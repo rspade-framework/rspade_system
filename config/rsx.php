@@ -1817,8 +1817,11 @@ return [
         // room; it is not long enough to leave a proven password redeemable for
         // the rest of the afternoon.
         //
-        // The same window bounds an in-flight WebAuthn ceremony's challenge, for
-        // the same reason: a challenge nobody answered must stop being satisfiable.
+        // The same window bounds a parked TOTP enrollment seed. An in-flight
+        // WebAuthn ceremony's challenge is NOT bounded here: its window is derived
+        // from the ceremony timeout the browser is sent (300s plus a 60s
+        // round-trip margin - Passkeys::challenge_window_seconds()), so the two
+        // can never disagree.
         //
         // Must be at least 1. Rsx_Two_Factor::challenge_expires_at() calls
         // shouldnt_happen() on anything lower rather than minting a window that is

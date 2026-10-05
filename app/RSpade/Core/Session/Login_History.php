@@ -18,6 +18,12 @@ use App\RSpade\Core\Session\User_Agent;
  *   They grow with real logins, are readable per user, and are pruned on a retention window by
  *   Session_Cleanup_Service (rsx.sessions.login_history_retention_days).
  *
+ *   PASSKEY ENROLLMENT CEREMONIES are rows here too (record_passkey_enrollment()): begun,
+ *   enrolled, failed and abandoned. They are written only for a SIGNED-IN identity enrolling
+ *   its own passkey, so they grow with real use like successes do, and they are the record a
+ *   support engineer reads when "my passkey would not save" - a ceremony that was begun and
+ *   never confirmed is the browser or the phone declining, not the server refusing.
+ *
  * - FAILURES are EPHEMERAL. record_failure() writes no row at all: it increments two
  *   Rsx_Counter counters (per email, per IP) that expire on
  *   rsx.sessions.login_throttle.window_minutes, and
@@ -79,9 +85,26 @@ class Login_History
     public const STATUS_FAILED_PASSKEY = 'failed_passkey';
 
     /**
+     * Passkey enrollment ceremony outcomes - rows, written by Rsx_Two_Factor through
+     * record_passkey_enrollment() (see that method). Not sign-ins and not failures in the
+     * throttle's sense: nothing here feeds Login_Throttle.
+     *
+     * BEGUN      begin_passkey_registration() issued creation options.
+     * ENROLLED   confirm_passkey_registration() stored the credential.
+     * FAILED     the confirmation reached the server and did not verify (failure_reason
+     *            carries why).
+     * ABANDONED  begun and never confirmed: superseded by a new attempt, found expired by
+     *            Session_Values_Cleanup_Service, or confirmed after the window closed.
+     */
+    public const STATUS_PASSKEY_ENROLL_BEGUN = 'passkey_enroll_begun';
+    public const STATUS_PASSKEY_ENROLLED = 'passkey_enrolled';
+    public const STATUS_PASSKEY_ENROLL_FAILED = 'passkey_enroll_failed';
+    public const STATUS_PASSKEY_ENROLL_ABANDONED = 'passkey_enroll_abandoned';
+
+    /**
      * Record a successful login
      *
-     * The only thing that writes a `_login_history` row.
+     * With record_passkey_enrollment(), the only thing that writes a `_login_history` row.
      *
      * @param int $login_user_id The authenticated user's ID
      * @param string $email The email used to log in
@@ -98,6 +121,58 @@ class Login_History
             'failure_reason' => null,
             'created_at' => now(),
         ]);
+    }
+
+    /**
+     * Record one passkey enrollment ceremony outcome as a `_login_history` row.
+     *
+     * Called by the staff second-factor facade (Rsx_Two_Factor) and nothing else; the client
+     * portal has no login history and logs the same outcomes instead.
+     *
+     * $client_context is the {ip_address, user_agent} pair the row carries, as captured by
+     * client_context() - passed when the outcome is recorded somewhere other than the request
+     * that began the ceremony (an abandoned enrollment found by the hourly sweep is recorded
+     * against the browser that began it, not against the CLI). Null = the current request.
+     *
+     * @param int $login_user_id The identity enrolling
+     * @param string $email Its email address
+     * @param string $status One of the STATUS_PASSKEY_ENROLL* constants
+     * @param string|null $reason Detail (why it failed or was abandoned), null when none
+     * @param array|null $client_context {ip_address, user_agent}, null for the current request
+     * @return void
+     */
+    public static function record_passkey_enrollment(
+        int $login_user_id,
+        string $email,
+        string $status,
+        ?string $reason = null,
+        ?array $client_context = null
+    ): void {
+        $client_context ??= self::client_context();
+
+        DB::table('_login_history')->insert([
+            'login_user_id' => $login_user_id,
+            'email_attempted' => $email,
+            'ip_address' => (string) ($client_context['ip_address'] ?? 'CLI'),
+            'user_agent' => $client_context['user_agent'] ?? null,
+            'status' => $status,
+            'failure_reason' => $reason === null ? null : mb_substr($reason, 0, 255),
+            'created_at' => now(),
+        ]);
+    }
+
+    /**
+     * The client a history row is attributed to: {ip_address, user_agent}, read the way every
+     * row written here reads them ('CLI' outside a request).
+     *
+     * @return array
+     */
+    public static function client_context(): array
+    {
+        return [
+            'ip_address' => self::_get_client_ip(),
+            'user_agent' => self::_get_user_agent(),
+        ];
     }
 
     /**
@@ -194,9 +269,9 @@ class Login_History
     /**
      * Get login history for a specific user
      *
-     * Successes only - failures are not stored (see the class docblock). The status/label and
-     * failure_reason keys remain in the returned shape because an application may record its own
-     * outcomes here through record_success(); framework-written rows are all SUCCESS.
+     * Successes and passkey enrollment outcomes - failures are not stored (see the class
+     * docblock). The status/label and failure_reason keys tell them apart; an application may
+     * also record its own outcomes here through record_success().
      *
      * @param int $login_user_id
      * @param int $limit Maximum number of records to return
@@ -337,6 +412,10 @@ class Login_History
             self::STATUS_FAILED_NOT_FOUND => 'Failed - User Not Found',
             self::STATUS_FAILED_SSO => 'Failed - SSO Sign-In',
             self::STATUS_FAILED_PASSKEY => 'Failed - Passkey Sign-In',
+            self::STATUS_PASSKEY_ENROLL_BEGUN => 'Passkey Enrollment Started',
+            self::STATUS_PASSKEY_ENROLLED => 'Passkey Enrolled',
+            self::STATUS_PASSKEY_ENROLL_FAILED => 'Passkey Enrollment Failed',
+            self::STATUS_PASSKEY_ENROLL_ABANDONED => 'Passkey Enrollment Abandoned',
             default => ucfirst(str_replace('_', ' ', $status)),
         };
     }

@@ -12,7 +12,9 @@ credential table. Those two facades are the ONLY classes application code touche
 `Passkeys`, `Recovery_Codes` and the credential models are implementation behind them.
 `Passkey_Login_Test` pins the passwordless flow and `Portal_Two_Factor_Test` the realm
 boundary (separate tables, prefixed user handles, the declared site, the portal's admission
-rule).
+rule). `Passkey_Ceremony_Test` pins the WebAuthn ceremony timeout (300 s, every ceremony,
+both realms), the challenge window derived from it, and the recorded outcome of every passkey
+enrollment (begun, enrolled, failed, abandoned).
 
 The subsystem's central property is the shape of the login flow. A login function verifies
 the password with `RsxAuth::attempt(record: false, touch_last_login: false)`, and if the

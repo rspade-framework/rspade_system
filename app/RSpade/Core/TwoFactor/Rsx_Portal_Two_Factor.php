@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Core\TwoFactor;
 
+use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Models\Portal_User_Model;
@@ -40,6 +41,8 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Abstract;
  *   store. A failure feeds Login_Throttle::record_failure() directly (so the brute-force
  *   budget is shared with the portal's password form and spent exactly once), and a success
  *   records nothing beyond the last_login stamp Portal_Session::set_portal_user_id() writes.
+ *   A passkey ENROLLMENT outcome (begun, enrolled, failed, abandoned) is one
+ *   Log::info('Portal passkey enrollment') line where staff get a _login_history row.
  *
  *   IMPERSONATION. "View as Client" is Portal_Session::is_impersonating(), and every
  *   enrollment and removal refuses under it: a staff member viewing a client's portal must
@@ -81,6 +84,12 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
      * Session value key holding the challenge of an in-flight PASSWORDLESS sign-in.
      */
     public const PASSKEY_LOGIN_CHALLENGE_KEY = 'portal_two_factor.passkey_login_challenge';
+
+    /**
+     * Session value key marking a passkey enrollment that has begun and not yet been
+     * confirmed - the staff facade's PASSKEY_ENROLLMENT_KEY, for the portal realm.
+     */
+    public const PASSKEY_ENROLLMENT_KEY = 'portal_two_factor.passkey_enrollment';
 
     /**
      * The prefix on every portal WebAuthn user handle.
@@ -192,5 +201,26 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
         ?string $reason = null
     ): void {
         Login_Throttle::record_failure();
+    }
+
+    /**
+     * One log line - the portal has no login history to write a row to. See the class
+     * docblock.
+     */
+    protected static function __record_passkey_enrollment(
+        int $identity_id,
+        string $email,
+        string $status,
+        ?string $reason,
+        array $client_context
+    ): void {
+        Log::info('Portal passkey enrollment', [
+            'portal_user_id' => $identity_id,
+            'email' => $email,
+            'status' => $status,
+            'reason' => $reason,
+            'ip_address' => $client_context['ip_address'] ?? null,
+            'user_agent' => $client_context['user_agent'] ?? null,
+        ]);
     }
 }

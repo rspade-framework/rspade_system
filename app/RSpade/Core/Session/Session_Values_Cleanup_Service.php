@@ -5,6 +5,8 @@ namespace App\RSpade\Core\Session;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
+use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
+use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
 
 /**
  * Session_Values_Cleanup_Service
@@ -26,6 +28,12 @@ use App\RSpade\Core\Task\Task_Instance;
  * rows, but the first run on an established installation could face a backlog, and no
  * maintenance sweep should hold one giant lock. #[Exclusive] so a long run never overlaps
  * its own next tick.
+ *
+ * ONE KIND OF EXPIRED VALUE IS EVIDENCE, NOT GARBAGE: a passkey enrollment marker that
+ * expired is a ceremony the browser began and never confirmed. Before the generic delete,
+ * each realm's two-factor facade records those as ABANDONED and removes them itself
+ * (Rsx_Two_Factor_Abstract::record_expired_passkey_enrollments()) - deleting them blind
+ * would erase the only server-side trace of a passkey that silently failed to save.
  *
  * Statement choice: a raw predicate DELETE via DB::table rather than a fetch-then-iterate.
  * The bulk-write mandate exists to keep per-record realtime frames and after_* hooks firing;
@@ -57,6 +65,15 @@ class Session_Values_Cleanup_Service extends Rsx_Service_Abstract
     public static function cleanup_expired_values(Task_Instance $task, array $params = [])
     {
         $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);
+
+        // First, so the generic delete below never takes an unrecorded marker.
+        $abandoned = Rsx_Two_Factor::record_expired_passkey_enrollments()
+            + Rsx_Portal_Two_Factor::record_expired_passkey_enrollments();
+
+        if ($abandoned > 0) {
+            $task->info("Recorded {$abandoned} abandoned passkey enrollments");
+        }
+
         $now = now();
 
         $total = 0;
@@ -80,6 +97,6 @@ class Session_Values_Cleanup_Service extends Rsx_Service_Abstract
             $task->info("Deleted {$total} expired session values");
         }
 
-        return ['deleted' => $total];
+        return ['deleted' => $total, 'abandoned_passkey_enrollments' => $abandoned];
     }
 }

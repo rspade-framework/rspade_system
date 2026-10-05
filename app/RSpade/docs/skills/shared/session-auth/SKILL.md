@@ -84,7 +84,7 @@ Login_History::get_failed_attempts_count($email);     // within the failure wind
 Login_History::get_failed_attempts_count_by_ip($ip);  // same
 ```
 
-Successes are `_login_history` rows, pruned on `rsx.sessions.login_history_retention_days` (default 365). **Failures are ephemeral - no row at all**: a per-email and a per-IP counter expiring on `rsx.sessions.login_throttle.window_minutes` (default 15), plus one `Log::warning` line. `/login` is anonymous-reachable, and a persisted failure row was an unauthenticated INSERT anyone on the internet could drive.
+Successes (and passkey enrollment outcomes, written by `Rsx_Two_Factor`) are `_login_history` rows, pruned on `rsx.sessions.login_history_retention_days` (default 365). **Failures are ephemeral - no row at all**: a per-email and a per-IP counter expiring on `rsx.sessions.login_throttle.window_minutes` (default 15), plus one `Log::warning` line. `/login` is anonymous-reachable, and a persisted failure row was an unauthenticated INSERT anyone on the internet could drive.
 
 Consequences you must design around: **a 30-day failed-attempt count is not answerable** - shrink such a stat to the window, or state the window in the label. And these counts are a **statistic, not the enforcement** - never build a second throttle on them (below).
 

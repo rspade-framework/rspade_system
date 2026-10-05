@@ -12,7 +12,9 @@ use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
 use BaconQrCode\Writer;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
+use lbuchs\WebAuthn\WebAuthnException;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
@@ -90,7 +92,20 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * expired state is a working outcome that says "sign in again". What it bounds is how long
  * a passed-password state stays redeemable, because a half-authenticated identity left
  * live forever is a password that has already been proven waiting on an unattended screen.
- * config('rsx.two_factor.challenge_window_minutes').
+ * config('rsx.two_factor.challenge_window_minutes'). An in-flight WEBAUTHN ceremony's challenge
+ * has its own, shorter window, derived from the ceremony timeout the browser is sent
+ * (Passkeys::challenge_window_seconds()).
+ *
+ * PASSKEY ENROLLMENT CEREMONIES ARE RECORDED - begun, enrolled, failed, abandoned - through
+ * the realm (__record_passkey_enrollment(): _login_history rows for staff, log lines for the
+ * portal). A browser that gives up on a ceremony tells the server nothing, so "begun" is
+ * written when the options are issued and a marker (the realm's PASSKEY_ENROLLMENT_KEY
+ * session value, expiring with the challenge) is parked beside the challenge. The marker is
+ * CLAIMED BY DELETION by exactly one of: the confirmation (enrolled / failed), the next begin
+ * in the same browser (abandoned - superseded or expired), or the hourly
+ * Session_Values_Cleanup_Service sweep once it has expired (abandoned) - so each ceremony
+ * gets exactly one outcome. A marker lost with its whole session (session expiry, an
+ * operator deleting the row) records no outcome; the begun row still stands.
  *
  * TWO ATTEMPT CAPS BOUND GUESSING, independent of the per-IP login throttle (which an
  * attacker defeats by rotating addresses). Every wrong answer to a challenge counts against
@@ -646,7 +661,47 @@ abstract class Rsx_Two_Factor_Abstract
      */
     public static function begin_passkey_registration(): array
     {
-        return Passkeys::registration_options(static::class, static::__enrolling_identity());
+        $identity = static::__enrolling_identity();
+
+        // An earlier enrollment in this browser that never reached its confirmation is over:
+        // the options below replace its challenge. Record it before its marker is replaced.
+        $previous = static::__take_passkey_enrollment();
+
+        if ($previous !== null) {
+            static::__record_enrollment_from_marker(
+                $previous['marker'],
+                Login_History::STATUS_PASSKEY_ENROLL_ABANDONED,
+                $previous['expired']
+                    ? 'Never confirmed; the challenge expired'
+                    : 'Superseded by a new enrollment attempt before it was confirmed'
+            );
+        }
+
+        $options = Passkeys::registration_options(static::class, $identity);
+
+        $client_context = Login_History::client_context();
+
+        Session::put_value(
+            static::PASSKEY_ENROLLMENT_KEY,
+            [
+                'identity_id' => (int) $identity->id,
+                'email' => (string) $identity->email,
+                'begun_at' => Rsx_Time::now_iso(),
+                'ip_address' => $client_context['ip_address'],
+                'user_agent' => $client_context['user_agent'],
+            ],
+            Passkeys::challenge_expires_at()
+        );
+
+        static::__record_passkey_enrollment(
+            (int) $identity->id,
+            (string) $identity->email,
+            Login_History::STATUS_PASSKEY_ENROLL_BEGUN,
+            null,
+            $client_context
+        );
+
+        return $options;
     }
 
     /**
@@ -670,7 +725,32 @@ abstract class Rsx_Two_Factor_Abstract
         $identity = static::__enrolling_identity();
         $identity_id = (int) $identity->id;
 
-        $verified = Passkeys::verify_registration(static::class, $attestation);
+        $pending = static::__take_passkey_enrollment();
+
+        try {
+            $verified = Passkeys::verify_registration(static::class, $attestation);
+        } catch (Two_Factor_Failed_Exception | WebAuthnException $e) {
+            // Recorded, then rethrown untouched: the caller's error handling is unchanged.
+            // A confirmation arriving after the window is an ABANDONED ceremony (the browser
+            // took longer than the server would wait), not a refused attestation.
+            if ($pending !== null && $pending['expired']) {
+                static::__record_enrollment_from_marker(
+                    $pending['marker'],
+                    Login_History::STATUS_PASSKEY_ENROLL_ABANDONED,
+                    'Confirmation arrived after the challenge expired'
+                );
+            } else {
+                static::__record_passkey_enrollment(
+                    $identity_id,
+                    (string) $identity->email,
+                    Login_History::STATUS_PASSKEY_ENROLL_FAILED,
+                    $e->getMessage(),
+                    Login_History::client_context()
+                );
+            }
+
+            throw $e;
+        }
 
         $had_codes = Recovery_Codes::remaining(static::class, $identity_id) > 0;
 
@@ -687,6 +767,14 @@ abstract class Rsx_Two_Factor_Abstract
         $row->confirmed_at = Rsx_Time::now_iso();
         $row->save();
 
+        static::__record_passkey_enrollment(
+            $identity_id,
+            (string) $identity->email,
+            Login_History::STATUS_PASSKEY_ENROLLED,
+            null,
+            Login_History::client_context()
+        );
+
         if ($had_codes) {
             return null;
         }
@@ -695,6 +783,124 @@ abstract class Rsx_Two_Factor_Abstract
         Recovery_Codes::store_for(static::class, $identity_id, $codes);
 
         return $codes;
+    }
+
+    /**
+     * Record every EXPIRED, never-confirmed passkey enrollment of this realm as ABANDONED,
+     * and delete its marker. Returns how many were recorded.
+     *
+     * Called by Session_Values_Cleanup_Service::cleanup_expired_values() BEFORE its generic
+     * delete of expired session values - otherwise the generic delete would take the
+     * markers and the outcome would never be written. Every expired marker is processed,
+     * a keyset page at a time; each is claimed by deleting it, so a begin racing the sweep
+     * for the same marker records it once, not twice.
+     *
+     * @return int
+     */
+    public static function record_expired_passkey_enrollments(): int
+    {
+        $now = Rsx_Time::to_database(Rsx_Time::now_iso());
+        $recorded = 0;
+
+        $rows = DB::table('_session_values')
+            ->select(['id', 'value'])
+            ->where('value_key', static::PASSKEY_ENROLLMENT_KEY)
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<', $now)
+            ->lazyById();
+
+        foreach ($rows as $row) {
+            if (DB::table('_session_values')->where('id', $row->id)->delete() !== 1) {
+                continue;
+            }
+
+            static::__record_enrollment_from_marker(
+                static::__decode_enrollment_marker($row->value),
+                Login_History::STATUS_PASSKEY_ENROLL_ABANDONED,
+                'Never confirmed; the challenge expired'
+            );
+
+            $recorded++;
+        }
+
+        return $recorded;
+    }
+
+    /**
+     * Claim this browser's passkey enrollment marker, EXPIRED OR NOT, deleting it.
+     *
+     * Read straight from _session_values rather than through Session::get_value(), which
+     * hides an expired value by design - and an expired marker is exactly the abandoned
+     * ceremony this exists to record. The marker is claimed by its DELETE: a caller whose
+     * delete removed nothing lost a race (to the sweep) and gets null, so an outcome is
+     * recorded once.
+     *
+     * @return array|null {marker: array, expired: bool}, or null when none is parked
+     */
+    protected static function __take_passkey_enrollment(): ?array
+    {
+        if (!Session::has_session()) {
+            return null;
+        }
+
+        $row = DB::table('_session_values')
+            ->where('session_id', Session::get_session_id())
+            ->where('value_key', static::PASSKEY_ENROLLMENT_KEY)
+            ->first();
+
+        if ($row === null) {
+            return null;
+        }
+
+        if (DB::table('_session_values')->where('id', $row->id)->delete() !== 1) {
+            return null;
+        }
+
+        return [
+            'marker' => static::__decode_enrollment_marker($row->value),
+            'expired' => $row->expires_at !== null && Rsx_Time::is_past($row->expires_at),
+        ];
+    }
+
+    /**
+     * A stored enrollment marker, decoded. Only begin_passkey_registration() writes one, so
+     * anything else is a broken invariant.
+     *
+     * @param string|null $json
+     * @return array
+     */
+    protected static function __decode_enrollment_marker(?string $json): array
+    {
+        $marker = json_decode((string) $json, true);
+
+        if (!is_array($marker) || !isset($marker['identity_id'], $marker['email'], $marker['begun_at'])) {
+            shouldnt_happen('A passkey enrollment marker is malformed: ' . (string) $json);
+        }
+
+        return $marker;
+    }
+
+    /**
+     * Record an outcome for the ceremony a marker describes, against the identity and the
+     * browser that BEGAN it - the recorder may be another request or the hourly sweep.
+     *
+     * @param array $marker
+     * @param string $status A Login_History::STATUS_PASSKEY_ENROLL* constant.
+     * @param string $reason
+     * @return void
+     */
+    protected static function __record_enrollment_from_marker(array $marker, string $status, string $reason): void
+    {
+        static::__record_passkey_enrollment(
+            (int) $marker['identity_id'],
+            (string) $marker['email'],
+            $status,
+            $reason . ' (begun ' . $marker['begun_at'] . ')',
+            [
+                'ip_address' => $marker['ip_address'] ?? null,
+                'user_agent' => $marker['user_agent'] ?? null,
+            ]
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -1295,11 +1501,12 @@ abstract class Rsx_Two_Factor_Abstract
     // THE REALM - what each facade answers
     // -------------------------------------------------------------------------
     //
-    // Each facade also declares four session value keys as class constants, read here
+    // Each facade also declares five session value keys as class constants, read here
     // through static:: - CHALLENGE_KEY (the pending second-factor challenge),
     // TOTP_PENDING_KEY (an in-flight authenticator-app seed), WEBAUTHN_CHALLENGE_KEY (a
-    // registration or second-factor assertion ceremony) and PASSKEY_LOGIN_CHALLENGE_KEY (a
-    // passwordless ceremony). The two realms' keys differ, because both realms' values can
+    // registration or second-factor assertion ceremony), PASSKEY_LOGIN_CHALLENGE_KEY (a
+    // passwordless ceremony) and PASSKEY_ENROLLMENT_KEY (the marker of a begun, unconfirmed
+    // passkey enrollment - see the class docblock). The two realms' keys differ, because both realms' values can
     // sit on the one session row a browser has at the same moment.
 
     /**
@@ -1401,5 +1608,24 @@ abstract class Rsx_Two_Factor_Abstract
         string $status,
         ?int $identity_id,
         ?string $reason = null
+    ): void;
+
+    /**
+     * Record one passkey enrollment ceremony outcome where a support engineer can read it.
+     * Never feeds the throttle - an enrollment is not a sign-in attempt.
+     *
+     * @param int $identity_id The identity that enrolled (or tried to).
+     * @param string $email Its email address.
+     * @param string $status A Login_History::STATUS_PASSKEY_ENROLL* constant.
+     * @param string|null $reason Why it failed or was abandoned; null otherwise.
+     * @param array $client_context {ip_address, user_agent} of the browser that began it.
+     * @return void
+     */
+    abstract protected static function __record_passkey_enrollment(
+        int $identity_id,
+        string $email,
+        string $status,
+        ?string $reason,
+        array $client_context
     ): void;
 }

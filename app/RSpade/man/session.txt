@@ -1614,8 +1614,12 @@ LOGIN HISTORY
         excluded.
 
     SUCCESSES ARE ROWS:
-        record_success() is the only thing that writes `_login_history`. The
-        table therefore grows with real logins rather than with attack volume,
+        record_success() and record_passkey_enrollment() are the only things
+        that write `_login_history`. The second records the outcome of a
+        signed-in identity's passkey enrollment ceremony (begun, enrolled,
+        failed, abandoned - rsx:man two_factor, PASSKEY ENROLLMENT OUTCOMES);
+        it is written only for an authenticated identity acting on itself.
+        The table therefore grows with real use rather than with attack volume,
         and is pruned by Session_Cleanup_Service::cleanup_login_history (hourly,
         chunked) past rsx.sessions.login_history_retention_days (default 365; 0
         or null disables the prune).
@@ -1667,23 +1671,30 @@ LOGIN HISTORY
         Login_History::STATUS_FAILED_LOCKED    - no framework producer
         Login_History::STATUS_FAILED_DISABLED  - no framework producer
 
+        Passkey enrollment ceremony rows (record_passkey_enrollment(), written
+        by Rsx_Two_Factor - rows, not log lines, and never fed to the throttle):
+        Login_History::STATUS_PASSKEY_ENROLL_BEGUN
+        Login_History::STATUS_PASSKEY_ENROLLED
+        Login_History::STATUS_PASSKEY_ENROLL_FAILED
+        Login_History::STATUS_PASSKEY_ENROLL_ABANDONED
+
         FAILED_2FA is written by the framework's own second-factor challenge
         (rsx:man two_factor) - an app that runs the challenge through
         Rsx_Two_Factor does NOT record it itself. The last two have no producer
         because account state is APPLICATION vocabulary (ACCOUNT STATE above):
         the app records those outcomes itself through record_failure(). All
         three are kept here so every app spells the same outcome the same way.
-        Since failures are not rows, a status describes the LOG line, not a
-        column.
+        Since failures are not rows, a FAILED_* status describes the LOG line,
+        not a column.
 
     READING IT BACK:
         $history = Login_History::get_history_for_user($login_user_id, $limit = 10);
 
-        Successes only, most recent first. Each record: id, email, ip_address,
-        user_agent, user_agent_parsed, location (null until geo-IP is wired),
-        status, status_label, failure_reason, created_at. The status /
-        failure_reason keys remain in the shape because an app may record its own
-        outcomes through record_success(); framework-written rows are all SUCCESS.
+        Successes and passkey enrollment outcomes, most recent first. Each
+        record: id, email, ip_address, user_agent, user_agent_parsed, location
+        (null until geo-IP is wired), status, status_label, failure_reason,
+        created_at. status tells a sign-in from an enrollment row; an app may
+        also record its own outcomes through record_success().
 
     APP RECIPE - CUSTOM STATUSES:
         Record the outcomes the framework cannot see, in the shared vocabulary

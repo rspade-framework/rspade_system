@@ -64,6 +64,13 @@ class Rsx_Two_Factor extends Rsx_Two_Factor_Abstract
      */
     public const PASSKEY_LOGIN_CHALLENGE_KEY = 'two_factor.passkey_login_challenge';
 
+    /**
+     * Session value key marking a passkey enrollment that has begun and not yet been
+     * confirmed: {identity_id, email, begun_at, ip_address, user_agent}, expiring with the
+     * ceremony's challenge. Exists so an abandoned enrollment can be recorded.
+     */
+    public const PASSKEY_ENROLLMENT_KEY = 'two_factor.passkey_enrollment';
+
     public static function _credential_model(): string
     {
         return Two_Factor_Credential_Model::class;
@@ -147,5 +154,19 @@ class Rsx_Two_Factor extends Rsx_Two_Factor_Abstract
         ?string $reason = null
     ): void {
         Login_History::record_failure($email, $status, $reason, $identity_id);
+    }
+
+    /**
+     * A _login_history row - the identity's history, where its sign-ins already are and
+     * where the /_sys panel's Sign-ins tab shows them.
+     */
+    protected static function __record_passkey_enrollment(
+        int $identity_id,
+        string $email,
+        string $status,
+        ?string $reason,
+        array $client_context
+    ): void {
+        Login_History::record_passkey_enrollment($identity_id, $email, $status, $reason, $client_context);
     }
 }

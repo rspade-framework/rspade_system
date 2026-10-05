@@ -1,7 +1,7 @@
 # Test catalog: two_factor
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues) | `planned`.
-Type: php / cli / asset / http / playwright. Last updated: 2026-09-24.
+Type: php / cli / asset / http / playwright. Last updated: 2026-10-05.
 
 ## Totp_Test (php, no transactions - pure logic) - RFC 6238 correctness and the rules verify() adds
 
@@ -271,6 +271,27 @@ site, the portal's admission rule and "View as Client".
 | tfa-portal-08 | the portal's admission rule refuses a suspended portal user | valid key, status suspended | refused | implemented |
 | tfa-portal-09 | the portal second-factor challenge answers with a portal passkey | begin_challenge() + challenge assertion | signed in to the portal, nothing pending in either realm | implemented |
 | tfa-portal-10 | the attempt caps hold on the portal's OWN counters | caps 2/2, two wrong codes on a portal challenge | challenge destroyed, the portal user locked, the staff identity with the same id not locked | implemented |
+
+## Passkey_Ceremony_Test (php, default isolation) - the ceremony timeout, the challenge window, enrollment outcomes
+
+Both realms. The timeout is a browser UI hint the framework must set (the library's own default
+is 20 s, too short for the cross-device QR flow); the challenge window is derived from it; every
+enrollment ceremony gets exactly one recorded outcome after its begun row.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| tfa-cer-01 | every staff ceremony carries the 300 s hint | registration, second-factor assertion, passwordless options | publicKey.timeout = 300000 on all three | implemented |
+| tfa-cer-02 | every portal ceremony carries the 300 s hint | the same three through Rsx_Portal_Two_Factor / Passkeys | publicKey.timeout = 300000 on all three | implemented |
+| tfa-cer-03 | the challenge window is derived and never shorter than the prompt | challenge_window_seconds() | timeout + margin, > timeout, margin > 0, <= 600 | implemented |
+| tfa-cer-04 | the stored challenge and the enrollment marker expire on that window | begin_passkey_registration() | both _session_values rows expire ~360 s out | implemented |
+| tfa-cer-05 | a completed enrollment writes begun then enrolled | begin + valid attestation | [passkey_enroll_begun, passkey_enrolled], marker spent | implemented |
+| tfa-cer-06 | a refused confirmation writes failed and still throws | begin + incomplete attestation | Two_Factor_Failed_Exception; passkey_enroll_failed row with the reason; marker spent | implemented |
+| tfa-cer-07 | a new begin supersedes the pending enrollment | begin twice | [begun, abandoned ("Superseded"), begun] | implemented |
+| tfa-cer-08 | a new begin records an EXPIRED pending enrollment | begin, expire the marker, begin | abandoned row naming the expired challenge and its begun time | implemented |
+| tfa-cer-09 | a late confirmation is abandoned, not failed | begin, expire, confirm a valid attestation | 'expired' exception; [begun, abandoned ("after the challenge expired")] | implemented |
+| tfa-cer-10 | the session-values sweep records an expired enrollment once | begin, expire, Session_Values_Cleanup_Service::cleanup_expired_values() | abandoned row with the begin's IP, marker deleted, a second pass records 0 | implemented |
+| tfa-cer-11 | the sweep leaves a live enrollment alone | begin, record_expired_passkey_enrollments() | the marker remains | implemented |
+| tfa-cer-12 | the portal logs its outcomes and writes no row | portal begin twice, MessageLogged listener | 'Portal passkey enrollment' lines [begun, abandoned, begun]; _login_history count unchanged | implemented |
 
 ## Deferred / planned
 

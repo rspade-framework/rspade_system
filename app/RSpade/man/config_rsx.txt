@@ -315,8 +315,10 @@ TWO-FACTOR AUTHENTICATION
 
     challenge_window_minutes is a SECURITY WINDOW, not an operation
     timeout: how long a passed-password-awaiting-second-factor state
-    stays redeemable, and how long an in-flight WebAuthn ceremony or a
-    parked enrollment seed stays satisfiable. It bounds no work, and
+    stays redeemable, and how long a parked TOTP enrollment seed stays
+    satisfiable. A WebAuthn ceremony's challenge is not governed here: its
+    window is derived from the 300-second ceremony timeout the browser is
+    sent (rsx:man two_factor). It bounds no work, and
     expiry degrades to a working outcome ("sign in again"). Must be at
     least 1 - anything lower calls shouldnt_happen() rather than minting
     a window that is already closed.

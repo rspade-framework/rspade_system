@@ -231,6 +231,71 @@ HOW IT WORKS
         publicKey.excludeCredentials[].id; get - publicKey.challenge,
         publicKey.allowCredentials[].id.
 
+    PASSKEYS: THE CEREMONY TIMEOUT AND THE CHALLENGE WINDOW
+        Every ceremony - registration, the second-factor assertion and
+        passwordless sign-in, in both realms - is sent publicKey.timeout =
+        300000 (Passkeys::CEREMONY_TIMEOUT_SECONDS = 300). It is a browser UI
+        HINT - how long the browser keeps its passkey prompt open - and bounds
+        no work of ours. The framework must set it: left out, the WebAuthn
+        library writes its own 20-second default, and 20 seconds cannot hold
+        the CROSS-DEVICE (hybrid / QR) flow - notice the QR code, unlock the
+        phone, open its credential provider, scan, Bluetooth tunnel,
+        biometric, relay back - which routinely takes 30 to 60 seconds and
+        more; the browser abandons first. 300 seconds is the WebAuthn
+        specification's recommended default for a ceremony whose
+        userVerification is 'required' or 'preferred' (all three are). A
+        local authenticator answers in seconds and the prompt closes then.
+        The browser may CLAMP the value; it is advice, never a guarantee.
+
+        The server keeps a WebAuthn challenge redeemable for the ceremony
+        timeout plus a 60-second round-trip margin
+        (Passkeys::challenge_window_seconds() = 360) - DERIVED, not
+        configured, so the window can never be shorter than the prompt the
+        browser was told to hold open. It is a SECURITY WINDOW like the one
+        below: it bounds how long an unanswered challenge stays satisfiable,
+        and a confirmation after it answers "That security key request has
+        expired. Please try again."
+
+    PASSKEY ENROLLMENT OUTCOMES - WHAT SUPPORT CAN READ
+        A browser that gives up on a ceremony tells the server nothing, so
+        every staff enrollment writes _login_history rows
+        (Login_History::record_passkey_enrollment()), shown on the /_sys
+        panel's per-identity Sign-ins tab:
+
+            passkey_enroll_begun      options issued (begin)
+            passkey_enrolled          credential stored (confirm)
+            passkey_enroll_failed     the confirmation reached the server and
+                                      did not verify; failure_reason says why
+            passkey_enroll_abandoned  begun and NEVER CONFIRMED: superseded by
+                                      a new begin in the same browser, found
+                                      expired by the next begin or by the
+                                      hourly Session_Values_Cleanup_Service
+                                      sweep, or confirmed after the window
+
+        A begin parks a marker session value (PASSKEY_ENROLLMENT_KEY) beside
+        the challenge, with the same expiry; whichever of the confirmation,
+        the next begin or the sweep claims it records the one outcome, against
+        the IP and browser that began the ceremony. An abandoned row's
+        failure_reason carries when the ceremony began. A session deleted
+        outright takes its marker with it, and that ceremony records no
+        outcome beyond its begun row. Nothing here feeds the login throttle -
+        an enrollment is not a sign-in attempt. The PORTAL has no login
+        history and logs the same outcomes instead:
+        Log::info('Portal passkey enrollment', {portal_user_id, email,
+        status, reason, ip_address, user_agent}).
+
+        READING "MY PASSKEY WOULD NOT SAVE". A begun row followed by an
+        abandoned one, with no failed row, means no confirmation ever reached
+        the server: the browser, or the phone's credential provider, declined
+        or gave up - the server refused nothing. That is the usual shape of a
+        generic browser error shown right after scanning the QR code
+        ("Something went wrong"). Not every authenticator app is a general
+        passkey provider for arbitrary sites; some hold credentials only for
+        their own vendor's accounts, so the user may need a different
+        provider on the phone (the platform's own password manager, or one
+        that offers passkeys to any site). A failed row, by contrast, is the
+        server refusing a response it did receive - read its failure_reason.
+
     RECOVERY CODES
         Ten codes per set (Recovery_Codes::COUNT), minted automatically the
         first time an identity confirms a real factor, and again by
@@ -279,8 +344,9 @@ HOW IT WORKS
 
     THE SECURITY WINDOW (NOT A TIMEOUT)
         rsx.two_factor.challenge_window_minutes (10) bounds how long a
-        passed-password state stays redeemable, and the same window bounds an
-        in-flight WebAuthn ceremony and a parked TOTP enrollment seed. It
+        passed-password state stays redeemable, and the same window bounds a
+        parked TOTP enrollment seed (a WebAuthn ceremony's challenge has its
+        own derived window - see PASSKEYS: THE CEREMONY TIMEOUT). It
         bounds no work, cancels nothing, and expiry degrades to a working
         outcome the user can act on ("Your verification window has expired.
         Please sign in again."). What is parked during it is a password that
@@ -404,11 +470,19 @@ THE FACADE
             throws Two_Factor_Failed_Exception and the parked seed SURVIVES,
             so the retry is the same enrollment.
         begin_passkey_registration(): array
-            The navigator.credentials.create() arguments.
+            The navigator.credentials.create() arguments. Records
+            passkey_enroll_begun (and passkey_enroll_abandoned for an earlier
+            unconfirmed enrollment in this browser) - see PASSKEY ENROLLMENT
+            OUTCOMES.
         confirm_passkey_registration(array $attestation, ?string $label): ?array
             Freshly minted recovery codes, or NULL when the identity already
             had a sheet - a user adding a second passkey must not have the
-            codes they wrote down silently invalidated.
+            codes they wrote down silently invalidated. Records
+            passkey_enrolled, or passkey_enroll_failed / _abandoned before
+            the exception propagates unchanged.
+        record_expired_passkey_enrollments(): int
+            Framework-internal: the hourly session-values sweep calls it to
+            record expired, never-confirmed enrollments as abandoned.
         regenerate_recovery_codes(): array
             Replaces the set. The previous sheet stops working immediately.
 
@@ -882,7 +956,9 @@ THE CLIENT PORTAL REALM
         recording   the portal has no login history (_login_history is the
                     staff identity's store): each failure feeds
                     Login_Throttle::record_failure() directly, exactly once,
-                    and a success records nothing beyond the last_login stamp.
+                    a success records nothing beyond the last_login stamp,
+                    and a passkey enrollment outcome is a
+                    Log::info('Portal passkey enrollment') line.
         rpId        the portal's HOST (Rsx_Portal_Url::host()) when PORTAL_URL
                     gives the portal a host of its own, otherwise the
                     application's hostname (shared with staff - safe, see
@@ -960,7 +1036,8 @@ CONFIGURATION
             way a product name may not be. A colon is stripped.
 
         'challenge_window_minutes' => 10
-            The SECURITY WINDOW above. Must be at least 1;
+            The SECURITY WINDOW above (the password-passed state and a parked
+            TOTP seed; not a WebAuthn challenge). Must be at least 1;
             challenge_expires_at() calls shouldnt_happen() on anything lower
             rather than minting a window that is already closed.
 
@@ -1008,6 +1085,12 @@ NOTES AND GOTCHAS
     - Staff and portal credentials are separate: a passkey registered on
       the staff app does not sign anybody in on the portal, and the reverse.
       A person who uses both enrolls a passkey in each.
+
+    - The WebAuthn ceremony timeout is the framework's (300 seconds), not
+      configuration: it is sized for the cross-device QR flow, and the
+      challenge window is derived from it. A generic browser error right
+      after a QR scan, with no failed row on the server, is the browser or
+      the phone's provider declining - see PASSKEY ENROLLMENT OUTCOMES.
 
     - A passwordless assertion must carry the UV flag. An authenticator that
       proves only presence (a bare touch) can answer a second-factor

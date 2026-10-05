@@ -227,8 +227,9 @@ DESCRIPTION
       Sign-ins   its whole _login_history, newest first, a page at a time
                  (outcome, IP, device, location, the email given), searched
                  by IP or browser. The table holds what Login_History stores -
-                 successful sign-ins for the retention window; failures are
-                 counters and log lines, never rows.
+                 successful sign-ins and passkey enrollment outcomes (begun,
+                 enrolled, failed, abandoned) for the retention window; sign-in
+                 failures are counters and log lines, never rows.
       Security   whether a password or provider sign-in owes a second factor,
                  each confirmed factor (kind, label, enrolled, last used),
                  whether it holds a passkey, the COUNT of unspent recovery

@@ -5,9 +5,10 @@ has, newest first, a page at a time.
 $base_params=({login_user_id: <id>}) - the identity (required); sent with every request
 
 Server half: _Sys_User_Signins_DataGrid.php (each row through
-Login_History::present_record(); search on IP or user agent). Grid key "signins". The
-table holds successful sign-ins (and any outcome an application records itself) for
-rsx.sessions.login_history_retention_days; framework failures are never rows.
+Login_History::present_record(), plus the badge `tone`; search on IP or user agent).
+Grid key "signins". The table holds successful sign-ins, passkey enrollment outcomes
+(and any outcome an application records itself) for
+rsx.sessions.login_history_retention_days; framework sign-in failures are never rows.
 --%>
 <Define:_Sys_User_Signins_DataGrid extends="_Sys_DataGrid_Abstract"
     $grid_key="signins"
@@ -31,7 +32,7 @@ rsx.sessions.login_history_retention_days; framework failures are never rows.
         <tr>
             <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
             <td>
-                <_Sys_Status_Badge $status=(row.status === 'success' ? 'ok' : 'fail') $label=row.status_label />
+                <_Sys_Status_Badge $status=row.tone $label=row.status_label />
                 <% if (row.failure_reason) { %>
                     <span class="_Sys_User_Signins_DataGrid__dim"><%= row.failure_reason %></span>
                 <% } %>

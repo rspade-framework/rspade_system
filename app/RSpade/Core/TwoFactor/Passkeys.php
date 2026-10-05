@@ -47,6 +47,10 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * in with a passkey" while a second-factor challenge is pending in the same browser, and
  * one ceremony must never overwrite the other's challenge.
  *
+ * EVERY CEREMONY CARRIES THE FRAMEWORK'S OWN TIMEOUT HINT (CEREMONY_TIMEOUT_SECONDS, 300),
+ * sized for the cross-device QR flow, and the challenge stays redeemable for that plus a
+ * round-trip margin (challenge_window_seconds()) - one number derived from the other.
+ *
  * EVERY CALL NAMES ITS REALM - the facade class (Rsx_Two_Factor for staff login identities,
  * Rsx_Portal_Two_Factor for portal users). The realm supplies the credential table, the
  * owner column, the session keys, the relying party id and the user handle. Staff and portal
@@ -79,6 +83,41 @@ class Passkeys
      * The only attestation format accepted. See the class docblock.
      */
     private const FORMATS = ['none'];
+
+    /**
+     * The WebAuthn CEREMONY TIMEOUT sent to the browser as publicKey.timeout, in seconds -
+     * on every ceremony: registration, the second-factor assertion and passwordless sign-in.
+     *
+     * A SANCTIONED TIMEOUT (engineering mandate "NEVER add a timeout"), owner-requested. It
+     * is a browser UI HINT, not a bound on any work of ours: it tells the browser how long
+     * to keep its passkey prompt open, a piece of the WebAuthn specification's UI contract
+     * with the user, and nothing on the server waits on it or is cancelled by it. The
+     * framework MUST set it, because lbuchs/webauthn otherwise writes its own 20-second
+     * default into every ceremony's options - and 20 seconds cannot hold the cross-device
+     * (hybrid / QR) flow, where the user notices the QR code, unlocks a phone, opens its
+     * credential provider, scans, waits on the Bluetooth tunnel and passes a biometric:
+     * routinely 30 to 60 seconds and more. The browser abandons first.
+     *
+     * WHY 300: it is the WebAuthn specification's recommended default for a ceremony whose
+     * userVerification is 'required' or 'preferred', which all three of ours are. It costs
+     * a local authenticator nothing (the prompt closes the moment it is answered). The
+     * browser may CLAMP it to a range of its own; the value is advice, never a guarantee.
+     *
+     * The server's challenge window is DERIVED from it - see challenge_window_seconds().
+     */
+    public const CEREMONY_TIMEOUT_SECONDS = 300;
+
+    /**
+     * Seconds the server keeps a challenge redeemable BEYOND the ceremony timeout.
+     *
+     * The ceremony timeout bounds the browser's prompt; after the prompt resolves, the
+     * response still has to travel to the server (the confirm POST, a slow network, a
+     * loaded server). Without this margin a ceremony answered in its last seconds would
+     * reach a challenge that had already expired - the server refusing what the browser
+     * still considered live. A minute covers that round trip; it is not extended further
+     * because every second added is a second an unanswered challenge stays satisfiable.
+     */
+    public const CHALLENGE_MARGIN_SECONDS = 60;
 
     // -------------------------------------------------------------------------
     // The library handle
@@ -150,10 +189,11 @@ class Passkeys
      * user has already enrolled refuses politely inside the browser instead of silently
      * minting a duplicate they would then have to tell apart in a list.
      *
-     * NO TIMEOUT IS PASSED. The library's own default lands in the args as the WebAuthn
-     * ceremony hint - how long the BROWSER keeps its prompt open, a piece of the spec's UI
-     * contract with the user and not a deadline on any work of ours. We neither set it nor
-     * enforce it.
+     * A CEREMONY TIMEOUT IS ALWAYS SENT, and the framework chooses it:
+     * CEREMONY_TIMEOUT_SECONDS, sized for the cross-device (hybrid / QR) flow. It is the
+     * WebAuthn ceremony hint - how long the BROWSER keeps its prompt open, a piece of the
+     * spec's UI contract with the user and not a deadline on any work of ours. Leaving it
+     * out does not mean "no timeout": the library then writes its own 20-second default.
      *
      * THE USER HANDLE COMES FROM THE REALM. An authenticator files a resident credential
      * under (rpId, user handle) and REPLACES an existing one with the same pair, so a staff
@@ -184,6 +224,7 @@ class Passkeys
             userId: $realm::_user_handle((int) $identity->id),
             userName: (string) $identity->email,
             userDisplayName: (string) $identity->email,
+            timeout: self::CEREMONY_TIMEOUT_SECONDS,
             requireResidentKey: true,
             excludeCredentialIds: $existing
         );
@@ -265,7 +306,7 @@ class Passkeys
             $credential_ids[] = self::base64url_decode($row->credential_key);
         }
 
-        $args = $server->getGetArgs($credential_ids);
+        $args = $server->getGetArgs($credential_ids, timeout: self::CEREMONY_TIMEOUT_SECONDS);
 
         self::_store_challenge($server, $realm::WEBAUTHN_CHALLENGE_KEY);
 
@@ -294,7 +335,7 @@ class Passkeys
     {
         $server = self::_server($realm);
 
-        $args = $server->getGetArgs([], requireUserVerification: true);
+        $args = $server->getGetArgs([], timeout: self::CEREMONY_TIMEOUT_SECONDS, requireUserVerification: true);
 
         self::_store_challenge($server, $realm::PASSKEY_LOGIN_CHALLENGE_KEY);
 
@@ -381,10 +422,40 @@ class Passkeys
     // -------------------------------------------------------------------------
 
     /**
+     * How long a WebAuthn challenge stays redeemable, in seconds: the ceremony timeout plus
+     * the round-trip margin.
+     *
+     * A SECURITY WINDOW, not an operation timeout: it bounds no work and cancels nothing.
+     * It is how long a challenge nobody answered stays satisfiable, and expiry degrades to
+     * a working outcome the user can act on ("That security key request has expired.
+     * Please try again."). It is DERIVED rather than configured so the two numbers can
+     * never disagree in the wrong direction - a window shorter than the browser's prompt
+     * would refuse a ceremony the browser still considers live.
+     *
+     * @return int
+     */
+    public static function challenge_window_seconds(): int
+    {
+        return self::CEREMONY_TIMEOUT_SECONDS + self::CHALLENGE_MARGIN_SECONDS;
+    }
+
+    /**
+     * When a WebAuthn challenge minted right now stops being redeemable, as an ISO string
+     * (what Session::put_value() expects).
+     *
+     * @return string
+     */
+    public static function challenge_expires_at(): string
+    {
+        return Rsx_Time::add(Rsx_Time::now_iso(), self::challenge_window_seconds());
+    }
+
+    /**
      * Write the just-minted challenge to the session, base64url encoded.
      *
-     * The expiry is the same security window the login challenge uses - a ceremony nobody
-     * completed must not stay satisfiable indefinitely.
+     * The expiry is challenge_expires_at() - the ceremony timeout plus its margin, so a
+     * ceremony nobody completed stops being satisfiable shortly after the browser's own
+     * prompt has given up on it.
      *
      * @param WebAuthn $server
      * @param string $key The session value key this ceremony parks under.
@@ -395,7 +466,7 @@ class Passkeys
         Session::put_value(
             $key,
             self::base64url_encode($server->getChallenge()->getBinaryString()),
-            Rsx_Two_Factor::challenge_expires_at()
+            self::challenge_expires_at()
         );
     }
 

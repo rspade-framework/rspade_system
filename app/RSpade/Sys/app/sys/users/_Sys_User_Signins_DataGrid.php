@@ -19,20 +19,33 @@ use App\RSpade\Sys\Theme\Components\_Sys_DataGrid_Abstract;
  * Login_History::get_history_for_user() answers the newest N; this grid pages the whole
  * table for the identity instead, and presents each row through the same
  * Login_History::present_record(). What the table holds is Login_History's business:
- * successes (and any outcome an application records itself), pruned on
- * rsx.sessions.login_history_retention_days - framework failures are ephemeral counters
- * and never rows.
+ * successes, passkey enrollment ceremony outcomes (begun, enrolled, failed, abandoned) and
+ * any outcome an application records itself, pruned on
+ * rsx.sessions.login_history_retention_days - framework sign-in failures are ephemeral
+ * counters and never rows.
  *
  * The identity is the fixed request param login_user_id (the grid's $base_params).
  * Search (filter) matches the IP address or the user agent.
  *
- * Each row: Login_History::present_record()'s keys, created_at as ISO UTC.
+ * Each row: Login_History::present_record()'s keys, created_at as ISO UTC, plus `tone` -
+ * the _Sys_Status_Badge tone its outcome is drawn in (TONES below; anything else is a
+ * failure).
  */
 class _Sys_User_Signins_DataGrid extends _Sys_DataGrid_Abstract
 {
     protected static array $sortable_columns = ['id', 'created_at', 'ip_address'];
 
     protected static ?string $default_sort = 'created_at';
+
+    /**
+     * Badge tone per status. A status not listed here is drawn as a failure.
+     */
+    private const TONES = [
+        Login_History::STATUS_SUCCESS => 'ok',
+        Login_History::STATUS_PASSKEY_ENROLLED => 'ok',
+        Login_History::STATUS_PASSKEY_ENROLL_BEGUN => 'info',
+        Login_History::STATUS_PASSKEY_ENROLL_ABANDONED => 'warn',
+    ];
 
     protected static function __build_query(array $params)
     {
@@ -56,6 +69,7 @@ class _Sys_User_Signins_DataGrid extends _Sys_DataGrid_Abstract
             $presented = Login_History::present_record((object) $row);
             $presented['id'] = (int) $presented['id'];
             $presented['created_at'] = Rsx_Time::to_iso($presented['created_at']);
+            $presented['tone'] = self::TONES[$presented['status']] ?? 'fail';
 
             return $presented;
         }, $records);

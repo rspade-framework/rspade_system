@@ -156,9 +156,9 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
     /**
      * Prune aged rows from the login-history table.
      *
-     * `_login_history` holds SUCCESSES only - failed attempts are ephemeral counters and never
-     * become rows (see Login_History) - so it grows with real logins rather than with attack
-     * volume. It still grows without bound over years, which is what this sweep answers.
+     * `_login_history` holds successes and passkey enrollment outcomes - failed sign-in attempts
+     * are ephemeral counters and never become rows (see Login_History) - so it grows with real
+     * use rather than with attack volume. It still grows without bound over years, which is what this sweep answers.
      *
      * Chunked like the session sweep, and silent when there is nothing to delete.
      * rsx.sessions.login_history_retention_days at 0 or null disables the prune entirely.
