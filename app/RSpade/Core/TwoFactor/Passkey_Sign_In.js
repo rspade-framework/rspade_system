@@ -9,9 +9,11 @@
  * sheet, or had no passkey for this site to offer. Nothing is said and the button is simply
  * available again.
  *
- * THE ENDPOINT IS RESOLVED THROUGH window[controller][method], as <Two_Factor_Challenge>
- * resolves it: every RSX Ajax controller is a global, so a wrong name fails here with a
- * message naming what was not found.
+ * THE ENDPOINT IS RESOLVED THROUGH THE MANIFEST, as <Two_Factor_Challenge> resolves it:
+ * Manifest.get_class_by_name(controller)[method]. A bundle's classes are lexical globals, not
+ * window properties, so window[controller] holds nothing; the manifest is the registry every
+ * generated controller stub is defined into, in every bundle, on a Blade page and in a SPA
+ * alike. A wrong name fails here with a message naming what was not found.
  */
 class Passkey_Sign_In extends Component {
     on_create() {
@@ -48,7 +50,7 @@ class Passkey_Sign_In extends Component {
      * Run the ceremony, post the assertion, and follow where the endpoint points.
      */
     async _sign_in() {
-        const controller = window[this.args.controller];
+        const controller = Manifest.get_class_by_name(this.args.controller);
 
         if (!controller || typeof controller[this.args.method] !== 'function') {
             throw new Error(

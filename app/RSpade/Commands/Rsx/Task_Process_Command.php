@@ -247,6 +247,7 @@ class Task_Process_Command extends Command
                 'worker_id' => null,
                 'worker_generation' => null,
                 'worker_host' => null,
+                'stop_requested' => 0,
                 'updated_at' => now(),
             ]);
 
@@ -377,6 +378,7 @@ class Task_Process_Command extends Command
                 'worker_id' => null,
                 'worker_generation' => null,
                 'worker_host' => null,
+                'stop_requested' => 0,
                 'updated_at' => now(),
             ]);
 

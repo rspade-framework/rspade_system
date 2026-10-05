@@ -47,6 +47,12 @@ says what is in this DIRECTORY.
 - **A cron tracker row is never permanently terminal.** One row IS the schedule; parking it in
   `failed`/`killed` stops that schedule forever and silently. Every settle path recycles it to
   `pending`, and `rsx:task:process` loudly revives any tracker found terminal.
+- **A stop request is cooperative and per run.** `Task::request_stop()` only sets
+  `_tasks.stop_requested`; nothing here may act on it for the task (interrupting is
+  `Task_Killer`'s job, by explicit operator command). Every path that returns a TRACKER to
+  `pending` after a run (`mark_completed`, `mark_failed`, the killer's recycle, the reaper's
+  abandoned recycle, the stranded revival) clears it, so one request never stops every
+  future run of a schedule; a one-shot row keeps it. A new tracker settle path must clear it too.
 - **Tasks run concurrently and unguarded.** Nothing here may reintroduce a global application
   lock; a task serializes its own critical section with `RsxLocks`.
 - **rsx-lockd is the ONE count of workers.** A worker's membership is its pool connection:

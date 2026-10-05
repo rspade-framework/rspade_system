@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Tasks\Php;
 
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
+use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
 
 /**
@@ -40,6 +41,31 @@ class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
     {
         self::$run_order[] = 'B';
         return ['marker' => 'B'];
+    }
+
+    /**
+     * A cooperatively stoppable task: runs up to `batches` batches, checking
+     * is_stop_requested() before each one, and itself requests a stop after batch
+     * `request_stop_after` - standing in for an operator's request arriving mid-run.
+     */
+    #[Task('exec fixture stoppable batches')]
+    public static function stoppable_batches(Task_Instance $task, array $params = [])
+    {
+        $done = 0;
+
+        for ($batch = 1; $batch <= (int) ($params['batches'] ?? 10); $batch++) {
+            if ($task->is_stop_requested()) {
+                break;
+            }
+
+            $done++;
+
+            if ($batch === (int) ($params['request_stop_after'] ?? 0)) {
+                Task::request_stop($task->get_id());
+            }
+        }
+
+        return ['batches_done' => $done];
     }
 
     /**

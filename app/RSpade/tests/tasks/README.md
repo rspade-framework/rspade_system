@@ -79,6 +79,10 @@ all background/scheduled work in the framework.
 - A pool member's detached child never carries its membership: every rsx-lockd socket is
   closed in the child (`RsxLocks::inherited_lock_fds()`). (php - real processes;
   `Task_Pool_Test`)
+- The cooperative stop: `Task::request_stop()` flags only a pending or running row,
+  `Task_Instance::is_stop_requested()` sees a request made mid-run and is false in immediate
+  mode, a task that checks ends at its next check, and a tracker clears the request when the
+  run it applied to ends while a one-shot keeps it. (php - `Task_Stop_Request_Test`)
 - CLI output of `rsx:task:list`/`run`. (cli - deferred)
 
 ## Documents

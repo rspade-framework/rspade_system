@@ -277,3 +277,14 @@ site, the portal's admission rule and "View as Client".
 Nothing is currently deferred. tfa-chal-18 and tfa-chal-19 were deferred while
 `verify_challenge()` had no HTTP path at all - the application owns the verification endpoint and
 none existed. The template app now ships one, and both rows are implemented above.
+
+## playwright/endpoint_resolution.js (playwright, the /_sys panel) - $controller resolves through the manifest
+
+Both components take the application's controller as a string; a bundle's classes are lexical
+globals, never window properties, so the lookup is `Manifest.get_class_by_name()`.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| TFA-RES-01 | `<Two_Factor_Challenge>` reaches its endpoint | a probe method on the `Spa_Session_Controller` stub that throws "probe reached" | the component reports "probe reached" | implemented |
+| TFA-RES-02 | `<Passkey_Sign_In>` gets past resolution | the same probe | `_sign_in()` does not throw "could not resolve" (the headless ceremony then fails on screen) | implemented |
+| TFA-RES-03 | an unknown controller is still reported by name | `No_Such_Controller::x` | "could not resolve the endpoint No_Such_Controller::x" | implemented |

@@ -218,11 +218,33 @@ class Task
             'logs' => $row->logs ? explode("\n", $row->logs) : [],
             'error' => $row->error,
             'scheduled_for' => $row->scheduled_for,
+            'stop_requested' => (bool) $row->stop_requested,
             'started_at' => $row->started_at,
             'completed_at' => $row->completed_at,
             'created_at' => $row->created_at,
             'updated_at' => $row->updated_at,
         ];
+    }
+
+    /**
+     * Ask a pending or running task to stop.
+     *
+     * Sets the row's stop_requested flag and nothing else: the task is NOT interrupted. It
+     * stops only if its own code checks Task_Instance::is_stop_requested() and ends its work
+     * when the answer is true; a task that never checks runs to completion. A pending task
+     * sees the request from its first check. On a recurring task's tracker row the request
+     * applies to the run in progress (or the next one) and is cleared when that run ends.
+     *
+     * @param int $task_id
+     * @return bool True when a pending or running row was flagged; false when the task does
+     *              not exist or has already finished
+     */
+    public static function request_stop(int $task_id): bool
+    {
+        return DB::table('_tasks')
+            ->where('id', $task_id)
+            ->whereIn('status', [Task_Status::PENDING, Task_Status::RUNNING])
+            ->update(['stop_requested' => 1, 'updated_at' => now()]) > 0;
     }
 
     /**

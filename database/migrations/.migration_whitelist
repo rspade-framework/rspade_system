@@ -626,6 +626,11 @@
             "created_at": "2026-10-05T07:50:29+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe retire_disabled_role_in_favour_of_is_enabled"
+        },
+        "2026_10_05_175320_add_stop_requested_to_tasks.php": {
+            "created_at": "2026-10-05T17:53:20+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_stop_requested_to_tasks"
         }
     }
 }

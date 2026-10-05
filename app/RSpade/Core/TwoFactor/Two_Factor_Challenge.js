@@ -10,11 +10,13 @@
  * payload would make the loading state indistinguishable from the expired one, which is the
  * state most likely to be misread by a user who has just walked away and come back.
  *
- * THE ENDPOINT IS RESOLVED THROUGH window[controller][method] because the whole point of the
- * two args is that this component does not know the application's controller. Every RSX Ajax
- * controller is a global with its methods on it, so a wrong name fails here with a message
- * naming exactly what was not found rather than as an undefined-is-not-a-function three
- * frames deeper.
+ * THE ENDPOINT IS RESOLVED THROUGH THE MANIFEST - Manifest.get_class_by_name(controller)
+ * [method] - because the whole point of the two args is that this component does not know
+ * the application's controller. A bundle's classes are lexical globals, not window
+ * properties, so window[controller] holds nothing; the manifest is the registry every
+ * generated controller stub is defined into, in every bundle, on a Blade page and in a SPA
+ * alike. A wrong name fails here with a message naming exactly what was not found rather
+ * than as an undefined-is-not-a-function three frames deeper.
  *
  * ON SUCCESS THE PAGE NAVIGATES, and nothing is rendered afterwards: the user is signed in
  * and this screen is finished. window.location, not Spa.dispatch - the destination is a
@@ -119,7 +121,7 @@ class Two_Factor_Challenge extends Component {
      * Hand one answer to the application's verification endpoint and follow where it points.
      */
     async _submit(payload) {
-        const controller = window[this.args.controller];
+        const controller = Manifest.get_class_by_name(this.args.controller);
 
         if (!controller || typeof controller[this.args.method] !== 'function') {
             throw new Error(

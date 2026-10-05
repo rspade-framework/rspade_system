@@ -212,3 +212,16 @@ kept apart IS the property under test - hence the file-level @ARTISAN-SPAWN-01-E
 | task-cmd-cli-05 | -q empties stderr and never touches stdout | rsx_test:echo -q | stderr '', stdout unchanged | implemented |
 | task-cmd-cli-06 | a throwing task exits 1 with the JSON error on stdout and [error] on stderr | rsx_test:fail | exit 1, {success:false,error:...}, "[error] Task failed: ..." | implemented |
 | task-cmd-cli-07 | rsx:task:list shows the COMMAND column, '-' for a task with none | rsx:task:list | header + rsx_test:echo beside echo_params; dash beside cleanup_request_log | implemented |
+
+## Task_Stop_Request_Test (php, default isolation) - the cooperative stop
+
+Rows are written directly and roll back with the test transaction; the fixture task
+`Task_Exec_Fixture_Service::stoppable_batches` checks before every batch.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| TSR-01 | a pending or running task can be asked to stop; the task and Task::status() see it | request_stop() on each | true; is_stop_requested() true; status()['stop_requested'] true | implemented |
+| TSR-02 | a finished or missing task cannot be asked to stop | completed, failed, missing id | false; flag untouched | implemented |
+| TSR-03 | an immediate-mode instance is never stopped | new Task_Instance(..., immediate) | false | implemented |
+| TSR-04 | a task that checks between batches ends at the first check after the request | 10 batches, request after batch 2 | batches_done 2; one-shot keeps the flag | implemented |
+| TSR-05 | a tracker's request is cleared when its run ends (completed or failed); a one-shot keeps it | tracker rows + one-shot row | 0, 0, 1 | implemented |

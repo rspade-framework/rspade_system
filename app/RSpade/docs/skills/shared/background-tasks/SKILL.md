@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: "Writing and running RSpade background tasks - #[Task] service methods, the Task_Instance API, Task::dispatch and Task::status, #[Schedule] recurrence, #[Exclusive]/#[Debounce] single-identity guards, the worker pool, and what a task must do about concurrency. Use when adding a scheduled job, a queued background job, a cleanup/import/report task, or a controller that kicks off long work and polls it."
+description: "Writing and running RSpade background tasks - #[Task] service methods, the Task_Instance API, Task::dispatch and Task::status, #[Schedule] recurrence, #[Exclusive]/#[Debounce] single-identity guards, the worker pool, and what a task must do about concurrency. Use when adding a scheduled job, making a long task stoppable (Task::request_stop / is_stop_requested), a queued background job, a cleanup/import/report task, or a controller that kicks off long work and polls it."
 ---
 
 # Background Tasks
@@ -86,9 +86,14 @@ $task->set_result($value);                              // publish a result mid-
 $task->heartbeat();                                     // call periodically in a long task
 $dir = $task->get_temp_dir();                           // auto-deleted on completion/failure
 $task->get_id(); $task->get_status(); $task->get_params(); $task->get_queue();
+$task->is_stop_requested();                             // true once Task::request_stop($id) flagged the row
 ```
 
-**There is no `warning()`, no `progress()`, no `set_status()`, and no `is_cancelled()`.** The temp-dir accessor is `get_temp_dir()`, not `get_temp_directory()`.
+**There is no `warning()`, no `progress()`, no `set_status()`, and no `is_cancelled()`** - the stop check is `is_stop_requested()`. The temp-dir accessor is `get_temp_dir()`, not `get_temp_directory()`.
+
+### Stopping a task is COOPERATIVE
+
+`Task::request_stop($id)` flags a pending or running task (`_tasks.stop_requested`, reported by `Task::status()`); **it interrupts nothing**. A task stops early only if its own code calls `$task->is_stop_requested()` between units of work and returns when it answers true - leaving its data consistent and saying in its log or result that it stopped early. A task that never checks runs to completion. Each call reads the row, so a request made mid-run is seen at the next check. Immediate mode (`Task::internal()`, `rsx:task:run`, a `#[Command]`) always answers false. A recurring task's request applies to one run and is cleared when that run ends; a one-shot keeps it. To end a task that does not check, kill it (`rsx:tasks:kill`). Contract: `rsx:man tasks` (STOPPING A TASK).
 
 `heartbeat()` stamps `last_heartbeat_at` on the row for the task screens. It is optional and has **no part in worker liveness** - a worker counts as alive exactly as long as its rsx-lockd connection is open, so an hours-long task needs no keep-alive call.
 

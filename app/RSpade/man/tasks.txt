@@ -108,6 +108,9 @@ TASK_INSTANCE API
     rsx-lockd connection is open (THE WORKER POOL), so a task may run for hours without
     calling anything.
 
+    Stop requests (cooperative - see STOPPING A TASK):
+        $task->is_stop_requested()      // true once Task::request_stop($id) flagged the row
+
     Temp workspace (auto-deleted on completion/failure):
         $dir = $task->get_temp_dir()    // tmp/tasks/task_<id>/
 
@@ -125,6 +128,7 @@ DISPATCH & STATUS
             'logs'    => string[],                        // one entry per logged line
             'error'   => string|null,
             'scheduled_for', 'started_at', 'completed_at', 'created_at', 'updated_at',
+            'stop_requested' => bool,                     // Task::request_stop() was called
         ]
 
     Example:
@@ -499,6 +503,52 @@ FAILURE BEHAVIOR
         php artisan rsx:health         WARNs once a tracker reaches
                                        rsx.tasks.failing_schedule_warn_after (3) consecutive
                                        failures, naming each offender and its reason
+
+STOPPING A TASK
+
+    A long task can be asked to stop early - but ONLY IF IT IS WRITTEN TO STOP. This is a
+    convention the task implements, not an automatic feature: the framework never interrupts
+    a task because a stop was requested.
+
+        Task::request_stop($id)          // bool: flags a pending or running task
+        $task->is_stop_requested()       // the task's own check, inside its loop
+
+    Task::request_stop() sets _tasks.stop_requested and does nothing else. It answers true
+    when a pending or running row was flagged, and false for a task that does not exist or
+    has already finished. Task::status($id) reports it as 'stop_requested'.
+
+    The task checks between units of work - every batch, every page of a result set, every
+    file - and when the answer is true it finishes cleanly (leaves its data consistent,
+    logs or returns what it did) and returns. A task that never calls is_stop_requested()
+    runs to completion whatever is requested. Each call reads the row, so a request made
+    while the task runs is seen at its next check; a task that was still pending when the
+    request arrived sees it at its first check. Returning normally after a stop is a
+    COMPLETED run; record in the result or the log that it stopped early if that matters.
+
+        #[Task('Reindex documents')]
+        public static function reindex(Task_Instance $task, array $params = [])
+        {
+            $done = 0;
+            foreach (Document_Model::query()->result_set() as $document) {
+                if ($task->is_stop_requested()) {
+                    $task->info("Stopped on request after {$done} documents");
+                    break;
+                }
+                $document->reindex();
+                $done++;
+            }
+            return ['indexed' => $done];
+        }
+
+    Immediate mode (Task::internal(), rsx:task:run, a #[Command]) has no row: the check
+    always answers false there.
+
+    A recurring #[Schedule] task keeps one tracker row, so a request on it applies to the run
+    in progress (or the next run, if none is) and is CLEARED when that run ends - completed,
+    failed, killed, abandoned or revived. A one-shot task keeps its request: a retry after
+    an abandonment still sees it.
+
+    To end a task that does not check, or one that is stuck, kill it (KILLING RUNNING TASKS).
 
 KILLING RUNNING TASKS
 

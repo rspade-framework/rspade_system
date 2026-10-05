@@ -235,6 +235,8 @@ class Task_Instance
                 $update['worker_id'] = null;
                 $update['worker_generation'] = null;
                 $update['worker_host'] = null;
+                // A stop request applied to the run that just ended, not to the schedule.
+                $update['stop_requested'] = 0;
             }
 
             DB::table('_tasks')->where('id', $this->id)->update($update);
@@ -284,6 +286,7 @@ class Task_Instance
                 $update['worker_pid'] = null;
                 $update['worker_id'] = null;
                 $update['worker_generation'] = null;
+                $update['stop_requested'] = 0;
                 $update['worker_host'] = null;
                 $update['status_reason'] = 'failed (recycled): ' . self::__summarize_error($error);
             } else {
@@ -491,6 +494,29 @@ class Task_Instance
 
         rmdir_recursive($this->temp_dir);
         $this->temp_dir = null;
+    }
+
+    /**
+     * Has a stop been requested for this task (Task::request_stop())?
+     *
+     * A COOPERATIVE stop: the framework never interrupts a task for it. A task that can be
+     * stopped calls this between units of work - every batch, every page of a loop - and,
+     * when it answers true, finishes cleanly (leaves its data consistent, records what it
+     * did) and returns. A task that never calls it simply runs to completion.
+     *
+     * Each call reads the row, so it sees a request made while the task is running. An
+     * immediate-mode instance (Task::internal(), rsx:task:run, a #[Command]) has no row and
+     * always answers false.
+     *
+     * @return bool
+     */
+    public function is_stop_requested(): bool
+    {
+        if ($this->is_immediate || $this->id === null) {
+            return false;
+        }
+
+        return (bool) DB::table('_tasks')->where('id', $this->id)->value('stop_requested');
     }
 
     /**

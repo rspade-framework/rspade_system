@@ -68,6 +68,7 @@ class Task_Killer
                 'worker_id'     => null,
                 'worker_generation' => null,
                 'worker_host'   => null,
+                'stop_requested' => 0,
                 'status_reason' => 'killed (recycled): ' . $explanation,
                 'updated_at'    => now(),
             ]);
