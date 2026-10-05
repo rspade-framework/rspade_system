@@ -32,9 +32,6 @@ queue grid in place (_Sys_Email_Action), a modified click opens the filtered gri
                 <_Sys_Detail_Item $label="Delivery mode" $value=_s.delivery_mode $mono=true />
                 <_Sys_Detail_Item $label="Transport" $value=_s.transport $mono=true />
                 <_Sys_Detail_Item $label="Recorded as" $value=_s.transport_label $mono=true />
-                <% if (_s.catcher_maildir) { %>
-                    <_Sys_Detail_Item $label="Catcher Maildir" $value=_s.catcher_maildir $mono=true />
-                <% } %>
                 <% if (_oldest) { %>
                     <_Sys_Detail_Item $label="Oldest pending">
                         <a href="<%= Rsx.Route('_Sys_Email_View_Action', _oldest.id) %>">#<%= _oldest.id %></a>

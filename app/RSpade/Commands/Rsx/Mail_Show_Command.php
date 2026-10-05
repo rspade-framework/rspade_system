@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use Illuminate\Console\Command;
 
@@ -16,7 +17,10 @@ use Illuminate\Console\Command;
  * THE RENDERED BODIES ARE REPORTED BY LENGTH, NOT PRINTED. A rendered email is tens of
  * kilobytes of inlined HTML; dumping it into a terminal buries the fields somebody
  * opened this command to read. --json carries them in full, which is the shape anything
- * that actually wants the body is using anyway.
+ * that actually wants the body is using anyway: `rendered_html` exactly as stored (its
+ * inline images named by cid:) and `displayable_html`, the same body through
+ * Rsx_Mail::displayable_html() with every inline image as a data: URI of the bytes
+ * recorded on the row - the one to write to a file and open in a browser.
  *
  * See: php artisan rsx:man email
  */
@@ -24,7 +28,7 @@ class Mail_Show_Command extends Command
 {
     protected $signature = 'rsx:mail:show
                             {id : The _email_queue row id}
-                            {--json : Machine-readable JSON output, including the rendered bodies}';
+                            {--json : Machine-readable JSON output, including the rendered bodies and the displayable HTML}';
 
     protected $description = 'Show every recorded detail of one queued email';
 
@@ -81,6 +85,7 @@ class Mail_Show_Command extends Command
 
         if ($json) {
             $payload['rendered_html'] = $record->rendered_html;
+            $payload['displayable_html'] = Rsx_Mail::displayable_html($record);
             $payload['rendered_text'] = $record->rendered_text;
 
             $this->line(json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));

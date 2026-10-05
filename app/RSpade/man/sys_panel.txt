@@ -124,9 +124,8 @@ DESCRIPTION
     every site's rows - in two tabs, EMAIL (the default) and SMS.
 
     EMAIL is the mail queue. A tile per status (a click narrows the queue to it), then
-    how the install delivers: the delivery mode, the transport, the
-    development catcher's Maildir in aiosmtpd mode, and the row that has
-    waited longest. The queue beneath is every message newest first,
+    how the install delivers: the delivery mode, the transport, and the
+    row that has waited longest. The queue beneath is every message newest first,
     filtered by status, category and site, searched by recipient (the
     envelope address or, on a dev host, who it was really for) or subject.
     A row opens its detail (`/_sys/email/<id>`): the envelope, category,
@@ -134,9 +133,11 @@ DESCRIPTION
     error, the attachments, headers and frozen template data, and the body -
     the rendered HTML in a sandboxed frame (no scripts, and no remote image,
     font or stylesheet is fetched: a message opened here tells nobody it was
-    read) or the plain-text part. In aiosmtpd mode the detail also lists the
-    catcher files that carry the row's X-RSX-Email-Id header, or says the
-    message never landed there. Resend puts a finished message back on the
+    read) or the plain-text part. Everything comes from the database: the
+    inline images are the bytes recorded on the row's own attachments
+    (Rsx_Mail::displayable_html(), rsx:man email), a placeholder marks one
+    that was never recorded, and nothing on the screen reads or mentions the
+    development mail catcher, so it renders the same on every host. Resend puts a finished message back on the
     queue with exactly the rules of rsx:mail:resend - one implementation
     serves both: a pending or sending row is refused, and a blocked row
     (the recipient opted out) asks first, because resending it overrides a

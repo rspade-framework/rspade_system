@@ -46,8 +46,7 @@ class _Sys_Email_Controller extends _Sys_Endpoint_Controller_Abstract
      * mode and the transport.
      *
      * @return array {counts: [{status, label, count}], total, oldest_pending: null|{id,
-     *                created_at, to_address}, delivery_mode, transport, transport_label,
-     *                catcher_maildir: null|string}
+     *                created_at, to_address}, delivery_mode, transport, transport_label}
      */
     #[Ajax_Endpoint]
     public static function summary(Request $request, array $params = [])
@@ -68,9 +67,6 @@ class _Sys_Email_Controller extends _Sys_Endpoint_Controller_Abstract
                 'delivery_mode' => $mode,
                 'transport' => Rsx_Mail_Transport::describe(),
                 'transport_label' => Rsx_Mail_Transport::transport_label(),
-                'catcher_maildir' => $mode === Rsx_Mail_Transport::MODE_AIOSMTPD
-                    ? (string) config('rsx.mail.catcher_maildir')
-                    : null,
             ];
         });
     }
@@ -118,12 +114,13 @@ class _Sys_Email_Controller extends _Sys_Endpoint_Controller_Abstract
     }
 
     /**
-     * One message, whole: every column, the site's name, the attachments, both rendered
-     * bodies (the HTML one wrapped for the sandboxed preview), what may be done to it,
-     * and - in aiosmtpd mode - its captured copies in the development catcher.
+     * One message, whole, from the database alone: every column, the site's name, the
+     * attachments, both rendered bodies (the HTML one made displayable by
+     * Rsx_Mail::displayable_html() - its inline images from the bytes recorded on the row -
+     * and wrapped for the sandboxed preview), and what may be done to it.
      *
      * @param array $params id
-     * @return array {email: {...}, catcher: null|{maildir, exists, files: [{name, path, delivered_at, size}]}}
+     * @return array {email: {...}}
      */
     #[Ajax_Endpoint]
     public static function detail(Request $request, array $params = [])
@@ -145,16 +142,12 @@ class _Sys_Email_Controller extends _Sys_Endpoint_Controller_Abstract
             $email['site_name'] = _Sys_Enum_Words::site_names([(int) $record->site_id])[(int) $record->site_id] ?? null;
             $email['attachments'] = $record->attachment_summary();
             $email['is_rendered'] = $record->rendered_html !== null && $record->rendered_html !== '';
-            $email['preview_html'] = $email['is_rendered'] ? static::preview_document((string) $record->rendered_html) : null;
+            $email['preview_html'] = $email['is_rendered'] ? static::preview_document(Rsx_Mail::displayable_html($record)) : null;
             $email['can_resend'] = $status_id !== Email_Queue_Model::STATUS_PENDING
                 && $status_id !== Email_Queue_Model::STATUS_SENDING;
             $email['resend_needs_force'] = $status_id === Email_Queue_Model::STATUS_BLOCKED;
 
-            $catcher = Rsx_Mail_Transport::delivery_mode() === Rsx_Mail_Transport::MODE_AIOSMTPD
-                ? Rsx_Mail_Transport::catcher_files_for((int) $record->id)
-                : null;
-
-            return ['email' => $email, 'catcher' => $catcher];
+            return ['email' => $email];
         });
     }
 

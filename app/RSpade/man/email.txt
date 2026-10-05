@@ -250,6 +250,46 @@ ATTACHMENTS AND INLINE IMAGES
     exactly as written. A local src that resolves to nothing THROWS and the row is FAILED -
     a broken image is a broken email, not a warning.
 
+    EVERY EMBEDDED IMAGE IS RECORDED AS WHAT WAS SENT. An auto-embedded asset's bytes go
+    into the content-addressed blob store and an inline _email_attachments row (disposition
+    2, the cid the stored rendered_html names, file_name, mime_type) records them at build
+    time, exactly as an ->embed() part is recorded at send() time; every inline part is
+    then put on the message FROM its blob. So the stored message can be reproduced later
+    with the bytes it carried - a rebranded or deleted logo changes no historical message -
+    and one logo across fifty thousand messages is one blob and fifty thousand small rows.
+    A rebuild of the same row (a retry, a resend) reuses the row already recorded for that
+    cid. The cid an asset is embedded under is the builder's private business: never
+    derive it by hand.
+
+    THE BLOB IS PINNED FOR AS LONG AS THE ROW EXISTS. File_Disposal_Service counts
+    _email_attachments as a live reference (and the FK to _file_storage is RESTRICT), with
+    no retention window of its own: the bytes go only when rsx.mail.retention_days deletes
+    the queue row, its attachment rows cascade with it, and nothing else points at the blob.
+
+DISPLAYING A STORED MESSAGE
+
+    Rsx_Mail::displayable_html(Email_Queue_Model $row): ?string
+
+    rendered_html names its inline images by cid:, which resolves only inside the MIME
+    message that carried the part - so the stored body, rendered as it stands, shows a
+    broken image in every browser. This is the ONE way a stored body is displayed, by the
+    /_sys Email screen and by an application's own email-history screen alike: every
+    cid: in an attribute value or a CSS url() becomes a data: URI of the bytes recorded
+    under that cid on THIS row's own _email_attachments rows - never today's asset, never
+    anything read off the filesystem by name. Nothing else in the HTML changes; null
+    rendered_html answers null.
+
+    A cid: with no recorded row (a message built before inline parts were recorded), or
+    whose blob is gone, becomes a VISIBLE placeholder image saying so, never a silent
+    broken image.
+
+    The data: URI is self-contained, so the result renders anywhere a page allows
+    img-src data: - the framework's default page CSP does, and so does the /_sys preview's
+    own document policy (default-src 'none'; img-src data:), where no URL of any kind could
+    load. A screen showing it in an iframe passes it as srcdoc. Never rewrite cid:
+    references in application code: a hand-derived content id is a framework-private
+    formula that will drift, and reading the live asset answers history with the present.
+
 STYLING
 
     ONE STYLESHEET, and one file wins - there is no merge:
@@ -576,8 +616,17 @@ THE DEVELOPMENT CATCHER
     own headers, so the envelope is readable next to the content. `rsx:mail:test` prints the
     path of the newest file for you.
 
-    A production host has no catcher; the pruning step and the path lookup are no-ops when
-    the directory does not exist.
+    THE MAILDIR HEALS ITSELF. The catcher creates cur/, new/ and tmp/ before EVERY
+    delivery, not only at startup, so a tmp/ tree cleaned out from under the running
+    daemon costs nothing - the next message recreates it - instead of failing every send
+    with "500 Error: (FileNotFoundError) ...".
+
+    The catcher is a delivery sink and nothing more: no history screen reads it. What was
+    sent is the queue row and its _email_attachments (DISPLAYING A STORED MESSAGE), on
+    every host alike.
+
+    A production host has no catcher; the pruning step is a no-op when the directory does
+    not exist.
 
 UNSUBSCRIBE
 
@@ -756,8 +805,9 @@ OPERATIONS
         Every column except the rendered bodies, which are reported by LENGTH (dumping tens
         of kilobytes of inlined HTML into a terminal buries the fields somebody opened this
         to read); headers and template data pretty-printed; attachments with file name, MIME
-        type, disposition, cid and blob size. --json carries the bodies in full. Exit 1 when
-        there is no such row.
+        type, disposition, cid and blob size. --json carries the bodies in full -
+        rendered_html as stored, plus displayable_html (Rsx_Mail::displayable_html(), the
+        one to write to a file and open in a browser). Exit 1 when there is no such row.
 
     rsx:mail:resend - put a finished message back on the queue
         php artisan rsx:mail:resend <id> [--force]

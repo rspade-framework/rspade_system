@@ -1,0 +1,65 @@
+STORED EMAIL BODIES RENDER THROUGH Rsx_Mail::displayable_html()
+Date: 2026-10-05
+
+IF YOU DO NOTHING: any screen of yours that prints an email's rendered_html shows every inline image broken.
+
+SUMMARY
+    A stored email body (_email_queue.rendered_html) names its inline images as
+    cid: references, which resolve only inside the MIME message that carried the
+    parts - never in a browser. The framework now records the bytes of every image
+    it embeds as a blob with an _email_attachments row (the auto-embedded
+    root-relative public assets included, which previously were embedded with no
+    record at all), and Rsx_Mail::displayable_html($row) rewrites each cid: in a
+    stored body to a data: URI of THAT message's own recorded part. History is
+    therefore reproduced from the database, with the bytes that were actually
+    sent - not today's asset - and on every host, with or without the development
+    mail catcher.
+
+    The framework's own /_sys/email screens render this way and no longer show the
+    mail catcher at all.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    Rsx_Mail::displayable_html(Email_Queue_Model $row): ?string
+        rendered_html with every cid: (attribute values and CSS url()) replaced by a
+        data: URI from the row's own inline parts. A cid with no recorded part -
+        every message built before this change - becomes a visible "Inline image
+        not recorded" placeholder, never a silent broken image. Null in, null out.
+    Email_Attachment_Model_Abstract::record_part() - the one writer of
+        _email_attachments rows.
+    rsx:mail:show --json carries displayable_html beside rendered_html.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    Your own email-history screens still print rendered_html raw.
+
+THE REFERENCE IMPLEMENTATION
+    system/app/RSpade/resource/reference_app/app/frontend/system/email_config/system_email_controller.php
+        (queue_preview: returns Rsx_Mail::displayable_html($email))
+
+PORTING IT
+    1. Every place your code returns or prints an Email_Queue_Model's
+       rendered_html for display: return Rsx_Mail::displayable_html($row)
+       instead (typically into an iframe srcdoc). The page's CSP must allow
+       img-src data: - the framework's default policy does.
+    2. DELETE any local helper that rewrites cid: references yourself - for
+       example one that recomputes the builder's content id
+       (substr(hash('sha256', $src), 0, 12) . '_' . basename($src)) and splices
+       in a data: URI read from AssetHandler::find_public_asset() or the disk.
+       That is the anti-pattern this change exists to retire: the content-id
+       formula is framework-private and will drift, it can only resolve images
+       your own code placed, and it answers history with the PRESENT asset - a
+       rebranded or removed logo silently rewrites every historical email.
+    3. Remove any use of the development mail catcher (its maildir,
+       rsx.mail.catcher_maildir, or Rsx_Mail_Transport::catcher_files_for(),
+       which no longer exists) as a history surface in your own screens. History
+       is the database.
+
+VERIFICATION
+    Send a message whose layout carries an image, open your email-history view of
+    it: the image renders. A message sent before this update shows the "Inline
+    image not recorded" placeholder in place of each inline image.
+
+SEE ALSO
+    email - DISPLAYING A STORED MESSAGE
+    skill rspade:email-and-sms - email history screens

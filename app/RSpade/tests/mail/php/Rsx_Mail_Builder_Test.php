@@ -7,9 +7,14 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\Mime\Email;
+use App\RSpade\Core\Dispatch\AssetHandler;
+use App\RSpade\Core\Files\File_Disposal_Service;
+use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Mail\Rsx_Mail_Builder;
 use App\RSpade\Core\Mail\Rsx_Mail_Text;
+use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -209,7 +214,7 @@ class Rsx_Mail_Builder_Test extends Rsx_Test_Abstract
         $message = new Email();
         $html = '<p><img src="' . self::PUBLIC_IMAGE . '" alt="Logo"></p>';
 
-        $result = Rsx_Mail_Builder::embed_local_images($message, $html);
+        $result = Rsx_Mail_Builder::embed_local_images($message, $html, static::__queue());
 
         static::__assert_contains('src="cid:', $result, 'the src was rewritten to a content id');
         static::__assert_false(
@@ -221,15 +226,19 @@ class Rsx_Mail_Builder_Test extends Rsx_Test_Abstract
 
     public static function test_an_absolute_or_protocol_relative_image_is_left_alone()
     {
+        $row = static::__queue();
+
         foreach (['https://cdn.example.com/logo.png', '//cdn.example.com/logo.png', 'data:image/gif;base64,R0lGOD'] as $src) {
             $message = new Email();
             $html = '<p><img src="' . $src . '" alt="Remote"></p>';
 
-            $result = Rsx_Mail_Builder::embed_local_images($message, $html);
+            $result = Rsx_Mail_Builder::embed_local_images($message, $html, $row);
 
             static::__assert_contains('src="' . $src . '"', $result, "'{$src}' is the sender talking about somewhere else");
             static::__assert_count(0, $message->getAttachments(), 'so nothing was embedded');
         }
+
+        static::__assert_count(0, $row->attachments()->get(), 'and nothing was recorded on the row');
     }
 
     /**
@@ -240,10 +249,11 @@ class Rsx_Mail_Builder_Test extends Rsx_Test_Abstract
     {
         $message = new Email();
         $html = '<p><img src="/img/there-is-no-such-asset-here.png"></p>';
+        $row = static::__queue();
 
         static::__assert_throws(
             \RuntimeException::class,
-            fn () => Rsx_Mail_Builder::embed_local_images($message, $html),
+            fn () => Rsx_Mail_Builder::embed_local_images($message, $html, $row),
             'does not resolve to a public asset'
         );
     }
@@ -256,12 +266,174 @@ class Rsx_Mail_Builder_Test extends Rsx_Test_Abstract
     {
         $message = new Email();
         $html = '<p><img src="cid:chart"></p>';
+        $row = static::__queue();
 
         static::__assert_throws(
             \RuntimeException::class,
-            fn () => Rsx_Mail_Builder::embed_local_images($message, $html),
+            fn () => Rsx_Mail_Builder::embed_local_images($message, $html, $row),
             "->embed('chart', ...)"
         );
+    }
+
+    // =========================================================================
+    // WHAT WAS SENT IS RECORDED: EMBEDDED PARTS AS BLOBS
+    // =========================================================================
+
+    /**
+     * Build a row whose layout masthead is a root-relative public asset - the shape a
+     * configured branding logo takes - and hand back the fresh row and its message.
+     *
+     * @return array{0: Email_Queue_Model, 1: Email}
+     */
+    private static function __build_with_logo(): array
+    {
+        $previous = config('rsx.mail.branding.logo_url');
+        config(['rsx.mail.branding.logo_url' => self::PUBLIC_IMAGE]);
+
+        try {
+            $row = static::__queue();
+            $message = Rsx_Mail_Builder::build($row);
+
+            return [$row->fresh(), $message];
+        } finally {
+            config(['rsx.mail.branding.logo_url' => $previous]);
+        }
+    }
+
+    /**
+     * The cid: references a stored body names, in order.
+     *
+     * @return array<int,string>
+     */
+    private static function __cids(string $html): array
+    {
+        preg_match_all('/src="cid:([^"]+)"/', $html, $matches);
+
+        return $matches[1];
+    }
+
+    /**
+     * An auto-embedded public asset is stored as a blob and recorded as an inline
+     * attachment row under the cid the stored HTML names - and the part on the message
+     * carries those same bytes under that same name.
+     */
+    public static function test_an_auto_embedded_public_asset_is_recorded_as_an_inline_blob()
+    {
+        [$row, $message] = static::__build_with_logo();
+
+        $cids = static::__cids((string) $row->rendered_html);
+        static::__assert_count(1, $cids, 'the stored body names the logo by one cid');
+
+        $rows = $row->attachments()->get();
+        static::__assert_count(1, $rows, 'one attachment row was recorded for it');
+
+        $attachment = $rows[0];
+        static::__assert_equals(Email_Attachment_Model::DISPOSITION_INLINE, (int) $attachment->disposition_id, 'it is an inline part');
+        static::__assert_equals($cids[0], $attachment->cid, 'under the cid the stored HTML names');
+        static::__assert_equals(basename(self::PUBLIC_IMAGE), $attachment->file_name, 'named after the asset');
+
+        $storage = File_Storage_Model::find($attachment->file_storage_id);
+        static::__assert_not_null($storage, 'the row points at a blob');
+
+        $asset_bytes = file_get_contents(AssetHandler::find_public_asset(ltrim(self::PUBLIC_IMAGE, '/')));
+        static::__assert_equals($asset_bytes, file_get_contents($storage->get_full_path()), 'the blob holds the asset\'s bytes');
+
+        $parts = $message->getAttachments();
+        static::__assert_count(1, $parts, 'one part rode on the message');
+        static::__assert_equals($cids[0], $parts[0]->getName(), 'under the same name');
+        static::__assert_equals($asset_bytes, $parts[0]->getBody(), 'carrying the same bytes the blob records');
+        static::__assert_equals($attachment->mime_type, $parts[0]->getMediaType() . '/' . $parts[0]->getMediaSubtype(), 'typed as the row records it');
+    }
+
+    /**
+     * Content addressing: the same asset across many messages is ONE blob, with one row
+     * per message pinning it.
+     */
+    public static function test_two_messages_embedding_one_asset_share_one_blob()
+    {
+        [$first] = static::__build_with_logo();
+        [$second] = static::__build_with_logo();
+
+        $first_rows = $first->attachments()->get();
+        $second_rows = $second->attachments()->get();
+
+        static::__assert_count(1, $first_rows, 'the first message records its logo');
+        static::__assert_count(1, $second_rows, 'and so does the second');
+        static::__assert_true((int) $first_rows[0]->id !== (int) $second_rows[0]->id, 'each message has its own row');
+        static::__assert_equals((int) $first_rows[0]->file_storage_id, (int) $second_rows[0]->file_storage_id, 'over one blob');
+    }
+
+    /**
+     * The recorded row is a LIVE reference: blob disposal will not release bytes an
+     * email's inline part points at, with no retention window of its own.
+     */
+    public static function test_a_recorded_inline_part_pins_its_blob_against_disposal()
+    {
+        [$row] = static::__build_with_logo();
+        $storage_id = (int) $row->attachments()->get()[0]->file_storage_id;
+
+        static::__assert_false(
+            DB::table('_file_attachments')->where('file_storage_id', $storage_id)->whereNull('destroyed_at')->exists(),
+            'precondition: no file attachment pins the blob, so the email row is the only reference'
+        );
+
+        static::__assert_false(File_Disposal_Service::release_blob_if_orphaned($storage_id), 'disposal refuses to release it');
+        static::__assert_true(is_file(File_Storage_Model::find($storage_id)->get_full_path()), 'and the bytes are still on disk');
+    }
+
+    /**
+     * A row built twice - a retry, a resend, the drain's one reconnect - keeps ONE row
+     * per cid rather than accumulating copies.
+     */
+    public static function test_rebuilding_a_row_reuses_its_recorded_part()
+    {
+        $previous = config('rsx.mail.branding.logo_url');
+        config(['rsx.mail.branding.logo_url' => self::PUBLIC_IMAGE]);
+
+        try {
+            $row = static::__queue();
+            Rsx_Mail_Builder::build($row);
+            $first = $row->attachments()->get();
+
+            Rsx_Mail_Builder::build($row->fresh());
+            $second = $row->attachments()->get();
+        } finally {
+            config(['rsx.mail.branding.logo_url' => $previous]);
+        }
+
+        static::__assert_count(1, $second, 'still one row after the rebuild');
+        static::__assert_equals((int) $first[0]->id, (int) $second[0]->id, 'the same row');
+    }
+
+    /**
+     * The explicit ->embed() path is the row the sender declared at enqueue time; the
+     * builder embeds it from its blob and records nothing more.
+     */
+    public static function test_an_explicit_embed_is_sent_from_its_own_row_and_adds_none()
+    {
+        $png = static::__png_path();
+
+        try {
+            $row = static::__queue(function ($email) use ($png) {
+                $email->show_image = true;
+                $email->embed('fixture_image', $png);
+            });
+
+            $before = $row->attachments()->get();
+            $message = Rsx_Mail_Builder::build($row);
+            $after = $row->attachments()->get();
+        } finally {
+            @unlink($png);
+        }
+
+        static::__assert_count(1, $before, 'enqueue recorded the declared image');
+        static::__assert_equals(array_column($before->toArray(), 'id'), array_column($after->toArray(), 'id'), 'the build added no row');
+        static::__assert_equals('fixture_image', $after[0]->cid, 'under the name the sender gave it');
+        static::__assert_equals(['fixture_image'], static::__cids((string) $row->fresh()->rendered_html), 'the stored body still names it by that cid');
+
+        $parts = $message->getAttachments();
+        static::__assert_count(1, $parts, 'one part rode on the message');
+        static::__assert_equals(base64_decode(self::ONE_PIXEL_PNG), $parts[0]->getBody(), 'carrying the declared bytes');
     }
 
     // =========================================================================

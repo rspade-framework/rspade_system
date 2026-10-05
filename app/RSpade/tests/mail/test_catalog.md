@@ -58,8 +58,8 @@ Row -> MIME message, via `Rsx_Mail_Builder_Test`.
 | MAIL-50 | a plain message is multipart/alternative, text first then html | php | row with no attachments | body `multipart/alternative`, parts `[text/plain, text/html]` | implemented | 2026-08-31 |
 | MAIL-51 | an inline image and an attachment nest mixed > related > alternative - the only arrangement a client renders correctly | php | row with an `embed()` and an `attach_bytes()` | mixed[related[alternative[text,html], image/png], text/csv] | implemented | 2026-08-31 |
 | MAIL-52 | the stylesheet is inlined onto elements AND kept in a `<style>` block | php | build a row | `<style>` present; the `.email-button` anchor carries `style=` | implemented | 2026-08-31 |
-| MAIL-53 | a root-relative public image becomes a `cid:` part rather than a URL a client would refuse to fetch | php | `<img src="/favicon.ico">` | src rewritten to `cid:`, one part attached | implemented | 2026-08-31 |
-| MAIL-54 | an absolute, protocol-relative or `data:` image is left exactly as written | php | three fixture srcs | unchanged, nothing embedded | implemented | 2026-08-31 |
+| MAIL-53 | a root-relative public image becomes a `cid:` part rather than a URL a client would refuse to fetch | php | `<img src="/favicon.ico">` against a queued row | src rewritten to `cid:`, one part attached | implemented | 2026-10-05 |
+| MAIL-54 | an absolute, protocol-relative or `data:` image is left exactly as written | php | three fixture srcs | unchanged, nothing embedded, nothing recorded on the row | implemented | 2026-10-05 |
 | MAIL-55 | an unresolvable local image throws - a broken image is a broken email | php | `<img src="/img/missing.png">` | `RuntimeException` "does not resolve to a public asset" | implemented | 2026-08-31 |
 | MAIL-56 | an unbound `cid:` reference throws and names the `embed()` call that is missing | php | `<img src="cid:chart">` with nothing embedded | `RuntimeException` naming `->embed('chart', ...)` | implemented | 2026-08-31 |
 | MAIL-57 | a link becomes "text (url)" so a text reader can still act on it | php | `<a href="...">pay the invoice</a>` | `pay the invoice (https://...)` | implemented | 2026-08-31 |
@@ -78,6 +78,22 @@ Row -> MIME message, via `Rsx_Mail_Builder_Test`.
 | MAIL-70 | a TRANSACTIONAL message offers no unsubscribe, in the header or the footer | php | TRANSACTIONAL row | no header, no link in the html | implemented | 2026-08-31 |
 | MAIL-71 | on a dev host the unsubscribe link names the ORIGINAL recipient, not the catchall | php | row with `dev_original_to` | the link carries the original address | implemented | 2026-08-31 |
 | MAIL-72 | the rendered bodies are persisted on the row before the transport is offered anything | php | build a row | `rendered_html`/`rendered_text` empty before, populated after | implemented | 2026-08-31 |
+| MAIL-280 | an auto-embedded public asset (a branding logo) is stored as a blob and recorded as ONE inline `_email_attachments` row under the cid the stored HTML names; the MIME part carries those bytes under that name | php | `rsx.mail.branding.logo_url` = `/favicon.ico`, build a row | one row, INLINE, `cid` = the stored body's cid, blob bytes = the asset, part body = the asset, part type = the row's `mime_type` | implemented | 2026-10-05 |
+| MAIL-281 | the same asset across two messages is one blob and two rows | php | two rows built with the logo | distinct row ids, one `file_storage_id` | implemented | 2026-10-05 |
+| MAIL-282 | a recorded inline part pins its blob - disposal refuses to release it, with no window of its own | php | a built row's logo blob, no `_file_attachments` pin | `release_blob_if_orphaned()` false, bytes on disk | implemented | 2026-10-05 |
+| MAIL-283 | rebuilding a row (retry, resend, reconnect) reuses its recorded part instead of adding one | php | `build()` twice on one row | one row, same id | implemented | 2026-10-05 |
+| MAIL-284 | the explicit `->embed()` path is unchanged: sent from the row enqueue recorded, nothing added | php | `embed('fixture_image', $png)` | same row ids before and after, `cid` fixture_image, part body = the png | implemented | 2026-10-05 |
+
+A stored body made displayable from the database, via `Rsx_Mail_Displayable_Html_Test`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MAIL-290 | a recorded cid becomes a `data:` URI of exactly the recorded bytes, and nothing else in the document changes | php | `<img src="cid:abc_logo.png">` + a recorded part | decoded bytes and type match; the rest byte-identical | implemented | 2026-10-05 |
+| MAIL-291 | an unrecorded cid becomes a visible placeholder naming it | php | a `cid:` with no row | `image/svg+xml` saying "Inline image not recorded" and the cid | implemented | 2026-10-05 |
+| MAIL-292 | a recorded cid whose blob is gone becomes a placeholder | php | the blob file unlinked | "Inline image unavailable" | implemented | 2026-10-05 |
+| MAIL-293 | only the row's OWN parts resolve | php | another row recording the same cid | placeholder | implemented | 2026-10-05 |
+| MAIL-294 | attribute (double, single quoted) and CSS `url()` spellings are rewritten; "cid:" in prose is not | php | `background=`, `url(&quot;cid:..&quot;)`, `src='..'`, prose | all three rewritten, prose intact | implemented | 2026-10-05 |
+| MAIL-295 | HTML without cids is returned unchanged; an unrendered row is null | php | remote + data: images; `rendered_html` null | identical; null | implemented | 2026-10-05 |
 
 The drain's state machine, via `Mail_Queue_Runner_Test` and the `Mail_Transport_Stub`.
 

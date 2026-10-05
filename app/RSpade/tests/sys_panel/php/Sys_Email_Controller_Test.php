@@ -10,6 +10,8 @@ namespace App\RSpade\Tests\SysPanel\Php;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Response\Error_Response;
@@ -18,15 +20,13 @@ use App\RSpade\Sys\App\Sys\Email\_Sys_Email_Controller;
 
 /**
  * The Email screen's endpoints: the queue headline, the queue grid and its filters, one
- * message's detail (preview wrapping, the development-catcher lookup, not_found) and
+ * message's detail (preview wrapping, inline images from the database, not_found) and
  * Resend with the rules of rsx:mail:resend.
  *
  * EVERY SITE: the test runs as user 1 on site 1 and plants its rows under a SECOND site
  * created inside the per-test transaction, so a read that narrowed to the developer's own
  * tenant would miss them. Rows are written with DB::table() - the model's creating hook
- * would stamp the acting site. The catcher lookup reads a Maildir the test builds in a
- * scratch directory, with rsx.mail.catcher_maildir pointed at it; the live catcher is not
- * touched. Resend's drain kick is skipped under the test runner (Rsx_Mail::_kick_drain()),
+ * would stamp the acting site. Resend's drain kick is skipped under the test runner (Rsx_Mail::_kick_drain()),
  * so the row is asserted PENDING, never sent.
  */
 class Sys_Email_Controller_Test extends Rsx_Test_Abstract
@@ -213,58 +213,58 @@ class Sys_Email_Controller_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * RP-EMAIL-04 - In aiosmtpd mode detail lists the catcher files whose HEADER carries
-     * X-RSX-Email-Id for this row (newest first); a body mention and another id do not
-     * match; an absent Maildir answers exists=false; other modes carry no catcher block.
+     * RP-EMAIL-04 - The screen renders from the DATABASE alone: detail's preview has
+     * every cid: image replaced by the bytes recorded on the row (Rsx_Mail::
+     * displayable_html()), an unrecorded one by the placeholder, and neither detail nor
+     * summary carries anything about the development catcher - in aiosmtpd mode included.
      */
-    public static function test_detail_catcher_lookup()
+    public static function test_detail_renders_from_the_database_only()
     {
         $site_id = static::__second_site_id();
-        $id = static::__plant($site_id);
-        $maildir = sys_get_temp_dir() . '/sys-email-catcher-' . uniqid();
+        $id = static::__plant($site_id, [
+            'rendered_html' => '<html><head></head><body><img src="cid:recorded"><img src="cid:never_recorded"></body></html>',
+        ]);
 
-        $previous_mode = config('rsx.mail.delivery');
-        $previous_maildir = config('rsx.mail.catcher_maildir');
+        $blob_source = sys_get_temp_dir() . '/sys-email-inline-' . uniqid() . '.bin';
+        file_put_contents($blob_source, 'sys-email-inline-bytes');
 
         try {
-            config(['rsx.mail.delivery' => 'aiosmtpd', 'rsx.mail.catcher_maildir' => $maildir]);
-
-            $absent = static::__endpoint('detail', ['id' => $id])['catcher'];
-            static::__assert_false($absent['exists'], 'a Maildir that was never created is reported absent');
-            static::__assert_equals([], $absent['files'], 'with nothing in it');
-
-            mkdir($maildir . '/new', 0777, true);
-            mkdir($maildir . '/cur', 0777, true);
-
-            file_put_contents($maildir . '/cur/older', "Subject: a\r\nX-RSX-Email-Id: {$id}\r\n\r\nbody\r\n");
-            touch($maildir . '/cur/older', time() - 60);
-            file_put_contents($maildir . '/new/newer', "x-rsx-email-id:   {$id}\n\nbody\n");
-            file_put_contents($maildir . '/new/other', "X-RSX-Email-Id: " . ($id + 1) . "\r\n\r\nbody\r\n");
-            file_put_contents($maildir . '/new/body_only', "Subject: b\r\n\r\nX-RSX-Email-Id: {$id}\r\n");
-
-            $catcher = static::__endpoint('detail', ['id' => $id])['catcher'];
-
-            static::__assert_true($catcher['exists'], 'the Maildir exists');
-            static::__assert_equals(['new/newer', 'cur/older'], array_column($catcher['files'], 'name'), 'both header matches, newest first; the body mention and the other id are not matched');
-            static::__assert_true(str_ends_with($catcher['files'][0]['delivered_at'], 'Z'), 'delivered_at is ISO UTC');
-
-            config(['rsx.mail.delivery' => 'suppressed']);
-            static::__assert_null(static::__endpoint('detail', ['id' => $id])['catcher'], 'outside aiosmtpd mode there is no catcher block');
+            Email_Attachment_Model::record_part(
+                Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::find($id)),
+                File_Storage_Model::store_blob($blob_source),
+                'recorded.png',
+                'image/png',
+                Email_Attachment_Model::DISPOSITION_INLINE,
+                'recorded',
+                0
+            );
         } finally {
-            config(['rsx.mail.delivery' => $previous_mode, 'rsx.mail.catcher_maildir' => $previous_maildir]);
-
-            foreach (['new', 'cur'] as $subdir) {
-                foreach (glob($maildir . '/' . $subdir . '/*') ?: [] as $file) {
-                    unlink($file);
-                }
-                if (is_dir($maildir . '/' . $subdir)) {
-                    rmdir($maildir . '/' . $subdir);
-                }
-            }
-            if (is_dir($maildir)) {
-                rmdir($maildir);
-            }
+            unlink($blob_source);
         }
+
+        $previous_mode = config('rsx.mail.delivery');
+
+        try {
+            config(['rsx.mail.delivery' => 'aiosmtpd']);
+
+            $response = static::__endpoint('detail', ['id' => $id]);
+            $summary = static::__endpoint('summary');
+        } finally {
+            config(['rsx.mail.delivery' => $previous_mode]);
+        }
+
+        static::__assert_equals(['email'], array_keys($response), 'detail answers the row and nothing about a catcher');
+        static::__assert_false(array_key_exists('catcher_maildir', $summary), 'nor does summary');
+
+        $preview = $response['email']['preview_html'];
+
+        static::__assert_contains(
+            'src="data:image/png;base64,' . base64_encode('sys-email-inline-bytes') . '"',
+            $preview,
+            'the recorded inline image is the row\'s own bytes'
+        );
+        static::__assert_contains('src="data:image/svg+xml;base64,', $preview, 'the unrecorded one is the placeholder');
+        static::__assert_false(str_contains($preview, 'cid:'), 'no cid: reference survives into the preview');
     }
 
     /**

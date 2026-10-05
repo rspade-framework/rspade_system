@@ -167,15 +167,15 @@ class Rsx_Mail
         foreach ($specs as $spec) {
             [$storage, $file_name, $mime_type] = static::_resolve_attachment_blob($spec);
 
-            $attachment = new Email_Attachment_Model();
-            $attachment->email_queue_id = $record->id;
-            $attachment->file_storage_id = $storage->id;
-            $attachment->file_name = $file_name;
-            $attachment->mime_type = $mime_type;
-            $attachment->disposition_id = $spec['disposition'];
-            $attachment->cid = $spec['cid'];
-            $attachment->sort_order = $sort_order++;
-            $attachment->save();
+            Email_Attachment_Model::record_part(
+                $record,
+                $storage,
+                $file_name,
+                $mime_type,
+                (int) $spec['disposition'],
+                $spec['cid'],
+                $sort_order++
+            );
         }
     }
 
@@ -291,6 +291,128 @@ class Rsx_Mail
         }
 
         return (int) Session::get_site_id();
+    }
+
+    // =========================================================================
+    // DISPLAYING A STORED MESSAGE
+    // =========================================================================
+
+    /**
+     * The row's rendered_html with every cid: reference made loadable by a browser - the
+     * ONE way a stored message body is displayed, by the /_sys Email screen and by any
+     * application's own email-history viewer alike.
+     *
+     * A cid: URI only resolves inside the MIME message that carried the part, so the
+     * stored body is unrenderable as it stands. Each `cid:<id>` in an attribute value or a
+     * CSS url() is replaced by a data: URI of the bytes recorded under that cid on THIS
+     * row's own _email_attachments rows - what was sent, never the asset path's current
+     * contents, and never anything read off the filesystem by name. Nothing else in the
+     * HTML changes.
+     *
+     * A data: URI is self-contained, so the result renders anywhere a page allows
+     * `img-src data:` - which includes the framework's own sandboxed preview document
+     * (default-src 'none', no network at all) and the framework's default page CSP.
+     *
+     * A cid: with no recorded row, or whose blob is no longer on disk, becomes a VISIBLE
+     * placeholder image saying so: a message whose inline bytes were never captured
+     * (anything built before the builder recorded them) is a fact worth seeing, not a
+     * silent broken image.
+     *
+     * Never derive a content id by hand to patch the body some other way: the cid an
+     * asset is embedded under is the builder's private business.
+     *
+     * @return string|null null when the row has not been rendered
+     */
+    public static function displayable_html(Email_Queue_Model $row): ?string
+    {
+        $html = $row->rendered_html;
+
+        if ($html === null) {
+            return null;
+        }
+
+        $parts = [];
+
+        foreach ($row->attachments()->whereNotNull('cid')->get() as $attachment) {
+            $parts[(string) $attachment->cid] = $attachment;
+        }
+
+        $resolved = [];
+
+        $resolve = static function (string $encoded_cid) use ($parts, &$resolved): string {
+            $cid = html_entity_decode(rawurldecode($encoded_cid), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+            if (!array_key_exists($cid, $resolved)) {
+                $resolved[$cid] = isset($parts[$cid])
+                    ? static::_inline_part_data_uri($parts[$cid], $cid)
+                    : static::_missing_inline_part_data_uri($cid, 'Inline image not recorded');
+            }
+
+            return $resolved[$cid];
+        };
+
+        // An attribute value: src="cid:x", background='cid:x', src=cid:x.
+        $html = preg_replace_callback(
+            '/(=\s*["\']?)cid:([^"\'\s>]+)/i',
+            fn ($m) => $m[1] . $resolve($m[2]),
+            $html
+        );
+
+        // A CSS url(): url(cid:x), url("cid:x"), url('cid:x') - quoted with an entity
+        // inside a style attribute too.
+        return preg_replace_callback(
+            '/(url\(\s*(?:["\']|&quot;|&#0?39;)?)cid:([^"\'\s)&]+)/i',
+            fn ($m) => $m[1] . $resolve($m[2]),
+            $html
+        );
+    }
+
+    /**
+     * One recorded inline part as a data: URI, or the placeholder when its blob is gone.
+     */
+    private static function _inline_part_data_uri(Email_Attachment_Model $attachment, string $cid): string
+    {
+        $storage = $attachment->file_storage_id === null
+            ? null
+            : File_Storage_Model::find($attachment->file_storage_id);
+
+        $path = $storage === null ? null : $storage->get_full_path();
+
+        if ($path === null || !is_file($path)) {
+            return static::_missing_inline_part_data_uri($cid, 'Inline image unavailable');
+        }
+
+        $bytes = file_get_contents($path);
+
+        if ($bytes === false) {
+            throw new \RuntimeException("Could not read the blob for email attachment #{$attachment->id} at {$path}.");
+        }
+
+        // The type is written into an attribute value, so only a well-formed media type is
+        // passed through; anything else is served as opaque bytes.
+        $mime_type = preg_match('#^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$#i', (string) $attachment->mime_type)
+            ? strtolower((string) $attachment->mime_type)
+            : 'application/octet-stream';
+
+        return 'data:' . $mime_type . ';base64,' . base64_encode($bytes);
+    }
+
+    /**
+     * A visible stand-in for an inline part whose bytes cannot be shown: a bordered SVG
+     * naming the cid, as a data: URI.
+     */
+    private static function _missing_inline_part_data_uri(string $cid, string $label): string
+    {
+        $caption = htmlspecialchars('cid:' . (strlen($cid) > 48 ? substr($cid, 0, 45) . '...' : $cid), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        $label = htmlspecialchars($label, ENT_QUOTES | ENT_XML1, 'UTF-8');
+
+        $svg = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="64" viewBox="0 0 240 64">'
+            . '<rect x="1" y="1" width="238" height="62" fill="#f8f9fa" stroke="#adb5bd" stroke-dasharray="4 3"/>'
+            . '<text x="120" y="28" font-family="sans-serif" font-size="13" fill="#495057" text-anchor="middle">' . $label . '</text>'
+            . '<text x="120" y="46" font-family="monospace" font-size="10" fill="#6c757d" text-anchor="middle">' . $caption . '</text>'
+            . '</svg>';
+
+        return 'data:image/svg+xml;base64,' . base64_encode($svg);
     }
 
     // =========================================================================

@@ -7,8 +7,9 @@ $html - the document to show (required): _Sys_Email_Controller::detail's
 
 The iframe is sandbox="" - no scripts, no forms, no popups, an opaque origin with no
 access to the panel - and the document arrives through srcdoc, never a URL. A remote
-image (a logo, a tracking pixel) is therefore not fetched, and a cid: inline image
-shows as missing: this is the markup that was sent, not a mail client.
+image (a logo, a tracking pixel) is therefore not fetched. Inline (cid:) images
+arrive as data: URIs of the bytes recorded on the row (Rsx_Mail::displayable_html()),
+and one whose bytes were never recorded shows a placeholder saying so.
 --%>
 <Define:_Sys_Email_Preview>
     <iframe $sid="frame" class="_Sys_Email_Preview__frame" sandbox="" referrerpolicy="no-referrer" title="Rendered email"></iframe>

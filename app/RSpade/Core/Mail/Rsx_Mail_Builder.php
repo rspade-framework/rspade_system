@@ -9,7 +9,9 @@ namespace App\RSpade\Core\Mail;
 
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
+use Symfony\Component\Mime\MimeTypes;
 use TijsVerkoyen\CssToInlineStyles\CssToInlineStyles;
+use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Text;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
@@ -32,7 +34,7 @@ use App\RSpade\Integrations\Scss\Scss_BundleProcessor;
  *
  *   render_html()        the blade, with subject/unsubscribe_url/branding added
  *   inline_css()         the compiled email stylesheet, onto the elements AND in <head>
- *   embed_local_images() every local <img> becomes a cid: part
+ *   embed_local_images() every local <img> becomes a cid: part, recorded as a blob
  *   derive_text()        the text part, derived when no <Class>_Text blade exists
  *
  * build() runs all four, assembles the Email, and RECORDS the rendered bodies and the
@@ -52,19 +54,7 @@ class Rsx_Mail_Builder
 
         $message = new Email();
 
-        $inline_attachments = [];
-        $file_attachments = [];
-
-        foreach ($row->attachments()->get() as $attachment) {
-            if ((int) $attachment->disposition_id === Email_Attachment_Model::DISPOSITION_INLINE) {
-                $inline_attachments[(string) $attachment->cid] = $attachment;
-                continue;
-            }
-
-            $file_attachments[] = $attachment;
-        }
-
-        $html = static::embed_local_images($message, $html, $inline_attachments);
+        $html = static::embed_local_images($message, $html, $row);
 
         $text = static::_text_part($row, $html);
 
@@ -73,6 +63,10 @@ class Rsx_Mail_Builder
 
         $message->html($html, 'utf-8');
         $message->text($text, 'utf-8');
+
+        $file_attachments = $row->attachments()
+            ->where('disposition_id', Email_Attachment_Model::DISPOSITION_ATTACHMENT)
+            ->get();
 
         foreach ($file_attachments as $attachment) {
             $message->attachFromPath(
@@ -249,32 +243,50 @@ class Rsx_Mail_Builder
     // =========================================================================
 
     /**
-     * Turn every local image reference into a cid: part on the message.
+     * Turn every local image reference into a cid: part on the message, and RECORD every
+     * part it embeds as an inline _email_attachments row on the queue row.
      *
      * Two shapes are handled and one is left alone:
      *
      *   src="/img/logo.png"  a public asset of this application. It is resolved through
-     *                        the same lookup the web server uses and embedded. An image
-     *                        a message merely LINKS to is an image most clients refuse
-     *                        to load, so a linked local asset is not a design choice we
-     *                        leave to chance.
+     *                        the same lookup the web server uses, its bytes go into the
+     *                        content-addressed blob store, and an inline attachment row
+     *                        records them under the cid the stored HTML now names. An
+     *                        image a message merely LINKS to is an image most clients
+     *                        refuse to load, so a linked local asset is not a design
+     *                        choice we leave to chance.
      *   src="cid:chart"      bound to the inline attachment the sender declared with
      *                        ->embed('chart', ...). Symfony rewrites the reference to
      *                        the part's real content id when it prepares the message.
      *   src="https://..."    left exactly as written. The sender meant a remote image.
      *
+     * EVERY EMBEDDED PART IS SENT FROM ITS BLOB. The message carries the bytes the row
+     * records, under the cid the stored rendered_html names, so the stored message can be
+     * reproduced later (Rsx_Mail::displayable_html()) with what was SENT - not with
+     * whatever the asset path holds today. One logo across fifty thousand messages is one
+     * blob and fifty thousand small rows, and each row is a live reference that keeps the
+     * blob from being released (File_Disposal_Service).
+     *
+     * A rebuild of the same row (a retry, a resend) reuses the row already recorded for a
+     * cid, re-pointing it at the asset's current bytes when they changed - the stored HTML
+     * is rewritten by the same build, so the row and the body always describe one send.
+     *
      * A local src that resolves to nothing THROWS. A broken image is a broken email;
      * the runner records the row FAILED with the reason rather than mailing a hole.
-     *
-     * @param array<string, Email_Attachment_Model> $inline_attachments Keyed by cid.
      */
-    public static function embed_local_images(Email $message, string $html, array $inline_attachments = []): string
+    public static function embed_local_images(Email $message, string $html, Email_Queue_Model $row): string
     {
+        $inline_attachments = [];
+
+        foreach ($row->attachments()->where('disposition_id', Email_Attachment_Model::DISPOSITION_INLINE)->get() as $attachment) {
+            $inline_attachments[(string) $attachment->cid] = $attachment;
+        }
+
         $embedded = [];
 
         $result = preg_replace_callback(
             '#<img\b[^>]*>#i',
-            static function ($matches) use ($message, $inline_attachments, &$embedded) {
+            static function ($matches) use ($message, $row, &$inline_attachments, &$embedded) {
                 $tag = $matches[0];
                 $src = static::_tag_attribute($tag, 'src');
 
@@ -295,12 +307,7 @@ class Rsx_Mail_Builder
                     }
 
                     if (!isset($embedded[$cid])) {
-                        $attachment = $inline_attachments[$cid];
-                        $message->embedFromPath(
-                            static::_attachment_path($attachment),
-                            $cid,
-                            $attachment->mime_type
-                        );
+                        static::_embed_part($message, $inline_attachments[$cid]);
                         $embedded[$cid] = true;
                     }
 
@@ -317,7 +324,13 @@ class Rsx_Mail_Builder
                 $cid = static::_cid_for_asset($src);
 
                 if (!isset($embedded[$cid])) {
-                    $message->embedFromPath($path, $cid);
+                    $inline_attachments[$cid] = static::_record_public_asset(
+                        $row,
+                        $path,
+                        $cid,
+                        $inline_attachments[$cid] ?? null
+                    );
+                    static::_embed_part($message, $inline_attachments[$cid]);
                     $embedded[$cid] = true;
                 }
 
@@ -327,6 +340,62 @@ class Rsx_Mail_Builder
         );
 
         return $result;
+    }
+
+    /**
+     * Put one recorded inline part on the message, from its blob, under its cid.
+     */
+    private static function _embed_part(Email $message, Email_Attachment_Model $attachment): void
+    {
+        $message->embedFromPath(
+            static::_attachment_path($attachment),
+            (string) $attachment->cid,
+            $attachment->mime_type
+        );
+    }
+
+    /**
+     * Store a public asset's bytes as a blob and record them as this row's inline part.
+     *
+     * The MIME type is the one the asset's extension names - the lookup Symfony applies
+     * to a file embedded by path, so the part goes out typed exactly as an embedded file
+     * would be (the blob itself has no extension to go by).
+     */
+    private static function _record_public_asset(
+        Email_Queue_Model $row,
+        string $path,
+        string $cid,
+        ?Email_Attachment_Model $existing
+    ): Email_Attachment_Model {
+        $storage = File_Storage_Model::store_blob($path);
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $mime_type = (new MimeTypes())->getMimeTypes($extension)[0] ?? 'application/octet-stream';
+        $file_name = basename($path);
+
+        if ($existing !== null) {
+            if ((int) $existing->file_storage_id !== (int) $storage->id
+                || $existing->mime_type !== $mime_type
+                || $existing->file_name !== $file_name) {
+                $existing->file_storage_id = $storage->id;
+                $existing->mime_type = $mime_type;
+                $existing->file_name = $file_name;
+                $existing->save();
+            }
+
+            return $existing;
+        }
+
+        $last_sort_order = Email_Attachment_Model::where('email_queue_id', $row->id)->max('sort_order');
+
+        return Email_Attachment_Model::record_part(
+            $row,
+            $storage,
+            $file_name,
+            $mime_type,
+            Email_Attachment_Model::DISPOSITION_INLINE,
+            $cid,
+            $last_sort_order === null ? 0 : ((int) $last_sort_order + 1)
+        );
     }
 
     /**

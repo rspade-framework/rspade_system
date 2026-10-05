@@ -17,8 +17,10 @@ tests follow is:
    `#[Schedule('every minute')]`) reclaims anything stranded in SENDING, then takes rows
    one at a time with a conditional UPDATE.
 3. **Build** - `Rsx_Mail_Builder` renders the blade, inlines the compiled stylesheet,
-   turns local images into `cid:` parts, derives the text part, and writes both rendered
-   bodies plus the header map back onto the row.
+   turns local images into `cid:` parts (each embedded public asset stored as a blob and
+   recorded as an inline `_email_attachments` row), derives the text part, and writes both
+   rendered bodies plus the header map back onto the row. `Rsx_Mail::displayable_html()`
+   turns a stored body back into something a browser renders, from those rows alone.
 4. **Transport** - in `live` mode the Laravel mailer `MAIL_MAILER` names, built by
    Laravel's MailManager (any Laravel mailer, or a transport a package registers with
    `Mail::extend()`); in `aiosmtpd` the fixed catcher. One of three outcomes the runner
@@ -55,7 +57,7 @@ Invariants the tests exist to hold:
 | File | Role |
 |------|------|
 | `Core/Mail/Rsx_Email_Abstract.php` | The email class contract and the fluent envelope |
-| `Core/Mail/Rsx_Mail.php` | Tenant resolution, blocklist, dev-site gate, unsubscribe signature, attachment persistence, drain kick |
+| `Core/Mail/Rsx_Mail.php` | Tenant resolution, blocklist, dev-site gate, unsubscribe signature, attachment persistence, drain kick, `displayable_html()` |
 | `Core/Mail/Email_ManifestSupport.php` | The build-time email table and its three FATALs |
 | `Core/Mail/Rsx_Mail_Builder.php` | Row -> `Symfony\Component\Mime\Email` |
 | `Core/Mail/Rsx_Mail_Text.php` | The derived plain-text part |
@@ -70,7 +72,7 @@ Invariants the tests exist to hold:
 | `Commands/Rsx/Mail_Queue_Command.php` | `rsx:mail:queue` - the summary and the filtered listing |
 | `Commands/Rsx/Mail_Show_Command.php` | `rsx:mail:show` - one row in full |
 | `Commands/Rsx/Mail_Resend_Command.php` | `rsx:mail:resend` - the escape hatch, and the Blocked `--force` gate |
-| `system/bin/mail_catcher.py` | The development catcher, and the `aiosmtpd` greeting the mode verifies |
+| `system/bin/mail_catcher.py` | The development catcher, the `aiosmtpd` greeting the mode verifies, and the Maildir it re-creates before every delivery |
 | `helpers.php` (`rsx_absolute_url`) | The origin every emailed link needs |
 
 Behavior of record: `php artisan rsx:man email`. Config: `rsx:man config_rsx`.
@@ -91,7 +93,9 @@ Behavior of record: `php artisan rsx:man email`. Config: `rsx:man config_rsx`.
 - **php** - the queue row's state machine and retention (`Email_Queue_Test`); the enqueue
   path, tenant resolution, recipients, blocklist, dedupe, scheduling, the dev-host gate
   and attachments (`Rsx_Email_Enqueue_Test`); MIME structure, CSS inlining, image
-  embedding, text derivation and headers (`Rsx_Mail_Builder_Test`); the drain's three
+  embedding and the inline parts it records as blobs, text derivation and headers
+  (`Rsx_Mail_Builder_Test`); a stored body made displayable from the row's own parts
+  (`Rsx_Mail_Displayable_Html_Test`); the drain's three
   outcomes plus reclaim and cleanup, driven by the stub transport
   (`Mail_Queue_Runner_Test`); the signed unsubscribe round trip (`Mail_Unsubscribe_Test`);
   the build-time FATALs over a synthetic manifest (`Mail_Manifest_Support_Test`);

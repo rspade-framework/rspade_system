@@ -14,7 +14,6 @@
 class _Sys_Email_View_Action extends Spa_Action {
     on_create() {
         this.data.email = null;
-        this.data.catcher = null;
         this.data.load_error = null;
         this.data.loading = true;
     }
@@ -23,7 +22,6 @@ class _Sys_Email_View_Action extends Spa_Action {
         try {
             const response = await _Sys_Email_Controller.detail({ id: this.args.id });
             this.data.email = response.email;
-            this.data.catcher = response.catcher;
         } catch (e) {
             // Plain data: this.data keeps no Error object, so the code and the message
             // are copied out. A not_found code renders the missing-record state.

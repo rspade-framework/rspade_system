@@ -1,9 +1,9 @@
 <%--
 _Sys_Email_View_Action - one _email_queue row, any site's: its envelope and delivery
-facts, the last error, the rendered HTML body (sandboxed) and the plain-text body,
-the attachments, the headers and frozen template data, and - in aiosmtpd mode - the
-copies the development catcher captured. Resend puts a finished message back on
-the queue (rsx:mail:resend's rules; a Blocked row asks first).
+facts, the last error, the rendered HTML body (sandboxed, its inline images from the
+bytes recorded on the row) and the plain-text body, the attachments, the headers and
+frozen template data - all of it from the database. Resend puts a finished message
+back on the queue (rsx:mail:resend's rules; a Blocked row asks first).
 
 Three states: loading, a load failure (_Sys_Not_Found for a missing id, _Sys_Error
 for anything else), and the record. The body tabs keep the hash key "body".
@@ -20,7 +20,6 @@ for anything else), and the record. The body tabs keep the hash key "body".
     <% } else { %>
         <%
             const _e = this.data.email;
-            const _catcher = this.data.catcher;
             const _when = (iso) => iso ? Rsx_Time.format_datetime(iso) : null;
             const _address = _Sys_Email_View_Action.address;
             const _list = _Sys_Email_View_Action.address_list;
@@ -71,37 +70,6 @@ for anything else), and the record. The body tabs keep the hash key "body".
                 <_Sys_Detail_Item $label="Updated" $value=_when(_e.updated_at) />
             </_Sys_Detail_List>
         </_Sys_Section>
-
-        <% if (_catcher) { %>
-            <_Sys_Section $title="Development catcher" $icon="bi-inbox" $count=_catcher.files.length $flush=(_catcher.files.length > 0)>
-                <% if (_catcher.files.length) { %>
-                    <div class="table-responsive">
-                        <table class="table mb-0">
-                            <thead>
-                                <tr>
-                                    <th>Captured file</th>
-                                    <th>Delivered</th>
-                                    <th>Size</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <% for (const _f of _catcher.files) { %>
-                                    <tr>
-                                        <td class="_Sys_Email_View_Action__mono" title="<%= _f.path %>"><%= _f.name %></td>
-                                        <td><%= Rsx_Time.format_datetime(_f.delivered_at) %></td>
-                                        <td><%= bytes_to_human(_f.size) %></td>
-                                    </tr>
-                                <% } %>
-                            </tbody>
-                        </table>
-                    </div>
-                <% } else if (_catcher.exists) { %>
-                    <_Sys_Empty_State $icon="bi-inbox" $title="Not in the catcher" $body=('No captured message in ' + _catcher.maildir + ' carries X-RSX-Email-Id: ' + _e.id + '.') />
-                <% } else { %>
-                    <_Sys_Empty_State $icon="bi-inbox" $title="Not in the catcher" $body=('The catcher has not created its Maildir yet (' + _catcher.maildir + ').') />
-                <% } %>
-            </_Sys_Section>
-        <% } %>
 
         <_Sys_Section $title="Body" $icon="bi-file-richtext">
             <% if (_e.is_rendered) { %>

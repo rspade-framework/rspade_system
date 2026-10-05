@@ -89,6 +89,36 @@ abstract class Email_Attachment_Model_Abstract extends Rsx_Model_Abstract
     ];
 
     /**
+     * Record one part of one email against a blob already in the store.
+     *
+     * The ONE place an _email_attachments row is written: the declared attachments and
+     * ->embed() images at enqueue time (Rsx_Mail), and the public assets the builder
+     * embeds on its own (Rsx_Mail_Builder::embed_local_images()), so every part a message
+     * carries is recorded - and pins its blob - the same way.
+     */
+    public static function record_part(
+        Email_Queue_Model $email,
+        File_Storage_Model $storage,
+        string $file_name,
+        string $mime_type,
+        int $disposition_id,
+        ?string $cid,
+        int $sort_order
+    ): static {
+        $attachment = new static();
+        $attachment->email_queue_id = $email->id;
+        $attachment->file_storage_id = $storage->id;
+        $attachment->file_name = $file_name;
+        $attachment->mime_type = $mime_type;
+        $attachment->disposition_id = $disposition_id;
+        $attachment->cid = $cid;
+        $attachment->sort_order = $sort_order;
+        $attachment->save();
+
+        return $attachment;
+    }
+
+    /**
      * The email this file is attached to.
      */
     #[Relationship]

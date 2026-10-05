@@ -40,6 +40,32 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 1025
 
 
+def ensure_maildir(maildir):
+    """Create the Maildir and its cur/new/tmp, whichever of them is missing.
+
+    mailbox.Maildir() creates them only when the path does not exist yet, so a parent
+    that exists without them (a fresh install, a container whose tmp/ was just created)
+    opens fine and then fails on the first delivery.
+    """
+    for sub in ("cur", "new", "tmp"):
+        os.makedirs(os.path.join(maildir, sub), exist_ok=True)
+
+
+class SelfHealingMailbox(Mailbox):
+    """aiosmtpd's Mailbox, re-creating the Maildir before EVERY delivery.
+
+    The catcher is long-running and its directory lives in a tree that is cleaned out
+    from under it (tmp/ is regenerable by definition). Without this a deleted Maildir
+    turns every later send into `500 Error: (FileNotFoundError) ...` - a delivery
+    failure recorded against the message for a missing scratch directory. Re-checking
+    three directories per message is the price of that never happening.
+    """
+
+    def handle_message(self, message):
+        ensure_maildir(self.mail_dir)
+        super().handle_message(message)
+
+
 def main(argv):
     if len(argv) < 2:
         sys.stderr.write("usage: mail_catcher.py <maildir> [host] [port]\n")
@@ -49,15 +75,12 @@ def main(argv):
     host = argv[2] if len(argv) > 2 else DEFAULT_HOST
     port = int(argv[3]) if len(argv) > 3 else DEFAULT_PORT
 
-    # Create the Maildir OURSELVES, subdirectories included. mailbox.Maildir() creates
-    # cur/new/tmp only when the path does not exist yet; a parent that exists without
-    # them (a fresh install, a container whose storage/ was just created) opens fine and
-    # then fails on the first delivery, which the SMTP client sees as a refused message.
-    for sub in ("cur", "new", "tmp"):
-        os.makedirs(os.path.join(maildir, sub), exist_ok=True)
+    # Created up front as well as on every delivery (SelfHealingMailbox), so the
+    # directory exists for a reader before the first message arrives.
+    ensure_maildir(maildir)
 
     controller = Controller(
-        Mailbox(maildir),
+        SelfHealingMailbox(maildir),
         hostname=host,
         port=port,
         ident=IDENT,
