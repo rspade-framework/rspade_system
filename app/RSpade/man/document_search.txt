@@ -433,8 +433,9 @@ DOCUMENT_PREVIEW COMPONENT
 
     An app adds or overrides viewers by merging config('rsx.preview.viewers') in
     rsx/resource/config/rsx.php. A built-in viewer is rendered directly by the
-    Document_Preview template; an APP-registered viewer name is instantiated
-    dynamically into the host element in on_ready with {url, extension, file_name,
+    Document_Preview template; every other viewer name (Spreadsheet_Viewer,
+    Markdown_Viewer, and any APP-registered one) is instantiated dynamically into
+    the host element in on_ready with {attachment_id, url, extension, file_name,
     page, fit}.
 
 SHOULD_SHOW_TEXT_PREVIEW

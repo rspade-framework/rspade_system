@@ -2,8 +2,9 @@
  * Document_Preview
  *
  * See Document_Preview.jqhtml for the full contract. Loads the server's viewer resolution in
- * on_load, dispatches to the built-in viewers via the template, instantiates app-registered
- * viewers dynamically in on_ready, and re-triggers the active viewer's events outward.
+ * on_load, dispatches to the built-in viewers via the template, instantiates every other viewer
+ * (Spreadsheet_Viewer, Markdown_Viewer, app-registered ones) dynamically in on_ready, and
+ * re-triggers the active viewer's events outward.
  *
  * Also owns the async-render waiting states: it subscribes to its attachment id in on_create and
  * swaps out of "Preparing preview..." when the background render worker finishes.
@@ -52,6 +53,7 @@ class Document_Preview extends Component {
         if (Document_Preview.BUILTIN_VIEWERS.indexOf(viewer_name) === -1) {
             console_debug('preview', 'Document_Preview: instantiating app-registered viewer', viewer_name);
             this.$sid('viewer').component(viewer_name, {
+                attachment_id: this.args.attachment_id,
                 url: this.data.info.urls.inline,
                 extension: this.data.info.extension,
                 file_name: this.data.info.file_name,

@@ -2,9 +2,11 @@
 Document_Preview
 
 Renders a real, in-browser preview of a file attachment by resolving a viewer component from the
-server (File_Preview_Controller::get_preview_info) and dispatching to it. The framework ships four
-viewers (Pdf_Viewer, Image_Viewer, Text_Viewer, Icon_Viewer); an app may register additional viewers
-in config('rsx.preview.viewers'), which are instantiated dynamically in on_ready.
+server (File_Preview_Controller::get_preview_info) and dispatching to it. Four viewers are
+rendered by this template (Pdf_Viewer, Image_Viewer, Text_Viewer, Icon_Viewer). Every other name in
+config('rsx.preview.viewers') - the framework's Spreadsheet_Viewer and Markdown_Viewer, and any
+viewer an app registers - is instantiated dynamically in on_ready with
+{attachment_id, url, extension, file_name, page, fit}.
 
 A convertible document (Word, Excel, PowerPoint, ...) has no PDF rendition until the background
 render worker has produced one, so this component also owns the WAITING states: it subscribes to
