@@ -77,7 +77,7 @@ if (!Event_Registry::has_handlers('file.upload.authorize')) {
 }
 ```
 
-That is exactly what `POST /_upload` does - an unhandled upload gate would be an anonymous upload endpoint, so it throws instead. **Every app ships a `file.upload.authorize` handler** (minimum: require login); see `rspade:file-attachments`.
+That is exactly what the three FILE gates do (`Rsx_File_Gates::require_handler()`) - an unhandled upload gate would be an anonymous upload endpoint and an unhandled read gate a public file server, so each throws instead. **Every app ships a `file.upload.authorize`, a `file.thumbnail.authorize` and a `file.download.authorize` handler** (minimum: require login); see `rspade:file-attachments`.
 
 ### Resolve - intercept a framework default
 
@@ -137,7 +137,7 @@ Name events `subject.verb` (`project.deleted`) or `subject.verb.aspect` (`file.u
 
 - **A handler never fires.** It must be `public static`, inside a class the manifest indexes (`/rsx/handlers/`), and the event name must match exactly. Handlers are discovered, not registered - a typo is silent.
 - **A filter drops the data.** A filter handler that returns nothing returns `null` into the chain. Always return the data.
-- **A gate "passes" with no handlers installed.** By design - default open. Check `Event_Registry::has_handlers()` if it must fail closed.
+- **A gate "passes" with no handlers installed.** By design - default open, except the three `file.*.authorize` gates, which throw. Check `Event_Registry::has_handlers()` if yours must fail closed.
 - **A resolve handler swallowed everything.** Returning a falsy-but-non-null value (`false`, `''`, `0`) counts as an interception; return `null` to decline.
 - **Requests got slow after adding a handler.** Handlers are inline; move the work into `Task::dispatch()`.
 

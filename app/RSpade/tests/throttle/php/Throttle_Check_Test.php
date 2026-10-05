@@ -107,8 +107,10 @@ class Throttle_Check_Test extends Rsx_Test_Abstract
         try {
             static::__assert_true(Rsx_Throttle::check('TEST_THROTTLE_ELAPSED', $user_id, 30));
 
-            $stale_at = self::__row($user_id, 'TEST_THROTTLE_ELAPSED')->last_executed_at;
+            // The stale value is read AFTER the backdate: the re-claim writes NOW(3), which can
+            // equal the first claim's timestamp when both land in the same millisecond.
             self::__backdate($user_id, 'TEST_THROTTLE_ELAPSED', 31);
+            $stale_at = self::__row($user_id, 'TEST_THROTTLE_ELAPSED')->last_executed_at;
 
             static::__assert_true(
                 Rsx_Throttle::check('TEST_THROTTLE_ELAPSED', $user_id, 30),

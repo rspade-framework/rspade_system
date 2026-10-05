@@ -96,6 +96,9 @@ it created.
 | tfa-chal-17 | a live TOTP code never burns a recovery code (TOTP is tried first) | a live code with codes present | remaining still 10 | implemented |
 | tfa-chal-18 | verify_challenge stamps last_login through RsxAuth::login() | a live code over real HTTP | last_login bumped | implemented (http - `two_factor_login_flow.sh`; unreachable from php, where `Session::set_login_user_id()` returns from its CLI branch before the stamp) |
 | tfa-chal-19 | verify_challenge's OWN throttle call refuses a locked-out client | wrong codes over real HTTP until the budget is spent | Auth_Throttled_Exception surfaced to the screen as itself | implemented (http - `two_factor_login_flow.sh`; unreachable from php, where `Session::get_client_ip()` is null by design) |
+| tfa-chal-20 | THE PER-CHALLENGE CAP: the wrong answer that reaches challenge_max_failures destroys the challenge | max wrong codes, then a correct one; then a fresh challenge | below the cap 'That code is not valid.' and pending survives; at the cap 'Please sign in again.', pending null, the correct code then 'expired'; a fresh challenge signs in and the identity count is cleared | implemented |
+| tfa-chal-21 | THE PER-IDENTITY CAP spans challenges, counts every answer kind, refuses a correct code, and clear_failures() lifts it | identity_max 4 / challenge_max 2: a TOTP-shaped, a recovery-shaped, an empty assertion and another wrong code over two challenges, then a live code | is_locked after 4; the live code refused with the account message, nobody signed in, pending discarded; after clear_failures the live code signs in | implemented |
+| tfa-chal-22 | a cap or window below one fails loud | each key set to 0 | the accessor throws | implemented |
 
 ## Passkeys_Test (php, default isolation) - WebAuthn against a simulated authenticator
 
@@ -176,7 +179,8 @@ stored, so what needs pinning is the operator's claim to the user, not the verif
 | tfa-cli-07 | THE OWNERSHIP CHECK: another identity's id is refused, where the facade no-ops | remove --id of a victim's credential | exit 1, 'credential_not_found'; both identities keep their factor | implemented |
 | tfa-cli-08 | --json cannot prompt, so it refuses without --force and destroys nothing | remove --json, no --force | exit 1, 'confirmation_required', the factor survives | implemented |
 | tfa-cli-09 | an unresolvable --user fails loudly in BOTH output forms | an unknown email and an unknown id | exit 1 either way; 'user_not_found' in JSON, '[ERROR]' in the human form | implemented |
-| tfa-cli-10 | --user is REQUIRED and never defaulted to identity 1 | all three commands with no --user | exit 1, 'user_required' naming the flag; identity 1 untouched | implemented |
+| tfa-cli-10 | --user is REQUIRED and never defaulted to identity 1 | every command with no --user | exit 1, 'user_required' naming the flag; identity 1 untouched | implemented |
+| tfa-cli-11 | unlock lifts a second-factor lock and leaves the factors alone | identity_max 1, one wrong code, then unlock --json, then a live code | was_locked true; is_locked false; is_enabled true; the live code signs in | implemented |
 
 ## two_factor_endpoint_gates.sh (http) - the gate split, ENFORCED
 
@@ -266,6 +270,7 @@ site, the portal's admission rule and "View as Client".
 | tfa-portal-07 | a passkey of another site's portal user is refused | key enrolled on site B, ceremony on site A | refused | implemented |
 | tfa-portal-08 | the portal's admission rule refuses a suspended portal user | valid key, status suspended | refused | implemented |
 | tfa-portal-09 | the portal second-factor challenge answers with a portal passkey | begin_challenge() + challenge assertion | signed in to the portal, nothing pending in either realm | implemented |
+| tfa-portal-10 | the attempt caps hold on the portal's OWN counters | caps 2/2, two wrong codes on a portal challenge | challenge destroyed, the portal user locked, the staff identity with the same id not locked | implemented |
 
 ## Deferred / planned
 

@@ -6,12 +6,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
-use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Rsx_File_Upload;
 use App\RSpade\Core\Files\Spreadsheet_Rendition;
@@ -104,9 +104,9 @@ use App\RSpade\Core\Session\Session;
  *
  * 1. file.upload.authorize (gate) - MANDATORY
  *    Purpose: Authorization check for uploads - first non-true response halts upload
- *    MANDATORY: unlike every other gate here, /_upload REFUSES to run when NO handler is
- *      registered for this event - it throws a RuntimeException (HTTP 5xx). An unregistered
- *      gate is an open anonymous upload endpoint, and who may upload is an application
+ *    MANDATORY: /_upload REFUSES to run when NO handler is registered for this event - it
+ *      throws a RuntimeException (HTTP 5xx), as the two read gates below do (Rsx_File_Gates).
+ *      An unregistered gate is an open anonymous upload endpoint, and who may upload is an application
  *      decision, so the framework treats "nobody is listening" as a misconfigured app rather
  *      than as permission. Registering one handler (even a bare login check) satisfies it.
  *    Data: [
@@ -167,6 +167,10 @@ use App\RSpade\Core\Session\Session;
  *    Purpose: Authorization check for viewing thumbnails - first non-true response denies access
  *    Data: ['attachment' => File_Attachment_Model, 'user' => User|null, 'request' => Request]
  *    Return: true to allow, or JsonResponse/redirect to deny
+ *    MANDATORY: like the upload gate, every surface that asks this gate THROWS when no handler
+ *      is registered (Rsx_File_Gates) - an unregistered read gate would serve every stored file
+ *      to anybody who can name it. A site whose files are deliberately public says so with a
+ *      handler that returns true.
  *    Example:
  *      #[OnEvent('file.thumbnail.authorize', priority: 10)]
  *      public static function check_thumbnail_access($data) {
@@ -182,6 +186,7 @@ use App\RSpade\Core\Session\Session;
  *    Purpose: Authorization check for file downloads - first non-true response denies access
  *    Data: ['attachment' => File_Attachment_Model, 'user' => User|null, 'request' => Request]
  *    Return: true to allow, or JsonResponse/redirect to deny
+ *    MANDATORY, exactly as file.thumbnail.authorize is.
  *    Example:
  *      #[OnEvent('file.download.authorize', priority: 10)]
  *      public static function check_download_access($data) {
@@ -234,10 +239,10 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Portal_Route('/_upload', methods: ['POST'])]
     public static function upload(Request $request, array $params = [])
     {
-        // The mandatory authorize-gate precondition and the whole ingest sequence below live in
-        // Rsx_File_Upload, shared verbatim with POST /api/v1/files. Only the transport checks
-        // and the response vocabulary are this endpoint's own.
-        Rsx_File_Upload::require_authorize_gate();
+        // The mandatory authorize-gate precondition (Rsx_File_Gates) and the whole ingest
+        // sequence below (Rsx_File_Upload) are shared verbatim with POST /api/v1/files. Only the
+        // transport checks and the response vocabulary are this endpoint's own.
+        Rsx_File_Gates::require_handler(Rsx_File_Gates::UPLOAD);
 
         // Validate the file BEFORE the gate: the gate payload carries the uploaded file itself
         // (and its temp path), so a handler can inspect the real bytes and reject on content.
@@ -420,14 +425,6 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Portal_Route('/_download/:key', methods: ['GET'])]
     public static function download_file(Request $request, array $params = [])
     {
-        // An API client may present its key here instead of a cookie session; this is a no-op
-        // for a browser request, and a bad key denies rather than degrading to anonymous.
-        // See Rsx_Api_Bearer::authenticate_web_request().
-        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
-        if ($bearer_denied !== null) {
-            return $bearer_denied;
-        }
-
         $key = $params['key'] ?? null;
         if (!$key) {
             abort(404, 'File not found');
@@ -439,7 +436,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Event: file.thumbnail.authorize (gate) - Check thumbnail access first
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => static::_gate_user(),
             'request' => $request,
@@ -450,7 +447,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Event: file.download.authorize (gate) - Then check download-specific access
-        $download_auth = Rsx::trigger_gate('file.download.authorize', [
+        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
             'attachment' => $attachment,
             'user' => static::_gate_user(),
             'request' => $request,
@@ -504,14 +501,6 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Portal_Route('/_inline/:key', methods: ['GET'])]
     public static function inline(Request $request, array $params = [])
     {
-        // An API client may present its key here instead of a cookie session; this is a no-op
-        // for a browser request, and a bad key denies rather than degrading to anonymous.
-        // See Rsx_Api_Bearer::authenticate_web_request().
-        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
-        if ($bearer_denied !== null) {
-            return $bearer_denied;
-        }
-
         $key = $params['key'] ?? null;
         if (!$key) {
             abort(404, 'File not found');
@@ -523,7 +512,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Event: file.thumbnail.authorize (gate) - Check thumbnail access first
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => static::_gate_user(),
             'request' => $request,
@@ -534,7 +523,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Event: file.download.authorize (gate) - Then check download-specific access
-        $download_auth = Rsx::trigger_gate('file.download.authorize', [
+        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
             'attachment' => $attachment,
             'user' => static::_gate_user(),
             'request' => $request,
@@ -623,14 +612,6 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Portal_Route('/_download_zip/:key', methods: ['GET'])]
     public static function download_multiple_zip(Request $request, array $params = [])
     {
-        // An API client may present its key here instead of a cookie session; this is a no-op
-        // for a browser request, and a bad key denies rather than degrading to anonymous.
-        // See Rsx_Api_Bearer::authenticate_web_request().
-        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
-        if ($bearer_denied !== null) {
-            return $bearer_denied;
-        }
-
         // -----------------------------------------------------------------------------
         // PHASE 1 - resolve the request, then validate and authorize everything up front
         // (no bytes streamed yet).
@@ -669,7 +650,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             }
 
             // Cascading auth gates - identical order to download_file().
-            $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+            $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
                 'attachment' => $attachment,
                 'user' => static::_gate_user(),
                 'request' => $request,
@@ -678,7 +659,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
                 throw new \RuntimeException($denied_message);
             }
 
-            $download_auth = Rsx::trigger_gate('file.download.authorize', [
+            $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
                 'attachment' => $attachment,
                 'user' => static::_gate_user(),
                 'request' => $request,
@@ -1180,14 +1161,6 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Portal_Route('/_thumbnail/preset/:key/:preset_name', methods: ['GET'])]
     public static function thumbnail_preset(Request $request, array $params = [])
     {
-        // An API client may present its key here instead of a cookie session; this is a no-op
-        // for a browser request, and a bad key denies rather than degrading to anonymous.
-        // See Rsx_Api_Bearer::authenticate_web_request().
-        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
-        if ($bearer_denied !== null) {
-            return $bearer_denied;
-        }
-
         $key = $params['key'] ?? null;
         $preset_name = $params['preset_name'] ?? null;
 
@@ -1214,7 +1187,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Event: file.thumbnail.authorize (gate) - Check thumbnail access
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => static::_gate_user(),
             'request' => $request,
@@ -1258,14 +1231,6 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Portal_Route('/_thumbnail/dynamic/:key/:type/:width/:height?', methods: ['GET'])]
     public static function thumbnail(Request $request, array $params = [])
     {
-        // An API client may present its key here instead of a cookie session; this is a no-op
-        // for a browser request, and a bad key denies rather than degrading to anonymous.
-        // See Rsx_Api_Bearer::authenticate_web_request().
-        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
-        if ($bearer_denied !== null) {
-            return $bearer_denied;
-        }
-
         $key = $params['key'] ?? null;
         $type = $params['type'] ?? 'fit';
         $width = (int)($params['width'] ?? 0);
@@ -1301,7 +1266,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Event: file.thumbnail.authorize (gate) - Check thumbnail access
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => static::_gate_user(),
             'request' => $request,

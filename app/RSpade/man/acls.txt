@@ -71,27 +71,33 @@ ARCHITECTURE
 
     Permission Resolution Order
 
-        1. Check if user role is DISABLED -> deny all
-        2. Check _user_permissions for explicit DENY -> deny if found
-        3. Check _user_permissions for explicit GRANT -> allow if found
-        4. Check role's default permissions -> allow if included
-        5. Deny (permission not granted)
+        1. Check _user_permissions for explicit DENY -> deny if found
+        2. Check _user_permissions for explicit GRANT -> allow if found
+        3. Check role's default permissions -> allow if included
+        4. Deny (permission not granted)
 
     Role Hierarchy
 
         ID   Constant            Label           Can Admin Roles
         ---  --------            -----           ---------------
-        200  ROLE_ROOT_ADMIN     Root Admin      300-800 (system only)
-        300  ROLE_SITE_OWNER     Site Owner      400-800
-        400  ROLE_SITE_ADMIN     Site Admin      500-800
-        500  ROLE_MANAGER        Manager         600-800
+        200  ROLE_ROOT_ADMIN     Root Admin      200-700 (system only)
+        300  ROLE_SITE_OWNER     Site Owner      300-700
+        400  ROLE_SITE_ADMIN     Site Admin      400-700
+        500  ROLE_MANAGER        Manager         500-700
         600  ROLE_USER           User            (none)
         700  ROLE_VIEWER         Viewer          (none)
-        800  ROLE_DISABLED       Disabled        (none)
 
         IDs are 100-based for future expansion. Lower ID = higher privilege.
-        "Can Admin Roles" prevents privilege escalation (Site Admin can't
-        create Site Owner). Root Admin is system-assigned only.
+        "Can Admin Roles" is EQUAL-OR-LOWER administration: every role that
+        administers users names itself and the roles below it, and never a
+        role above it (a Site Admin can't create, edit or promote a Site
+        Owner, but may manage another Site Admin). An administration endpoint
+        asks can_admin_role() of BOTH the target's current role and any new
+        role it assigns. Root Admin is system-assigned only.
+
+        There is no "disabled" role. Switching a member off is
+        users.is_enabled = 0, which sign-in refuses and every request
+        enforces (rsx:man session).
 
         A role says what somebody may do inside one site's records. Whether
         somebody is a DEVELOPER of the installation is a different question and
@@ -160,7 +166,6 @@ MODEL IMPLEMENTATION
             const ROLE_MANAGER = 500;
             const ROLE_USER = 600;
             const ROLE_VIEWER = 700;
-            const ROLE_DISABLED = 800;
 
             // Permission constants
             const PERM_MANAGE_SITES_ROOT = 1;
@@ -179,7 +184,7 @@ MODEL IMPLEMENTATION
                         'constant' => 'ROLE_SITE_OWNER',
                         'label' => 'Site Owner',
                         'permissions' => [2, 3, 4, 5, 6, 7],
-                        'can_admin_roles' => [400, 500, 600, 700, 800],
+                        'can_admin_roles' => [300, 400, 500, 600, 700],
                     ],
                     // ... additional roles
                 ],
@@ -188,9 +193,6 @@ MODEL IMPLEMENTATION
             // Get all resolved permissions (role + supplementary applied)
             public function get_resolved_permissions(): array
             {
-                if ($this->role_id === self::ROLE_DISABLED) {
-                    return [];
-                }
                 $permissions = $this->role_id__permissions ?? [];
                 // Add supplementary GRANTs, remove supplementary DENYs
                 // ... (see User_Model for full implementation)
@@ -212,7 +214,7 @@ MODEL IMPLEMENTATION
 
         $user->role_id__label           // "Site Admin"
         $user->role_id__permissions     // [3,4,5,6,7]
-        $user->role_id__can_admin_roles // [400,500,600,700,800]
+        $user->role_id__can_admin_roles // [400,500,600,700]
 
 PERMISSION CLASS API
 
@@ -577,8 +579,8 @@ ADMINISTRATION SCREENS
     A list page loads its users, calls for_users() once for their ids, and passes
     each user's entry to get_permission_breakdown($entry) so the page costs one
     ACL query rather than one per row. withEffectivePermission() answers "who can
-    export data" with the same rule as has_permission(): a role other than
-    ROLE_DISABLED, no DENY row, and the role's default or a GRANT row. It does not
+    export data" with the same rule as has_permission(): no DENY row, and
+    the role's default or a GRANT row. It does not
     filter membership state; add ->where('is_enabled', 1) when that matters.
 
     The endpoints are the application's, and so is their authorization:
@@ -738,13 +740,13 @@ ADDING NEW ROLES
                 self::PERM_EDIT_DATA,
                 self::PERM_VIEW_DATA,
             ],
-            'can_admin_roles' => [500, 600, 700, 800],
+            'can_admin_roles' => [450, 500, 600, 700],  // Itself and below
         ],
 
     3. Update can_admin_roles for roles above:
 
         400 => [  // ROLE_SITE_ADMIN
-            'can_admin_roles' => [450, 500, 600, 700, 800],  // Add new role ID
+            'can_admin_roles' => [400, 450, 500, 600, 700],  // Add new role ID
         ],
 
     4. Run migration if role_id column needs updating

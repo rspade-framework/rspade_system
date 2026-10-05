@@ -23,17 +23,18 @@ Lower id = higher privilege. IDs are 100-based to leave room for insertion.
 
 | ID | Constant | Label | Can admin roles |
 |---|---|---|---|
-| 200 | `ROLE_ROOT_ADMIN` | Root Admin | 300-800 (system-assigned only) |
-| 300 | `ROLE_SITE_OWNER` | Site Owner | 400-800 |
-| 400 | `ROLE_SITE_ADMIN` | Site Admin | 500-800 |
-| 500 | `ROLE_MANAGER` | Manager | 600-800 |
+| 200 | `ROLE_ROOT_ADMIN` | Root Admin | 200-700 (system-assigned only) |
+| 300 | `ROLE_SITE_OWNER` | Site Owner | 300-700 |
+| 400 | `ROLE_SITE_ADMIN` | Site Admin | 400-700 |
+| 500 | `ROLE_MANAGER` | Manager | 500-700 |
 | 600 | `ROLE_USER` | User | none |
 | 700 | `ROLE_VIEWER` | Viewer | none |
-| 800 | `ROLE_DISABLED` | Disabled | none |
+
+**There is no "disabled" role.** Switching a member off is `users.is_enabled = 0`, refused at sign-in and on every request (`rsx:man session`).
 
 **A developer is not a role.** Whether somebody builds this installation is `login_users.is_developer`, read with `Session::is_developer()` (JS: `window.rsxapp.is_developer`, present only when true) and set only by hand in the database - `rsx:man session`.
 
-`has_role()` is an **"at least" test** - same or higher privilege (lower id). `can_admin_role()` reads the "can admin roles" list and is what **prevents privilege escalation**: a Site Admin cannot create a Site Owner.
+`has_role()` is an **"at least" test** - same or higher privilege (lower id). `can_admin_role()` reads the "can admin roles" list and is what **prevents privilege escalation**: a Site Admin cannot create a Site Owner. The list is **equal-or-lower**: a role names itself and the roles below it, so a Site Admin may manage another Site Admin, and an administration endpoint asks `can_admin_role()` of BOTH the target's CURRENT role and any NEW role it assigns.
 
 Roles are declared as an ordinary model enum on `User_Model`, with two custom properties the ACL layer reads:
 
@@ -43,7 +44,7 @@ public static $enums = ['role_id' => [
         'constant'        => 'ROLE_SITE_OWNER',
         'label'           => 'Site Owner',
         'permissions'     => [2, 3, 4, 5, 6, 7],
-        'can_admin_roles' => [400, 500, 600, 700, 800],
+        'can_admin_roles' => [300, 400, 500, 600, 700],
     ],
 ]];
 ```
@@ -72,11 +73,10 @@ Supplementary permissions, granted by no role by default: `PERM_API_ACCESS` (8),
 
 ### Resolution order
 
-1. Role is `ROLE_DISABLED` -> deny everything.
-2. Explicit **DENY** in `_user_permissions` -> denied.
-3. Explicit **GRANT** in `_user_permissions` -> granted.
-4. In the role's default set -> granted.
-5. Otherwise denied.
+1. Explicit **DENY** in `_user_permissions` -> denied.
+2. Explicit **GRANT** in `_user_permissions` -> granted.
+3. In the role's default set -> granted.
+4. Otherwise denied.
 
 **DENY always wins** - a user with both a GRANT and a DENY row has the permission denied.
 
@@ -214,7 +214,7 @@ const assignable = User_Model.role_id__enum_select()
 - **A user has the role but not the permission.** Look for a DENY row - `User_Permission_Model::for_user($user_id)`. DENY beats the role, and a GRANT alongside it does not rescue it.
 - **JS and PHP disagree about a permission.** They cannot, if both read the resolved set: `window.rsxapp.user.resolved_permissions` IS `get_resolved_permissions()`. A disagreement means the page was rendered before the change - reload. (A hand-written JS twin of a check is the other cause, and is forbidden.)
 - **A new constant is invisible to JavaScript.** Run `php artisan rsx:constants:regenerate`.
-- **An admin cannot assign a role they hold themselves.** Correct by construction: `can_admin_roles` lists roles strictly below. Peers and superiors are never administrable.
-- **Everything is denied for one user.** `ROLE_DISABLED` short-circuits resolution to an empty set before any grant is considered.
+- **An admin cannot touch a superior.** Correct by construction: `can_admin_roles` lists the role itself and the roles below it, never one above. Check the target's CURRENT role as well as the new one, or a Site Admin can demote a Site Owner by assigning a role they do hold.
+- **A disabled member still resolves permissions.** Correct: disabling is `users.is_enabled`, which refuses the membership at sign-in and on every request; the role and ACL rows are untouched so re-enabling restores them.
 
 Details: `php artisan rsx:man acls`. Related: `rspade:auth-gates`, `rspade:model-enums`.

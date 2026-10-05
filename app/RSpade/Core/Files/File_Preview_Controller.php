@@ -4,12 +4,12 @@ namespace App\RSpade\Core\Files;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Response;
-use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Markdown_Rendition;
+use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Spreadsheet_Rendition;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -114,14 +114,6 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     #[Portal_Route('/_preview/pdf/:key', methods: ['GET'])]
     public static function pdf_rendition(Request $request, array $params = [])
     {
-        // An API client may present its key here instead of a cookie session; this is a no-op
-        // for a browser request, and a bad key denies rather than degrading to anonymous.
-        // See Rsx_Api_Bearer::authenticate_web_request().
-        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
-        if ($bearer_denied !== null) {
-            return $bearer_denied;
-        }
-
         $key = $params['key'] ?? null;
         if (!$key) {
             abort(404, 'File not found');
@@ -133,7 +125,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         }
 
         // Dual authorization gate cascade - identical to inline()/download_file().
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
@@ -142,7 +134,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             return $thumbnail_auth;
         }
 
-        $download_auth = Rsx::trigger_gate('file.download.authorize', [
+        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
             'attachment' => $attachment,
             'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
@@ -212,11 +204,6 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     #[Portal_Route('/_preview/sheet/:key', methods: ['GET'])]
     public static function sheet_rendition(Request $request, array $params = [])
     {
-        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
-        if ($bearer_denied !== null) {
-            return $bearer_denied;
-        }
-
         $key = $params['key'] ?? null;
         if (!$key) {
             abort(404, 'File not found');
@@ -227,7 +214,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             abort(404, 'File not found');
         }
 
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
@@ -236,7 +223,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             return $thumbnail_auth;
         }
 
-        $download_auth = Rsx::trigger_gate('file.download.authorize', [
+        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
             'attachment' => $attachment,
             'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
@@ -540,7 +527,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // browser still carries the staff cookie - the STAFF user, which would authorize a
         // portal viewer against staff permissions. Same idiom as /_upload. See
         // docs.dev/audits/portal_realm_session_audit_2026_08_09.md.
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
@@ -651,7 +638,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // gate must not be handed a staff-facade read.
         $user = File_Attachment_Controller::_gate_user();
 
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => $user,
             'request' => $request,
@@ -660,7 +647,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
         }
 
-        $download_auth = Rsx::trigger_gate('file.download.authorize', [
+        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
             'attachment' => $attachment,
             'user' => $user,
             'request' => $request,
@@ -750,7 +737,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // gate must not be handed a staff-facade read.
         $user = File_Attachment_Controller::_gate_user();
 
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => $user,
             'request' => $request,
@@ -759,7 +746,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
         }
 
-        $download_auth = Rsx::trigger_gate('file.download.authorize', [
+        $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
             'attachment' => $attachment,
             'user' => $user,
             'request' => $request,

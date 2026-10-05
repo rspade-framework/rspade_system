@@ -97,7 +97,7 @@ Building elsewhere (a CI artifact, a container image) works because of determini
 
 **Strict production** adds, relative to debug:
 
-- Minification (Terser for JS, cssnano for CSS, via the minify RPC server).
+- Minification (Terser for JS, cssnano for CSS, via the minify RPC server). **Class and function names survive it** (`keep_classnames`/`keep_fnames`) because components and SPA actions are resolved by a class's own `.name`; `Manifest._define` refuses a class whose runtime name is not its manifest name, so a renaming build is a boot failure naming the class ("answers to the name '...' at runtime"), never a blank SPA page.
 - Inline sourcemaps are GONE - minification strips the `sourceMappingURL` comments.
 - `console_debug()` is neutralized **two ways at once**: call sites are STRIPPED from the compiled output (Terser treats `console_debug` and `Debugger.console_debug` as `pure_funcs`), AND the `console_debug` config block is omitted from `window.rsxapp`, so even a surviving call site no-ops at runtime.
 - The composer autoloader is dumped `--classmap-authoritative`.
@@ -160,14 +160,15 @@ They stop the framework's OWN write paths, and they do not (and cannot) stop som
 
 ## Determinism: why a build travels
 
-**Two byte-identical codebases, checked out at DIFFERENT absolute paths, produce an IDENTICAL build_key and IDENTICAL bundle filenames, byte-for-byte.** That is what lets one compile be trusted across a cluster, cached by CI keyed on build_key, or baked into a container image.
+**Two byte-identical codebases, checked out at DIFFERENT absolute paths and built in the SAME mode, produce an IDENTICAL build_key and IDENTICAL bundle filenames, byte-for-byte.** That is what lets one compile be trusted across a cluster, cached by CI keyed on build_key, or baked into a container image.
 
-1. **File hashing branches on `RSX_MODE`**, the single mode switch. In a prod mode the hash covers the file's PROJECT-RELATIVE path plus its CONTENT (sha512) - never the absolute path, never disk timestamps. (Development still uses a fast relative-path + size + mtime hash; it only needs to notice local edits and is deliberately not portable.)
+1. **File hashing branches on `RSX_MODE`**, the single mode switch. In a prod mode the hash covers the file's PROJECT-RELATIVE path plus its CONTENT (sha512) - never the absolute path, never disk timestamps. (Development still uses a fast relative-path + size + mtime hash; it only needs to notice local edits and is deliberately not portable. That hash never reaches build_key, so touching a file never moves the key.)
 2. **The manifest hash excludes per-file mtime/size.** A file contributes its path and its sha1 to the key and nothing else; mtime and size stay in the index's `file_index` for dev change-detection. The prod index carries no `generated` timestamp, so it is byte-stable and build_key is content-derived.
-3. **Generated-file keys are LOGICAL.** A generated stub is recorded as `tmp/js-stubs/<name>.js` whatever `RSX_TMP_PATH` resolves to, so two boxes with different overrides produce identical indexes and identical build keys.
-4. **Bundle filenames are `{Bundle}__{app|vendor}.{hash8}.{ext}`**, the hash8 deriving from the same relative-path + content inputs plus the committed lockfile hashes and npm declarations. Minified output is reproducible given the pinned, committed `node_modules`.
+3. **The MODE is part of build_key.** One tree builds three different artifacts, and the key is what identifies the build to the FPC namespace, the build-scoped `RsxCache` prefix, `window.rsxapp.build_key` and the dev `?v=` cache-buster - so a development build after `rsx:prod:disable` never answers with the sealed build's key. The index records its mode; a development boot that loads an index recorded under another mode discards it and rebuilds in full.
+4. **Generated-file keys are LOGICAL.** A generated stub is recorded as `tmp/js-stubs/<name>.js` whatever `RSX_TMP_PATH` resolves to, so two boxes with different overrides produce identical indexes and identical build keys.
+5. **Bundle filenames are `{Bundle}__{app|vendor}.{hash8}.{ext}`**, the hash8 deriving from the same relative-path + content inputs plus the committed lockfile hashes and npm declarations. Minified output is reproducible given the pinned, committed `node_modules`.
 
-**Bonus, and it is a real one**: because build_key is content-derived and stable across checkouts, full-page-cache keys (`fpc:{build_key}:{host}:...`) are **cluster-shareable** - two nodes on the same build hit the same FPC entries. (`rsx:man fpc`.)
+**Bonus, and it is a real one**: because build_key is content-derived and stable across checkouts (in one mode), full-page-cache keys (`fpc:{build_key}:{host}:...`) are **cluster-shareable** - two nodes on the same build hit the same FPC entries. (`rsx:man fpc`.)
 
 ---
 

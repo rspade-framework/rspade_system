@@ -235,6 +235,15 @@ THE DOCUMENT SANDBOX
     library - no binary is spawned, so there is no process to contain. Sandboxing
     that would mean sandboxing PHP itself.
 
+    PDF thumbnails. Page 1 of an uploaded PDF (and of an Office document's PDF
+    rendition) is rasterised by Imagick_Thumbnail_Renderer through ImageMagick's
+    PDF coder, which runs Ghostscript INSIDE the PHP process serving the
+    thumbnail request - on the host, in either sandbox mode. The shipped
+    ImageMagick policy (Imagick_Policy) is the only containment that applies
+    there. An application that must not parse uploaded PDFs on the host takes the
+    thumbnail over through the document.thumbnail_render resolve chain
+    (rsx:man document_search).
+
   THE TIMEOUT PATH
     When the sanctioned bound expires, Symfony kills the process it started -
     which under the sandbox is the docker CLIENT, not the container. So every
@@ -245,11 +254,17 @@ THE DOCUMENT SANDBOX
   THE HEALTH ROWS
     rsx:health carries one "Document Sandbox" check in every mode:
 
-      sandbox='none'    INFO in development (it is the default); WARN on a debug
-                        or production box, naming LIBREOFFICE_SANDBOX=docker. It
-                        is a WARN and not a FAIL because a site whose uploads all
-                        come from inside the organisation is entitled to this
-                        posture, and the exit code gates deploys.
+      sandbox='none'    WHO CAN UPLOAD decides the severity. Any live (not
+                        soft-deleted) portal user on the install is somebody
+                        outside the organisation who can attach a document, so
+                        the row is a WARN in EVERY mode, development included,
+                        naming the count and LIBREOFFICE_SANDBOX=docker. With no
+                        portal user: INFO in development (it is the default),
+                        WARN on a debug or production box. Never a FAIL: a site
+                        whose uploads all come from inside the organisation is
+                        entitled to this posture, the operator decides whether
+                        the outside world is trusted with the parser, and the
+                        exit code gates deploys.
       sandbox='docker'  FIVE rows - docker client, docker daemon, sandbox image,
                         sandbox run, memory cap. A failing link is a FAIL, because
                         a box configured to sandbox and unable to is a box that

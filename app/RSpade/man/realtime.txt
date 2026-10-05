@@ -122,6 +122,15 @@ SETUP
                               and the emitter engine's key-missing publish covers
                               those identities on their first write (see
                               EMITTERS); no change is ever lost.
+        REALTIME_MAX_FRAME_BYTES
+                              Largest inbound websocket message the relay
+                              accepts (default: 65536). See RESOURCE CAPS.
+        REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION
+                              Distinct subscriptions one connection may hold
+                              (default: 1000). See RESOURCE CAPS.
+
+    The relay reads both caps from .env directly; a value that is not a
+    positive integer makes it refuse to start, naming the key.
 
     The client connect URL is NOT an env var - it is derived as
     {scheme}://{Rsx::get_hostname()}/ws (wss on https pages, ws on plain-http
@@ -151,10 +160,13 @@ SETUP
     exactly (a sub-host does not match) and without ports. This
     catches a pasted .env pointing at another instance (silent dead realtime
     otherwise, since the relay URL is derived from the host). Loopback REQUESTS
-    (localhost / 127.* / ::1) are exempt; a loopback-VALUED APP_URL is NOT
-    exempt (an APP_URL=https://localhost browsed under a real host is exactly
-    the misconfiguration this catches). The check is skipped entirely on CLI and
-    in prod modes. (Rsx_Env_Hostname_Guard.)
+    (localhost, a valid dotted-quad 127.0.0.0/8 address, ::1 - parsed, so
+    127.attacker.example is not one) are exempt; a loopback-VALUED APP_URL is
+    NOT exempt (an APP_URL=https://localhost browsed under a real host is
+    exactly the misconfiguration this catches). The check is skipped on CLI.
+    Debug and production validate the host in Rsx::get_hostname() instead (the
+    APP_URL host, its sub-hosts, the PORTAL_URL host; fatal otherwise).
+    (Rsx_Env_Hostname_Guard.)
 
     The server reads APP_KEY from .env for HMAC token validation and
     REDIS_HOST/REDIS_PORT/REDIS_PASSWORD for pub/sub.
@@ -1209,6 +1221,38 @@ WIRE FORMAT (CLIENT -> RELAY)
     scratch on every auth_ok, so a subscribe lost to a closed socket is reissued
     moments later by the resync. A replay queue would be a second mechanism
     doing the resync's job.
+
+    RESOURCE CAPS. Two size/count caps (not timeouts) keep one socket - any
+    holder of a connection token, an anonymous public-topic caller included -
+    from making the shared relay hold unbounded memory:
+
+        REALTIME_MAX_FRAME_BYTES (65536)
+            One inbound message, enforced by the ws library (maxPayload) BEFORE
+            the bytes are buffered or parsed. An oversized frame closes the
+            connection with 1009 (message too big) and the relay logs a
+            protocol violation naming the connection. The default is several
+            times the largest legitimate frame (25 subscribes is 7-20KB).
+        REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION (1000)
+            Distinct sub_ids one connection holds. One tab is one connection,
+            and identical topic+filter watches share one sub_id, so this is
+            the number of distinct records a single page watches at once. A
+            subscribe beyond it is REFUSED - checked before the token's HMAC -
+            with an error frame naming the sub_id and the cap:
+
+                {"type": "error", "sub_id": "<sub_id>",
+                 "message": "Subscription limit reached: at most 1000
+                             subscriptions per connection"}
+
+            The connection stays open and every existing subscription keeps
+            working. Re-subscribing a sub_id already held is a replace and is
+            never counted twice. A sub_id that is not a non-empty string of at
+            most 1024 characters is refused the same way (and echoed back as
+            null rather than reflected).
+
+        Rsx_Realtime drops the refused watch: its callbacks are discarded,
+        console.error names the topic, and a component gated on the
+        subscription's establishment (on_create() subscribe) has that promise
+        REJECTED rather than waiting for an ack that is not coming.
 
     Ajax batching interacts with this. In debug/production the N subscribe-token
     calls of one tick return in ONE batched response, so N subscriptions leave

@@ -10,12 +10,27 @@ namespace App\RSpade\Core\Session;
 use App\RSpade\Core\Rsx;
 
 /**
- * The attributes of the session cookie.
+ * The name and attributes of the session cookie.
  *
- * There is exactly ONE session cookie (`rsx`), emitted by Session and shared by the
- * staff app and the client portal alike - a session identifies a BROWSER, not an
- * experience. This class remains the single home for the cookie's SECURITY
- * attributes: path, domain, HttpOnly, SameSite and the Secure flag.
+ * There is exactly ONE session cookie, emitted by Session and shared by the staff app
+ * and the client portal alike - a session identifies a BROWSER, not an experience. This
+ * class is the single home for its NAME (name()) and its SECURITY attributes: path,
+ * domain, HttpOnly, SameSite and the Secure flag. Nothing else spells the name.
+ *
+ * THE NAME IS `__Host-rsx` WHENEVER THE COOKIE IS SECURE. A browser accepts a cookie
+ * with the `__Host-` prefix only when it is Secure, has Path=/ and carries NO Domain,
+ * and only from a secure origin - so no sibling subdomain (`Domain=example.com`), no
+ * narrower path (`Path=/login`, which a browser sends first and PHP keeps first), and no
+ * plain-http response can plant or shadow it. That closes session fixation by cookie
+ * tossing: the token is minted once and never rotated at login (rsx:man session), so a
+ * planted token would otherwise become the victim's signed-in session.
+ *
+ * `rsx` (no prefix) is used ONLY on a development-mode request over plain http, the one
+ * case where the cookie cannot be Secure (below) and a browser would therefore REJECT a
+ * `__Host-` cookie outright, leaving http://localhost unable to hold a session. Such a
+ * request has no transport security to protect in the first place. The two names are
+ * never read interchangeably: a secure request reads only `__Host-rsx`, so a planted
+ * plain `rsx` cookie is invisible to it.
  *
  * THE SECURE FLAG. RSpade assumes upstream SSL termination and APP_URL must be
  * https, so a real request is always secure and the cookie is always Secure -
@@ -30,6 +45,22 @@ use App\RSpade\Core\Rsx;
  */
 class Rsx_Session_Cookie
 {
+    /** The session cookie's name on a secure request (every request outside development). */
+    public const SECURE_NAME = '__Host-rsx';
+
+    /** The session cookie's name on a development-mode plain-http request only. */
+    public const INSECURE_NAME = 'rsx';
+
+    /**
+     * The session cookie's name for THIS request - read, set and cleared under it alike.
+     *
+     * @return string SECURE_NAME when the cookie is Secure, INSECURE_NAME otherwise
+     */
+    public static function name(): string
+    {
+        return static::is_secure() ? self::SECURE_NAME : self::INSECURE_NAME;
+    }
+
     /**
      * The setcookie() options array for a session cookie.
      *

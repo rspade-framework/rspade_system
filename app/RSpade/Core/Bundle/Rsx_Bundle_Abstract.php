@@ -14,6 +14,7 @@ use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Session\Rsx_Session_Cookie;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -406,7 +407,7 @@ abstract class Rsx_Bundle_Abstract
 
         // Add session_hash if session exists (hashed for scoping, non-reversible).
         // ONE cookie for the whole site - staff and portal pages hash the same token.
-        $session_token = $_COOKIE['rsx'] ?? null;
+        $session_token = $_COOKIE[Rsx_Session_Cookie::name()] ?? null;
         $rsxapp_data['session_hash'] = $session_token
             ? hash_hmac('sha256', $session_token, config('app.key'))
             : null;

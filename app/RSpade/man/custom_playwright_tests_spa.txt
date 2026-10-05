@@ -384,7 +384,7 @@ COMMON PITFALLS
     Hostname guard hard-fatals before auth
         In development mode, Rsx_Env_Hostname_Guard throws a RuntimeException on
         every web request whose Host header is neither loopback
-        (localhost/127.*/::1) nor an exact match for APP_URL's host (or PORTAL_URL's,
+        (localhost / a 127.0.0.0/8 address / ::1) nor an exact match for APP_URL's host (or PORTAL_URL's,
         when the portal has a host of its own). A BASE_URL
         pointing at a mismatched or typo'd hostname 500s for reasons unrelated
         to your test. The reference test uses http://localhost precisely to stay
@@ -405,7 +405,9 @@ COMMON PITFALLS
         flag follows the request scheme (Rsx_Session_Cookie). A plain-http
         loopback test therefore holds a session in development mode and only
         there - do not expect a debug/production-mode build to authenticate
-        over http.
+        over http. The cookie is named `rsx` on such a request and `__Host-rsx`
+        on every secure one; a test that reads or plants the cookie asks
+        Rsx_Session_Cookie::name() rather than spelling either.
 
     Playwright require path
         Playwright is installed under system/node_modules, not the project root.

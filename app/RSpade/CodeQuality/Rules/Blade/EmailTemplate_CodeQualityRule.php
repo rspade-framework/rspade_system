@@ -413,7 +413,8 @@ class EmailTemplate_CodeQualityRule extends CodeQualityRule_Abstract
         $lines[] = '';
         $lines[] = 'rsx_absolute_url() takes the scheme, host and non-default port from APP_URL (the';
         $lines[] = 'single hostname source) when there is no request to read them from - which is';
-        $lines[] = 'always, because email is rendered in a background task.';
+        $lines[] = 'always, because email is rendered in a background task - and never takes them';
+        $lines[] = 'from a request host the application does not serve.';
         $lines[] = '';
         $lines[] = 'A URL that is deliberately relative declares itself, on the line or the line above,';
         $lines[] = 'and says why:';

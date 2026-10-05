@@ -77,6 +77,7 @@ class Api_Coded_Failure_Test extends Rsx_Test_Abstract
 
         $user->is_api_access_enabled = 1;
         $user->save();
+        static::grant_every_permission(1);
 
         $key = Api_Key_Model::generate(1, 'Coded failure probe (test)')['key'];
 

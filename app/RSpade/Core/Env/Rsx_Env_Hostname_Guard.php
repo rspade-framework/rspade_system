@@ -23,12 +23,13 @@ use App\RSpade\Core\Rsx;
  * declared host. Hosts are compared without ports, exactly as cookies are scoped.
  *
  * check() runs once per web request (immediately before route dispatch). It is a
- * DEVELOPMENT-mode tripwire only - production sites may legitimately answer on
- * many hostnames / behind CDNs, so the guard is gated on RSX_MODE, not on
- * is_dev_site(). Loopback REQUESTS (localhost / 127.* / ::1 - the curl/rsx:debug
- * testing channel) never trip it. A loopback-VALUED APP_URL is NOT exempted: an
- * APP_URL=https://localhost browsed under a real hostname is exactly the pasted
- * .env this guard exists to catch, so it fatals.
+ * DEVELOPMENT-mode tripwire only - debug and production validate the request host in
+ * Rsx::get_hostname() (APP_URL host, its sub-hosts, the PORTAL_URL host) - so the guard
+ * is gated on RSX_MODE, not on is_dev_site(). Loopback REQUESTS (localhost, a parsed
+ * 127.0.0.0/8 address, ::1 - the curl/rsx:debug testing channel) never trip it; links
+ * that leave the browser are still built from APP_URL for them (rsx_absolute_url()).
+ * A loopback-VALUED APP_URL is NOT exempted: an APP_URL=https://localhost browsed under
+ * a real hostname is exactly the pasted .env this guard exists to catch, so it fatals.
  *
  * The pure comparison core (build_declared + find_mismatch) takes plain inputs and
  * touches neither env nor $_SERVER, so it is unit-testable in isolation.
@@ -189,17 +190,29 @@ class Rsx_Env_Hostname_Guard
     }
 
     /**
-     * A host is loopback when it is exactly "localhost", a 127.* IPv4 address, or
-     * the IPv6 loopback "::1". Only loopback REQUEST hosts are exempted now; a
-     * loopback-valued APP_URL is a real mismatch when browsed under a real host.
+     * A host is loopback when it is exactly "localhost", a syntactically valid dotted-quad
+     * IPv4 address inside 127.0.0.0/8, or the IPv6 loopback "::1" (bracketed or not).
+     * Only loopback REQUEST hosts are exempted; a loopback-valued APP_URL is a real
+     * mismatch when browsed under a real host.
+     *
+     * The IPv4 test is a real address parse, never a string prefix: "127.attacker.example"
+     * is a DNS name anybody can register, and a prefix test exempted it. Shorthand forms
+     * ("127.1") and out-of-range octets ("127.0.0.256") are not valid dotted quads, so
+     * they are not loopback and face the ordinary declared-host comparison.
      */
     public static function is_loopback_host(string $host): bool
     {
         $host = strtolower(trim($host));
 
-        return $host === 'localhost'
-            || str_starts_with($host, '127.')
-            || $host === '::1';
+        if ($host === 'localhost' || $host === '::1' || $host === '[::1]') {
+            return true;
+        }
+
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+            return false;
+        }
+
+        return (ip2long($host) >> 24) === 127;
     }
 
     // -------------------------------------------------------------------------

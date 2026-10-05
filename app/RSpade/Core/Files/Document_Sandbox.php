@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Files;
 
 use Exception;
+use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -49,6 +50,13 @@ use App\RSpade\Core\Rsx;
  * NOT COVERED: PhpSpreadsheet. Workbook renditions (Spreadsheet_Rendition) and workbook text
  * (Spreadsheet_Text_Extractor) are read IN-PROCESS by a PHP library - no binary is spawned, so
  * there is no process to contain. Sandboxing them would mean sandboxing PHP itself.
+ *
+ * NOT COVERED: PDF thumbnails. Page 1 of an uploaded PDF (and of an Office document's PDF
+ * rendition) is rasterised by Imagick_Thumbnail_Renderer through ImageMagick's PDF coder, which
+ * runs Ghostscript INSIDE the PHP process serving the thumbnail request - on the host, in either
+ * mode. The shipped ImageMagick policy (Imagick_Policy) is the only containment that applies
+ * there. An application that must not parse uploaded PDFs on the host takes the thumbnail over
+ * through the document.thumbnail_render resolve chain.
  *
  * @see rsx:man libreoffice (THE DOCUMENT SANDBOX)
  */
@@ -409,7 +417,7 @@ class Document_Sandbox
         $mode = static::mode();
 
         if ($mode !== self::MODE_DOCKER) {
-            return static::_posture_row(Rsx::get_mode());
+            return static::_posture_row(Rsx::get_mode(), static::__portal_user_count());
         }
 
         $image = static::image();
@@ -436,21 +444,36 @@ class Document_Sandbox
     /**
      * The row for a box that spawns document binaries on the host.
      *
-     * A sealed box is a deployed site, so "no containment" there is something an operator is
-     * told about (WARN, advisory - a site whose uploads all come from inside the organisation is
-     * entitled to this posture, and rsx:health's exit code must not refuse to deploy it). A
-     * development box gets an INFO: it is the default, and a row nobody acts on devalues the rows
-     * beside it.
+     * WHO CAN UPLOAD decides the severity. A portal user is, by definition, somebody outside the
+     * organisation, and every portal user can attach a document the render worker then hands to
+     * soffice/pdftotext on the host - so a box with ANY portal user is a WARN in EVERY mode,
+     * development included (a development site may be serving the public right now). With no
+     * portal user, uploads come from the organisation's own staff: a sealed box is told about
+     * the missing containment (WARN, advisory - such a site is entitled to this posture, and
+     * rsx:health's exit code must not refuse to deploy it), and a development box gets an INFO,
+     * because it is the default and a row nobody acts on devalues the rows beside it.
+     *
+     * Never a FAIL: the operator decides whether the outside world is trusted with the parser.
      *
      * @param string $mode The application mode this box is in.
+     * @param int $portal_user_count Live (not soft-deleted) portal users on this install.
      * @return array{status: string, detail: string, remediation: ?string}
      */
-    public static function _posture_row(string $mode): array
+    public static function _posture_row(string $mode, int $portal_user_count): array
     {
+        if ($portal_user_count > 0) {
+            return [
+                'status' => 'WARN',
+                'detail' => "{$portal_user_count} portal user(s) outside the organisation can upload documents, "
+                    . 'and soffice/pdftotext convert them on the host with no containment',
+                'remediation' => 'set LIBREOFFICE_SANDBOX=docker (rsx:man libreoffice)',
+            ];
+        }
+
         if ($mode === Rsx::MODE_DEVELOPMENT) {
             return [
                 'status' => 'INFO',
-                'detail' => 'none - soffice and pdftotext run on the host',
+                'detail' => 'none - soffice and pdftotext run on the host (no portal users upload documents)',
                 'remediation' => null,
             ];
         }
@@ -460,6 +483,17 @@ class Document_Sandbox
             'detail' => 'documents are converted on the host by soffice/pdftotext with no containment',
             'remediation' => 'set LIBREOFFICE_SANDBOX=docker (rsx:man libreoffice)',
         ];
+    }
+
+    /**
+     * Live portal users across every site - the people outside the organisation who can upload.
+     * One COUNT; the posture row is computed only when the sandbox is off.
+     *
+     * @return int
+     */
+    private static function __portal_user_count(): int
+    {
+        return Portal_User_Model::without_site_scope(fn () => Portal_User_Model::query()->count());
     }
 
     /**

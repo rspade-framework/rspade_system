@@ -19,8 +19,9 @@ use App\RSpade\Core\Naming\Rsx_Paths;
  * hard-down site: the manifest is what boots the framework.
  *
  * So the vocabulary a fixture may use is the vocabulary the framework itself guarantees:
- * the four checks declared on Permission_Abstract / Portal_Permission_Abstract.
- * 'is_sysadmin' is staff-only; the other three exist in both realms.
+ * the checks declared on Permission_Abstract / Portal_Permission_Abstract.
+ * 'is_sysadmin' and 'is_framework_developer' are staff-only; the other three exist in both
+ * realms.
  *
  * Scope is any `tests/` directory under the framework tree or the application tree, which
  * is exactly the set of files that ships as somebody else's fixture.
@@ -34,7 +35,7 @@ class TestFixtureAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
      * See App\RSpade\Core\Permission\Permission_Abstract (staff) and
      * App\RSpade\Core\Portal\Portal_Permission_Abstract (portal).
      */
-    private const FRAMEWORK_CHECKS = ['public', 'closed', 'is_logged_in', 'is_sysadmin'];
+    private const FRAMEWORK_CHECKS = ['public', 'closed', 'is_logged_in', 'is_sysadmin', 'is_framework_developer'];
 
     public function get_id(): string
     {
@@ -218,7 +219,7 @@ class TestFixtureAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
                 . "and a failed manifest build is a hard-down site, not a failing test.\n"
                 . "\n"
                 . "FIX: use one of the framework's own checks - " . implode(', ', self::FRAMEWORK_CHECKS)
-                . " ('is_sysadmin' is staff-only). A fixture that must exercise an application check does "
+                . " ('is_sysadmin' and 'is_framework_developer' are staff-only). A fixture that must exercise an application check does "
                 . "so with SYNTHETIC metadata handed to the auth index, never with a live attribute.\n"
                 . "\n"
                 . "Rule: " . self::RULE_ID . ". See: rsx:man auth_gates",

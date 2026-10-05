@@ -177,14 +177,36 @@ and delete their keys in teardown.
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | sess-http-00 | session cookie behavior over real HTTP (set/persist) | HTTP requests | cookie behaves per spec | implemented |
+| sess-http-08 | a SECURE request names the cookie `__Host-rsx`, Secure, Path=/, no Domain | GET a session-minting probe on :8000 (the TLS-terminated listener) | `Set-Cookie: __Host-rsx=...; path=/; secure` with no domain | implemented |
+| sess-http-09 | a secure request ignores a planted unprefixed `rsx` cookie | the token from sess-http-08 sent as `rsx=` on :8000 | a fresh `__Host-rsx` with a DIFFERENT token is minted | implemented |
 
-(Migrated from the prior bash suite; see the script for exact assertions.)
+(Migrated from the prior bash suite; see the script for exact assertions.) Needs a
+framework-development box: the `/ssr-test` probes are gated `is_framework_developer`.
 
 ## http/session_token_immutability.sh (http - live server)
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | sess-http-06 | token minted once at creation; login is a pure record update (no rotation, no cookie re-emission); same token then authenticates | anon session -> POST /login -> GET /dashboard | step1 Set-Cookie rsx; step2 NO Set-Cookie rsx + token unchanged; step3 200 | implemented |
+
+## Session_Cookie_Flags_Test (php, no DB) - the session cookie's name and attributes
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-cookie-01 | the Secure flag follows the scheme in development and is forced elsewhere | plain http / https / X-Forwarded-Proto in each mode | per mode | implemented |
+| sess-cookie-02 | a Secure cookie is named `__Host-rsx` | terminated / https development, plain http in debug and production | `__Host-rsx` | implemented |
+| sess-cookie-03 | the unprefixed `rsx` exists only on a development plain-http request (a browser rejects a non-Secure `__Host-` cookie) | plain http, development | `rsx` | implemented |
+| sess-cookie-04 | one attribute set: Path=/, no Domain, HttpOnly, Lax | options() | as listed | implemented |
+
+## Client_Ip_Test (php, no DB) - the one client-address resolver
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-ip-01 | an untrusted peer is the client; its X-Forwarded-For is ignored | peer 203.0.113.5 with forged XFF (incl. a forged loopback hop) | 203.0.113.5 | implemented |
+| sess-ip-02 | through a loopback peer the rightmost untrusted XFF entry is the client | `<spoof>, <client>[, ::1]` via 127.0.0.1 / ::1 | `<client>` | implemented |
+| sess-ip-03 | a device in front of nginx is the client until declared in rsx.http.trusted_proxies, then skipped | `<spoof>, <client>, 10.1.2.3`, undeclared / CIDR / address | 10.1.2.3 / `<client>` / `<client>` | implemented |
+| sess-ip-04 | X-Forwarded-Host is never trusted | loopback peer + `X-Forwarded-Host: evil.example` | the request's own host | implemented |
+| sess-ip-05 | a rotated X-Forwarded-For from a non-loopback peer does not move the Login_Throttle key | live POST /login from the container's own address with a forged XFF | the counter is keyed on the peer, not the header | verified live 2026-10-05 (needs a non-loopback source address; not scripted) |
 
 ## http/session_link_handshake.sh (http - live server)
 
@@ -232,12 +254,12 @@ MANAGER (peer), USER(600) under MANAGER.
 | sess-termfu-02 | self-service works through the cross-user function | php | actor terminates own row | true, row deactivated | implemented |
 | sess-termfu-03 | ABSENCE is false, never a throw | php | valid authority, unknown session id | false | implemented |
 | sess-termfu-04 | the operator's own CURRENT session is refused with false | php | actor names its live CLI session id | false, row still active | implemented |
-| sess-termfu-05 | a PEER is refused | php | MANAGER acting on MANAGER | AjaxUnauthorizedException, row intact | implemented |
+| sess-termfu-05 | a PEER follows the whitelist | php | a role acting on a second holder of the same role | permitted and the row deactivated when the role names itself in can_admin_roles (equal-or-lower administration); otherwise AjaxUnauthorizedException, row intact | implemented |
 | sess-termfu-06 | a subordinate reaching upward is refused | php | USER acting on MANAGER | AjaxUnauthorizedException, row intact | implemented |
 | sess-termfu-07 | no acting identity is refused | php | logged out, any target | AjaxUnauthorizedException ('logged-in actor'), row intact | implemented |
 | sess-termfu-08 | a target with no users row on the acting site is refused | php | login identity with no site user | AjaxUnauthorizedException ('no such user on the acting site') | implemented |
 | sess-termfu-09 | bulk termination by an admin, sparing one | php | 3 rows, except = one of them | returns 2, two deactivated, spared row active | implemented |
-| sess-termfu-10 | bulk termination by a peer is refused | php | MANAGER acting on MANAGER | AjaxUnauthorizedException, no row touched | implemented |
+| sess-termfu-10 | bulk termination by a peer follows the whitelist | php | a role acting on a second holder of the same role | 1 row ended when the role names itself in can_admin_roles; otherwise AjaxUnauthorizedException, no row touched | implemented |
 | sess-termfu-11 | bulk termination with no acting identity is refused | php | logged out | AjaxUnauthorizedException, row intact | implemented |
 | sess-termfu-12 | the unchecked internal path works with no session context | php | logged out, 2 rows | returns 2, both deactivated | implemented |
 | sess-termfu-13 | session.terminated payload for a cross-user termination | php | admin terminates target row | 1 event: actor/target/session_id, scope 'admin' | implemented |

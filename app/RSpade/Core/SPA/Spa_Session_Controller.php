@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Portal\Portal_Session;
+use App\RSpade\Core\Session\Rsx_Session_Cookie;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -46,7 +47,7 @@ class Spa_Session_Controller extends Rsx_Controller_Abstract
         // Rsx_Portal.is_portal()) because an Ajax request cannot reliably self-detect
         // the portal context server-side. This only drives client-side
         // staleness/refresh, never authorization, so trusting the flag is safe.
-        $session_token = $_COOKIE['rsx'] ?? null;
+        $session_token = $_COOKIE[Rsx_Session_Cookie::name()] ?? null;
 
         if (!empty($params['is_portal'])) {
             $user = Portal_Session::get_portal_user();

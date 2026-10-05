@@ -121,6 +121,11 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
         $user->is_enabled = 1;
         $user->save();
 
+        // The second-factor failure counter lives in redis, outside the rolled-back
+        // transaction, and is keyed by id - and a restored test baseline hands the same ids
+        // out again on the next run. A fresh fixture starts with a clean count.
+        Rsx_Two_Factor::clear_failures($login_user);
+
         return $login_user;
     }
 
@@ -461,6 +466,143 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
                 'failure ' . $i . ' is counted once, not twice'
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Attempt caps (independent of the client IP)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Run $fn with rsx.two_factor overrides in place, restoring the configured values after.
+     */
+    private static function __with_two_factor_config(array $overrides, callable $fn): void
+    {
+        $saved = config('rsx.two_factor');
+
+        config(['rsx.two_factor' => array_merge($saved, $overrides)]);
+
+        try {
+            $fn();
+        } finally {
+            config(['rsx.two_factor' => $saved]);
+        }
+    }
+
+    /**
+     * Answer the pending challenge wrongly and return the refusal's message.
+     */
+    private static function __wrong_answer(array $input = ['code' => '000000']): string
+    {
+        try {
+            Rsx_Two_Factor::verify_challenge($input);
+        } catch (Two_Factor_Failed_Exception $e) {
+            return $e->getMessage();
+        }
+
+        static::__assert_true(false, 'a wrong answer was accepted');
+
+        return '';
+    }
+
+    /**
+     * THE PER-CHALLENGE CAP. Wrong answers below the cap are ordinary refusals; the answer
+     * that reaches it DESTROYS the parked challenge, so the next guess needs the password
+     * again (which is what the per-IP throttle charges for).
+     */
+    public static function test_the_challenge_is_destroyed_at_its_failure_cap()
+    {
+        $fixture = static::__enrolled_identity('challenge_cap');
+        $max = Rsx_Two_Factor::challenge_max_failures();
+
+        Rsx_Two_Factor::begin_challenge($fixture['login_user']);
+
+        for ($i = 1; $i < $max; $i++) {
+            static::__assert_equals('That code is not valid.', static::__wrong_answer(), "wrong answer {$i} is an ordinary refusal");
+            static::__assert_not_null(Rsx_Two_Factor::challenge_pending(), "the challenge survives wrong answer {$i}");
+        }
+
+        static::__assert_equals(
+            'Too many incorrect codes. Please sign in again.',
+            static::__wrong_answer(),
+            'the answer that reaches the cap says the sign-in must start over'
+        );
+        static::__assert_null(Rsx_Two_Factor::challenge_pending(), 'and the challenge is gone');
+
+        static::__assert_throws(
+            Two_Factor_Failed_Exception::class,
+            fn () => Rsx_Two_Factor::verify_challenge(['code' => static::__unspent_code($fixture['secret'])]),
+            'expired'
+        );
+
+        // A fresh password entry parks a fresh challenge with a fresh count, and a correct
+        // answer then signs in and clears the identity's count.
+        Rsx_Two_Factor::begin_challenge($fixture['login_user']);
+        Rsx_Two_Factor::verify_challenge(['code' => static::__unspent_code($fixture['secret'])]);
+
+        static::__assert_equals((int) $fixture['login_user']->id, (int) Session::get_login_user_id(), 'a new challenge signs in');
+        static::__assert_false(Rsx_Two_Factor::is_locked($fixture['login_user']), 'a correct answer clears the count');
+    }
+
+    /**
+     * THE PER-IDENTITY CAP spans challenges (and, by construction, addresses): every kind
+     * of wrong answer counts - a TOTP-shaped code, a recovery-code-shaped one, a passkey
+     * assertion - and once the budget is spent even a CORRECT code is refused, until an
+     * operator clears it.
+     */
+    public static function test_the_identity_cap_spans_challenges_and_refuses_a_correct_code()
+    {
+        static::__with_two_factor_config(['challenge_max_failures' => 2, 'identity_max_failures' => 4], function () {
+            $fixture = static::__enrolled_identity('identity_cap');
+            $login_user = $fixture['login_user'];
+
+            Rsx_Two_Factor::begin_challenge($login_user);
+            static::__wrong_answer(['code' => '000000']);
+            static::__wrong_answer(['code' => 'aaaa-bbbb-cccc']);
+            static::__assert_null(Rsx_Two_Factor::challenge_pending(), 'the first challenge spent its own cap');
+            static::__assert_false(Rsx_Two_Factor::is_locked($login_user), 'two of four');
+
+            Rsx_Two_Factor::begin_challenge($login_user);
+            static::__wrong_answer(['assertion' => []]);
+            static::__assert_false(Rsx_Two_Factor::is_locked($login_user), 'three of four - a passkey failure counts too');
+            static::__wrong_answer(['code' => '111111']);
+            static::__assert_true(Rsx_Two_Factor::is_locked($login_user), 'four of four, across two challenges');
+
+            Rsx_Two_Factor::begin_challenge($login_user);
+
+            static::__assert_equals(
+                'Too many incorrect codes have been entered for this account. Please try again later.',
+                static::__wrong_answer(['code' => static::__unspent_code($fixture['secret'])]),
+                'a locked identity is refused even a correct code'
+            );
+            static::__assert_false(Session::is_logged_in(), 'nobody is signed in');
+            static::__assert_null(Rsx_Two_Factor::challenge_pending(), 'and the challenge is discarded');
+
+            Rsx_Two_Factor::clear_failures($login_user);
+            static::__assert_false(Rsx_Two_Factor::is_locked($login_user), 'the operator release lifts the lock');
+
+            Rsx_Two_Factor::begin_challenge($login_user);
+            Rsx_Two_Factor::verify_challenge(['code' => static::__unspent_code($fixture['secret'])]);
+
+            static::__assert_equals((int) $login_user->id, (int) Session::get_login_user_id(), 'and the correct code signs in again');
+        });
+    }
+
+    /**
+     * The caps are configuration, and a nonsensical value is a broken deployment.
+     */
+    public static function test_a_cap_below_one_fails_loud()
+    {
+        static::__with_two_factor_config(['challenge_max_failures' => 0], function () {
+            static::__assert_throws(\Throwable::class, fn () => Rsx_Two_Factor::challenge_max_failures());
+        });
+
+        static::__with_two_factor_config(['identity_max_failures' => 0], function () {
+            static::__assert_throws(\Throwable::class, fn () => Rsx_Two_Factor::identity_max_failures());
+        });
+
+        static::__with_two_factor_config(['identity_failure_window_minutes' => 0], function () {
+            static::__assert_throws(\Throwable::class, fn () => Rsx_Two_Factor::identity_failure_window_seconds());
+        });
     }
 
     // -------------------------------------------------------------------------

@@ -82,6 +82,12 @@ one central ksort after the last module), and the file map itself was only sorte
 time while the indexes derived from it are LISTS in its order (fixed by sorting it right
 after the parse pass).
 
+`Manifest_Build_Key_Mode_Test` pins what the build key IDENTIFIES: the tree's content AND
+the mode it was built in (`Manifest_Store::_compute_hash($body, $mode)`), plus the index's
+mode stamp and the development boot's refusal of an index recorded under another mode
+(`Manifest_Store::index_mode_stale_reason()`). It works at the decision level and against
+the live index swapped in memory; nothing switches the box's mode.
+
 `Manifest_Model_Introspection_Test` counts QUERIES, because that is what the model
 module's fingerprint is for: two consecutive passes over an unchanged tree must issue
 zero `SHOW COLUMNS`. It drives the module directly rather than through a build, because a

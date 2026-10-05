@@ -23,7 +23,8 @@ use App\RSpade\Core\Rsx;
  * ACL System:
  * - Primary role (role_id) grants base permissions
  * - Supplementary permissions (_user_permissions table) can GRANT or DENY specific permissions
- * - Resolution: DISABLED check → DENY override → GRANT override → role default
+ * - Resolution: DENY override → GRANT override → role default
+ * - Disabling a member is users.is_enabled (refused at login and on every request), never a role
  *
  * ACTOR: extends Rsx_Site_Actor_Model_Abstract - it signs in and it is the site-scoped
  * target of the created_by/updated_by authorship pairs. See rsx:man actors.
@@ -87,7 +88,6 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     const ROLE_MANAGER = 500;
     const ROLE_USER = 600;
     const ROLE_VIEWER = 700;
-    const ROLE_DISABLED = 800;
 
     // =========================================================================
     // ROLE CONSTANTS (lower ID = higher privilege, 100-based for future expansion)
@@ -224,7 +224,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
                 'constant' => 'ROLE_ROOT_ADMIN',
                 'label' => 'Root Admin',
                 'permissions' => [1, 2, 3, 4, 5, 6, 7], // All core PERM_* (1-7)
-                'can_admin_roles' => [300, 400, 500, 600, 700, 800], // All roles below
+                'can_admin_roles' => [200, 300, 400, 500, 600, 700], // Itself and every role below
                 'selectable' => false, // Root admin assigned by system only
             ],
             // ROLE_SITE_OWNER = 300
@@ -232,21 +232,21 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
                 'constant' => 'ROLE_SITE_OWNER',
                 'label' => 'Site Owner',
                 'permissions' => [2, 3, 4, 5, 6, 7], // BILLING(2) through VIEW(7)
-                'can_admin_roles' => [400, 500, 600, 700, 800], // Site Admin and below
+                'can_admin_roles' => [300, 400, 500, 600, 700], // Site Owner and below
             ],
             // ROLE_SITE_ADMIN = 400
             400 => [
                 'constant' => 'ROLE_SITE_ADMIN',
                 'label' => 'Site Admin',
                 'permissions' => [3, 4, 5, 6, 7], // SETTINGS(3) through VIEW(7)
-                'can_admin_roles' => [500, 600, 700, 800], // Manager and below
+                'can_admin_roles' => [400, 500, 600, 700], // Site Admin and below
             ],
             // ROLE_MANAGER = 500
             500 => [
                 'constant' => 'ROLE_MANAGER',
                 'label' => 'Manager',
                 'permissions' => [5, 6, 7], // ACTIVITY(5), EDIT(6), VIEW(7)
-                'can_admin_roles' => [600, 700, 800], // User and below
+                'can_admin_roles' => [500, 600, 700], // Manager and below
             ],
             // ROLE_USER = 600
             600 => [
@@ -260,13 +260,6 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
                 'constant' => 'ROLE_VIEWER',
                 'label' => 'Viewer',
                 'permissions' => [7], // VIEW(7) only
-                'can_admin_roles' => [],
-            ],
-            // ROLE_DISABLED = 800
-            800 => [
-                'constant' => 'ROLE_DISABLED',
-                'label' => 'Disabled',
-                'permissions' => [],
                 'can_admin_roles' => [],
             ],
         ],
@@ -362,17 +355,13 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
 
     /**
      * THE resolution rule, in one place: the role's defaults, plus GRANTs, minus DENYs
-     * (DENY wins), and nothing at all for a disabled role. Sorted for stable output.
+     * (DENY wins). Sorted for stable output.
      *
      * @param array{grants: int[], denies: int[]} $supplementary
      * @return int[]
      */
     private function __resolve_permissions(array $supplementary): array
     {
-        if ($this->role_id === self::ROLE_DISABLED) {
-            return [];
-        }
-
         $permissions = $this->role_id__permissions ?? [];
 
         foreach ($supplementary['grants'] as $perm_id) {
@@ -401,8 +390,10 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     /**
      * Check if user can administer users with the given role
      *
-     * Prevents privilege escalation - users can only assign roles
-     * at or below their own permission level.
+     * Prevents privilege escalation - a user administers (creates, edits, re-roles,
+     * disables) only users whose role is EQUAL to or LOWER than their own, as listed
+     * in the role's can_admin_roles. An administration endpoint asks it of BOTH the
+     * target's current role and any new role it assigns.
      *
      * @param int $role_id Role constant (ROLE_*)
      * @return bool
@@ -546,7 +537,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      *
      *   from_role  the user's role grants it by default
      *   override   'grant', 'deny' or null - the supplementary row, if any
-     *   effective  what has_permission() answers (DENY wins; a disabled role has nothing)
+     *   effective  what has_permission() answers (DENY wins)
      *
      * A list screen passes this user's entry from User_Permission_Model::for_users() as
      * $supplementary, so a page of users costs one ACL query instead of one per row.
@@ -557,7 +548,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      */
     public function get_permission_breakdown(?array $supplementary = null): array
     {
-        $role_permissions = $this->role_id === self::ROLE_DISABLED ? [] : ($this->role_id__permissions ?? []);
+        $role_permissions = $this->role_id__permissions ?? [];
         $supplementary = $supplementary ?? $this->_load_supplementary_permissions();
         $effective = $this->__resolve_permissions($supplementary);
         $rows = [];
@@ -743,7 +734,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
 
     /**
      * Scope to the users who EFFECTIVELY hold a permission - the set has_permission()
-     * answers true for: a role other than ROLE_DISABLED, no DENY row, and either a role
+     * answers true for: no DENY row, and either a role
      * that grants it by default or a GRANT row. It answers the permission question only;
      * membership state (is_enabled) is a separate filter the caller adds when it wants it.
      *
@@ -758,7 +749,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
         $roles_granting = [];
 
         foreach (static::$enums['role_id'] as $role_id => $role) {
-            if ((int) $role_id !== self::ROLE_DISABLED && in_array($permission_id, $role['permissions'] ?? [], true)) {
+            if (in_array($permission_id, $role['permissions'] ?? [], true)) {
                 $roles_granting[] = (int) $role_id;
             }
         }
@@ -766,7 +757,6 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
         $table = $this->getTable();
 
         return $query
-            ->where("{$table}.role_id", '!=', self::ROLE_DISABLED)
             ->whereNotExists(function ($sub) use ($table, $permission_id) {
                 $sub->selectRaw('1')
                     ->from('_user_permissions')

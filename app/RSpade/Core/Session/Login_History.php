@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Cache\Rsx_Counter;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\User_Agent;
 
 /**
@@ -278,26 +279,13 @@ class Login_History
     }
 
     /**
-     * Get client IP address, handling proxies
+     * The client IP for a history row (Session::get_client_ip()); 'CLI' outside a request.
      *
      * @return string
      */
     private static function _get_client_ip(): string
     {
-        if (php_sapi_name() === 'cli') {
-            return 'CLI';
-        }
-
-        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
-            return trim($ips[0]);
-        }
-
-        if (!empty($_SERVER['HTTP_X_REAL_IP'])) {
-            return $_SERVER['HTTP_X_REAL_IP'];
-        }
-
-        return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        return Session::get_client_ip() ?? 'CLI';
     }
 
     /**

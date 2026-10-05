@@ -9,8 +9,10 @@
 
 namespace App\RSpade\Core;
 
+use Illuminate\Http\Request;
 use RuntimeException;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
+use App\RSpade\Core\Env\Rsx_Env_Hostname_Guard;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
@@ -233,10 +235,12 @@ class Rsx
      * see Rsx_App_Url).
      *
      * Resolution:
-     * - Web mode (non-production): the request hostname (HTTP_HOST), port stripped.
-     * - Production web mode: the request hostname must be the APP_URL host, a sub-host
-     *   of it (ends with ".<app_url_host>"), or the client portal's own host
-     *   (Rsx_Portal_Url::host(), when PORTAL_URL names one); fatal otherwise.
+     * - Web, development mode: the request hostname (HTTP_HOST), port stripped. The
+     *   development tripwire is Rsx_Env_Hostname_Guard, run before dispatch.
+     * - Web, debug or production mode: the request hostname must be the APP_URL host, a
+     *   sub-host of it (ends with ".<app_url_host>"), or the client portal's own host
+     *   (Rsx_Portal_Url::host(), when PORTAL_URL names one); fatal otherwise. Keyed on
+     *   the RSX mode, never on app.env (which maps debug mode to 'local').
      * - CLI mode: the APP_URL host.
      */
     public static function get_hostname(): string
@@ -254,11 +258,12 @@ class Rsx
                 $request_host = explode(':', $request_host)[0];
             }
 
-            // Production validation: request hostname must match the APP_URL host.
-            if (app()->environment('production')) {
+            // Sealed-build validation (debug and production alike): the request hostname
+            // must be one this application serves.
+            if (!self::is_development()) {
                 $app_host = self::__app_url_host();
                 if ($app_host === null) {
-                    shouldnt_happen('APP_URL must be set in .env for production environments');
+                    shouldnt_happen('APP_URL must be set in .env outside development mode');
                 }
 
                 // Request host must equal the APP_URL host, be a sub-host of it, or be the
@@ -286,9 +291,9 @@ class Rsx
     }
 
     /**
-     * Whether a production request host is one this application answers on: the APP_URL
-     * host, a sub-host of it, or the client portal's host. Pure (lowercased, port-less
-     * inputs); get_hostname() is the caller.
+     * Whether a request host is one this application answers on: the APP_URL host, a
+     * sub-host of it, or the client portal's host. Pure (lowercased, port-less inputs);
+     * get_hostname() (debug and production) and absolute_url_origin() are the callers.
      *
      * @param string $request_host The request's host, lowercased, no port
      * @param string $app_host The APP_URL host
@@ -300,6 +305,55 @@ class Rsx
         return $request_host === $app_host
             || str_ends_with($request_host, '.' . $app_host)
             || ($portal_host !== '' && $request_host === $portal_host);
+    }
+
+    /**
+     * The origin (scheme://host[:port], the default port dropped) an ABSOLUTE URL built
+     * during $request must carry - the one rsx_absolute_url() prepends.
+     *
+     * The request's own authority (the scheme the browser used, X-Forwarded-Proto aware,
+     * and the browsed host and port) ONLY when its host is a served host - host_is_served()
+     * against the configured APP_URL and PORTAL_URL hosts, in every mode. Otherwise -
+     * no host, no APP_URL host, a loopback host APP_URL does not name, any other host -
+     * APP_URL's configured origin. Such URLs leave the browser (a reset or invitation
+     * link is mailed to somebody else), so a Host header the caller chose must never be
+     * able to reach one.
+     *
+     * A console process's request is the one Laravel synthesizes from APP_URL, so the CLI
+     * answers APP_URL's origin through the same path.
+     */
+    public static function absolute_url_origin(Request $request): string
+    {
+        $raw_host = (string) $request->server('HTTP_HOST', '');
+        $app_host = self::__app_url_host();
+
+        if ($raw_host === '' || $app_host === null) {
+            return self::app_url_origin();
+        }
+
+        $request_host = Rsx_Env_Hostname_Guard::normalize_request_host($raw_host);
+
+        if (!self::host_is_served($request_host, $app_host, Rsx_Portal_Url::host())) {
+            return self::app_url_origin();
+        }
+
+        $scheme = self::__scheme_of_server($request->server->all());
+
+        return $scheme . '://' . self::compose_authority($request_host, $raw_host, $scheme);
+    }
+
+    /**
+     * APP_URL's origin - scheme://host[:port], the default port dropped - read from
+     * configuration and never from the request. Throws when APP_URL names no host.
+     */
+    public static function app_url_origin(): string
+    {
+        $app_host = self::__app_url_host();
+        if ($app_host === null) {
+            shouldnt_happen('Cannot build an absolute URL: APP_URL is not set (or has no host). Set APP_URL in .env');
+        }
+
+        return self::__app_url_scheme() . '://' . self::__app_url_authority($app_host);
     }
 
     /**
@@ -331,14 +385,7 @@ class Rsx
         }
 
         // CLI: the APP_URL authority, port included when it declares a non-default one.
-        $app_url = trim((string) env('APP_URL'));
-
-        return self::compose_authority(
-            $host,
-            (string) (parse_url($app_url, PHP_URL_HOST) ?: $host)
-                . (parse_url($app_url, PHP_URL_PORT) ? ':' . (int) parse_url($app_url, PHP_URL_PORT) : ''),
-            strtolower((string) parse_url($app_url, PHP_URL_SCHEME)) === 'http' ? 'http' : 'https'
-        );
+        return self::__app_url_authority($host);
     }
 
     /**
@@ -359,9 +406,32 @@ class Rsx
             return self::__request_scheme();
         }
 
+        return self::__app_url_scheme();
+    }
+
+    /**
+     * APP_URL's scheme: 'http' only for a literal http APP_URL, 'https' otherwise.
+     */
+    private static function __app_url_scheme(): string
+    {
         $app_url = trim((string) env('APP_URL'));
 
         return strtolower((string) parse_url($app_url, PHP_URL_SCHEME)) === 'http' ? 'http' : 'https';
+    }
+
+    /**
+     * APP_URL's authority for a resolved host, its port spelled only when non-default.
+     */
+    private static function __app_url_authority(string $host): string
+    {
+        $app_url = trim((string) env('APP_URL'));
+
+        return self::compose_authority(
+            $host,
+            (string) (parse_url($app_url, PHP_URL_HOST) ?: $host)
+                . (parse_url($app_url, PHP_URL_PORT) ? ':' . (int) parse_url($app_url, PHP_URL_PORT) : ''),
+            self::__app_url_scheme()
+        );
     }
 
     /**
@@ -390,12 +460,23 @@ class Rsx
      */
     private static function __request_scheme(): string
     {
-        $forwarded = strtolower(trim((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')));
+        return self::__scheme_of_server($_SERVER);
+    }
+
+    /**
+     * The scheme a server-variable set describes: X-Forwarded-Proto when it names one,
+     * else the HTTPS flag.
+     *
+     * @param array<string, mixed> $server
+     */
+    private static function __scheme_of_server(array $server): string
+    {
+        $forwarded = strtolower(trim((string) ($server['HTTP_X_FORWARDED_PROTO'] ?? '')));
         if ($forwarded === 'https' || $forwarded === 'http') {
             return $forwarded;
         }
 
-        $https = strtolower(trim((string) ($_SERVER['HTTPS'] ?? '')));
+        $https = strtolower(trim((string) ($server['HTTPS'] ?? '')));
 
         return ($https !== '' && $https !== 'off') ? 'https' : 'http';
     }

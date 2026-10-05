@@ -1634,6 +1634,37 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | HTTP: Trusted Proxies (the client address)
+    |--------------------------------------------------------------------------
+    |
+    | Which peers may tell the application who the CLIENT is. X-Forwarded-For is
+    | read ONLY when the immediate peer (REMOTE_ADDR) is a trusted proxy, and then
+    | right to left: each trusted hop is skipped and the first untrusted address is
+    | the client. Every entry a client wrote itself sits to the LEFT of the address
+    | the first trusted proxy appended, so a forged header changes nothing. One
+    | resolver, $request->ip() (App\Http\Middleware\TrustProxies), feeds
+    | Session::get_client_ip(): the login throttle, the second-factor throttle,
+    | login history, session rows, the API request log and revision records.
+    |
+    | Loopback (127.0.0.1, ::1) is ALWAYS trusted: the framework's own hops are on
+    | it (nginx -> the full-page-cache proxy on 127.0.0.1:3200 -> nginx -> PHP).
+    | List here the addresses or CIDRs of anything in FRONT of nginx that appends
+    | X-Forwarded-For - a load balancer, a TLS terminator, a CDN's published ranges.
+    | Until it is listed, every request appears to come from that device, and the
+    | per-IP login throttle counts every visitor as one.
+    |
+    | Only X-Forwarded-For is trusted. X-Forwarded-Host/-Port/-Prefix are never
+    | read through a proxy (the host the application answers on is HTTP_HOST,
+    | validated against APP_URL / PORTAL_URL).
+    |
+    */
+    'http' => [
+        // e.g. ['10.0.0.0/8', '192.0.2.10']. Empty: loopback only.
+        'trusted_proxies' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Session Retention
     |--------------------------------------------------------------------------
     |
@@ -1793,6 +1824,36 @@ return [
         // shouldnt_happen() on anything lower rather than minting a window that is
         // already closed.
         'challenge_window_minutes' => 10,
+
+        // ATTEMPT CAPS. These are counts, not timeouts. A six-digit code with a
+        // +/-1 step tolerance has three live answers in a million, so an uncapped
+        // challenge is a guessing oracle for anyone who already holds the password.
+        // The per-IP login throttle (rsx.sessions.login_throttle) is not enough on
+        // its own: an attacker rotates addresses. Every wrong answer to a challenge -
+        // a TOTP code, a recovery code, a passkey assertion - counts against BOTH caps.
+        //
+        // Wrong answers ONE parked challenge survives. The answer that reaches this
+        // number destroys the challenge, and the user signs in again (re-entering the
+        // password, which spends the per-IP budget). Must be at least 1.
+        'challenge_max_failures' => 5,
+
+        // Wrong answers ONE IDENTITY may give, across every challenge and every IP,
+        // inside identity_failure_window_minutes. Once reached, verification for that
+        // identity is refused - a correct code included - until the window closes or an
+        // operator runs rsx:users:2fa:unlock (Rsx_Two_Factor::clear_failures()). A
+        // correct answer before the cap is reached clears the count. Must be at least 1.
+        'identity_max_failures' => 10,
+
+        // A SECURITY WINDOW, NOT AN OPERATION TIMEOUT (see the timeout mandate): the
+        // fixed window, opened by an identity's first wrong answer, inside which
+        // identity_max_failures is counted - and therefore how long a locked identity
+        // stays locked. It bounds an attacker's guessing RATE, not any operation:
+        // nothing is waiting on it and nothing fails when it closes. 60 minutes holds a
+        // password-holding attacker to identity_max_failures guesses an hour (about one
+        // success in 30,000 hours for a six-digit code), while a real user who fumbled
+        // their phone is locked out for at most an hour or until support unlocks them.
+        // Must be at least 1.
+        'identity_failure_window_minutes' => 60,
     ],
 
     /*

@@ -245,7 +245,14 @@ STRICT PRODUCTION
     Strict production is the fully optimized build. Relative to debug:
 
         - Minified (Terser for JS, cssnano for CSS, via the minify RPC
-          server).
+          server). Class and function NAMES survive minification
+          (keep_classnames / keep_fnames): the runtime resolves jqhtml
+          components and SPA actions by a class's own .name, so a minifier
+          that renamed one would leave every action rendering as an empty
+          default component. The browser's class registry
+          (Manifest._define) refuses a class whose runtime name is not its
+          manifest name, so a rename is a boot failure naming the class,
+          never a blank page.
         - Inline sourcemaps are GONE (minification strips the
           sourceMappingURL comments - the "no minify, no maps" truth stated
           above, run forward).
@@ -266,8 +273,8 @@ ENVIRONMENT VALIDATION
 
 DETERMINISM CONTRACT
     A sealed build is deterministic: two byte-identical codebases, checked
-    out at DIFFERENT paths, produce an IDENTICAL build_key and IDENTICAL
-    bundle filenames, byte-for-byte. This is what lets a build be
+    out at DIFFERENT paths and built in the SAME mode, produce an IDENTICAL
+    build_key and IDENTICAL bundle filenames, byte-for-byte. This is what lets a build be
     compiled once and trusted across a cluster (or cached by CI keyed on the
     build_key), and it is what makes the CI-artifact and container-image
     recipes in rsx:man prod honest.
@@ -283,7 +290,9 @@ DETERMINISM CONTRACT
        mtime hash - it only needs to notice local edits, and is deliberately
        not portable. The path is relative there too: base_path() sits above
        symlinks to the application and volatile trees, so an absolute path
-       would give one file two identities.)
+       would give one file two identities. That fast hash keys derived
+       caches and bundle filenames; it never reaches build_key, which is
+       content-derived in every mode - see 2.)
 
     2. The manifest hash excludes per-file mtime/size. Those still live in
        the cache file (dev change-detection needs them) but are OUT of the
@@ -293,21 +302,33 @@ DETERMINISM CONTRACT
        incremental one emit the same sections in the same order rather than
        in the order each happened to produce or inherit them. So the
        manifest index produced by two identical checkouts is byte-stable,
-       and build_key (the manifest hash) is content-derived.
+       and build_key (the manifest hash) is content-derived. An mtime change
+       alone therefore never moves the key.
 
-    3. Generated-file keys in the manifest index are LOGICAL, not absolute.
+    3. The MODE is part of build_key. One tree builds three different
+       artifacts (development, debug, production), and the key is what
+       identifies the build to the full-page cache, the build-scoped
+       RsxCache prefix, window.rsxapp.build_key and the development asset
+       cache-buster - so the same tree keys differently in each mode, and a
+       development build after rsx:prod:disable never answers with the
+       sealed build's key. The index records the mode it was built in, and
+       a development boot that loads an index recorded under another mode
+       discards it and rebuilds in full.
+
+    4. Generated-file keys in the manifest index are LOGICAL, not absolute.
        A generated stub is recorded as tmp/js-stubs/<name>.js whatever
        RSX_TMP_PATH resolves to on the building box, so two boxes with
        different tmp roots produce identical indexes and identical build
        keys.
 
-    4. Bundle filenames are {Bundle}__{app|vendor}.{hash8}.{ext}, where the
+    5. Bundle filenames are {Bundle}__{app|vendor}.{hash8}.{ext}, where the
        hash8 derives from the same relative-path + content inputs (plus the
        committed lockfile content hashes and npm declarations, already
        deterministic). Minified output is reproducible given the pinned,
        committed node_modules.
 
-    Bonus: because build_key is content-derived and stable across checkouts,
+    Bonus: because build_key is content-derived and stable across checkouts
+    (in one mode),
     the full-page cache keys (fpc:{build_key}:{host}:{...}) are cluster-shareable -
     two nodes on the same build hit the same FPC entries.
 

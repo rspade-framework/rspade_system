@@ -7,6 +7,7 @@
 namespace App\RSpade\Tests\ProdMode\Php;
 
 use App\RSpade\Core\Manifest\Manifest_Store;
+use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -77,8 +78,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['files']['rsx/models/beta_model.php']['mtime'] = 888888;
 
         static::__assert_equals(
-            Manifest_Store::_compute_hash($a),
-            Manifest_Store::_compute_hash($b),
+            Manifest_Store::_compute_hash($a, Rsx::MODE_PRODUCTION),
+            Manifest_Store::_compute_hash($b, Rsx::MODE_PRODUCTION),
             'mtime mutation must not change the build key'
         );
     }
@@ -90,8 +91,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['files']['rsx/models/alpha_model.php']['size'] = 424242;
 
         static::__assert_equals(
-            Manifest_Store::_compute_hash($a),
-            Manifest_Store::_compute_hash($b),
+            Manifest_Store::_compute_hash($a, Rsx::MODE_PRODUCTION),
+            Manifest_Store::_compute_hash($b, Rsx::MODE_PRODUCTION),
             'size mutation must not change the build key'
         );
     }
@@ -107,8 +108,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['files']['rsx/models/alpha_model.php']['hash'] = 'cccc3333';
 
         static::__assert_not_equals(
-            Manifest_Store::_compute_hash($a),
-            Manifest_Store::_compute_hash($b),
+            Manifest_Store::_compute_hash($a, Rsx::MODE_PRODUCTION),
+            Manifest_Store::_compute_hash($b, Rsx::MODE_PRODUCTION),
             'a per-file sha1 change must change the build key'
         );
     }
@@ -129,8 +130,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
             = '/somewhere/else/entirely/vendor/some/trait/SoftDeletes.php';
 
         static::__assert_equals(
-            Manifest_Store::_compute_hash($a),
-            Manifest_Store::_compute_hash($b),
+            Manifest_Store::_compute_hash($a, Rsx::MODE_PRODUCTION),
+            Manifest_Store::_compute_hash($b, Rsx::MODE_PRODUCTION),
             'an absolute path inside a file record must not change the build key'
         );
     }
@@ -146,8 +147,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['models'] = ['Alpha_Model' => ['file' => 'rsx/models/alpha_model.php']];
 
         static::__assert_equals(
-            Manifest_Store::_compute_hash($a),
-            Manifest_Store::_compute_hash($b),
+            Manifest_Store::_compute_hash($a, Rsx::MODE_PRODUCTION),
+            Manifest_Store::_compute_hash($b, Rsx::MODE_PRODUCTION),
             'an absolute base_path() prefix in a derived section is reduced before hashing'
         );
     }
@@ -155,7 +156,7 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
     public static function test_hash_does_not_mutate_input()
     {
         $body = self::_fixture();
-        Manifest_Store::_compute_hash($body);
+        Manifest_Store::_compute_hash($body, Rsx::MODE_PRODUCTION);
 
         // The live manifest body must keep mtime/size (dev change-detection needs them).
         static::__assert_equals(1000, $body['files']['rsx/models/alpha_model.php']['mtime'], 'input must not be mutated');
@@ -169,8 +170,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['php_classes']['Gamma_Model'] = ['file' => 'rsx/models/gamma_model.php'];
 
         static::__assert_not_equals(
-            Manifest_Store::_compute_hash($a),
-            Manifest_Store::_compute_hash($b),
+            Manifest_Store::_compute_hash($a, Rsx::MODE_PRODUCTION),
+            Manifest_Store::_compute_hash($b, Rsx::MODE_PRODUCTION),
             'a derived-section change must change the build key'
         );
     }
@@ -188,8 +189,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['files'] = array_reverse($b['files'], true);
 
         static::__assert_equals(
-            Manifest_Store::_compute_hash($a),
-            Manifest_Store::_compute_hash($b),
+            Manifest_Store::_compute_hash($a, Rsx::MODE_PRODUCTION),
+            Manifest_Store::_compute_hash($b, Rsx::MODE_PRODUCTION),
             'file insertion order must not affect the build key'
         );
     }

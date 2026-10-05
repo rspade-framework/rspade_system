@@ -21,7 +21,7 @@ the application half lives in `rsx/portal/` (which has its own CLAUDE.md).
 
 ## Invariants worth stating out loud
 
-- **ONE session per browser.** One `rsx` cookie, one `_sessions` row, shared by
+- **ONE session per browser.** One session cookie, one `_sessions` row, shared by
   the staff app and the portal. The row is a PROPERTY BAG; the EXPERIENCE is a
   property of the REQUEST. Both identities set at once is NORMAL. Never mix the
   two facades' properties, and never delete or deactivate the row on portal

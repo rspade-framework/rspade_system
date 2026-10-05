@@ -7,9 +7,9 @@ use App\RSpade\Core\Api\Rsx_Api;
 use App\RSpade\Core\Api\Rsx_Api_Controller_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Rsx_File_Upload;
 use App\RSpade\Core\Files\Spreadsheet_Rendition;
-use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Session\Session;
 
@@ -25,7 +25,7 @@ use App\RSpade\Core\Session\Session;
  *
  * GETTING BYTES BACK OUT IS NOT AN ENDPOINT EITHER. The existing /_download, /_inline,
  * /_thumbnail/* and /_preview/pdf routes accept an Authorization: Bearer key exactly as they
- * accept a cookie (see Rsx_Api_Bearer::authenticate_web_request), so there is ONE URL per
+ * accept a cookie (see Rsx_Api_Bearer::authenticate_file_route), so there is ONE URL per
  * file for a browser and an integration alike. Those URLs are documented on the upload
  * endpoint below, because they cannot appear as cards of their own in an /api/vN catalog.
  *
@@ -129,7 +129,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
         // Same mandatory precondition POST /_upload enforces, for the same reason: an app that
         // registered no file.upload.authorize handler has an anonymous upload endpoint, and
         // that is a misconfigured application, not a bad request.
-        Rsx_File_Upload::require_authorize_gate();
+        Rsx_File_Gates::require_handler(Rsx_File_Gates::UPLOAD);
 
         // An API key is a STAFF credential and its session is a staff identity, so the realm
         // is never the portal here - the site comes from Session::get_site_id(), which the
@@ -283,7 +283,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
             return null;
         }
 
-        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => Session::get_user(),
             'request' => request(),
@@ -294,7 +294,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
         }
 
         if ($need_bytes) {
-            $download_auth = Rsx::trigger_gate('file.download.authorize', [
+            $download_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::DOWNLOAD, [
                 'attachment' => $attachment,
                 'user' => Session::get_user(),
                 'request' => request(),

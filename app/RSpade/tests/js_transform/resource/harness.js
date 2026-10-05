@@ -12,6 +12,13 @@
  *   node harness.js emit <Fixture_Name> <target>      -> print the raw transformed source
  *   node harness.js assert_negative                   -> run the assertion against a
  *                                                        binding-dropping (fork-less) config
+ *   node harness.js minified <Fixture_Name> <target>  -> transform, then minify through the
+ *                                                        REAL minify service (Terser, as a
+ *                                                        strict production build runs it),
+ *                                                        eval, print the `.name` facts JSON
+ *   node harness.js manifest_identity                 -> register a correctly named and a
+ *                                                        renamed class through the REAL
+ *                                                        Manifest._define, print the outcome
  *
  * Invoked by php/Js_Decorator_Transform_Test.php. Output is a single JSON line on stdout.
  */
@@ -21,6 +28,8 @@ const path = require('path');
 const vm = require('vm');
 
 const BABEL_SERVICE = path.join(__dirname, '..', '..', '..', 'Core', 'JsParsers', 'resource', 'babel-service.js');
+const MANIFEST_JS = path.join(__dirname, '..', '..', '..', 'Core', 'Js', 'Manifest.js');
+const MINIFY_SERVICE = path.join(__dirname, '..', '..', '..', 'Core', 'Bundle', 'resource', 'minify-service.js');
 const FIXTURES = path.join(__dirname, 'fixtures');
 
 const server = require(BABEL_SERVICE);
@@ -143,10 +152,83 @@ function assert_negative() {
     }
 }
 
+// Evaluate a source in a fresh sandbox and return the value of `expression`, read from
+// WITHIN the same script so a lexical (class / const) binding resolves the way a sibling
+// concatenated file's bare reference would.
+function eval_and_read(code, expression, filename) {
+    const sandbox = build_sandbox({});
+    sandbox.__captured = undefined;
+    vm.createContext(sandbox);
+    vm.runInContext(code + `\n;globalThis.__captured = ${expression};`, sandbox, { filename });
+    return sandbox.__captured;
+}
+
+// The names the runtime resolves by, read off the source as authored-then-transformed and
+// again after the real minify service has run over it. The minify module is required
+// in-process (its exported RPC handler), so the options under test are exactly the ones a
+// strict production build uses.
+async function minified_facts(name, target) {
+    const transformed = transform(name, target);
+    const minify = require(MINIFY_SERVICE);
+    const response = await minify.minify({ files: [{ type: 'js', content: transformed, filename: name + '.js' }] });
+    const result = response.results[name + '.js'];
+    if (result.status !== 'success') {
+        throw new Error('minify failed for ' + name + ' [' + target + ']: ' + JSON.stringify(result.error));
+    }
+
+    const read = (code, label) => {
+        const value = eval_and_read(code, name, name + '.' + label + '.js');
+        if (name === 'Fixture_Named_Functions') {
+            return { top: value.top.name, inner: value.inner.name };
+        }
+        return { class_name: value.name };
+    };
+
+    return {
+        name,
+        target,
+        transformed: read(transformed, 'transformed'),
+        minified: read(result.result, 'minified'),
+    };
+}
+
+// The browser's class registry refuses a class whose `.name` is not its manifest name.
+// Manifest.js is a self-contained class file; it is evaluated as-is in a sandbox and fed
+// one correctly named class and one whose runtime name is a hashed alias (the shape a
+// renaming minifier produced).
+function manifest_identity() {
+    const sandbox = { console };
+    vm.createContext(sandbox);
+    vm.runInContext(fs.readFileSync(MANIFEST_JS, 'utf8') + '\n;globalThis.Manifest = Manifest;', sandbox, { filename: 'Manifest.js' });
+
+    const attempt = (cls, manifest_name) => {
+        try {
+            sandbox.Manifest._define([[cls, manifest_name, null, null]]);
+            return { threw: false, registered: sandbox.Manifest._classes[manifest_name] !== undefined };
+        } catch (e) {
+            return { threw: true, message: e.message };
+        }
+    };
+
+    const renamed = vm.runInContext('(class _9de25a2c_Fixture_Renamed_Action {})', sandbox);
+    const named = vm.runInContext('(class Fixture_Named_Action {})', sandbox);
+
+    return {
+        named: attempt(named, 'Fixture_Named_Action'),
+        renamed: attempt(renamed, 'Fixture_Renamed_Action'),
+    };
+}
+
 const mode = process.argv[2];
 let output;
 
-if (mode === 'runtime') {
+if (mode === 'minified') {
+    // Async (the minify handler is); prints its own JSON line.
+    minified_facts(process.argv[3], process.argv[4] || 'modern').then(
+        (facts) => console.log(JSON.stringify(facts)),
+        (error) => { console.error(error.stack || String(error)); process.exitCode = 1; }
+    );
+} else if (mode === 'runtime') {
     output = runtime_facts(process.argv[3], process.argv[4] || 'modern');
 } else if (mode === 'emit') {
     // Raw transformed source, printed as-is rather than as JSON facts, so a test can assert
@@ -155,11 +237,13 @@ if (mode === 'runtime') {
     process.stdout.write(transform(process.argv[3], process.argv[4] || 'modern'));
 } else if (mode === 'assert_negative') {
     output = assert_negative();
+} else if (mode === 'manifest_identity') {
+    output = manifest_identity();
 } else {
-    console.error('Usage: node harness.js runtime <Fixture_Name> <target> | node harness.js emit <Fixture_Name> <target> | node harness.js assert_negative');
+    console.error('Usage: node harness.js runtime <Fixture_Name> <target> | node harness.js emit <Fixture_Name> <target> | node harness.js assert_negative | node harness.js minified <Fixture_Name> <target> | node harness.js manifest_identity');
     process.exit(1);
 }
 
-if (mode !== 'emit') {
+if (mode !== 'emit' && mode !== 'minified') {
     console.log(JSON.stringify(output));
 }

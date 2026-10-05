@@ -62,7 +62,7 @@ Flash_Alert::warning('This action cannot be undone');
 
 A flash alert is scoped by TWO things, because they answer two different questions.
 
-**`session_id` - which BROWSER.** One browser has one session (one `rsx` cookie, one
+**`session_id` - which BROWSER.** One browser has one session (one session cookie, one
 `_sessions` row), shared by the staff app and the portal. This is what keeps one browser's
 alerts out of another browser's page. It cannot say which experience queued a row, because
 it is the same value in both.
@@ -83,7 +83,7 @@ portal's site contract lives, and it refuses to invent a site).
 
 The read asks `has_session()`, not `get_session_id()`, to decide whether anything is
 pending: `get_session_id()` would create a session for an anonymous visitor who has never
-triggered activation. `has_session()` resolves the browser's `rsx` cookie and creates nothing.
+triggered activation. `has_session()` resolves the browser's session cookie and creates nothing.
 
 The one-minute read-path expiry carries the experience predicate too - a staff read has no
 business deleting the portal's rows, stale or not. The hourly retention task is the sweep

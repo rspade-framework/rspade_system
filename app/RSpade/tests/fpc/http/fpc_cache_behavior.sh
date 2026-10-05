@@ -6,6 +6,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # HTTP integration test - runs against live web server and FPC proxy.
 # No database switching needed; tests verify HTTP-level cache behavior.
+#
+# Needs a FRAMEWORK-DEVELOPMENT box (IS_FRAMEWORK_DEVELOPER=true): /ssr-test is gated
+# #[Auth('is_framework_developer')] and is refused everywhere else.
 
 echo "[SETUP] Preparing test..." >&2
 
@@ -19,7 +22,7 @@ if ! curl -s -o /dev/null --connect-timeout 2 "$FPC_URL/ssr-test" 2>/dev/null; t
 fi
 
 # Clear all FPC cache entries before testing
-redis-cli KEYS 'fpc:*' | xargs -r redis-cli DEL > /dev/null 2>&1
+php artisan rsx:fpc:clear > /dev/null
 
 echo "[TEST] Running FPC cache assertions..." >&2
 
@@ -109,12 +112,16 @@ echo "[TEST] 6. OK - POST bypasses cache" >&2
 # Test 7: Request with session cookie bypasses cache
 # ---------------------------------------------------------------------------
 echo "[TEST] 7. Session cookie bypasses cache..." >&2
-cache_header=$(get_header "/ssr-test" "X-FPC-Cache" "-b rsx=fake_session_token")
-if [ -n "$cache_header" ]; then
-    echo "FAIL: $TEST_NAME - Request with session cookie got FPC header: $cache_header"
-    exit 1
-fi
-echo "[TEST] 7. OK - Session cookie bypasses cache" >&2
+# Both spellings of the session cookie (Rsx_Session_Cookie): __Host-rsx on a secure
+# request, plain rsx on a development plain-http one.
+for session_cookie in "__Host-rsx" "rsx"; do
+    cache_header=$(get_header "/ssr-test" "X-FPC-Cache" "-b ${session_cookie}=fake_session_token")
+    if [ -n "$cache_header" ]; then
+        echo "FAIL: $TEST_NAME - Request with session cookie ${session_cookie} got FPC header: $cache_header"
+        exit 1
+    fi
+done
+echo "[TEST] 7. OK - Session cookie (either name) bypasses cache" >&2
 
 # ---------------------------------------------------------------------------
 # Test 8: HEAD request reads cache but doesn't populate it

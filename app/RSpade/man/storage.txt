@@ -125,7 +125,7 @@ SCOPE INVALIDATION
     - User logs in/out (user ID changes)
     - User switches sites (site ID changes)
     - Application is updated (build key changes)
-    - Session changes (rsx cookie changes)
+    - Session changes (session cookie changes)
 
     This prevents stale data from one context bleeding into another context.
 

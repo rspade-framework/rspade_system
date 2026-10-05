@@ -568,7 +568,9 @@ THE ATTACHMENT_THUMBNAIL COMPONENT
     The same component, unchanged, on portal pages: File_Attachment_Model ships both
     fetch() and portal_fetch(), each gated through the app's own
     file.thumbnail.authorize handler with realm-honest user resolution, and a denial
-    is indistinguishable from a missing record. An app whose thumbnail gate only
+    is indistinguishable from a missing record. That handler is MANDATORY: with none
+    registered every thumbnail read throws naming the gate (rsx:man file_upload,
+    SECURITY HOOKS). An app whose thumbnail gate only
     considered staff users will now deny every portal thumbnail - the handler must
     answer for a Portal_User_Model too. The image itself is requested in the
     portal realm as well: the thumbnail routes are declared in both route tables

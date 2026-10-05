@@ -92,9 +92,10 @@ CACHE BEHAVIOR
     (make_cache_key() in system/bin/fpc-proxy.js) and PHP (Rsx_FPC::cache_key())
     derive it identically.
 
-    The build key is the manifest hash, written to
-    build/build_key during manifest save. When any file
-    changes trigger a manifest rebuild, the build key changes and all FPC
+    The build key is the manifest hash - the tree's content plus the mode it
+    was built in - written to build/build_key during manifest save. When a
+    content change triggers a manifest rebuild, or the box changes mode, the
+    build key changes and all FPC
     entries are effectively invalidated: new requests compute new cache keys,
     so the old entries are simply never read again. Those orphaned entries
     are reclaimed one of three ways:
@@ -179,9 +180,11 @@ WHAT CLEARS AN ENTRY
         with no body. This saves bandwidth on repeat visits.
 
     Session Cookie Bypass:
-        If the request contains an 'rsx' cookie (indicating the visitor
-        has an active session), the proxy passes through directly to PHP.
-        Session users never receive cached content.
+        If the request carries a session cookie, the proxy passes through
+        directly to PHP; session users never receive cached content. Either
+        name counts - '__Host-rsx', or the plain 'rsx' a development-mode http
+        request uses (rsx:man session, SECURITY) - because the proxy cannot
+        tell which one PHP would read, and a bypass is the safe direction.
 
     POST/Non-GET Bypass:
         Non-GET/HEAD methods always pass through to PHP.
@@ -303,7 +306,7 @@ DISPATCHER BEHAVIOR
     1. Checks request is GET with no POST/FILES data
     2. Calls Session::init() to load existing session (does NOT create one)
     3. If user is logged in, skips FPC (no header set)
-    4. If anonymous, blanks all cookies except 'rsx' from $_COOKIE
+    4. If anonymous, blanks all cookies except the session cookie from $_COOKIE
     5. Executes controller method normally
     6. Adds the X-RSpade-FPC header, whose value is the route's own declared
        lifetime in seconds - or 'none'

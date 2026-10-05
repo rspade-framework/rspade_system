@@ -30,6 +30,12 @@ screen; the es5 target was always broken this way).
   assertion (pre/post) that fails the build if any decorated class loses its binding.
 - `app/RSpade/Core/JsParsers/resource/babel-plugin-decorators/` -- the vendored decorator
   fork (esbuild bundle + patch + regeneration docs).
+- `app/RSpade/Core/Bundle/resource/minify-service.js` -- the strict-production minifier
+  (Terser). Covered for one property only: class and function NAMES survive it, because the
+  runtime resolves components and SPA actions by `.name` and the transform's
+  `_<hash>_<Name> = <Name>` assignment is what JS infers a dropped name from.
+- `app/RSpade/Core/Js/Manifest.js` -- `Manifest._define`, the browser class registry, which
+  refuses a class whose runtime `.name` is not its manifest name.
 - `app/RSpade/Core/JsParsers/Js_Transformer.php` -- cache keying, including the toolchain
   fingerprint that invalidates cached transforms when the fork / @babel/core / server script
   changes.
@@ -59,6 +65,13 @@ documents the fork architecture and the binding contract).
   decorator execution, replacement decorators). Covered by `php`.
 - The fail-closed contract assertion: a dropped binding fails the build loudly. Covered by
   `php` (runs the real assertion against a fork-less config).
+- NAMES SURVIVE MINIFICATION: a decorated class (statics branch, title metadata, surviving
+  declaration), a plain class, a top-level function and a function nested in mangle scope
+  all answer to their authored `.name` after the REAL transform AND the REAL minify service,
+  at every target; and the class registry refuses a renamed class at boot. Covered by `php`
+  (`Js_Minify_Names_Test`, JT-10..JT-12). A test on the Babel output alone cannot see a
+  minifier rename, which is how the defect shipped: a downstream field report (2026-10-05)
+  had every decorated SPA action answering to `_<hash>_<Name>` in strict production only.
 - The node service lifecycle: two PHP processes getting two PRIVATE daemons that cannot touch
   each other (asserted both by clearing the per-process state and with a real child artisan
   run), the daemon's idle exit and the proof it never fires while a request is still arriving,
@@ -79,8 +92,12 @@ documents the fork architecture and the binding contract).
 - `resource/harness.js` -- node harness driving the REAL transform path (the babel module's
   exported internals), evaluating output in a `vm` sandbox with decorator stubs, emitting
   runtime facts as JSON; `emit` mode prints the raw transformed source instead, and
-  `assert_negative` runs the negative (assertion-trips) check. Lives under `resource/` so the
+  `assert_negative` runs the negative (assertion-trips) check, `minified` runs a fixture
+  through the transform and then the minify service (required in-process) and reports
+  `.name` before and after, and `manifest_identity` feeds the real `Manifest._define` a
+  correctly named and a renamed class. Lives under `resource/` so the
   manifest does not scan it as framework JS.
 - `resource/fixtures/*.js` -- the decorated/undecorated class fixtures (cases a-e), plus the
   framework-application-prefix fixtures (`_Fixture_Sys_Sidebar`, `_Fixture_Sys_Action`) and
-  the authored-underscore non-class fixture (`Fixture_Authored_Underscores`).
+  the authored-underscore non-class fixture (`Fixture_Authored_Underscores`), and the
+  function-name fixture for minification (`Fixture_Named_Functions`).

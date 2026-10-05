@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: "Uploading files in RSX and attaching them to records - the mandatory file.upload.authorize gate, Ajax.upload(form_data) as the browser transport (POST /api/v1/files for an external integration), the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), a currentColor file-type mark with <File_Type_Icon $file_name> (never a hand-rolled extension map), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, attaching a file uploaded through the external API, showing a thumbnail, avatar or file-type icon, showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks."
+description: "Uploading files in RSX and attaching them to records - the three mandatory file gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize - each throws 'File uploads are disabled' / 'File reads are disabled' when no handler is registered), Ajax.upload(form_data) as the browser transport (POST /api/v1/files for an external integration), the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), a currentColor file-type mark with <File_Type_Icon $file_name> (never a hand-rolled extension map), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, attaching a file uploaded through the external API, showing a thumbnail, avatar or file-type icon, showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks."
 ---
 
 # File attachments
@@ -52,11 +52,11 @@ Drag-and-drop: add `class="rsx-droppable"` to any element/component and handle t
 
 ---
 
-## 2. The upload gate is MANDATORY
+## 2. The file gates are MANDATORY
 
-`POST /_upload` **THROWS (5xx)** when no `file.upload.authorize` handler is registered.
+`POST /_upload` **THROWS (5xx)** when no `file.upload.authorize` handler is registered, and every file READ - thumbnail, download, inline, ZIP, preview, rendition, extracted text, the API's file metadata - throws when `file.thumbnail.authorize` or `file.download.authorize` has none ("File reads are disabled: no file.download.authorize gate handler is registered...").
 
-This is the one gate in the framework that is fail-closed by absence. `Rsx::trigger_gate()` defaults OPEN when nothing is listening — correct for an optional gate, catastrophic here, because an app that never wrote a handler would be running an anonymous upload endpoint. So the endpoint asks `Event_Registry::has_handlers()` itself and refuses. Who may upload is an APPLICATION decision the framework will not guess.
+These three are the gates in the framework that are fail-closed by absence. `Rsx::trigger_gate()` defaults OPEN when nothing is listening — correct for an optional gate, catastrophic here: an app that never wrote a handler would be running an anonymous upload endpoint, or serving every stored file to anybody who can name it by key or sequential id. So every file surface asks through `Rsx_File_Gates::authorize()`, which calls `require_handler()` first. Who may upload and who may see a file are APPLICATION decisions the framework will not guess; a site whose files are deliberately public registers a read handler that returns `true`.
 
 Every app ships exactly one such handler in `/rsx/handlers/`. Minimum: require a logged-in user. The template's is `rsx/handlers/File_Upload_Handlers.php`:
 
@@ -350,9 +350,9 @@ public static function download_all(Request $request, array $params = [])
 
 | Hook | Kind | Fires |
 |---|---|---|
-| `file.upload.authorize` | gate | on `/_upload` (MANDATORY, see §2) |
-| `file.download.authorize` | gate | `/_download`, `/_inline`, ZIP members, PDF renditions |
-| `file.thumbnail.authorize` | gate | thumbnails, previews, and (with download) the dual-gated byte routes |
+| `file.upload.authorize` | gate | on `/_upload` and `POST /api/v1/files` (MANDATORY, see §2) |
+| `file.download.authorize` | gate | `/_download`, `/_inline`, ZIP members, renditions, extracted text (MANDATORY) |
+| `file.thumbnail.authorize` | gate | thumbnails, previews, metadata, and (with download) the dual-gated byte routes (MANDATORY) |
 | `file.upload.params` / `file.upload.response` | filter | shape the create params / the JSON response |
 | `file.upload.complete` | action | logging, notifications |
 

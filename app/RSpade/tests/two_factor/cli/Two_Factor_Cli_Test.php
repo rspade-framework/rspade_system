@@ -18,6 +18,7 @@ use App\RSpade\Core\TwoFactor\Recovery_Codes;
 use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
 use App\RSpade\Core\TwoFactor\Totp;
 use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
+use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
 
 /**
  * rsx:users:2fa:setup / :dump / :remove - the operator path, end to end.
@@ -78,6 +79,9 @@ class Two_Factor_Cli_Test extends Rsx_Test_Abstract
         $user->last_name = 'Identity';
         $user->is_enabled = 1;
         $user->save();
+
+        // The failure counter is redis-held and id-keyed; a fresh fixture starts clean.
+        Rsx_Two_Factor::clear_failures($login_user);
 
         return $login_user;
     }
@@ -260,6 +264,49 @@ class Two_Factor_Cli_Test extends Rsx_Test_Abstract
     // -------------------------------------------------------------------------
 
     /**
+     * tfa-cli-11: unlock lifts the identity's second-factor lock, so its correct code
+     * signs in again; the factors themselves are untouched.
+     */
+    public static function test_unlock_lifts_a_second_factor_lock()
+    {
+        $login_user = static::__make_login_user();
+        $data = static::__setup($login_user);
+
+        $saved = config('rsx.two_factor');
+        config(['rsx.two_factor' => array_merge($saved, ['identity_max_failures' => 1])]);
+
+        try {
+            Session::logout();
+            static::__reset_session();
+            Rsx_Two_Factor::begin_challenge($login_user);
+
+            try {
+                Rsx_Two_Factor::verify_challenge(['code' => '000000']);
+            } catch (Two_Factor_Failed_Exception $e) {
+                // expected: the one wrong answer spends the budget
+            }
+
+            static::__assert_true(Rsx_Two_Factor::is_locked($login_user), 'the identity is locked');
+
+            [$code, $envelope] = static::__json_call('rsx:users:2fa:unlock', ['--user' => (string) $login_user->id]);
+
+            static::__assert_equals(0, $code);
+            static::__assert_true($envelope['data']['was_locked'], 'the command reports the lock it lifted');
+            static::__assert_false(Rsx_Two_Factor::is_locked($login_user), 'and the lock is gone');
+            static::__assert_true(Rsx_Two_Factor::is_enabled($login_user), 'the factor is untouched');
+
+            Rsx_Two_Factor::begin_challenge($login_user);
+            $signed_in = Rsx_Two_Factor::verify_challenge([
+                'code' => Totp::code_for($data['secret'], intdiv(time(), Totp::PERIOD)),
+            ]);
+
+            static::__assert_equals((int) $login_user->id, (int) $signed_in->id, 'the correct code signs in again');
+        } finally {
+            config(['rsx.two_factor' => $saved]);
+        }
+    }
+
+    /**
      * tfa-cli-05: removing everything leaves the identity signing in with a password alone,
      * recovery codes included.
      */
@@ -374,7 +421,7 @@ class Two_Factor_Cli_Test extends Rsx_Test_Abstract
      */
     public static function test_unknown_user_fails_loudly_in_both_forms()
     {
-        foreach (['rsx:users:2fa:setup', 'rsx:users:2fa:dump'] as $command) {
+        foreach (['rsx:users:2fa:setup', 'rsx:users:2fa:dump', 'rsx:users:2fa:unlock'] as $command) {
             [$json_code, $envelope] = static::__json_call($command, ['--user' => 'nobody_' . uniqid() . '@example.com']);
 
             static::__assert_equals(1, $json_code, $command . ' exits non-zero');
@@ -394,7 +441,7 @@ class Two_Factor_Cli_Test extends Rsx_Test_Abstract
      */
     public static function test_user_is_required_and_never_defaulted()
     {
-        foreach (['rsx:users:2fa:setup', 'rsx:users:2fa:dump'] as $command) {
+        foreach (['rsx:users:2fa:setup', 'rsx:users:2fa:dump', 'rsx:users:2fa:unlock'] as $command) {
             [$code, $envelope] = static::__json_call($command, []);
 
             static::__assert_equals(1, $code);

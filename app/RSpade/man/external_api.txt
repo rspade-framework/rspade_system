@@ -125,11 +125,16 @@ DECLARING ENDPOINTS
         {"error": {"code": "forbidden", "message": "Insufficient
         permissions"}} - distinct from the uniform 401 a bad key gets.
 
-        The template ships 'is_logged_in' on its reference endpoints. It also
-        DEFINES can_use_api() (PERM_API_ACCESS) but deliberately does not
-        apply it, because keys minted before that permission existed would
-        stop working; gating a NEW API surface on can_use_api() is the
-        recommended shape when there is no such history to respect.
+        The template gates every reference API controller
+        #[Auth('is_logged_in', 'can_use_api', 'can_view_data')] and every write
+        additionally #[Auth('can_edit_data')] - the same data checks its staff
+        screens apply, so a key never does what its holder could not do in the
+        browser. can_use_api (PERM_API_ACCESS) is held by no role by default
+        and is granted per user; the template's Main::pre_dispatch also refuses
+        a bearer identity without it (403 account_refused), which covers the
+        file-serving routes too. API use therefore takes two switches there:
+        the framework's users.is_api_access_enabled and the application's
+        permission. rsx/app/api/CLAUDE.md is the living description.
 
     #[Api_Endpoint(pattern, methods)]
         pattern   MUST start '/api/vN/' (N = one or more digits) and have a
@@ -304,6 +309,12 @@ AUTHENTICATION
         no Authorization header      -> 401 {"error": {"code": "auth_required"}}
         invalid / revoked / expired  -> 401 {"error": {"code": "unauthorized"}}
 
+    The same uniform 401 refuses a key whose user is not active (the
+    membership or its site disabled), whose user lacks
+    users.is_api_access_enabled, or whose LOGIN IDENTITY is soft-deleted - a
+    deleted account's keys die with it. The caller learns that the key does
+    not work, never why.
+
     On success the dispatcher resolves the key's user WITHOUT site scope
     (User_Model::without_site_scope() - there is no site identity yet to scope
     by), then establishes a headless identity:
@@ -461,6 +472,13 @@ FILE ENDPOINTS
         /_preview/sheet/:key
 
     A bad Bearer on one of these is a 401 - it never degrades to anonymous.
+    The page Dispatcher establishes the key's identity
+    (Rsx_Api_Bearer::authenticate_file_route()) as soon as one of these routes
+    matches - BEFORE the #[Auth] gates and BEFORE the application's
+    Main::pre_dispatch - so the account policy sees a key holder here exactly
+    as it does on /api/vN, and a non-null pre_dispatch answer is the same
+    403 account_refused (Rsx_Api_Bearer::account_refused()). The header is
+    ignored on every other page route.
     Fetch them on the APPLICATION host at their bare paths. The same routes
     also answer in the portal realm (under the portal's prefix, or on its own
     host) for portal pages; a Bearer key presented on a PORTAL-realm file route
@@ -468,6 +486,9 @@ FILE ENDPOINTS
     request - the API does not exist on the portal (rsx:man portal).
     Read authorization runs the file.thumbnail.authorize and (for bytes)
     file.download.authorize gates; a denial and a missing file are both 404.
+    Both gates are MANDATORY: with no handler registered for either, every
+    file read - these routes and GET /api/v1/files/:key(/text) - throws a 5xx
+    naming the missing gate (rsx:man file_upload, SECURITY HOOKS).
 
 API KEYS
     Keys are Api_Key_Model rows on the framework-core _api_keys table. Format
@@ -883,7 +904,7 @@ KEY SCOPES
     (/_file/..., /_thumbnail/..., /_download_zip/..., /_preview/pdf/... - see
     FILE ENDPOINTS) accept a Bearer key on a URL that carries no /api/vN/ path
     for a scope to match, and they serve the very bytes GET /api/v1/files/:key
-    describes. So Rsx_Api_Bearer::authenticate_web_request() evaluates a scoped
+    describes. So Rsx_Api_Bearer::authenticate_file_route() evaluates a scoped
     key against a SYNTHETIC path inside the files subtree - "does any scope
     reach the files subtree" - and answers the same insufficient_scope 403 when
     it does not. Without this the scope would be advisory: a key scoped away
@@ -1467,7 +1488,9 @@ ENVIRONMENT INTERACTIONS AND CAVEATS
     Dev hostname guard. In development mode a web request whose host does not
     match the APP_URL host fatals loudly (Rsx_Env_Hostname_Guard). An external
     API call in dev must therefore use the APP_URL host, or a loopback request
-    (localhost / 127.* / ::1), which is exempt.
+    (localhost / a 127.0.0.0/8 address / ::1), which is exempt. In debug and
+    production the host must be the APP_URL host, a sub-host of it, or the
+    PORTAL_URL host.
 
     CSRF. Not applicable. There is no cookie session to protect, and RSpade's
     VerifyCsrfToken is disabled framework-wide regardless. Bearer auth is the
@@ -1491,7 +1514,8 @@ ENVIRONMENT INTERACTIONS AND CAVEATS
     the API as usual (and <portal-prefix>/api/... is an ordinary portal URL).
 
     Main_Abstract::pre_dispatch. RUNS for API dispatch, after the bearer identity,
-    the scope check and the #[Auth] gates, before the controller - so an
+    the scope check and the #[Auth] gates, before the controller - and for a
+    bearer key on a file-serving route (FILE ENDPOINTS) - so an
     application's own account policy (suspended, unpaid, terms not accepted,
     rsx:man session MID-SESSION) covers its keys as well as its pages. $params
     carries _handler (the endpoint's controller class) and _method, as the page

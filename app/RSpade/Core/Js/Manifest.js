@@ -28,6 +28,21 @@ class Manifest {
                 let class_extends = item[2] || null;
                 let decorators = item[3] || null;
 
+                // NAMES ARE IDENTITY. jqhtml resolves a component and Spa dispatches an
+                // action by the class's own `.name`, so a class answering to anything but
+                // its manifest name would be created as a template-less default Component
+                // with none of its methods - a blank page with no attributable error. The
+                // causes are a build step that renamed the class (a minifier without
+                // keep_classnames) or a class decorator that returned a different class.
+                if (class_object.name !== class_name) {
+                    throw new Error(
+                        `Class '${class_name}' answers to the name '${class_object.name}' at runtime. ` +
+                        'The runtime resolves components and SPA actions by class name, so this class ' +
+                        'cannot be found under its own name. A build step renamed it (minification must ' +
+                        'preserve class names) or a class decorator replaced it with a different class.'
+                    );
+                }
+
                 // Store the class information (using object to avoid duplicates)
                 Manifest._classes[class_name] = {
                     class: class_object,

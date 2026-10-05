@@ -283,8 +283,8 @@ THE CLAIM WINDOW
     AUDIT METADATA
 
     created_by_ip_address (VARCHAR(45), nullable) records the client IP at
-    creation - resolved by Session::get_client_ip(), which reads the proxy header
-    chain and returns null outside a request context (CLI, tasks, imports). For
+    creation - resolved by Session::get_client_ip() ($request->ip(), forwarded
+    headers believed only from trusted proxies - rsx:man session) and null outside a request context (CLI, tasks, imports). For
     an anonymous upload it is the only datum the framework can honestly record;
     anything richer (which user, which tenant workflow) is the app's job. It is
     NEVER consulted for authorization.
@@ -865,9 +865,11 @@ UPLOAD ENDPOINT
 
 THE MANDATORY UPLOAD GATE
 
-    POST /_upload REFUSES to accept a file unless the application has registered
-    at least one handler for file.upload.authorize. With none registered the
-    endpoint throws a RuntimeException before it looks at the request:
+    All three file gates are MANDATORY (Rsx_File_Gates; the two READ gates are
+    covered under SECURITY HOOKS). POST /_upload REFUSES to accept a file unless
+    the application has registered at least one handler for file.upload.authorize.
+    With none registered the endpoint throws a RuntimeException before it looks at
+    the request:
 
         File uploads are disabled: no file.upload.authorize gate handler is
         registered. ... See: php artisan rsx:man file_upload
@@ -880,8 +882,11 @@ THE MANDATORY UPLOAD GATE
     decision the framework will not guess, so it fails loud instead.
 
     Registering ONE handler satisfies it. The general trigger_gate() semantics
-    are unchanged; only this endpoint asks the registry whether anyone is
-    listening (App\RSpade\Core\Events\Event_Registry::has_handlers()).
+    are unchanged; every file surface asks through
+    App\RSpade\Core\Files\Rsx_File_Gates::authorize($event, $data), which
+    calls require_handler($event) (Event_Registry::has_handlers()) first and
+    then Rsx::trigger_gate(). Framework code never asks a file gate through
+    trigger_gate() directly.
 
     Minimal handler - require a logged-in user (staff OR portal). Put it in
     /rsx/handlers/; #[OnEvent] handlers are manifest-discovered, nothing to
@@ -1322,13 +1327,21 @@ SECURITY HOOKS
 
     Gates:
         file.upload.authorize    Who may upload           (POST /_upload)
-                                 MANDATORY - no handler registered means uploads
-                                 throw, not that they are allowed. See THE
-                                 MANDATORY UPLOAD GATE.
-        file.thumbnail.authorize Base file-access gate     (thumbnails, and
-                                 the first check on downloads/inline/zip)
-        file.download.authorize  Extra download restriction (downloads, inline,
-                                 and every zip member)
+        file.thumbnail.authorize Base file-access gate     (thumbnails,
+                                 attachment metadata, preview info, and the
+                                 first check on every full-content read)
+        file.download.authorize  Full-content gate         (downloads, inline,
+                                 every zip member, PDF/sheet renditions,
+                                 extracted text)
+
+    ALL THREE ARE MANDATORY. With no handler registered for a gate, every
+    surface that asks it throws a RuntimeException naming the gate ("File reads
+    are disabled: no file.download.authorize gate handler is registered...")
+    before it answers anything - a 5xx, because the APPLICATION is
+    misconfigured. Who may see a stored file is an application decision the
+    framework will not guess: a read gate defaulting open would serve every
+    file to anybody who can name it by key or sequential id. A site whose files
+    are deliberately public says so with a handler that returns true.
 
     Cascading model
         Thumbnails check file.thumbnail.authorize only.
@@ -1367,12 +1380,18 @@ SECURITY HOOKS
             if ($data['attachment']->created_by_id !== $data['user']?->id) {
                 return response()->json(['error' => 'Access denied'], 403);
             }
-            return true;   // no download hook needed - cascade covers it
+            return true;
         }
 
-    Without an authorization hook, files are reachable by anyone holding the
-    key. The key is unguessable, but treat these gates as the real access
-    control for anything non-public. See rsx:man event_hooks.
+        #[OnEvent('file.download.authorize', priority: 10)]
+        public static function download_follows_thumbnail($data) {
+            return true;   // the cascade already applied owner_only; the gate
+                           // still needs a handler, or every read throws
+        }
+
+    Treat these gates as the real access control: the key is unguessable, but
+    an attachment's id is not, and every read surface asks them.
+    See rsx:man event_hooks.
 
 EXTERNAL BYTE RESIDENCY (HANDLERS)
 
@@ -1704,10 +1723,11 @@ COMMON PITFALLS
     - Assuming web /_upload serializes concurrent writers. It does not take an
       application lock; only the CLI upload command does.
 
-    - Forgetting the authorization hooks. Without file.thumbnail.authorize /
-      file.download.authorize handlers, any holder of a key can fetch the file.
-      file.upload.authorize is the exception: it is MANDATORY and fails loud
-      rather than defaulting open.
+    - Forgetting an authorization hook. All three file gates are MANDATORY: an
+      app missing file.thumbnail.authorize or file.download.authorize throws on
+      every file read (thumbnail, download, preview, extracted text), and one
+      missing file.upload.authorize throws on every upload. Register one
+      handler per gate, even a bare "return true".
 
     - Reading uploaded bytes in file.upload.params or file.upload.complete to
       decide whether to accept them. Too late - the blob is already stored by

@@ -1,6 +1,6 @@
 ---
 name: two-factor
-description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge / verify_challenge / begin_passkey_login / verify_passkey_login) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::attempt(record: false, touch_last_login: false), passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove operator commands, and a forced-enrollment interstitial driven from pre_dispatch. Use when adding 2FA, TOTP or passkeys to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', or a passkey refused after moving hosts."
+description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge / verify_challenge / begin_passkey_login / verify_passkey_login) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::attempt(record: false, touch_last_login: false), passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove / :unlock operator commands, the attempt caps (is_locked / clear_failures, rsx.two_factor.challenge_max_failures / identity_max_failures), and a forced-enrollment interstitial driven from pre_dispatch. Use when adding 2FA, TOTP or passkeys to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Too many incorrect codes. Please sign in again.', 'Too many incorrect codes have been entered for this account. Please try again later.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', or a passkey refused after moving hosts."
 ---
 
 # Two-factor authentication
@@ -212,6 +212,7 @@ JS helpers: `Rsx_Two_Factor.is_supported()`, `controller()` (the page realm's co
 ## Gotchas
 
 - **Do not double-count the throttle.** `Login_History::record_failure(..., STATUS_FAILED_2FA, ...)` already feeds `Login_Throttle`. Calling `Login_Throttle::record_failure()` beside it halves the real budget, and the halving is only ever discovered by a user locked out early.
+- **Two attempt caps sit beside the throttle, independent of IP.** Every wrong answer counts against the CHALLENGE (`challenge_max_failures`, 5: the answer that reaches it destroys the challenge, so the user signs in again) and against the IDENTITY (`identity_max_failures`, 10, inside the 60-minute `identity_failure_window_minutes` security window: once reached, `is_locked()` is true and verification is refused - a correct code included - until the window closes). A correct answer clears the count. Release a locked user with `rsx:users:2fa:unlock --user=` (staff) or `Rsx_Portal_Two_Factor::clear_failures($portal_user)`; both messages are user-safe `Two_Factor_Failed_Exception`s, rendered as-is.
 - **Park before you log out.** Anything the challenge must carry across (an invite code, a redirect) is written with `Session::put_value($key, $value, Rsx_Two_Factor::challenge_expires_at())` **BEFORE** `begin_challenge()`. `put_value()` establishes the session row; the logout clears the identity, not the row, and `_session_values` survive by FK. Written afterwards, it lands on a session the caller abandoned.
 - **A checkbox absent from a POST means OFF.** A policy flag of your own (the reference app's `is_2fa_required`) uses `!empty($params['is_2fa_required']) ? 1 : 0`, or it can never be turned back off.
 - **A dismissed browser prompt is not an error.** `NotAllowedError` is caught and answered as `null`; say nothing and leave the button available.
@@ -227,12 +228,13 @@ JS helpers: `Rsx_Two_Factor.is_supported()`, `controller()` (the page realm's co
 
 ## Operator commands
 
-`--user=<id|email>` is required on all three; `--json` uses the standard envelope. They act on STAFF login identities only.
+`--user=<id|email>` is required on all four; `--json` uses the standard envelope. They act on STAFF login identities only.
 
 ```
 php artisan rsx:users:2fa:setup  --user=alice@example.com    # bootstrap/recovery: prints seed + codes ONCE, refuses a second seed
 php artisan rsx:users:2fa:dump   --user=1                    # factors WITH decrypted TOTP seeds (codes are a count - they are hashed)
 php artisan rsx:users:2fa:remove --user=1 [--id=7] [--force] # prompts; --json requires --force
+php artisan rsx:users:2fa:unlock --user=1                    # clears the failure count (lifts an attempt-cap lock); factors untouched
 ```
 
 They run as whoever holds shell access, which is a higher privilege than any identity in the app - which is why the impersonation rule that governs the web paths does not reach them. **Never call `cli_setup_totp()` / `cli_dump_credentials()` from a request path.**

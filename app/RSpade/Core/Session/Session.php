@@ -24,7 +24,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * 1. As a Laravel Eloquent model for the sessions table
  * 2. As a static interface for session management (similar to RS3 design)
  *
- * ONE SESSION PER BROWSER. A session identifies a BROWSER - one `rsx` cookie, one
+ * ONE SESSION PER BROWSER. A session identifies a BROWSER - one session cookie, one
  * _sessions row, per cookie jar - and NOT an authentication realm. The row is a
  * PROPERTY BAG consumed by different parts of the site; no realm owns it. The
  * EXPERIENCE is a property of the REQUEST (Rsx_Portal::is_portal_request()), and all
@@ -42,7 +42,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * browser mints the row the same way a staff page view would.
  *
  * A portal on its OWN host (PORTAL_URL) is reached through a separate cookie jar, so
- * that browser holds an `rsx` cookie per host. Ordinarily each names its own row. The
+ * that browser holds a session cookie per host. Ordinarily each names its own row. The
  * one place the two are joined is staff "View as Client": the linked-session handshake
  * (Session_Link) ends with the portal host's cookie naming the SAME row as the staff
  * host's, through _clone_session_to_this_host(). One row then serves both hosts, which
@@ -457,7 +457,7 @@ class Session extends Rsx_System_Model_Abstract
         Manifest::init();
 
         // Try to get session token from cookie or request
-        $session_token = $_COOKIE['rsx'] ?? null;
+        $session_token = $_COOKIE[Rsx_Session_Cookie::name()] ?? null;
 
         if (empty($session_token)) {
             self::$_session = null;
@@ -735,12 +735,12 @@ class Session extends Rsx_System_Model_Abstract
         }
 
         // ONE cookie for the whole site - staff pages and portal pages alike.
-        setcookie('rsx', self::$_session_token, Rsx_Session_Cookie::options(time() + (365 * 86400)));
+        setcookie(Rsx_Session_Cookie::name(), self::$_session_token, Rsx_Session_Cookie::options(time() + (365 * 86400)));
     }
 
     /**
      * Make an EXISTING session row this browser's session on THIS host: load it as the
-     * current session for the rest of the request and emit its token in the `rsx` cookie.
+     * current session for the rest of the request and emit its token in the session cookie.
      *
      * The last leg of the linked-session handshake (Session_Link), on a portal served from
      * its own host: once both hosts have proved they are the same browser, the portal
@@ -749,7 +749,7 @@ class Session extends Rsx_System_Model_Abstract
      *
      * The request may already have resolved a DIFFERENT row from this host's cookie, and
      * init() then re-emitted that token. That earlier Set-Cookie is withdrawn before the
-     * new one is sent, so the response carries exactly one `rsx` cookie. The replaced row
+     * new one is sent, so the response carries exactly one session cookie. The replaced row
      * is DEACTIVATED: its token lived only in this browser's cookie on this host, which no
      * longer holds it, so nothing could ever resume it - leaving it active would only list a
      * device nobody is on. (A row that is the target itself is simply kept.)
@@ -793,12 +793,13 @@ class Session extends Rsx_System_Model_Abstract
         self::$_has_init = true;
         self::$_has_activate = true;
 
-        // Withdraw an rsx Set-Cookie this request already queued (init() re-emits the
+        // Withdraw a session Set-Cookie this request already queued (init() re-emits the
         // previous token), keeping every other header exactly as it was.
         if (self::$_has_set_cookie) {
+            $session_cookie_prefix = '/^Set-Cookie:\s*' . preg_quote(Rsx_Session_Cookie::name(), '/') . '=/i';
             $kept = [];
             foreach (headers_list() as $header) {
-                if (stripos($header, 'Set-Cookie:') === 0 && !preg_match('/^Set-Cookie:\s*rsx=/i', $header)) {
+                if (stripos($header, 'Set-Cookie:') === 0 && !preg_match($session_cookie_prefix, $header)) {
                     $kept[] = $header;
                 }
             }
@@ -818,9 +819,11 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
-     * The requesting client's IP address as the framework sees it - the ONE place the proxy
-     * header chain is interpreted. Reads no session state and creates nothing, so it is safe
-     * on any code path (including ones that must not mint a session).
+     * The requesting client's IP address as the framework sees it: $request->ip(), resolved
+     * by the TrustProxies middleware - X-Forwarded-For honoured only through a trusted peer
+     * (loopback plus config('rsx.http.trusted_proxies')), walked right to left, so a header
+     * the client wrote cannot choose the answer. Reads no session state and creates nothing,
+     * so it is safe on any code path (including ones that must not mint a session).
      *
      * Returns null when there is no request context at all (CLI, tasks, programmatic work).
      * A caller that needs a non-null string supplies its own placeholder.
@@ -833,18 +836,7 @@ class Session extends Rsx_System_Model_Abstract
             return null;
         }
 
-        // Check for forwarded IP (when behind proxy/CDN)
-        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
-
-            return trim($ips[0]);
-        }
-
-        if (!empty($_SERVER['HTTP_X_REAL_IP'])) {
-            return $_SERVER['HTTP_X_REAL_IP'];
-        }
-
-        return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        return request()->ip() ?? '0.0.0.0';
     }
 
     /**
@@ -860,7 +852,7 @@ class Session extends Rsx_System_Model_Abstract
     /**
      * Reset/logout the current session.
      *
-     * Retires the BROWSER's session wholesale: the row is deactivated and the `rsx`
+     * Retires the BROWSER's session wholesale: the row is deactivated and the session
      * cookie cleared, so any portal identity riding the same row goes with it. That
      * is the correct reading of "reset the session" under one-session-per-browser -
      * a staff sign-out that must leave the portal identity alone is logout()
@@ -909,7 +901,7 @@ class Session extends Rsx_System_Model_Abstract
         self::$_has_set_cookie = false;
 
         // Clear cookie
-        setcookie('rsx', '', Rsx_Session_Cookie::options(time() - 3600));
+        setcookie(Rsx_Session_Cookie::name(), '', Rsx_Session_Cookie::options(time() - 3600));
     }
 
     /**
@@ -1382,11 +1374,13 @@ class Session extends Rsx_System_Model_Abstract
         // csrf_token were minted exactly once, at session creation (__activate),
         // and are IMMUTABLE for the life of the session - they are NEVER
         // regenerated here, and the cookie is NOT re-emitted. Token rotation at
-        // login was deliberately removed (owner ruling 2026-07-24): RSX tokens are
-        // server-minted only and never adopted from the client, so the classic
-        // session-fixation vector (a planted cookie the victim keeps) does not
-        // apply, and rotating on an in-place identity swap caused a cookie-desync
-        // race. See rsx:man session (SECURITY). self::$_session_token is NOT touched.
+        // login was deliberately removed (owner ruling 2026-07-24): rotating on an
+        // in-place identity swap caused a cookie-desync race. Server-minting alone
+        // does NOT exclude fixation - an attacker can mint a genuine token for
+        // themselves and plant it in the victim's browser - so the defence is the
+        // cookie NAME: `__Host-rsx` (Rsx_Session_Cookie) cannot be set by a sibling
+        // subdomain, shadowed by a narrower path, or planted over plain http. See
+        // rsx:man session (SECURITY). self::$_session_token is NOT touched.
         self::$_session->login_user_id = $login_user_id;
         self::$_session->save();
 
@@ -2104,10 +2098,11 @@ class Session extends Rsx_System_Model_Abstract
      *   1. The target IS the actor. Self-management of one's own device list is always
      *      allowed and needs no role at all.
      *   2. The actor's role may ADMINISTER the target's role - Permission::can_admin_role()
-     *      on the target's per-site users.role_id. That list is strictly "roles BELOW mine"
-     *      (User_Model::$enums role_id.can_admin_roles), so a PEER refuses and a SUPERIOR
-     *      refuses, for free and by construction. There is no "same role may terminate each
-     *      other" concession: two Site Admins cannot sign each other out.
+     *      on the target's per-site users.role_id. That list is "my role and the roles
+     *      BELOW it" (User_Model::$enums role_id.can_admin_roles, equal-or-lower
+     *      administration), so a SUPERIOR refuses for free and by construction, and a PEER
+     *      is permitted exactly because the role names itself - two Site Admins may sign
+     *      each other out, as they may edit each other.
      * A target with no users row on the acting site is likewise refused - the actor's site
      * cannot see that identity, so there is nothing here to authorize against.
      *

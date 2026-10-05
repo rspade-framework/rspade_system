@@ -120,6 +120,7 @@ class Api_Request_Hardening_Test extends Rsx_Test_Abstract
 
         $user->is_api_access_enabled = 1;
         $user->save();
+        static::grant_every_permission(1);
 
         return Api_Key_Model::generate(1, 'Hardening probe (test)')['key'];
     }

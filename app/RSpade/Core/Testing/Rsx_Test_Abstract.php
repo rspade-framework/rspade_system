@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Testing;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Models\User_Permission_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Session;
@@ -314,6 +315,19 @@ abstract class Rsx_Test_Abstract
      */
     private static function _run_tests()
     {
+        // setup() starts at the same request boundary every test method ends at. The runner
+        // re-provisions the baseline between a $requires_db_reset class and the next one, and
+        // Rsx_Initial_User::create() leaves a script-scoped tenant declaration
+        // (Session::set_temporary_site_id()) standing. That declaration outranks the CLI
+        // tier, so a setup() that called __acting_as_site() for a site of its own still saved
+        // its fixtures into the baseline site, and the class failed only when it ran after a
+        // re-provision (Realtime_User_Refresh_Test). The CLI identity declaration survives
+        // this reset, as it does between test methods. Outermost run() only: a nested run()
+        // is part of the calling test, whose request is still in progress.
+        if (self::$__run_depth === 1) {
+            Session::_testing_reset();
+        }
+
         // Call setup
         static::setup();
 
@@ -816,9 +830,11 @@ abstract class Rsx_Test_Abstract
      *
      * - superior: a role whose `can_admin_roles` list is non-empty (the most privileged
      *   one, so it administers as many roles as this application declares).
-     * - subordinate: a role the superior may administer.
-     * - peer: the superior again - a second holder of the same role, which the
-     *   whitelist contract does NOT let the superior administer.
+     * - subordinate: a role BELOW the superior that the superior may administer (its own
+     *   role, when the whitelist names it, is never chosen as the subordinate).
+     * - peer: the superior again - a second holder of the same role. Whether the
+     *   superior may administer a peer is whatever its own whitelist says
+     *   (`role_can_admin_peer()`), so a test asserts that answer rather than assuming it.
      *
      * An application whose roles declare no administration relation cannot express the
      * scenario at all, so the test skips rather than failing.
@@ -829,12 +845,48 @@ abstract class Rsx_Test_Abstract
     {
         $superior = static::most_privileged_role_id();
         $roles = User_Model::role_id__enum();
-        $can_admin = $roles[$superior]['can_admin_roles'] ?? [];
+        $below = array_values(array_filter(
+            array_map('intval', $roles[$superior]['can_admin_roles'] ?? []),
+            fn (int $role_id) => $role_id !== $superior
+        ));
 
-        if (empty($can_admin)) {
-            static::__skip('User_Model declares no role with a non-empty can_admin_roles list, so role administration cannot be exercised in this application.');
+        if (empty($below)) {
+            static::__skip('User_Model declares no role that administers another role, so role administration cannot be exercised in this application.');
         }
 
-        return [$superior, (int) $can_admin[0], $superior];
+        return [$superior, $below[0], $superior];
+    }
+
+    /**
+     * Does this application's whitelist let a role administer a second holder of the
+     * SAME role? True when the superior role from role_triple() names itself in its own
+     * `can_admin_roles` (equal-or-lower administration), false when it names only roles
+     * below it.
+     */
+    public static function role_can_admin_peer(): bool
+    {
+        $superior = static::most_privileged_role_id();
+        $roles = User_Model::role_id__enum();
+
+        return in_array($superior, array_map('intval', $roles[$superior]['can_admin_roles'] ?? []), true);
+    }
+
+    /**
+     * GRANT a user every permission this application's catalogue declares
+     * (User_Model::permission_definitions()).
+     *
+     * For a test whose subject is framework machinery reached THROUGH an identity - an
+     * external API call, an endpoint's gates - rather than any one permission. The
+     * application decides what such an identity needs (its Main::pre_dispatch() may refuse a
+     * bearer key whose user lacks a permission no role grants, and its endpoints declare
+     * their own gates), and a framework test may not name that permission. A user holding
+     * the whole catalogue satisfies any permission-based policy. Rows are ordinary
+     * User_Permission_Model writes, so they roll back with the per-test transaction.
+     */
+    public static function grant_every_permission(int $user_id): void
+    {
+        foreach (array_keys(User_Model::permission_definitions()) as $permission_id) {
+            User_Permission_Model::grant($user_id, (int) $permission_id);
+        }
     }
 }

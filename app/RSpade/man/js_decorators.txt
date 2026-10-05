@@ -333,6 +333,15 @@ TRANSFORM PIPELINE
         instead of shipping a broken bundle. This checks the CONTRACT, not an output
         shape, so it survives future Babel changes.
 
+    The Class's Own Name:
+        The binding is half the contract; the class's own `.name` is the other half,
+        because jqhtml and the SPA registry resolve a class BY that name. The transform
+        emits `_<hash>_<Name> = <Name>` around a decorated class, so any later step that
+        drops the class's own name lets JS infer `.name` from that hashed alias. Strict
+        production minification therefore runs with keep_classnames / keep_fnames
+        (rsx:man app_mode, STRICT PRODUCTION), and Manifest._define refuses at boot a
+        class whose runtime `.name` is not its manifest name.
+
     Cache Fingerprint:
         Js_Transformer.php folds a toolchain fingerprint (the fork bundle, the transform
         server script, and the @babel/core version) into every transform cache key, so

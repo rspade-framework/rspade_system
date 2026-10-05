@@ -441,51 +441,42 @@ THE FOUR POLICY MODES
     Pick the one that matches your product; nothing else in the subsystem
     changes.
 
-    1. VERIFIED-EMAIL MATCH (what the template ships, invite-aware)
-        Connect a provider identity to an account it can PROVE belongs to the
-        same person, and to nothing else.
+    1. VERIFIED-EMAIL MATCH OF AN EXISTING ACCOUNT (what the template ships)
+        SSO signs in an account that ALREADY EXISTS and does nothing else.
+        Accounts are created in advance - in the template, by an
+        administrator's invitation accepted with a password - and a provider
+        is only ever a way into one of them.
 
             #[OnEvent('sso.identity.unlinked', priority: 10)]
-            public static function unlinked($data)
+            public static function match_verified_email_of_existing_account($data)
             {
                 $email = isset($data['email']) ? trim((string) $data['email']) : '';
 
-                if ($email === '') {
+                if ($email === '' || empty($data['email_verified'])) {
                     return null;                 // X and Facebook can send none
                 }
 
-                if (!empty($data['email_verified'])) {
-                    $login_user = Login_User_Model::where('email', $email)->first();
+                $login_user = Login_User_Model::where('email', $email)->first();
 
-                    if ($login_user !== null) {
-                        try {
-                            return Rsx_Sso::consume_pending_and_login($login_user);
-                        } catch (Sso_Failed_Exception $e) {
-                            Flash_Alert::error($e->getMessage());
-
-                            return Rsx::Route('Login_Controller::index');
-                        }
-                    }
+                if ($login_user === null) {
+                    return null;                 // no account: fail closed
                 }
 
-                $invitation = self::_open_invitation_for($email);
+                try {
+                    return Rsx_Sso::consume_pending_and_login($login_user);
+                } catch (Sso_Failed_Exception $e) {
+                    Flash_Alert::error($e->getMessage());
 
-                if ($invitation !== null) {
-                    return Rsx::Route('Accept_Invite_Controller::index',
-                                      ['code' => $invitation->invite_code]);
+                    return Rsx::Route('Login_Controller::index');
                 }
-
-                return null;
             }
 
-        THE SECOND BRANCH IS WHAT MAKES "Continue with Google" WORK AS A
-        SIGN-UP BUTTON FOR AN INVITEE WITHOUT MAKING IT ONE FOR A STRANGER.
-        The invitee has no account to match, so they are sent into the
-        ordinary accept-invite flow with the identity STILL PENDING, and the
-        accept flow connects it when the account is created. No verification
-        is needed on that branch and none is implied: it grants nothing, and
-        the link is written only when the address the invitation names is the
-        address the provider asserted.
+        Everything else declines - an unverified address, no account, and an
+        open invitation to the address alike - and the framework answers "No
+        account is connected to this sign-in." An invitee accepts the
+        invitation link they were emailed, and may Connect a provider from
+        their settings afterwards. The strictest mode the framework supports
+        without custom screens, and the right default for an internal tool.
 
         *** THE ACCOUNT-TAKEOVER WARNING. NEVER MATCH AN UNVERIFIED EMAIL. ***
 
@@ -533,12 +524,26 @@ THE FOUR POLICY MODES
         somebody who has not signed up yet, and own the account they later
         try to create.
 
-    3. INVITE-ONLY, STRICT
-        Drop branch 1 of mode 1 and keep branch 2. Nobody signs in until an
-        administrator has invited their address, and a provider identity is
-        only ever connected during an invite acceptance. The strictest mode
-        the framework supports without custom screens, and the right default
-        for an internal tool.
+    3. INVITE-AWARE SIGN-UP
+        Mode 1, plus "Continue with Google" as the sign-up button for an
+        INVITEE without making it one for a stranger. When no account matches,
+        look for an open invitation to the asserted address and send the
+        browser into the accept-invite flow with the identity STILL PENDING:
+
+                $invitation = self::_open_invitation_for($email);
+                if ($invitation !== null) {
+                    return Rsx::Route('Accept_Invite_Controller::index',
+                                      ['code' => $invitation->invite_code]);
+                }
+                return null;
+
+        The accept flow then connects it with Rsx_Sso::link_pending() INSIDE
+        the transaction that creates the account (rolling back if the link is
+        refused), matching only when the invitation's own address is the
+        address the provider asserted - a pending identity for any other
+        address is left alone. That branch grants nothing by itself, so it
+        needs no verification of its own; the invitation is the authority.
+        The template does not ship this mode.
 
     4. FINISH REGISTRATION
         The product needs more than an email address before an account can
@@ -554,12 +559,9 @@ THE FOUR POLICY MODES
         That page reads Rsx_Sso::pending() - safe to render: an asserted
         email, a name and an avatar, carrying no token and conferring nothing
         - prefills what it can, and on submit creates the account and calls
-        Rsx_Sso::link_pending($login_user) INSIDE the same transaction. The
-        worked example is the template's accept-invite flow, where a matching
-        pending identity makes the password field optional server-side and
-        the connection is written in the transaction that creates the account
-        (rolling back if the link is refused, so an unreachable account is
-        never left behind).
+        Rsx_Sso::link_pending($login_user) INSIDE the same transaction,
+        rolling back if the link is refused, so an account with no usable
+        credential is never left behind.
 
         The window is rsx.sso.pending_window_minutes; a page that expires
         mid-form gets a user-safe refusal from link_pending(), not a broken

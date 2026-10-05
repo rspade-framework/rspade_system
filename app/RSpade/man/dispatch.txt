@@ -95,7 +95,8 @@ THE FRONT CONTROLLER
     3. The preamble: the request's revision unit of work, Manifest::init(), the
        development hostname tripwire (Rsx_Env_Hostname_Guard: a browsed host
        that matches neither APP_URL's nor PORTAL_URL's host fatals; loopback
-       is exempt), and - AJAX and
+       is exempt; debug and production validate the host in Rsx::get_hostname()
+       instead), and - AJAX and
        PAGE only - the development first-run setup screen (offered to, and
        accepted from, a loopback caller only).
 
@@ -440,7 +441,7 @@ FULL PAGE CACHE
     A route method marked #[FPC] is eligible for full-page caching. During
     dispatch the FPC arm engages ONLY when all hold: the request is GET, there
     is no POST data, there are no uploaded files, AND the visitor is not logged
-    in. When it engages, every cookie except the session cookie 'rsx' is blanked
+    in. When it engages, every cookie except the session cookie (Rsx_Session_Cookie::name()) is blanked
     to keep the rendered output untainted, and the built response gets the header
     X-RSpade-FPC: 1 with any Set-Cookie removed. That header signals the FPC
     proxy layer to cache the page; the dispatcher itself does not store anything.

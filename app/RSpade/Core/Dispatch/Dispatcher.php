@@ -20,6 +20,7 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxAuthRequiredException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFormErrorException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxNotFoundException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
+use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Csp\Rsx_Csp;
 use App\RSpade\Core\Debug\Debugger;
@@ -57,7 +58,8 @@ use App\RSpade\Lib\Flash\Flash_Alert;
  *    rsx:debug dev-auth identity.
  * 2. AJAX channel: /_ajax/_batch and /_ajax/<Controller>/<action>, to the Ajax core.
  * 3. PAGE channel: a public file when one exists at the path; the /error/* preview
- *    namespace; route matching (and the staff default route); site membership (staff);
+ *    namespace; route matching (and the staff default route); an API key on a
+ *    file-serving route (Rsx_Api_Bearer::authenticate_file_route()); site membership (staff);
  *    the #[Auth] gates; the realm's Main::pre_dispatch; the controller's pre_dispatch and
  *    the action; rsx.post_dispatch; the response (coded RSX responses, views, typed
  *    arrays, JSON), the FPC marker (staff), HEAD stripping and the realm's CSP.
@@ -345,8 +347,9 @@ class Dispatcher
                 $fpc_ttl_mins = (int) ($route_match['fpc_ttl_mins'] ?? 0);
 
                 // Blank all cookies except session to prevent tainted output
+                $session_cookie_name = \App\RSpade\Core\Session\Rsx_Session_Cookie::name();
                 foreach ($_COOKIE as $key => $value) {
-                    if ($key !== 'rsx') {
+                    if ($key !== $session_cookie_name) {
                         unset($_COOKIE[$key]);
                     }
                 }
@@ -357,6 +360,19 @@ class Dispatcher
 
         if (Manifest::php_class_metadata(Manifest::_normalize_class_name($handler_class)) === null) {
             throw new Exception("Handler class not found in manifest: {$handler_class}");
+        }
+
+        // --- An API key on a file-serving route ---
+        // /_download, /_inline, /_download_zip, /_thumbnail/* and /_preview/* accept a
+        // Bearer key in place of a cookie session. The identity is established HERE, ahead
+        // of the gates and of the realm's Main::pre_dispatch, so the application's account
+        // policy sees the key's holder exactly as it does on the API - and a non-null answer
+        // from it is the API's 403 account_refused (__run_matched()). A bad key denies; any
+        // other route ignores the header. See Rsx_Api_Bearer::authenticate_file_route().
+        $bearer_refusal = Rsx_Api_Bearer::authenticate_file_route($route_match['surface'] ?? '', $request);
+
+        if ($bearer_refusal !== null) {
+            return static::__transform_response($realm, $bearer_refusal, $original_method, $request);
         }
 
         // --- Site membership (users.is_enabled, staff) ---
@@ -430,6 +446,12 @@ class Dispatcher
     {
         $pre_dispatch_result = static::__call_main_pre_dispatch($realm, $request, $params);
         if ($pre_dispatch_result !== null) {
+            // A bearer identity (a key on a file-serving route) cannot follow a redirect or
+            // an interstitial: the refusal is the API's own, whatever the hook returned.
+            if (Session::is_api_request()) {
+                return Rsx_Api_Bearer::account_refused();
+            }
+
             return static::__build_response($realm, $pre_dispatch_result);
         }
 

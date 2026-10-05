@@ -317,6 +317,26 @@ THE RECOMMENDED DEPLOYMENT
     box configured to sandbox cannot. See rsx:man libreoffice, THE DOCUMENT
     SANDBOX.
 
+  BEHIND A LOAD BALANCER, TLS TERMINATOR OR CDN
+    The client's address is $request->ip(), and X-Forwarded-For is believed
+    only from a TRUSTED PROXY: loopback (the framework's own nginx -> FPC
+    proxy -> nginx hops) plus config('rsx.http.trusted_proxies'), which ships
+    EMPTY. A box with anything in front of nginx MUST list that device's
+    addresses or CIDRs in rsx/resource/config/rsx.php:
+
+        'http' => [
+            'trusted_proxies' => ['10.0.0.0/8'],
+        ],
+
+    Unlisted, every request appears to come from the device: the per-IP login
+    and second-factor throttles count every visitor as one, and login history,
+    session rows and revision records all name the device. Never list a range
+    a client can reach nginx from directly - a trusted peer's X-Forwarded-For is
+    believed. Only X-Forwarded-For is trusted: the host the site answers on is
+    the Host header nginx received, which debug and production validate
+    against APP_URL / PORTAL_URL (rsx:man config_rsx, HTTP). Prelaunch entry 8
+    (rsx:man prelaunch_checklist) is the audit.
+
   COMPOSER IS NOT A PRODUCTION-BOX OPERATION
     Do not run `composer install` or `composer dump-autoload` by hand on an
     unsealed production box. Composer's post-autoload-dump hook spawns a bare
@@ -329,8 +349,9 @@ THE RECOMMENDED DEPLOYMENT
 BUILD ELSEWHERE
     Both recipes below produce an artifact on a machine that is not the
     production host. Both depend on the determinism contract (rsx:man
-    app_mode): two byte-identical codebases produce an identical build_key
-    and byte-identical bundle filenames, whatever absolute path they sit at.
+    app_mode): two byte-identical codebases built in the same mode produce an
+    identical build_key and byte-identical bundle filenames, whatever absolute
+    path they sit at.
     So an artifact built in CI is the same artifact a host build would have
     produced, and rsx:prod:verify on the host proves it.
 

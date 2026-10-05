@@ -156,6 +156,12 @@ const targetPresets = {
  * any such name lost its program-scope binding. This catches a future upstream regression or
  * a stale/unpatched fork at build time instead of shipping a ReferenceError to the browser.
  *
+ * The binding is half the contract; the class's own `.name` is the other half (jqhtml and the
+ * SPA registry resolve a class by it). The emitted `_<hash>_<Name> = <Name>` assignment means
+ * any LATER step that drops the class's own name makes JS infer `.name` from the hashed alias,
+ * which is why the minify subsystem (Core/Bundle/resource/minify-service.js) keeps class and
+ * function names, and why Manifest._define refuses a class answering to another name.
+ *
  * Upstream defect history (not fixed through Babel 8.0.1):
  * - https://github.com/babel/babel/issues/12689 (decorators + class fields)
  * - https://github.com/evanw/esbuild/issues/3823 (same IIFE pattern issue)

@@ -34,7 +34,7 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
      * @var string
      */
     protected $signature = 'rsx:manifest:build
-                            {--force : Execute rsx:clean then rsx:manifest:build via PHP exec}
+                            {--force : Run rsx:clean (discarding build/ and tmp/), then build the manifest from scratch in a fresh process}
                             {--clean : Clear all caches before building (forces complete rebuild)}
                             {--build-debug : Enable verbose build output (shows file-by-file processing)}';
 
@@ -120,7 +120,10 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
             return 1;
         }
 
-        $start_time = microtime(true);
+        // The manifest is built DURING BOOT (Rsx_Framework_Provider calls Manifest::init()
+        // before any command's handle() runs), so a stopwatch started here measures a no-op.
+        // Time the whole process instead, and say whether this process actually rebuilt.
+        $start_time = $_SERVER['REQUEST_TIME_FLOAT'];
 
         // Reset debug options
         Manifest::$_debug_options = [];
@@ -151,7 +154,8 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
         $this->line('  PHP Classes: ' . $stats['php']);
         $this->line('  JS Classes: ' . $stats['js']);
         $this->line('  Blade Views: ' . $stats['blade']);
-        $this->line('  Build Time: ' . $elapsed . 'ms');
+        $this->line('  Rebuilt: ' . (Manifest::rebuild_occurred() ? 'yes' : 'no (the index already described the tree)'));
+        $this->line('  Build Time: ' . $elapsed . 'ms (whole process)');
 
         // The MEMORY GATE's readout. A cold build's peak can only be measured in a process
         // that started without a manifest, so the gate spawns this command with a scratch

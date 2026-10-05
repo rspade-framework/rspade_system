@@ -148,6 +148,26 @@ class Env_Hostname_Guard_Test extends Rsx_Test_Abstract
         static::__assert_false(Rsx_Env_Hostname_Guard::is_loopback_host('128.0.0.1'));
     }
 
+    /**
+     * The IPv4 test is an address PARSE, not a string prefix: a DNS name beginning
+     * "127." is registrable by anybody, and a prefix test exempted it from the guard
+     * (the request host then flowed into mailed reset links).
+     */
+    public static function test_loopback_is_a_parsed_address_not_a_prefix()
+    {
+        static::__assert_false(Rsx_Env_Hostname_Guard::is_loopback_host('127.attacker.example'), 'a DNS name starting 127.');
+        static::__assert_false(Rsx_Env_Hostname_Guard::is_loopback_host('127.0.0.1.attacker.example'), 'a DNS name wrapping a loopback address');
+        static::__assert_false(Rsx_Env_Hostname_Guard::is_loopback_host('127.0.0.256'), 'an out-of-range octet is no address');
+        static::__assert_false(Rsx_Env_Hostname_Guard::is_loopback_host('127.1'), 'shorthand is not a dotted quad');
+        static::__assert_false(Rsx_Env_Hostname_Guard::is_loopback_host('127.'), 'a bare prefix');
+        static::__assert_false(Rsx_Env_Hostname_Guard::is_loopback_host('localhost.attacker.example'));
+        static::__assert_false(Rsx_Env_Hostname_Guard::is_loopback_host('::2'));
+
+        static::__assert_true(Rsx_Env_Hostname_Guard::is_loopback_host('127.0.0.1'));
+        static::__assert_true(Rsx_Env_Hostname_Guard::is_loopback_host('127.255.255.255'), 'the whole /8');
+        static::__assert_true(Rsx_Env_Hostname_Guard::is_loopback_host('[::1]'), 'the bracketed IPv6 form');
+    }
+
     // -------------------------------------------------------------------------
     // request-host normalization: port stripping + case + IPv6 bracket form
     // -------------------------------------------------------------------------

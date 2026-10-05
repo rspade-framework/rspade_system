@@ -199,6 +199,8 @@ Separate from topics: a session mutation (login/logout/identity/tenant change) o
 
 `.env` -> `REALTIME_ENABLED=true`, `REALTIME_WS_PORT=6200`. Run `node system/bin/realtime-server.js` under a process supervisor and proxy `/ws` in nginx. **There is no client URL to configure**: it is derived as `wss://{Rsx::get_hostname()}/ws` from the browsed host, and the scheme follows the page protocol, so a plain-http loopback/dev page uses `ws://` and realtime works headlessly. `REALTIME_PHP_ORIGIN` (default `http://127.0.0.1`) is how the relay calls back into PHP - a deployment fact.
 
+**Two resource caps** (sizes, not timeouts) bound what one socket can make the shared relay hold: `REALTIME_MAX_FRAME_BYTES` (65536 - an oversized inbound frame closes the connection with 1009) and `REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION` (1000 distinct sub_ids; one more is refused with `{"type":"error","sub_id":...,"message":"Subscription limit reached: ..."}`, the connection and every other watch carry on). The client drops a refused watch and REJECTS its establishment promise, so a component subscribing in `on_create()` errors instead of hanging. A non-positive-integer value stops the relay at start, naming the key. `rsx:man realtime` (RESOURCE CAPS).
+
 ---
 
 ## Residual gaps (named honestly)
@@ -219,6 +221,7 @@ Separate from topics: a session mutation (login/logout/identity/tenant change) o
 - **The page strobes / flashes on every change.** A callback calling `reload()` instead of `refresh()`.
 - **Two fetches on load.** The subscription was registered in `on_ready()` rather than `on_create()`, so the load was not gated.
 - **A component reloads N times per message.** A non-idempotent subscribe registered outside `on_create()` - each `reload()` added another callback.
+- **`Subscribe refused for <topic> (Subscription limit reached ...)` in the console.** One page is watching more than `REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION` distinct records - watch the list, not each row.
 - **Nothing arrives anywhere.** `REALTIME_ENABLED`, the relay process, the nginx `/ws` proxy - and note that under maintenance mode frames are deliberately dropped and the registry reads empty.
 
 Details: `php artisan rsx:man realtime`. Colocated: `system/app/RSpade/Core/Realtime/CLAUDE.md`. Related: `rspade:jqhtml`, `rspade:background-tasks`, `rspade:auth-gates`.

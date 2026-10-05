@@ -290,12 +290,14 @@ FRAMEWORK INVENTORY
                                  hand. INFO when the imagick extension is absent.
         Document Sandbox         whether soffice and pdftotext run on the host or
                                  inside a throwaway container
-                                 (rsx.libreoffice.sandbox). 'none' is an INFO in
+                                 (rsx.libreoffice.sandbox). 'none' is a WARN in
+                                 EVERY mode when any live portal user exists (an
+                                 outside party who can upload); otherwise an INFO in
                                  development, where it is the default, and a WARN on
-                                 a sealed box naming LIBREOFFICE_SANDBOX=docker - a
-                                 site whose uploads all come from inside the
-                                 organisation is entitled to that posture, and the
-                                 exit code gates deploys. 'docker' reports FIVE rows
+                                 a sealed box - naming LIBREOFFICE_SANDBOX=docker
+                                 either way. Never a FAIL: a site whose uploads all
+                                 come from inside the organisation is entitled to
+                                 that posture, and the exit code gates deploys. 'docker' reports FIVE rows
                                  instead - docker client, docker daemon, sandbox
                                  image, sandbox run, memory cap. The first four are
                                  the chain, and a failing link is a FAIL, because a

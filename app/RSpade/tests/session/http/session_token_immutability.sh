@@ -5,6 +5,10 @@ TEST_NAME="Session Token Immutability"
 
 # HTTP integration test - runs against the live web server (dev DB).
 #
+# Needs a FRAMEWORK-DEVELOPMENT box (IS_FRAMEWORK_DEVELOPER=true): the /ssr-test probe it
+# mints a session with is gated #[Auth('is_framework_developer')]. It talks plain http to
+# port 80, so the cookie is the development-only unprefixed `rsx` (Rsx_Session_Cookie).
+#
 # Proves the owner ruling (2026-07-24): a session token STRING is minted EXACTLY
 # ONCE, at session creation, and is IMMUTABLE for the life of the session. Logging in
 # is a pure record update on the existing row - it never mints a new token. The SAME

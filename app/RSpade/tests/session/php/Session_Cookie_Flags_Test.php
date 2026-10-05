@@ -13,7 +13,7 @@ use App\RSpade\Core\Session\Rsx_Session_Cookie;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * The session cookie attributes both realms emit (Rsx_Session_Cookie).
+ * The session cookie name and attributes both realms emit (Rsx_Session_Cookie).
  *
  * The Secure flag is the interesting one. RSpade assumes upstream SSL termination,
  * so outside development mode the cookie is ALWAYS Secure regardless of what the
@@ -35,6 +35,22 @@ class Session_Cookie_Flags_Test extends Rsx_Test_Abstract
      */
     private static function __is_secure_for(Request $request, string $mode): bool
     {
+        return static::__evaluate_for($request, $mode, fn () => Rsx_Session_Cookie::is_secure());
+    }
+
+    /**
+     * Evaluate name() with a given request and RSX mode, restoring both after.
+     */
+    private static function __name_for(Request $request, string $mode): string
+    {
+        return static::__evaluate_for($request, $mode, fn () => Rsx_Session_Cookie::name());
+    }
+
+    /**
+     * Run $probe with a given request and RSX mode installed, restoring both after.
+     */
+    private static function __evaluate_for(Request $request, string $mode, callable $probe): mixed
+    {
         $previous_request = app('request');
         $previous_mode = $_SERVER['RSX_MODE'] ?? null;
 
@@ -46,7 +62,7 @@ class Session_Cookie_Flags_Test extends Rsx_Test_Abstract
         app()->instance('request', $request);
 
         try {
-            return Rsx_Session_Cookie::is_secure();
+            return $probe();
         } finally {
             app()->instance('request', $previous_request);
 
@@ -146,6 +162,53 @@ class Session_Cookie_Flags_Test extends Rsx_Test_Abstract
     }
 
     // =========================================================================
+    // THE NAME
+    // =========================================================================
+
+    /**
+     * A Secure cookie is named __Host-rsx: the browser then refuses any Domain= or
+     * non-root-path variant and any plain-http Set-Cookie, so a sibling subdomain or a
+     * plain-http response cannot plant a session token (fixation by cookie tossing).
+     */
+    public static function test_a_secure_cookie_carries_the_host_prefix()
+    {
+        static::__assert_equals('__Host-rsx', Rsx_Session_Cookie::SECURE_NAME);
+        static::__assert_equals(
+            Rsx_Session_Cookie::SECURE_NAME,
+            static::__name_for(static::__terminated_request(), Rsx::MODE_DEVELOPMENT),
+            'a terminated development request reads and writes __Host-rsx'
+        );
+        static::__assert_equals(
+            Rsx_Session_Cookie::SECURE_NAME,
+            static::__name_for(static::__https_request(), Rsx::MODE_DEVELOPMENT),
+            'an https development request reads and writes __Host-rsx'
+        );
+        static::__assert_equals(
+            Rsx_Session_Cookie::SECURE_NAME,
+            static::__name_for(static::__plain_http_request(), Rsx::MODE_PRODUCTION),
+            'production is always Secure, so always __Host-rsx'
+        );
+        static::__assert_equals(
+            Rsx_Session_Cookie::SECURE_NAME,
+            static::__name_for(static::__plain_http_request(), Rsx::MODE_DEBUG),
+            'debug is always Secure, so always __Host-rsx'
+        );
+    }
+
+    /**
+     * The one non-Secure case drops the prefix, because a browser rejects a __Host-
+     * cookie that is not Secure - http://localhost development must still hold a session.
+     */
+    public static function test_development_plain_http_uses_the_plain_name()
+    {
+        static::__assert_equals(
+            Rsx_Session_Cookie::INSECURE_NAME,
+            static::__name_for(static::__plain_http_request(), Rsx::MODE_DEVELOPMENT),
+            'a plain-http development request reads and writes the unprefixed name'
+        );
+    }
+
+    // =========================================================================
     // THE REST OF THE ATTRIBUTES
     // =========================================================================
 
@@ -158,8 +221,8 @@ class Session_Cookie_Flags_Test extends Rsx_Test_Abstract
         $options = Rsx_Session_Cookie::options($expires);
 
         static::__assert_equals($expires, $options['expires'], 'the caller owns the lifetime');
-        static::__assert_equals('/', $options['path']);
-        static::__assert_equals('', $options['domain'], 'current domain only');
+        static::__assert_equals('/', $options['path'], '__Host- requires Path=/');
+        static::__assert_equals('', $options['domain'], 'current domain only (__Host- forbids Domain)');
         static::__assert_true($options['httponly'], 'no JavaScript access');
         static::__assert_equals('Lax', $options['samesite'], 'CSRF protection');
         static::__assert_true(is_bool($options['secure']), 'the secure flag is resolved, not deferred');

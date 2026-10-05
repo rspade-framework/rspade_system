@@ -60,7 +60,7 @@ TRANSPORT (handled for you)
 
     Blade forms (@csrf):
         The @csrf directive is overridden by RSpade and emits the BROWSER's one
-        csrf_token. There is one session per browser (one `rsx` cookie, one
+        csrf_token. There is one session per browser (one session cookie, one
         _sessions row) shared by the staff app and the portal, so there is exactly
         one token and nothing to fork on - a staff form and a portal form carry
         the same value, and both realms verify against the same row. It emits

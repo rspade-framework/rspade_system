@@ -19,7 +19,7 @@ request passes when it matches ANY declared host exactly, without its port.
 | EHG-04 | loopback-VALUED APP_URL not skipped | php | APP_URL=https://localhost, real request host | 1 entry; mismatch | implemented | 2026-07-22 |
 | EHG-05 | empty / absent APP_URL declares nothing | php | APP_URL='' and [] | 0 entries | implemented | 2026-07-22 |
 | EHG-06 | hostless APP_URL fails loud | php | APP_URL='/ws' | RuntimeException | implemented | 2026-07-22 |
-| EHG-07 | loopback hosts recognized (localhost/127.*/::1) | php | various | true; real host false | implemented | 2026-07-22 |
+| EHG-07 | loopback hosts recognized (localhost/127.0.0.0/8/::1) | php | various | true; real host false | implemented | 2026-07-22 |
 | EHG-08 | normalize strips port, lowercases, handles IPv6 brackets | php | HOST:port / [::1]:port | bare lowercased host | implemented | 2026-07-22 |
 | EHG-09 | comparison is case-insensitive | php | mixed-case request + APP_URL | no mismatch | implemented | 2026-07-22 |
 | EHG-10 | a separate PORTAL_URL host is a second declared host: either host passes, a third is refused, the message names both | php | APP_URL + PORTAL_URL on another host | 2 entries; app/portal pass; third mismatch | implemented | 2026-10-01 |
@@ -28,6 +28,22 @@ request passes when it matches ANY declared host exactly, without its port.
 | EHG-13 | the portal host is compared without its port | php | declared :8080, request :9000 | no mismatch | implemented | 2026-10-01 |
 | EHG-14 | no declared host is never a mismatch | php | [] | null | implemented | 2026-10-01 |
 | EHG-15 | production `Rsx::get_hostname()` serves the APP_URL host, its sub-hosts and the portal host (exact), nothing else | php | `Rsx::host_is_served()` | per row | implemented | 2026-10-01 |
+| EHG-16 | the loopback test is a parsed 127.0.0.0/8 dotted quad, never a prefix | php | `127.attacker.example`, `127.0.0.256`, `127.1`, `[::1]`, `127.255.255.255` | names and malformed addresses false; real loopback true | implemented | 2026-10-05 |
+
+## Absolute_Url_Request_Test (php, no transactions)
+
+Covers `rsx_absolute_url()` / `Rsx::absolute_url_origin()`: the request authority is used
+only when the request host is SERVED (APP_URL host, a sub-host, the PORTAL_URL host);
+anything else - a loopback host APP_URL does not name, an arbitrary Host header - gets
+APP_URL's configured origin. Driven by rebinding `app('request')` to synthetic requests.
+The no-request (CLI / task) answer is the mail concern's `Absolute_Url_Test`.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| AURL-01 | a served host keeps the browsed authority, port and scheme | request on the APP_URL host (and on a sub-host, and on http with a non-default port) | that origin + path | implemented |
+| AURL-02 | an unserved host never reaches the URL | `Host: evil.example`, `Host: 127.attacker.example` | APP_URL origin + path | implemented |
+| AURL-03 | loopback is not a served host unless APP_URL names it | `Host: localhost`, `127.0.0.1` | APP_URL origin + path | implemented |
+| AURL-04 | a separate PORTAL_URL host is served; an absolute URL passes through | portal-host request; `https://x/y` | portal origin + path; unchanged | implemented |
 
 ## App_Url_Test (php)
 

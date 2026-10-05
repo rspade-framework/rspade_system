@@ -174,10 +174,20 @@ DEFINING AN AUTH CHECK
     Built-in checks (on Permission_Abstract, marked, inherited by every app):
 
         public          always true - the explicit open marker
+        closed          always false - the explicit "switched off on purpose"
+                        marker, reachable by nobody in any mode
         is_logged_in    staff session present (the existing facade method,
                         now additionally marked as a gate)
         is_sysadmin     the developer flag (Session::is_developer()) - the
                         /_sys panel's gate; #[Replaceable] (rsx:man sys_panel)
+        is_framework_developer
+                        config('rsx.code_quality.is_framework_developer')
+                        (IS_FRAMEWORK_DEVELOPER in .env) - a fact about the
+                        INSTALL, never the visitor: every caller passes on a
+                        framework-development tree and every caller is refused
+                        anywhere else. Gates pages that exist only for the
+                        framework's own tests (the template's /ssr-test
+                        harness). Not #[Replaceable].
         can_impersonate may this staff user "View as Client" (rsx:man portal,
                         IMPERSONATION). DENIES by default; #[Replaceable], so
                         an app offering the feature redeclares it on its

@@ -6,6 +6,13 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # HTTP integration test - runs against live web server, no database switching.
 # Session creation tests need the real database to insert session records.
+#
+# Needs a FRAMEWORK-DEVELOPMENT box (IS_FRAMEWORK_DEVELOPER=true): the /ssr-test probes
+# are gated #[Auth('is_framework_developer')] and are refused everywhere else.
+#
+# Port 80 is plain http (development: the unprefixed `rsx` cookie, not Secure); port 8000
+# is the image's TLS-terminated listener (X-Forwarded-Proto https: the Secure
+# `__Host-rsx` cookie). See Rsx_Session_Cookie.
 
 echo "[SETUP] Preparing test..." >&2
 echo "[TEST] Running session cookie assertions..." >&2
@@ -90,6 +97,43 @@ if ! echo "$full_cookie" | grep -qi "samesite"; then
 fi
 
 echo "[TEST] 5. OK - Cookie has HttpOnly and SameSite flags" >&2
+
+# ---------------------------------------------------------------------------
+# Test 6: a SECURE request names the cookie __Host-rsx: Secure, Path=/, no Domain
+# ---------------------------------------------------------------------------
+echo "[TEST] 6. Secure request - __Host-rsx cookie..." >&2
+secure_cookie=$(curl -s -D - -o /dev/null "http://localhost:8000/ssr-test/session-get-session-id" 2>/dev/null | grep -i '^Set-Cookie: __Host-rsx=' | tr -d '\r' || true)
+if [ -z "$secure_cookie" ]; then
+    echo "FAIL: $TEST_NAME - a secure request did not set __Host-rsx"
+    exit 1
+fi
+if ! echo "$secure_cookie" | grep -qi "; secure"; then
+    echo "FAIL: $TEST_NAME - __Host-rsx without Secure (a browser rejects it): $secure_cookie"
+    exit 1
+fi
+if ! echo "$secure_cookie" | grep -qi "; path=/;"; then
+    echo "FAIL: $TEST_NAME - __Host-rsx without Path=/ (a browser rejects it): $secure_cookie"
+    exit 1
+fi
+if echo "$secure_cookie" | grep -qi "domain="; then
+    echo "FAIL: $TEST_NAME - __Host-rsx carries a Domain (a browser rejects it): $secure_cookie"
+    exit 1
+fi
+echo "[TEST] 6. OK - __Host-rsx is Secure, Path=/, host-only" >&2
+
+# ---------------------------------------------------------------------------
+# Test 7: a secure request IGNORES a plain `rsx` cookie - a planted unprefixed token is
+# never resumed, so a new session (a different token) is minted instead
+# ---------------------------------------------------------------------------
+echo "[TEST] 7. Secure request ignores a planted plain rsx cookie..." >&2
+planted=$(echo "$secure_cookie" | sed -E 's/^Set-Cookie: __Host-rsx=([^;]+);.*/\1/I')
+reply=$(curl -s -D - -o /dev/null -b "rsx=$planted" "http://localhost:8000/ssr-test/session-get-session-id" 2>/dev/null | grep -i '^Set-Cookie: __Host-rsx=' | tr -d '\r' || true)
+reply_token=$(echo "$reply" | sed -E 's/^Set-Cookie: __Host-rsx=([^;]+);.*/\1/I')
+if [ -z "$reply_token" ] || [ "$reply_token" = "$planted" ]; then
+    echo "FAIL: $TEST_NAME - a plain rsx cookie was resumed on a secure request: $reply"
+    exit 1
+fi
+echo "[TEST] 7. OK - plain rsx ignored; a fresh __Host-rsx session was minted" >&2
 
 echo "PASS: $TEST_NAME"
 exit 0

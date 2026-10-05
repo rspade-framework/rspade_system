@@ -428,7 +428,7 @@ ENTRY 5: PORTAL EXPERIENCE BOUNDARY (the staff facade answering portal questions
         this?", or "which session is this?" on a code path a CLIENT PORTAL request
         can reach - and whether it asks the right facade.
 
-        There is ONE session per browser - one `rsx` cookie, one `_sessions` row -
+        There is ONE session per browser - one session cookie, one `_sessions` row -
         and TWO sets of PROPERTIES on it, reached through two facades that are not
         interchangeable:
 
@@ -499,9 +499,9 @@ ENTRY 5: PORTAL EXPERIENCE BOUNDARY (the staff facade answering portal questions
         3. Audit your gate handlers by hand. These run on both channels and the
            framework hands them a 'user':
 
-               file.upload.authorize        (mandatory - you have one)
-               file.thumbnail.authorize
-               file.download.authorize
+               file.upload.authorize        (all three are mandatory -
+               file.thumbnail.authorize      a missing one throws on every
+               file.download.authorize       upload or read; you have them)
 
            Confirm each still behaves correctly when 'user' is a Portal_User_Model,
            and when it is null. A handler that type-checks for your staff User_Model
@@ -514,7 +514,7 @@ ENTRY 5: PORTAL EXPERIENCE BOUNDARY (the staff facade answering portal questions
 
         5. TEST THE PORTAL IN A BROWSER THAT IS NOT SIGNED INTO THE STAFF APP.
            This is the step everyone skips and it is the one that finds the bugs.
-           Use a private window, or a second browser, or clear the `rsx` cookie -
+           Use a private window, or a second browser, or clear the session cookie -
            then walk the portal end to end: log in, upload, download, preview a
            document, use a realtime-backed screen, log out and back in. A
            developer's own browser is usually signed into the staff app, and every
@@ -849,10 +849,13 @@ ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and t
         failure afterwards (Login_Throttle::record_failure(), or a
         Login_History::record_failure() which already does).
 
-        SECOND, what Session::get_client_ip() answers on the DEPLOYED host. It reads
-        X-Forwarded-For, then X-Real-IP, then REMOTE_ADDR. Load one page and look at
-        the address the framework recorded (a `_sessions` row's ip_address, or a
-        deliberate failed login and its "Login failure" log line).
+        SECOND, what Session::get_client_ip() answers on the DEPLOYED host. It is
+        $request->ip(): REMOTE_ADDR, unless the peer is a TRUSTED PROXY - loopback,
+        plus config('rsx.http.trusted_proxies') (empty by default) - in which case
+        X-Forwarded-For is walked right to left past the trusted hops. X-Real-IP is
+        not read. Load one page and look at the address the framework recorded (a
+        `_sessions` row's ip_address, or a deliberate failed login and its "Login
+        failure" log line).
 
     Why it matters
         The throttle is keyed on the client IP, so a deployment where every request
@@ -880,9 +883,12 @@ ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and t
         4. Verify the refusal is rendered as a message, not as an error page:
            Auth_Throttled_Exception is THROWN, and an uncaught throw on an anonymous
            login form is a 500 for a user who merely typed a password wrong ten times.
-        5. Confirm the address the framework sees is the real client's, and that your
-           proxy sets X-Forwarded-For (or X-Real-IP). If it does not, the throttle is
-           either global or useless.
+        5. Confirm the address the framework sees is the real client's. Anything in
+           FRONT of nginx - a load balancer, a TLS terminator, a CDN - must append
+           X-Forwarded-For AND be listed (address or CIDR) in rsx.http.trusted_proxies
+           in rsx/resource/config/rsx.php. Unlisted, every request appears to come
+           from that device and the throttle is global. Never list a range a client
+           can connect from directly: a trusted peer's X-Forwarded-For is believed.
         6. Review rsx.sessions.login_throttle against how your users actually behave.
            The defaults (10 failures / 15 minutes / 15 minute lockout) suit a normal
            business application; a kiosk or a shared-NAT population may need a larger
@@ -899,9 +905,13 @@ ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and t
              second one only guarantees two different answers.
         DON'T trust a manual test from your own desk to prove the IP wiring. One
              browser cannot tell a per-IP bucket from a global one.
+        DON'T add X-Real-IP or a home-grown header reader. Session::get_client_ip()
+             is the one resolver, and a second one would believe a header the
+             client wrote.
 
     Related
-        php artisan rsx:man session      (LOGIN THROTTLE)
+        php artisan rsx:man session      (LOGIN THROTTLE, THE CLIENT ADDRESS)
+        php artisan rsx:man prod         (trusted proxies)
         php artisan rsx:man auth
 
 

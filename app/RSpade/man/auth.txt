@@ -76,7 +76,7 @@ IDENTITY MODEL
             site_id             FK to sites
             email               Invited email (before login_user is linked)
             first_name / last_name / phone   Display + contact
-            role_id             Site role (enum 100-800, see PERMISSIONS below)
+            role_id             Site role (enum 200-700, see PERMISSIONS below)
             is_enabled          Membership flag. FRAMEWORK-OWNED and
                                 framework-enforced at login and at every request,
                                 together with sites.is_enabled (see Site
@@ -302,12 +302,13 @@ PERMISSIONS (ACL)
         ROLE_MANAGER     500
         ROLE_USER        600
         ROLE_VIEWER      700
-        ROLE_DISABLED    800
 
     A role grants a default permission set (User_Model::PERM_* constants). The
     _user_permissions table layers per-user GRANT/DENY exceptions on top.
-    Resolution order: DISABLED role denies all -> DENY override -> GRANT
-    override -> role default -> deny. DENY always wins.
+    Resolution order: DENY override -> GRANT override -> role default ->
+    deny. DENY always wins. A role administers users of its own role and
+    below (can_admin_role). Switching a member off is users.is_enabled,
+    never a role.
 
     Permission facade:
         Every app's `Rsx\Permission` extends
@@ -390,6 +391,12 @@ SIGNUP MODES
         anonymous    - open /signup; anyone may create an account.
         disabled     - no new signups; /signup is refused.
 
+    The template applies the mode to BOTH the /signup page and its submit
+    endpoint, so a POST never succeeds where the page would refuse, and an
+    address that already has an account gets the same answer as a new one
+    (nothing is written, nothing is revealed). Federated sign-in never
+    creates an account in any mode (rsx:man sso, THE FOUR POLICY MODES).
+
     Verification (config('rsx.auth.verification_required'), env
     RSX_VERIFICATION_REQUIRED) defaults to 'none' - the PIN/email/SMS
     verification flow is configured but NOT yet implemented in the template.
@@ -432,8 +439,8 @@ IMPERSONATION
 
 TWO EXPERIENCES, ONE SESSION
     RSpade ships a second authenticated experience - the client portal - and it
-    does NOT get a session of its own. A session identifies a BROWSER: one `rsx`
-    cookie, one _sessions row, shared by both. The row is a property bag; the
+    does NOT get a session of its own. A session identifies a BROWSER: one session
+    cookie (`__Host-rsx`), one _sessions row, shared by both. The row is a property bag; the
     portal's identity lives in portal_user_id / portal_site_id and the staff
     identity in login_user_id / site_id, and both being set at once is normal.
     Which set a request consults is decided by Rsx_Portal::is_portal_request().
@@ -504,7 +511,7 @@ PITFALLS
     - New accounts are is_verified = 0. Do not treat an accepted invitation as
       a verified email until verification is actually wired.
 
-    - users.role_id is the ONLY role column (the ACL enum, 100-800). The
+    - users.role_id is the ONLY role column (the ACL enum, 200-700). The
       pre-ACL user_role_id column was dropped 2026-08-13. It is nullable, so a
       membership created without one has no role and no permissions - always
       assign an explicit User_Model::ROLE_* constant when creating one, never a
@@ -513,8 +520,9 @@ PITFALLS
     - Config keys are under rsx.auth.* (signup_mode, verification_required,
       invite_expiration_days) - not top-level rsx.*.
 
-    - The session cookie is named "rsx" and the lifetime is a fixed 365 days;
-      neither is a config value.
+    - The session cookie is named "__Host-rsx" (plain "rsx" only on a
+      development-mode http request - rsx:man session, SECURITY) and the
+      lifetime is a fixed 365 days; neither is a config value.
 
 SEE ALSO
     auth_gates  - #[Auth] on every surface, the #[Auth_Check] vocabulary,

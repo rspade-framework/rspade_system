@@ -227,7 +227,7 @@ class Portal_Host_Reach_Test extends Rsx_Test_Abstract
 
         $request = Request::create(static::__app_origin() . '/_portal/_inline/k', 'GET', [], [], [], $bearer);
         Rsx_Request_Channel::classify($request);
-        $response = Rsx_Api_Bearer::authenticate_web_request($request);
+        $response = Rsx_Api_Bearer::authenticate_file_route('File_Attachment_Controller::inline', $request);
 
         static::__assert_not_null($response, 'a key on a portal-realm file route is answered');
         static::__assert_equals(404, $response->getStatusCode(), 'the API does not exist on the portal');
@@ -236,6 +236,6 @@ class Portal_Host_Reach_Test extends Rsx_Test_Abstract
         // Without a key the portal request is untouched: its gates decide.
         $request = Request::create(static::__app_origin() . '/_portal/_inline/k');
         Rsx_Request_Channel::classify($request);
-        static::__assert_null(Rsx_Api_Bearer::authenticate_web_request($request));
+        static::__assert_null(Rsx_Api_Bearer::authenticate_file_route('File_Attachment_Controller::inline', $request));
     }
 }

@@ -113,6 +113,9 @@ class Portal_Two_Factor_Test extends Rsx_Test_Abstract
         $user->status_id = $status_id;
         $user->save();
 
+        // The failure counter is redis-held and id-keyed; a fresh fixture starts clean.
+        Rsx_Portal_Two_Factor::clear_failures($user);
+
         return $user;
     }
 
@@ -408,5 +411,37 @@ class Portal_Two_Factor_Test extends Rsx_Test_Abstract
 
         static::__assert_equals((int) $fixture['portal_user']->id, (int) Portal_Session::get_portal_user_id());
         static::__assert_null(Rsx_Portal_Two_Factor::challenge_pending(), 'the challenge is spent');
+    }
+
+    /**
+     * The attempt caps hold in the portal realm, on the portal's own counters: a portal
+     * challenge is destroyed at its cap, and the portal user's failures never lock the
+     * staff identity that happens to share the numeric id (nor the reverse).
+     */
+    public static function test_the_portal_challenge_is_capped_on_its_own_counters()
+    {
+        $fixture = static::__enrolled_portal_user(static::$_site_id);
+        $portal_user = $fixture['portal_user'];
+        $id = (int) $portal_user->id;
+
+        static::__as_portal(static::$_site_id);
+
+        $saved = config('rsx.two_factor');
+        config(['rsx.two_factor' => array_merge($saved, ['challenge_max_failures' => 2, 'identity_max_failures' => 2])]);
+
+        try {
+            Rsx_Two_Factor::clear_failures($id);
+            Rsx_Portal_Two_Factor::begin_challenge($portal_user);
+
+            static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Portal_Two_Factor::verify_challenge(['code' => '000000']), 'not valid');
+            static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Portal_Two_Factor::verify_challenge(['code' => '000000']), 'sign in again');
+
+            static::__assert_null(Rsx_Portal_Two_Factor::challenge_pending(), 'the portal challenge is destroyed at its cap');
+            static::__assert_true(Rsx_Portal_Two_Factor::is_locked($id), 'the portal user is locked');
+            static::__assert_false(Rsx_Two_Factor::is_locked($id), 'the staff identity with the same id is not');
+        } finally {
+            config(['rsx.two_factor' => $saved]);
+            Rsx_Portal_Two_Factor::clear_failures($id);
+        }
     }
 }

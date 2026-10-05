@@ -122,6 +122,23 @@ abstract class Permission_Abstract
     }
 
     /**
+     * The framework-harness gate: is this box a framework-development tree?
+     *
+     * Answers config('rsx.code_quality.is_framework_developer') (IS_FRAMEWORK_DEVELOPER in
+     * .env), a property of the INSTALL and never of the visitor: every caller on a
+     * framework-development box passes, every caller anywhere else is refused. It gates the
+     * pages that exist only so the framework's own tests have something to drive (the
+     * /ssr-test harness), which must not be reachable on an install that is merely running
+     * the template. Not #[Replaceable]: the answer is a fact about the tree, not a policy an
+     * application chooses.
+     */
+    #[Auth_Check]
+    public static function is_framework_developer(): bool
+    {
+        return (bool) config('rsx.code_quality.is_framework_developer', false);
+    }
+
+    /**
      * May this staff user view the client portal AS a portal user ("View as Client")?
      *
      * Portal_Session::begin_impersonation_from_staff() asks it before starting, and the

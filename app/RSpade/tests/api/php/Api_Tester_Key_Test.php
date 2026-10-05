@@ -81,6 +81,10 @@ class Api_Tester_Key_Test extends Rsx_Test_Abstract
 
     public static function test_scoped_key_is_a_strict_subset_of_its_user()
     {
+        // The contacts endpoints carry the application's own gates; the subject is the
+        // intersection, so the holder must first pass them.
+        static::grant_every_permission(self::USER_ID);
+
         $user_targets = static::__allowed(Api_Tester_Key::accessible_targets_for_user(static::__user()));
         static::__assert_not_empty($user_targets, 'user 1 reaches at least one v1 endpoint');
 

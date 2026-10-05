@@ -170,7 +170,9 @@ The manifest cache contains:
 
 ```php
 [
-    'hash' => '42b9d0efb5c547eec0fb2ca19bf922e0',
+    'hash' => '42b9d0efb5c547eec0fb2ca19bf922e0', // the build key: content + mode
+    'mode' => 'development',             // the RSX mode this index was built in; a dev
+                                         // boot rebuilds an index recorded under another
     'data' => [
         'files' => [...],                // Indexed files (the HOT subset until the cold
                                          // half is merged - see above)

@@ -14,6 +14,7 @@ use BaconQrCode\Writer;
 use Illuminate\Support\Facades\Crypt;
 use RuntimeException;
 use App\RSpade\Core\Auth\Login_Throttle;
+use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Login_History;
@@ -91,6 +92,16 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * live forever is a password that has already been proven waiting on an unattended screen.
  * config('rsx.two_factor.challenge_window_minutes').
  *
+ * TWO ATTEMPT CAPS BOUND GUESSING, independent of the per-IP login throttle (which an
+ * attacker defeats by rotating addresses). Every wrong answer to a challenge counts against
+ * the CHALLENGE (challenge_max_failures: the answer that reaches it destroys the parked
+ * challenge, so the password must be entered again) and against the IDENTITY
+ * (identity_max_failures inside identity_failure_window_minutes, across all challenges and
+ * addresses: once reached, verification is refused for that identity, a correct answer
+ * included, until the window closes or clear_failures() runs). Both counters live in the
+ * transient-counter store (Rsx_Counter), keyed by realm, so a staff identity and a portal
+ * user with the same id never share one. config('rsx.two_factor.*').
+ *
  * A TOTP SEED IS ENCRYPTED AT REST, NOT HASHED. A password is verified by hashing the guess,
  * so it never needs to be recoverable; a TOTP seed is recoverable BY DESIGN, because the
  * server has to regenerate the same codes the phone does, and there is no one-way form of it
@@ -159,6 +170,82 @@ abstract class Rsx_Two_Factor_Abstract
         }
 
         return Rsx_Time::add(Rsx_Time::now_iso(), $minutes * 60);
+    }
+
+    /**
+     * Wrong answers one parked challenge survives (config rsx.two_factor.challenge_max_failures).
+     *
+     * @return int
+     */
+    public static function challenge_max_failures(): int
+    {
+        $max = (int) config('rsx.two_factor.challenge_max_failures');
+
+        if ($max < 1) {
+            shouldnt_happen('rsx.two_factor.challenge_max_failures must be at least 1');
+        }
+
+        return $max;
+    }
+
+    /**
+     * Wrong answers one identity may give inside the failure window
+     * (config rsx.two_factor.identity_max_failures).
+     *
+     * @return int
+     */
+    public static function identity_max_failures(): int
+    {
+        $max = (int) config('rsx.two_factor.identity_max_failures');
+
+        if ($max < 1) {
+            shouldnt_happen('rsx.two_factor.identity_max_failures must be at least 1');
+        }
+
+        return $max;
+    }
+
+    /**
+     * The identity failure window in seconds - a SECURITY WINDOW bounding the guessing rate
+     * (config rsx.two_factor.identity_failure_window_minutes; see its comment).
+     *
+     * @return int
+     */
+    public static function identity_failure_window_seconds(): int
+    {
+        $minutes = (int) config('rsx.two_factor.identity_failure_window_minutes');
+
+        if ($minutes < 1) {
+            shouldnt_happen('rsx.two_factor.identity_failure_window_minutes must be at least 1 minute');
+        }
+
+        return $minutes * 60;
+    }
+
+    /**
+     * Is this identity refused second-factor verification because it has spent its
+     * failure budget?
+     *
+     * @param int|Rsx_Model_Abstract $identity An identity of this realm, or its id.
+     * @return bool
+     */
+    public static function is_locked(int|Rsx_Model_Abstract $identity): bool
+    {
+        return Rsx_Counter::get(static::__identity_failure_key(static::__resolve_id($identity)))
+            >= static::identity_max_failures();
+    }
+
+    /**
+     * Clear an identity's second-factor failure count, lifting a lock. The operator's
+     * release for a user who locked themselves out (rsx:users:2fa:unlock), and what a
+     * correct answer does on its own.
+     *
+     * @param int|Rsx_Model_Abstract $identity An identity of this realm, or its id.
+     * @return void
+     */
+    public static function clear_failures(int|Rsx_Model_Abstract $identity): void
+    {
+        Rsx_Counter::reset(static::__identity_failure_key(static::__resolve_id($identity)));
     }
 
     // -------------------------------------------------------------------------
@@ -660,6 +747,9 @@ abstract class Rsx_Two_Factor_Abstract
             [
                 'identity_id' => static::__resolve_id($identity),
                 'email' => (string) $identity->email,
+                // Names this challenge's own failure counter, so a fresh challenge (a fresh
+                // password entry) starts its count at zero.
+                'challenge_id' => random_hash(32),
             ],
             static::challenge_expires_at()
         );
@@ -728,6 +818,9 @@ abstract class Rsx_Two_Factor_Abstract
      *     let through untouched: "we did not check" is a different answer from "that was
      *     wrong", and a login function must be able to say so.
      *  2. The pending identity is loaded, or the window has closed.
+     *  2b. An identity that has spent its failure budget (is_locked()) is refused before
+     *     anything is tried, and its challenge is discarded - a correct answer would
+     *     otherwise make the lock an oracle.
      *  3. A passkey assertion is tried when one was offered; otherwise a typed code is
      *     tried against every confirmed TOTP credential and then against the recovery
      *     codes. Recovery LAST, so a string that is a live TOTP code never burns a
@@ -736,8 +829,11 @@ abstract class Rsx_Two_Factor_Abstract
      *     with STATUS_FAILED_2FA for staff, which already feeds Login_Throttle; the throttle
      *     directly for the portal, whose outcomes have no history store). Never both: one
      *     failure counted twice halves the real budget, and the halving would only be
-     *     discovered by a user locked out early.
-     *  5. On success the pending value is forgotten FIRST, then the realm signs the identity
+     *     discovered by a user locked out early. The failure also counts once against
+     *     the challenge and once against the identity (the attempt caps, independent of
+     *     IP); the answer that spends the challenge's budget destroys the challenge.
+     *  5. On success the pending value is forgotten FIRST, the identity's failure count is
+     *     cleared, then the realm signs the identity
      *     in, then the success is recorded.
      *  6. The sign-in REFUSES an identity the realm will not admit - a staff identity holding
      *     no active site membership (users.is_enabled + sites.is_enabled), a portal user the portal's account
@@ -775,6 +871,14 @@ abstract class Rsx_Two_Factor_Abstract
             throw new Two_Factor_Failed_Exception('Your verification window has expired. Please sign in again.');
         }
 
+        if (static::is_locked($identity_id)) {
+            static::abandon_challenge();
+
+            throw new Two_Factor_Failed_Exception(
+                'Too many incorrect codes have been entered for this account. Please try again later.'
+            );
+        }
+
         $verified = false;
 
         if (isset($input['assertion']) && is_array($input['assertion'])) {
@@ -786,10 +890,26 @@ abstract class Rsx_Two_Factor_Abstract
         if (!$verified) {
             static::__record_failure($email, Login_History::STATUS_FAILED_2FA, $identity_id);
 
+            Rsx_Counter::increment(static::__identity_failure_key($identity_id), static::identity_failure_window_seconds());
+
+            // The counter only has to outlive the challenge it counts, which lives exactly
+            // the challenge window.
+            $challenge_failures = Rsx_Counter::increment(
+                static::__challenge_failure_key($pending['challenge_id']),
+                (int) config('rsx.two_factor.challenge_window_minutes') * 60
+            );
+
+            if ($challenge_failures >= static::challenge_max_failures()) {
+                static::abandon_challenge();
+
+                throw new Two_Factor_Failed_Exception('Too many incorrect codes. Please sign in again.');
+            }
+
             throw new Two_Factor_Failed_Exception('That code is not valid.');
         }
 
         static::abandon_challenge();
+        static::clear_failures($identity_id);
 
         // The second factor was answered correctly, and the realm still will not admit the
         // identity - so the sign-in is refused with the same message a wrong code gets. The
@@ -979,20 +1099,43 @@ abstract class Rsx_Two_Factor_Abstract
     /**
      * The pending challenge, validated into shape, or null.
      *
-     * @return array|null {identity_id, email}
+     * @return array|null {identity_id, email, challenge_id}
      */
     protected static function __pending_challenge(): ?array
     {
         $pending = Session::get_value(static::CHALLENGE_KEY);
 
-        if (!is_array($pending) || !isset($pending['identity_id'], $pending['email'])) {
+        if (!is_array($pending) || !isset($pending['identity_id'], $pending['email'], $pending['challenge_id'])) {
             return null;
         }
 
         return [
             'identity_id' => (int) $pending['identity_id'],
             'email' => (string) $pending['email'],
+            'challenge_id' => (string) $pending['challenge_id'],
         ];
+    }
+
+    /**
+     * The transient counter of one identity's wrong answers, per realm.
+     *
+     * @param int $identity_id
+     * @return string
+     */
+    protected static function __identity_failure_key(int $identity_id): string
+    {
+        return static::CHALLENGE_KEY . ':failures:identity:' . $identity_id;
+    }
+
+    /**
+     * The transient counter of one parked challenge's wrong answers, per realm.
+     *
+     * @param string $challenge_id
+     * @return string
+     */
+    protected static function __challenge_failure_key(string $challenge_id): string
+    {
+        return static::CHALLENGE_KEY . ':failures:challenge:' . $challenge_id;
     }
 
     /**

@@ -37,11 +37,22 @@ async function minifyJs(content, filename, stripConsoleDebug = false) {
         // Remove existing sourcemap comments before minification
         const cleanContent = content.replace(/\/\/[#@]\s*sourceMappingURL=.*/g, '');
 
+        // NAMES ARE IDENTITY. The runtime resolves jqhtml components and SPA actions by
+        // class name (`cls.name`), and the manifest keys its whole class map on simple
+        // names, so a minifier that may rename a class or a function is incompatible with
+        // that identity model. keep_classnames / keep_fnames are therefore correctness
+        // requirements, set in BOTH compress and mangle (Terser honours each separately).
+        // Without them Terser drops a decorated class's own name binding and JS infers
+        // `.name` from the decorator transform's `_<hash>_Name = Name` assignment, so every
+        // decorated SPA action answered to its hashed alias. Pinned by the js_transform
+        // concern's Js_Minify_Names_Test.
         const compressOptions = {
             dead_code: true,
             drop_console: false,  // Keep console.log for now
             drop_debugger: true,
-            passes: 2
+            passes: 2,
+            keep_classnames: true,
+            keep_fnames: true
         };
 
         // Strip console_debug call sites in strict production. pure_funcs marks the
@@ -57,7 +68,9 @@ async function minifyJs(content, filename, stripConsoleDebug = false) {
         const result = await terserMinify(cleanContent, {
             compress: compressOptions,
             mangle: {
-                reserved: ['$', 'jQuery', '_', 'Rsx', 'rsxapp']  // Don't mangle these
+                reserved: ['$', 'jQuery', '_', 'Rsx', 'rsxapp'],  // Don't mangle these
+                keep_classnames: true,
+                keep_fnames: true
             },
             format: {
                 // Don't try to preserve comments - we'll prepend them manually

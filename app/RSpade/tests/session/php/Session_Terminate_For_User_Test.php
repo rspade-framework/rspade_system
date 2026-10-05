@@ -29,8 +29,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Authorization is self-or-can_admin_role: an actor may always manage their own device
  * list, and otherwise only a role named in their own role's can_admin_roles whitelist
- * (User_Model $enums). A PEER therefore refuses, and so does a subordinate reaching
- * upward - both fall out of that list without a rule of their own. The roles are derived
+ * (User_Model $enums). A subordinate reaching upward therefore refuses, and a PEER is
+ * permitted exactly when the role names itself in that list (equal-or-lower
+ * administration) - both fall out of the list without a rule of their own. The roles are derived
  * from the application's own $enums at runtime (Rsx_Test_Abstract::role_triple()), never
  * named as role constants, so the class is portable to an application whose User_Model
  * declares an entirely different role vocabulary.
@@ -208,13 +209,27 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
     // terminate_session_for_user - authority refused (THROWS)
     // =====================================================================
 
-    public static function test_a_peer_is_refused()
+    /**
+     * A peer holds the same role: the whitelist decides. Equal-or-lower administration
+     * names the role in its own list and the termination goes through; a whitelist that
+     * names only lower roles refuses it.
+     */
+    public static function test_a_peer_follows_the_whitelist()
     {
         $target = self::__make_user(self::__superior_role());
         $peer   = self::__make_user(self::__superior_role());
         $session_id = self::__insert_session((int) $target->login_user_id);
 
         self::__act_as($peer);
+
+        if (static::role_can_admin_peer()) {
+            static::__assert_true(
+                Session::terminate_session_for_user((int) $target->login_user_id, $session_id),
+                'a role that administers its own role terminates a peer session'
+            );
+            static::__assert_false(self::__is_active($session_id), 'the peer session row is deactivated');
+            return;
+        }
 
         static::__assert_throws(
             AjaxUnauthorizedException::class,
@@ -316,13 +331,23 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
         static::__assert_true(self::__is_active($spared), 'the spared row survives');
     }
 
-    public static function test_bulk_termination_by_a_peer_is_refused()
+    public static function test_bulk_termination_by_a_peer_follows_the_whitelist()
     {
         $target = self::__make_user(self::__superior_role());
         $peer   = self::__make_user(self::__superior_role());
         $session_id = self::__insert_session((int) $target->login_user_id);
 
         self::__act_as($peer);
+
+        if (static::role_can_admin_peer()) {
+            static::__assert_equals(
+                1,
+                Session::terminate_all_sessions_for_user((int) $target->login_user_id),
+                'a role that administers its own role sweeps a peer'
+            );
+            static::__assert_false(self::__is_active($session_id), 'the peer session row is deactivated');
+            return;
+        }
 
         static::__assert_throws(
             AjaxUnauthorizedException::class,

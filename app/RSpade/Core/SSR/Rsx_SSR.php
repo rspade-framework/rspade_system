@@ -187,8 +187,15 @@ class Rsx_SSR
         // Launch as daemon — detached from PHP process tree. The daemon outlives this
         // process, so it must not inherit our flock descriptors or lockd sockets: a held lock
         // (or a task-pool membership) would otherwise stay held for the daemon's lifetime.
+        //
+        // The backgrounded job is a LIST (`cd && node`), so bash forks a subshell to run it,
+        // and that subshell's stdout is shell_exec()'s pipe until it exits. Without `exec` it
+        // waits on node for the daemon's whole life, shell_exec() never sees end-of-file, and
+        // this worker hangs holding the SSR render lock (every later SSR request then queues
+        // behind it). `exec` turns the subshell INTO node, whose output is already redirected,
+        // so the pipe closes as soon as `echo` returns - and $! is node's own pid.
         $cmd = RsxLocks::shell_prefix_without_inherited_locks() . sprintf(
-            'cd %s && nohup node %s --socket=%s > /dev/null 2>&1 & echo $!',
+            'cd %s && exec nohup node %s --socket=%s > /dev/null 2>&1 & echo $!',
             escapeshellarg(base_path()),
             escapeshellarg($server_script),
             escapeshellarg($socket_path)

@@ -318,7 +318,11 @@ class Manifest_Store
         // the file a function of the tree rather than of the path the build took to it.
         ksort(Manifest::$data['data']);
 
-        Manifest::$data['hash'] = self::_compute_hash(Manifest::$data['data']);
+        // The index records the mode it was built in, and the key is computed for it. A
+        // development boot that loads an index recorded under another mode rebuilds it
+        // (index_mode_stale_reason()), so a key always describes the mode serving it.
+        Manifest::$data['mode'] = Rsx::get_mode();
+        Manifest::$data['hash'] = self::_compute_hash(Manifest::$data['data'], Manifest::$data['mode']);
 
         // The hot payload: every derived section, the file index, and the hot files only.
         $hot = Manifest::$data;
@@ -521,6 +525,21 @@ class Manifest_Store
                 : null;
         }
 
+        // An index built in ANOTHER mode is never reused, however current its files are: its
+        // key identifies the other mode's build (the production seal's, after a return to
+        // development). Every sanctioned transition discards the build tree anyway; this is
+        // what holds when RSX_MODE moved by any other route. A full rebuild, not an
+        // incremental one - nothing in the tree changed, so an incremental pass would
+        // find nothing to do.
+        $mode_reason = self::index_mode_stale_reason(Manifest::$data['mode'] ?? null, Rsx::get_mode());
+
+        if ($mode_reason !== null) {
+            console_debug('MANIFEST', '* ' . $mode_reason . ' *');
+            Manifest::$data = static::_empty_data();
+
+            return false;
+        }
+
         $stale_reason = self::stale_reason(
             Manifest::$data['data']['file_index'] ?? [],
             Manifest::$data['data']['files'] ?? [],
@@ -565,6 +584,27 @@ class Manifest_Store
         }
 
         return true;
+    }
+
+    /**
+     * Was a loaded index built in the mode now running?
+     *
+     * Returns null when it was, or a one-line reason when it was built in another mode (or
+     * records none, which is an index older than the mode stamp). Pure over its arguments, so
+     * the rule is asserted directly (Manifest_Build_Key_Mode_Test).
+     *
+     * @param string|null $index_mode   Manifest::$data['mode'] as loaded, null when absent
+     * @param string      $current_mode Rsx::get_mode()
+     * @return string|null Null when the index belongs to this mode, else why it does not
+     */
+    public static function index_mode_stale_reason(?string $index_mode, string $current_mode): ?string
+    {
+        if ($index_mode === $current_mode) {
+            return null;
+        }
+
+        return 'Manifest index was built in ' . ($index_mode ?? 'an unrecorded') . ' mode and RSX_MODE is '
+            . $current_mode . ', triggering a full manifest rebuild';
     }
 
     /**
@@ -937,14 +977,24 @@ class Manifest_Store
      *     hash the same sections in the same order. Within a section the producers make the
      *     order deterministic (the class maps and the autoloader map are ksorted at build).
      *
+     * THE MODE IS PART OF THE KEY. One tree builds three different artifacts - development
+     * (unminified, JIT), debug (sealed, unminified) and production (sealed, minified,
+     * console_debug stripped) - and the key is what every consumer takes to IDENTIFY the build
+     * it is looking at: the full-page-cache namespace, the build-scoped RsxCache prefix, the
+     * browser storage scope (window.rsxapp.build_key) and the development asset cache-buster.
+     * Without the mode, a development rebuild after a production seal answered with the
+     * seal's key, so two different builds shared every one of those namespaces. Two checkouts
+     * built in the SAME mode still produce the same key, which is the cluster contract.
+     *
      * NO DEEP COPY. The predecessor rebuilt the entire manifest body node by node -
      * ksorting every associative node and running a path rewrite over every string - and
      * measured 29 ms plus a second copy of the index in memory, on every save.
      *
      * @param array $manifest_body The value of Manifest::$data['data']
+     * @param string $mode The RSX mode the build is produced in (Rsx::MODE_*)
      * @return string 32-char truncated SHA-256
      */
-    public static function _compute_hash(array $manifest_body): string
+    public static function _compute_hash(array $manifest_body, string $mode): string
     {
         $file_lines = [];
 
@@ -968,7 +1018,7 @@ class Manifest_Store
         self::_emit_hash_material($manifest_body, $derived);
 
         return substr(
-            hash('sha256', hash('sha256', implode("\n", $file_lines)) . "\n" . hash('sha256', $derived)),
+            hash('sha256', $mode . "\n" . hash('sha256', implode("\n", $file_lines)) . "\n" . hash('sha256', $derived)),
             0,
             32
         );

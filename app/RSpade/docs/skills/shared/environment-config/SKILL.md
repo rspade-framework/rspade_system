@@ -97,11 +97,13 @@ The literal token `$HOSTNAME` - **unquoted, no braces; that is the only spelling
 
 ### Diagnosing the hostname-guard fatal
 
-In **development mode only**, every web request verifies the browsed host matches a declared host - the `APP_URL` host, or `PORTAL_URL`'s host when the portal has one of its own - and **fatals loudly on mismatch**, naming the request host and every declared host. Production's `Rsx::get_hostname()` likewise serves the `APP_URL` host, its sub-hosts and the portal host, and fatals on anything else. That is not a bug being pedantic: it catches a pasted `.env` pointing at another instance, which otherwise produces a working-looking app writing to somebody else's database.
+In **development mode**, every web request verifies the browsed host matches a declared host - the `APP_URL` host, or `PORTAL_URL`'s host when the portal has one of its own - and **fatals loudly on mismatch**, naming the request host and every declared host (`Rsx_Env_Hostname_Guard`). In **debug and production** (keyed on the RSX mode, never on `app.env`) `Rsx::get_hostname()` serves the `APP_URL` host, its sub-hosts and the portal host, and fatals on anything else. That is not a bug being pedantic: it catches a pasted `.env` pointing at another instance, which otherwise produces a working-looking app writing to somebody else's database.
 
-- Loopback REQUESTS (localhost, 127.*, ::1) are exempt - so curl testing keeps working.
+- Loopback REQUESTS (`localhost`, a valid dotted-quad `127.0.0.0/8` address, `::1`) are exempt from the development guard - so curl testing keeps working. The test is a real address parse: `127.attacker.example` is a DNS name and is NOT loopback, nor are `127.1` or `127.0.0.256`.
 - A loopback-VALUED `APP_URL` is **not** exempt; `APP_URL=https://localhost` on a real hostname still fatals.
-- CLI and prod modes are exempt entirely.
+- CLI is exempt entirely.
+
+**Absolute URLs never trust an unserved Host.** `rsx_absolute_url()` composes from the request's own scheme and authority ONLY when the request host is a served host (the `APP_URL` host, a sub-host of it, the `PORTAL_URL` host); anything else - a loopback request included, unless `APP_URL` names it - gets `APP_URL`'s configured origin (`Rsx::absolute_url_origin()`, `Rsx::app_url_origin()`). Those URLs are mailed to other people, so a forged Host header must never reach one. A reset link that comes out on the `APP_URL` host while you curl `localhost` is this rule working.
 
 Fix by making `.env` tell the truth about the host you are actually browsing (usually: restore the `$HOSTNAME` form). Cross-check what the framework thinks: `php artisan rsx:debug /` and `Rsx::get_hostname()`.
 

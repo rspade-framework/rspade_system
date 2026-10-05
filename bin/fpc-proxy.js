@@ -70,7 +70,11 @@ const MARKER_NO_EXPIRY = 'none';
 const rsx_paths = require(path.join(__dirname, 'lib', 'rsx_paths.js'));
 
 const BUILD_KEY_PATH = path.join(rsx_paths.build_root(), 'build_key');
-const SESSION_COOKIE_NAME = 'rsx';
+// Mirrors Rsx_Session_Cookie::SECURE_NAME / INSECURE_NAME. The proxy cannot tell which one
+// PHP would read for this request (the plain name exists only on a development-mode http
+// request), so the presence of EITHER marks the request personalised: a cache bypass is
+// always the safe direction.
+const SESSION_COOKIE_NAMES = ['__Host-rsx', 'rsx'];
 
 // ---------------------------------------------------------------------------
 // State
@@ -177,7 +181,7 @@ function has_session_cookie(req) {
     const cookies = cookie_header.split(';');
     for (const cookie of cookies) {
         const [name] = cookie.trim().split('=');
-        if (name === SESSION_COOKIE_NAME) {
+        if (SESSION_COOKIE_NAMES.includes(name)) {
             return true;
         }
     }

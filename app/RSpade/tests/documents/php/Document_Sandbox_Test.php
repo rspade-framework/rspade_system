@@ -314,19 +314,31 @@ class Document_Sandbox_Test extends Rsx_Test_Abstract
     // THE HEALTH ROWS
     // ============================================================================================
 
-    // DOCUMENTS-SANDBOX-POSTURE-ROW: no containment is a WARN on a deployed box and an INFO in
-    // development, where it is the default.
+    // DOCUMENTS-SANDBOX-POSTURE-ROW: with no portal user, no containment is a WARN on a deployed
+    // box and an INFO in development, where it is the default.
     public static function test_the_posture_row_warns_on_a_sealed_box_and_informs_in_development()
     {
         foreach ([Rsx::MODE_DEBUG, Rsx::MODE_PRODUCTION] as $mode) {
-            $row = Document_Sandbox::_posture_row($mode);
+            $row = Document_Sandbox::_posture_row($mode, 0);
             static::__assert_equals('WARN', $row['status'], "no containment is reported on a {$mode} box");
             static::__assert_contains('LIBREOFFICE_SANDBOX=docker', $row['remediation'], 'the remediation names the switch');
         }
 
-        $dev = Document_Sandbox::_posture_row(Rsx::MODE_DEVELOPMENT);
+        $dev = Document_Sandbox::_posture_row(Rsx::MODE_DEVELOPMENT, 0);
         static::__assert_equals('INFO', $dev['status'], 'the development default is not a finding');
         static::__assert_contains('none', $dev['detail'], 'the row says which posture this is');
+    }
+
+    // DOCUMENTS-SANDBOX-POSTURE-OUTSIDE-UPLOADS: any portal user is somebody outside the
+    // organisation who can upload, so no containment is a WARN in EVERY mode, development included.
+    public static function test_the_posture_row_warns_in_every_mode_when_portal_users_can_upload()
+    {
+        foreach ([Rsx::MODE_DEVELOPMENT, Rsx::MODE_DEBUG, Rsx::MODE_PRODUCTION] as $mode) {
+            $row = Document_Sandbox::_posture_row($mode, 3);
+            static::__assert_equals('WARN', $row['status'], "portal uploads without containment are reported on a {$mode} box");
+            static::__assert_contains('3 portal user(s)', $row['detail'], 'the row says who can upload');
+            static::__assert_contains('LIBREOFFICE_SANDBOX=docker', $row['remediation'], 'the remediation names the switch');
+        }
     }
 
     // DOCUMENTS-SANDBOX-CHAIN-ROWS: four independent links, and ANY of them failing is a FAIL -

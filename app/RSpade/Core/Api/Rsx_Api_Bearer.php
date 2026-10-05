@@ -2,11 +2,13 @@
 
 namespace App\RSpade\Core\Api;
 
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Api\Rsx_Api;
+use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
@@ -20,21 +22,24 @@ use App\RSpade\Core\Session\Session;
  *   1. Api_Dispatcher, for every /api/vN/ request. Auth runs FIRST there, uniformly across the
  *      whole namespace, so a caller cannot probe which endpoints exist without a good key.
  *   2. The file-SERVING web routes (/_download, /_inline, /_thumbnail/*, /_download_zip and
- *      /_preview/pdf). Those are ordinary #[Route]s dispatched by the main Dispatcher, which
- *      never sees API identity - yet a file's bytes are exactly what an API client that just
- *      uploaded it wants next, and inventing /api/vN/ mirrors of four byte-serving routes
- *      would have meant two URLs per file forever. So the EXISTING URLs learn one extra
- *      credential instead: authenticate_web_request() below.
+ *      /_preview/{pdf,sheet}). Those are ordinary #[Route]s dispatched by the page
+ *      Dispatcher - yet a file's bytes are exactly what an API client that just uploaded it
+ *      wants next, and inventing /api/vN/ mirrors of the byte-serving routes would have
+ *      meant two URLs per file forever. So the EXISTING URLs learn one extra credential
+ *      instead: the Dispatcher calls authenticate_file_route() below as soon as one of them
+ *      matches, ahead of the gates and the application's Main::pre_dispatch.
  *
  * The rules are identical wherever the header is honored, because they are written once: the
- * key must resolve, and its user must be BOTH active and permitted to use the API
- * (users.is_api_access_enabled). A caller learns that the key does not work, never WHY.
+ * key must resolve, its login identity must be live (not soft-deleted), and its user must be
+ * BOTH active and permitted to use the API (users.is_api_access_enabled). A caller learns
+ * that the key does not work, never WHY. The application's account policy
+ * (Main::pre_dispatch) is asked on both channels too, and refuses with account_refused().
  */
 class Rsx_Api_Bearer
 {
     /**
      * The representative path the file-serving web routes are scope-checked against - one
-     * concrete member of the /api/v1/files subtree. See authenticate_web_request().
+     * concrete member of the /api/v1/files subtree. See authenticate_file_route().
      */
     private const FILES_SUBTREE_PROBE = '/api/v1/files/anything';
 
@@ -59,7 +64,9 @@ class Rsx_Api_Bearer
      * Resolves the key's user WITHOUT site scope (no site identity exists yet), and refuses
      * unless that user is BOTH active (User_Model::is_active(): the membership and its site both
      * enabled) and permitted to use the API (users.is_api_access_enabled - the same column
-     * Session::has_api_access() reads). The refusal happens BEFORE
+     * Session::has_api_access() reads), and unless its login identity is live: a soft-deleted
+     * login_users row is an account RsxAuth::attempt() already treats as not found, so its keys
+     * die with it. The refusal happens BEFORE
      * _set_api_identity(), so a refused user never gets an identity established, and it reuses
      * the one uniform message every other key failure returns. On success, sets the API identity
      * and throttles the last_used_at touch.
@@ -84,7 +91,8 @@ class Rsx_Api_Bearer
 
         // No site identity is established yet, so the site-scoped find must run unscoped.
         $user = User_Model::without_site_scope(fn () => User_Model::find((int) $key->user_id));
-        if (!$user || !$user->is_active() || !$user->is_api_access_enabled) {
+        if (!$user || !$user->is_active() || !$user->is_api_access_enabled
+            || Login_User_Model::find((int) $user->login_user_id) === null) {
             return ['error' => ['unauthorized', 'Invalid or expired API key'], 'key' => null, 'user' => null];
         }
 
@@ -95,18 +103,53 @@ class Rsx_Api_Bearer
     }
 
     /**
-     * Let an ordinary web route accept an API key in place of a cookie session.
+     * The file-serving web routes that accept an API key in place of a cookie session, by
+     * manifest surface key (simple class name + method - the same key in both realms, and
+     * the same key an application's class override of either controller keeps).
      *
-     * Called as the FIRST statement of a byte-serving route, before its file.*.authorize gates
-     * run, so those gates see the key's user in Session::get_user() exactly as they see a
-     * browser's user.
+     * EVERY ONE IS GET-ONLY, which is why a READ-ONLY key needs no clamp here: there is no
+     * verb to refuse. The day a non-GET route joins this list it needs the API dispatcher's
+     * read_only gate as well as the scope clamp below.
+     */
+    private const FILE_ROUTE_SURFACES = [
+        'File_Attachment_Controller::download_file',
+        'File_Attachment_Controller::inline',
+        'File_Attachment_Controller::download_multiple_zip',
+        'File_Attachment_Controller::thumbnail_preset',
+        'File_Attachment_Controller::thumbnail',
+        'File_Preview_Controller::pdf_rendition',
+        'File_Preview_Controller::sheet_rendition',
+    ];
+
+    /**
+     * Whether a matched page surface accepts an API key (see FILE_ROUTE_SURFACES).
+     */
+    public static function is_file_route(string $surface): bool
+    {
+        return in_array($surface, self::FILE_ROUTE_SURFACES, true);
+    }
+
+    /**
+     * Let a file-serving web route accept an API key in place of a cookie session.
+     *
+     * Called by the page Dispatcher for a matched FILE_ROUTE_SURFACES row, BEFORE the
+     * #[Auth] gates and BEFORE the realm's Main::pre_dispatch - so the application's account
+     * policy sees the key's holder exactly as the API dispatcher shows it to that hook, and
+     * the file.*.authorize gates see the key's user in Session::get_user() exactly as they
+     * see a browser's user. A non-null Main::pre_dispatch answer for the identity set here is
+     * the API's own 403 account_refused (account_refused() below): the Dispatcher asks
+     * Session::is_api_request() and answers it that way, never with the hook's page response,
+     * because a key holder cannot follow an interstitial.
+     *
+     * Any other surface returns null untouched: the key is honoured on these routes and
+     * nowhere else on the page channel.
      *
      * The outcomes, in this order:
      *   - a Bearer header on a PORTAL-realm request (the portal twin of these routes),
      *     identity or not -> the API's own 404 not_found: the API does not exist on the portal.
      *   - an identity already exists (a staff or portal cookie session, or an API identity set
      *     earlier in this request) -> null, and NOTHING is touched. A browser request behaves
-     *     exactly as it did before this method existed, header or no header. This also enforces
+     *     exactly as it would without this method, header or no header. This also enforces
      *     Session::_set_api_identity()'s once-per-request contract.
      *   - no identity and no Bearer header -> null. The route proceeds anonymously and its
      *     gates decide, as they always have.
@@ -127,15 +170,13 @@ class Rsx_Api_Bearer
      * The 403 body names no 'required' target, unlike the dispatcher's: the synthetic path is
      * not an endpoint the caller could ever call, and printing it would advertise a URL that
      * does not exist.
-     *
-     * A READ-ONLY KEY NEEDS NO CLAMP HERE. Every route that calls this method is declared
-     * GET-only (/_download, /_inline, /_thumbnail/*, /_download_zip, /_preview/pdf), so a
-     * read-only key may use all of them by definition - there is no verb to refuse. The day
-     * a non-GET route adopts this credential, it needs the dispatcher's read_only gate as
-     * well as this scope clamp.
      */
-    public static function authenticate_web_request(Request $request): ?Response
+    public static function authenticate_file_route(string $surface, Request $request): ?Response
     {
+        if (!static::is_file_route($surface)) {
+            return null;
+        }
+
         // The portal realm takes no key. These routes also answer in the portal's route
         // table, for portal pages; an API key is a STAFF identity and the API does not exist
         // on the portal, so a key presented there is refused exactly as an unknown API path
@@ -167,6 +208,16 @@ class Rsx_Api_Bearer
         }
 
         return null;
+    }
+
+    /**
+     * The ONE answer to a non-null Main::pre_dispatch for a bearer identity, on the API and on
+     * the file-serving web routes alike: an API client cannot follow a redirect or an
+     * interstitial, so whatever the hook returned becomes this uniform 403.
+     */
+    public static function account_refused(): JsonResponse
+    {
+        return Rsx_Api::error('account_refused', 'This account may not use the API at this time.', 403);
     }
 
     /**

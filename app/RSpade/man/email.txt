@@ -296,8 +296,11 @@ LINKS - AND THE RULE THAT ENFORCES THEM
         {{ rsx_absolute_url(Rsx::Route('Clients_View_Action', ['id' => $id])) }}
 
     rsx_absolute_url($path) takes the scheme, host and non-default port from the request
-    when there is one and from APP_URL (the single hostname source) when there is not -
-    which is always for email, because messages are rendered in a background task.
+    ONLY when the request's host is one the application serves (the APP_URL host, a
+    sub-host of it, or the PORTAL_URL host), and from APP_URL (the single hostname source)
+    otherwise - always for email, because messages are rendered in a background task. A
+    URL built in a request and handed to a message (an invitation link minted by an
+    endpoint) therefore cannot carry a Host header the caller chose (rsx:man helpers).
 
     AN EMAIL ALSO HAS NO BROWSER. Nothing in a mail client re-formats a datetime for the
     reader, and nothing runs later to correct one that went out wrong: the message is frozen

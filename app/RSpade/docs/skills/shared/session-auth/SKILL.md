@@ -104,14 +104,14 @@ try {
 
 A login path that verifies its own password and does not record to `Login_History` does both halves itself - `Login_Throttle::require_not_throttled()` before the check, `Login_Throttle::record_failure()` on the miss (the template's portal login is the worked example). **Never pair `record_failure()` with a `Login_History::record_failure()` on the same event** - that counts twice.
 
-Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (10), `window_minutes` (15), `lockout_minutes` (15). **A caller with no client IP is never throttled** - CLI, tasks and tests have no remote party to throttle. **Fail closed**: a cache error propagates and the login fails loud; only maintenance mode (redis deliberately stopped) leaves the throttle inert.
+Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (10), `window_minutes` (15), `lockout_minutes` (15). **A caller with no client IP is never throttled** - CLI, tasks and tests have no remote party to throttle. The client IP is `Session::get_client_ip()` = `$request->ip()`: X-Forwarded-For counts only through a trusted proxy (loopback plus `rsx.http.trusted_proxies`, empty by default), so **a box behind a load balancer must list it** or every visitor shares one bucket. Never read a forwarding header yourself. **Fail closed**: a cache error propagates and the login fails loud; only maintenance mode (redis deliberately stopped) leaves the throttle inert.
 
 ### Account state is APPLICATION vocabulary; site membership is the FRAMEWORK's
 
 `attempt()` verifies a live identity, the password, and site membership - and **nothing else**. `login_users.status_id` / `is_activated` / `is_verified` mean whatever your app decides. Enforce your statuses in **two** places:
 
 1. Your login function (above) - so a bad-state login never starts.
-2. `Main::pre_dispatch()` - return non-null to halt, which ejects a session whose account went bad AFTER sign-in. It runs for external API calls too (a non-null return there is a 403 `account_refused`; branch on `Session::is_api_request()` before `Session::logout()`, which a headless API identity cannot call). **`init()` is a bootstrap hook and cannot eject anybody.**
+2. `Main::pre_dispatch()` - return non-null to halt, which ejects a session whose account went bad AFTER sign-in. It runs for bearer-key calls too - `/api/vN` and the file-serving routes (a non-null return there is a 403 `account_refused`; branch on `Session::is_api_request()` before `Session::logout()`, which a headless API identity cannot call). **`init()` is a bootstrap hook and cannot eject anybody.**
 
 **`users.is_enabled` and `sites.is_enabled` are NOT yours - delete every check you wrote on them.** They are the framework's switches - one membership, one whole site - and a membership is usable (**active**) only when both are on: `User_Model::is_active()` for a row, the `->active()` scope for a query. The Default site (id 0) can never be disabled (the save throws). Enforced twice:
 
@@ -157,7 +157,7 @@ Session::_deactivate_sessions_for_user($login_user_id): int
 **The authorization rule on the two cross-user functions - two ways to be authorized, only two:**
 
 1. **The target IS the actor** - managing your own device list needs no role.
-2. **The actor's role may administer the target's** - `Permission::can_admin_role()` against the target's per-site `users.role_id`. That list is strictly "roles below mine", so **a PEER is refused and a SUPERIOR is refused, by construction**. Two Site Admins cannot sign each other out. A target with no `users` row on the acting site is refused too.
+2. **The actor's role may administer the target's** - `Permission::can_admin_role()` against the target's per-site `users.role_id`. That list is equal-or-lower ("my role and the roles below it"), so **a SUPERIOR is refused by construction and a PEER is permitted** - two Site Admins may sign each other out, as they may edit each other. A target with no `users` row on the acting site is refused too.
 
 `developer_terminate_sessions()` consults no role: a caller that is not a developer is refused by the same throw, and it never ends the caller's own current session (0).
 

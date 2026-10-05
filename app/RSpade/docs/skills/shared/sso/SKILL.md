@@ -1,6 +1,6 @@
 ---
 name: sso
-description: "Wiring federated sign-in (Google, Microsoft, Facebook, Apple, X, or any Socialite provider) into an application's staff login or client portal - Rsx_Sso and its portal twin Rsx_Portal_Sso (rsx.sso.portal_enabled, the portal.sso.* hooks, the portal callback URL), Rsx_Sso (enabled_providers / pending / link_pending / consume_pending_and_login / identities_list / unlink), the sso.identity.unlinked, sso.login.authorize, sso.two_factor.verify_url, sso.login.destination and sso.link.destination hooks, <Sso_Buttons /> and its $intent=\"link\" spelling, Rsx_Sso_Controller's identities_list / identity_unlink / link_begin endpoints, and rsx:users:sso:dump / :unlink. Use when adding 'Continue with Google' to a login page, building a Connected Accounts settings section, choosing an account policy (verified-email match, auto-provision, invite-only, finish registration), adding a provider through rsx.sso.custom, offering Google or Microsoft sign-in on the client portal, or when hitting 'No account is connected to this sign-in.', 'That sign-in took too long. Please try again.', 'That account is already connected to a different sign-in.', 'is enabled but SSO_GOOGLE_CLIENT_SECRET is not set', a 404 on /_sso/<key>/begin, or 'Connected accounts cannot be changed while impersonating another user.'"
+description: "Wiring federated sign-in (Google, Microsoft, Facebook, Apple, X, or any Socialite provider) into an application's staff login or client portal - Rsx_Sso and its portal twin Rsx_Portal_Sso (rsx.sso.portal_enabled, the portal.sso.* hooks, the portal callback URL), Rsx_Sso (enabled_providers / pending / link_pending / consume_pending_and_login / identities_list / unlink), the sso.identity.unlinked, sso.login.authorize, sso.two_factor.verify_url, sso.login.destination and sso.link.destination hooks, <Sso_Buttons /> and its $intent=\"link\" spelling, Rsx_Sso_Controller's identities_list / identity_unlink / link_begin endpoints, and rsx:users:sso:dump / :unlink. Use when adding 'Continue with Google' to a login page, building a Connected Accounts settings section, choosing an account policy (verified-email match of an existing account, auto-provision, invite-aware sign-up, finish registration), adding a provider through rsx.sso.custom, offering Google or Microsoft sign-in on the client portal, or when hitting 'No account is connected to this sign-in.', 'That sign-in took too long. Please try again.', 'That account is already connected to a different sign-in.', 'is enabled but SSO_GOOGLE_CLIENT_SECRET is not set', a 404 on /_sso/<key>/begin, or 'Connected accounts cannot be changed while impersonating another user.'"
 ---
 
 # Federated sign-in (SSO)
@@ -30,53 +30,45 @@ name               string or NULL
 avatar_url         string or NULL
 ```
 
-### Mode 1 - verified-email match (what the template ships)
+### Mode 1 - verified-email match of an existing account (what the template ships)
+
+SSO signs in an account that ALREADY EXISTS and does nothing else; accounts are created in advance (the template: an administrator's invitation, accepted with a password).
 
 ```php
 #[OnEvent('sso.identity.unlinked', priority: 10)]
-public static function unlinked($data)
+public static function match_verified_email_of_existing_account($data)
 {
     $email = isset($data['email']) ? trim((string) $data['email']) : '';
 
-    if ($email === '') {
+    if ($email === '' || empty($data['email_verified'])) {
         return null;                          // X sends none; Facebook may withhold
     }
 
-    if (!empty($data['email_verified'])) {
-        $login_user = Login_User_Model::where('email', $email)->first();
+    $login_user = Login_User_Model::where('email', $email)->first();
 
-        if ($login_user !== null) {
-            try {
-                return Rsx_Sso::consume_pending_and_login($login_user);
-            } catch (Sso_Failed_Exception $e) {
-                Flash_Alert::error($e->getMessage());   // user-safe by contract
-
-                return Rsx::Route('Login_Controller::index');
-            }
-        }
+    if ($login_user === null) {
+        return null;                          // no account: fail closed
     }
 
-    $invitation = self::_open_invitation_for($email);   // invite-aware second branch
+    try {
+        return Rsx_Sso::consume_pending_and_login($login_user);
+    } catch (Sso_Failed_Exception $e) {
+        Flash_Alert::error($e->getMessage());   // user-safe by contract
 
-    if ($invitation !== null) {
-        return Rsx::Route('Accept_Invite_Controller::index', ['code' => $invitation->invite_code]);
+        return Rsx::Route('Login_Controller::index');
     }
-
-    return null;
 }
 ```
 
-**NEVER match an unverified email.** A provider that lets a user type any address into a profile hands over a CLAIM, not a fact - matching it means anybody who can name your address at such a provider signs in as you, with no password and no notification. `email_verified` is the only thing that makes branch 1 safe. Google and Apple assert it; **Microsoft, Facebook and X do not**, so this policy declines those three by design.
-
-The invite branch is what makes "Continue with Google" a **sign-up button for an invitee and not for a stranger**: the identity stays PENDING and is linked inside the transaction that creates the account.
+**NEVER match an unverified email.** A provider that lets a user type any address into a profile hands over a CLAIM, not a fact - matching it means anybody who can name your address at such a provider signs in as you, with no password and no notification. `email_verified` is the only thing that makes the match safe. Google and Apple assert it; **Microsoft, Facebook and X do not**, so this policy declines those three by design (their users Connect from settings once signed in). An open invitation to the address declines too - the invitee accepts the emailed link.
 
 ### Mode 2 - auto-provision
 
 Create the `Login_User_Model` (password = `Hash::make(random_hash(64))`, an unusable hash, never null) plus your own site profile row, then `Rsx_Sso::consume_pending_and_login($login_user)`. **Still require `email_verified`** - auto-provisioning an unverified address lets a stranger pre-register somebody else's email.
 
-### Mode 3 - invite-only, strict
+### Mode 3 - invite-aware sign-up
 
-Drop branch 1 of mode 1, keep the invite branch. Nobody signs in until an administrator invited their address.
+Mode 1, plus: when no account matches, find an open invitation to the asserted address and return the accept-invite URL with the identity still PENDING; the accept flow calls `Rsx_Sso::link_pending()` **inside the transaction that creates the account**, and only when the invitation's own address is the asserted one. That makes "Continue with Google" a sign-up button for an invitee and not for a stranger. The template does not ship it (`rsx:man sso`).
 
 ### Mode 4 - finish registration
 

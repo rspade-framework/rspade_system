@@ -160,7 +160,7 @@ on a staff one (rsx:man anchors).
 | PORTAL-REACH-05 | `Rsx_Portal::internal_url()` and the attachment URL builders follow the request's realm | php | staff, default-prefix portal, own host, own host + /x | bare / `/_portal/...` / bare / `/x/...` | implemented | 2026-10-01 |
 | PORTAL-REACH-06 | the CSP report-uri names the realm's own collector | php | `report_path()`, `compose('portal')` | `/_portal/_csp-report`; bare at the root of its own host | implemented | 2026-10-01 |
 | PORTAL-REACH-07 | the portal collector is CSRF-exempt (foreign Origin, no token) and a portal POST beside it is not | php | `Rsx_Csrf::enforce()` | no throw / HttpResponseException | implemented | 2026-10-01 |
-| PORTAL-REACH-08 | an API key presented to a portal-realm file route is the API's 404; no key leaves the request untouched | php | `Rsx_Api_Bearer::authenticate_web_request()` | 404 not_found / null | implemented | 2026-10-01 |
+| PORTAL-REACH-08 | an API key presented to a portal-realm file route is the API's 404; no key leaves the request untouched | php | `Rsx_Api_Bearer::authenticate_file_route()` | 404 not_found / null | implemented | 2026-10-01 |
 | PORTAL-REACH-09 | a signed-in portal user loads a shared document's thumbnail, inline view and preview on a separate portal host | http | PORTAL_URL on its own host, a portal session, a shared attachment | 200 bytes on each | deferred (needs PORTAL_URL set in .env; the orchestrator's live check) | 2026-10-01 |
 
 ## Portal_Session_Impersonation_Test (php) - begin_impersonation_from_staff()

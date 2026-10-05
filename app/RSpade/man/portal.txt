@@ -161,7 +161,7 @@ PORTAL URL
       block (AUTHORIZATION).
 
     A portal on its own host is fully served: the development hostname guard
-    and production Rsx::get_hostname() accept PORTAL_URL's host (rsx:man
+    and the debug/production Rsx::get_hostname() accept PORTAL_URL's host (rsx:man
     realtime), the framework file routes and the CSP collector answer there
     (INTERNAL ENDPOINTS), the full-page cache keys by host (rsx:man fpc),
     passkeys use it as the relying party (rsx:man two_factor), SSO calls back
@@ -352,7 +352,7 @@ SESSION & AUTH
 
 PORTAL SESSIONS
     Cookie and storage
-      There is ONE session per browser: one 'rsx' cookie, one _sessions row, one
+      There is ONE session per browser: one session cookie, one _sessions row, one
       csrf_token, shared by the staff app and the portal. The portal identity is a
       set of PROPERTIES on that row - portal_user_id, portal_site_id,
       impersonator_user_id, impersonation_started_at - alongside the staff properties
@@ -363,7 +363,7 @@ PORTAL SESSIONS
       browser can legitimately be on a different tenant in each experience.
 
       A portal on its own host (PORTAL URL) is reached through a separate
-      cookie jar, so the browser holds an 'rsx' cookie per host, and ordinarily
+      cookie jar, so the browser holds a session cookie per host, and ordinarily
       each names its own row - the portal host's with the staff properties
       null. The one place the two are joined is "View as Client": the
       linked-session handshake points the portal host's cookie at the staff
@@ -532,7 +532,7 @@ EXPERIENCE FORKS (which properties answer)
     Prefix mode masks these bugs from developers, because a developer's own browser
     is usually signed into the staff app on the same host - so a portal path that
     silently borrows the staff identity appears to work. Test the portal with NO
-    staff login present (a private window, or clear the `rsx` cookie), and perform
+    staff login present (a private window, or clear the session cookie), and perform
     at least one REAL form login: rsx:debug --portal installs the session directly
     and never runs your login controller, so it cannot reproduce anything that
     happens during login. Pre-launch audit: rsx:man prelaunch_checklist ENTRY 5.
@@ -919,8 +919,8 @@ REQUESTS (firm <-> client conversation thread)
         a missing creator. The in-app notification bus is Portal_Notification_Model.
 
     File access: thread documents are gated by Portal_File_Access_Handlers (the
-    file.thumbnail.authorize / file.download.authorize gates). Beyond STAFF (any logged-in
-    internal user) and SHARED client-document recipients, a logged-in portal user may read
+    file.thumbnail.authorize / file.download.authorize gates). Beyond STAFF (an active staff
+    membership, on a staff URL) and SHARED client-document recipients, a logged-in portal user may read
     an 'attachment' File_Attachment of a Portal_Request_Thread_Model whose client they are
     a member of (has_client_access) - read access is membership-based; review state is
     enforced separately. Fail-closed; anonymous and non-members get 403.
@@ -959,7 +959,7 @@ IMPERSONATION (VIEW AS CLIENT)
       Same host (the portal under a prefix on APP_URL's host): one cookie, one
         row. The impersonation is written straight onto the caller's own row
         and the portal's landing URL is returned.
-      Separate host: the browser holds a different 'rsx' cookie on the portal
+      Separate host: the browser holds a different session cookie on the portal
         host, and no host can set a cookie for the other. The call starts the
         LINKED-SESSION HANDSHAKE below and returns the URL of its first leg.
 
@@ -986,7 +986,7 @@ IMPERSONATION (VIEW AS CLIENT)
         3. portal host  <prefix>/_session_link/complete
              Redeems code 3. REQUIRES the rsx_link cookie to hash to the bound
              nonce - the browser at leg 3 is the one that reached leg 1. Points the
-             portal host's 'rsx' cookie at the row (Session::
+             portal host's session cookie at the row (Session::
              _clone_session_to_this_host(); a row this host's cookie named before
              is deactivated), clears rsx_link and lands on the portal.
 
@@ -1210,7 +1210,14 @@ ACCESS MODEL (ACCOUNT vs PER-CLIENT ACCESS)
         (the firm never manages portal passwords). One account per email per site.
       - Portal_Membership_Model (app) is the many-to-many PER-CLIENT access layer:
         one account can hold many client memberships. Authorization is
-        membership-based (Portal_Permission).
+        membership-based (Portal_Permission), and a membership grants access
+        only while its CLIENT is live: turning the client's portal off
+        (clients.portal_enabled) or deleting the client revokes every member
+        at once without touching a row, and reopening restores them. The
+        portal side reads memberships only through the model's live readers
+        (has_membership(), find_for_user_and_client(), get_for_user()); staff
+        screens and the code that creates a membership read every row
+        (has_membership_row(), get_all_for_user(), get_for_client()).
 
     Invitations are PER-CLIENT:
       - New person (no portal account) -> the registration link onboards the
@@ -1326,12 +1333,15 @@ DOCUMENTS (FIRM -> CLIENT SHARE)
 
     File access (serving the thumbnail + download to a portal user):
     Rsx\Handlers\Portal_File_Access_Handlers registers BOTH file.thumbnail.authorize
-    and file.download.authorize gates. The gate allows a logged-in STAFF user (manages
-    the files) OR a logged-in PORTAL user who is a MEMBER of the document's client, when
-    the attachment is a 'documents' attachment that has been shared with the client (any
-    Shared_Item exists). Everyone else (anonymous, a non-member, or an unshared document)
-    gets a 403. Registering these gates tightens the previously ungated
-    /_download//_thumbnail//_inline endpoints to deny-by-default.
+    and file.download.authorize gates (the framework refuses every file read while
+    either gate has no handler - rsx:man file_upload, SECURITY HOOKS). The handler forks
+    on the REALM of the request: on a staff URL an active staff membership passes; on a
+    portal URL only the portal user passes, and only for a 'documents' attachment
+    shared with their OWN contact by an unexpired share
+    (Shared_Item_Model::find_valid_share()) of a client they hold a live membership of,
+    or an attachment on a request thread of such a client. Everyone else (anonymous, a
+    non-member, a staff session on a portal URL, an unshared or expired document) gets
+    a 403. rsx/handlers/CLAUDE.md is the living description.
 
     Membership gate: each tab action runs its own three-state (loading ->
     Universal_Error_Page_Component -> content) off Portal_Workspaces_Controller::get(),

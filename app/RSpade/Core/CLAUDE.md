@@ -8,7 +8,7 @@ The framework provides application-wide middleware hooks via `Main_Abstract`:
 
 1. **Create `/rsx/main.php`** extending `Main_Abstract` with three methods:
    - `init()` - Called once during bootstrap
-   - `pre_dispatch(Request $request, array $params)` - Called before any route dispatch and every external API call (after the gates; non-null on the API = 403 `account_refused`)
+   - `pre_dispatch(Request $request, array $params)` - Called before any route dispatch and every external API call (after the gates; non-null for a bearer-key identity - on `/api/vN` or a file-serving route - = 403 `account_refused`)
    - `unhandled_route(Request $request, array $params)` - Called when no route matches
 
 2. **Pre-dispatch flow**:

@@ -209,10 +209,22 @@ API REFERENCE
     response_fatal_error(?string $message = null, array $details = [])
 
     rsx_absolute_url(string $path): string
-        A relative path as an absolute URL on the application hostname. Always
-        https (APP_URL is https-enforced at boot). For a same-origin link in
-        HTML, use Rsx::Route() instead - this is for emails, webhooks and
-        anything leaving the page.
+        A relative path as an absolute URL for this installation. For a same-
+        origin link in HTML, use Rsx::Route() instead - this is for emails,
+        webhooks and anything leaving the page. The origin is
+        Rsx::absolute_url_origin(request()):
+
+          - a request on a SERVED host (the APP_URL host, a sub-host of it, or
+            the PORTAL_URL host): the scheme the browser used (X-Forwarded-
+            Proto aware) and the browsed authority, port included;
+          - anything else (no Host, a loopback or any other host APP_URL does
+            not name), and every CLI process or task: APP_URL's configured
+            origin (Rsx::app_url_origin()).
+
+        The request authority is admitted only after that check because these
+        URLs leave the browser - a reset or invitation link is mailed to
+        somebody else - so a Host header the caller chose can never reach one.
+        Throws when APP_URL names no host.
 
   Shell
 
@@ -232,6 +244,11 @@ API REFERENCE
           observed.
         - $env is MERGED over the current environment. Pass a secret here, never
           on the command line, where ps would expose it.
+        - A backgrounded child keeps the output pipe, so the call waits for it.
+          Detach a daemon by redirecting its output ('nohup thing > /dev/null
+          2>&1 & echo $!'); a backgrounded LIST ('cd dir && thing ... &') must
+          `exec` its last command ('cd dir && exec thing > /dev/null 2>&1 &'),
+          or the forked subshell holds the pipe for the daemon's whole life.
 
         Escape every interpolated value with escapeshellarg(). For an artisan
         subprocess use Rsx_Artisan, NOT this (see rsx:man locks).

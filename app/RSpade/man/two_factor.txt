@@ -48,6 +48,7 @@ SYNOPSIS
     php artisan rsx:users:2fa:setup  --user=alice@example.com
     php artisan rsx:users:2fa:dump   --user=1
     php artisan rsx:users:2fa:remove --user=1 [--id=7] [--force]
+    php artisan rsx:users:2fa:unlock --user=1        # lift an attempt-cap lock
 
 DESCRIPTION
     A second factor proves that the person holding the browser also holds
@@ -305,6 +306,37 @@ HOW IT WORKS
                real budget, and the halving is only ever discovered by a user
                locked out early.
 
+    ATTEMPT CAPS (COUNTS, NOT TIMEOUTS)
+        The per-IP throttle alone is not enough: an attacker who holds the
+        password rotates addresses. Every wrong answer to a challenge - a TOTP
+        code, a recovery code, a passkey assertion - also counts against two
+        caps that are independent of IP:
+
+            PER CHALLENGE  rsx.two_factor.challenge_max_failures (5). The
+                           answer that reaches it DESTROYS the parked
+                           challenge ('Too many incorrect codes. Please sign
+                           in again.'); the user re-enters the password,
+                           which spends the per-IP budget again. Each
+                           begin_challenge() starts its own count at zero.
+            PER IDENTITY   rsx.two_factor.identity_max_failures (10) inside
+                           identity_failure_window_minutes (60), across every
+                           challenge and every address. Once reached, the
+                           identity is LOCKED: verify_challenge() refuses it -
+                           a correct code included, so the lock is not an
+                           oracle - and discards the challenge ('Too many
+                           incorrect codes have been entered for this account.
+                           Please try again later.'), until the window closes
+                           or an operator runs rsx:users:2fa:unlock.
+
+        A correct answer before the cap clears the identity's count. The
+        identity window is a SECURITY WINDOW, not a timeout: it bounds the
+        guessing RATE (ten guesses an hour), nothing waits on it, and nothing
+        fails when it closes. Both counters live in the transient-counter
+        store (Rsx_Counter), keyed per realm, so a staff identity and a portal
+        user with the same id never share one. Passwordless sign-in
+        (verify_passkey_login()) is outside the caps - it has no pending
+        identity to count against and is throttled per IP.
+
         A RECORDED SUCCESS MEANS FULL AUTHENTICATION. That is why the login
         function suppresses recording and the last_login stamp at the
         password stage (attempt(record: false, touch_last_login: false)) and
@@ -399,6 +431,8 @@ THE FACADE
 
                 1. require_not_throttled()   - throws Auth_Throttled_Exception
                 2. the pending identity, or the window has closed
+                2b. a LOCKED identity (is_locked()) is refused and its
+                   challenge discarded, before anything is tried
                 3. a passkey assertion when one was offered; otherwise the
                    typed string against every confirmed TOTP credential, and
                    THEN against the recovery codes - recovery LAST, so a
@@ -406,9 +440,14 @@ THE FACADE
                    code
                 4. on failure: record the failure ONCE through the realm
                    (staff: Login_History STATUS_FAILED_2FA; portal: the
-                   throttle directly) and throw
-                   Two_Factor_Failed_Exception('That code is not valid.')
-                5. on success: forget the pending value, sign in through the
+                   throttle directly), count it once against the challenge
+                   and once against the identity, and throw
+                   Two_Factor_Failed_Exception('That code is not valid.') -
+                   or, when the challenge's cap is reached, destroy the
+                   challenge and throw 'Too many incorrect codes. Please sign
+                   in again.'
+                5. on success: forget the pending value, clear the identity's
+                   failure count, sign in through the
                    realm (staff: RsxAuth::login(); portal:
                    Portal_Session::set_portal_user_id()), record the success
                 6. an identity the realm will not admit (staff: no enabled
@@ -422,6 +461,19 @@ THE FACADE
             without that comparison anyone holding any valid passkey could
             complete anybody else's challenge.
         abandon_challenge(): void
+
+    THE ATTEMPT CAPS
+        is_locked(int|identity $identity): bool
+            True once the identity has spent identity_max_failures inside the
+            window.
+        clear_failures(int|identity $identity): void
+            Zero the identity's failure count, lifting a lock. What a correct
+            answer does on its own, and the operator's release
+            (rsx:users:2fa:unlock). Touches no factor.
+        challenge_max_failures(): int
+        identity_max_failures(): int
+        identity_failure_window_seconds(): int
+            The configured values; each throws below 1.
 
     PASSWORDLESS SIGN-IN (anonymous caller; no password, nothing pending)
         begin_passkey_login(): array
@@ -855,7 +907,10 @@ THE CLIENT PORTAL REALM
     $method="verify_2fa" />, whose endpoint calls
     Rsx_Portal_Two_Factor::verify_challenge().
 
-    The rsx:users:2fa:* operator commands act on staff login identities only.
+    The rsx:users:2fa:* operator commands act on staff login identities only;
+    a locked portal user is released with
+    Rsx_Portal_Two_Factor::clear_failures($portal_user) from a shell (or by
+    the identity window closing).
 
 CLI COMMANDS
     THE BOOTSTRAP AND RECOVERY PATH, and deliberately not a general
@@ -866,7 +921,7 @@ CLI COMMANDS
     already a higher privilege than any identity in the application - so the
     impersonation reasoning that governs the web paths does not reach here.
 
-    --user=<id|email> is REQUIRED on all three and resolves against
+    --user=<id|email> is REQUIRED on all four and resolves against
     login_users. --json wraps the result in the standard
     {"ok": true, "command": ..., "data": {...}} envelope (and a non-zero exit
     with {"ok": false, "error": ...} on failure).
@@ -889,8 +944,14 @@ CLI COMMANDS
         outcome). Prompts before destroying anything; --force is how a script
         says the intent. --json cannot prompt, so it REQUIRES --force.
 
+    rsx:users:2fa:unlock --user=<id|email> [--json]
+        Clears the identity's second-factor failure count
+        (Rsx_Two_Factor::clear_failures()), lifting an attempt-cap lock. The
+        factors are untouched - remove is the command that takes them away.
+        Reports whether the identity was locked ("was_locked" under --json).
+
 CONFIGURATION
-    config('rsx.two_factor') - two keys, and there is no third:
+    config('rsx.two_factor') - five keys, and there is no sixth:
 
         'issuer' => null
             The label an authenticator app files the account under. null
@@ -902,6 +963,19 @@ CONFIGURATION
             The SECURITY WINDOW above. Must be at least 1;
             challenge_expires_at() calls shouldnt_happen() on anything lower
             rather than minting a window that is already closed.
+
+        'challenge_max_failures' => 5
+            Wrong answers one parked challenge survives (ATTEMPT CAPS).
+            Must be at least 1.
+
+        'identity_max_failures' => 10
+            Wrong answers one identity may give inside the identity window,
+            across challenges and addresses. Must be at least 1.
+
+        'identity_failure_window_minutes' => 60
+            A SECURITY WINDOW (not a timeout): opened by the identity's first
+            wrong answer; how long a locked identity stays locked. Must be at
+            least 1.
 
     There is NO enable switch - see DESCRIPTION.
 

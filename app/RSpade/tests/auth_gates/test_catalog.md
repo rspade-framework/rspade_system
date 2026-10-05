@@ -28,6 +28,8 @@
 | AG-ROOT-03 | It evaluates staff-side; naming it from portal is the unknown-name failure | php | `evaluate()` in both realms | false, then RuntimeException | implemented | 2026-09-07 |
 | AG-ROOT-04 | The generated staff JS mirror exports it, so `can_access()` answers for a panel link | php | Generated mirror stub | contains `Permission.is_sysadmin` | implemented | 2026-09-07 |
 | AG-ROOT-05 | A developer passes; a signed-in identity that is not a developer is refused | php | user 1 (developer) then a fresh ordinary login identity | true / false | implemented | 2026-09-25 |
+| AG-FWDEV-01 | `is_framework_developer` is a staff check on `Permission_Abstract`, unknown to the portal realm | php | Live registry, `evaluate()` from portal | present; RuntimeException | implemented | 2026-10-05 |
+| AG-FWDEV-02 | It answers the install flag (`rsx.code_quality.is_framework_developer`) for an anonymous caller | php | flag false / true | false / true | implemented | 2026-10-05 |
 | AG-EVAL-01 | Only an exact `true` grants | php | Bodies returning true/false/1/'true'/nothing | only the first grants | implemented | 2026-08-07 |
 | AG-EVAL-02 | AND semantics; an empty gate list passes | php | `[]`, `[grant]`, `[grant,deny]`, `[deny,grant]` | true, true, false, false | implemented | 2026-08-07 |
 | AG-EVAL-03 | A check body runs LIVE on every ask - no cache between asks | php | Four staff consultations then one portal | counter 1,2,3,4 then 5 | implemented | 2026-08-31 |

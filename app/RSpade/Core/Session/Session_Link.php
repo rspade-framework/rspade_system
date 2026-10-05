@@ -155,7 +155,7 @@ class Session_Link
         }
 
         // The SAME browser owns the staff session: its own staff cookie names the bound row.
-        $token = (string) $request->cookies->get('rsx', '');
+        $token = (string) $request->cookies->get(Rsx_Session_Cookie::name(), '');
         $browser_row = $token === '' ? null : Session::find_by_token($token);
 
         if ($browser_row === null || (int) $browser_row->id !== $link['session_id']) {

@@ -500,7 +500,9 @@ DOCUMENT_TEXT_PREVIEW COMPONENT
     the same document the same way. It runs the CONTENT gate cascade
     (file.thumbnail.authorize THEN file.download.authorize), NOT the metadata gate
     get_preview_info runs: extracted text is often the whole document, so it is gated
-    like the bytes. Text is returned uncapped up to config('rsx.search.max_text_bytes').
+    like the bytes. Both gates are MANDATORY: with no handler registered for either,
+    every preview, rendition and extracted-text read throws naming the missing gate
+    (rsx:man file_upload, SECURITY HOOKS). Text is returned uncapped up to config('rsx.search.max_text_bytes').
 
 SERVER SURFACES
     Every /_preview/ route is declared in BOTH route tables on one handler. A

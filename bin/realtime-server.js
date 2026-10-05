@@ -10,7 +10,9 @@
  *
  * Requires .env: APP_KEY, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD,
  *                REALTIME_WS_PORT (default 6200), APP_URL,
- *                REALTIME_PHP_ORIGIN (default http://127.0.0.1)
+ *                REALTIME_PHP_ORIGIN (default http://127.0.0.1),
+ *                REALTIME_MAX_FRAME_BYTES (default 65536),
+ *                REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION (default 1000)
  */
 
 const { WebSocketServer } = require('ws');
@@ -81,6 +83,44 @@ const AUTH_TIMEOUT = 5000;         // 5 seconds to authenticate after connect
 // user, so a frame may demand 25 verifications before it is somebody else's turn. (Size is
 // not the reason - 25 subscribes is 7-20KB.)
 const MAX_MESSAGES_PER_FRAME = 25;
+
+/**
+ * A positive integer from the environment, or the default when the key is unset or empty.
+ * Anything else is a misconfigured deployment and the relay refuses to start, naming the key -
+ * a cap that silently read as NaN would be no cap at all.
+ */
+function positive_int_env(key, default_value) {
+    const raw = process.env[key];
+    if (raw === undefined || raw === '') return default_value;
+    if (!/^[0-9]+$/.test(raw) || parseInt(raw, 10) < 1) {
+        console.error(`[realtime] ${key} must be a positive integer, got '${raw}'`);
+        process.exit(1);
+    }
+    return parseInt(raw, 10);
+}
+
+// SIZE AND COUNT CAPS - NOT TIMEOUTS. The relay is ONE shared process, and both of these are
+// reachable by any caller holding a token (an anonymous public-topic connection included), so
+// without them one socket can make the process hold an arbitrary amount of memory.
+//
+// MAX_FRAME_BYTES bounds ONE inbound websocket message, enforced by the ws library itself
+// (maxPayload) BEFORE the bytes are buffered and parsed: an oversized frame closes the socket
+// with 1009 (message too big). The default is several times the largest legitimate frame -
+// MAX_MESSAGES_PER_FRAME subscribes is 7-20KB.
+const MAX_FRAME_BYTES = positive_int_env('REALTIME_MAX_FRAME_BYTES', 65536);
+
+// MAX_SUBSCRIPTIONS_PER_CONNECTION bounds the distinct sub_ids one connection may hold. One
+// browser tab is one connection and the client ref-counts identical topic+filter watches onto
+// ONE sub_id, so the count is the number of distinct records a single page watches at once. A
+// subscribe beyond the cap is REFUSED with an error frame naming its sub_id and the cap - the
+// connection stays open and every existing subscription keeps working. Re-subscribing a sub_id
+// the connection already holds is a replace, never counted twice.
+const MAX_SUBSCRIPTIONS_PER_CONNECTION = positive_int_env('REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION', 1000);
+
+// A sub_id is the client's canonical topic+filter key (Rsx_Realtime._canonical_key), a short
+// string. Its length is capped so the per-connection map is bounded in BYTES as well as in
+// entries.
+const MAX_SUB_ID_LENGTH = 1024;
 
 // Subscriber-change notify channel (relay -> PHP). Where PHP listens is a DEPLOYMENT
 // fact about this box (the precedent is fpc-proxy's BACKEND_HOST), never invocation
@@ -407,6 +447,24 @@ function parse_json_frame(raw) {
 }
 
 // ---------------------------------------------------------------------------
+// Subscription limits
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure: why this connection may not take sub_id, or null when it may. Checked BEFORE the
+ * token's HMAC is verified - a refused subscribe costs the relay nothing. Exported for tests.
+ */
+function subscribe_refusal(subscriptions, sub_id, max_subscriptions) {
+    if (typeof sub_id !== 'string' || sub_id === '' || sub_id.length > MAX_SUB_ID_LENGTH) {
+        return `sub_id must be a non-empty string of at most ${MAX_SUB_ID_LENGTH} characters`;
+    }
+    if (!subscriptions.has(sub_id) && subscriptions.size >= max_subscriptions) {
+        return `Subscription limit reached: at most ${max_subscriptions} subscriptions per connection`;
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
 // Bootstrap - runtime side effects (port bind, redis, timers, signal handlers).
 // Everything from here down runs ONLY when this file is executed as a program.
 // It is guarded by require.main === module (the export seam at the end of the
@@ -416,7 +474,7 @@ function parse_json_frame(raw) {
 
 function main() {
 
-const wss = new WebSocketServer({ port: WS_PORT });
+const wss = new WebSocketServer({ port: WS_PORT, maxPayload: MAX_FRAME_BYTES });
 
 wss.on('listening', () => {
     console.log(`[realtime] WebSocket server listening on port ${WS_PORT}`);
@@ -492,7 +550,13 @@ wss.on('connection', (ws) => {
         rewrite_registry_async();
     });
 
-    ws.on('error', () => {
+    ws.on('error', (err) => {
+        // ws raises this (and closes 1009) for a frame over maxPayload - the one error here
+        // an operator needs to see, because it means a client is over the cap.
+        if (err && err.code === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH') {
+            console.warn(`[realtime] Protocol violation from ${describe_conn(conn)}: ` +
+                `inbound frame over ${MAX_FRAME_BYTES} bytes - closing connection`);
+        }
         clearTimeout(auth_timer);
         clearTimeout(conn.pong_timer);
         connections.delete(ws);
@@ -551,6 +615,16 @@ function handle_auth(ws, conn, msg, auth_timer) {
 }
 
 function handle_subscribe(ws, conn, msg) {
+    const refusal = subscribe_refusal(conn.subscriptions, msg.sub_id, MAX_SUBSCRIPTIONS_PER_CONNECTION);
+    if (refusal !== null) {
+        console.warn(`[realtime] Subscribe refused for ${describe_conn(conn)}: ${refusal}`);
+        // The sub_id is echoed only when it is a well-formed one, so the client can drop that
+        // one watch; an oversized or non-string sub_id is never reflected back.
+        const echoed = (typeof msg.sub_id === 'string' && msg.sub_id.length <= MAX_SUB_ID_LENGTH) ? msg.sub_id : null;
+        ws.send(JSON.stringify({ type: 'error', sub_id: echoed, message: refusal }));
+        return;
+    }
+
     const payload = validate_token(msg.token || '');
     if (!payload || !payload.topic) {
         ws.send(JSON.stringify({ type: 'error', message: 'Invalid subscribe token' }));
@@ -758,7 +832,7 @@ setInterval(() => {
 
 // Export seam: the pure, side-effect-free validators are exposed for unit tests.
 // require()'ing this file does NOT start the relay (main() only runs as a program).
-module.exports = { validate_token, parse_json_frame, matches_filter, diff_new_members, sign_notify_body };
+module.exports = { validate_token, parse_json_frame, matches_filter, diff_new_members, sign_notify_body, subscribe_refusal };
 
 if (require.main === module) {
     main();

@@ -99,7 +99,7 @@ anonymous caller. `Realtime::connection_token()` picks the facade by the REALM O
 `has_session()` in both realms so opening a socket never CREATES a session as a side effect.
 `_current_site_id()` forks identically — it must, or Node's site-match rejects every portal
 subscribe. (Branching on `Portal_Session::is_logged_in()` sent unauthenticated portal callers
-down the staff branch, where `get_session_id()` minted a staff session and set the `rsx` cookie
+down the staff branch, where `get_session_id()` minted a staff session and set the session cookie
 on a portal response — audit `docs.dev/audits/portal_realm_session_audit_2026_08_09.md`.)
 Subscribe: `{topic, filter, site_id, exp}`
 
@@ -250,6 +250,12 @@ HEADLESS (no session — everything from `$site_id`/`$filter`).
   non-array or oversized frame, naming the limit). Auth is sent directly (array-wrapped),
   never queued. A message queued while down is DROPPED — auth_ok resync is the one
   catch-up mechanism; never turn this into a replay queue.
+- Relay resource caps (sizes, not timeouts): `REALTIME_MAX_FRAME_BYTES` (65536, the ws
+  `maxPayload` - an oversized frame closes 1009) and `REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION`
+  (1000 distinct sub_ids; `subscribe_refusal()` runs before the HMAC and answers an error
+  frame carrying the `sub_id`). The client's `error` handler drops a watch named by
+  `msg.sub_id` and rejects its `established` promise; an error with no `sub_id` stays a
+  console warning.
 - Forced reconnect (`_force_reconnect()`): a drift-tick gap observed while a socket is held
   (suspend/resume — the socket may be half-open and messages are gone) and an unanswered
   application-level liveness ping (`{type:'ping'}`/`{type:'pong'}`, run on the drift

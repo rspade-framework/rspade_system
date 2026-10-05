@@ -1100,7 +1100,10 @@ function command_exists($command)
  * DETACHING A BACKGROUND PROCESS: a child put in the background inherits the output
  * pipe, so this function keeps reading until that child also exits. Redirect the
  * background child's output away ('nohup thing > /dev/null 2>&1 & echo $!') and the
- * call returns immediately, which is what a daemon launcher wants anyway.
+ * call returns immediately, which is what a daemon launcher wants anyway. A backgrounded
+ * LIST ('cd dir && thing ... &') runs in a forked subshell that keeps the pipe until the
+ * whole list ends - `exec` the last command ('cd dir && exec thing > /dev/null 2>&1 &')
+ * so the subshell becomes the child and the pipe is released.
  *
  * Credentials: pass secrets through $env, never on the command line. Anything in
  * the command string is visible to every user on the box via `ps`; the
@@ -1997,12 +2000,21 @@ define('ARG_MAX_SINGLE_BYTES', 32 * 4096);
 /**
  * Convert a relative URL path to an absolute URL for THIS installation.
  *
- * Scheme, host and a non-default port all come from the same pair of accessors the
- * rest of the framework builds authorities with:
+ * Scheme, host and a non-default port come from one of two places
+ * (Rsx::absolute_url_origin()):
  *
- *   Web request  -> the scheme the BROWSER used (X-Forwarded-Proto aware) and the
+ *   A request on a SERVED host (the APP_URL host, a sub-host of it, or the PORTAL_URL
+ *   host)        -> the scheme the BROWSER used (X-Forwarded-Proto aware) and the
  *                   browsed authority, port included.
- *   CLI / task   -> APP_URL, the single hostname source, parsed for all three.
+ *   Anything else (a loopback or otherwise unserved request host)
+ *                -> APP_URL's configured origin. A CLI process or a task reaches the
+ *                   same answer: its request is the one Laravel synthesizes from APP_URL.
+ *
+ * The request authority is admitted ONLY after that check because these URLs leave the
+ * browser - a password-reset or invitation link is mailed to somebody else - so a Host
+ * header the caller chose must never be able to reach one (a poisoned host would deliver
+ * the victim's token to the attacker's server). A loopback host is not a served host
+ * unless APP_URL names it.
  *
  * It is deliberately NOT hardcoded https on a hardcoded bare hostname any more: a
  * development container published on http://localhost:8080 produced
@@ -2031,5 +2043,5 @@ function rsx_absolute_url(string $path): string
         $path = '/' . $path;
     }
 
-    return \App\RSpade\Core\Rsx::get_scheme() . '://' . \App\RSpade\Core\Rsx::get_http_host() . $path;
+    return \App\RSpade\Core\Rsx::absolute_url_origin(request()) . $path;
 }

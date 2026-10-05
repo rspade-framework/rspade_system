@@ -35,9 +35,6 @@ class Acl_Administration_Api_Test extends Rsx_Test_Abstract
     /**
      * [role, a permission the role grants, a catalogue permission it does not grant].
      *
-     * A role with permissions is never the disabled role, so its users answer
-     * has_permission() normally.
-     *
      * @return array{0: int, 1: int, 2: int}
      */
     private static function __role_fixture(): array

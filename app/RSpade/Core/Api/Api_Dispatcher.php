@@ -337,11 +337,7 @@ class Api_Dispatcher
         // scopes itself by handler namespace behaves identically here.
         $main_refusal = self::_main_pre_dispatch($request, $params, $controller, $method);
         if ($main_refusal !== null) {
-            $response = self::_error(
-                'account_refused',
-                'This account may not use the API at this time.',
-                403
-            );
+            $response = Rsx_Api_Bearer::account_refused();
             self::_log($request, $start, $method, $path, $handler, 403, $api_key_id, $user_id, $site_id, $response);
 
             return $response;

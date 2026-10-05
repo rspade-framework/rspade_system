@@ -207,6 +207,34 @@ HTTP MIDDLEWARE
 
     The framework declares none - the block ships empty.
 
+HTTP
+    'http' => [
+        'trusted_proxies' => [],
+    ]
+
+    trusted_proxies      Addresses or CIDRs of anything in FRONT of nginx
+                         that appends X-Forwarded-For - a load balancer, a
+                         TLS terminator, a CDN's published ranges. Loopback
+                         (127.0.0.1, ::1) is ALWAYS trusted on top of this
+                         list (the framework's own nginx -> FPC proxy ->
+                         nginx hops). Empty by default.
+
+    App\Http\Middleware\TrustProxies is the ONE client-address resolver:
+    X-Forwarded-For is honoured only when the immediate peer (REMOTE_ADDR) is
+    trusted, and is walked right to left skipping trusted hops, so an entry
+    the client wrote itself is never the answer. $request->ip() is then the
+    client, and Session::get_client_ip() returns it to the login and
+    second-factor throttles, login history, session rows, the API request log
+    and revision records. A deployment behind a proxy that does not list it
+    sees one address for every visitor (rsx:man prod).
+
+    ONLY X-Forwarded-For is trusted. X-Forwarded-Host/-Port/-Prefix are never
+    read through a proxy: the application's host is the HTTP_HOST nginx
+    received, which debug and production validate against APP_URL /
+    PORTAL_URL. The scheme for links is read from X-Forwarded-Proto by the
+    framework's own URL builder (rsx_absolute_url()), which composes from the
+    request only for a served host (rsx:man helpers).
+
 CLIENT PORTAL
     'portal' => [
         'url' => env('PORTAL_URL', ''),    # where the portal is served
@@ -268,6 +296,9 @@ TWO-FACTOR AUTHENTICATION
     'two_factor' => [
         'issuer' => null,
         'challenge_window_minutes' => 10,
+        'challenge_max_failures' => 5,
+        'identity_max_failures' => 10,
+        'identity_failure_window_minutes' => 60,
     ]
 
     Second factors (TOTP, passkeys, recovery codes). THERE IS NO ENABLE
@@ -288,7 +319,17 @@ TWO-FACTOR AUTHENTICATION
     parked enrollment seed stays satisfiable. It bounds no work, and
     expiry degrades to a working outcome ("sign in again"). Must be at
     least 1 - anything lower calls shouldnt_happen() rather than minting
-    a window that is already closed. See: php artisan rsx:man two_factor
+    a window that is already closed.
+
+    challenge_max_failures and identity_max_failures are ATTEMPT CAPS
+    (counts): wrong answers one parked challenge survives (the answer that
+    reaches it destroys the challenge), and wrong answers one identity may
+    give across every challenge and address inside
+    identity_failure_window_minutes - after which the identity is refused,
+    a correct code included, until the window closes or
+    rsx:users:2fa:unlock runs. The identity window is a SECURITY WINDOW
+    bounding the guessing rate, not a timeout. Each must be at least 1.
+    See: php artisan rsx:man two_factor
 
 FEDERATED SIGN-IN (SSO)
     'sso' => [

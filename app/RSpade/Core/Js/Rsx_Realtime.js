@@ -1061,6 +1061,23 @@ class Rsx_Realtime {
         }
 
         if (msg.type === 'error') {
+            // A refusal that names a sub_id (the relay's per-connection subscription cap) ends
+            // that ONE watch: the subscription will never exist, so a component gated on its
+            // establishment must not wait for an ack that is not coming. The connection and
+            // every other watch carry on.
+            const refused = msg.sub_id ? Rsx_Realtime._watches.get(msg.sub_id) : undefined;
+            if (refused) {
+                console.error(
+                    '[Realtime] Subscribe refused for ' + refused.topic + ' (' + msg.message + ') - dropping ' +
+                    refused.callbacks.size + ' watcher(s)'
+                );
+                if (refused._established_reject) {
+                    refused._established_reject(new Error('Realtime subscribe refused for ' + refused.topic));
+                }
+                Rsx_Realtime._watches.delete(msg.sub_id);
+                return;
+            }
+
             console.warn('[Realtime] Server error:', msg.message);
         }
     }

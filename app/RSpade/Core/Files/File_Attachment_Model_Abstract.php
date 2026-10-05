@@ -15,6 +15,7 @@ use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Imagick_Policy;
+use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Svg_Upload_Sanitizer;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
 use App\RSpade\Core\Portal\Portal_Authorizable;
@@ -918,7 +919,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
             return false;
         }
 
-        $authorized = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $authorized = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => Rsx_Portal::is_portal_request()
                 ? Portal_Session::get_portal_user()
@@ -966,17 +967,15 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * Record-level portal visibility: the app's file.thumbnail.authorize gate, answered for the
      * CURRENT PORTAL USER.
      *
-     * Fail-closed in the framework's strongest sense - a gate with no handlers returns true only
-     * because trigger_gate() is open by default, so an app that registers no thumbnail gate has
-     * declared every attachment visible; every app ships one (the upload gate is mandatory and
-     * the same handler file carries this one). Anything other than a literal true denies.
+     * Fail-closed: the gate is mandatory (Rsx_File_Gates throws when no handler is registered),
+     * and anything other than a literal true denies.
      *
      * @return bool
      */
     #[Replaceable]
     public function portal_can_read(): bool
     {
-        $authorized = Rsx::trigger_gate('file.thumbnail.authorize', [
+        $authorized = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $this,
             'user' => Portal_Session::get_portal_user(),
             'request' => request(),

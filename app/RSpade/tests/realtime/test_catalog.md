@@ -55,6 +55,23 @@ test never touches the live supervised relay.
 |----|--------------------------|------|-------|----------|--------|--------------|
 | UC-108 | validate_token never throws + returns null on all hostile signature shapes (incl. 64-char non-hex audit input); valid token still returns payload; parse_json_frame drops non-JSON and literal null | http | http/realtime_relay_preauth_dos.sh (node harness over exported validators) | all assertions ok; RESULT PASS | implemented | 2026-07-28 |
 
+## Relay resource caps (2026-10-05)
+
+The relay is one shared process reachable by any token holder, anonymous public-topic
+connections included. One inbound frame is bounded by REALTIME_MAX_FRAME_BYTES (ws maxPayload,
+default 65536: closed 1009 before the bytes are parsed) and one connection's distinct sub_ids by
+REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION (default 1000: a subscribe past it is refused with an
+error frame naming its sub_id, the connection stays open, a held sub_id re-subscribes as a
+replace). A sub_id must be a non-empty string of at most 1024 characters. The live half runs a
+PRIVATE relay against a PRIVATE redis-server on scratch ports - never the supervised relay, whose
+boot DEL of the shared subscriber registry a second instance would repeat.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RELAY-CAPS-PURE | subscribe_refusal() accepts under the cap, refuses at it naming the cap, treats a held sub_id as a replace, and refuses a non-string / empty / 1025-char sub_id | http | http/realtime_relay_resource_caps.sh (exported helper) | null / message as stated | implemented | 2026-10-05 |
+| RELAY-CAPS-FRAME | an inbound frame over the cap closes the socket with 1009 and is logged | http | http/realtime_relay_resource_caps.sh (private relay, cap 4096, 8KB frame) | close 1009; relay log "over 4096 bytes" | implemented | 2026-10-05 |
+| RELAY-CAPS-SUBS | the subscription cap refuses the next subscribe with an error frame naming its sub_id and the cap, keeps the connection open, re-acks a held sub_id, and never echoes an oversized sub_id | http | http/realtime_relay_resource_caps.sh (private relay, cap 3, four subscribes) | s1-s3 subscribed, s4 error "at most 3 subscriptions per connection", s1 re-acked, long sub_id error with sub_id null, ping answered | implemented | 2026-10-05 |
+
 ## Delivery guarantee: subscribe-time seeding + the absent-baseline publish (2026-08-05)
 
 The emitter engine used to treat a missing value-hash as "first seed" and swallow the

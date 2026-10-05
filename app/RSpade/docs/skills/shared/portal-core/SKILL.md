@@ -268,7 +268,7 @@ It throws `AjaxUnauthorizedException` unless the staff-realm `can_impersonate` c
 - **Own host:** the browser has a different cookie there and neither host can set the other's. The URL is leg 1 of the **linked-session handshake** - three GET redirects:
   1. portal `<prefix>/_session_link/open` - burns code 1, sets an HttpOnly `rsx_link` nonce cookie, sends the browser to the staff host;
   2. staff `/_session_link/confirm` - burns code 2, REQUIRES the browser's own staff cookie to name the bound row and `can_impersonate` to still pass, applies the impersonation;
-  3. portal `<prefix>/_session_link/complete` - burns code 3, REQUIRES the nonce cookie, points the portal host's `rsx` cookie at the SAME row.
+  3. portal `<prefix>/_session_link/complete` - burns code 3, REQUIRES the nonce cookie, points the portal host's session cookie at the SAME row.
 
   Codes are 256-bit, stored hashed in `_session_links`, single-use, HMAC-signed per leg and host (`Rsx_Signed_Url`), valid **120 seconds - a security window, not a timeout**. The session token never appears in a URL. **Any failure answers one 400, "This link has expired or was already used.", and links nothing** - click View as Client again. Afterwards one row serves both hosts: `Session::reset()` on either ends both.
 

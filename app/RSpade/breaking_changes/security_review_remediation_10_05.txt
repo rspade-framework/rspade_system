@@ -1,0 +1,214 @@
+SECURITY REVIEW REMEDIATION (2026-10-05): FRAMEWORK HARDENING AND A TEMPLATE AUTHORIZATION AUDIT
+Date: 2026-10-05
+
+IF YOU DO NOTHING: your forked rsx/ keeps the authorization holes the template had (any staff user reads every queued email and its invite/reset links, a site admin can take over a higher-role account, view-only users can write data), and several framework changes refuse what your code used to allow.
+
+SUMMARY
+    An adversarial review of every RSpade interface found no unauthenticated
+    data exfiltration through the framework channels, but found serious gaps in
+    two places: absolute links built from the request Host header (fixed in the
+    framework, nothing for you to do) and authorization in the TEMPLATE
+    application's staff endpoints. Your rsx/ was forked from that template, so
+    the template fixes do not reach you - this document is the audit to run on
+    your own code, plus the framework changes that alter what your code may
+    rely on.
+
+    Part A lists framework changes that need action in YOUR code.
+    Part B is the audit of your forked rsx/, one section per finding, each
+    naming the reference implementation to compare against.
+    Part C lists framework changes that need nothing from you, for awareness.
+
+PART A - FRAMEWORK CHANGES THAT NEED ACTION IN YOUR CODE
+
+A1. File READ gates fail closed.
+    file.thumbnail.authorize and file.download.authorize are now mandatory,
+    exactly as file.upload.authorize already was: with no handler registered,
+    every download, inline view, thumbnail, preview, preview-info and
+    extracted-text read - and the attachment fetch() - throws, naming the gate.
+    Action: make sure /rsx/handlers registers both gates (a handler that
+    returns true is enough for deliberately public files). If you class-override
+    File_Attachment_Model::fetch() or portal_can_read() and call
+    Rsx::trigger_gate() yourself, switch to Rsx_File_Gates::authorize().
+    Reference: system/app/RSpade/resource/reference_app/handlers/
+    File_Upload_Handlers.php and Portal_File_Access_Handlers.php.
+
+A2. ROLE_DISABLED (800) is retired.
+    A disabled membership is users.is_enabled = 0, the framework-enforced flag.
+    The framework migration 2026_10_05_075029 converts every role-800 user to
+    is_enabled = 0 with role 700. Action: remove every User_Model::ROLE_DISABLED
+    reference and every comparison of role_id with 800 from your code; disable
+    users through is_enabled (the template adds set_user_enabled and an
+    Enable/Disable button - see B3).
+
+A3. Administration is EQUAL-OR-LOWER.
+    Roles 200-500 now include themselves in can_admin_roles
+    (User_Model_Abstract::$enums): a user may create and modify users of their
+    own role or below. can_admin_role() and the guarded session-termination
+    functions follow the matrix, so a peer may now terminate a peer's sessions.
+    Action: if your User_Model override redeclares $enums['role_id'], add each
+    administering role to its own can_admin_roles; review any code that relied
+    on "a role cannot administer itself".
+
+A4. A bearer key on the framework file routes now passes through
+    Main::pre_dispatch.
+    /_download, /_inline, /_download_zip, both /_thumbnail routes,
+    /_preview/pdf and /_preview/sheet establish the key's identity BEFORE your
+    Main::pre_dispatch runs, and a non-null answer is a 403 account_refused.
+    Action: if your pre_dispatch calls Session::logout() or assumes a cookie
+    session, branch on Session::is_api_request() first. A soft-deleted
+    login_users row's keys are now refused.
+
+A5. The session cookie is __Host-rsx on every secure request.
+    Rsx_Session_Cookie::name() owns it (plain rsx only on a plain-http
+    development request). Every signed-in user is signed out once at deploy.
+    Action: any script, proxy rule, CDN rule or test keyed on the cookie name
+    rsx must read Rsx_Session_Cookie::name() or use __Host-rsx.
+
+A6. Client IP comes from trusted proxies only.
+    X-Forwarded-For is honoured only from loopback and the addresses in
+    rsx.http.trusted_proxies (empty by default). Action: a box behind a load
+    balancer or TLS terminator MUST list it there, or every visitor resolves to
+    the proxy's address and shares one login-throttle bucket
+    (rsx:man prelaunch_checklist).
+
+A7. Debug mode validates the request host like production.
+    A debug-mode box browsed under a host APP_URL / PORTAL_URL does not serve
+    now fails loudly. Action: browse it under its configured host.
+
+A8. /ssr-test.
+    The template's SSR harness is gated on the new framework check
+    is_framework_developer. Action: in your fork, change its #[Auth('public')]
+    to #[Auth('is_framework_developer')] or delete rsx/app/ssr_test/.
+    (The worker hang it could trigger is fixed in the framework.)
+
+PART B - AUDIT YOUR FORKED rsx/
+
+Reference app root:
+    system/app/RSpade/resource/reference_app/   (written REF/ below)
+
+B1. Every staff endpoint carries a DATA permission check.  [was S-05]
+    The template declared can_view_data / can_edit_data /
+    can_view_user_activity but no endpoint used them, so view-only users could
+    create, edit and delete. Audit every controller under rsx/app (Ajax
+    endpoints, routes, model fetch() methods and /api/v1 endpoints):
+        reads                     #[Auth('is_logged_in', 'can_view_data')] (class)
+        writes                    #[Auth('can_edit_data')] (method)
+        site-wide activity/audit  can_view_user_activity
+        system email / settings   can_manage_site_settings
+        user management           can_manage_users
+    Then copy REF/tests/Endpoint_Data_Gates_Test.php into rsx/tests and run it:
+    it lists every rsx/app Ajax endpoint with its gates and fails a
+    write-shaped endpoint (save_/delete_/create_/update_/add_/remove_/
+    toggle_/set_/upload_/send_ ...) that lacks can_edit_data or a stronger
+    admin check. Adjust its exemption list to your app.
+
+B2. The system email screen.  [was S-02]
+    REF/app/frontend/system/ - the controller and its actions are gated
+    is_logged_in + can_manage_site_settings; previously any signed-in user read
+    every queued email body (invite and password-reset links included),
+    re-sent any email and flipped any opt-out.
+
+B3. User administration checks the TARGET and the NEW role.  [was S-03, S-04]
+    In your user-management controller every read-for-edit, save, invite,
+    enable/disable, API-key revoke, role change, 2FA-requirement change and
+    email change must check BOTH can_admin_role(target's CURRENT role) and
+    can_admin_role(NEW role). Previously only the new role was checked, so a
+    site admin could demote the root admin, clear their second factor and
+    change their email. send_invite must never return an invite URL for an
+    invitee whose role is above the caller's; it returns invite_url_hidden and
+    the modal says the link is hidden because the selected user's access level
+    exceeds the caller's own.
+    Reference: REF/app/frontend/settings/user_management/
+    settings_user_management_controller.php (__administrable_user(),
+    _validate_role_id(), set_user_enabled, send_invite) and its add-user /
+    view actions.
+
+B4. API access requires the API permission.  [was S-07]
+    The API Keys screen and every /api/v1 controller carry can_use_api, and
+    Main::pre_dispatch refuses a bearer request whose user lacks
+    PERM_API_ACCESS (403 account_refused). NO ROLE GRANTS PERM_API_ACCESS: grant
+    it (User_Permission_Model::grant) to every user who holds live keys BEFORE
+    deploying, or their integrations stop. Reference: REF/main.php,
+    REF/app/api/v1/, REF/app/frontend/settings/api_keys/.
+
+B5. Portal access follows the client's portal switch.  [was S-10]
+    Membership rows are kept when a client's portal is disabled or the client
+    is deleted, so access returns when it is reopened - but every portal-side
+    access check must count only memberships whose client has
+    portal_enabled = 1 and is not soft-deleted. Audit
+    Portal_Membership_Model::has_membership / find_for_user_and_client /
+    get_for_user (portal-side, now filtered) against
+    has_membership_row / get_all_for_user (every row: staff screens, duplicate
+    checks, invitation acceptance). Every portal access path should go through
+    Portal_Permission. Reference: REF/models/portal_membership_model.php,
+    REF/portal_permission.php. Test fixtures relying on a membership now need
+    portal_enabled = true.
+
+B6. The file access handlers fork on the REALM.  [was S-11]
+    In the portal realm, authorize only a portal user, by membership of the
+    file's client; a staff session gets nothing there. In the staff realm,
+    require an active membership (User_Model::is_active()). Previously
+    is_logged_in() was enough, so a disabled staff user kept file access
+    through the portal routes. Reference:
+    REF/handlers/Portal_File_Access_Handlers.php.
+
+B7. Document shares honour expiry and their contact.  [was S-12]
+    A share opens a document to its contact only, until it expires.
+    Reference: REF/models/shared_item_model.php (find_valid_share, is_valid)
+    and the portal Documents list.
+
+B8. Multi-site references.  [was S-17]
+    Every save that accepts a foreign id (client_id, contact_id, project_id,
+    user ids, parent ids) resolves it through the site-scoped model, so another
+    site's id reads as a missing one; every list grid's joins carry
+    site_id = base row's site_id. Reference: REF/app/frontend/contacts/,
+    projects/, tasks/ controllers and their DataGrid classes.
+
+B9. SSO only signs in accounts that already exist.  [SSO review]
+    Accounts are created in advance by an administrator. Delete any branch of
+    your sso.identity.unlinked handler that forwards an unlinked identity into
+    an invitation or sign-up - an unverified provider email was enough to
+    claim an invitation. Reference: REF/handlers/Sso_Handlers.php
+    (match_verified_email_of_existing_account).
+
+B10. /signup honours signup_mode on SUBMIT.  [was S-21]
+    The POST must refuse under 'disabled' and 'invite_only' without a valid
+    invite, exactly as the GET does, and answer an existing email exactly like
+    a new one. Reference: REF/app/login/signup/signup_controller.php.
+
+B11. Portal member validation.  [was S-35]
+    portal_add_member requires a contact of the same client; membership roles
+    are validated against the enum; staff user detail lists only this site's
+    sessions. Reference: REF/app/frontend/clients/clients_controller.php,
+    the user-management controller's get_user.
+
+PART C - FRAMEWORK CHANGES THAT NEED NOTHING FROM YOU
+
+    - Emailed and absolute links (rsx_absolute_url) use the request host only
+      when it is a served host, otherwise APP_URL; the loopback test parses a
+      real address. A Host header can no longer redirect a reset or invite
+      link to an attacker.
+    - Second-factor verification has per-challenge and per-identity attempt
+      caps (rsx.two_factor.*); operators clear a lock with
+      rsx:users:2fa:unlock.
+    - The SSR daemon spawn no longer hangs the PHP worker that starts it.
+    - The realtime relay caps frame size and subscriptions per connection
+      (REALTIME_MAX_FRAME_BYTES, REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION);
+      restart the relay to apply.
+    - rsx:health warns when LibreOffice runs unsandboxed and portal users can
+      upload.
+    - is_framework_developer is a new framework-declared auth check.
+
+VERIFICATION
+    php artisan migrate; php artisan rsx:test (with Endpoint_Data_Gates_Test
+    copied in); php artisan rsx:health shows no FAIL; sign in as a view-only
+    user and confirm every write button and endpoint is refused.
+
+SEE ALSO
+    auth_gates - the check vocabulary and #[Auth]
+    acls - roles, can_admin_roles, the ACL administration API
+    file_upload - the mandatory upload and read gates
+    session - the session cookie and the client-IP resolver
+    prelaunch_checklist - trusted proxies
+    portal - portal access and memberships
+    sso - sign-in hooks

@@ -22,7 +22,7 @@ A 32-byte random token, minted ONCE when the session is created and stored on `_
 
 ## Portal parity
 
-There is **one session per browser** - one `rsx` cookie, one `_sessions` row, one token - shared by the staff app and the portal. So there is exactly one token and nothing to fork on: a staff form and a portal form carry the same value, both realms verify against the same row, and `Rsx_Csrf::enforce()` takes no realm argument. Portal code writes `@csrf` exactly like staff code; **a hand-rolled portal variant is always wrong.**
+There is **one session per browser** - one session cookie (`__Host-rsx`), one `_sessions` row, one token - shared by the staff app and the portal. So there is exactly one token and nothing to fork on: a staff form and a portal form carry the same value, both realms verify against the same row, and `Rsx_Csrf::enforce()` takes no realm argument. Portal code writes `@csrf` exactly like staff code; **a hand-rolled portal variant is always wrong.**
 
 ## Enforcement point and failure shape
 

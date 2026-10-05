@@ -48,7 +48,7 @@ OBJECT STRUCTURE
         session_hash        String. Hashed session token. An INGREDIENT of
                             cache_key; also compared directly by the SPA
                             session-validation endpoint. Non-reversible hash of
-                            the rsx cookie value.
+                            the session cookie's value.
 
         cache_key           String. 32-char md5 that IS the Rsx_Storage scope
                             suffix. Computed server-side over session_hash + user

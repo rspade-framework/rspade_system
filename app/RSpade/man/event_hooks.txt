@@ -402,11 +402,15 @@ FRAMEWORK EVENT CATALOG
         These fire from File_Attachment_Controller::upload() (the /_upload
         endpoint), in the order listed.
 
-        file.upload.authorize (gate)
-            Fired from: File_Attachment_Controller::upload (POST /_upload), before
-                        the file is validated or stored.
-            Data: {request: Request, user: User|null, params: array}
-                  user is Session::get_user() (may be null); params is the route
+        file.upload.authorize (gate) - MANDATORY: with no handler registered
+            every upload transport throws (rsx:man file_upload).
+            Fired from: Rsx_File_Upload::accept() (POST /_upload and
+                        POST /api/v1/files), after the file is validated and
+                        before anything is stored.
+            Data: {request, user, params, file, filename, size, mime_type,
+                   extension, tmp_path}
+                  user is realm-honest (the portal user on a portal request,
+                  else the staff user; may be null); params is the route
                   params, NOT the POST body.
             Return: true to allow; ANY other value (a Response - error JSON,
                     redirect) halts the upload and is returned to the client.
@@ -449,6 +453,12 @@ FRAMEWORK EVENT CATALOG
         guards the thumbnail surface; file.download.authorize guards raw
         download/inline. Preview (/_preview/pdf/:key) and download run BOTH, as a
         dual gate (thumbnail first, then download).
+
+        BOTH ARE MANDATORY, like file.upload.authorize: they are asked through
+        Rsx_File_Gates::authorize(), and a gate with NO handler registered makes
+        every surface that asks it throw a RuntimeException naming the gate,
+        never default open. A site whose files are public registers a handler
+        returning true (rsx:man file_upload, SECURITY HOOKS).
 
         file.thumbnail.authorize (gate)
             Fired from: File_Attachment_Controller (thumbnail / file / download

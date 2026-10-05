@@ -5,8 +5,8 @@ namespace App\RSpade\Core\Files;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use App\RSpade\Core\Debug\Rsx_Diagnostics;
-use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Files\File_Attachment_Model;
+use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Unparseable_Svg_Exception;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
 use App\RSpade\Core\Portal\Portal_Session;
@@ -35,30 +35,6 @@ use App\RSpade\Core\Session\Session;
  */
 class Rsx_File_Upload
 {
-    /**
-     * MANDATORY GATE PRECONDITION. Rsx::trigger_gate() defaults OPEN when nothing is listening -
-     * correct for an optional gate, catastrophic for this one (an app that never wrote a handler
-     * would be running an anonymous upload endpoint). Who may upload is an APPLICATION decision
-     * the framework cannot guess, so an unregistered gate is a MISCONFIGURED APPLICATION, not a
-     * bad request: fail loud (5xx), before the request is examined at all.
-     *
-     * Called by EVERY upload surface, first, before the request is touched.
-     */
-    public static function require_authorize_gate(): void
-    {
-        if (Event_Registry::has_handlers('file.upload.authorize')) {
-            return;
-        }
-
-        throw new \RuntimeException(
-            'File uploads are disabled: no file.upload.authorize gate handler is registered. '
-            . 'Uploading is an application authorization decision the framework will not make '
-            . 'for you (at minimum, require a logged-in user), so an upload endpoint refuses to '
-            . 'accept a file until the application registers a #[OnEvent(\'file.upload.authorize\')] '
-            . 'handler in /rsx/handlers/. See: php artisan rsx:man file_upload'
-        );
-    }
-
     /**
      * Authorize, scope and ingest one received file.
      *
@@ -107,7 +83,7 @@ class Rsx_File_Upload
         // facade read that would be null for a logged-in portal uploader. The fork is on the
         // REALM OF THE REQUEST, not on who is signed in - see the note in
         // File_Attachment_Controller::upload().
-        $auth_result = Rsx::trigger_gate('file.upload.authorize', [
+        $auth_result = Rsx_File_Gates::authorize(Rsx_File_Gates::UPLOAD, [
             'request' => $request,
             'user' => $is_portal
                 ? Portal_Session::get_portal_user()
