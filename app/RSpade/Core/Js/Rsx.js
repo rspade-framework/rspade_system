@@ -215,6 +215,12 @@ class Rsx {
                 return;
             }
 
+            // A browser extension's own script failing is not this page failing.
+            if (Rsx._EXTENSION_ORIGIN.test(event.filename || '') || Rsx._is_extension_rejection(event.error)) {
+                console_debug('BROWSER_EXTENSION', 'Ignored an error raised by a browser extension:', event.message);
+                return;
+            }
+
             // Pass the Error object directly if available, otherwise create one
             const exception = event.error || new Error(event.message);
             // Attach additional metadata if not already present
@@ -227,24 +233,138 @@ class Rsx {
 
         // Handle unhandled promise rejections
         window.addEventListener('unhandledrejection', function (event) {
+            const reason = event.reason;
+            const exception = Rsx._rejection_as_error(reason);
+
             // View Transition API rejections are benign — the page rendered fine,
             // the transition animation just couldn't complete (e.g., DOM changed
             // before snapshot finished during SPA navigation). Suppress silently.
-            const reason_message = event.reason instanceof Error
-                ? event.reason.message
-                : (event.reason ? String(event.reason) : '');
-            if (reason_message.includes('Transition was aborted') || reason_message.includes('Transition was skipped')) {
+            if (exception.message.includes('Transition was aborted') || exception.message.includes('Transition was skipped')) {
                 event.preventDefault();
                 return;
             }
 
-            // event.reason can be Error, string, or any value
-            const exception = event.reason instanceof Error
-                ? event.reason
-                : new Error(event.reason ? String(event.reason) : 'Unhandled promise rejection');
+            // A browser extension (wallet injectors, page widgets) rejecting its own promise
+            // in this page is not the application failing. Left to the browser's console.
+            if (Rsx._is_extension_rejection(reason)) {
+                console_debug('BROWSER_EXTENSION', 'Ignored a rejection raised by a browser extension:', reason);
+                return;
+            }
 
-            Rsx._handle_unhandled_exception(exception, { source: 'unhandled_rejection' });
+            Rsx._handle_unhandled_exception(exception, {
+                source: 'unhandled_rejection',
+                implicated: Rsx._implicates_page_code(reason),
+            });
         });
+    }
+
+    /**
+     * A browser-extension script URL (Chrome, Firefox, Safari).
+     */
+    static _EXTENSION_ORIGIN = /(chrome|moz|safari-web)-extension:\/\//;
+
+    /**
+     * The rejection reason as an Error, never stringified to "[object Object]".
+     *
+     * An Error is returned as it is. Anything else becomes an Error whose message carries the
+     * value - a string verbatim, an object as JSON - and the raw value rides along as
+     * `rejection_reason` for the logger.
+     *
+     * @param {*} reason
+     * @returns {Error}
+     */
+    static _rejection_as_error(reason) {
+        if (reason instanceof Error) {
+            return reason;
+        }
+
+        let text;
+
+        if (reason === undefined || reason === null) {
+            text = 'Unhandled promise rejection';
+        } else if (typeof reason === 'string') {
+            text = reason;
+        } else if (typeof reason === 'object' && typeof reason.message === 'string' && reason.message !== '') {
+            text = reason.message;
+        } else {
+            text = 'Unhandled promise rejection: ' + Rsx._describe_value(reason);
+        }
+
+        const exception = new Error(text);
+        exception.rejection_reason = reason;
+
+        return exception;
+    }
+
+    /**
+     * A readable one-line description of an arbitrary rejected value.
+     *
+     * @param {*} value
+     * @returns {string}
+     */
+    static _describe_value(value) {
+        let json = null;
+
+        // JSON.stringify throws on a cyclic object and answers undefined for a function: both
+        // are ordinary rejection values, so the type tag below describes them instead.
+        try {
+            json = JSON.stringify(value);
+        } catch (e) {
+            json = null;
+        }
+
+        if (typeof json === 'string' && json !== '{}') {
+            return json.length > 1000 ? json.substring(0, 1000) + '...' : json;
+        }
+
+        const tag = Object.prototype.toString.call(value);
+        const keys = value && typeof value === 'object' ? Object.keys(value) : [];
+
+        return keys.length ? tag + ' with keys ' + keys.join(', ') : tag;
+    }
+
+    /**
+     * True when a rejection or error demonstrably came from a browser extension: a stack whose
+     * frames are extension scripts, or Chrome's extension-messaging failure.
+     *
+     * @param {*} reason
+     * @returns {boolean}
+     */
+    static _is_extension_rejection(reason) {
+        if (reason === undefined || reason === null) {
+            return false;
+        }
+
+        const stack = typeof reason.stack === 'string' ? reason.stack : '';
+        const message = typeof reason === 'string'
+            ? reason
+            : (typeof reason.message === 'string' ? reason.message : '');
+
+        return Rsx._EXTENSION_ORIGIN.test(stack)
+            || message === 'Could not establish connection. Receiving end does not exist.';
+    }
+
+    /**
+     * Does a rejection implicate this page's own code?
+     *
+     * Only an Error carries frames to judge by. Its stack names this origin's scripts (the
+     * compiled bundles, the mirrored vendor files) when the application or the framework
+     * threw it; an Error with no stack at all cannot be judged and is treated as implicated.
+     * A non-Error value (a plain object, a string) carries no frame of ours and is not.
+     *
+     * @param {*} reason
+     * @returns {boolean}
+     */
+    static _implicates_page_code(reason) {
+        if (!(reason instanceof Error)) {
+            return false;
+        }
+
+        if (typeof reason.stack !== 'string' || reason.stack === '') {
+            return true;
+        }
+
+        return reason.stack.includes(window.location.origin) || reason.stack.includes('/_compiled/');
     }
 
     /**
@@ -276,6 +396,8 @@ class Rsx {
      * @param {Error|string|Object} exception - Exception object, string, or object with message
      * @param {Object} meta - Metadata about exception source
      * @param {string} meta.source - 'window_error', 'unhandled_rejection', or undefined for manual triggers
+     * @param {boolean} [meta.implicated] - false when the failure implicates none of this page's
+     *                                       code: reported, but the SPA is left enabled
      */
     static _handle_unhandled_exception(exception, meta = {}) {
         // Trigger event for listeners:
@@ -283,6 +405,12 @@ class Rsx {
         // - Exception_Handler: Logs to console and displays error (layout or flash alert)
         // Pass exception and metadata (source info for logging decisions)
         Rsx.trigger('unhandled_exception', { exception, meta });
+
+        // A rejection that implicates none of this page's code (meta.implicated === false)
+        // is reported and nothing more: the page is not broken, so navigation stays.
+        if (meta.implicated === false) {
+            return;
+        }
 
         // Disable SPA navigation if in SPA mode
         // This allows user to navigate away from broken page using normal browser navigation

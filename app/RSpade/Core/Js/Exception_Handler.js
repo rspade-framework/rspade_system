@@ -117,10 +117,20 @@ class Exception_Handler {
      * @param {Error|string} exception - The exception to display
      * @param {Object} meta - Metadata about exception source
      * @param {string} meta.source - 'window_error', 'unhandled_rejection', or undefined
+     * @param {boolean} [meta.implicated] - false: reported quietly, never displayed
      */
     static display_unhandled_exception(exception, meta = {}) {
         // Developer explicitly suppressed all display
         if (Exception_Handler._suppress_display) {
+            return;
+        }
+
+        // A failure that implicates none of this page's code (a plain-object rejection from a
+        // third-party script) is reported - Debugger.js has already logged it to the server
+        // from the same event - but the user is not told the application broke, because it
+        // did not.
+        if (meta.implicated === false) {
+            console.warn('[Exception_Handler] Unhandled rejection from outside this page\'s code (not shown to the user):', exception);
             return;
         }
 

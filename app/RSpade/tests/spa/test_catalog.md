@@ -4,7 +4,7 @@ The title rows live in `playwright/spa_action_title.js` (one browser session ove
 template app's `/contacts` and `/contacts/view/:id`); the guard rows live in
 `playwright/navigation_guard.js` (one session over the framework's own `/_sys` panel, so
 it depends on no application code); the fragment rows live in `playwright/fragment_popstate.js`
-(same `/_sys` session shape); the ResizeObserver rows live in `playwright/resize_observer_notice.js` (same shape). The decorator half - `@title` surviving the transform
+(same `/_sys` session shape); the ResizeObserver rows live in `playwright/resize_observer_notice.js` (same shape), the rejection-origin rows in `playwright/unhandled_rejection_origin.js` (same shape). The decorator half - `@title` surviving the transform
 as `_spa_title` - is JT-03f in the `js_transform` concern.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
@@ -29,6 +29,11 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-RO-01 | The browser's ResizeObserver delivery-overrun notice (both spellings, ErrorEvent with no error object) fires no `unhandled_exception` and leaves SPA navigation enabled | playwright | `/_sys`, `dispatchEvent(new ErrorEvent('error', {message}))` | no event; `Spa._spa_enabled` true | implemented | 2026-09-25 |
 | SPA-RO-02 | After the notice, `Spa.dispatch()` still navigates client-side | playwright | `/_sys` -> `/_sys/tasks` | landed on the target; a window marker survives (no page load) | implemented | 2026-09-25 |
 | SPA-RO-03 | The match is exact: a different `ResizeObserver loop ...` message, and the notice text carried by a real Error, are still unhandled exceptions | playwright | two control ErrorEvents | two `unhandled_exception` events; SPA disabled | implemented | 2026-09-25 |
+| SPA-REJ-01 | A plain-object rejection is reported once, its message carries the value as JSON (never `[object Object]`), and it is marked `implicated: false` | playwright | `/_sys`, a dispatched `PromiseRejectionEvent` with reason `{code, detail}` | one `unhandled_exception`, message contains the value, `meta.implicated === false` | implemented | 2026-10-05 |
+| SPA-REJ-02 | A rejection that implicates no page code leaves SPA navigation enabled | playwright | as SPA-REJ-01 | `Spa._spa_enabled` true | implemented | 2026-10-05 |
+| SPA-REJ-03 | After it, `Spa.dispatch()` still navigates client-side | playwright | `/_sys` -> `/_sys/tasks` | landed on the target; a window marker survives | implemented | 2026-10-05 |
+| SPA-REJ-04 | Extension-origin rejections are ignored outright: an Error whose stack names a `chrome-extension://` script, and Chrome's extension-messaging failure | playwright | two dispatched rejections | no `unhandled_exception`; SPA enabled | implemented | 2026-10-05 |
+| SPA-REJ-05 | A rejection whose Error stack names this origin's compiled bundle is still an exception that disables the SPA | playwright | an Error with a `/_compiled/` frame | one `unhandled_exception`, `implicated === true`, SPA disabled | implemented | 2026-10-05 |
 
 ## Notes
 

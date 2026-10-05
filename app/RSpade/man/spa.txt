@@ -930,6 +930,29 @@ DISABLING SPA NAVIGATION
     stays visible while developing. Any other message, or the same text on a
     real Error, is handled as an exception.
 
+    An unhandled promise REJECTION is judged by whether it implicates this
+    page's own code, because third-party code in the page - browser-extension
+    content scripts above all - rejects its own promises:
+
+        - From a browser extension (an Error whose stack names a
+          chrome-extension://, moz-extension:// or safari-web-extension://
+          script, or Chrome's "Could not establish connection. Receiving end
+          does not exist."): ignored, written to the BROWSER_EXTENSION
+          console_debug channel. The same applies to a window error raised
+          from an extension script.
+        - A value that is not an Error (a plain object, a string): reported -
+          the unhandled_exception event fires, so the server log receives it -
+          with the value in the message (an object as JSON, never
+          "[object Object]", the raw value on exception.rejection_reason), and
+          marked meta.implicated = false. The user is shown nothing and SPA
+          navigation stays enabled: no frame of this page's code is in it.
+        - An Error whose stack names this origin's scripts, or carries no stack
+          at all: an exception as before - displayed, and the SPA disabled.
+
+    The debug box shown in the layout while an action is loading is headed
+    "Unhandled Error", not "Fatal Error": an unhandled exception says the page
+    failed to handle something, not that the application is beyond use.
+
 SESSION VALIDATION
     After each SPA navigation (except initial load and back/forward), the client
     validates its state against the server by calling Rsx.validate_session().

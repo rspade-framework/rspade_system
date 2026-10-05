@@ -105,7 +105,7 @@ class Spa_Layout extends Component {
         // Create error box with inline styles (no framework dependencies)
         const error_html = `
             <div style="border: 2px solid #dc3545; background-color: #ffe6e6; color: #000; padding: 15px; margin-bottom: 20px;">
-                <strong>Fatal Error:</strong> ${this._escape_html(message)}
+                <strong>Unhandled Error:</strong> ${this._escape_html(message)}
             </div>
         `;
 
