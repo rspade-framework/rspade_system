@@ -1,0 +1,64 @@
+File_Storage_Model::store_blob() TAKES THE REFERENCE AS A CALLBACK; find_or_create() IS PRIVATE
+Date: 2026-10-05
+
+IF YOU DO NOTHING: any code of yours that calls File_Storage_Model::store_blob($path) or File_Storage_Model::find_or_create($path) directly dies with an ArgumentCountError or a call-to-private-method Error.
+
+SUMMARY
+    Only code that writes bytes into the blob store BY HAND is affected - code
+    that calls File_Storage_Model::store_blob() or ::find_or_create() itself. The
+    ordinary entry points are unchanged: File_Attachment_Model::create_from_upload(),
+    create_from_disk(), create_from_string(), create_from_url(), Ajax.upload(),
+    POST /api/v1/files and the email builder's attach()/embed().
+
+THE CHANGE
+    A storage row is deduplicated by content hash, so a new upload can land on the
+    very row File_Disposal_Service is about to release. Every blob is now guarded by
+    a per-hash readers-writer lock (file_blob:<hash>): the code that records a
+    reference holds the READ lock from before the row is looked up until the
+    reference row COMMITS, and the disposal pass re-checks every reference table
+    under the WRITE lock before it deletes the row and unlinks the file.
+
+    A reference written after store_blob() returned could not be covered by that
+    lock, so the reference write now happens INSIDE the call:
+
+        store_blob(string $temp_path, callable $reference): File_Storage_Model
+
+    $reference receives the storage row and writes the row that points at it. The
+    lock is released when $reference has returned and the outermost database
+    transaction (if one is open) has committed or rolled back.
+
+    find_or_create() - the older spelling of the same operation, with no
+    reference at all - is now private.
+
+ACTION REQUIRED
+    Search your code (rsx/) for store_blob( and find_or_create( on
+    File_Storage_Model. Convert each call so the row that references the blob is
+    saved inside the callback:
+
+        Before:
+            $storage = File_Storage_Model::store_blob($temp_path);
+            $row->file_storage_id = $storage->id;
+            $row->save();
+
+        After:
+            $storage = File_Storage_Model::store_blob($temp_path, function (File_Storage_Model $storage) use ($row) {
+                $row->file_storage_id = $storage->id;
+                $row->save();
+            });
+
+    If the code only stored bytes to create a File_Attachment_Model, prefer
+    File_Attachment_Model::create_from_disk() / create_from_string() instead of a
+    hand-written store.
+
+    A blob stored with a callback that saves nothing is legal but unreferenced:
+    the disposal sweeps will release it.
+
+VERIFICATION
+    rsx:check and a page load are clean. Exercise each converted path once and
+    confirm the reference row exists with its file_storage_id set, and the file
+    opens.
+
+SEE ALSO
+    file_disposal - RACE-PROOF RELEASE
+    file_upload
+    skill rspade:file-attachments

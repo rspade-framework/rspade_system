@@ -54,7 +54,7 @@ class Storage_Isolation_Test extends Rsx_Test_Abstract
     {
         $tmp = tempnam(sys_get_temp_dir(), 'rsx_iso_');
         file_put_contents($tmp, $bytes);
-        $storage = File_Storage_Model::store_blob($tmp);
+        $storage = File_Storage_Model::store_blob($tmp, fn () => null);
         @unlink($tmp);
 
         $a = new File_Attachment_Model();
@@ -122,8 +122,8 @@ class Storage_Isolation_Test extends Rsx_Test_Abstract
 
     /**
      * THE B-38 proof: a blob authored during a test run is written under the test root and NOT the
-     * real store, and deleting the attachment (the deleted-hook that unlinks the last-reference
-     * blob) removes the file from the test root only - the real store is never touched.
+     * real store, and permanently destroying the attachment releases the last-reference blob
+     * without ever touching the real store.
      */
     public static function test_blob_written_and_deleted_only_in_test_root()
     {
@@ -149,8 +149,11 @@ class Storage_Isolation_Test extends Rsx_Test_Abstract
         $storage_id = $storage->id;
         $a->force_destroy();
 
-        static::__assert_false(file_exists($test_path), 'blob removed from the test root on destroy');
         static::__assert_null(File_Storage_Model::find($storage_id), 'orphaned storage row released on destroy');
+        // The unlink itself waits for the release to COMMIT, and this test's transaction is
+        // rolled back - so the test-root file is still present, and the real store is still
+        // untouched. The committed unlink is pinned by File_Blob_Lock_Test.
+        static::__assert_true(file_exists($test_path), 'the test-root blob waits for the release to commit');
         static::__assert_false(file_exists($real_path), 'the real developer store was never touched');
     }
 

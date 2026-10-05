@@ -165,32 +165,41 @@ class Rsx_Mail
         $sort_order = 0;
 
         foreach ($specs as $spec) {
-            [$storage, $file_name, $mime_type] = static::_resolve_attachment_blob($spec);
+            $position = $sort_order++;
 
-            Email_Attachment_Model::record_part(
-                $record,
-                $storage,
-                $file_name,
-                $mime_type,
-                (int) $spec['disposition'],
-                $spec['cid'],
-                $sort_order++
+            static::_with_attachment_blob(
+                $spec,
+                function (File_Storage_Model $storage, string $file_name, string $mime_type) use ($record, $spec, $position) {
+                    Email_Attachment_Model::record_part(
+                        $record,
+                        $storage,
+                        $file_name,
+                        $mime_type,
+                        (int) $spec['disposition'],
+                        $spec['cid'],
+                        $position
+                    );
+                }
             );
         }
     }
 
     /**
-     * Get one attachment spec's bytes into the blob store.
+     * Get one attachment spec's bytes into the blob store and hand the storage row, file
+     * name and mime to $record, which writes the row that pins them.
      *
      * A File_Attachment_Model REUSES its existing blob - nothing is copied and nothing
-     * is re-hashed. A path or raw bytes go through a temp file, because store_blob()
-     * hashes and byte-compares a file on disk (see File_Attachment_Model::create_from_string,
+     * is re-hashed; record_part()'s save holds that blob's lock and refuses a row that was
+     * released in the meantime. A path or raw bytes go through store_blob(), which calls
+     * $record inside its reference scope - store_blob() hashes and byte-compares a file on
+     * disk, so raw bytes go through a temp file (see File_Attachment_Model::create_from_string,
      * which does the same dance for the same reason).
      *
-     * @param array $spec
-     * @return array{0: File_Storage_Model, 1: string, 2: string}
+     * @param array    $spec
+     * @param callable $record fn (File_Storage_Model $storage, string $file_name, string $mime_type)
+     * @return void
      */
-    private static function _resolve_attachment_blob(array $spec): array
+    private static function _with_attachment_blob(array $spec, callable $record): void
     {
         $source = $spec['source'];
 
@@ -209,11 +218,9 @@ class Rsx_Mail
                 );
             }
 
-            return [
-                $storage,
-                $spec['name'] ?? $source->file_name,
-                $spec['mime'] ?? $source->mime_type,
-            ];
+            $record($storage, $spec['name'] ?? $source->file_name, $spec['mime'] ?? $source->mime_type);
+
+            return;
         }
 
         if (is_string($source)) {
@@ -221,11 +228,15 @@ class Rsx_Mail
                 throw new \RuntimeException("Cannot attach '{$source}' to an email: no such file.");
             }
 
-            return [
-                File_Storage_Model::store_blob($source),
-                $spec['name'] ?? basename($source),
-                $spec['mime'] ?? (mime_content_type($source) ?: 'application/octet-stream'),
-            ];
+            $file_name = $spec['name'] ?? basename($source);
+            $mime_type = $spec['mime'] ?? (mime_content_type($source) ?: 'application/octet-stream');
+
+            File_Storage_Model::store_blob(
+                $source,
+                fn (File_Storage_Model $storage) => $record($storage, $file_name, $mime_type)
+            );
+
+            return;
         }
 
         // Raw bytes the caller generated.
@@ -236,14 +247,15 @@ class Rsx_Mail
         }
 
         try {
-            $storage = File_Storage_Model::store_blob($temp_path);
+            File_Storage_Model::store_blob(
+                $temp_path,
+                fn (File_Storage_Model $storage) => $record($storage, $spec['name'], $spec['mime'])
+            );
         } finally {
             if (file_exists($temp_path)) {
                 @unlink($temp_path);
             }
         }
-
-        return [$storage, $spec['name'], $spec['mime']];
     }
 
     /**

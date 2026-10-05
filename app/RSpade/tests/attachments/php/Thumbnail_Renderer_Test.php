@@ -50,7 +50,7 @@ class Thumbnail_Renderer_Test extends Rsx_Test_Abstract
         $bytes = Attachment_Fixture_Handler::png_bytes('a');
         $tmp = tempnam(sys_get_temp_dir(), 'rsx_rmime_');
         file_put_contents($tmp, $bytes);
-        $storage = \App\RSpade\Core\Files\File_Storage_Model::store_blob($tmp);
+        $storage = \App\RSpade\Core\Files\File_Storage_Model::store_blob($tmp, fn () => null);
         @unlink($tmp);
 
         $a = new File_Attachment_Model();

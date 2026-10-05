@@ -229,14 +229,18 @@ class Sys_Email_Controller_Test extends Rsx_Test_Abstract
         file_put_contents($blob_source, 'sys-email-inline-bytes');
 
         try {
-            Email_Attachment_Model::record_part(
-                Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::find($id)),
-                File_Storage_Model::store_blob($blob_source),
-                'recorded.png',
-                'image/png',
-                Email_Attachment_Model::DISPOSITION_INLINE,
-                'recorded',
-                0
+            $row = Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::find($id));
+            File_Storage_Model::store_blob(
+                $blob_source,
+                fn (File_Storage_Model $storage) => Email_Attachment_Model::record_part(
+                    $row,
+                    $storage,
+                    'recorded.png',
+                    'image/png',
+                    Email_Attachment_Model::DISPOSITION_INLINE,
+                    'recorded',
+                    0
+                )
             );
         } finally {
             unlink($blob_source);

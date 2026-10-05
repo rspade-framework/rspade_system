@@ -2065,8 +2065,9 @@ return [
     | 'delivery' is the master switch and is CONFIGURED, not derived: 'live'
     | hands each row to the Laravel mailer MAIL_MAILER names, 'suppressed'
     | renders the message, records it, and records STATUS_SUPPRESSED without
-    | sending. The shipped default is 'aiosmtpd', so a fresh install delivers
-    | into a local Maildir and nothing leaves the box.
+    | sending. The shipped default is 'suppressed', so a fresh install records
+    | every message - the email history screens render it from the database -
+    | and nothing leaves the box, with no catcher daemon to depend on.
     |
     | 'dev_site' is the SECOND, independent layer: on a hostname containing
     | '.dev.' (Rsx::is_dev_site()) every recipient is checked against the
@@ -2077,7 +2078,7 @@ return [
         // What this install does with an email. FOUR modes, and nothing else is
         // accepted - an unrecognised value throws (Rsx_Mail_Transport::delivery_mode()).
         //
-        //   aiosmtpd   THE DEFAULT. Captured by the development catcher on this box:
+        //   aiosmtpd   Opt-in. Captured by the development catcher on this box:
         //              SMTP to 127.0.0.1:1025, no encryption, no auth. Laravel's mail
         //              config is IGNORED in this mode, so a stale MAIL_HOST cannot
         //              redirect a development install's mail at a real relay. The
@@ -2088,11 +2089,13 @@ return [
         //              (config/mail.php). 'log' and 'array' are refused - they deliver
         //              nothing. The .dev.-hostname recipient whitelist/catchall gate
         //              applies in THIS MODE ONLY.
-        //   suppressed Built and recorded (rendered_html/rendered_text land on the row),
-        //              never handed to a transport. Rows end SUPPRESSED.
+        //   suppressed THE DEFAULT. Built and recorded (rendered_html/rendered_text and
+        //              the inline parts land on the row), never handed to a transport.
+        //              Rows end SUPPRESSED - a deliberate outcome, not an error. The
+        //              catcher is only needed to inspect the raw MIME a transport saw.
         //   disabled   The queue is FROZEN. The drain logs one line and returns; rows
         //              stay PENDING, untouched, and nothing is marked stale.
-        'delivery' => env('MAIL_DELIVERY', 'aiosmtpd'),
+        'delivery' => env('MAIL_DELIVERY', 'suppressed'),
 
         // Server-error policy: the mail host answered with an error for THIS message
         // (an SMTP reply, or an API transport's 4xx refusal), so the message is retried

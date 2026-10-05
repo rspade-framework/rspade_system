@@ -367,35 +367,42 @@ class Rsx_Mail_Builder
         string $cid,
         ?Email_Attachment_Model $existing
     ): Email_Attachment_Model {
-        $storage = File_Storage_Model::store_blob($path);
         $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
         $mime_type = (new MimeTypes())->getMimeTypes($extension)[0] ?? 'application/octet-stream';
         $file_name = basename($path);
 
-        if ($existing !== null) {
-            if ((int) $existing->file_storage_id !== (int) $storage->id
-                || $existing->mime_type !== $mime_type
-                || $existing->file_name !== $file_name) {
-                $existing->file_storage_id = $storage->id;
-                $existing->mime_type = $mime_type;
-                $existing->file_name = $file_name;
-                $existing->save();
+        // The part is recorded INSIDE store_blob()'s reference scope, so the blob cannot be
+        // released between the dedup lookup and the row that pins it.
+        $part = null;
+        File_Storage_Model::store_blob($path, function (File_Storage_Model $storage) use ($row, $cid, $existing, $mime_type, $file_name, &$part) {
+            if ($existing !== null) {
+                if ((int) $existing->file_storage_id !== (int) $storage->id
+                    || $existing->mime_type !== $mime_type
+                    || $existing->file_name !== $file_name) {
+                    $existing->file_storage_id = $storage->id;
+                    $existing->mime_type = $mime_type;
+                    $existing->file_name = $file_name;
+                    $existing->save();
+                }
+
+                $part = $existing;
+                return;
             }
 
-            return $existing;
-        }
+            $last_sort_order = Email_Attachment_Model::where('email_queue_id', $row->id)->max('sort_order');
 
-        $last_sort_order = Email_Attachment_Model::where('email_queue_id', $row->id)->max('sort_order');
+            $part = Email_Attachment_Model::record_part(
+                $row,
+                $storage,
+                $file_name,
+                $mime_type,
+                Email_Attachment_Model::DISPOSITION_INLINE,
+                $cid,
+                $last_sort_order === null ? 0 : ((int) $last_sort_order + 1)
+            );
+        });
 
-        return Email_Attachment_Model::record_part(
-            $row,
-            $storage,
-            $file_name,
-            $mime_type,
-            Email_Attachment_Model::DISPOSITION_INLINE,
-            $cid,
-            $last_sort_order === null ? 0 : ((int) $last_sort_order + 1)
-        );
+        return $part;
     }
 
     /**

@@ -140,9 +140,9 @@ Retention: whole rows (attachments cascade) deleted after `rsx.mail.retention_da
 
 | Mode | What happens |
 |---|---|
-| `aiosmtpd` | **The shipped default.** Captured by the development catcher on `127.0.0.1:1025`. Laravel's mail config is **ignored**, so a stale `MAIL_HOST` cannot mail anybody by accident. |
+| `aiosmtpd` | Opt-in. Captured by the development catcher on `127.0.0.1:1025` - choose it to inspect the raw MIME a transport would see. Laravel's mail config is **ignored**, so a stale `MAIL_HOST` cannot mail anybody by accident. |
 | `live` | Real delivery through **the Laravel mailer `MAIL_MAILER` names** — **the only mode that reads Laravel's mail config, and the only one the dev-site gate applies to**. `log`/`array` are refused (every row would read Sent). |
-| `suppressed` | Rendered and recorded, handed to nobody. Rows end **Suppressed**. |
+| `suppressed` | **The shipped default.** Rendered and recorded (body and inline parts), handed to nobody. Rows end **Suppressed** - a deliberate outcome, not an error; the history screens show the message from the database, and no daemon is involved. |
 | `disabled` | **The queue is frozen.** `send()` still queues; the drain logs one line and returns. Rows stay Pending, untouched, and are never set aside as stale. |
 
 **The transport is Laravel's.** `system/config/mail.php` is Laravel's own shape with Laravel's `.env` keys (`MAIL_MAILER`, `MAIL_SCHEME`, `MAIL_URL`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`); `Rsx_Mail_Transport::make()` builds the named mailer through `MailManager::createSymfonyTransport()` and hands it the MIME the queue built, so inline images and attachments never depend on the transport. **Add a mailer** (a Microsoft Graph package, say): `rsx:composer require` it, register its service provider in `rsx.integrations.providers` (auto-discovery reads only `system/vendor`), declare its `mailers` entry in `rsx/resource/config/mail.php` (every `rsx/resource/config/<name>.php` deep-merges over `config('<name>')`), set `MAIL_MAILER`. `rsx:health` constructs it; `rsx:mail:test` proves it. Never call Laravel's `Mail` facade or write a Mailable - only the transport is borrowed. `rsx:man email`, MAIL TRANSPORTS.

@@ -18,7 +18,9 @@ file as recoverable. The tests pin both halves of that contract.
 - `system/app/RSpade/Core/Files/File_Attachment_Model.php` - `delete()` (SoftDeletes),
   `undelete()`, `force_destroy()`, `get_deleted_files()`, `get_deleted_attachments()`
 - `system/app/RSpade/Core/Files/File_Storage_Model.php` - the deduplicated blob row that
-  the refcount protects
+  the refcount protects; `store_blob()` is the reference-creator side of the blob lock
+- `system/app/RSpade/Core/Files/File_Blob_Locks.php` - the per-blob `file_blob:<hash>`
+  readers-writer lock (creators read until their reference commits, destroyers write)
 
 ## Behavior defined by
 
@@ -33,7 +35,8 @@ Hooks: `file.attachment.destroy.hold` (GATE - framework convention, `true` PERMI
 
 ## Applicability note
 
-These tests COMMIT. A blob unlink is a filesystem operation, not a transactional one, so a
+These tests COMMIT (`File_Blob_Lock_Test` for a second reason too: a release unlinks only when
+its transaction commits, and its helper process must see the rows). A blob unlink is a filesystem operation, not a transactional one, so a
 rolled-back transaction would leave the disk and the database disagreeing about what the
 test just proved. `File_Disposal_Test` therefore declares `$requires_db_reset = true` +
 `$use_database_transactions = false` and clears `_file_attachments` / `_file_storage`
@@ -59,6 +62,7 @@ The hooks are observed through a fixture listener (`File_Disposal_Test_Listener`
 | `destroy.hold` gate defers, then releases on a later run | php | implemented (`File_Disposal_Test`) |
 | `force_destroy()` is immediate, announces itself, ignores a hold, survives a throwing listener | php | implemented (`File_Disposal_Test`) |
 | Every pass spans every site: another site's attachment is destroyed and swept, and its hold on a shared blob is counted | php | implemented (`File_Disposal_All_Sites_Test`) |
+| Race-proof release: FK refusal keeps the bytes; a release waits for a creator's read lock in another process; holds last until commit; unlink at commit, kept on rollback; record + release in one transaction; attachment + email double pin; disk-sweep re-check | php | implemented (`File_Blob_Lock_Test`) |
 | Monthly deep sweep: disk/refcount reconciliation + `disk_orphan_min_age_days` guard | php | not implemented - the sweep walks the real storage tree; needs a seeded orphan-on-disk fixture |
 | 6-hourly `sweep_unclaimed_uploads` claim window (`rsx.attachments` claim hours) | php | not implemented - covered indirectly by the attachments concern's ownership tests, not by a clock-advanced sweep |
 | `deleted_retention_days`: 0 keeps forever through the daily and monthly passes; a positive value honoured at its boundary; a negative value throws | php | implemented (`File_Disposal_Retention_Config_Test`) |

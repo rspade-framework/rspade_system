@@ -6,7 +6,7 @@
 | ATT-02 | External attachment metadata works with no resident blob | php | create_external | get_size/mime from columns, fetch_count 0 | implemented | 2026-07-02 |
 | ATT-03 | First byte access materializes once; key + URLs stable | php | external + resolve_storage x2 | fetch_count 1, blob linked, key stable | implemented | 2026-07-02 |
 | ATT-04 | First thumbnail request materializes + renders | php | external + _render_thumbnail_data | materialized, WebP produced | implemented | 2026-07-02 |
-| ATT-05 | evict -> cleanup sweeps orphan blob -> re-materialize | php | evict + rsx:storage:cleanup | storage row+file gone, re-fetch on next access | implemented | 2026-07-02 |
+| ATT-05 | evict -> cleanup sweeps orphan blob -> re-materialize | php | evict + rsx:storage:cleanup | storage row gone (file kept until the release commits - the per-test transaction never does), re-fetch on next access | implemented | 2026-10-05 |
 | ATT-06 | relink to new content re-extracts dims/mime; hash changes (cache self-invalidates) | php | relink 8x8 -> 16x16 | width 16, file_size updated, hash differs | implemented | 2026-07-02 |
 | ATT-07 | Unregistered handler_class on a byte path fails loud; nothing served | php | forced bogus handler | RuntimeException | implemented | 2026-07-02 |
 | ATT-08 | evict on a handler-less attachment throws | php | plain + evict_blob | Rsx_Caller_Exception | implemented | 2026-07-02 |

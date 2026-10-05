@@ -46,8 +46,9 @@ Backlog `docs.dev/backlog/BACKLOG.md` B-38; `system/app/RSpade/tests/CLAUDE.md`
   | 'rsx-renditions')` (php).
 - The run's override relocates every root under `tmp/test-storage` (php).
 - A blob authored during a run is written under the test root, never the real store, and a
-  delete unlinks the test-root file only - the real store is untouched (php; the decisive
-  B-38 proof).
+  destroy releases it without touching the real store (php; the decisive B-38 proof). The
+  unlink itself waits for the release to commit, so inside the per-test transaction the
+  test-root file stays; `file_disposal/File_Blob_Lock_Test` pins the committed unlink.
 - Thumbnail + rendition cache-path seams honor the override (php).
 - The run's override survives a class that drives `_override()` / `_clear_overrides()` for its
   own purposes (the class boundary restores it; `prod_mode` and `paths` classes do exactly

@@ -286,6 +286,8 @@ File_Attachment_Model::create_from_url('https://example.com/logo.png', ['site_id
 
 They return an UNATTACHED attachment — attach it yourself with `attach_to()`/`add_to()` (trusted server code, so the claim guard is not in your way for handler-backed rows).
 
+**Raw bytes enter the store only through `File_Storage_Model::store_blob($temp_path, $reference)`** (the factories call it for you). `$reference` receives the storage row and writes the row that pins it; the blob's read lock (`file_blob:<hash>`) is held from before the dedup lookup until that row COMMITS, so disposal can never release the bytes in between. Record the reference INSIDE the callback, never after `store_blob()` returns. Saving an attachment or email part whose `file_storage_id` changed holds the same lock and THROWS "was released while a reference to it was being recorded" if the row is gone.
+
 ---
 
 ## 7. Deleting is a retention window, not destruction
@@ -304,7 +306,7 @@ $attachment->undelete();
 
 `force_destroy()` is the **only** immediate erasure — it bypasses the retention window AND the `file.attachment.destroy.hold` gate. Use it when a record must genuinely be gone now, not as a tidier `delete()`.
 
-**`File_Disposal_Service` is the SOLE blob-release authority.** No other code unlinks a blob. It runs a daily destroy+release pass and a monthly orphan sweep, plus the 6-hourly unclaimed-upload sweep. A blob is released only when NO live-or-retained attachment pins it — a **retention-aware** refcount, so a file still recoverable in someone's recycle bin keeps its bytes alive.
+**`File_Disposal_Service` is the SOLE blob-release authority.** No other code unlinks a blob. It runs a daily destroy+release pass and a monthly orphan sweep, plus the 6-hourly unclaimed-upload sweep. A blob is released only when NO live-or-retained attachment pins it — a **retention-aware** refcount, so a file still recoverable in someone's recycle bin keeps its bytes alive. A queued email's part pins it too. The release deletes the storage row FIRST (the reference foreign keys refuse it if anything still points there) and unlinks the file only after that COMMITS — so `force_destroy()` inside an open transaction unlinks at the outermost commit, and a rollback keeps the file.
 
 Two hooks, both receiving the attachment:
 

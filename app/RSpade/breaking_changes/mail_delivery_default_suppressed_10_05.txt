@@ -1,0 +1,44 @@
+THE DEFAULT MAIL DELIVERY MODE IS NOW 'suppressed', NOT 'aiosmtpd'
+Date: 2026-10-05
+
+IF YOU DO NOTHING: an install that never set MAIL_DELIVERY stops handing mail to the development catcher and records every message as Suppressed instead.
+
+SUMMARY
+    config('rsx.mail.delivery') - MAIL_DELIVERY - now defaults to 'suppressed':
+    every message is rendered and recorded (its body and inline parts land on the
+    queue row, so the email history screens show it from the database), marked
+    Status Suppressed, and handed to no transport. Nothing leaves the box, exactly
+    as before, but no daemon is involved: the development catcher on
+    127.0.0.1:1025 ('aiosmtpd') is now opt-in, for inspecting the raw MIME message
+    a transport would see.
+
+    Why: the history screens no longer read the catcher, and the catcher's maildir
+    lives under tmp/, which rsx:clean (and rsx:prod:disable) wipe - a running
+    catcher whose directory vanished refused every send with a 500, recorded as a
+    delivery failure on a box that was never meant to deliver anything.
+
+WHAT CHANGED
+    The default only. The four modes are unchanged (aiosmtpd | live | suppressed |
+    disabled), an install that SETS MAIL_DELIVERY keeps exactly what it set, and
+    'live' is untouched.
+
+ACTION REQUIRED
+    1. Look at MAIL_DELIVERY in your .env.
+       - Absent: you are now on 'suppressed'. If you relied on the catcher (a
+         tool or habit reading tmp/mail-catcher, rsx:mail:test checking the
+         maildir), set MAIL_DELIVERY=aiosmtpd explicitly.
+       - MAIL_DELIVERY=aiosmtpd: unchanged. If you only used the catcher to keep
+         mail from leaving a development box, switch to MAIL_DELIVERY=suppressed
+         and the catcher daemon is no longer in the delivery path.
+       - MAIL_DELIVERY=live, suppressed or disabled: nothing to do.
+    2. If your own .env.dist (or provisioning) writes MAIL_DELIVERY=aiosmtpd for
+       new installs, decide whether it should write 'suppressed' instead.
+
+VERIFICATION
+    php artisan rsx:health - the "Mail delivery" row names the mode. Send a test
+    message (php artisan rsx:mail:test <address>): under 'suppressed' it exits 0
+    and the row reads Suppressed; /_sys/email shows the rendered message.
+
+SEE ALSO
+    email - DELIVERY MODES AND THE DEV-SITE LAYER
+    prelaunch_checklist - the mail delivery audit

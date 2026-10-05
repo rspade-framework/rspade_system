@@ -49,8 +49,8 @@ h.run(async function () {
     const observer = await h.connect();
 
     // ---- The classic AB/BA cycle ---------------------------------------------------
-    // This is the real ordering hazard in the tree: FILE_WRITE -> FILE_BLOB_DISPOSAL taken
-    // in one order by an upload and the other by a delete.
+    // Two connections take two names in opposite orders. The names are fixtures; any pair
+    // acquired in inconsistent order closes the same cycle.
     const a = await h.connect();
     const b = await h.connect();
 

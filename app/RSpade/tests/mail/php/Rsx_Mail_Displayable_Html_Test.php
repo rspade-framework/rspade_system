@@ -64,14 +64,15 @@ class Rsx_Mail_Displayable_Html_Test extends Rsx_Test_Abstract
         file_put_contents_safe($path, $bytes);
 
         try {
-            $storage = File_Storage_Model::store_blob($path);
+            return File_Storage_Model::store_blob(
+                $path,
+                fn (File_Storage_Model $storage) => Email_Attachment_Model::record_part(
+                    $row, $storage, $cid, $mime_type, Email_Attachment_Model::DISPOSITION_INLINE, $cid, 0
+                )
+            );
         } finally {
             @unlink($path);
         }
-
-        Email_Attachment_Model::record_part($row, $storage, $cid, $mime_type, Email_Attachment_Model::DISPOSITION_INLINE, $cid, 0);
-
-        return $storage;
     }
 
     /**

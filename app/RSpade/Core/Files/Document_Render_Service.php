@@ -52,7 +52,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * recorded in render_error, surfaced by rsx:documents:failed, and re-queued only by an explicit
  * operator action (rsx:documents:rerender).
  *
- * Kicked promptly on upload (File_Storage_Model::find_or_create and
+ * Kicked promptly on upload (File_Storage_Model::store_blob() and
  * File_Attachment_Model::request_render's dispatch) and swept every 10 minutes so a killed worker
  * resumes without anyone noticing.
  */
@@ -62,7 +62,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
      * THE prompt kick: ask for a render pass now rather than waiting for the 10-minute sweep.
      *
      * One choke point with one guard, called from the two places new work appears (a new blob in
-     * File_Storage_Model::find_or_create, and a blob entering PENDING in request_render).
+     * File_Storage_Model::store_blob(), and a blob entering PENDING in request_render).
      * rsx.search.enabled is the kick switch - when it is off no worker is spawned on upload, and
      * the state written to the row is still the truth, so the sweeper picks the work up whenever
      * the switch comes back. #[Exclusive] coalesces concurrent kicks into one pass.

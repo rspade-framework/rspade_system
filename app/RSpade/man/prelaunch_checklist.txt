@@ -928,10 +928,10 @@ ENTRY 9: OUTBOUND EMAIL (the transport, the sender domain, and the dev safety ne
         MODES AND THE DEV-SITE LAYER and CONFIGURATION. This audit directs you
         there and does not restate it.
 
-        A fresh install is in MAIL_DELIVERY=aiosmtpd - captured into a local Maildir
-        and nothing else. That is correct for development and wrong for launch, and
-        NOTHING BREAKS to tell you: the queue row says Sent, the catcher file is
-        written, and no human ever receives anything.
+        A fresh install is in MAIL_DELIVERY=suppressed - every message rendered and
+        recorded, none sent. That is correct for development and wrong for launch,
+        and NOTHING BREAKS to tell you: the queue row says Suppressed, the history
+        screen shows the message, and no human ever receives anything.
 
     Why it matters
         Every failure in this entry is invisible from inside the application. A
@@ -949,8 +949,8 @@ ENTRY 9: OUTBOUND EMAIL (the transport, the sender domain, and the dev safety ne
     The audit
         1. MAIL_DELIVERY=live, EXPLICITLY. It is the ONE value that makes this host
            send mail, and the other three all look healthy while nobody receives
-           anything: 'aiosmtpd' (the shipped default) captures into a local Maildir,
-           'suppressed' renders and records and hands nothing to a transport, and
+           anything: 'suppressed' (the shipped default) renders and records and
+           hands nothing to a transport, 'aiosmtpd' captures into a local Maildir, and
            'disabled' freezes the queue entirely. Confirm which one this host is on:
 
                php artisan rsx:health          # the three Mail rows

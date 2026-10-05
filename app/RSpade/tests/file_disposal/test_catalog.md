@@ -49,6 +49,23 @@ and restores it in a `finally`.
 | fd-42 | A positive value is honoured at its boundary | retention 5, one deleted 6 days ago, one 4 days ago | the first destroyed and its blob released, the second retained | implemented |
 | fd-43 | A bad value is a config error | -1, `'thirty'`, 1.5 | the daily pass throws `RuntimeException` naming the key; nothing destroyed | implemented |
 
+## File_Blob_Lock_Test (php, `$requires_db_reset` + no transaction) - race-proof release
+
+Commits: the unlink happens at COMMIT, and the cross-process test's helper must see the rows.
+Every method starts from cleared `_email_queue` / `_file_attachments` / `_file_storage`.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| fd-50 | A file attachment present after the re-check makes the release fail safe | live attachment; the post-re-check release step called directly (lock path bypassed) | returns false, storage row kept, file on disk, the live attachment keeps its `file_storage_id` | implemented |
+| fd-51 | The same for an email part | `_email_attachments` row; release step called directly | returns false, storage row kept, file on disk | implemented |
+| fd-52 | A release WAITS for a reference creator in another process | this process holds READ `file_blob:<hash>` on an orphan blob; helper process calls `release_blob_if_orphaned()` | helper parks as a queued writer; row + file + no result while the read is held; after release: `released`, row and file gone | implemented |
+| fd-53 | A reference's read lock lasts until its transaction commits | `create_from_string()` with and without an open transaction | no transaction: no reader after the insert; in a transaction: one reader until `commit()` | implemented |
+| fd-54 | A release inside a transaction unlinks only at commit | `force_destroy()` between `beginTransaction()` and `commit()` | row gone, file present and write lock held before the commit; file gone and lock free after | implemented |
+| fd-55 | A rolled-back release keeps the file | `force_destroy()` then `rollBack()` | storage row restored, file on disk, lock free | implemented |
+| fd-56 | One transaction may record and release the same blob | create then `force_destroy()` in one transaction (READ upgraded to WRITE) | file gone at commit, no reader or writer left | implemented |
+| fd-57 | A blob pinned by an attachment AND an email part survives until both are gone | attachment + `record_part()` on one blob; destroy the attachment; delete the email row | kept after the first, released after the second | implemented |
+| fd-58 | The disk sweep removes only files no storage row claims | `__sweep_disk_batch()` over a claimed file and an unclaimed planted file | 1 removed (the unclaimed one), claimed kept, per-blob lock released | implemented |
+
 ## Not implemented
 
 | ID | Purpose | Why not | Status |

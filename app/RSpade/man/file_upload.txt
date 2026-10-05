@@ -140,8 +140,8 @@ STORAGE STRUCTURE
 
 DEDUPLICATION AND HASH COLLISION HANDLING
 
-    On ingest, File_Storage_Model::find_or_create($temp_path) hashes the file
-    and looks for an existing blob at that hash:
+    On ingest, File_Storage_Model::store_blob($temp_path, $reference) hashes the
+    file and looks for an existing blob at that hash:
 
         1. Compute the content hash.
         2. If a blob exists at that hash path:
@@ -168,16 +168,28 @@ DEDUPLICATION AND HASH COLLISION HANDLING
     metadata.
 
     Implementation:
-        File_Storage_Model::find_or_create($temp_file_path)
-        File_Storage_Model::store_blob($temp_file_path)   (pinned name)
+        File_Storage_Model::store_blob($temp_file_path, $reference)   (pinned name)
         File_Storage_Model::increment_base16_value($hash)
 
-    Concurrency note: the web /_upload path does NOT take an application-level
-    lock around ingest. find_or_create()/store_blob() do not serialize
-    concurrent writers - dedup and the collision retry rely on filesystem
-    behavior and the byte-compare, not on a mutex. The CLI upload command
-    (rsx:file:upload) does take a named write lock. Do not assume web uploads
-    are serialized against each other.
+    store_blob() is the ONLY way bytes enter the store. $reference receives the
+    storage row and writes the row that pins it (an attachment, an email part);
+    store_blob() returns the storage row. The blob's read lock (file_blob:<hash>)
+    is held from before the lookup until that reference is COMMITTED, so disposal
+    can never release the bytes in between - see rsx:man file_disposal (RACE-PROOF
+    RELEASE). A reference recorded after store_blob() returned has no such
+    guarantee: record it inside $reference. A $reference that records nothing is
+    legal; the blob is then an orphan for the disposal sweeps.
+
+        File_Storage_Model::store_blob($path, function (File_Storage_Model $storage) use ($attachment) {
+            $attachment->file_storage_id = $storage->id;
+            $attachment->save();
+        });
+
+    Concurrency note: uploads of DIFFERENT content never wait for each other, and
+    uploads of the SAME content share the read lock - dedup and the collision
+    retry rely on the byte-compare, not on a mutex. They wait only for a release of
+    that same blob. The CLI upload command (rsx:file:upload) additionally takes the
+    FILE_WRITE named write lock.
 
 FILE LIFECYCLE
 
@@ -193,16 +205,18 @@ FILE LIFECYCLE
         command (see CLI COMMANDS). Design your flow to attach promptly.
 
     Storage cleanup on delete
-        Deleting an attachment via the model ($attachment->delete()) fires the
-        File_Attachment_Model::boot() deleted handler: if no other attachment
-        references the same blob, the physical file and its File_Storage_Model
-        row are removed immediately.
+        $attachment->delete() is a SOFT delete: it enters the recoverable
+        retention window (rsx.files.deleted_retention_days, 0 = forever) and
+        frees nothing - the blob stays on disk and undelete() restores the
+        attachment. File_Disposal_Service is the only thing that releases a
+        blob: the daily pass destroys attachments whose window has passed, and
+        a blob is released only when no attachment (live or still retained)
+        and no queued email part references it, under that blob's write lock
+        (rsx:man file_disposal). force_destroy() is the one immediate erasure.
 
-        CAUTION: this is a MODEL EVENT. A bulk query delete
-        (File_Attachment_Model::where(...)->delete()) issues raw SQL and does
-        NOT fire the deleted handler - the blobs it orphans are left on disk
-        until a manual rsx:storage:cleanup. Delete attachments one at a time
-        (loop + ->delete()) when you want storage reclaimed.
+        However a reference disappears - a destroyed attachment, a purged
+        email, a bulk query - a blob nothing references any more is found by
+        the monthly deep sweep, the backstop that releases it.
 
 ATTACHMENT API
 
@@ -1442,8 +1456,9 @@ EXTERNAL BYTE RESIDENCY (HANDLERS)
         path (fail loud; nothing served). Register app handlers there.
 
     Pinned public APIs (stable contract)
-        File_Storage_Model::store_blob(string $temp_path): File_Storage_Model
-            The frozen name for the blob-ingest path.
+        File_Storage_Model::store_blob(string $temp_path, callable $reference): File_Storage_Model
+            The frozen name for the blob-ingest path; $reference writes the row
+            that pins the blob, under the blob's read lock (see DEDUPLICATION).
 
         On File_Attachment_Model:
           resolve_storage(): File_Storage_Model

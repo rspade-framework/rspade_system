@@ -46,6 +46,51 @@ RETENTION-AWARE REFCOUNT
     not just live ones. Any refcount query uses
     withTrashed()->whereNull('destroyed_at').
 
+    A queued email's part (_email_attachments) pins its blob too, with no window of
+    its own: the row lives until its email row is deleted.
+
+RACE-PROOF RELEASE
+    A reference can be recorded at any moment, deduplicated onto the very blob a
+    disposal pass is releasing. Two mechanisms make that safe.
+
+    The per-blob lock. Every blob has a web-cluster readers-writer lock named
+    file_blob:<hash> (File_Blob_Locks; see rsx:man locks).
+        READERS  every reference creator. File_Storage_Model::store_blob() takes the
+                 read lock BEFORE the storage row is looked up or created and holds it
+                 until the reference written in its callback is COMMITTED; the save()
+                 of File_Attachment_Model and Email_Attachment_Model does the same for
+                 any write that sets file_storage_id (a reference to an EXISTING row),
+                 and throws if the row was released first.
+        WRITERS  release_blob_if_orphaned() and the monthly disk-orphan sweep. Each
+                 re-checks both reference tables (or, for a disk file, the storage
+                 row) inside the write lock.
+    "Until committed" means: at once when no transaction is open, else at the end
+    of the OUTERMOST transaction (commit or rollback). A reference inside an open
+    transaction is invisible to every other connection, so a lock released at the
+    INSERT would admit a destroyer that cannot see it.
+
+    Delete the row before the file. Inside the write lock the release runs:
+        re-check references
+        -> transaction: null the DESTROYED tombstones' file_storage_id, delete the
+           _file_storage row (its search-index row cascades in the same transaction)
+        -> commit
+        -> unlink the blob file and purge its rendition + thumbnail caches
+    Both reference tables carry an ON DELETE RESTRICT foreign key to
+    _file_storage, so a reference that exists after all makes the delete FAIL:
+    release_blob_if_orphaned() returns false and nothing is unlinked. Only
+    destroyed tombstones are un-claimed, so a live reference keeps its claim.
+
+    Inside a caller's open transaction, release_blob_if_orphaned() returns true as
+    soon as the row is deleted, but the unlink waits for the OUTERMOST commit
+    (DB::afterCommit) and the write lock is held until it has run; a rollback
+    restores the row and leaves the file in place. A process that recorded a
+    reference to the same blob earlier in that transaction already holds its read
+    lock, which the release upgrades to the write lock.
+
+    MAINTENANCE MODE grants cluster locks as no-ops (rsx:man maintenance_mode); the
+    row-before-file ordering is then the safety net, on a fleet with nothing else
+    running.
+
 RECOVERY API
     File_Attachment_Model::get_deleted_files($fileable = null, $category = null)
         Static. The attachments currently in the retention window (soft-deleted, not
@@ -82,18 +127,17 @@ DESTRUCTION HOOKS (app integration seam)
         every other RSpade gate (e.g. file.download.authorize).
 
     file.attachment.destroyed  (an ACTION, after stamping, per attachment)
-        Payload = the attachment row. Fired OUTSIDE the blob-lock critical section. A
+        Payload = the attachment row. Fired OUTSIDE any blob lock. A
         THROWING listener ABORTS that one attachment's destruction (row left
         un-stamped, retried next run) - destruction never half-happens relative to an
         app integration. Handlers must be idempotent (a retry re-fires).
 
 SCHEDULED TASKS (File_Disposal_Service)
-    All #[Exclusive]; every blob-touching pass serializes on the shared
-    RsxLocks::named_write_lock('FILE_BLOB_DISPOSAL') so no two can interleave a
-    refcount check with another's unlink. That is a WEB-CLUSTER lock (the blob store
-    is shared across the fleet, so a box must not unlink a blob another box just
-    referenced) held for the whole pass, however long it runs - see `rsx:man locks`. All are keyset-paginated for bounded
-    memory over hundreds of thousands of rows.
+    All #[Exclusive]. Every blob they release or unlink is released under that
+    blob's own write lock (RACE-PROOF RELEASE above); there is no pass-wide lock, so
+    two passes - or a pass and force_destroy() - serialize only where they touch the
+    same blob. All are keyset-paginated for bounded memory over hundreds of
+    thousands of rows.
 
     EVERY PASS SPANS EVERY SITE. Retention is install policy and the blob store is
     deduplicated across the whole install, so each task runs outside the site scope
@@ -191,9 +235,12 @@ INTERACTIONS / PITFALLS
       plain delete(), so a bad upload never lingers in retention.
     - CLI tools rsx:file:delete and rsx:storage:cleanup are explicit admin erasures:
       they force_destroy() / route through the retention-aware release, not delete().
+    - force_destroy() inside an open transaction deletes the storage row at once and
+      unlinks the file at the outermost COMMIT; a test that runs inside a rolled-back
+      per-test transaction therefore never sees the file disappear.
 
 SEE ALSO
     rsx:man file_upload, rsx:man document_search, rsx:man tasks,
-    rsx:man event_hooks, rsx:man locks
+    rsx:man event_hooks, rsx:man locks, rsx:man maintenance_mode
 
 RSpade                              2026                    RSX_FILE_DISPOSAL(1)

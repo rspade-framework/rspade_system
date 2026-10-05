@@ -51,9 +51,24 @@ class Mail_Laravel_Mailer_Test extends Rsx_Test_Abstract
     private static ?Mail_Transport_Stub $built_transport = null;
     private static array $built_config = [];
 
+    /** @var ?string the delivery mode setup() replaced, put back by teardown() */
+    private static ?string $previous_delivery = null;
+
+    /**
+     * Pin a mode that hands messages to a transport: the default ('suppressed') records
+     * every message and offers it to none, so the stub transport would never be reached.
+     */
     public static function setup()
     {
         static::__acting_as_site(self::SITE_ID);
+
+        self::$previous_delivery = config('rsx.mail.delivery');
+        config(['rsx.mail.delivery' => 'aiosmtpd']);
+    }
+
+    public static function teardown()
+    {
+        config(['rsx.mail.delivery' => self::$previous_delivery]);
     }
 
     /**

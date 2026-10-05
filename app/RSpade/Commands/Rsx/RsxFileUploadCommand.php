@@ -86,10 +86,6 @@ class RsxFileUploadCommand extends Command
         $lock = RsxLocks::named_write_lock(RsxLocks::LOCK_FILE_WRITE);
 
         try {
-            // Create or find existing storage
-            $this->info('Uploading file to storage...');
-            $storage = File_Storage_Model::find_or_create($file_path);
-
             // Determine filename
             $filename = $this->option('name') ?: basename($file_path);
             $extension = pathinfo($filename, PATHINFO_EXTENSION);
@@ -104,7 +100,6 @@ class RsxFileUploadCommand extends Command
             // Create attachment record
             $attachment = new File_Attachment_Model();
             $attachment->key = File_Attachment_Model::generate_key();
-            $attachment->file_storage_id = $storage->id;
             $attachment->file_name = $filename;
             $attachment->file_extension = $extension;
             $attachment->file_type_id = $file_type_id;
@@ -140,7 +135,12 @@ class RsxFileUploadCommand extends Command
                 $attachment->fileable_id = (int)$model_id;
             }
 
-            $attachment->save();
+            // Store the bytes and save the row that pins them in one store_blob() reference scope.
+            $this->info('Uploading file to storage...');
+            $storage = File_Storage_Model::store_blob($file_path, function (File_Storage_Model $storage) use ($attachment) {
+                $attachment->file_storage_id = $storage->id;
+                $attachment->save();
+            });
 
             // Output success information
             $this->info('');

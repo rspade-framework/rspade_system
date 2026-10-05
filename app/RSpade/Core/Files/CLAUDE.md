@@ -4,7 +4,7 @@ This directory's documentation now lives in the man pages and the skill tier; th
 is a pointer, not a second copy.
 
 - **Uploading / claiming / the upload gate / size ceiling**: `rsx:man file_upload`
-- **Deletion, retention, blob release, disposal hooks**: `rsx:man file_disposal`
+- **Deletion, retention, blob release, disposal hooks, the per-blob `file_blob:<hash>` lock (`File_Blob_Locks`)**: `rsx:man file_disposal`
 - **Thumbnails, `<Attachment_Thumbnail>`, the render state machine, the renderer registry**: `rsx:man thumbnails`
 - **The render pipeline in operation (`rsx:documents:status|failed|rerender`)**: `rsx:man documents`
 - **Text extraction, full-text search, `<Document_Preview>` / `<Document_Text_Preview>`, PDF renditions**: `rsx:man document_search`

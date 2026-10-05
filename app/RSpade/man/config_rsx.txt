@@ -727,15 +727,15 @@ FULL PAGE CACHE
 MAIL AND SMS
     'mail' => [
         # aiosmtpd | live | suppressed | disabled. Anything else THROWS.
-        #   aiosmtpd   the development catcher on 127.0.0.1:1025 (THE DEFAULT);
+        #   aiosmtpd   the development catcher on 127.0.0.1:1025 (opt-in);
         #              Laravel's mail config is IGNORED, and the catcher's SMTP
         #              greeting must say 'aiosmtpd'
         #   live       real delivery through the Laravel mailer MAIL_MAILER names
         #              (config/mail.php - rsx:man email, MAIL TRANSPORTS); the
         #              .dev.-hostname recipient gate applies in THIS MODE ONLY
-        #   suppressed built and recorded, handed to nobody
+        #   suppressed built and recorded, handed to nobody (THE DEFAULT)
         #   disabled   the queue is FROZEN - the drain returns, rows stay Pending
-        'delivery' => env('MAIL_DELIVERY', 'aiosmtpd'),
+        'delivery' => env('MAIL_DELIVERY', 'suppressed'),
         'retry' => ['attempts' => 3, 'delay_minutes' => 3],
         'retention_days' => 30,
         # QUEUE HYGIENE, NOT A TIMEOUT. Guards against one configuration failure:
@@ -760,12 +760,13 @@ MAIL AND SMS
     TWO INDEPENDENT SAFETY LAYERS, do not conflate them.
 
     'delivery' is the master switch and is CONFIGURED, not derived, with FOUR
-    values (an unrecognised one throws). 'aiosmtpd' - the shipped default -
-    hands each row to the development catcher on this box and ignores the
-    'transport' block entirely; 'live' hands it to the configured transport;
-    'suppressed' renders and records it without sending; 'disabled' freezes
+    values (an unrecognised one throws). 'suppressed' - the shipped default -
+    renders and records each row without sending; 'aiosmtpd' hands it to the
+    development catcher on this box and ignores the 'transport' block
+    entirely; 'live' hands it to the configured transport; 'disabled' freezes
     the queue so the drain does nothing and rows stay Pending. So a fresh
-    install delivers into a local Maildir and nothing leaves the box.
+    install records every message, the history screens show it from the
+    database, and nothing leaves the box.
 
     'dev_site' is the second layer, keyed on the HOSTNAME (Rsx::is_dev_site()
     - the host contains '.dev.'), and it applies in 'live' MODE ONLY.

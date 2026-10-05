@@ -52,7 +52,7 @@ class File_Storage_Reuse_Test extends Rsx_Test_Abstract
     public static function test_missing_file_is_rewritten_under_the_same_record()
     {
         $bytes = 'storage-reuse-' . uniqid('', true);
-        $storage = File_Storage_Model::store_blob(static::__temp_file_with($bytes));
+        $storage = File_Storage_Model::store_blob(static::__temp_file_with($bytes), fn () => null);
 
         $original_id = (int) $storage->id;
         $hash = (string) $storage->hash;
@@ -64,7 +64,7 @@ class File_Storage_Reuse_Test extends Rsx_Test_Abstract
         unlink($path);
         static::__assert_false(is_file($path), 'The blob file should be gone.');
 
-        $again = File_Storage_Model::store_blob(static::__temp_file_with($bytes));
+        $again = File_Storage_Model::store_blob(static::__temp_file_with($bytes), fn () => null);
 
         static::__assert_equals($original_id, (int) $again->id, 'The same storage record must be returned.');
         static::__assert_equals($hash, (string) $again->hash, 'The hash must be unchanged.');
@@ -78,7 +78,7 @@ class File_Storage_Reuse_Test extends Rsx_Test_Abstract
     public static function test_size_is_corrected_when_the_row_disagrees_with_the_bytes()
     {
         $bytes = 'storage-reuse-size-' . uniqid('', true);
-        $storage = File_Storage_Model::store_blob(static::__temp_file_with($bytes));
+        $storage = File_Storage_Model::store_blob(static::__temp_file_with($bytes), fn () => null);
 
         $path = $storage->get_full_path();
         unlink($path);
@@ -86,7 +86,7 @@ class File_Storage_Reuse_Test extends Rsx_Test_Abstract
         // A row whose recorded size does not describe the bytes it is about to receive.
         DB::table('_file_storage')->where('id', $storage->id)->update(['size' => 1]);
 
-        $again = File_Storage_Model::store_blob(static::__temp_file_with($bytes));
+        $again = File_Storage_Model::store_blob(static::__temp_file_with($bytes), fn () => null);
 
         static::__assert_equals((int) $storage->id, (int) $again->id, 'The same record must be returned.');
         static::__assert_equals(strlen($bytes), (int) $again->size, 'The size must describe the restored bytes.');
@@ -95,11 +95,11 @@ class File_Storage_Reuse_Test extends Rsx_Test_Abstract
     public static function test_an_intact_blob_still_dedups_without_touching_the_disk()
     {
         $bytes = 'storage-reuse-intact-' . uniqid('', true);
-        $first = File_Storage_Model::store_blob(static::__temp_file_with($bytes));
+        $first = File_Storage_Model::store_blob(static::__temp_file_with($bytes), fn () => null);
         $path = $first->get_full_path();
         $mtime = filemtime($path);
 
-        $second = File_Storage_Model::store_blob(static::__temp_file_with($bytes));
+        $second = File_Storage_Model::store_blob(static::__temp_file_with($bytes), fn () => null);
 
         static::__assert_equals((int) $first->id, (int) $second->id, 'Identical bytes dedup onto one record.');
         static::__assert_equals($mtime, filemtime($path), 'A dedup hit must not rewrite the blob.');

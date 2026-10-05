@@ -12,6 +12,7 @@ use App\RSpade\Core\Auth\Staff_Authorizable;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Icons;
+use App\RSpade\Core\Files\File_Blob_Locks;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Imagick_Policy;
@@ -1048,7 +1049,8 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     /**
      * Force materialization of external bytes into the local blob store. No-op if already
      * resident. Dispatches the handler's fetch(), stores the bytes via store_blob(), and links
-     * them via relink_storage(). Handler byte-fetch failures bubble (fail loud).
+     * them via relink_storage() inside store_blob()'s reference scope. Handler byte-fetch
+     * failures bubble (fail loud).
      *
      * @return void
      */
@@ -1063,8 +1065,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         $temp_path = $handler_fqcn::fetch($this);
 
         try {
-            $storage = File_Storage_Model::store_blob($temp_path);
-            $this->relink_storage($storage);
+            File_Storage_Model::store_blob($temp_path, fn (File_Storage_Model $storage) => $this->relink_storage($storage));
         } finally {
             if (is_string($temp_path) && file_exists($temp_path)) {
                 @unlink($temp_path);
@@ -1439,15 +1440,6 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
             $source_path = $sanitized_path;
         }
 
-        // Create or find storage
-        try {
-            $storage = File_Storage_Model::find_or_create($source_path);
-        } finally {
-            if ($sanitized_path !== null && file_exists($sanitized_path)) {
-                unlink($sanitized_path);
-            }
-        }
-
         // Coarse file_type_id buckets on the PIPELINE mime (extension-first for documents), so a
         // zip-sniffed OOXML doc buckets as DOCUMENT, not ARCHIVE.
         $file_type_id = static::determine_file_type(static::resolve_pipeline_mime($mime_type, $extension));
@@ -1455,11 +1447,9 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         // Create attachment
         $attachment = new static();
         $attachment->key = static::generate_key();
-        $attachment->file_storage_id = $storage->id;
         $attachment->file_name = $filename;
         $attachment->file_extension = $extension;
         $attachment->mime_type = $mime_type;
-        $attachment->file_size = $storage->size;
         $attachment->file_type_id = $file_type_id;
         $attachment->site_id = $params['site_id'];
         // Audit stamp, request-context only. Left UNSET (not explicitly null) when there is no
@@ -1491,7 +1481,19 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
             $attachment->set_meta($params['fileable_meta']);
         }
 
-        $attachment->save();
+        // Store the bytes and save the row that pins them inside ONE store_blob() reference
+        // scope, so the blob cannot be released between the dedup lookup and the insert.
+        try {
+            File_Storage_Model::store_blob($source_path, function (File_Storage_Model $storage) use ($attachment) {
+                $attachment->file_storage_id = $storage->id;
+                $attachment->file_size = $storage->size;
+                $attachment->save();
+            });
+        } finally {
+            if ($sanitized_path !== null && file_exists($sanitized_path)) {
+                unlink($sanitized_path);
+            }
+        }
 
         // Extract metadata using ImageMagick. In strict reject-mode a content-parse failure throws
         // Unparseable_Upload_Exception - but create_from_upload() is NOT transactional (the row +
@@ -2388,6 +2390,10 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * overwritten here, which is the contract - the caller supplies the bytes, the model
      * derives the label.
      *
+     * A write that sets file_storage_id is a blob REFERENCE and runs under the blob's read lock
+     * until it commits (File_Blob_Locks::referencing_storage()); it throws if the storage row was
+     * released before the write.
+     *
      * @param array $options
      * @return bool
      */
@@ -2401,6 +2407,17 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         // backfill repairs every row written before the column arrived.
         if (static::__file_type_label_column_exists()) {
             $this->file_type_label = static::file_type_label_for($this->mime_type, $this->file_extension);
+        }
+
+        // A write that points this row at a blob is a REFERENCE being recorded: hold the blob's
+        // read lock until it commits, so File_Disposal_Service cannot release the bytes between
+        // the caller finding the storage row and this row pinning it. Inside store_blob() the
+        // lock is already held and this is a reentrant hold. See File_Blob_Locks.
+        if ($this->file_storage_id !== null && $this->isDirty('file_storage_id')) {
+            return File_Blob_Locks::referencing_storage(
+                (int) $this->file_storage_id,
+                fn () => parent::save($options)
+            );
         }
 
         return parent::save($options);

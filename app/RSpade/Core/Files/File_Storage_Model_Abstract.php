@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Files;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Files\Document_Render_Service;
+use App\RSpade\Core\Files\File_Blob_Locks;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Search\Search_Index_Model;
@@ -239,18 +240,35 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     }
 
     /**
-     * Store a temp file's bytes into the blob store and return its storage record.
+     * Store a temp file's bytes into the blob store and record the reference that pins them.
      *
-     * PINNED PUBLIC API (WP-A): this is the stable, documented name for the blob-ingest path.
-     * Content-addressed (sha256), deduplicated, immutable. Delegates to find_or_create().
-     * The framework guarantees this signature.
+     * THE ONE WAY BYTES ENTER THE STORE. Content-addressed (sha256), deduplicated, immutable.
+     * $reference receives the storage row and writes the row that points at it (an attachment,
+     * an email part); store_blob() returns the storage row once $reference has returned.
      *
-     * @param string $temp_file_path Absolute path to a readable temp file.
+     * WHY THE CALLBACK: a deduplicated row can be the one File_Disposal_Service is about to
+     * release. The blob's read lock (File_Blob_Locks, file_blob:<hash>) is taken BEFORE the row
+     * is looked up or created and held until the reference written inside $reference is
+     * COMMITTED - at once with no transaction open, at the outermost commit or rollback inside
+     * one. A destroyer re-checks the reference tables under the matching write lock, so it either
+     * sees the reference or finishes before the lookup runs. A reference recorded after
+     * store_blob() returned would have no such guarantee; record it inside $reference.
+     *
+     * A $reference that records nothing is legal (the blob is then an orphan for the disposal
+     * sweeps), and one that throws leaves whatever bytes were written for the same sweeps.
+     *
+     * @param string   $temp_file_path Absolute path to a readable temp file.
+     * @param callable $reference      fn (File_Storage_Model $storage): mixed - writes the reference.
      * @return static
      */
-    public static function store_blob(string $temp_file_path): File_Storage_Model
+    public static function store_blob(string $temp_file_path, callable $reference): File_Storage_Model
     {
-        return static::find_or_create($temp_file_path);
+        return File_Blob_Locks::reference_scope(function () use ($temp_file_path, $reference) {
+            $storage = static::__find_or_create($temp_file_path);
+            $reference($storage);
+
+            return $storage;
+        });
     }
 
     /**
@@ -274,7 +292,9 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     }
 
     /**
-     * Find or create a file storage record with collision handling
+     * Find or create a file storage record with collision handling. Runs only inside
+     * store_blob()'s reference scope: every hash it examines is read-locked before its row is
+     * looked up (File_Blob_Locks::hold_read() throws outside a scope).
      *
      * Algorithm:
      * 1. Hash the uploaded file (SHA-256)
@@ -289,7 +309,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      * @param string $temp_file_path Path to uploaded temporary file
      * @return static
      */
-    public static function find_or_create($temp_file_path)
+    private static function __find_or_create(string $temp_file_path)
     {
         if (!file_exists($temp_file_path)) {
             shouldnt_happen("Temporary file does not exist: {$temp_file_path}");
@@ -301,6 +321,10 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
 
         // Loop until we find a matching file or an available slot
         while (true) {
+            // Lock each hash before its row is consulted. A collision moves on to the next hash
+            // and locks that one too, so the lock always guards the hash the row will carry.
+            File_Blob_Locks::hold_read($current_hash);
+
             // Check if a record exists for this hash
             $existing_record = static::where('hash', $current_hash)->first();
 

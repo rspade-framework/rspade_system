@@ -50,7 +50,7 @@ class Files_Repair_Mime_Routing_Test extends Rsx_Test_Abstract
         // Seed a resident blob backing a docx whose sniff came out as application/zip (the bug).
         $tmp = tempnam(sys_get_temp_dir(), 'rsx_repair_');
         file_put_contents($tmp, 'PK' . "\x03\x04" . random_bytes(64));  // zip-ish bytes; content irrelevant here
-        $storage = File_Storage_Model::store_blob($tmp);
+        $storage = File_Storage_Model::store_blob($tmp, fn () => null);
         @unlink($tmp);
 
         $storage->is_indexed = 1;  // simulate a prior (mis-routed) extraction attempt

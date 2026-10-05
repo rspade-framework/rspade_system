@@ -32,9 +32,24 @@ class Mail_Drain_All_Sites_Test extends Rsx_Test_Abstract
 {
     private const WORKER_SITE_ID = 1;
 
+    /** @var ?string the delivery mode setup() replaced, put back by teardown() */
+    private static ?string $previous_delivery = null;
+
+    /**
+     * Pin a mode that hands messages to a transport: the default ('suppressed') records
+     * every message and offers it to none, so the stub transport would never be reached.
+     */
     public static function setup()
     {
         static::__acting_as_site(self::WORKER_SITE_ID);
+
+        self::$previous_delivery = config('rsx.mail.delivery');
+        config(['rsx.mail.delivery' => 'aiosmtpd']);
+    }
+
+    public static function teardown()
+    {
+        config(['rsx.mail.delivery' => self::$previous_delivery]);
     }
 
     private static function __second_site_id(): int

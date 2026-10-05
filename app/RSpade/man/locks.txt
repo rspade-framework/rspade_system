@@ -89,8 +89,10 @@ DOMAIN ASSIGNMENT
                                          caller asks for it deliberately.
         FILE_WRITE              cluster  the blob store is shared; a box must
                                          not race another box's upload
-        FILE_BLOB_DISPOSAL      cluster  a box must not unlink a blob another
-                                         box just referenced
+        file_blob:<hash>        cluster  one per blob, readers-writer: reference
+                                         creators read, destroyers write, so no
+                                         box unlinks a blob another box is
+                                         referencing (rsx:man file_disposal)
         MANIFEST_BUILD          system   build artifacts on local disk
         BUNDLE_BUILD            system   build artifacts on local disk
         SSR_RENDER              system   a per-box node process
@@ -139,9 +141,9 @@ FIFO AND DEADLOCK REFUSAL
     what each of those waits for, and onward. If the walk returns to the
     requester, the request is refused immediately rather than parked:
 
-        RuntimeException: Deadlock: acquiring WRITE lock cluster:FILE_BLOB_DISPOSAL
+        RuntimeException: Deadlock: acquiring WRITE lock cluster:rebuild_report_cache
         would close a wait-for cycle
-          c11 [web-01:900] waits for WRITE lock cluster:FILE_BLOB_DISPOSAL -> blocked by c12 [web-01:901]
+          c11 [web-01:900] waits for WRITE lock cluster:rebuild_report_cache -> blocked by c12 [web-01:901]
           c12 [web-01:901] waits for WRITE lock cluster:FILE_WRITE -> blocked by c11 [web-01:900]
 
     The cycle text names every participant with its host and pid, and IS the

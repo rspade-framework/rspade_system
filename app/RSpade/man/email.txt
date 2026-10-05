@@ -539,20 +539,23 @@ DELIVERY MODES AND THE DEV-SITE LAYER
     FOUR values, and anything else THROWS (Rsx_Mail_Transport::delivery_mode() - one place,
     so a typo is never silently read as "not live"):
 
-        aiosmtpd     THE SHIPPED DEFAULT. Captured by the development catcher on this box:
+        aiosmtpd     OPT-IN. Captured by the development catcher on this box:
                      SMTP to 127.0.0.1:1025, no encryption, no auth. LARAVEL'S MAIL CONFIG
                      IS IGNORED in this mode - MAIL_MAILER, MAIL_HOST and the rest are not
                      read at all - so a box whose MAIL_HOST still names last year's relay
                      cannot mail anybody by accident. The catcher must ADVERTISE ITSELF (see THE DEVELOPMENT
-                     CATCHER). Nothing leaves the box.
+                     CATCHER). Nothing leaves the box. Choose it to inspect the raw MIME
+                     message a transport would see (headers, multipart structure).
         live         each row is handed to the mailer MAIL_MAILER names (MAIL
                      TRANSPORTS). This is the ONLY mode that reads Laravel's mail config,
                      and the ONLY mode the dev-site recipient layer below applies to. A
                      mailer that delivers nothing ('log', 'array') is REFUSED - the drain
                      throws before claiming a row - because every row would be recorded
                      Sent; recording without sending is 'suppressed'.
-        suppressed   each row is rendered, recorded, and marked Suppressed. Nothing is
-                     opened, nothing leaves.
+        suppressed   THE SHIPPED DEFAULT. Each row is rendered, recorded (the body and
+                     its inline parts, so the history screens show it from the database),
+                     and marked Suppressed - a deliberate outcome, not an error. Nothing
+                     is opened, nothing leaves, and no daemon is involved.
         disabled     THE QUEUE IS FROZEN. send() still queues and still kicks the drain
                      (which is then a cheap no-op); the drain logs one line and returns.
                      Rows stay Pending, untouched, and are NOT aged out by the stale sweep,
@@ -865,7 +868,7 @@ TESTING
     application ever assigns it at runtime.
 
     A test host is usually a .dev. hostname, and the dev-site recipient gate engages only in
-    delivery mode 'live'. Under the shipped default ('aiosmtpd') the gate is inert, so a test
+    delivery mode 'live'. Under the shipped default ('suppressed') the gate is inert, so a test
     whose subject IS the gate pins config('rsx.mail.delivery') to 'live' (with a non-loopback
     host, since nothing is sent) and a test that merely needs a deliverable row leaves the
     default alone or whitelists its domain.

@@ -65,7 +65,7 @@ class External_Handler_Test extends Rsx_Test_Abstract
         $bytes = Attachment_Fixture_Handler::png_bytes($variant);
         $tmp = tempnam(sys_get_temp_dir(), 'rsx_plain_');
         file_put_contents($tmp, $bytes);
-        $storage = File_Storage_Model::store_blob($tmp);
+        $storage = File_Storage_Model::store_blob($tmp, fn () => null);
         @unlink($tmp);
 
         $a = new File_Attachment_Model();
@@ -175,7 +175,10 @@ class External_Handler_Test extends Rsx_Test_Abstract
         $exit = Artisan::call('rsx:storage:cleanup', ['--force' => true]);
         static::__assert_equals(0, $exit, 'cleanup command succeeded');
         static::__assert_null(File_Storage_Model::find($storage_id), 'evicted-orphan storage row swept');
-        static::__assert_false(file_exists($path), 'evicted-orphan blob file removed');
+        // The file is unlinked when the release COMMITS (a rolled-back release must keep it), and
+        // this test runs inside a transaction that never commits - so the bytes are still there.
+        // The committed unlink is pinned by File_Blob_Lock_Test.
+        static::__assert_true(file_exists($path), 'the blob file waits for the release to commit');
 
         // Bytes re-materialize on next demand.
         $a->resolve_storage();
@@ -193,7 +196,7 @@ class External_Handler_Test extends Rsx_Test_Abstract
         // Build storage for variant b (16x16 blue) and relink.
         $tmp = tempnam(sys_get_temp_dir(), 'rsx_relink_');
         file_put_contents($tmp, Attachment_Fixture_Handler::png_bytes('b'));
-        $new_storage = File_Storage_Model::store_blob($tmp);
+        $new_storage = File_Storage_Model::store_blob($tmp, fn () => null);
         @unlink($tmp);
 
         $a->relink_storage($new_storage);
@@ -237,7 +240,7 @@ class External_Handler_Test extends Rsx_Test_Abstract
         // Use a persisted storage row as an arbitrary fileable parent.
         $tmp = tempnam(sys_get_temp_dir(), 'rsx_parent_');
         file_put_contents($tmp, Attachment_Fixture_Handler::png_bytes('a'));
-        $parent = File_Storage_Model::store_blob($tmp);
+        $parent = File_Storage_Model::store_blob($tmp, fn () => null);
         @unlink($tmp);
 
         $a->add_to($parent, 'ext_docs');

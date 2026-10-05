@@ -2,12 +2,13 @@
 
 namespace App\RSpade\Core\Files;
 
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 use App\RSpade\Core\Files\File_Attachment_Model;
+use App\RSpade\Core\Files\File_Blob_Locks;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
-use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
@@ -39,81 +40,160 @@ use App\RSpade\Core\Time\Rsx_Time;
  * silently, hours later, in a background task. Every reference check below asks both
  * tables, and any future table that points at _file_storage.id must be added here.
  *
- * All blob-touching work serializes on the shared FILE_BLOB_DISPOSAL named write lock so
- * the daily and monthly passes (and force_destroy) can never interleave a refcount check
- * with another pass's unlink.
+ * RACE-PROOF RELEASE. A reference can be recorded at any moment, deduplicated onto the very
+ * blob being released. Two mechanisms close that window:
+ *   - the PER-BLOB LOCK (File_Blob_Locks, file_blob:<hash>). Every reference creator holds the
+ *     read lock from before its storage lookup until its reference row commits; every destroyer
+ *     here holds the write lock and re-checks both reference tables inside it.
+ *   - DELETE THE ROW BEFORE THE FILE. The storage row is deleted in a transaction first, where
+ *     the ON DELETE RESTRICT foreign keys of _file_attachments and _email_attachments refuse it
+ *     if any reference exists; the file and its derived caches are unlinked only after that
+ *     commits. So a reference the lock somehow did not exclude makes the release FAIL SAFE
+ *     (nothing unlinked) instead of leaving a row that points at a missing file.
+ * Maintenance mode grants cluster locks as no-ops (rsx:man locks); the ordering is then the
+ * whole safety net, on a fleet with nothing else running.
+ *
+ * No global disposal lock: two destroyers of the same blob serialize on its write lock, and
+ * destroyers of different blobs share no state. The passes themselves are #[Exclusive].
  */
 class File_Disposal_Service extends Rsx_Service_Abstract
 {
     /**
-     * Release a storage blob IFF no attachment still pins it under the retention-aware
-     * refcount rule. Purges the blob-keyed caches too: the search index rides along on
-     * File_Storage_Model::delete()'s own cascade; the rendition + thumbnails are NOT
-     * cascade-cleaned, so they are unlinked explicitly here.
+     * Release a storage blob IFF nothing still pins it under the retention-aware refcount rule
+     * (a live-or-retained attachment, or a queued email's part). Purges the blob-keyed caches
+     * too: the search index rides along on File_Storage_Model::delete()'s own cascade; the
+     * rendition + thumbnails are NOT cascade-cleaned, so they are unlinked explicitly here.
      *
-     * Serialized on FILE_BLOB_DISPOSAL. Safe to call for a NULL/absent storage id (no-op).
+     * Runs under the blob's WRITE lock (File_Blob_Locks) and re-checks both reference tables
+     * inside it. Order inside the lock: re-check -> transaction (release the destroyed
+     * tombstones' claim, delete the storage row) -> commit -> unlink the file and purge the
+     * caches. Inside a caller's open transaction the unlink waits for the OUTERMOST commit
+     * (DB::afterCommit; a rollback restores the row and keeps the file), and the write lock is
+     * held until then.
+     *
+     * Safe to call for an absent storage id (no-op).
      *
      * @param int $storage_id
-     * @return bool true if the blob + storage row were released
+     * @return bool true if the storage row was deleted (its bytes are unlinked at commit)
      */
     public static function release_blob_if_orphaned(int $storage_id): bool
     {
-        $token = RsxLocks::named_write_lock('FILE_BLOB_DISPOSAL');
-        try {
-            // Retention-aware refcount: still pinned by any live-or-retained attachment. The
-            // blob is deduplicated across the whole install, so EVERY site's attachments
-            // count - a site-scoped count would release bytes another tenant still holds.
-            $pinned = File_Attachment_Model::without_site_scope(
-                fn () => File_Attachment_Model::withTrashed()
-                    ->where('file_storage_id', $storage_id)
-                    ->whereNull('destroyed_at')
-                    ->exists()
-            );
-            if ($pinned) {
-                return false;
-            }
+        $hash = DB::table('_file_storage')->where('id', $storage_id)->value('hash');
+        if ($hash === null) {
+            return false;
+        }
+        $hash = (string) $hash;
 
-            // A queued email's attachment pins the blob just as hard. There is no
-            // retention window here - the row exists until the email row is deleted.
-            if (Email_Attachment_Model::where('file_storage_id', $storage_id)->exists()) {
+        return File_Blob_Locks::exclusive($hash, function () use ($storage_id, $hash) {
+            if (self::__blob_is_referenced($storage_id)) {
                 return false;
             }
 
             $storage = File_Storage_Model::find($storage_id);
-            if ($storage === null) {
+            if ($storage === null || (string) $storage->hash !== $hash) {
                 return false;
             }
 
-            $hash = $storage->hash;
+            return self::__release_unreferenced_blob($storage);
+        });
+    }
 
-            // Release the FK claim from the (now all-destroyed) tombstone attachments so the
-            // storage row can be deleted - the _file_attachments.file_storage_id FK is
-            // ON DELETE RESTRICT. This IS "releasing the claim on the blob": the tombstone
-            // rows persist forever as audit records, with their metadata intact and
-            // file_storage_id nulled. Raw update (these are destroyed rows; no lifecycle).
-            //
-            // @REALTIME-BULK-01-EXCEPTION - every row this touches is a DESTROYED tombstone: the
-            // retention window has elapsed, the attachment is unreachable from every screen, and
-            // nothing can be subscribed to it. A change frame here would tell a subscriber that
-            // does not exist to refetch a record it may no longer read.
-            DB::table('_file_attachments')->where('file_storage_id', $storage_id)->update(['file_storage_id' => null]);
+    /**
+     * Is the blob still pinned? Retention-aware: any live-or-retained attachment counts, from
+     * EVERY site (the blob is deduplicated across the whole install, so a site-scoped count
+     * would release bytes another tenant still holds), and so does any queued email's part
+     * (there is no retention window there - the row exists until the email row is deleted).
+     */
+    private static function __blob_is_referenced(int $storage_id): bool
+    {
+        $pinned = File_Attachment_Model::without_site_scope(
+            fn () => File_Attachment_Model::withTrashed()
+                ->where('file_storage_id', $storage_id)
+                ->whereNull('destroyed_at')
+                ->exists()
+        );
+        if ($pinned) {
+            return true;
+        }
 
-            // Physical blob (resolved through the Rsx_File_Paths choke point).
-            $blob_path = $storage->get_full_path();
+        return Email_Attachment_Model::where('file_storage_id', $storage_id)->exists();
+    }
+
+    /**
+     * Delete an unreferenced blob's storage row, then - once that commits - its file and
+     * derived caches. The caller holds the blob's write lock and has already re-checked the
+     * references; this step is the database's half of the guarantee.
+     *
+     * Returns false, with NOTHING unlinked, when a foreign key refuses the delete: a reference
+     * row exists after all, and the bytes are exactly what it needs.
+     */
+    private static function __release_unreferenced_blob(File_Storage_Model $storage): bool
+    {
+        $storage_id = (int) $storage->id;
+        $hash = (string) $storage->hash;
+        $blob_path = $storage->get_full_path();
+
+        try {
+            DB::transaction(function () use ($storage, $storage_id) {
+                // Release the FK claim of the DESTROYED tombstones so the storage row can be
+                // deleted - the _file_attachments.file_storage_id FK is ON DELETE RESTRICT. The
+                // tombstones persist forever as audit records, metadata intact. Destroyed rows
+                // ONLY: a live attachment recorded after the re-check keeps its claim, and its
+                // claim is what makes the delete below refuse.
+                //
+                // @REALTIME-BULK-01-EXCEPTION - every row this touches is a DESTROYED tombstone: the
+                // retention window has elapsed, the attachment is unreachable from every screen, and
+                // nothing can be subscribed to it. A change frame here would tell a subscriber that
+                // does not exist to refetch a record it may no longer read.
+                DB::table('_file_attachments')
+                    ->where('file_storage_id', $storage_id)
+                    ->whereNotNull('destroyed_at')
+                    ->update(['file_storage_id' => null]);
+
+                // Deletes the storage row and (via its own deleted() hook) the _search_indexes row,
+                // in this same transaction.
+                $storage->delete();
+            });
+        } catch (QueryException $e) {
+            // ONLY the foreign-key refusal is expected here (MySQL 1451, SQLSTATE 23000): a
+            // reference row in _file_attachments or _email_attachments still points at this
+            // storage row. The transaction rolled back, nothing was unlinked, and the blob stays
+            // for whoever references it - the fail-safe outcome. Every other database error is
+            // a real fault and propagates.
+            if (!self::__is_foreign_key_refusal($e)) {
+                throw $e;
+            }
+
+            return false;
+        }
+
+        // Runs now with no transaction open, else after the OUTERMOST commit (discarded on a
+        // rollback, which restores the row). The write lock is still held either way.
+        DB::afterCommit(function () use ($blob_path, $hash) {
+            // This process may have stored the same bytes again later in the same transaction;
+            // a live row at this hash owns the file now.
+            if (DB::table('_file_storage')->where('hash', $hash)->exists()) {
+                return;
+            }
+
             if (is_file($blob_path)) {
                 @unlink($blob_path);
             }
 
             // Blob-keyed derived caches that $storage->delete() does NOT cascade.
             self::__purge_blob_derived_caches($hash);
+        });
 
-            // Deletes the storage row and (via its own deleted() hook) the _search_indexes row.
-            $storage->delete();
+        return true;
+    }
 
-            return true;
-        } finally {
-            RsxLocks::release_lock($token);
-        }
+    /**
+     * Whether a query failed because a foreign key RESTRICTs deleting a referenced row
+     * (MySQL ER_ROW_IS_REFERENCED_2, 1451).
+     */
+    private static function __is_foreign_key_refusal(QueryException $e): bool
+    {
+        return (string) $e->getCode() === '23000' && (int) ($e->errorInfo[1] ?? 0) === 1451;
     }
 
     /**
@@ -464,8 +544,9 @@ class File_Disposal_Service extends Rsx_Service_Abstract
 
     /**
      * Probe a batch of {hash => path} against _file_storage and unlink the files whose hash
-     * has no row. Serialized on FILE_BLOB_DISPOSAL and re-checked per file inside the lock, so
-     * a blob written between the walk and the unlink is never destroyed.
+     * has no row. Each unlink runs under that blob's WRITE lock and re-checks the row inside it,
+     * so a creator mid-upload (holding the read lock from its lookup until its reference
+     * commits) is waited for, and a blob it stored meanwhile is never destroyed.
      *
      * @param array<string, string> $pending hash => absolute path
      */
@@ -476,23 +557,26 @@ class File_Disposal_Service extends Rsx_Service_Abstract
         );
 
         $deleted = 0;
-        $token = RsxLocks::named_write_lock('FILE_BLOB_DISPOSAL');
-        try {
-            foreach ($pending as $hash => $path) {
-                if (isset($known[$hash])) {
-                    continue;
-                }
-                // Re-check under the lock (a fresh upload may have created the row meanwhile).
-                if (DB::table('_file_storage')->where('hash', $hash)->exists()) {
-                    continue;
-                }
-                if (is_file($path)) {
-                    @unlink($path);
-                    $deleted++;
-                }
+        foreach ($pending as $hash => $path) {
+            if (isset($known[$hash])) {
+                continue;
             }
-        } finally {
-            RsxLocks::release_lock($token);
+
+            $removed = File_Blob_Locks::exclusive((string) $hash, function () use ($hash, $path) {
+                if (DB::table('_file_storage')->where('hash', $hash)->exists()) {
+                    return false;
+                }
+                if (!is_file($path)) {
+                    return false;
+                }
+
+                @unlink($path);
+                return true;
+            });
+
+            if ($removed) {
+                $deleted++;
+            }
         }
 
         return $deleted;
