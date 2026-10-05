@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Models;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Models\User_Permission_Model;
 use App\RSpade\Core\Realtime\Realtime;
@@ -21,7 +22,7 @@ use App\RSpade\Core\Realtime\Realtime;
  */
 /**
  * _AUTO_GENERATED_ Database type hints - do not edit manually
- * Table: user_permissions
+ * Table: _user_permissions
  *
  * @property string $created_at
  * @property int $created_by_id
@@ -38,7 +39,7 @@ use App\RSpade\Core\Realtime\Realtime;
  */
 abstract class User_Permission_Model_Abstract extends Rsx_Model_Abstract
 {
-    protected $table = 'user_permissions';
+    protected $table = '_user_permissions';
     protected $fillable = []; // No mass assignment - always explicit
 
     /**
@@ -72,9 +73,12 @@ abstract class User_Permission_Model_Abstract extends Rsx_Model_Abstract
      * @param int $user_id User ID
      * @param int $permission_id Permission constant
      * @return User_Permission_Model
+     * @throws Rsx_Caller_Exception when the id is not in User_Model::$permission_definitions
      */
     public static function grant(int $user_id, int $permission_id): User_Permission_Model
     {
+        static::__assert_known_permission($permission_id);
+
         // Remove any existing entry first (could be DENY)
         static::where('user_id', $user_id)
             ->where('permission_id', $permission_id)
@@ -101,9 +105,12 @@ abstract class User_Permission_Model_Abstract extends Rsx_Model_Abstract
      * @param int $user_id User ID
      * @param int $permission_id Permission constant
      * @return User_Permission_Model
+     * @throws Rsx_Caller_Exception when the id is not in User_Model::$permission_definitions
      */
     public static function deny(int $user_id, int $permission_id): User_Permission_Model
     {
+        static::__assert_known_permission($permission_id);
+
         // Remove any existing entry first (could be GRANT)
         static::where('user_id', $user_id)
             ->where('permission_id', $permission_id)
@@ -149,6 +156,25 @@ abstract class User_Permission_Model_Abstract extends Rsx_Model_Abstract
     }
 
     /**
+     * Remove every supplementary permission of a user - back to the role defaults.
+     *
+     * @param int $user_id User ID
+     * @return int Number of rows removed (0 when the user had none)
+     */
+    public static function remove_all(int $user_id): int
+    {
+        $deleted = static::where('user_id', $user_id)->delete();
+
+        static::_bump_generation($user_id);
+
+        if ($deleted > 0) {
+            static::__realtime_push_user_refresh($user_id);
+        }
+
+        return $deleted;
+    }
+
+    /**
      * Get all supplementary permissions for a user
      *
      * @param int $user_id User ID
@@ -172,6 +198,49 @@ abstract class User_Permission_Model_Abstract extends Rsx_Model_Abstract
         }
 
         return $result;
+    }
+
+    /**
+     * The supplementary permissions of several users in one query - what a list screen
+     * reads for a page of users instead of one for_user() call per row.
+     *
+     * Every requested id is present in the result, with empty lists when it has no rows.
+     *
+     * @param int[] $user_ids User IDs (the caller's page; bounded by it)
+     * @return array<int, array{grants: int[], denies: int[]}> keyed by user id
+     */
+    public static function for_users(array $user_ids): array
+    {
+        $result = [];
+
+        foreach ($user_ids as $user_id) {
+            $result[(int) $user_id] = ['grants' => [], 'denies' => []];
+        }
+
+        if (empty($result)) {
+            return $result;
+        }
+
+        $rows = static::whereIn('user_id', array_keys($result))->get();
+
+        foreach ($rows as $row) {
+            $result[(int) $row->user_id][$row->is_grant ? 'grants' : 'denies'][] = (int) $row->permission_id;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Refuse a permission id the catalogue does not define, so a write path fed by a form
+     * can never store a row that decides nothing.
+     *
+     * @throws Rsx_Caller_Exception
+     */
+    private static function __assert_known_permission(int $permission_id): void
+    {
+        if (!User_Model::permission_exists($permission_id)) {
+            throw new Rsx_Caller_Exception("Unknown permission id {$permission_id}: it is not in User_Model::\$permission_definitions");
+        }
     }
 
     /**

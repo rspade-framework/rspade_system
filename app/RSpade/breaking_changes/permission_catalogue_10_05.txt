@@ -1,0 +1,53 @@
+THE PERMISSION CATALOGUE: EVERY PERMISSION IS DECLARED IN User_Model::$permission_definitions
+Date: 2026-10-05
+
+IF YOU DO NOTHING: grant() and deny() throw for any PERM_* constant your own User_Model added beyond the framework's nine.
+
+SUMMARY
+    User_Model now carries a permission catalogue - $permission_definitions,
+    every permission keyed by its PERM_* id with a constant name, a label and a
+    description - so an ACL administration screen can be written against the
+    framework instead of hand-listing permissions. It is the one list:
+    User_Permission_Model::grant()/deny() refuse an id it does not define, and
+    get_permission_breakdown() reports one row per entry.
+
+    New API (no change needed to use it):
+        User_Model::permission_definitions() / permission_exists() / permission_label()
+        $user->get_permission_breakdown([$entry])   per-permission from_role, override, effective
+        User_Permission_Model::for_users($ids)       a page of users' overrides, one query
+        User_Permission_Model::remove_all($user_id)  back to the role defaults
+        User_Model::withEffectivePermission($perm)   scope: who holds a permission
+
+WHAT YOU ALREADY HAVE
+    The framework's nine permissions (PERM_MANAGE_SITES_ROOT .. PERM_DATA_EXPORT)
+    are in the catalogue. An application that uses only those needs nothing.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    A catalogue entry for each permission your own User_Model declares (an id
+    above 9, or any id the framework's list does not contain).
+
+PORTING IT
+    In your class User_Model extends User_Model_Abstract (rsx/models/), redeclare
+    $permission_definitions as the framework's entries plus yours:
+
+        public static $permission_definitions = [
+            // ... copy entries 1-9 from User_Model_Abstract ...
+            10 => [
+                'constant' => 'PERM_YOUR_FEATURE',
+                'label' => 'Your Feature',
+                'description' => 'What holding it lets a user do.',
+            ],
+        ];
+
+    The 'constant' must name the PERM_* the id is declared as. If you replaced a
+    hand-listed permission table in an ACL screen, render it from
+    User_Model::permission_definitions() instead.
+
+VERIFICATION
+    php artisan rsx:test --framework Acl_Administration_Api_Test passes: its
+    first test fails naming any permission a role grants that the catalogue
+    lacks.
+
+SEE ALSO
+    acls - The Permission Catalogue, ADMINISTRATION SCREENS, ADDING NEW PERMISSIONS
+    skill rspade:permissions-acl - building an ACL administration screen

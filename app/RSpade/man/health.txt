@@ -394,7 +394,7 @@ FRAMEWORK INVENTORY
                                  it, so an operator can see it is the framework and not
                                  their own feature that is about to fail. WARN for a
                                  semantic probe - present and silently wrong (a NULL
-                                 user_permissions.is_grant is a permission lost, a NULL
+                                 _user_permissions.is_grant is a permission lost, a NULL
                                  users.is_api_access_enabled is an API opened). The
                                  declaration is Core/Database/Schema_Contract; audit
                                  pairs and timestamps are excluded because

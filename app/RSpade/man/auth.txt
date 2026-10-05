@@ -305,7 +305,7 @@ PERMISSIONS (ACL)
         ROLE_DISABLED    800
 
     A role grants a default permission set (User_Model::PERM_* constants). The
-    user_permissions table layers per-user GRANT/DENY exceptions on top.
+    _user_permissions table layers per-user GRANT/DENY exceptions on top.
     Resolution order: DISABLED role denies all -> DENY override -> GRANT
     override -> role default -> deny. DENY always wins.
 

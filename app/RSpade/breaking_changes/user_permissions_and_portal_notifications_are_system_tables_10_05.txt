@@ -1,0 +1,42 @@
+USER_PERMISSIONS AND PORTAL_NOTIFICATIONS ARE NOW _USER_PERMISSIONS AND _PORTAL_NOTIFICATIONS
+Date: 2026-10-05
+
+IF YOU DO NOTHING: raw SQL or DB::table() naming user_permissions or portal_notifications fails with "table doesn't exist".
+
+SUMMARY
+    A framework table that an application reaches only through a library API,
+    never as an ORM model of its own, is a SYSTEM table and carries the
+    underscore prefix. The ACL rows and the portal notification store are both:
+    every read and write goes through User_Permission_Model (grant, deny,
+    remove, remove_all, for_user, for_users) and Portal_Notification_Model
+    (emit, feed, unread_count, mark_read, mark_all_read). A framework migration
+    renames them; every column, index, foreign key and row is kept.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    The migration 2026_10_05_051050 (RENAME TABLE), applied by php artisan migrate.
+    User_Permission_Model and Portal_Notification_Model, already pointing at the
+    new names - code that calls their methods needs no change.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    Only code that names either table directly: raw SQL, DB::table('...'), a
+    join, or a migration of your own written after this one.
+
+PORTING IT
+    1. Search your tree (rsx/) for the two old names:
+           grep -rnw "user_permissions\|portal_notifications" rsx/
+    2. Replace each table reference with _user_permissions /
+       _portal_notifications, or better, with the model method that does the
+       same thing (the lists above).
+    3. A migration of yours that already ran stays as it is: migrations are
+       history, and it ran against the old name before the rename.
+
+VERIFICATION
+    php artisan migrate applies the rename; php artisan rsx:health shows no
+    "Schema Contract" FAIL; the grep above finds nothing outside migrations.
+
+SEE ALSO
+    acls - the ACL tables and API
+    portal - ACTIVITY & NOTIFICATIONS
+    database_schema_architecture - system tables and the application-table contract

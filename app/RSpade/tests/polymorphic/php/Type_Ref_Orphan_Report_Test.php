@@ -22,7 +22,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * resolved to a model class. It deliberately says nothing about the `_type_refs` rows
  * themselves - a row whose class is gone is inert, permanent, and never to be deleted.
  *
- * Three ids are planted on portal_notifications.subject_type:
+ * Three ids are planted on _portal_notifications.subject_type:
  *   - a VANISHED-CLASS id (a _type_refs row naming a class no file declares);
  *   - a DANGLING id (no _type_refs row at all);
  *   - a HEALTHY id (Site_Model), which must NOT appear.
@@ -97,16 +97,16 @@ class Type_Ref_Orphan_Report_Test extends Rsx_Test_Abstract
         $row->save();
 
         DB::update(
-            'UPDATE portal_notifications SET subject_type = ?, subject_id = ? WHERE id = ?',
+            'UPDATE _portal_notifications SET subject_type = ?, subject_id = ? WHERE id = ?',
             [$type_ref_id, self::SITE_ID, $row->id]
         );
     }
 
-    /** The single finding for portal_notifications.subject_type, or null. */
+    /** The single finding for _portal_notifications.subject_type, or null. */
     private static function __notification_finding(array $findings): ?array
     {
         foreach ($findings as $finding) {
-            if ($finding['table'] === 'portal_notifications' && $finding['column'] === 'subject_type') {
+            if ($finding['table'] === '_portal_notifications' && $finding['column'] === 'subject_type') {
                 return $finding;
             }
         }
@@ -166,7 +166,7 @@ class Type_Ref_Orphan_Report_Test extends Rsx_Test_Abstract
         $ids = [$vanished_id, $dangling_id];
         sort($ids);
 
-        $expected = 'SELECT * FROM portal_notifications WHERE subject_type IN (' . implode(', ', $ids) . ')'
+        $expected = 'SELECT * FROM _portal_notifications WHERE subject_type IN (' . implode(', ', $ids) . ')'
             . '  -- ' . implode(', ', array_map(
                 static fn ($id) => $id === $vanished_id ? self::VANISHED_CLASS : $id . ' (no _type_refs row)',
                 $ids
@@ -192,9 +192,9 @@ class Type_Ref_Orphan_Report_Test extends Rsx_Test_Abstract
         Artisan::call('rsx:type_refs:orphans');
         $output = Artisan::output();
 
-        static::__assert_contains('portal_notifications.subject_type - 1 row', $output, 'the table, column and count');
+        static::__assert_contains('_portal_notifications.subject_type - 1 row', $output, 'the table, column and count');
         static::__assert_contains(
-            'SELECT * FROM portal_notifications WHERE subject_type IN (' . $vanished_id . ')',
+            'SELECT * FROM _portal_notifications WHERE subject_type IN (' . $vanished_id . ')',
             $output,
             'the pasteable SELECT'
         );
@@ -213,7 +213,7 @@ class Type_Ref_Orphan_Report_Test extends Rsx_Test_Abstract
 
         $entry = null;
         foreach ($payload as $row) {
-            if ($row['table'] === 'portal_notifications' && $row['column'] === 'subject_type') {
+            if ($row['table'] === '_portal_notifications' && $row['column'] === 'subject_type') {
                 $entry = $row;
             }
         }
@@ -225,7 +225,7 @@ class Type_Ref_Orphan_Report_Test extends Rsx_Test_Abstract
             $entry['type_ids'][(string) $vanished_id],
             'type_ids maps the id to the class name it names'
         );
-        static::__assert_contains('SELECT * FROM portal_notifications', $entry['select'], 'select');
+        static::__assert_contains('SELECT * FROM _portal_notifications', $entry['select'], 'select');
     }
 
     public static function test_a_clean_database_reports_nothing_and_exits_zero()

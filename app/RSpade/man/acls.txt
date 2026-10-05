@@ -64,7 +64,7 @@ ARCHITECTURE
             role_id             Primary role for this site membership
             ...                 Other membership fields
 
-        user_permissions (supplementary)
+        _user_permissions (supplementary)
             user_id             FK to users
             permission_id       Which permission constant
             is_grant            1 = GRANT, 0 = DENY
@@ -72,8 +72,8 @@ ARCHITECTURE
     Permission Resolution Order
 
         1. Check if user role is DISABLED -> deny all
-        2. Check user_permissions for explicit DENY -> deny if found
-        3. Check user_permissions for explicit GRANT -> allow if found
+        2. Check _user_permissions for explicit DENY -> deny if found
+        3. Check _user_permissions for explicit GRANT -> allow if found
         4. Check role's default permissions -> allow if included
         5. Deny (permission not granted)
 
@@ -118,6 +118,18 @@ PERMISSIONS
         --  --------                    -------
         8   PERM_API_ACCESS             Allow API key creation/usage
         9   PERM_DATA_EXPORT            Allow bulk data export
+
+    The Permission Catalogue
+
+        Every permission is also an entry in User_Model::$permission_definitions,
+        keyed by its PERM_* value: {constant, label, description}. It is the ONE
+        list of permissions - what an administration screen shows, what
+        get_permission_breakdown() reports a row for, and what grant()/deny()
+        validate against. Read it with:
+
+            User_Model::permission_definitions()   // id => {id, constant, label, description}
+            User_Model::permission_exists($id)     // bool
+            User_Model::permission_label($id)      // "Manage Site Users" (throws on unknown id)
 
     Role-Permission Matrix
 
@@ -489,7 +501,7 @@ SUPPLEMENTARY PERMISSIONS
 
     Database Table
 
-        user_permissions
+        _user_permissions
             id              BIGINT PRIMARY KEY
             user_id         BIGINT NOT NULL (FK to users)
             permission_id   INT NOT NULL
@@ -510,8 +522,20 @@ SUPPLEMENTARY PERMISSIONS
         // Remove supplementary (revert to role default)
         User_Permission_Model::remove($user_id, User_Model::PERM_API_ACCESS);
 
+        // Remove every supplementary row of a user (back to the role defaults)
+        $removed = User_Permission_Model::remove_all($user_id);
+
         // Get all supplementary permissions for user
         $supplementary = User_Permission_Model::for_user($user_id);
+        // ['grants' => [8], 'denies' => [9]]
+
+        // The same for a page of users, in one query (every requested id present)
+        $by_user = User_Permission_Model::for_users($user_ids);
+
+    grant() and deny() THROW Rsx_Caller_Exception for an id that is not in the
+    catalogue, so a form posting a bad id can never store a row that decides
+    nothing. Every write invalidates the user's in-memory permission cache and
+    pushes a realtime refresh to that user's open pages.
 
     Resolution Priority
 
@@ -528,6 +552,49 @@ SUPPLEMENTARY PERMISSIONS
         - GRANT added -> has permission (redundant but harmless)
         - DENY added -> NO permission (DENY overrides role)
         - Both GRANT and DENY -> NO permission (DENY wins)
+
+ADMINISTRATION SCREENS
+
+    Everything a screen that views and edits ACLs needs - a site's user list, a
+    root administrator's cross-site panel - is on the two models:
+
+        Read                                     Gives
+        ----                                     -----
+        User_Model::role_id__enum()              every role: label, permissions,
+                                                 can_admin_roles, selectable
+        User_Model::permission_definitions()     every permission: label, description
+        $user->get_permission_breakdown()        one row per permission for one user:
+                                                 from_role, override (grant|deny|null),
+                                                 effective (== has_permission())
+        User_Permission_Model::for_users($ids)   a page of users' overrides, one query
+        User_Model::withEffectivePermission($p)  scope: the users who hold $p now
+        $user->can_admin_role($role_id)          may the ACTING user manage that role
+
+        Write
+        -----
+        User_Permission_Model::grant / deny / remove / remove_all
+
+    A list page loads its users, calls for_users() once for their ids, and passes
+    each user's entry to get_permission_breakdown($entry) so the page costs one
+    ACL query rather than one per row. withEffectivePermission() answers "who can
+    export data" with the same rule as has_permission(): a role other than
+    ROLE_DISABLED, no DENY row, and the role's default or a GRANT row. It does not
+    filter membership state; add ->where('is_enabled', 1) when that matters.
+
+    The endpoints are the application's, and so is their authorization:
+
+        - Gate the screen with an #[Auth] check (e.g. one built on
+          PERM_MANAGE_SITE_USERS, or is_sysadmin for a developer-only page).
+        - Before changing a user's ACL, require that the acting user may
+          administer that user's role: Permission::can_admin_role($target->role_id)
+          - otherwise a manager could grant themselves or a peer anything.
+        - users rows are site-scoped. A root administrator's cross-site panel
+          reads them inside User_Model::without_site_scope(fn () => ...); the
+          ACL rows themselves carry no site_id and follow their user.
+
+    Worked example (read-only, closed by default):
+    system/app/RSpade/resource/reference_app/app/dev/acl/dev_acl_controller.php
+    (the catalogue as the column list, for_users() plus the breakdown per row).
 
 EXAMPLES
 
@@ -622,9 +689,21 @@ EXAMPLES
 
 ADDING NEW PERMISSIONS
 
-    1. Add constant to User_Model:
+    1. Add the constant AND its catalogue entry to your User_Model
+       (class User_Model extends User_Model_Abstract in rsx/models/). Redeclare
+       the whole $permission_definitions array - the framework's entries plus
+       yours - because grant()/deny() refuse an id the catalogue lacks:
 
         const PERM_NEW_FEATURE = 10;
+
+        public static $permission_definitions = [
+            // ... the framework's entries 1-9 ...
+            10 => [
+                'constant' => 'PERM_NEW_FEATURE',
+                'label' => 'New Feature',
+                'description' => 'Use the new feature.',
+            ],
+        ];
 
     2. Add to role definitions in $enums if role should grant it:
 
@@ -712,7 +791,7 @@ FRAMEWORK IMPLEMENTATION DETAILS
 
         Supplementary permissions are cached on the User_Model instance:
 
-            1. First has_permission() call loads all user_permissions
+            1. First has_permission() call loads all _user_permissions
             2. Stored in User_Model instance property
             3. Subsequent checks use cached data
 
@@ -823,7 +902,7 @@ MIGRATION FROM LEGACY
     If upgrading from a system without ACLs:
 
     1. Add role_id column to users table (default ROLE_USER)
-    2. Create user_permissions table
+    2. Create _user_permissions table
     3. Assign appropriate roles to existing users
     4. Mark the Permission helpers you need with #[Auth_Check] and declare
        #[Auth(...)] on every surface (the build enumerates what is missing)

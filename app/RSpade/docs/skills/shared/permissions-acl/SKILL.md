@@ -1,6 +1,6 @@
 ---
 name: permissions-acl
-description: "Working with RSpade's role hierarchy and per-user ACL layer - users.role_id, user_permissions GRANT/DENY rows, the Permission facade (has_permission/has_role/can_admin_role/require_permission/require_role) and its JS mirror reading window.rsxapp.user.resolved_permissions. Use when adding a permission constant or a role, checking whether a user may do something inside a function body, preventing privilege escalation in a role-assignment UI, granting or denying a supplementary permission, or deciding whether a rule belongs in an ACL or an #[Auth] gate."
+description: "Working with RSpade's role hierarchy and per-user ACL layer - users.role_id, _user_permissions GRANT/DENY rows, the Permission facade (has_permission/has_role/can_admin_role/require_permission/require_role) and its JS mirror reading window.rsxapp.user.resolved_permissions. Use when adding a permission constant or a role, checking whether a user may do something inside a function body, preventing privilege escalation in a role-assignment UI, granting or denying a supplementary permission, building an ACL administration screen (permission_definitions, get_permission_breakdown, for_users, remove_all, withEffectivePermission), or deciding whether a rule belongs in an ACL or an #[Auth] gate."
 ---
 
 # Permissions and ACLs
@@ -10,7 +10,7 @@ Three layers, and conflating them is the usual mistake:
 | Layer | Where it lives | What it is |
 |---|---|---|
 | **Roles** | `users.role_id` | hierarchical, one per site membership; each grants a default permission set |
-| **ACLs** | `user_permissions` rows | per-user GRANT/DENY exceptions to that default; **DENY always wins** |
+| **ACLs** | `_user_permissions` rows | per-user GRANT/DENY exceptions to that default; **DENY always wins** |
 | **Auth-gate checks** | `#[Auth_Check]` methods | named booleans a surface declares; usually fed by roles and ACLs, but may read any user- or environment-scoped fact |
 
 **A check is where "may this user" is *answered*; roles and ACLs are only the most common *inputs*.** Gating a surface is the `rspade:auth-gates` skill; this one is the input layer and the in-body checks.
@@ -68,11 +68,13 @@ Core permissions, granted by role:
 
 Supplementary permissions, granted by no role by default: `PERM_API_ACCESS` (8), `PERM_DATA_EXPORT` (9).
 
+**The catalogue is `User_Model::$permission_definitions`** - every permission keyed by its id with `constant`, `label` and `description`, read through `User_Model::permission_definitions()` / `permission_exists($id)` / `permission_label($id)`. It is the one list: a screen renders its columns from it, and `grant()`/`deny()` throw `Rsx_Caller_Exception` for an id it does not define.
+
 ### Resolution order
 
 1. Role is `ROLE_DISABLED` -> deny everything.
-2. Explicit **DENY** in `user_permissions` -> denied.
-3. Explicit **GRANT** in `user_permissions` -> granted.
+2. Explicit **DENY** in `_user_permissions` -> denied.
+3. Explicit **GRANT** in `_user_permissions` -> granted.
 4. In the role's default set -> granted.
 5. Otherwise denied.
 
@@ -80,14 +82,31 @@ Supplementary permissions, granted by no role by default: `PERM_API_ACCESS` (8),
 
 ### The supplementary layer
 
-`user_permissions` = `(user_id, permission_id, is_grant)` with a UNIQUE key on the pair. Use it for per-user exceptions: API access for one user regardless of role, export removed from a user who normally has it, temporary elevation during onboarding.
+`_user_permissions` = `(user_id, permission_id, is_grant)` with a UNIQUE key on the pair. Use it for per-user exceptions: API access for one user regardless of role, export removed from a user who normally has it, temporary elevation during onboarding.
 
 ```php
 User_Permission_Model::grant($user_id, User_Model::PERM_API_ACCESS);
 User_Permission_Model::deny($user_id, User_Model::PERM_DATA_EXPORT);
 User_Permission_Model::remove($user_id, User_Model::PERM_API_ACCESS);  // back to role default
-$supplementary = User_Permission_Model::for_user($user_id);
+User_Permission_Model::remove_all($user_id);                            // every override gone
+$supplementary = User_Permission_Model::for_user($user_id);             // ['grants' => [], 'denies' => []]
+$by_user = User_Permission_Model::for_users($user_ids);                 // a page of users, one query
 ```
+
+### Building an ACL administration screen
+
+Never hand-list permissions or recompute "effective" in a controller - the models answer it:
+
+| Need | Call |
+|---|---|
+| Columns / the permission list | `User_Model::permission_definitions()` |
+| Roles with their defaults and who may manage them | `User_Model::role_id__enum()` (`permissions`, `can_admin_roles`, `selectable`) |
+| One user's position per permission | `$user->get_permission_breakdown($for_users_entry)` - `from_role`, `override` (`grant`/`deny`/null), `effective` (== `has_permission()`) |
+| A page of users without N queries | `for_users($ids)` once, then pass each entry to the breakdown |
+| Who holds a permission right now | `User_Model::withEffectivePermission($perm_id)` (scope; add `->where('is_enabled', 1)` for live memberships only) |
+| Edit / reset | `grant()`, `deny()`, `remove()`, `remove_all()` |
+
+**The endpoint authorizes, the model does not**: gate the screen with an `#[Auth]` check, and before touching a target user's ACL require `Permission::can_admin_role($target->role_id)` - without it a manager can grant a peer, or themselves, anything. A root administrator's **cross-site** panel reads `users` inside `User_Model::without_site_scope(fn () => ...)`; ACL rows follow their user. Worked example: `system/app/RSpade/resource/reference_app/app/dev/acl/dev_acl_controller.php`.
 
 ---
 
@@ -168,7 +187,7 @@ const assignable = User_Model.role_id__enum_select()
 
 ## Adding a permission
 
-1. Add the constant to `User_Model`: `const PERM_NEW_FEATURE = 10;`
+1. Add the constant AND its catalogue entry to your `User_Model` (`class User_Model extends User_Model_Abstract`): `const PERM_NEW_FEATURE = 10;`, and redeclare `$permission_definitions` with the framework's entries plus `10 => ['constant' => 'PERM_NEW_FEATURE', 'label' => ..., 'description' => ...]`. Without the entry `grant()`/`deny()` refuse the id.
 2. Add its id to the `permissions` array of every role that should grant it by default (omit entirely for a supplementary-only permission).
 3. `php artisan rsx:constants:regenerate` - regenerates the JS stubs.
 4. Consume it: `Permission::has_permission(User_Model::PERM_NEW_FEATURE)`, and wrap it in an `#[Auth_Check]` helper if a surface needs to gate on it.
@@ -188,7 +207,7 @@ const assignable = User_Model.role_id__enum_select()
 - Depends only on WHO the user is, and a surface should be closed to them entirely -> an `#[Auth_Check]` gate (`rspade:auth-gates`).
 - Depends only on who the user is, but is asked mid-function about part of a response -> `has_permission()`/`has_role()` inline.
 - Depends on WHICH RECORD -> record layer, always: ownership, membership scoping, record state. Never a gate, never an ACL permission.
-- A one-off exception for one person -> a `user_permissions` GRANT/DENY row, not a new role.
+- A one-off exception for one person -> a `_user_permissions` GRANT/DENY row, not a new role.
 
 ## Troubleshooting
 

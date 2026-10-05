@@ -151,7 +151,7 @@ EXAMPLES:
             return DB::select("
                 SELECT u.*, GROUP_CONCAT(p.name) as permissions
                 FROM users u
-                LEFT JOIN user_permissions up ON u.id = up.user_id
+                LEFT JOIN _user_permissions up ON u.id = up.user_id
                 LEFT JOIN permissions p ON up.permission_id = p.id
                 GROUP BY u.id
             ");

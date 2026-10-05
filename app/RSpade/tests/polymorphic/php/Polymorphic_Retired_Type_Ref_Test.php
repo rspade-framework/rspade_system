@@ -107,7 +107,7 @@ class Polymorphic_Retired_Type_Ref_Test extends Rsx_Test_Abstract
         $row->save();
 
         DB::update(
-            'UPDATE portal_notifications SET subject_type = ?, subject_id = ? WHERE id = ?',
+            'UPDATE _portal_notifications SET subject_type = ?, subject_id = ? WHERE id = ?',
             [$type_ref_id, self::SITE_ID, $row->id]
         );
 

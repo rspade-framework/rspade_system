@@ -761,7 +761,7 @@ ACTIVITY & NOTIFICATIONS
     the class basename, subject_id is the row id. Never FK the primitive to an app
     table.
 
-    Table: portal_notifications
+    Table: _portal_notifications
       id, site_id, portal_user_id (recipient), type (string key), subject_type +
       subject_id (polymorphic type-ref, nullable), payload (JSON title/body/url
       snapshot), read_at (nullable), created_at.

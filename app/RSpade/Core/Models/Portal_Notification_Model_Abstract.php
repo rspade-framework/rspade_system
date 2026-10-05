@@ -60,7 +60,7 @@ use App\RSpade\Core\Realtime\Realtime;
  */
 /**
  * _AUTO_GENERATED_ Database type hints - do not edit manually
- * Table: portal_notifications
+ * Table: _portal_notifications
  *
  * @property string $created_at
  * @property int $created_by_id
@@ -104,7 +104,7 @@ abstract class Portal_Notification_Model_Abstract extends Rsx_Site_Model_Abstrac
     public static $unbounded = true;
 
 
-    protected $table = 'portal_notifications';
+    protected $table = '_portal_notifications';
     protected $fillable = []; // No mass assignment - always explicit
 
     /**

@@ -284,7 +284,7 @@ Supported methods: `where()`, `orWhere()`, `whereNot()`, `orWhereNot()`, `whereI
 form before that arity is lost). A closure/nested `where()` receives another
 `RestrictedEloquentBuilder`, so clauses inside it convert too.
 
-**Qualified column names are accepted** (`portal_notifications.subject_type`) when the
+**Qualified column names are accepted** (`_portal_notifications.subject_type`) when the
 qualifier names the builder's OWN table. This is required, not cosmetic: Eloquent's morph
 relations qualify the morph type column themselves (`HasRelationships::morphMany()` passes
 `$table.'.'.$type`, `whereHasMorph()` calls `qualifyColumn()`), so without it the relation's

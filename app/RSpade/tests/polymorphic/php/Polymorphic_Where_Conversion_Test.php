@@ -21,7 +21,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Three spellings, three answers:
  *   - bare ('subject_type')                            -> converted
- *   - self-qualified ('portal_notifications.subject_type') -> converted, qualifier preserved
+ *   - self-qualified ('_portal_notifications.subject_type') -> converted, qualifier preserved
  *   - foreign-qualified ('activities.subject_type')     -> NOT converted (that column belongs
  *     to a joined table whose type-ref declaration is not this builder's to read)
  *
@@ -81,11 +81,11 @@ class Polymorphic_Where_Conversion_Test extends Rsx_Test_Abstract
         $row = static::__make_notification('Site_Model', self::SITE_ID);
         $type_ref_id = Type_Ref_Registry::class_to_id('Site_Model');
 
-        $query = Portal_Notification_Model::where('portal_notifications.subject_type', 'Site_Model');
+        $query = Portal_Notification_Model::where('_portal_notifications.subject_type', 'Site_Model');
 
         static::__assert_true(in_array($type_ref_id, $query->getBindings(), true));
         static::__assert_contains(
-            '`portal_notifications`.`subject_type`',
+            '`_portal_notifications`.`subject_type`',
             $query->toSql(),
             'the conversion lookup uses the bare name; the emitted clause stays table-qualified'
         );
@@ -117,7 +117,7 @@ class Polymorphic_Where_Conversion_Test extends Rsx_Test_Abstract
         ));
         static::__assert_true(in_array(
             $type_ref_id,
-            Portal_Notification_Model::query()->orWhere('portal_notifications.subject_type', 'Site_Model')->getBindings(),
+            Portal_Notification_Model::query()->orWhere('_portal_notifications.subject_type', 'Site_Model')->getBindings(),
             true
         ));
     }
@@ -133,7 +133,7 @@ class Polymorphic_Where_Conversion_Test extends Rsx_Test_Abstract
         ));
         static::__assert_true(in_array(
             $type_ref_id,
-            Portal_Notification_Model::query()->orWhereNot('portal_notifications.subject_type', 'Site_Model')->getBindings(),
+            Portal_Notification_Model::query()->orWhereNot('_portal_notifications.subject_type', 'Site_Model')->getBindings(),
             true
         ));
     }
@@ -144,7 +144,7 @@ class Polymorphic_Where_Conversion_Test extends Rsx_Test_Abstract
         $type_ref_id = Type_Ref_Registry::class_to_id('Site_Model');
 
         $query = Portal_Notification_Model::whereIn(
-            'portal_notifications.subject_type',
+            '_portal_notifications.subject_type',
             ['Site_Model', 999999, null]
         );
 
@@ -172,7 +172,7 @@ class Polymorphic_Where_Conversion_Test extends Rsx_Test_Abstract
 
         static::__assert_true(in_array(
             $type_ref_id,
-            Portal_Notification_Model::where('portal_notifications.subject_type', '=', $type_ref_id)->getBindings(),
+            Portal_Notification_Model::where('_portal_notifications.subject_type', '=', $type_ref_id)->getBindings(),
             true
         ));
     }
@@ -197,10 +197,10 @@ class Polymorphic_Where_Conversion_Test extends Rsx_Test_Abstract
     {
         $error = static::__assert_throws(
             \RuntimeException::class,
-            fn() => Portal_Notification_Model::where('portal_notifications.subject_type', 'Not_A_Real_Model_Xyz')->exists()
+            fn() => Portal_Notification_Model::where('_portal_notifications.subject_type', 'Not_A_Real_Model_Xyz')->exists()
         );
 
-        static::__assert_contains('portal_notifications.subject_type', $error->getMessage());
+        static::__assert_contains('_portal_notifications.subject_type', $error->getMessage());
     }
 
     public static function test_an_unresolvable_value_inside_a_where_in_array_throws()

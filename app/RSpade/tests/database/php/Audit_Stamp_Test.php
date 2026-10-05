@@ -130,7 +130,7 @@ class Audit_Stamp_Test extends Rsx_Test_Abstract
 
         // Raw SQL on purpose: the point is the value BEFORE the type-ref cast.
         $raw = \Illuminate\Support\Facades\DB::select(
-            'SELECT created_by_type FROM portal_notifications WHERE id = ?',
+            'SELECT created_by_type FROM _portal_notifications WHERE id = ?',
             [$notification->id]
         )[0]->created_by_type;
 
@@ -194,7 +194,7 @@ class Audit_Stamp_Test extends Rsx_Test_Abstract
 
         // Raw SQL on purpose: clearing the pair through the ORM would re-stamp it.
         \Illuminate\Support\Facades\DB::statement(
-            'UPDATE portal_notifications SET updated_by_id = NULL, updated_by_type = NULL WHERE id = ?',
+            'UPDATE _portal_notifications SET updated_by_id = NULL, updated_by_type = NULL WHERE id = ?',
             [$notification->id]
         );
 
@@ -202,7 +202,7 @@ class Audit_Stamp_Test extends Rsx_Test_Abstract
         $reloaded->save();
 
         $after = \Illuminate\Support\Facades\DB::select(
-            'SELECT updated_by_id, updated_by_type FROM portal_notifications WHERE id = ?',
+            'SELECT updated_by_id, updated_by_type FROM _portal_notifications WHERE id = ?',
             [$notification->id]
         )[0];
 

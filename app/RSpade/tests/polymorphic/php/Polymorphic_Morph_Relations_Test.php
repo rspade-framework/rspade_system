@@ -82,7 +82,7 @@ class Polymorphic_Morph_Relations_Test extends Rsx_Test_Abstract
     private static function __raw_row(int $id): object
     {
         return DB::select(
-            'SELECT subject_type, subject_id FROM portal_notifications WHERE id = ?',
+            'SELECT subject_type, subject_id FROM _portal_notifications WHERE id = ?',
             [$id]
         )[0];
     }
@@ -307,7 +307,7 @@ class Polymorphic_Morph_Relations_Test extends Rsx_Test_Abstract
     {
         $row = static::__make_notification('Site_Model', self::SITE_ID);
 
-        $ids = Portal_Notification_Model::where('portal_notifications.subject_type', 'Site_Model')
+        $ids = Portal_Notification_Model::where('_portal_notifications.subject_type', 'Site_Model')
             ->pluck('id')
             ->all();
 

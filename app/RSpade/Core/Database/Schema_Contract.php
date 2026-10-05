@@ -12,7 +12,7 @@ namespace App\RSpade\Core\Database;
  *
  * An application-owned table is one with no leading underscore: users, login_users,
  * sites, portal_users and the rest of the roster below. The framework models them,
- * reads and writes named columns on them, joins them, and - in four places - points a
+ * reads and writes named columns on them, joins them, and - in six places - points a
  * foreign key from one of its OWN tables into them. An application may alter every one
  * of these tables, and is expected to: that is the difference between them and the
  * `_`-prefixed tables the framework owns outright. This class is the declaration of
@@ -42,7 +42,7 @@ namespace App\RSpade\Core\Database;
  *   - Columns the framework only DECLARES on a model and never reads (users.phone,
  *     user_profiles.title/department/bio). A column nothing reads cannot break
  *     anything by being absent.
- *   - Tables no framework code names. The framework models 9 application-owned tables;
+ *   - Tables no framework code names. The framework models 7 application-owned tables;
  *     every other non-underscore table in a database belongs to the application alone.
  *
  * EXTENDING IT. A new framework read or write of an application-owned table adds its
@@ -214,25 +214,8 @@ class Schema_Contract
             ],
 
             // -----------------------------------------------------------------
-            // Authorization and identity satellites
+            // Identity satellites
             // -----------------------------------------------------------------
-            'user_permissions' => [
-                'migration' => '2025_11_23_160855_create_user_permissions_table',
-                'columns' => [
-                    'user_id' => ['where' => 'Permission ACL resolution - a users.id, not a login_users.id'],
-                    'permission_id' => ['where' => 'Permission ACL resolution (PERM_* ids)'],
-                    'is_grant' => ['where' => 'Permission ACL resolution - false is a DENY and DENY wins'],
-                ],
-                'unique' => [
-                    [
-                        'columns' => ['user_id', 'permission_id'],
-                        'name' => 'uk_user_permission',
-                        'why' => 'grant and deny are written delete-then-insert, so a duplicate leaves a'
-                            . ' stale row deciding an access question',
-                    ],
-                ],
-            ],
-
             'user_profiles' => [
                 'migration' => '2025_11_04_011050_create_user_profiles_table',
                 'columns' => [
@@ -272,29 +255,13 @@ class Schema_Contract
                 'unique' => [],
             ],
 
-            // -----------------------------------------------------------------
-            // Portal notifications
-            // -----------------------------------------------------------------
-            'portal_notifications' => [
-                'migration' => '2026_06_23_035931_create_portal_notifications_table',
-                'columns' => [
-                    'site_id' => ['where' => 'Portal_Notification_Model tenant scope'],
-                    'portal_user_id' => ['where' => 'Portal_Notification_Model::emit() recipient'],
-                    'type' => ['where' => 'Portal_Notification_Model payload'],
-                    'subject_type' => ['where' => 'the polymorphic subject of the notification'],
-                    'subject_id' => ['where' => 'the polymorphic subject of the notification'],
-                    'payload' => ['where' => 'Portal_Notification_Model payload'],
-                    'read_at' => ['where' => 'the unread count the portal renders'],
-                ],
-                'unique' => [],
-            ],
         ];
     }
 
     /**
      * The foreign keys the framework relies on.
      *
-     * The four from FRAMEWORK-owned (`_`-prefixed) tables INTO application-owned tables
+     * The six from FRAMEWORK-owned (`_`-prefixed) tables INTO application-owned tables
      * are the strongest form of this contract: the framework's own storage cannot be
      * written at all if the target is gone. The rest are the application-owned
      * references the framework's own models traverse.
@@ -353,7 +320,7 @@ class Schema_Contract
                 'why' => 'Site_Scoped requires users.site_id to be a real tenant',
             ],
             [
-                'table' => 'user_permissions',
+                'table' => '_user_permissions',
                 'column' => 'user_id',
                 'references' => 'users',
                 'referenced_column' => 'id',
@@ -374,7 +341,7 @@ class Schema_Contract
                 'why' => 'a portal account belongs to exactly one tenant',
             ],
             [
-                'table' => 'portal_notifications',
+                'table' => '_portal_notifications',
                 'column' => 'portal_user_id',
                 'references' => 'portal_users',
                 'referenced_column' => 'id',
@@ -505,11 +472,11 @@ class Schema_Contract
             [
                 'key' => 'is_grant_null',
                 'kind' => 'count',
-                'label' => 'user_permissions.is_grant',
-                'table' => 'user_permissions',
+                'label' => '_user_permissions.is_grant',
+                'table' => '_user_permissions',
                 'predicate' => 'is_grant IS NULL',
                 'why' => 'a NULL reads as a DENY and DENY wins, so it is a permission silently lost',
-                'remediation' => 'decide each row: UPDATE user_permissions SET is_grant = 1 (grant) or 0 (deny)'
+                'remediation' => 'decide each row: UPDATE _user_permissions SET is_grant = 1 (grant) or 0 (deny)'
                     . ' WHERE is_grant IS NULL',
             ],
         ];

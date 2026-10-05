@@ -64,7 +64,7 @@ class RestrictedEloquentBuilder extends Builder
      * Check if a column is a type_ref column
      *
      * Accepts the bare column name AND the table-qualified spelling of this builder's own
-     * table ("portal_notifications.subject_type"). Eloquent's own polymorphic relations
+     * table ("_portal_notifications.subject_type"). Eloquent's own polymorphic relations
      * qualify the morph type column - HasRelationships::morphMany() passes
      * $table.'.'.$type - so without this the relation's own `where(type, class)` constraint
      * would be compared unconverted (a class-name string against a BIGINT column, which

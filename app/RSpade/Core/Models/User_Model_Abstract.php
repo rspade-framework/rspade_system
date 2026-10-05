@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Models;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Permission_Model;
@@ -21,7 +22,7 @@ use App\RSpade\Core\Rsx;
  *
  * ACL System:
  * - Primary role (role_id) grants base permissions
- * - Supplementary permissions (user_permissions table) can GRANT or DENY specific permissions
+ * - Supplementary permissions (_user_permissions table) can GRANT or DENY specific permissions
  * - Resolution: DISABLED check → DENY override → GRANT override → role default
  *
  * ACTOR: extends Rsx_Site_Actor_Model_Abstract - it signs in and it is the site-scoped
@@ -118,6 +119,69 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     const PERM_VIEW_DATA = 7;
     const PERM_API_ACCESS = 8;
     const PERM_DATA_EXPORT = 9;
+
+    /**
+     * THE PERMISSION CATALOGUE - every permission this application knows, keyed by its
+     * PERM_* value, with the label and description an administration screen shows.
+     *
+     * It is the one list of permissions: permission_definitions() reads it,
+     * User_Permission_Model::grant()/deny() refuse an id that is not in it, and
+     * get_permission_breakdown() reports one row per entry. An application that adds a
+     * permission declares its PERM_* constant AND its entry here, in its own
+     * `class User_Model extends User_Model_Abstract` (redeclare the whole array).
+     *
+     * Literal ids, not self:: constants: PHP cannot use class constants in a static
+     * property initializer. Each 'constant' names the PERM_* it mirrors.
+     *
+     * @var array<int, array{constant: string, label: string, description: string}>
+     */
+    public static $permission_definitions = [
+        1 => [
+            'constant' => 'PERM_MANAGE_SITES_ROOT',
+            'label' => 'Manage All Sites',
+            'description' => 'Administer every site on the installation.',
+        ],
+        2 => [
+            'constant' => 'PERM_MANAGE_SITE_BILLING',
+            'label' => 'Manage Site Billing',
+            'description' => 'Change the site\'s plan, payment details and invoices.',
+        ],
+        3 => [
+            'constant' => 'PERM_MANAGE_SITE_SETTINGS',
+            'label' => 'Manage Site Settings',
+            'description' => 'Change the site\'s configuration.',
+        ],
+        4 => [
+            'constant' => 'PERM_MANAGE_SITE_USERS',
+            'label' => 'Manage Site Users',
+            'description' => 'Invite, edit and disable the site\'s users and assign their roles.',
+        ],
+        5 => [
+            'constant' => 'PERM_VIEW_USER_ACTIVITY',
+            'label' => 'View User Activity',
+            'description' => 'Read the activity history of the site\'s users.',
+        ],
+        6 => [
+            'constant' => 'PERM_EDIT_DATA',
+            'label' => 'Edit Data',
+            'description' => 'Create, change and delete the site\'s records.',
+        ],
+        7 => [
+            'constant' => 'PERM_VIEW_DATA',
+            'label' => 'View Data',
+            'description' => 'Read the site\'s records.',
+        ],
+        8 => [
+            'constant' => 'PERM_API_ACCESS',
+            'label' => 'API Access',
+            'description' => 'Create and use external API keys.',
+        ],
+        9 => [
+            'constant' => 'PERM_DATA_EXPORT',
+            'label' => 'Data Export',
+            'description' => 'Export the site\'s data in bulk.',
+        ],
+    ];
 
     /**
      * Columns toArray() never sends to the browser (window.rsxapp.user, model fetch,
@@ -293,28 +357,31 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      */
     public function get_resolved_permissions(): array
     {
-        // Disabled users have no permissions
+        return $this->__resolve_permissions($this->_load_supplementary_permissions());
+    }
+
+    /**
+     * THE resolution rule, in one place: the role's defaults, plus GRANTs, minus DENYs
+     * (DENY wins), and nothing at all for a disabled role. Sorted for stable output.
+     *
+     * @param array{grants: int[], denies: int[]} $supplementary
+     * @return int[]
+     */
+    private function __resolve_permissions(array $supplementary): array
+    {
         if ($this->role_id === self::ROLE_DISABLED) {
             return [];
         }
 
-        // Start with role default permissions
         $permissions = $this->role_id__permissions ?? [];
 
-        // Load supplementary overrides (DB query is cached)
-        $supplementary = $this->_load_supplementary_permissions();
-
-        // Add supplementary GRANTs
         foreach ($supplementary['grants'] as $perm_id) {
             if (!in_array($perm_id, $permissions, true)) {
                 $permissions[] = $perm_id;
             }
         }
 
-        // Remove supplementary DENYs
         $permissions = array_values(array_diff($permissions, $supplementary['denies']));
-
-        // Sort for consistent ordering
         sort($permissions);
 
         return $permissions;
@@ -387,7 +454,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
         ];
         $this->_supplementary_permissions_generation = $current_generation;
 
-        // Load from user_permissions table
+        // Load from _user_permissions table
         $permissions = User_Permission_Model::where('user_id', $this->id)->get();
 
         foreach ($permissions as $perm) {
@@ -426,11 +493,92 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     }
 
     /**
-     * Clear cached supplementary permissions (call after modifying user_permissions table)
+     * Clear cached supplementary permissions (call after modifying _user_permissions table)
      */
     public function clear_permission_cache(): void
     {
         $this->_supplementary_permissions = null;
+    }
+
+    /**
+     * Every permission in the catalogue ($permission_definitions), keyed by id.
+     *
+     * @return array<int, array{id: int, constant: string, label: string, description: string}>
+     */
+    public static function permission_definitions(): array
+    {
+        $definitions = [];
+
+        foreach (static::$permission_definitions as $permission_id => $definition) {
+            $definitions[(int) $permission_id] = ['id' => (int) $permission_id] + $definition;
+        }
+
+        ksort($definitions);
+
+        return $definitions;
+    }
+
+    /**
+     * Is this id a permission in the catalogue?
+     */
+    public static function permission_exists(int $permission_id): bool
+    {
+        return isset(static::$permission_definitions[$permission_id]);
+    }
+
+    /**
+     * The catalogue label of a permission.
+     *
+     * @throws Rsx_Caller_Exception when the id is not in the catalogue
+     */
+    public static function permission_label(int $permission_id): string
+    {
+        if (!static::permission_exists($permission_id)) {
+            throw new Rsx_Caller_Exception("Unknown permission id {$permission_id}: it is not in User_Model::\$permission_definitions");
+        }
+
+        return static::$permission_definitions[$permission_id]['label'];
+    }
+
+    /**
+     * One row per catalogue permission explaining where this user stands on it - what an
+     * ACL administration screen shows for one user.
+     *
+     *   from_role  the user's role grants it by default
+     *   override   'grant', 'deny' or null - the supplementary row, if any
+     *   effective  what has_permission() answers (DENY wins; a disabled role has nothing)
+     *
+     * A list screen passes this user's entry from User_Permission_Model::for_users() as
+     * $supplementary, so a page of users costs one ACL query instead of one per row.
+     *
+     * @param array{grants: int[], denies: int[]}|null $supplementary preloaded overrides
+     * @return array<int, array{id: int, constant: string, label: string, description: string,
+     *                          from_role: bool, override: ?string, effective: bool}>
+     */
+    public function get_permission_breakdown(?array $supplementary = null): array
+    {
+        $role_permissions = $this->role_id === self::ROLE_DISABLED ? [] : ($this->role_id__permissions ?? []);
+        $supplementary = $supplementary ?? $this->_load_supplementary_permissions();
+        $effective = $this->__resolve_permissions($supplementary);
+        $rows = [];
+
+        foreach (static::permission_definitions() as $permission_id => $definition) {
+            $override = null;
+
+            if (in_array($permission_id, $supplementary['denies'], true)) {
+                $override = 'deny';
+            } elseif (in_array($permission_id, $supplementary['grants'], true)) {
+                $override = 'grant';
+            }
+
+            $rows[$permission_id] = $definition + [
+                'from_role' => in_array($permission_id, $role_permissions, true),
+                'override' => $override,
+                'effective' => in_array($permission_id, $effective, true),
+            ];
+        }
+
+        return $rows;
     }
 
     // =========================================================================
@@ -591,6 +739,54 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     public function scopeWithRole($query, int $role_id)
     {
         return $query->where('role_id', $role_id);
+    }
+
+    /**
+     * Scope to the users who EFFECTIVELY hold a permission - the set has_permission()
+     * answers true for: a role other than ROLE_DISABLED, no DENY row, and either a role
+     * that grants it by default or a GRANT row. It answers the permission question only;
+     * membership state (is_enabled) is a separate filter the caller adds when it wants it.
+     *
+     * @throws Rsx_Caller_Exception when the id is not in the catalogue
+     */
+    public function scopeWithEffectivePermission($query, int $permission_id)
+    {
+        if (!static::permission_exists($permission_id)) {
+            throw new Rsx_Caller_Exception("Unknown permission id {$permission_id}: it is not in User_Model::\$permission_definitions");
+        }
+
+        $roles_granting = [];
+
+        foreach (static::$enums['role_id'] as $role_id => $role) {
+            if ((int) $role_id !== self::ROLE_DISABLED && in_array($permission_id, $role['permissions'] ?? [], true)) {
+                $roles_granting[] = (int) $role_id;
+            }
+        }
+
+        $table = $this->getTable();
+
+        return $query
+            ->where("{$table}.role_id", '!=', self::ROLE_DISABLED)
+            ->whereNotExists(function ($sub) use ($table, $permission_id) {
+                $sub->selectRaw('1')
+                    ->from('_user_permissions')
+                    ->whereColumn('_user_permissions.user_id', "{$table}.id")
+                    ->where('_user_permissions.permission_id', $permission_id)
+                    ->where('_user_permissions.is_grant', false);
+            })
+            ->where(function ($either) use ($table, $permission_id, $roles_granting) {
+                if (!empty($roles_granting)) {
+                    $either->whereIn("{$table}.role_id", $roles_granting);
+                }
+
+                $either->orWhereExists(function ($sub) use ($table, $permission_id) {
+                    $sub->selectRaw('1')
+                        ->from('_user_permissions')
+                        ->whereColumn('_user_permissions.user_id', "{$table}.id")
+                        ->where('_user_permissions.permission_id', $permission_id)
+                        ->where('_user_permissions.is_grant', true);
+                });
+            });
     }
 
     /**
