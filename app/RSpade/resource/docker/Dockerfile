@@ -46,7 +46,7 @@ RUN echo "$TZ" > /etc/timezone
 # is a list nobody can ever prune.
 RUN apt-get update && apt-get install -y \
     # web server, cache, process supervision
-        nginx redis-server redis-tools supervisor \
+        nginx libnginx-mod-http-brotli-filter redis-server redis-tools supervisor \
     # talking to a database (the SERVER is a dev-target concern)
         mysql-client \
     # fetching and unpacking. No software-properties-common: it exists to provide
