@@ -163,6 +163,11 @@ DECLARING ENDPOINTS
         - @api-hidden           hides the endpoint from the docs page and the
                                 LLM catalog (it still routes and works).
         - @api-response {json}  a verbatim example response shown on the card.
+        - @api-deprecated <note>  marks the endpoint deprecated on the docs page
+                                and in OpenAPI whether or not a later version
+                                replaces it; the note (the reason, or what to
+                                use instead) is shown with it. It still routes
+                                and works. See VERSIONING.
 
     SCAN-TIME ENFORCEMENT (Api_Endpoint_ManifestSupport, fails the manifest
     build with a RuntimeException - loud, immediate, non-bypassable):
@@ -180,7 +185,11 @@ DECLARING ENDPOINTS
         - type 'file' on a :route token
         - type 'file' carrying a default
         - #[FPC], #[Route], #[SPA], or #[Ajax_Endpoint] on the same method
-        - a duplicate route pattern
+        - a duplicate route pattern, including an address a version range
+          expands to (VERSIONING)
+        - a version range (through: / #[Api_Versions]) ending below the
+          pattern's own version; a non-integer through:; #[Api_Versions] or
+          #[Api_Resource] declared twice or without its argument
         - API-GET-PURE-01: a write call in a GET handler's body, or a GET
           handler whose body cannot be located (see KEY SCOPES)
       The converse guard lives in Route_ManifestSupport: a NON-API #[Route] (or
@@ -560,7 +569,7 @@ API KEYS
                                        [--json]
         php artisan rsx:api:key:delete <id> [--purge] [--force] [--json]
         php artisan rsx:api:openapi    [--user=<id|email>] [--key=<id>]
-                                       [--site=] [--compact]
+                                       [--site=] [--api-version=N] [--compact]
 
     --user IS REQUIRED wherever it appears without brackets, and is spelled as
     an OPTION because that is how every other framework command spells it
@@ -687,6 +696,13 @@ API KEYS
     actually call. It implies its user, so
     --user is redundant with it (naming a different user is refused, as is a
     revoked or expired key, which can reach nothing at all).
+
+    --api-version=N (or vN) narrows on the other axis: the document is that one
+    version's surface exactly as the docs page shows it (VERSIONING, DOCS DISPLAY
+    RULE), with info.version naming it - the input for generating one version's
+    client. It composes with --user and --key. An unknown version is refused
+    (version_unknown). It is not --version because that is the console's own
+    global flag. Without it every version is listed.
 
     END TO END. A key that grants itself access, uses it, and expires:
 
@@ -1132,7 +1148,74 @@ READ-ONLY KEYS
 VERSIONING
     Versioning is URL-only (/api/v1/..., /api/v2/...) and EXACT-MATCH at runtime
     - there is NO fallthrough from v2 to v1. A request to a path that does not
-    exist at its stated version is a 404 (after auth).
+    exist at its stated version is a 404 (after auth). Fallthrough is not a
+    missing feature: it would let a key scoped /api/v2/* reach v1 handlers (the
+    scope grammar's version prefix is a promise), it would turn two versions
+    sharing a path into a per-request precedence rule, and the 404 is the right
+    answer to a client built against a stale spec. A version RANGE (below) gives
+    a v2 client one prefix for everything with every address real.
+
+    CARRYING AN ENDPOINT INTO A LATER VERSION. An endpoint is served from the
+    version in its pattern through a later one when it says so, and the manifest
+    expands that into one ordinary route row per version - /api/v1/x and
+    /api/v2/x, one handler, one #[Api_Param] surface, one gate list:
+
+        #[Api_Versions(through: 2)]          // on the controller: every endpoint
+        #[Api_Resource('Contacts')]           //   in it is also served at v2
+        class Contacts_Api_Controller extends Rsx_Api_Controller_Abstract
+        {
+            #[Api_Endpoint('/api/v1/contacts', methods: ['GET'])]
+            public static function list(...)  // /api/v1/contacts AND /api/v2/contacts
+
+            #[Api_Endpoint('/api/v1/contacts/:id', methods: ['GET'], through: 1)]
+            public static function get(...)   // v1 only: v2 revises it (below)
+        }
+
+        #[Api_Resource('Contacts')]
+        class Contacts_V2_Api_Controller extends Rsx_Api_Controller_Abstract
+        {
+            #[Api_Endpoint('/api/v2/contacts/:id', methods: ['GET'])]
+            public static function get(...)   // the v2 revision
+        }
+
+    through: on the #[Api_Endpoint] overrides the controller's #[Api_Versions];
+    with neither, an endpoint is served at its own version only. A range ending
+    BELOW the pattern's own version fails the build, and an expanded address
+    that another declaration also claims is the ordinary "Duplicate route
+    definition" build failure, naming the range - one address has one handler,
+    never a precedence rule, so the revised endpoint ends its own range
+    (through: 1) rather than being outranked. Scopes, the docs page and OpenAPI
+    see only ordinary rows: a key scoped /api/v1/... does not reach the /api/v2/
+    copy (the ? version segment is for a key that follows the API across
+    versions). A method may also carry several #[Api_Endpoint] attributes; each
+    is expanded on its own.
+
+    A V2 CONTROLLER NEEDS ITS OWN CLASS NAME. Class names are unique per file
+    type across the whole tree and NAMESPACES ARE NOT CONSULTED, so a V1\ / V2\
+    namespace split of one Contacts_Api_Controller is a build failure ("Duplicate
+    PHP class name"). Name it Contacts_V2_Api_Controller (any unique name
+    works - the class name means nothing to routing) and give both controllers
+    the same #[Api_Resource('Contacts')]: that is the resource the docs page and
+    the OpenAPI tags list them under. Without it the resource derives from the
+    class name ('Contacts_Api_Controller' -> 'Contacts'), and the v2 controller
+    would appear as a separate "Contacts V2" resource.
+
+    DEPRECATING. An endpoint reads deprecated when a later version of it is
+    served by a different handler, or when its docblock carries
+    @api-deprecated <note> - the one way to mark an endpoint being withdrawn
+    with no successor, or whose successor lives at another path.
+
+    RETIRING A VERSION. _api_route_usage holds, per route PATTERN, its version
+    and when an authenticated key last called it (recorded once the key has
+    matched the route and cleared its scope; refreshed at most once a minute).
+    Whether anything still calls v1:
+
+        Api_Route_Usage::last_called_for_version(1)  // [{pattern, last_called_at}]
+        SELECT pattern, last_called_at FROM _api_route_usage
+            WHERE version = 1 ORDER BY last_called_at DESC;
+
+    Before narrowing a key's scopes to one version, prefer the ? version
+    segment (/api/?/contacts/*) for an integration meant to follow the API.
 
     DOCS DISPLAY RULE (Api_Catalog, the single implementation both the docs page
     and the LLM catalog consume): endpoints are grouped by (verb, path with the
@@ -1145,7 +1228,9 @@ VERSIONING
 
     Api_Catalog (pure functions over the manifest):
         get_versions()                 distinct versions, descending
-        resolve_for_version($v)        the display-rule winners for version $v
+        resolve_for_version($v)        the display-rule winners for version $v,
+                                       grouped by resource
+        resource_name($endpoint)       #[Api_Resource], else the class-derived name
         parse_version($pattern)        '/api/vN/...' -> N
         path_key($pattern)             the vN-stripped grouping key
 
@@ -1364,13 +1449,21 @@ DOCS AND TESTER PAGE
                             part is type:string, format:binary. One 'file' param
                             is what makes an endpoint multipart; the PART NAME is
                             the param's own name, never assumed to be 'file'.
-        superseded          deprecated:true when a HIGHER version exists for the
-                            same verb + path_key. Every version stays listed at
-                            its real path, because every version stays callable.
+        superseded          deprecated:true when a HIGHER version of the same
+                            verb + path_key is served by a DIFFERENT handler.
+                            A version range is one handler at every version, so
+                            its own later rows never supersede its earlier ones.
+                            Every version stays listed at its real path, because
+                            every version stays callable.
+        @api-deprecated     deprecated:true, with "Deprecated: <note>" appended
+                            to the description.
         @api-hidden         omitted entirely.
+        tags                one per resource - the docs page's own grouping
+                            (Api_Catalog::resource_name()).
 
-    Every version is listed; the catalog display rule above is a DOCS-PAGE
-    concern and has no equivalent here - paths are paths, and all of them work.
+    Every version is listed unless the document is narrowed to one
+    (openapi_document($targets, $version), rsx:api:openapi --api-version=N), in
+    which case it is that version's surface as the docs display rule resolves it.
 
     THE .json PATH. AssetHandler::is_asset_request() claims any *.json path
     BEFORE route dispatch, so a generated document at a natural filename used to

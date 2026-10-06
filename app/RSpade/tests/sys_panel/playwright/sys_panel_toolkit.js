@@ -22,13 +22,16 @@
  *     4. Enter inside a textarea is a newline, not an accept.
  *     5. alert() with one argument renders it as the body, with no title header.
  *     6. form(): a component with no <Rsx_Form> fails loud instead of submitting nothing.
- *     7. form() round trip against a real panel endpoint - the Tasks screen's Kill dialog
- *        (_Sys_Task_Kill_Form -> _Sys_Tasks_Controller.kill): a blank explanation comes
- *        back as a server field error and the dialog stays open with the field marked;
- *        a real one kills the row and resolves the server result.
+ *     7. form() against real panel endpoints. A server field error: the Sites screen's
+ *        Rename dialog (_Sys_Site_Rename_Form -> _Sys_Sites_Controller.rename) with the
+ *        name cleared comes back as a field error, the dialog stays open with the input
+ *        marked and outlined, and dismissing it saves nothing. A success round trip: the
+ *        Tasks screen's Kill dialog (_Sys_Task_Kill_Form -> _Sys_Tasks_Controller.kill)
+ *        kills the row and resolves the server result.
  *
- * Step 7 plants its own RUNNING _tasks row with NO worker_pid (so the kill signals no
- * process) through `php artisan db:query`, and deletes it afterwards.
+ * Step 7 renames nothing (site 1 is only opened, never saved), and plants its own RUNNING
+ * _tasks row with NO worker_pid (so the kill signals no process) through
+ * `php artisan db:query`, deleting it afterwards.
  *
  * Self-contained: mints its own dev-auth headers (system/bin/dev-auth.js), so it runs with a
  * bare `node sys_panel_toolkit.js` against the dev web server on localhost. User 1 is the
@@ -263,14 +266,11 @@ async function run() {
         check(await dialog_result(page) === false, 'form(): dismissing resolves false', 'form(): dismissal did not resolve false');
         await page.waitForSelector('._Sys_Modal', { state: 'detached' });
 
-        // 7. form() round trip against the Kill endpoint.
-        const marker = 'sys_panel_toolkit_probe_' + Date.now();
-        db_query("INSERT INTO _tasks (class, method, queue, status, started_at, created_at) VALUES " +
-            "('Sys_Panel_Toolkit_Probe_Service', '" + marker + "', 'default', 'running', UTC_TIMESTAMP(), UTC_TIMESTAMP())");
-        probe_task_id = db_query("SELECT id FROM _tasks WHERE method = '" + marker + "'")[0].id;
-
-        await open_dialog(page, "_Sys_Modal.form({title: 'Kill', component: '_Sys_Task_Kill_Form', " +
-            "component_args: {task_id: " + probe_task_id + ", task_label: 'Probe'}, submit_label: 'Kill'})");
+        // 7a. form(): a server field error keeps the dialog open with the input marked.
+        const site_before = db_query('SELECT name FROM sites WHERE id = 1')[0].name;
+        await open_dialog(page, "_Sys_Modal.form({title: 'Rename', component: '_Sys_Site_Rename_Form', " +
+            "component_args: {site: {id: 1, name: " + JSON.stringify(site_before) + ", slug: 'probe-unused', field_lengths: {name: 255, slug: 255}}}, submit_label: 'Save'})");
+        await page.fill('._Sys_Modal [data-name="name"] input', '');
         await page.click('._Sys_Modal .modal-footer [data-sys-modal-default]');
         await page.waitForSelector('._Sys_Modal .is-invalid');
         const invalid_state = await page.evaluate(() => ({
@@ -282,7 +282,7 @@ async function run() {
             'form() validation round trip wrong: ' + JSON.stringify(invalid_state));
 
         // The invalid mark lands on the input COMPONENT; its SCSS must carry it to the
-        // <textarea> itself, or the field is never outlined (the transition settles first).
+        // <input> itself, or the field is never outlined (the transition settles first).
         await page.waitForTimeout(400);
         const outline = await page.evaluate(() => {
             const probe = document.createElement('div');
@@ -290,12 +290,26 @@ async function run() {
             document.body.appendChild(probe);
             const expected = getComputedStyle(probe).color;
             probe.remove();
-            return { expected, actual: getComputedStyle(document.querySelector('._Sys_Modal textarea')).borderTopColor };
+            return { expected, actual: getComputedStyle(document.querySelector('._Sys_Modal [data-name="name"] input')).borderTopColor };
         });
         check(outline.actual === outline.expected,
-            'form(): the invalid textarea itself is outlined in the invalid colour',
-            'the invalid textarea is not outlined: ' + JSON.stringify(outline));
+            'form(): the invalid input itself is outlined in the invalid colour',
+            'the invalid input is not outlined: ' + JSON.stringify(outline));
 
+        await page.keyboard.press('Escape');
+        check(await dialog_result(page) === false, 'form(): dismissing after a field error resolves false', 'dismissal after a field error did not resolve false');
+        await page.waitForSelector('._Sys_Modal', { state: 'detached' });
+        check(db_query('SELECT name FROM sites WHERE id = 1')[0].name === site_before,
+            'form(): the refused submit saved nothing', 'the refused rename changed the site');
+
+        // 7b. form() success round trip against the Kill endpoint.
+        const marker = 'sys_panel_toolkit_probe_' + Date.now();
+        db_query("INSERT INTO _tasks (class, method, queue, status, started_at, created_at) VALUES " +
+            "('Sys_Panel_Toolkit_Probe_Service', '" + marker + "', 'default', 'running', UTC_TIMESTAMP(), UTC_TIMESTAMP())");
+        probe_task_id = db_query("SELECT id FROM _tasks WHERE method = '" + marker + "'")[0].id;
+
+        await open_dialog(page, "_Sys_Modal.form({title: 'Kill', component: '_Sys_Task_Kill_Form', " +
+            "component_args: {task_id: " + probe_task_id + ", task_label: 'Probe'}, submit_label: 'Kill'})");
         await page.fill('._Sys_Modal textarea', 'toolkit round trip');
         await page.click('._Sys_Modal .modal-footer [data-sys-modal-default]');
         const kill_result = await dialog_result(page);

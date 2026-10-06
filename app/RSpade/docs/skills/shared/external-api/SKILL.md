@@ -1,6 +1,6 @@
 ---
 name: external-api
-description: "Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, key scopes (bare path patterns in _api_keys.scopes), file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version, uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, narrowing a key with scopes or scope presets (config('rsx.api.scope_presets')) or with the read-only flag (--read-only, _api_keys.read_only), or diagnosing a 401 before route match, a 403 insufficient_scope, a 403 read_only_key, an API-GET-PURE-01 manifest-build failure, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument."
+description: "Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, key scopes (bare path patterns in _api_keys.scopes), file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version (#[Api_Versions], through:, #[Api_Resource], @api-deprecated, Api_Route_Usage, rsx:api:openapi --api-version), uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, narrowing a key with scopes or scope presets (config('rsx.api.scope_presets')) or with the read-only flag (--read-only, _api_keys.read_only), or diagnosing a 401 before route match, a 403 insufficient_scope, a 403 read_only_key, an API-GET-PURE-01 manifest-build failure, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument."
 ---
 
 # External API
@@ -177,9 +177,13 @@ Indexed by key, by `ip`, and by `created_at`. Retention is `config('rsx.api.log_
 
 ## Versioning
 
-URL-only, **exact-match at runtime** - there is no fallthrough from `/api/v2/x` to a v1 handler. Ship a new version as a new path.
+URL-only, **exact-match at runtime** - there is no fallthrough from `/api/v2/x` to a v1 handler (it would let a `/api/v2/*`-scoped key reach v1 handlers; never add one). Ship a new version as a new path.
 
-The docs GROUP by (verb, path with the `vN` stripped) and show the newest version <= the one selected, so `/apidocs/v1` shows a v1 endpoint even when v2 exists elsewhere.
+**Carry unchanged endpoints into v2 by declaring a range, never by copying attributes**: `#[Api_Versions(through: 2)]` on the controller serves every endpoint in it at v1 AND v2 (the manifest expands real `/api/v2/...` route rows, one handler); `through: N` on an `#[Api_Endpoint]` overrides it - the endpoint v2 revises says `through: 1`. A range below the pattern's own version, or an expanded address another declaration claims, fails the build ("Duplicate route definition" naming the range).
+
+**A v2 controller needs its own class name** - class names are unique per file type and namespaces are not consulted, so a `V1\` / `V2\` split of one class name is a build failure. Name it `Contacts_V2_Api_Controller` and put `#[Api_Resource('Contacts')]` on BOTH controllers: that is the group the docs page and OpenAPI tags list them under (absent, the group derives from the class name and v2 shows as a separate "Contacts V2").
+
+The docs GROUP by (verb, path with the `vN` stripped) and show the newest version <= the one selected, so `/apidocs/v1` shows a v1 endpoint even when v2 exists elsewhere. `@api-deprecated <note>` in an endpoint's docblock marks it deprecated (docs + OpenAPI) with no successor needed. **Is anything still calling v1?** `Api_Route_Usage::last_called_for_version(1)` - `_api_route_usage` keeps each route pattern's last authenticated call, refreshed at most once a minute. `rsx:api:openapi --api-version=2` emits one version's surface for client generation. Details: `rsx:man external_api` (VERSIONING).
 
 ## Docs and tester
 
@@ -209,7 +213,7 @@ public static function api_openapi(Request $request, array $params = []) {
 - **`page()`'s argument restricts the listing** (default `true`): only endpoints whose `#[Auth]` gates pass for the API key the viewer supplied — scoped to the **key's** user, not the viewer. With no key it lists nothing and the landing card asks for one; supplying one **reloads**, because the catalog is baked in at render.
 - Restricted listing hides what a caller cannot use; it is **not access control** — `Api_Dispatcher` gates every call regardless. That gate is: the key resolves, its user is active, AND `users.is_api_access_enabled` is set. All three failures return the one uniform `unauthorized` / "Invalid or expired API key" 401, so a caller never learns which.
 - The filter works by briefly becoming the key's user (`Api_Tester_Key::accessible_targets()` -> `Session::_set_api_identity` + `Auth_Gates::can_access`, torn down in a `finally`). The identity fence is the whole fence: gates evaluate live, so the answers follow whichever identity is installed at the moment of the ask.
-- **OpenAPI 3.1 document at `/apidocs/openapi.json`** (gated with the console), generated by `Api_Openapi::document()` from the same manifest catalog. Feed it to client generators, Postman, or an agent toolchain. Every version is listed at its real path; a superseded endpoint carries `deprecated: true`.
+- **OpenAPI 3.1 document at `/apidocs/openapi.json`** (gated with the console), generated by `Api_Openapi::document()` from the same manifest catalog. Feed it to client generators, Postman, or an agent toolchain. Every version is listed at its real path; an endpoint another handler supersedes at a later version, or one carrying `@api-deprecated`, carries `deprecated: true`. `openapi_document($targets, $version)` / `rsx:api:openapi --api-version=N` narrows to one version.
 
 ### The identity endpoint
 

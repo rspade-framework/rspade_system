@@ -335,15 +335,16 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
     {
         $doc = Api_Openapi::document();
 
-        // The template app ships exactly one version, so nothing can be superseded.
-        if (count(Api_Catalog::get_versions()) > 1) {
-            return;
-        }
-
+        // Only the versioning fixture (Api_Versioning_Test) has a superseded or an
+        // @api-deprecated endpoint; nothing else in the catalogue may read deprecated.
         foreach (static::__operations($doc) as $entry) {
+            if (str_contains($entry['url'], '/test-probe/versioning/')) {
+                continue;
+            }
+
             static::__assert_false(
                 isset($entry['op']['deprecated']),
-                "{$entry['url']} is not deprecated when it is the only version"
+                "{$entry['url']} is not deprecated when nothing supersedes it"
             );
         }
     }

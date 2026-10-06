@@ -538,4 +538,88 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
         static::__assert_not_null($row);
         static::__assert_equals(Task_Status::PENDING, $row->status);
     }
+
+    /**
+     * Plant a pending on-demand fixture row, drain it with an in-process worker and hand back
+     * the settled row. The worker passes printed text through to its own stdout, which here
+     * is the test runner's: the outer buffer swallows it.
+     */
+    private static function __run_fixture(string $method): object
+    {
+        $id = DB::table('_tasks')->insertGetId([
+            'class' => self::FIX,
+            'method' => $method,
+            'queue' => 'default',
+            'status' => Task_Status::PENDING,
+            'params' => json_encode([]),
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        ob_start();
+        try {
+            Artisan::call('rsx:task:worker', ['--max-time' => 30]);
+        } finally {
+            ob_end_clean();
+        }
+
+        return DB::table('_tasks')->where('id', $id)->first();
+    }
+
+    /** The message part of each log line at $level ("[ts] [level] message"). */
+    private static function __log_messages(object $row, string $level): array
+    {
+        $messages = [];
+        foreach (explode("\n", (string) $row->logs) as $line) {
+            if (preg_match('/^\[[^\]]+\] \[' . preg_quote($level, '/') . '\] (.*)$/', $line, $match)) {
+                $messages[] = $match[1];
+            }
+        }
+
+        return $messages;
+    }
+
+    /**
+     * task-exec-out-01 - what a task prints is recorded on its log as `output` lines, in
+     * order with its logger calls: each complete line as it is printed, a buffer the task
+     * left open flushed into the capture, the trailing partial line at the end.
+     */
+    public static function test_printed_output_is_recorded_on_the_log()
+    {
+        static::__reset_fixture();
+
+        $level = ob_get_level();
+        $row = static::__run_fixture('prints_output');
+
+        static::__assert_equals(Task_Status::COMPLETED, $row->status, 'the run completed');
+        static::__assert_equals(
+            ['first printed line', 'second printed line', 'from a buffer left open', 'trailing partial'],
+            static::__log_messages($row, 'output'),
+            'every printed line, the open buffer and the partial tail are recorded'
+        );
+
+        $lines = explode("\n", $row->logs);
+        $order = array_values(array_filter(array_map(function ($line) {
+            return preg_match('/\] (before the echo|first printed line|between)$/', $line, $m) ? $m[1] : null;
+        }, $lines)));
+        static::__assert_equals(['before the echo', 'first printed line', 'between'], $order, 'printed lines interleave with logger lines in the order they happened');
+        static::__assert_equals($level, ob_get_level(), 'the buffer the task left open does not outlive the run');
+    }
+
+    /**
+     * task-exec-out-02 - a run that prints and then throws keeps what it printed, and still
+     * settles failed with its error.
+     */
+    public static function test_printed_output_survives_a_throw()
+    {
+        static::__reset_fixture();
+
+        $level = ob_get_level();
+        $row = static::__run_fixture('prints_then_throws');
+
+        static::__assert_equals(Task_Status::FAILED, $row->status, 'the run failed');
+        static::__assert_equals(['printed before the throw'], static::__log_messages($row, 'output'), 'the printed line was recorded');
+        static::__assert_contains('fixture exploded after printing', (string) $row->error, 'the error is recorded');
+        static::__assert_equals($level, ob_get_level(), 'the capture closed its buffer on the throw');
+    }
 }

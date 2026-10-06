@@ -15,7 +15,13 @@ use App\RSpade\Core\Manifest\Manifest;
  * Display/resolution rule: endpoints are grouped by (HTTP verb, path key = pattern with
  * /api/vN stripped). For a selected catalog version, each group shows the single endpoint
  * with the highest version <= the selected version, at its REAL /api/vN pattern. Runtime
- * routing is always exact-match on the full pattern and is unaffected by this rule.
+ * routing is always exact-match on the full pattern and is unaffected by this rule. An
+ * endpoint served through a version range (#[Api_Versions] / through:) is one catalog row per
+ * version, so the selected version shows it at that version's own path.
+ *
+ * Resource grouping: by the controller's #[Api_Resource('Name')], else by its class name with
+ * the controller suffix stripped - resource_name(), the one rule the docs page and the
+ * OpenAPI tags share.
  */
 class Api_Catalog
 {
@@ -118,14 +124,15 @@ class Api_Catalog
             $winners[static::_dedupe_key($best)] = $best;
         }
 
-        // Group winners by resource for display.
+        // Group winners by resource for display. A resource may span several controllers
+        // (a v2 controller declaring its v1 sibling's #[Api_Resource]), so a group names no
+        // class; each endpoint carries its own.
         $grouped = [];
         foreach ($winners as $ep) {
-            $resource = static::_resource_name($ep['class']);
+            $resource = static::resource_name($ep);
             if (!isset($grouped[$resource])) {
                 $grouped[$resource] = [
                     'name' => str_replace('_', ' ', $resource),
-                    'class' => $ep['class'],
                     'endpoints' => [],
                 ];
             }
@@ -254,10 +261,20 @@ class Api_Catalog
     }
 
     /**
-     * Derive a resource name from a controller class by stripping the controller suffix.
+     * The resource an endpoint is listed under: its controller's #[Api_Resource], else the
+     * controller class name with the controller suffix stripped
+     * ('Clients_Api_Controller' -> 'Clients').
+     *
+     * @param array $endpoint A catalog row.
      */
-    private static function _resource_name(string $class): string
+    public static function resource_name(array $endpoint): string
     {
+        if (!empty($endpoint['resource'])) {
+            return $endpoint['resource'];
+        }
+
+        $class = (string) $endpoint['class'];
+
         if (str_ends_with($class, '_Api_Controller')) {
             return substr($class, 0, -strlen('_Api_Controller'));
         }

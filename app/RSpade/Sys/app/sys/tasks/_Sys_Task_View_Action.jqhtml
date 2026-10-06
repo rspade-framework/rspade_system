@@ -1,6 +1,7 @@
 <%--
-_Sys_Task_View_Action - one _tasks row: its facts, params, result, error and logs,
-with Kill (while running) and Re-dispatch (failed or killed one-shot rows).
+_Sys_Task_View_Action - one _tasks row: its facts, params, result, error and its log in
+a live console (_Sys_Task_Console), with Kill (while running) and Re-dispatch (failed or
+killed one-shot rows). The facts reload when the console reports a status change.
 
 Three states: loading, a load failure (_Sys_Not_Found for a missing id,
 _Sys_Error for anything else), and the record.
@@ -21,7 +22,6 @@ _Sys_Error for anything else), and the record.
             const _heartbeat = _t.last_heartbeat_at
                 ? Rsx_Time.format_datetime(_t.last_heartbeat_at) + ' (' + Rsx_Time.relative(_t.last_heartbeat_at) + ')'
                 : null;
-            const _logs = _t.logs.join('\n');
         %>
         <_Sys_Page_Header $title=('Task #' + _t.id) $icon="bi-list-check" $subtitle=(_t.class + '::' + _t.method)>
             <Slot:meta>
@@ -53,6 +53,9 @@ _Sys_Error for anything else), and the record.
                 <_Sys_Detail_Item $label="Completed" $value=_when(_t.completed_at) />
                 <_Sys_Detail_Item $label="Last heartbeat" $value=_heartbeat />
                 <_Sys_Detail_Item $label="Worker PID" $value=_t.worker_pid $mono=true />
+                <% if (_t.worker_state) { %>
+                    <_Sys_Detail_Item $label="Worker" $value=(_Sys_Tasks_Running.WORKER_LABELS[_t.worker_state]) />
+                <% } %>
                 <_Sys_Detail_Item $label="Lock key" $value=_t.lock_key $mono=true />
                 <_Sys_Detail_Item $label="Consecutive failures" $value=_t.consecutive_failures />
                 <_Sys_Detail_Item $label="Last error at" $value=_when(_t.last_error_at) />
@@ -77,8 +80,8 @@ _Sys_Error for anything else), and the record.
             <_Sys_Code_Pane $json=_t.result />
         </_Sys_Section>
 
-        <_Sys_Section $title="Logs" $icon="bi-journal-text" $count=_t.logs.length>
-            <_Sys_Code_Pane $text=_logs $max_height=600 />
+        <_Sys_Section $title="Console" $icon="bi-terminal">
+            <_Sys_Task_Console $sid="console" $task_id=_t.id />
         </_Sys_Section>
     <% } %>
     </Slot:main>

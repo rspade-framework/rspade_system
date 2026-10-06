@@ -15,6 +15,7 @@ use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Status;
 use App\RSpade\Core\Task\Task_Killer;
+use App\RSpade\Core\Task\Task_Changed_Topic;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Cron_Parser;
 
@@ -189,6 +190,8 @@ class Task_Process_Command extends Command
             if (Task_Pool::holds_lock()) {
                 Task_Pool::unlock();
             }
+            // Each abandoned row settled above, now that the lock is gone.
+            Task_Changed_Topic::flush_deferred();
         }
 
         foreach ($live as $task) {
@@ -220,6 +223,9 @@ class Task_Process_Command extends Command
      */
     private function settle_abandoned(object $task, string $reason): void
     {
+        // Held until detect_stuck_tasks() lets the pool lock go (Task_Changed_Topic).
+        Task_Changed_Topic::notify((int) $task->id);
+
         $row = DB::table('_tasks')
             ->where('id', $task->id)
             ->where('status', Task_Status::RUNNING)

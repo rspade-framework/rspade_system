@@ -8,6 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
+use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Tester_Key;
 use App\RSpade\Core\Api\Rsx_Api_Docs;
@@ -37,6 +38,11 @@ use App\RSpade\Core\Api\Rsx_Api_Docs;
  * --user and --key both NARROW the document, and --key narrows it further than --user can:
  * gates alone versus gates intersected with that key's scopes. Generating a client from
  * the key-narrowed document means every operation in it is one the key can actually call.
+ *
+ * --api-version narrows on the other axis (named so because --version is the console's own
+ * global flag, which prints the framework version) - which API version - and composes with either: the
+ * version's surface exactly as the docs page shows it, info.version naming it. Without it
+ * every version is listed, each superseded operation flagged as such.
  */
 class Api_Openapi_Command extends Command
 {
@@ -44,6 +50,7 @@ class Api_Openapi_Command extends Command
                             {--user= : Narrow the document to what this user (id or email) may actually call}
                             {--site= : Site id, to disambiguate an email held in more than one site}
                             {--key= : Narrow to one API key id - its user\'s gates INTERSECTED with the key\'s own scopes. Composable with --user, which must then name that key\'s user}
+                            {--api-version= : Narrow to one API version (N or vN) - that version\'s surface as the docs page shows it, for generating one version\'s client}
                             {--compact : Emit without pretty-printing}';
 
     protected $description = 'Write the OpenAPI 3.1 document to stdout (optionally narrowed to one user or one API key)';
@@ -58,16 +65,47 @@ class Api_Openapi_Command extends Command
 
         try {
             $accessible_targets = $this->__accessible_targets();
+            $version = $this->__version();
         } catch (Api_Cli_Error $e) {
             return Api_Key_Cli_Support::json_error($this, $e->error_code, $e->getMessage());
         }
 
         $this->getOutput()->writeln(json_encode(
-            Rsx_Api_Docs::openapi_document($accessible_targets),
+            Rsx_Api_Docs::openapi_document($accessible_targets, $version),
             $flags
         ));
 
         return 0;
+    }
+
+    /**
+     * The --api-version this invocation asks for, or null for every version.
+     *
+     * @throws Api_Cli_Error on a malformed or unknown version
+     */
+    private function __version(): ?int
+    {
+        $option = trim((string) ($this->option('api-version') ?? ''));
+
+        if ($option === '') {
+            return null;
+        }
+
+        if (!preg_match('/^v?([0-9]+)$/i', $option, $m)) {
+            throw new Api_Cli_Error('version_invalid', "--api-version must be a version number (2 or v2), got '{$option}'.");
+        }
+
+        $version = (int) $m[1];
+        $versions = Api_Catalog::get_versions();
+
+        if (!in_array($version, $versions, true)) {
+            throw new Api_Cli_Error(
+                'version_unknown',
+                "There is no API version {$version}; the catalogue has v" . implode(', v', $versions) . '.'
+            );
+        }
+
+        return $version;
     }
 
     /**

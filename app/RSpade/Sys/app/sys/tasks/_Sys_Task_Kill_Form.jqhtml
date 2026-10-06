@@ -6,8 +6,8 @@ hosts it in _Sys_Modal.form().
 $task_id - the RUNNING _tasks row to kill (required)
 $task_label - "Class::method", shown in the warning line (required)
 
-The explanation is required by the SERVER (an empty one comes back as a field error
-and the dialog stays open) and is recorded on the row's status_reason.
+The explanation is optional. It is recorded on the row's status_reason; left blank, the
+server records "killed from the control panel".
 --%>
 <Define:_Sys_Task_Kill_Form>
     <Rsx_Form $controller="_Sys_Tasks_Controller" $method="kill">
@@ -18,7 +18,7 @@ and the dialog stays open) and is recorded on the row's status_reason.
             to stop (SIGTERM), and force-killed (SIGKILL) if it is still running 5 seconds later.
             A scheduled task goes back to pending; any other task is marked killed.
         </p>
-        <_Sys_Form_Field $label="Explanation" $required=true $help="Recorded on the task as its status reason.">
+        <_Sys_Form_Field $label="Explanation" $help="Optional. Recorded on the task as its status reason.">
             <_Sys_Textarea_Input $name="explanation" $max_length=-1 $rows=3 $placeholder="Why is this task being killed?" />
         </_Sys_Form_Field>
     </Rsx_Form>

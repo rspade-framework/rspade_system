@@ -4,7 +4,7 @@
  */
 class _Sys_Task_Kill_Form extends Component {
     /**
-     * Ask for an explanation and kill a running task. The kill itself waits for the
+     * Ask for an optional explanation and kill a running task. The kill itself waits for the
      * worker to exit (a 5s grace before SIGKILL), so the dialog's submit spinner can
      * run that long.
      *

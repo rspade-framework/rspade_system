@@ -49,10 +49,27 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  *   required; waive it for incidental bookkeeping (a log row, a last-used stamp), never
  *   for a user-visible mutation.
  *
+ * Versions:
+ * - An endpoint is served from the version in its pattern THROUGH a later one when it says so:
+ *   `through: N` on the #[Api_Endpoint], else the controller's #[Api_Versions(through: N)],
+ *   else only its own version. The range is EXPANDED HERE into one ordinary route row and one
+ *   catalog row per version (/api/v1/x, /api/v2/x, ...), so routing stays exact-match and
+ *   Api_Catalog, Api_Scopes and the OpenAPI projection see nothing new. through below the
+ *   pattern's own version is a build failure, and an expanded address that another
+ *   declaration also claims is the ordinary duplicate-route failure - one address, one
+ *   handler, never a precedence rule. A method may still carry several #[Api_Endpoint]
+ *   attributes; each is expanded on its own.
+ * - #[Api_Resource('Name')] on the controller names the catalogue group its endpoints are
+ *   listed under (a v2 controller must have its own class name, and declares its v1 sibling's
+ *   resource to be listed with it). Absent, the group derives from the class name.
+ *
  * Docblock parsing:
  * - description: the first PARAGRAPH (consecutive non-tag lines).
  * - @api-hidden: excludes the endpoint from documentation.
  * - @api-response: an example response JSON block, stored verbatim.
+ * - @api-deprecated <note>: marks the endpoint deprecated in the catalogue and the OpenAPI
+ *   document whether or not a later version replaces it; the note (the reason, or what to
+ *   use instead) is shown with it.
  */
 class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
 {
@@ -197,6 +214,9 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
             }
         }
 
+        $class_through = static::_class_versions_through($metadata, $location);
+        $resource = static::_class_resource($metadata, $location);
+
         foreach ($attr_instances as $route_args) {
             $pattern = $route_args[0] ?? ($route_args['pattern'] ?? null);
             $methods = $route_args[1] ?? ($route_args['methods'] ?? ['GET']);
@@ -271,22 +291,14 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
                 static::_assert_get_handler_is_pure(base_path($file), $method_name, $docblock, $location);
             }
 
-            // Duplicate route detection (pattern must be unique across all route types).
-            if (isset($manifest_data['data']['routes'][$pattern])) {
-                $existing = $manifest_data['data']['routes'][$pattern];
-                throw new \RuntimeException(
-                    "Duplicate route definition: {$pattern}\n" .
-                    "  Already defined: {$existing['class']}::{$existing['method']} in {$existing['file']}\n" .
-                    "  Conflicting: {$location}"
-                );
-            }
-
             $description = static::_parse_description($docblock);
             $is_hidden = str_contains($docblock, '@api-hidden');
             $response_example = static::_parse_response_example($docblock);
+            $deprecated = static::_parse_deprecated($docblock);
 
-            $version = static::parse_version($pattern);
+            $declared_version = static::parse_version($pattern);
             $path_key = static::path_key($pattern);
+            $through = static::_endpoint_through($route_args, $class_through, $declared_version, $pattern, $location);
 
             // Declarative auth gates: class-level #[Auth] then the
             // method's own (additive). #[Auth] is deliberately NOT in
@@ -302,39 +314,177 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
 
             $target = ($metadata['class'] ?? '') . '::' . $method_name;
 
-            // Route entry consumed by the dispatcher. The param declarations,
-            // the version, the path key and the response example live ONCE, on
-            // the api_endpoints row below - the dispatcher reads api_params from
-            // there (api_endpoints is in the hot index, like routes).
-            $manifest_data['data']['routes'][$pattern] = [
-                'methods' => $methods,
-                'type' => 'api',
-                'class' => $metadata['fqcn'] ?? $metadata['class'],
-                'method' => $method_name,
-                'name' => $name,
-                'file' => $file,
-                'pattern' => $pattern,
-                'surface' => $target,
-                'target' => $target,
-            ];
+            // One route row and one catalog row per version the declaration serves: the
+            // declared pattern, then the same path under every later version through $through.
+            for ($version = $declared_version; $version <= $through; $version++) {
+                $version_pattern = preg_replace('#^/api/v[0-9]+#', '/api/v' . $version, $pattern);
 
-            // Catalog entry consumed by Api_Catalog for documentation.
-            $manifest_data['data']['api_endpoints'][$pattern] = [
-                'pattern' => $pattern,
-                'methods' => $methods,
-                'class' => $metadata['class'] ?? null,
-                'fqcn' => $metadata['fqcn'] ?? null,
-                'method' => $method_name,
-                // Docblock-derived: the file record does not hold either of
-                // these, so they are the catalog's own contribution.
-                'description' => $description,
-                'response_example' => $response_example,
-                'api_params' => $api_params,
-                'version' => $version,
-                'path_key' => $path_key,
-                'hidden' => $is_hidden,
-            ];
+                // Duplicate route detection (pattern must be unique across all route types).
+                // An expanded address another declaration also claims lands here too.
+                if (isset($manifest_data['data']['routes'][$version_pattern])) {
+                    $existing = $manifest_data['data']['routes'][$version_pattern];
+                    $how = $version_pattern === $pattern
+                        ? ''
+                        : "  (served through v{$through} from '{$pattern}' - end the range before v{$version} with through: on the #[Api_Endpoint])\n";
+                    throw new \RuntimeException(
+                        "Duplicate route definition: {$version_pattern}\n" .
+                        "  Already defined: {$existing['class']}::{$existing['method']} in {$existing['file']}\n" .
+                        "  Conflicting: {$location}\n" .
+                        $how
+                    );
+                }
+
+                // Route entry consumed by the dispatcher. The param declarations,
+                // the version, the path key and the response example live ONCE, on
+                // the api_endpoints row below - the dispatcher reads api_params from
+                // there (api_endpoints is in the hot index, like routes).
+                $manifest_data['data']['routes'][$version_pattern] = [
+                    'methods' => $methods,
+                    'type' => 'api',
+                    'class' => $metadata['fqcn'] ?? $metadata['class'],
+                    'method' => $method_name,
+                    'name' => $name,
+                    'file' => $file,
+                    'pattern' => $version_pattern,
+                    'surface' => $target,
+                    'target' => $target,
+                ];
+
+                // Catalog entry consumed by Api_Catalog for documentation.
+                $manifest_data['data']['api_endpoints'][$version_pattern] = [
+                    'pattern' => $version_pattern,
+                    // The pattern as written in the attribute; differs from 'pattern' on a
+                    // row the declaration's version range produced.
+                    'declared_pattern' => $pattern,
+                    'methods' => $methods,
+                    'class' => $metadata['class'] ?? null,
+                    'fqcn' => $metadata['fqcn'] ?? null,
+                    'method' => $method_name,
+                    'resource' => $resource,
+                    // Docblock-derived: the file record does not hold either of
+                    // these, so they are the catalog's own contribution.
+                    'description' => $description,
+                    'response_example' => $response_example,
+                    'deprecated' => $deprecated,
+                    'api_params' => $api_params,
+                    'version' => $version,
+                    'path_key' => $path_key,
+                    'hidden' => $is_hidden,
+                ];
+            }
         }
+    }
+
+    /**
+     * The controller's #[Api_Versions(through: N)], or null when it declares none.
+     */
+    private static function _class_versions_through(array $metadata, string $location): ?int
+    {
+        $args = static::_single_class_attribute($metadata, 'Api_Versions', $location);
+        if ($args === null) {
+            return null;
+        }
+
+        $through = $args['through'] ?? ($args[0] ?? null);
+        if (!is_int($through) || $through < 1) {
+            throw new \RuntimeException(
+                "Invalid #[Api_Versions]: {$location}\n" .
+                "  through: must be a positive integer version, e.g. #[Api_Versions(through: 2)]."
+            );
+        }
+
+        return $through;
+    }
+
+    /**
+     * The controller's #[Api_Resource('Name')], or null when it declares none.
+     */
+    private static function _class_resource(array $metadata, string $location): ?string
+    {
+        $args = static::_single_class_attribute($metadata, 'Api_Resource', $location);
+        if ($args === null) {
+            return null;
+        }
+
+        $name = $args[0] ?? ($args['name'] ?? null);
+        if (!is_string($name) || trim($name) === '') {
+            throw new \RuntimeException(
+                "Invalid #[Api_Resource]: {$location}\n" .
+                "  A non-empty resource name is required, e.g. #[Api_Resource('Contacts')]."
+            );
+        }
+
+        return trim($name);
+    }
+
+    /**
+     * The argument list of a class-level attribute declared at most once, or null when the
+     * class does not carry it.
+     */
+    private static function _single_class_attribute(array $metadata, string $short_name, string $location): ?array
+    {
+        foreach (($metadata['attributes'] ?? []) as $attr_name => $instances) {
+            if ($attr_name !== $short_name && !str_ends_with($attr_name, '\\' . $short_name)) {
+                continue;
+            }
+
+            if (count($instances) !== 1) {
+                throw new \RuntimeException(
+                    "Invalid #[{$short_name}]: {$location}\n" .
+                    "  A controller declares #[{$short_name}] at most once."
+                );
+            }
+
+            return (array) $instances[0];
+        }
+
+        return null;
+    }
+
+    /**
+     * The last version one #[Api_Endpoint] declaration serves: its own through:, else the
+     * controller's #[Api_Versions], else the version in its pattern. Never below that version.
+     */
+    private static function _endpoint_through(array $route_args, ?int $class_through, int $declared_version, string $pattern, string $location): int
+    {
+        if (array_key_exists('through', $route_args)) {
+            $through = $route_args['through'];
+            if (!is_int($through)) {
+                throw new \RuntimeException(
+                    "Invalid #[Api_Endpoint] through: for '{$pattern}': {$location}\n" .
+                    "  through: must be an integer version, e.g. through: 2."
+                );
+            }
+            $source = 'through: ' . $through;
+        } elseif ($class_through !== null) {
+            $through = $class_through;
+            $source = "the controller's #[Api_Versions(through: {$through})]";
+        } else {
+            return $declared_version;
+        }
+
+        if ($through < $declared_version) {
+            throw new \RuntimeException(
+                "Invalid #[Api_Endpoint] version range for '{$pattern}': {$location}\n" .
+                "  {$source} ends before v{$declared_version}, the version the pattern names.\n" .
+                "  Give this endpoint its own through: (at least {$declared_version})."
+            );
+        }
+
+        return $through;
+    }
+
+    /**
+     * The @api-deprecated note: the text after the tag, or '' when the tag stands alone.
+     * Null when the docblock does not carry the tag.
+     */
+    private static function _parse_deprecated(string $docblock): ?string
+    {
+        if (!preg_match('/@api-deprecated\b[ \t]*([^\r\n]*)/', $docblock, $m)) {
+            return null;
+        }
+
+        return trim(preg_replace('#\s*\*/\s*$#', '', $m[1]));
     }
 
     /**

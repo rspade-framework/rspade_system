@@ -14,15 +14,17 @@ use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Killer;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Sys\App\Sys\Tasks\_Sys_Tasks_DataGrid;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 
 /**
- * The Tasks screen's endpoints: the running rows, the history grid, one row's detail,
- * the two actions a developer takes on a row - kill it, or dispatch it again - and the
- * schedules (every #[Schedule] beside its tracker row) with Run now.
+ * The Tasks screen's endpoints: the running rows, the history grid, one row's detail and
+ * its log tail (the live console), the two actions a developer takes on a row - kill it,
+ * or dispatch it again - and the schedules (every #[Schedule] beside its tracker row)
+ * with Run now.
  *
  * _tasks has no model; every read is DB::table(). Its datetime columns hold UTC wall
  * clock with no zone (the application and the database session both run in UTC), so
@@ -38,15 +40,32 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
         'last_heartbeat_at', 'created_at', 'updated_at', 'last_run_at',
     ];
 
+    /** The status reason a kill records when the developer gave no explanation. */
+    public const KILL_DEFAULT_REASON = 'killed from the control panel';
+
     /** Characters of a tracker's last error shown on the Schedules tab. */
     public const ERROR_EXCERPT_LENGTH = 120;
+
+    /**
+     * worker_state values. Answered from evidence on THIS host only - the worker's process,
+     * read through /proc - never from the row's age or its heartbeat:
+     *   alive      the worker process that claimed the row is running here
+     *   gone       it is not: the row is abandoned, and rsx:task:process settles it on its
+     *              next tick (if the row stays, that tick is not running)
+     *   elsewhere  the row was claimed on another host, whose processes this one cannot see
+     *   unknown    the row records no pid
+     */
+    public const WORKER_ALIVE = 'alive';
+    public const WORKER_GONE = 'gone';
+    public const WORKER_ELSEWHERE = 'elsewhere';
+    public const WORKER_UNKNOWN = 'unknown';
 
     /**
      * Every RUNNING row, oldest start first. The set is bounded by the worker pool
      * (rsx.tasks.global_max_workers), so it is returned whole.
      *
-     * @return array {rows: [{id, class, class_short, method, queue, worker_pid, started_at,
-     *                        last_heartbeat_at, is_cron}]}
+     * @return array {rows: [{id, class, class_short, method, queue, worker_pid, worker_host,
+     *                        worker_state, started_at, last_heartbeat_at, is_cron}]}
      */
     #[Ajax_Endpoint]
     public static function running(Request $request, array $params = [])
@@ -55,11 +74,112 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
             ->where('status', Task_Status::RUNNING)
             ->orderBy('started_at')
             ->orderBy('id')
-            ->get(['id', 'class', 'method', 'queue', 'worker_pid', 'started_at', 'last_heartbeat_at', 'next_run_at'])
-            ->map(fn ($row) => static::present_row((array) $row))
+            ->get(['id', 'class', 'method', 'queue', 'worker_pid', 'worker_id', 'worker_host', 'started_at', 'last_heartbeat_at', 'next_run_at'])
+            ->map(function ($row) {
+                $presented = static::present_row((array) $row);
+                $presented['worker_state'] = static::worker_state($row);
+                unset($presented['worker_id']);
+
+                return $presented;
+            })
             ->all();
 
         return ['rows' => $rows];
+    }
+
+    /**
+     * The queue labels in use and how much work each holds, beside the one worker pool that
+     * drains them all. A queue is a LABEL: there is one pool of generic workers, capped at
+     * rsx.tasks.global_max_workers, and a worker claims run-now work first (FIFO), then due
+     * schedules - whatever the label.
+     *
+     * Per queue, over the pending and running rows:
+     *   running         RUNNING rows; stale_running of those have a worker that is gone
+     *   pending_due     one-shot rows waiting for a worker now
+     *   pending_later   one-shot rows held for later (a delayed dispatch or a retry backoff)
+     *   schedules       #[Schedule] trackers; schedules_due of them are due now
+     *   oldest_due_at   when the longest-waiting due one-shot row became due
+     *
+     * @return array {pool: {max_workers, members, waiting}, queues: [...]}
+     */
+    #[Ajax_Endpoint]
+    public static function queues(Request $request, array $params = [])
+    {
+        $now = now();
+
+        // One row per queue label in use - the result set is the set of labels.
+        $counts = DB::table('_tasks')
+            ->whereIn('status', [Task_Status::PENDING, Task_Status::RUNNING])
+            ->groupBy('queue')
+            ->orderBy('queue')
+            ->selectRaw(
+                'queue,'
+                . " SUM(status = 'running') AS running,"
+                . " SUM(status = 'pending' AND next_run_at IS NULL AND (scheduled_for IS NULL OR scheduled_for <= ?)) AS pending_due,"
+                . " SUM(status = 'pending' AND next_run_at IS NULL AND scheduled_for > ?) AS pending_later,"
+                . " SUM(status = 'pending' AND next_run_at IS NOT NULL) AS schedules,"
+                . " SUM(status = 'pending' AND next_run_at IS NOT NULL AND next_run_at <= ?) AS schedules_due,"
+                . " MIN(CASE WHEN status = 'pending' AND next_run_at IS NULL AND (scheduled_for IS NULL OR scheduled_for <= ?)"
+                . ' THEN COALESCE(scheduled_for, created_at) END) AS oldest_due_at',
+                [$now, $now, $now, $now]
+            )
+            ->get();
+
+        $stale = [];
+        foreach (DB::table('_tasks')->where('status', Task_Status::RUNNING)->get(['queue', 'worker_pid', 'worker_id', 'worker_host']) as $row) {
+            if (static::worker_state($row) === self::WORKER_GONE) {
+                $stale[$row->queue] = ($stale[$row->queue] ?? 0) + 1;
+            }
+        }
+
+        $queues = [];
+        foreach ($counts as $row) {
+            $queues[] = [
+                'queue' => $row->queue,
+                'running' => (int) $row->running,
+                'stale_running' => $stale[$row->queue] ?? 0,
+                'pending_due' => (int) $row->pending_due,
+                'pending_later' => (int) $row->pending_later,
+                'schedules' => (int) $row->schedules,
+                'schedules_due' => (int) $row->schedules_due,
+                'oldest_due_at' => Rsx_Time::to_iso($row->oldest_due_at),
+            ];
+        }
+
+        $stats = Task_Pool::stats();
+
+        return [
+            'pool' => [
+                'max_workers' => Task_Pool::max_workers(),
+                'members' => $stats['members'],
+                'waiting' => $stats['waiting'],
+            ],
+            'queues' => $queues,
+        ];
+    }
+
+    /**
+     * Whether the worker that claimed a RUNNING row is still there; see the WORKER_*
+     * constants. A row claimed by a pool worker is checked against the worker's command
+     * line (a pid the kernel reused is not that worker); a row run outside the pool
+     * (--once, Task::internal()) has no worker_id, and its pid is simply probed.
+     *
+     * @param object $row A _tasks row with worker_pid, worker_id and worker_host
+     */
+    public static function worker_state(object $row): string
+    {
+        if ($row->worker_host !== null && $row->worker_host !== Task_Pool::host()) {
+            return self::WORKER_ELSEWHERE;
+        }
+
+        $pid = (int) $row->worker_pid;
+        if ($pid <= 0) {
+            return self::WORKER_UNKNOWN;
+        }
+
+        $alive = $row->worker_id !== null ? Task::is_worker_process($pid) : posix_kill($pid, 0);
+
+        return $alive ? self::WORKER_ALIVE : self::WORKER_GONE;
     }
 
     /**
@@ -89,7 +209,25 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
     }
 
     /**
-     * One row, whole: params and result decoded, logs split into lines.
+     * The queue filter's options: every queue label that has a row.
+     *
+     * @return array [{value, label}]
+     */
+    #[Ajax_Endpoint]
+    public static function queue_options(Request $request, array $params = [])
+    {
+        return DB::table('_tasks')
+            ->distinct()
+            ->orderBy('queue')
+            ->pluck('queue')
+            ->map(fn ($queue) => ['value' => $queue, 'label' => $queue])
+            ->all();
+    }
+
+    /**
+     * One row: params and result decoded, the worker's state beside it. The logs are not
+     * here - the live console reads them through logs() - and neither is updated_at, which
+     * moves with every log line: the detail screen repaints only when the row's facts change.
      *
      * @param array $params id
      */
@@ -105,7 +243,8 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
         $task = static::present_row((array) $row);
         $task['params'] = $row->params === null ? null : json_decode($row->params, true);
         $task['result'] = $row->result === null ? null : json_decode($row->result, true);
-        $task['logs'] = $row->logs ? explode("\n", $row->logs) : [];
+        $task['worker_state'] = $row->status === Task_Status::RUNNING ? static::worker_state($row) : null;
+        unset($task['logs'], $task['updated_at']);
         $task['can_kill'] = $row->status === Task_Status::RUNNING;
         $task['can_redispatch'] = static::__can_redispatch($row);
 
@@ -113,9 +252,49 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
     }
 
     /**
-     * Force-kill a running task - the panel's rsx:tasks:kill. An explanation is
-     * required and recorded on the row. Task_Killer signals the worker (SIGTERM, a
-     * 5s grace, then SIGKILL), so this call can take that long.
+     * A row's log lines from line $offset on, for the live console: it asks again with the
+     * offset and run it was handed back each time the row changes (Task_Changed_Topic), so
+     * asking twice never repeats a line.
+     *
+     * A #[Schedule] tracker is ONE row across every run, and each run writes its log afresh.
+     * `run` names the run the lines belong to (its started_at); when the caller's run is not
+     * the row's, or the log is shorter than what the caller holds, the answer is the whole
+     * log with restart = true, and the console starts over.
+     *
+     * @param array $params id, offset (lines already held; default 0), run (as last returned)
+     * @return array {lines: string[], offset: int, run: ?string, restart: bool, status: string,
+     *                last_heartbeat_at: ?string}
+     */
+    #[Ajax_Endpoint]
+    public static function logs(Request $request, array $params = [])
+    {
+        $row = DB::table('_tasks')->where('id', (int) ($params['id'] ?? 0))->first(['status', 'logs', 'started_at', 'last_heartbeat_at']);
+
+        if (!$row) {
+            return response_not_found('No task with that id.');
+        }
+
+        $all = $row->logs ? explode("\n", $row->logs) : [];
+        $offset = max(0, (int) ($params['offset'] ?? 0));
+        $run = Rsx_Time::to_iso($row->started_at);
+
+        $restart = $offset > count($all) || ($offset > 0 && ($params['run'] ?? null) !== $run);
+
+        return [
+            'lines' => array_slice($all, $restart ? 0 : $offset),
+            'offset' => count($all),
+            'run' => $run,
+            'restart' => $restart,
+            'status' => $row->status,
+            'last_heartbeat_at' => Rsx_Time::to_iso($row->last_heartbeat_at),
+        ];
+    }
+
+    /**
+     * Force-kill a running task - the panel's rsx:tasks:kill. The explanation is
+     * optional and recorded on the row as its status reason; left blank, the row records
+     * KILL_DEFAULT_REASON instead. Task_Killer signals the worker (SIGTERM, a 5s grace,
+     * then SIGKILL), so this call can take that long.
      *
      * The Kill dialog's form endpoint.
      *
@@ -126,11 +305,8 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
     public static function kill(Request $request, array $params = [])
     {
         $explanation = trim((string) ($params['explanation'] ?? ''));
-
         if ($explanation === '') {
-            return response_form_error('An explanation is required.', [
-                'explanation' => 'Say why this task is being killed; it is recorded on the task.',
-            ]);
+            $explanation = self::KILL_DEFAULT_REASON;
         }
 
         $row = DB::table('_tasks')->where('id', (int) ($params['task_id'] ?? 0))->first();

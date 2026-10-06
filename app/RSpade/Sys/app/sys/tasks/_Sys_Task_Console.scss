@@ -1,0 +1,32 @@
+._Sys_Task_Console {
+    display: block;
+
+    &__screen {
+        height: 60vh;
+        min-height: 320px;
+        padding: 8px;
+        background: #0d1117;
+        border-radius: 4px 4px 0 0;
+    }
+
+    &__bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 6px 8px;
+        border: 1px solid var(--rsx-border);
+        border-top: 0;
+        border-radius: 0 0 4px 4px;
+        font-size: 12px;
+    }
+
+    &__status {
+        flex: 1;
+        font-family: var(--rsx-mono);
+        color: var(--rsx-muted);
+    }
+
+    &__live {
+        color: var(--rsx-dim);
+    }
+}

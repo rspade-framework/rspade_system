@@ -413,4 +413,160 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
 
         static::__assert_array_has_key('/api/v1/fixture', $manifest['data']['routes']);
     }
+
+    // -------------------------------------------------------------------------
+    // Version ranges, #[Api_Resource], @api-deprecated
+    // -------------------------------------------------------------------------
+
+    /**
+     * __manifest() with class-level attributes on the controller.
+     */
+    private static function __manifest_with_class(array $method_attrs, array $class_attrs, array $seed_routes = []): array
+    {
+        $manifest = static::__manifest($method_attrs, self::BASE, $seed_routes);
+        $manifest['data']['files'][self::FIXTURE_FILE]['attributes'] = $class_attrs;
+
+        return $manifest;
+    }
+
+    private static function __process(array &$manifest): void
+    {
+        Api_Endpoint_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
+    }
+
+    /**
+     * api-range-01 - through: on the endpoint expands into one route row and one catalog row
+     * per version, each at its own /api/vN path, one handler throughout.
+     */
+    public static function test_through_expands_one_row_per_version()
+    {
+        $manifest = static::__manifest(['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET'], 'through' => 3]]]);
+        static::__process($manifest);
+
+        foreach ([1, 2, 3] as $version) {
+            $pattern = "/api/v{$version}/contacts";
+            static::__assert_array_has_key($pattern, $manifest['data']['routes'], "a route row for v{$version}");
+            static::__assert_equals('Foo_Api_Controller::list', $manifest['data']['routes'][$pattern]['surface'], 'one handler');
+            static::__assert_equals($pattern, $manifest['data']['routes'][$pattern]['pattern']);
+
+            $catalog = $manifest['data']['api_endpoints'][$pattern];
+            static::__assert_equals($version, $catalog['version'], "the v{$version} row carries its version");
+            static::__assert_equals('/contacts', $catalog['path_key'], 'one path key');
+            static::__assert_equals('/api/v1/contacts', $catalog['declared_pattern'], 'the declared pattern is kept');
+        }
+
+        static::__assert_false(isset($manifest['data']['routes']['/api/v4/contacts']), 'nothing past through');
+    }
+
+    /**
+     * api-range-02 - #[Api_Versions(through: N)] on the controller is the default for every
+     * endpoint in it, and an endpoint's own through: overrides it.
+     */
+    public static function test_class_versions_default_and_method_override()
+    {
+        $manifest = static::__manifest_with_class(
+            ['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]]],
+            ['Api_Versions' => [['through' => 2]]]
+        );
+        static::__process($manifest);
+        static::__assert_array_has_key('/api/v2/contacts', $manifest['data']['routes'], 'the class default carries the endpoint into v2');
+
+        $manifest = static::__manifest_with_class(
+            ['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET'], 'through' => 1]]],
+            ['Api_Versions' => [['through' => 2]]]
+        );
+        static::__process($manifest);
+        static::__assert_false(isset($manifest['data']['routes']['/api/v2/contacts']), 'through: 1 on the method stops it at v1');
+        static::__assert_array_has_key('/api/v1/contacts', $manifest['data']['routes']);
+    }
+
+    /**
+     * api-range-03 - a range ending before the pattern's own version, from either source,
+     * is a build failure; so is a non-integer through and a malformed #[Api_Versions].
+     */
+    public static function test_a_range_ending_before_its_own_version_throws()
+    {
+        static::__assert_scan_throws(
+            static::__manifest(['Api_Endpoint' => [[0 => '/api/v3/contacts', 1 => ['GET'], 'through' => 2]]]),
+            'ends before v3'
+        );
+        static::__assert_scan_throws(
+            static::__manifest_with_class(
+                ['Api_Endpoint' => [[0 => '/api/v3/contacts', 1 => ['GET']]]],
+                ['Api_Versions' => [['through' => 2]]]
+            ),
+            "the controller's #[Api_Versions(through: 2)] ends before v3"
+        );
+        static::__assert_scan_throws(
+            static::__manifest(['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET'], 'through' => '2']]]),
+            'through: must be an integer'
+        );
+        static::__assert_scan_throws(
+            static::__manifest_with_class(['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]]], ['Api_Versions' => [[]]]),
+            'Invalid #[Api_Versions]'
+        );
+        static::__assert_scan_throws(
+            static::__manifest_with_class(['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]]], ['Api_Versions' => [['through' => 2], ['through' => 3]]]),
+            'at most once'
+        );
+    }
+
+    /**
+     * api-range-04 - an expanded address another declaration already claims is the ordinary
+     * duplicate-route failure, naming the range that produced it.
+     */
+    public static function test_an_expanded_address_that_collides_throws()
+    {
+        $seed = [
+            '/api/v2/contacts' => ['class' => 'Contacts_V2_Api_Controller', 'method' => 'list', 'file' => 'v2.php'],
+        ];
+
+        static::__assert_scan_throws(
+            static::__manifest(['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET'], 'through' => 2]]], self::BASE, $seed),
+            "served through v2 from '/api/v1/contacts'"
+        );
+    }
+
+    /**
+     * api-resource-01 - #[Api_Resource] is stored on every catalog row the controller
+     * declares; without it the row carries null; an empty name is a build failure.
+     */
+    public static function test_api_resource_names_the_group()
+    {
+        $manifest = static::__manifest_with_class(
+            ['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET'], 'through' => 2]]],
+            ['Api_Resource' => [['Contacts']]]
+        );
+        static::__process($manifest);
+        static::__assert_equals('Contacts', $manifest['data']['api_endpoints']['/api/v1/contacts']['resource']);
+        static::__assert_equals('Contacts', $manifest['data']['api_endpoints']['/api/v2/contacts']['resource'], 'every expanded row too');
+
+        $manifest = static::__manifest(['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]]]);
+        static::__process($manifest);
+        static::__assert_null($manifest['data']['api_endpoints']['/api/v1/contacts']['resource'], 'absent, null');
+
+        static::__assert_scan_throws(
+            static::__manifest_with_class(['Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]]], ['Api_Resource' => [['  ']]]),
+            'Invalid #[Api_Resource]'
+        );
+    }
+
+    /**
+     * api-deprecated-01 - @api-deprecated is the note after the tag, '' for a bare tag, and
+     * null when the docblock does not carry it.
+     */
+    public static function test_api_deprecated_tag_is_read_from_the_docblock()
+    {
+        $manifest = static::__fixture_manifest('deprecated_list');
+        static::__process($manifest);
+        static::__assert_equals('Use GET /api/v2/fixture instead.', $manifest['data']['api_endpoints']['/api/v1/fixture']['deprecated']);
+
+        $manifest = static::__fixture_manifest('bare_deprecated_list');
+        static::__process($manifest);
+        static::__assert_equals('', $manifest['data']['api_endpoints']['/api/v1/fixture']['deprecated'], 'a bare tag is an empty note');
+
+        $manifest = static::__fixture_manifest('list');
+        static::__process($manifest);
+        static::__assert_null($manifest['data']['api_endpoints']['/api/v1/fixture']['deprecated'], 'no tag, null');
+    }
 }

@@ -100,6 +100,18 @@ Other members are real members on a second daemon connection (the RsxLocks one, 
 | task-exec-10 | an older-generation row on this host is judged by its pid | older generation: dead pid; live pid | PENDING for a retry, consecutive_failures 1 ("of a previous rsx-lockd generation"); RUNNING | implemented |
 | task-exec-11 | an older-generation row on another host is left alone and counted by health | older generation on two other hosts (3 rows) + one on this host | other-host row RUNNING; previous_generation_rows() = 3 on 2 hosts; Task Worker Pool WARN naming them | implemented |
 | task-exec-12 | a claim lost before the run goes back to pending | RUNNING tracker under a wid; release_unrun_claim() via reflection; then again on a FAILED row | PENDING, started_at + four worker columns null, next_run_at restored; FAILED row untouched, "already settled by the reaper" | implemented |
+| task-exec-out-01 | what a task prints is recorded on its log as `output` lines, in order with its logger lines | `prints_output`: echo between info() calls, an ob_start() left open, a trailing partial line | `output` lines: both printed lines, the open buffer's line, the partial tail; interleaved in order; output-buffer level restored | implemented |
+| task-exec-out-02 | printed output survives a throw | `prints_then_throws` | FAILED with its error; the printed line recorded; buffer level restored | implemented |
+
+## Task_Changed_Topic_Test (php, no-tx, live Redis registry) - the frame the live console follows
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-topic-01 | notify() publishes once per site watching THAT task id | registry: id 901 on sites 1 and 7, id 902 on 3, 901 under another topic on 5 | publishes to sites 1 and 7 only | implemented |
+| task-topic-02 | nobody watching: no frame | registry for another id only | nothing published | implemented |
+| task-topic-03 | under the pool lock a frame is held back; flush_deferred() sends it once | two notifies while holding the pool lock | nothing under the lock; one frame after flush; a second flush sends nothing | implemented |
+| task-topic-04 | a task's own writes announce themselves | a watched RUNNING row; info(), heartbeat(), set_result() | three publishes | implemented |
+| task-topic-05 | subscribing is sysadmin-only | user 1 (developer); then signed out | true; false | implemented |
 
 ## Task_Abandonment_Retry_Test (php, $requires_db_reset + no-tx) - what the reaper does with an abandoned row
 

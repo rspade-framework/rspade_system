@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Task\Task_Concurrency;
+use App\RSpade\Core\Task\Task_Changed_Topic;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Lock;
 use App\RSpade\Core\Task\Task_Pool;
@@ -126,6 +127,10 @@ class Task_Worker_Command extends Command
                     return 1;
                 }
 
+                // The previous run's settle (written under the lock) and this claim.
+                Task_Changed_Topic::flush_deferred();
+                Task_Changed_Topic::notify((int) $task_row->id);
+
                 [$task_instance, $outcome] = $this->run_task($task_row);
 
                 // Re-take the lock to settle. A connection that died while the task ran has
@@ -149,6 +154,7 @@ class Task_Worker_Command extends Command
                     if (Task_Pool::holds_lock()) {
                         Task_Pool::unlock();
                     }
+                    Task_Changed_Topic::flush_deferred();
 
                     $message = "[WORKER] Lost the task pool connection while running task {$task_row->id}"
                         . " ({$task_row->class}::{$task_row->method}); its outcome was recorded and this worker"
@@ -167,6 +173,7 @@ class Task_Worker_Command extends Command
 
             Task_Pool::leave();
             Task_Pool::unlock();
+            Task_Changed_Topic::flush_deferred();
         } catch (\Throwable $e) {
             // Whatever escaped left this process a member and perhaps the lock holder.
             // Closing the pool connection ends both at the daemon - which matters when the
@@ -364,7 +371,7 @@ class Task_Worker_Command extends Command
                 throw new \Exception("Method not found: {$class}::{$method}");
             }
 
-            $outcome = ['ok' => true, 'result' => $class::$method($task_instance, $params)];
+            $outcome = ['ok' => true, 'result' => $this->call_capturing_output($task_instance, fn () => $class::$method($task_instance, $params))];
         } catch (\Throwable $e) {
             // Throwable, not Exception: a TypeError inside a task must record its error
             // on the row like any other failure, not vanish unrecorded.
@@ -395,6 +402,52 @@ class Task_Worker_Command extends Command
         $task_instance->cleanup_temp_dir();
 
         return [$task_instance, $outcome];
+    }
+
+    /**
+     * Run $call with everything it prints recorded on the task's log, line by line, as it is
+     * printed.
+     *
+     * A worker is spawned detached with its stdout on /dev/null, so a task's echo, print or
+     * var_dump would otherwise reach nobody. Each COMPLETE line becomes an `[output]` log
+     * line the moment it is written (the handler runs on every write: chunk size 1), so the
+     * live console shows it while the task is still running; a trailing partial line is
+     * recorded when the call returns or throws. The text is also passed through, so a worker
+     * run in a terminal still prints it.
+     *
+     * Output a task buffers itself (a view rendered with ob_start) is the task's own and never
+     * reaches this handler; buffers the task opened and left open are flushed down into it
+     * before the capture ends.
+     *
+     * @return mixed What $call returned.
+     */
+    private function call_capturing_output(Task_Instance $task_instance, callable $call): mixed
+    {
+        $partial = '';
+
+        ob_start(function (string $chunk) use ($task_instance, &$partial) {
+            $partial .= $chunk;
+            while (($newline = strpos($partial, "\n")) !== false) {
+                $task_instance->log('output', rtrim(substr($partial, 0, $newline), "\r"));
+                $partial = substr($partial, $newline + 1);
+            }
+
+            return $chunk;
+        }, 1);
+        $level = ob_get_level();
+
+        try {
+            return $call();
+        } finally {
+            while (ob_get_level() > $level) {
+                ob_end_flush();
+            }
+            ob_end_flush();
+
+            if ($partial !== '') {
+                $task_instance->log('output', rtrim($partial, "\r"));
+            }
+        }
     }
 
     /**

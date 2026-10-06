@@ -18,6 +18,7 @@ use App\RSpade\Sys\Theme\Components\_Sys_DataGrid_Abstract;
  * Filters (each a top-level request param, declared on _Sys_Tasks_DataGrid.jqhtml):
  *   status - one Task_Status value; anything else is ignored
  *   class  - one fully-qualified task class
+ *   queue  - one queue label
  *   since  - a FINISHED-within window over completed_at: 1h | 24h | 7d | 30d. It dates
  *            a row the way the Dashboard's failed-tasks tile does, so status=failed +
  *            since=24h is exactly that tile's count.
@@ -57,6 +58,11 @@ class _Sys_Tasks_DataGrid extends _Sys_DataGrid_Abstract
         $class = (string) ($params['class'] ?? '');
         if ($class !== '') {
             $query->where('class', $class);
+        }
+
+        $queue = (string) ($params['queue'] ?? '');
+        if ($queue !== '') {
+            $query->where('queue', $queue);
         }
 
         $since = (string) ($params['since'] ?? '');

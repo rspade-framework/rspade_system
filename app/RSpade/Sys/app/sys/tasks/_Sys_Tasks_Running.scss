@@ -20,6 +20,20 @@
         font-size: 12.5px;
     }
 
+    &__worker--alive {
+        color: var(--rsx-success);
+    }
+
+    &__worker--gone {
+        color: var(--rsx-danger);
+        font-weight: 600;
+    }
+
+    &__worker--elsewhere,
+    &__worker--unknown {
+        color: var(--rsx-dim);
+    }
+
     &__cron {
         margin-left: 6px;
         padding: 1px 6px;

@@ -48,8 +48,8 @@ DESCRIPTION
     administrators do with tenants, billing or customers. Those are application
     concepts and they stay in the application.
 
-    It has seven screens, in sidebar order: Dashboard, Debug Flags, Tasks,
-    Email & SMS, Logs, Sites and Users, each described below. A screen over
+    It has eight screens, in sidebar order: Dashboard, Debug Flags, Tasks,
+    Task Queues, Email & SMS, Logs, Sites and Users, each described below. A screen over
     site-scoped data reads EVERY site, never the developer's own tenant. What
     an application has to coexist with is the panel's SHAPE - the tree, the
     URL, the gate, the switch and the reserved namespace - covered in the
@@ -88,16 +88,29 @@ DESCRIPTION
     config file. rsx:man console_debug.
 
     Tasks (`/_sys/tasks`) is the `_tasks` table, install-wide, in three tabs.
-    RUNNING lists every row a worker is executing now - id, task, PID, start
-    time, heartbeat age, queue - with a Kill action that asks for an
+    RUNNING lists every row marked running - id, task, WORKER, PID, start
+    time, heartbeat age, queue - with a Kill action that takes an optional
     explanation and does what `rsx:tasks:kill` does: SIGTERM, a 5 second
-    grace, SIGKILL, the explanation recorded as the row's status reason (a
+    grace, SIGKILL, the explanation recorded as the row's status reason
+    ("killed from the control panel" when none is given) (a
     schedule's tracker row goes back to pending rather than terminal).
-    HISTORY is every row, newest first, filtered by status, task class and
+    WORKER is evidence that the row is really running, read from the process
+    that claimed it on this host: alive, gone (the worker died - the row is
+    abandoned, and rsx:task:process settles it on its next tick, so a gone row
+    that stays means the cron tick is not running), on another host (whose
+    processes this one cannot see) or no pid recorded. Heartbeat is when the
+    task last called $task->heartbeat(); "never" says only that it does not.
+    HISTORY is every row, newest first, filtered by status, task class, queue and
     "finished within" (by completed_at, the dashboard's own definition of a
     recent failure), searched by class or method, sortable by id, start and
-    finish. A row opens its detail (`/_sys/tasks/<id>`): every column, the
-    params and result as JSON, the error and the log lines, Kill while it
+    finish. A row opens its detail (`/_sys/tasks/<id>`): every column with the
+    worker's state while it runs, the params and result as JSON, the error,
+    and the log in a live CONSOLE (an xterm.js terminal): every line the task
+    writes - its info/error/debug/progress calls and, in a worker run, what it
+    prints, as `output` lines - appears as it is written, with the status,
+    line count and last heartbeat under it. It follows the row over
+    realtime (Task_Changed_Topic); with realtime disabled it shows the log as
+    of the page load and Refresh reads what is new. Kill while it
     runs, and Re-dispatch for a failed or killed one-shot row - the same
     service, method, params and queue enqueued as a NEW row, the old row left
     as it was. Datetimes show in the viewer's timezone. The dashboard's
@@ -119,6 +132,20 @@ DESCRIPTION
     one-shot row; the tracker and its next run are not touched. An
     #[Exclusive] or #[Debounce] task that already has a queued run coalesces
     onto it, and the flash says so and links to that row instead.
+
+    Task Queues (`/_sys/queues`) is what each queue label is waiting on,
+    beside the one worker pool that drains them all. A queue is a LABEL
+    (Task::dispatch()'s 'queue' option, #[Task(queue: ...)]): workers are
+    generic, never assigned to a queue, capped together at
+    rsx.tasks.global_max_workers, and a worker claims run-now work first,
+    oldest first, then due schedules, whatever the label. So the tiles are
+    the pool - its cap, the workers connected to rsx-lockd now - and the
+    totals of running rows (with how many have no live worker) and pending
+    rows due now; the table has one row per label with pending or running
+    work: running (and stale), pending due now, held for later (a delayed
+    dispatch or a retry backoff), schedule trackers (and how many are due)
+    and how long the oldest due row has waited. Each count links to the
+    Tasks history filtered to that queue and status.
 
     Email & SMS (`/_sys/email`) is the two outbound queues, install-wide -
     every site's rows - in two tabs, EMAIL (the default) and SMS.

@@ -25,6 +25,15 @@
     border-radius: 10px;
     padding: 20px 22px;
 
+    &__deprecated {
+        margin: 12px 0 0;
+        padding: 8px 12px;
+        border-left: 3px solid var(--rsx-warn);
+        background: var(--rsx-raised);
+        color: var(--rsx-text);
+        font-size: 13px;
+    }
+
     &__head {
         display: flex;
         align-items: center;

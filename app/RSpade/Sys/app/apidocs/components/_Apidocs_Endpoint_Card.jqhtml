@@ -11,6 +11,13 @@
     <code class="_Apidocs_Endpoint_Card__path"><%= ep.pattern %></code>
 </header>
 
+<% if (ep.deprecated !== null && ep.deprecated !== undefined) { %>
+    <%-- @api-deprecated on the handler: shown whether or not a later version replaces it. --%>
+    <p class="_Apidocs_Endpoint_Card__deprecated">
+        <strong>Deprecated.</strong><% if (ep.deprecated) { %> <%= ep.deprecated %><% } %>
+    </p>
+<% } %>
+
 <% if (ep.description) { %>
     <p class="_Apidocs_Endpoint_Card__desc"><%br= ep.description %></p>
 <% } %>

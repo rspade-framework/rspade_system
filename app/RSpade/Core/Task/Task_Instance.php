@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Task;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
+use App\RSpade\Core\Task\Task_Changed_Topic;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
 
@@ -361,6 +362,7 @@ class Task_Instance
                     'logs' => implode("\n", $this->logs),
                     'updated_at' => now(),
                 ]);
+            Task_Changed_Topic::notify($this->id);
         }
     }
 
@@ -428,6 +430,7 @@ class Task_Instance
                     'result' => json_encode($result),
                     'updated_at' => now(),
                 ]);
+            Task_Changed_Topic::notify($this->id);
         }
     }
 
@@ -448,6 +451,7 @@ class Task_Instance
                     'last_heartbeat_at' => now(),
                     'updated_at' => now(),
                 ]);
+            Task_Changed_Topic::notify($this->id);
         }
     }
 

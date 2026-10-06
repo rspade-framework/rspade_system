@@ -100,6 +100,26 @@ class Api_Get_Pure_Fixture
     /**
      * Stand-in for whatever a real handler would load.
      */
+    /**
+     * A pure handler the catalogue marks deprecated.
+     *
+     * @api-deprecated Use GET /api/v2/fixture instead.
+     */
+    public static function deprecated_list(array $params = [])
+    {
+        return ['records' => [static::__record($params)]];
+    }
+
+    /**
+     * A pure handler deprecated with no note.
+     *
+     * @api-deprecated
+     */
+    public static function bare_deprecated_list(array $params = [])
+    {
+        return ['records' => [static::__record($params)]];
+    }
+
     private static function __record(array $params)
     {
         return (object) ['id' => $params['id'] ?? null];

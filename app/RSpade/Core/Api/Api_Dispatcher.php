@@ -11,6 +11,7 @@ use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Param_Validator;
 use App\RSpade\Core\Api\Api_Request_Log_Model;
+use App\RSpade\Core\Api\Api_Route_Usage;
 use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Auth\Auth_Gates;
@@ -283,6 +284,11 @@ class Api_Dispatcher
 
             return $response;
         }
+
+        // --- Route usage ---
+        // An authenticated key has reached this route: the route is in use, whatever the
+        // call goes on to answer. _api_route_usage is what says whether a version can retire.
+        Api_Route_Usage::record($route['pattern']);
 
         // --- Assemble raw input (route > GET > body); reject unparseable JSON ---
         $json_invalid = false;

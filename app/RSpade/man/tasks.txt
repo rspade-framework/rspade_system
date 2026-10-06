@@ -95,6 +95,19 @@ TASK_INSTANCE API
         $task->debug($message)
     (There is no warning() level.)
 
+    Printed output: in a run a pool worker executes, everything the task prints
+    (echo, print, var_dump) is recorded on the same log, one `[output]` line per printed
+    line, as it is printed - a trailing partial line when the run ends. Output the task
+    buffers itself (ob_start around a rendered view) is its own and is not recorded. An
+    immediate run (Task::internal(), rsx:task:run, a #[Command]) is not captured: there
+    stdout is the command's value.
+
+    Every log line is persisted the moment it is written, and the /_sys task detail shows
+    the log in a live console that follows the run line by line (Task_Changed_Topic, when
+    realtime is enabled). That console, the Running list's Worker column (whether the
+    claiming process is still alive) and the Task Queues screen are where to look first
+    when a task seems stuck - rsx:man sys_panel.
+
     Progress and result:
         $task->update_progress(int $percent, ?string $message = null)  // 0-100, logged
                                                     // logs as "[45%] message", or "[45%]"

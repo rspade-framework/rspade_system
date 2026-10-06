@@ -15,7 +15,13 @@ says what is in this DIRECTORY.
   unlock, and spawn only below the cap), and the process-level switch `spawn_workers(bool)`
   (OFF by default under the test suite).
 - `Task_Instance.php` — the `$task` handle passed to every task method (`info`/`error`/`debug`,
-  `update_progress`, `set_result`, `heartbeat`).
+  `update_progress`, `set_result`, `heartbeat`). Each of those writes announces itself
+  through `Task_Changed_Topic::notify()`.
+- `Task_Changed_Topic.php` — the realtime frame `{id}` the `/_sys` task detail's live console
+  follows (sysadmin-gated). `notify()` reads the relay's subscriber registry and publishes once
+  per site watching THAT row, nothing when nobody is; it is also called by `Task_Killer` and the
+  reaper's `settle_abandoned()`. A pool worker additionally records what a task PRINTS as
+  `[output]` log lines (`Task_Worker_Command::call_capturing_output()`).
 - `Task_Command_ManifestSupport.php` — bakes the `#[Command]` table (`data['task_commands']`)
   and enforces its five build-time FATALs. `Task_Command_Registrar.php` — the one call
   `app/Console/Kernel.php` makes, turning each baked row into a `Task_Alias_Command.php`,
@@ -93,6 +99,11 @@ says what is in this DIRECTORY.
   `Framework_Maintenance::is_active()`; the row stays PENDING for the first tick after the
   window. The tick tries ONE `spawn_worker()` when work is due - a worker drains until
   nothing is claimable, so the tick never loops spawns.
+- **No frame under the pool lock.** A Redis publish is an outbound call, so
+  `Task_Changed_Topic::notify()` only RECORDS the id while this process holds the pool lock
+  (`mark_failed()` logs its error line during the settle), and whoever releases the lock calls
+  `Task_Changed_Topic::flush_deferred()` - the worker after each unlock, the reaper after
+  `detect_stuck_tasks()`. A new path that writes a row under the lock and unlocks must flush.
 - **The reaper's stuck-task cap is framework infrastructure, not licence to add timeouts.**
   See the no-timeout mandate.
 - Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]` classes.

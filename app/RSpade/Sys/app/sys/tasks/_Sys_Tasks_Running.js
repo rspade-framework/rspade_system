@@ -5,6 +5,14 @@
  * after a kill, so the screen can refresh the history beside it.
  */
 class _Sys_Tasks_Running extends Component {
+    /** _Sys_Tasks_Controller::worker_state() values, as the screens print them. */
+    static WORKER_LABELS = {
+        alive: 'alive',
+        gone: 'gone - abandoned',
+        elsewhere: 'on another host',
+        unknown: 'no pid recorded',
+    };
+
     on_create() {
         this.data.rows = [];
         this.data.error_data = null;

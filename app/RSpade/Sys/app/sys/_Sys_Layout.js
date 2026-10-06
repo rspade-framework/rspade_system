@@ -52,6 +52,12 @@ class _Sys_Layout extends Spa_Layout {
                             href: Rsx.Route('_Sys_Tasks_Action'),
                         },
                         {
+                            label: 'Task Queues',
+                            icon: 'bi-stack',
+                            route: '_Sys_Task_Queues_Action',
+                            href: Rsx.Route('_Sys_Task_Queues_Action'),
+                        },
+                        {
                             label: 'Email & SMS',
                             icon: 'bi-envelope',
                             route: '_Sys_Email_Action',

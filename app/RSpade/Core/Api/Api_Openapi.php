@@ -26,10 +26,13 @@ use App\RSpade\Core\Api\Api_Catalog;
  *                          on POST (see Api_Dispatcher::_collect_raw_input), but the body is
  *                          the documented shape and the one the tester sends, so documenting
  *                          both would describe two ways to do one thing.
- *   superseded endpoints   deprecated:true when a HIGHER version exists for the same
- *                          verb + path_key. This is the standard spelling of "prefer the
- *                          newer one" and replaces the old catalog's latest_in_version map
- *                          plus the prose paragraph that had to explain it.
+ *   superseded endpoints   deprecated:true when a HIGHER version of the same verb + path_key
+ *                          is served by a DIFFERENT handler. This is the standard spelling of
+ *                          "prefer the newer one". An endpoint served through a version range
+ *                          is one handler at every version, so its earlier rows are not
+ *                          superseded by its own later ones.
+ *   @api-deprecated        deprecated:true whether or not anything supersedes it, with the
+ *                          note appended to the description.
  *   @api-hidden            omitted entirely - there is nothing to say about an endpoint the
  *                          catalog does not publish.
  *
@@ -56,11 +59,16 @@ class Api_Openapi
     ];
 
     /**
-     * The complete OpenAPI 3.1 document for every published endpoint, all versions.
+     * The OpenAPI 3.1 document for every published endpoint - all versions, or one.
      *
-     * Versions are NOT filtered: /api/v1/x and /api/v2/x are two paths, individually
-     * callable, and listing both is what makes the document true. The older one carries
-     * deprecated:true.
+     * With no $version, versions are NOT filtered: /api/v1/x and /api/v2/x are two paths,
+     * individually callable, and listing both is what makes the document true. The older one
+     * carries deprecated:true.
+     *
+     * With $version, the document is that version's surface exactly as the docs page shows it
+     * (Api_Catalog::resolve_for_version(): per verb + path_key, the newest endpoint at or
+     * below the version, at its real path) and info.version names it - the input for
+     * generating one version's client. An unknown version throws.
      *
      * $accessible_targets, when supplied, is the map Api_Tester_Key::accessible_targets_for_user()
      * returns: 'Class::method' => bool. Only the endpoints it admits reach the document, so
@@ -68,9 +76,24 @@ class Api_Openapi
      * whole surface. It is a VISIBILITY filter and nothing more - Api_Dispatcher gates every
      * real call regardless of which document a client was generated from.
      */
-    public static function document(?array $accessible_targets = null): array
+    public static function document(?array $accessible_targets = null, ?int $version = null): array
     {
-        $endpoints = Api_Catalog::get_endpoint_list(false);
+        if ($version === null) {
+            $endpoints = Api_Catalog::get_endpoint_list(false);
+        } else {
+            if (!in_array($version, Api_Catalog::get_versions(), true)) {
+                throw new \InvalidArgumentException(
+                    "No API version {$version}; the catalogue has v" . implode(', v', Api_Catalog::get_versions()) . '.'
+                );
+            }
+
+            $endpoints = [];
+            foreach (Api_Catalog::resolve_for_version($version) as $group) {
+                foreach ($group['endpoints'] as $endpoint) {
+                    $endpoints[] = $endpoint;
+                }
+            }
+        }
 
         if ($accessible_targets !== null) {
             $endpoints = array_values(array_filter(
@@ -81,7 +104,7 @@ class Api_Openapi
 
         return [
             'openapi' => '3.1.0',
-            'info' => static::__info(),
+            'info' => static::__info($version),
             'servers' => [
                 ['url' => rtrim((string) config('app.url', ''), '/')],
             ],
@@ -93,16 +116,17 @@ class Api_Openapi
     }
 
     /**
-     * Document metadata. The version is the newest catalog version, spelled as the API
-     * version rather than an application release number - it is what a consumer selects.
+     * Document metadata. The version is the one the document was narrowed to, else the newest
+     * catalog version, spelled as the API version rather than an application release number -
+     * it is what a consumer selects.
      */
-    private static function __info(): array
+    private static function __info(?int $version): array
     {
         $versions = Api_Catalog::get_versions();
 
         return [
             'title' => config('app.name', 'RSpade') . ' API',
-            'version' => 'v' . ($versions[0] ?? 1),
+            'version' => 'v' . ($version ?? ($versions[0] ?? 1)),
             'description' => 'External REST API. Every request carries an API key as '
                 . 'Authorization: Bearer rsx_... - there is no cookie or session auth on this '
                 . 'surface. Keys are created in Settings > API Keys. A key resolves to a staff '
@@ -170,23 +194,31 @@ class Api_Openapi
      */
     private static function __paths(array $endpoints): array
     {
-        // Highest version present for each verb + path_key, so a superseded endpoint can be
-        // marked deprecated without the consumer needing a rule explained to them.
-        $newest = [];
+        // Per verb + path_key, the highest version each HANDLER serves, so a superseded
+        // endpoint can be marked deprecated without the consumer needing a rule explained to
+        // them. A version range's later rows are the same handler, never a successor.
+        $served = [];
         foreach ($endpoints as $ep) {
+            $handler = $ep['class'] . '::' . $ep['method'];
             foreach ($ep['methods'] as $verb) {
                 $key = strtoupper($verb) . ' ' . $ep['path_key'];
-                $newest[$key] = max($newest[$key] ?? 0, (int) $ep['version']);
+                $served[$key][$handler] = max($served[$key][$handler] ?? 0, (int) $ep['version']);
             }
         }
 
         $paths = [];
         foreach ($endpoints as $ep) {
             $url = static::__to_template($ep['pattern']);
+            $handler = $ep['class'] . '::' . $ep['method'];
 
             foreach ($ep['methods'] as $verb) {
                 $key = strtoupper($verb) . ' ' . $ep['path_key'];
-                $superseded = (int) $ep['version'] < ($newest[$key] ?? 0);
+                $superseded = false;
+                foreach ($served[$key] as $other => $other_version) {
+                    if ($other !== $handler && $other_version > (int) $ep['version']) {
+                        $superseded = true;
+                    }
+                }
 
                 $paths[$url][strtolower($verb)] = static::__operation($ep, $verb, $superseded);
             }
@@ -219,8 +251,15 @@ class Api_Openapi
             }
         }
 
-        if ($superseded) {
+        if ($superseded || ($ep['deprecated'] ?? null) !== null) {
             $operation['deprecated'] = true;
+        }
+
+        if (($ep['deprecated'] ?? '') !== '') {
+            $note = 'Deprecated: ' . $ep['deprecated'];
+            $operation['description'] = isset($operation['description']) || isset($operation['summary'])
+                ? ($operation['description'] ?? $operation['summary']) . "\n\n" . $note
+                : $note;
         }
 
         $parameters = [];
@@ -383,19 +422,11 @@ class Api_Openapi
     }
 
     /**
-     * Resource tag, matching the docs page's grouping ('Clients_Api_Controller' -> 'Clients').
+     * Resource tag: the docs page's own grouping (Api_Catalog::resource_name()).
      */
     private static function __tag_for(array $ep): string
     {
-        $class = $ep['class'];
-
-        foreach (['_Api_Controller', '_Controller'] as $suffix) {
-            if (str_ends_with($class, $suffix)) {
-                return substr($class, 0, -strlen($suffix));
-            }
-        }
-
-        return $class;
+        return Api_Catalog::resource_name($ep);
     }
 
     /**

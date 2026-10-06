@@ -190,11 +190,14 @@ class Rsx_Api_Docs
      * Api_Tester_Key::accessible_targets_for_user($user). Omit it for the full surface, which
      * is what a public openapi.json wants.
      *
+     * $version narrows it to one API version's surface, as the docs page shows that version
+     * (the input for generating one version's client); omit it for every version.
+     *
      * @return array The OpenAPI 3.1 document
      */
-    public static function openapi_document(?array $accessible_targets = null): array
+    public static function openapi_document(?array $accessible_targets = null, ?int $version = null): array
     {
-        return Api_Openapi::document($accessible_targets);
+        return Api_Openapi::document($accessible_targets, $version);
     }
 
     /**

@@ -31,6 +31,7 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
         '/_sys/debug-flags' => '_Sys_Debug_Flags_Action',
         '/_sys/tasks'       => '_Sys_Tasks_Action',
         '/_sys/tasks/:id'   => '_Sys_Task_View_Action',
+        '/_sys/queues'      => '_Sys_Task_Queues_Action',
         '/_sys/email'       => '_Sys_Email_Action',
         '/_sys/email/:id'   => '_Sys_Email_View_Action',
         '/_sys/email/sms/:id' => '_Sys_Sms_View_Action',

@@ -94,6 +94,8 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
         static::__assert_equals('Sys_Tasks_Probe_Service', $row['class_short'], 'class_short is the basename');
         static::__assert_equals('2026-01-02T03:04:05.678Z', $row['started_at'], 'started_at is ISO UTC');
         static::__assert_equals('2026-01-02T03:05:00.000Z', $row['last_heartbeat_at'], 'last_heartbeat_at is ISO UTC');
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_UNKNOWN, $row['worker_state'], 'a row with no pid has an unknown worker');
+        static::__assert_false(array_key_exists('worker_id', $row), 'worker_id stays on the server');
         static::__assert_false($row['is_cron'], 'a one-shot row is not a schedule');
     }
 
@@ -134,8 +136,9 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * RP-TASKS-03 - detail returns the whole row decoded, with what may be done to it;
-     * a missing id is not_found.
+     * RP-TASKS-03 - detail returns the row decoded, with what may be done to it, and
+     * without its logs (the console reads them through logs()) or updated_at (which moves
+     * with every log line); a missing id is not_found.
      */
     public static function test_detail_and_not_found()
     {
@@ -151,7 +154,9 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(['n' => 1], $task['params'], 'params decoded');
         static::__assert_equals(['ok' => false], $task['result'], 'result decoded');
-        static::__assert_equals(['[a] one', '[b] two'], $task['logs'], 'logs split into lines');
+        static::__assert_false(array_key_exists('logs', $task), 'the logs are not part of the detail');
+        static::__assert_false(array_key_exists('updated_at', $task), 'nor is updated_at');
+        static::__assert_null($task['worker_state'], 'a row that is not running has no worker state');
         static::__assert_equals('boom', $task['error'], 'error carried');
         static::__assert_false($task['can_kill'], 'a failed row cannot be killed');
         static::__assert_true($task['can_redispatch'], 'a failed one-shot row can be re-dispatched');
@@ -168,11 +173,6 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
     {
         $running = static::__plant(['status' => Task_Status::RUNNING, 'started_at' => now(), 'worker_pid' => null]);
 
-        $blank = static::__endpoint('kill', ['task_id' => $running, 'explanation' => '   ']);
-        static::__assert_error(Ajax::ERROR_VALIDATION, $blank, 'a blank explanation');
-        static::__assert_array_has_key('explanation', $blank->get_metadata(), 'the error targets the explanation field');
-        static::__assert_equals(Task_Status::RUNNING, DB::table('_tasks')->where('id', $running)->value('status'), 'the row is untouched');
-
         $completed = static::__plant(['status' => Task_Status::COMPLETED, 'completed_at' => now()]);
         static::__assert_error(Ajax::ERROR_VALIDATION, static::__endpoint('kill', ['task_id' => $completed, 'explanation' => 'x']), 'a completed row');
 
@@ -185,6 +185,15 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
         $row = DB::table('_tasks')->where('id', $running)->first();
         static::__assert_equals(Task_Status::KILLED, $row->status, 'the row is killed');
         static::__assert_equals('stuck on a probe', $row->status_reason, 'the explanation is recorded');
+
+        $unexplained = static::__plant(['status' => Task_Status::RUNNING, 'started_at' => now(), 'worker_pid' => null]);
+        $result = static::__endpoint('kill', ['task_id' => $unexplained, 'explanation' => '   ']);
+        static::__assert_equals(['id' => $unexplained, 'outcome' => 'killed_no_process'], $result, 'a blank explanation still kills');
+        static::__assert_equals(
+            _Sys_Tasks_Controller::KILL_DEFAULT_REASON,
+            DB::table('_tasks')->where('id', $unexplained)->value('status_reason'),
+            'and records the default reason'
+        );
     }
 
     /**
@@ -365,5 +374,119 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
 
         static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('run_schedule_now', ['class' => self::PROBE_CLASS, 'method' => 'probe']), 'a task with no #[Schedule]');
         static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('run_schedule_now', []), 'no class or method');
+    }
+
+    /** A pid no Linux host hands out (pid_max tops out at 4194304). */
+    private const DEAD_PID = 2147480000;
+
+    /**
+     * RP-TASKS-09 - worker_state is evidence about the claiming process, never the row's
+     * age: a pool worker's pid that is not a live worker is gone, a row from another host
+     * is elsewhere, a row run outside the pool (no worker_id) is judged by its pid alone.
+     */
+    public static function test_worker_state()
+    {
+        $row = fn (array $columns) => (object) array_merge(['worker_pid' => null, 'worker_id' => null, 'worker_host' => null], $columns);
+
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_GONE, _Sys_Tasks_Controller::worker_state($row(['worker_pid' => self::DEAD_PID, 'worker_id' => 3])), 'a dead pool worker is gone');
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_GONE, _Sys_Tasks_Controller::worker_state($row(['worker_pid' => getmypid(), 'worker_id' => 3])), 'a live process that is not a task worker is not the claiming worker');
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_ALIVE, _Sys_Tasks_Controller::worker_state($row(['worker_pid' => getmypid()])), 'an inline run is judged by its pid');
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_GONE, _Sys_Tasks_Controller::worker_state($row(['worker_pid' => self::DEAD_PID])), 'an inline run whose pid is gone');
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_ELSEWHERE, _Sys_Tasks_Controller::worker_state($row(['worker_pid' => self::DEAD_PID, 'worker_id' => 3, 'worker_host' => 'another-host.invalid'])), 'another host is never judged from here');
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_UNKNOWN, _Sys_Tasks_Controller::worker_state($row([])), 'no pid recorded');
+
+        $id = static::__plant(['status' => Task_Status::RUNNING, 'started_at' => now(), 'worker_pid' => self::DEAD_PID, 'worker_id' => 3]);
+        $listed = array_column(static::__endpoint('running')['rows'], 'worker_state', 'id');
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_GONE, $listed[$id] ?? null, 'the Running list carries it');
+        static::__assert_equals(_Sys_Tasks_Controller::WORKER_GONE, static::__endpoint('detail', ['id' => $id])['task']['worker_state'], 'and so does the detail');
+    }
+
+    /**
+     * RP-TASKS-10 - logs() hands the console the lines after its offset; a new run of the
+     * row (another started_at) or a log shorter than the offset answers the whole log with
+     * restart; a missing id is not_found.
+     */
+    public static function test_logs_tail()
+    {
+        $id = static::__plant([
+            'status' => Task_Status::RUNNING,
+            'started_at' => '2026-01-02 03:04:05.000',
+            'last_heartbeat_at' => '2026-01-02 03:04:06.000',
+            'logs' => "one\ntwo\nthree",
+        ]);
+
+        $first = static::__endpoint('logs', ['id' => $id]);
+        static::__assert_equals(['one', 'two', 'three'], $first['lines'], 'from 0, every line');
+        static::__assert_equals(3, $first['offset'], 'the offset is the line count');
+        static::__assert_equals('2026-01-02T03:04:05.000Z', $first['run'], 'the run is the row started_at');
+        static::__assert_false($first['restart'], 'a first read is not a restart');
+        static::__assert_equals('running', $first['status']);
+        static::__assert_equals('2026-01-02T03:04:06.000Z', $first['last_heartbeat_at']);
+
+        DB::table('_tasks')->where('id', $id)->update(['logs' => "one\ntwo\nthree\nfour"]);
+        $next = static::__endpoint('logs', ['id' => $id, 'offset' => 3, 'run' => $first['run']]);
+        static::__assert_equals(['four'], $next['lines'], 'only the new line');
+        static::__assert_false($next['restart']);
+
+        $same = static::__endpoint('logs', ['id' => $id, 'offset' => 4, 'run' => $first['run']]);
+        static::__assert_equals([], $same['lines'], 'asking again repeats nothing');
+
+        DB::table('_tasks')->where('id', $id)->update(['started_at' => '2026-01-02 04:00:00.000', 'logs' => "next run\na\nb\nc\nd"]);
+        $new_run = static::__endpoint('logs', ['id' => $id, 'offset' => 4, 'run' => $first['run']]);
+        static::__assert_true($new_run['restart'], 'another run restarts the console');
+        static::__assert_equals(['next run', 'a', 'b', 'c', 'd'], $new_run['lines'], 'with the whole new log');
+
+        DB::table('_tasks')->where('id', $id)->update(['logs' => 'short']);
+        $shorter = static::__endpoint('logs', ['id' => $id, 'offset' => 5, 'run' => $new_run['run']]);
+        static::__assert_true($shorter['restart'], 'a log shorter than the offset restarts the console');
+        static::__assert_equals(['short'], $shorter['lines']);
+
+        $max = (int) DB::table('_tasks')->max('id');
+        static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('logs', ['id' => $max + 1000]), 'a missing id');
+    }
+
+    /**
+     * RP-TASKS-11 - queues() counts each label's pending and running work beside the pool,
+     * and the history grid filters by queue.
+     */
+    public static function test_queues_and_queue_filter()
+    {
+        $queue = 'rp_tasks_queue_' . uniqid();
+        $other = $queue . '_other';
+
+        $running = static::__plant(['queue' => $queue, 'status' => Task_Status::RUNNING, 'started_at' => now(), 'worker_pid' => self::DEAD_PID, 'worker_id' => 3]);
+        static::__plant(['queue' => $queue, 'status' => Task_Status::RUNNING, 'started_at' => now(), 'worker_pid' => null]);
+        static::__plant(['queue' => $queue, 'created_at' => '2026-01-02 03:04:05.000']);
+        static::__plant(['queue' => $queue, 'scheduled_for' => now()->subMinute()]);
+        static::__plant(['queue' => $queue, 'scheduled_for' => now()->addHour()]);
+        static::__plant(['queue' => $queue, 'next_run_at' => now()->subMinute(), 'cron_expression' => '* * * * *']);
+        static::__plant(['queue' => $queue, 'next_run_at' => now()->addHour(), 'cron_expression' => '0 * * * *']);
+        static::__plant(['queue' => $queue, 'status' => Task_Status::COMPLETED, 'completed_at' => now()]);
+        $elsewhere = static::__plant(['queue' => $other]);
+
+        $response = static::__endpoint('queues');
+        $by_queue = array_column($response['queues'], null, 'queue');
+
+        static::__assert_equals([
+            'queue' => $queue,
+            'running' => 2,
+            'stale_running' => 1,
+            'pending_due' => 2,
+            'pending_later' => 1,
+            'schedules' => 2,
+            'schedules_due' => 1,
+            'oldest_due_at' => '2026-01-02T03:04:05.000Z',
+        ], $by_queue[$queue] ?? null, 'the counts for the queue, a completed row left out');
+        static::__assert_equals(1, $by_queue[$other]['pending_due'] ?? null, 'each label is its own row');
+
+        static::__assert_true(is_int($response['pool']['max_workers']) && $response['pool']['max_workers'] >= 1, 'the pool cap');
+        static::__assert_true(is_int($response['pool']['members']), 'the live worker count');
+
+        $filtered = static::__grid(['queue' => $queue, 'status' => 'running']);
+        static::__assert_true(in_array($running, $filtered), 'the grid filters by queue');
+        static::__assert_false(in_array($elsewhere, static::__grid(['queue' => $queue])), 'and leaves other queues out');
+
+        $options = array_column(static::__endpoint('queue_options'), 'label', 'value');
+        static::__assert_equals($queue, $options[$queue] ?? null, 'queue_options lists every label in use');
     }
 }

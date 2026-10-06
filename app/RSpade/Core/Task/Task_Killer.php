@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Task\Task_Changed_Topic;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
 
@@ -72,6 +73,7 @@ class Task_Killer
                 'status_reason' => 'killed (recycled): ' . $explanation,
                 'updated_at'    => now(),
             ]);
+            Task_Changed_Topic::notify((int) $row->id);
             return 'recycled';
         }
 
@@ -85,6 +87,7 @@ class Task_Killer
             'completed_at'  => now(),
             'updated_at'    => now(),
         ]);
+        Task_Changed_Topic::notify((int) $row->id);
 
         return $signalled ? 'killed' : 'killed_no_process';
     }

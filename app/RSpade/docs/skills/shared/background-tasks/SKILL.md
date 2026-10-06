@@ -95,6 +95,8 @@ $task->is_stop_requested();                             // true once Task::reque
 
 `Task::request_stop($id)` flags a pending or running task (`_tasks.stop_requested`, reported by `Task::status()`); **it interrupts nothing**. A task stops early only if its own code calls `$task->is_stop_requested()` between units of work and returns when it answers true - leaving its data consistent and saying in its log or result that it stopped early. A task that never checks runs to completion. Each call reads the row, so a request made mid-run is seen at the next check. Immediate mode (`Task::internal()`, `rsx:task:run`, a `#[Command]`) always answers false. A recurring task's request applies to one run and is cleared when that run ends; a one-shot keeps it. To end a task that does not check, kill it (`rsx:tasks:kill`). Contract: `rsx:man tasks` (STOPPING A TASK).
 
+**A queued run's printed output is logged too**: in a pool worker, `echo`/`print`/`var_dump` land on the task's log as `[output]` lines, live, beside the `info()` lines (an immediate run - `Task::internal()`, `rsx:task:run`, a `#[Command]` - is not captured; its stdout is the value). The `/_sys` task detail shows the log in a live console as the task writes it, the Running list says whether each row's worker process is still alive, and `/_sys/queues` counts pending and running work per queue label - the first places to look at a task that seems stuck (`rsx:man sys_panel`).
+
 `heartbeat()` stamps `last_heartbeat_at` on the row for the task screens. It is optional and has **no part in worker liveness** - a worker counts as alive exactly as long as its rsx-lockd connection is open, so an hours-long task needs no keep-alive call.
 
 ---

@@ -1,6 +1,8 @@
 /**
  * _Sys_Task_View_Action - one _tasks row. See the .jqhtml for the layout.
  *
+ * The facts reload when the live console (_Sys_Task_Console) reports a status change.
+ *
  * Kill opens the shared dialog (_Sys_Task_Kill_Form.open) and reloads the record;
  * Re-dispatch confirms, dispatches the same service/method/params/queue as a NEW row
  * (_Sys_Tasks_Controller.redispatch) and navigates to that row. The server decides
@@ -39,6 +41,12 @@ class _Sys_Task_View_Action extends Spa_Action {
 
     on_ready() {
         const that = this;
+
+        // The console follows the row live; the facts above it change only with its status.
+        const console_pane = this.sid('console');
+        if (console_pane) {
+            console_pane.on('status_changed', () => that.reload());
+        }
 
         this.$.off('click._sys_task_view');
 

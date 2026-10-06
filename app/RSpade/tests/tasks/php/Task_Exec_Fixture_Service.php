@@ -88,4 +88,31 @@ class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
         self::$run_order[] = 'TYPE_ERROR';
         throw new \TypeError('fixture type error on purpose');
     }
+
+    /**
+     * Prints between log calls, opens a buffer it never closes, and ends on a partial line -
+     * every shape the worker's stdout capture records.
+     */
+    #[Task('exec fixture that prints')]
+    public static function prints_output(Task_Instance $task, array $params = [])
+    {
+        $task->info('before the echo');
+        echo "first printed line\nsecond printed line\n";
+        $task->info('between');
+        ob_start();
+        echo "from a buffer left open\n";
+        print 'trailing partial';
+
+        return ['printed' => true];
+    }
+
+    /**
+     * Prints, then throws: the printed line is recorded before the run is settled failed.
+     */
+    #[Task('exec fixture that prints and throws')]
+    public static function prints_then_throws(Task_Instance $task, array $params = [])
+    {
+        echo "printed before the throw\n";
+        throw new \Exception('fixture exploded after printing');
+    }
 }

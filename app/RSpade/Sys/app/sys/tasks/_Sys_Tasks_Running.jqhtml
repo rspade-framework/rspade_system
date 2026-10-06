@@ -1,9 +1,15 @@
 <%--
-_Sys_Tasks_Running - the Tasks screen's Running tab: every task a worker is
-executing right now, with a Kill action per row.
+_Sys_Tasks_Running - the Tasks screen's Running tab: every row marked RUNNING, with a
+Kill action per row.
 
 Self-loading (_Sys_Tasks_Controller.running); Refresh reloads this region only, and
-a kill reloads it too. Heartbeat age is how long ago the worker last reported in.
+a kill reloads it too. The ID opens the task's detail and live console.
+
+Worker is the evidence that the row is really running: whether the process that claimed
+it is still alive on this host (_Sys_Tasks_Controller::worker_state()). "gone" means the
+row is abandoned - rsx:task:process settles it on its next tick, so one that stays means
+that tick is not running. Heartbeat is when the TASK last called $task->heartbeat();
+"never" only means it does not call it.
 --%>
 <Define:_Sys_Tasks_Running>
 <% if (this.data.loading) { %>
@@ -32,6 +38,7 @@ a kill reloads it too. Heartbeat age is how long ago the worker last reported in
                             <tr>
                                 <th>ID</th>
                                 <th>Task</th>
+                                <th>Worker</th>
                                 <th>PID</th>
                                 <th>Started</th>
                                 <th>Heartbeat</th>
@@ -49,6 +56,7 @@ a kill reloads it too. Heartbeat age is how long ago the worker last reported in
                                             <span class="_Sys_Tasks_Running__cron">schedule</span>
                                         <% } %>
                                     </td>
+                                    <td><span class="<%= '_Sys_Tasks_Running__worker _Sys_Tasks_Running__worker--' + row.worker_state %>"><%= _Sys_Tasks_Running.WORKER_LABELS[row.worker_state] %></span></td>
                                     <td class="_Sys_Tasks_Running__mono"><%= row.worker_pid %></td>
                                     <td><%= row.started_at ? Rsx_Time.format_datetime(row.started_at) : '' %></td>
                                     <td><%= row.last_heartbeat_at ? Rsx_Time.relative(row.last_heartbeat_at) : 'never' %></td>
