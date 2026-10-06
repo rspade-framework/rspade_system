@@ -157,6 +157,7 @@ class Mail_Queue_Command extends Command
                 'id' => (int) $record->id,
                 'site_id' => (int) $record->site_id,
                 'status' => $record->status_id__label,
+                'block_cause' => $record->block_cause_id === null ? null : $record->block_cause_id__label,
                 'to_address' => $record->to_address,
                 'dev_original_to' => $record->dev_original_to,
                 'subject' => $record->subject,

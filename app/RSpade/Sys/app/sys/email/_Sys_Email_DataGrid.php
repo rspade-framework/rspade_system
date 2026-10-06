@@ -34,7 +34,7 @@ class _Sys_Email_DataGrid extends _Sys_DataGrid_Abstract
 
     private const LIST_COLUMNS = [
         'id', 'site_id', 'to_address', 'to_name', 'dev_original_to', 'subject', 'email_class',
-        'category_id', 'status_id', 'attempt_count', 'last_error', 'last_attempt_at', 'sent_at',
+        'category_id', 'status_id', 'block_cause_id', 'attempt_count', 'last_error', 'last_attempt_at', 'sent_at',
         'created_at',
     ];
 
@@ -72,7 +72,8 @@ class _Sys_Email_DataGrid extends _Sys_DataGrid_Abstract
 
     /**
      * Each row gains its status and category words (the badge and filter vocabulary),
-     * its site's name, and the first line of its last error.
+     * its site's name, the first line of its last error, and - on a Blocked row - the
+     * sentence saying which standing rule blocked it (the badge's tooltip).
      */
     protected static function __transform_records(array $records, array $params): array
     {
@@ -83,6 +84,7 @@ class _Sys_Email_DataGrid extends _Sys_DataGrid_Abstract
             $row['category'] = _Sys_Enum_Words::enum_word(Email_Queue_Model::class, 'category_id', (int) $row['category_id']);
             $row['site_name'] = $names[$row['site_id']] ?? null;
             $row['error_excerpt'] = _Sys_Enum_Words::first_line($row['last_error']);
+            $row['status_reason'] = (int) $row['status_id'] === Email_Queue_Model::STATUS_BLOCKED ? $row['error_excerpt'] : null;
             unset($row['last_error']);
 
             return $row;

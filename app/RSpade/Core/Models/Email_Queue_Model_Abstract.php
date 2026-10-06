@@ -71,6 +71,7 @@ use App\RSpade\Core\Models\Email_Attachment_Model;
  *
  * @property int $attempt_count
  * @property array $bcc
+ * @property int $block_cause_id
  * @property int $category_id
  * @property array $cc
  * @property string $created_at
@@ -103,11 +104,14 @@ use App\RSpade\Core\Models\Email_Attachment_Model;
  * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
+ * @property array $withheld_recipients
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
  * @property-read string $category_id__label
  * @property-read string $category_id__constant
+ * @property-read string $block_cause_id__label
+ * @property-read string $block_cause_id__constant
  *
  * @method static array status_id__enum() Get all enum definitions with full metadata
  * @method static array status_id__enum_select() Get [{value, label}] array for dropdowns
@@ -117,6 +121,10 @@ use App\RSpade\Core\Models\Email_Attachment_Model;
  * @method static array category_id__enum_select() Get [{value, label}] array for dropdowns
  * @method static array category_id__enum_labels() Get simple id => label map
  * @method static array category_id__enum_ids() Get array of all valid enum IDs
+ * @method static array block_cause_id__enum() Get all enum definitions with full metadata
+ * @method static array block_cause_id__enum_select() Get [{value, label}] array for dropdowns
+ * @method static array block_cause_id__enum_labels() Get simple id => label map
+ * @method static array block_cause_id__enum_ids() Get array of all valid enum IDs
  *
  * @mixin \Eloquent
  */
@@ -134,6 +142,8 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     const CATEGORY_TRANSACTIONAL = 1;
     const CATEGORY_NOTIFICATION = 2;
     const CATEGORY_MARKETING = 3;
+    const BLOCK_CAUSE_OPTED_OUT = 1;
+    const BLOCK_CAUSE_SITE_BLOCK_LIST = 2;
 
     /**
      * What last_error says on a row reclaim_stranded() rescued.
@@ -185,6 +195,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
         'cc' => 'array',
         'bcc' => 'array',
         'headers' => 'array',
+        'withheld_recipients' => 'array',
     ];
 
     public static $enums = [
@@ -204,7 +215,31 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
             2 => ['constant' => 'CATEGORY_NOTIFICATION', 'label' => 'Notification', 'badge' => 'bg-info'],
             3 => ['constant' => 'CATEGORY_MARKETING', 'label' => 'Marketing', 'badge' => 'bg-secondary'],
         ],
+        // WHY a Blocked row was blocked - one status, two standing rules. NULL on every
+        // row that is not Blocked. last_error carries the sentence a reader is shown.
+        'block_cause_id' => [
+            // The recipient unsubscribed from this category (_email_recipients). Never
+            // applies to a transactional message; resend overrides it only with force.
+            1 => ['constant' => 'BLOCK_CAUSE_OPTED_OUT', 'label' => 'Recipient opted out'],
+            // The address is on the site's block list (_email_blocked_addresses). Applies
+            // to every category; no force overrides it - removing the entry does.
+            2 => ['constant' => 'BLOCK_CAUSE_SITE_BLOCK_LIST', 'label' => 'Site block list'],
+        ],
     ];
+
+    /** What last_error says on a row blocked by the recipient's opt-out. */
+    const OPTED_OUT_ERROR = 'Recipient has unsubscribed from this email category';
+
+    /** The prefix of last_error on a row blocked by the site block list; the entry's reason follows. */
+    const SITE_BLOCK_LIST_ERROR = "Address is on this site's block list";
+
+    /**
+     * The sentence last_error carries for a site block list entry with $reason.
+     */
+    public static function site_block_list_error(string $reason): string
+    {
+        return self::SITE_BLOCK_LIST_ERROR . ': ' . $reason;
+    }
 
     /**
      * Create a queued email record from a frozen descriptor.
@@ -271,40 +306,52 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
         $record->dev_original_to = $descriptor['dev_original_to'] ?? null;
         $record->related_type = $descriptor['related_type'] ?? null;
         $record->related_id = $descriptor['related_id'] ?? null;
+        $record->withheld_recipients = empty($descriptor['withheld_recipients']) ? null : $descriptor['withheld_recipients'];
         $record->attempt_count = 0;
 
         return $record;
     }
 
     /**
-     * Create a blocked email record (for audit trail).
+     * Record an email a standing rule refused, without queueing it.
      *
      * The row exists precisely BECAUSE nothing was sent: "we had something to tell you
-     * and you had asked us not to" is the fact somebody will need six months from now.
+     * and a rule said no" is the fact somebody will need six months from now. It is the
+     * WHOLE message - envelope, dedupe key, related record, schedule - written from the
+     * same descriptor as a queued row, so a replay with the same dedupe key finds it and
+     * a resend sends what the caller asked for. Written BLOCKED in one save: it is never
+     * momentarily PENDING, so a drain running now cannot claim it.
+     *
+     * @param array  $descriptor As for enqueue()
+     * @param int    $block_cause_id One of the BLOCK_CAUSE_* constants
+     * @param string $reason The sentence last_error carries
      */
-    public static function enqueue_blocked(
-        int $site_id,
-        string $to_address,
-        string $subject,
-        string $email_class,
-        array $template_data = [],
-        int $category_id = 2,
-        ?string $to_name = null
-    ): self {
-        $record = new static();
-        $record->site_id = $site_id;
-        $record->to_address = strtolower(trim($to_address));
-        $record->to_name = $to_name;
-        $record->subject = $subject;
-        $record->email_class = $email_class;
-        $record->template_data = $template_data;
-        $record->category_id = $category_id;
+    public static function enqueue_blocked(array $descriptor, int $block_cause_id, string $reason): self
+    {
+        $record = static::_from_descriptor($descriptor);
         $record->status_id = self::STATUS_BLOCKED;
-        $record->last_error = 'Recipient has unsubscribed from this email category';
-        $record->attempt_count = 0;
+        $record->block_cause_id = $block_cause_id;
+        $record->next_attempt_at = null;
+        $record->last_error = $reason;
         $record->save();
 
         return $record;
+    }
+
+    /**
+     * A claimed row a standing rule now refuses: the drain re-checks the site block list
+     * when it claims a row, because an address listed while the row waited must not be
+     * mailed by a decision made before the listing existed.
+     *
+     * The attempt is NOT counted - nothing was attempted.
+     */
+    public function mark_blocked(int $block_cause_id, string $reason): void
+    {
+        $this->status_id = self::STATUS_BLOCKED;
+        $this->block_cause_id = $block_cause_id;
+        $this->next_attempt_at = null;
+        $this->last_error = $reason;
+        $this->save();
     }
 
     /**
@@ -542,6 +589,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     public function reset_for_resend(): void
     {
         $this->status_id = self::STATUS_PENDING;
+        $this->block_cause_id = null;
         $this->attempt_count = 0;
         $this->next_attempt_at = now();
         $this->last_error = null;

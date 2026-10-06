@@ -53,6 +53,7 @@ class Mail_Show_Command extends Command
             'id' => (int) $record->id,
             'site_id' => (int) $record->site_id,
             'status' => $record->status_id__label,
+            'block_cause' => $record->block_cause_id === null ? null : $record->block_cause_id__label,
             'category' => $record->category_id__label,
             'email_class' => $record->email_class,
             'subject' => $record->subject,
@@ -63,6 +64,7 @@ class Mail_Show_Command extends Command
             'reply_to_name' => $record->reply_to_name,
             'cc' => $record->cc,
             'bcc' => $record->bcc,
+            'withheld_recipients' => $record->withheld_recipients,
             'headers' => $record->headers,
             'template_data' => $record->template_data,
             'dedupe_key' => $record->dedupe_key,
@@ -107,6 +109,7 @@ class Mail_Show_Command extends Command
             'Queue row' => '#' . $payload['id'],
             'Site' => $payload['site_id'],
             'Status' => $payload['status'],
+            'Blocked by' => $payload['block_cause'],
             'Category' => $payload['category'],
             'Email class' => $payload['email_class'],
             'Subject' => $payload['subject'],
@@ -115,6 +118,7 @@ class Mail_Show_Command extends Command
             'Reply-To' => $this->__address($payload['reply_to'], $payload['reply_to_name']),
             'CC' => $this->__list($payload['cc']),
             'BCC' => $this->__list($payload['bcc']),
+            'Withheld' => $this->__withheld($payload['withheld_recipients']),
             'Dedupe key' => $payload['dedupe_key'],
             'Related' => $payload['related_id'] === null
                 ? null
@@ -212,5 +216,25 @@ class Mail_Show_Command extends Command
         }
 
         return implode(', ', array_filter($parts));
+    }
+
+    /**
+     * The cc/bcc entries removed before sending, each with its field and the reason.
+     */
+    private function __withheld($value): ?string
+    {
+        if (!is_array($value) || $value === []) {
+            return null;
+        }
+
+        $parts = [];
+
+        foreach ($value as $entry) {
+            $parts[] = strtoupper((string) $entry['field']) . ' '
+                . $this->__address($entry['address'] ?? null, $entry['name'] ?? null)
+                . ' - ' . $entry['reason'];
+        }
+
+        return implode('; ', $parts);
     }
 }

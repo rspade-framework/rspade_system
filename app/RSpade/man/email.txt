@@ -186,14 +186,18 @@ SENDING
 
         1. Resolve the tenant from the EXPERIENCE being served - the portal site on a
            portal request, the staff Session site otherwise. The site stamps the row AND
-           drives the blocklist lookup, so getting it wrong mails somebody who opted out.
-        2. Dedupe.
-        3. Blocklist (non-transactional only) - an opted-out address is RECORDED as a
-           BLOCKED row, never sent. The audit row is the point.
-        4. The dev-site recipient gate (below).
-        5. Freeze subject() and data() into the row.
-        6. Persist attachments into the content-addressed blob store.
-        7. Kick the drain (Task::dispatch), in every context except a test run.
+           drives both block lookups, so getting it wrong mails somebody who must not be.
+        2. Dedupe - the existing row is returned whatever its status, Blocked included.
+        3. The SITE BLOCK LIST, every category (below), on the ORIGINAL addresses: a listed
+           `to` records the whole message as a BLOCKED row; a listed cc/bcc entry is
+           removed, recorded in withheld_recipients, and the message still goes.
+        4. The recipient opt-out (non-transactional only) - an opted-out address is
+           RECORDED as a BLOCKED row, never sent. The audit row is the point.
+        5. The dev-site recipient gate (below), on `to` and on every cc/bcc entry.
+        6. Freeze subject() and data() into the row.
+        7. Persist attachments into the content-addressed blob store - for a Blocked or
+           Suppressed row too: the row is always the whole message.
+        8. Kick the drain (Task::dispatch), in every context except a test run.
 
     A CLI importer, a #[Task] and a web request all kick the drain. The one exception is
     the test runner, whose swapped database connection a detached worker would not see; a
@@ -203,19 +207,66 @@ RECIPIENTS AND BLOCKLIST
 
     Categories (Rsx_Email_Abstract:: and Rsx_Mail:: spell the same three):
 
-        TRANSACTIONAL (1)   Always delivers, ignores the blocklist. Password resets,
-                            invitations, receipts, security notices.
+        TRANSACTIONAL (1)   Ignores the recipient opt-out. Password resets,
+                            invitations, receipts, security notices. The site block
+                            list still applies.
         NOTIFICATION  (2)   Respects the opt-out.
         MARKETING     (3)   Respects the opt-out.
 
     Pick by what the message IS, not by how much you want it delivered.
 
-    Per-address preferences live in _email_recipients, unique per site_id + address:
+    TWO BLOCK RULES, TWO TABLES. The recipient OPT-OUT is the recipient's choice, set by an
+    unsubscribe link, per category, and never applies to transactional mail. The SITE BLOCK
+    LIST is the site's ruling that no email of any category may reach an address. They have
+    different authors and different override rules, so they are separate tables and
+    separate method families.
+
+    The recipient opt-out lives in _email_recipients, unique per site_id + address:
 
         Rsx_Mail::is_blocked($email, Rsx_Mail::MARKETING);
         Rsx_Mail::block($email, Rsx_Mail::MARKETING);
         Rsx_Mail::unblock($email, Rsx_Mail::MARKETING);
         Rsx_Mail::block_all($email);          // every non-transactional category
+
+    The site block list lives in _email_blocked_addresses (Email_Blocked_Address_Model),
+    unique per site_id + address, each entry carrying a short human reason:
+
+        Rsx_Mail::block_address($email, 'Client is marked do-not-email');
+        Rsx_Mail::unblock_address($email);
+        Rsx_Mail::is_address_blocked($email);     // bool
+        Rsx_Mail::blocked_addresses();            // Rsx_Result_Set: email, reason, created_at
+
+    All four act on the CURRENT site - the same resolution as the send (a portal request
+    files under the portal's site; a sessionless CLI or task is site 0, the Default site,
+    so a script maintaining another tenant's list calls Session::set_site_id() first).
+    Both writers are IDEMPOTENT: re-blocking a listed address replaces its reason, and
+    unblocking an absent one is not an error. Addresses are matched trimmed and
+    lowercased. A blank reason throws - it is what the Blocked row says.
+
+    The list is checked three times:
+
+        at enqueue      `to` listed -> the whole message is written BLOCKED, block_cause_id
+                        2, last_error "Address is on this site's block list: <reason>",
+                        in ONE save (never momentarily Pending); the drain is not kicked.
+                        A listed cc/bcc entry is removed and recorded in
+                        withheld_recipients ({field, address, name, reason}); the message
+                        goes to everybody else.
+        at the drain    every claimed row is re-checked against its own site's list
+                        before it is built: a row can wait days (send_at(), a retry, an
+                        outage), and an address listed meanwhile is not mailed. A listed
+                        `to` marks the row Blocked (no attempt counted); a listed copy is
+                        withheld as above.
+        at resend       a row whose original recipient is listed NOW is refused, and
+                        --force does not override it (see rsx:mail:resend).
+
+    Every check is on the ORIGINAL address - before the dev-site redirect, and against
+    dev_original_to at the drain - so a dev host exercises the list exactly as production
+    does.
+
+    THE FRAMEWORK NEVER WRITES THIS TABLE ITSELF - no entry on a bounce, no panel button,
+    and nothing a recipient can reach. Its rows are the application's, so an application
+    keeping the list in sync with its own data may reconcile against the whole list for a
+    site.
 
     The same table carries per-recipient counters (total_sent, total_failed, last_sent_at),
     incremented by the drain against the ORIGINAL address - on a dev host the envelope may
@@ -379,7 +430,10 @@ THE QUEUE AND ITS STATUSES
                          refused to send it because it was due more than
                          rsx.mail.stale_after_days ago (last_error names rsx:mail:resend -
                          see THE STALE-MESSAGE WINDOW).
-        5   Blocked      Never queued: the recipient had opted out of this category.
+        5   Blocked      Never sent: a standing rule refused it. block_cause_id says which
+                         (1 the recipient opted out of this category, 2 the address is on
+                         the site block list) and last_error says it as a sentence - the
+                         tooltip on the /_sys Blocked badge.
         6   Suppressed   Rendered and recorded, deliberately not handed to a transport.
                          Delivery mode is suppressed, or a dev host left no deliverable
                          address. Terminal, and NOT a failure.
@@ -388,7 +442,8 @@ THE QUEUE AND ITS STATUSES
     attempt_count (a first send IS an attempt), next_attempt_at, last_attempt_at,
     last_error, message_id_header, transport, transport_response, dedupe_key (unique per
     site), dev_original_to, rendered_html, rendered_text, headers, cc, bcc, reply_to,
-    related_type/related_id.
+    related_type/related_id, block_cause_id (Blocked rows only), withheld_recipients (the
+    cc/bcc entries removed before sending, each with its field and reason).
 
     THE BUILDER WRITES THE RENDERED BODIES BEFORE THE SEND. A message that ends up
     Suppressed or Failed still carries exactly what would have gone out, which is the only
@@ -572,6 +627,10 @@ DELIVERY MODES AND THE DEV-SITE LAYER
         4. neither                  -> NOTHING is deliverable from this host: the row is
                                        written Suppressed at ENQUEUE time with the reason
                                        "dev site: no whitelist match and no catchall"
+
+    A cc/bcc entry is a recipient too: one the whitelists do not name is removed and
+    recorded in withheld_recipients with the reason "dev site: not whitelisted" - never
+    redirected and never left to ride along beside a `to` sent to the catchall.
 
     Cases 1 and 4 both leave the address untouched and mean opposite things - one is "send
     it", the other is "there is nowhere to send it".
@@ -821,12 +880,18 @@ OPERATIONS
         keeps its identity, its frozen subject and data, and its attachments.
 
         Works for Failed (including stale), Suppressed and Blocked. A PENDING or SENDING row
-        is refused as nothing to do (exit 0). A BLOCKED row REQUIRES --force and exits 1
-        without it: Blocked means the recipient asked not to receive this category, that is
-        a consent record, and a command that quietly overrode it would make the unsubscribe
-        link a lie. Exit 1 when there is no such row. The rules are Rsx_Mail::resend($row,
-        $force), which answers RESEND_QUEUED, RESEND_ALREADY_QUEUED or RESEND_BLOCKED and
-        is what the /_sys Email screen's Resend calls too (rsx:man sys_panel).
+        is refused as nothing to do (exit 0). A row whose original recipient is on the site
+        block list NOW is refused and exits 1 whatever --force says: the site's ruling is
+        lifted by removing the entry, never by a resend. A row Blocked BY the list whose
+        entry has since been removed is resent without --force - the reason it was held is
+        gone. A row Blocked by an OPT-OUT REQUIRES --force and exits 1 without it: the
+        recipient asked not to receive this category, that is a consent record, and a
+        command that quietly overrode it would make the unsubscribe link a lie. A resend
+        sends the message the row holds: copies withheld when it was queued stay withheld.
+        Exit 1 when there is no such row. The rules are Rsx_Mail::resend($row, $force),
+        which answers RESEND_QUEUED, RESEND_ALREADY_QUEUED, RESEND_BLOCKED or
+        RESEND_ADDRESS_BLOCKED and is what the /_sys Email screen's Resend calls too
+        (rsx:man sys_panel).
 
     rsx:health - three Mail rows
         Mail delivery        which of the four modes this install is in. INFO, never FAIL,

@@ -8,9 +8,10 @@ use App\RSpade\Core\Manifest\Manifest;
 /**
  * Enforces path-agnostic class references by preventing direct FQCN usage starting with \Rsx\
  *
- * RSX classes should be referenced by simple name only, allowing the autoloader to
- * resolve them automatically. Direct FQCN references like \Rsx\Models\User_Model
- * are not allowed - use User_Model instead.
+ * RSX classes are referenced by simple name, imported with a `use` statement. Direct FQCN
+ * references like \Rsx\Models\User_Model are not allowed - import it and write User_Model.
+ * The import is not optional in a `catch` clause or an `instanceof`, which never invoke the
+ * autoloader.
  *
  * Note: use statements for Rsx\ classes ARE allowed - this rule only prevents
  * direct FQCN usage in code like new \Rsx\Models\User_Model() or \App\RSpade\Core\Session\Session::init()
@@ -91,7 +92,14 @@ class RsxFqcnUsage_CodeQualityRule extends CodeQualityRule_Abstract
                     $simple_name = end($parts);
 
                     $message = "Direct FQCN reference '{$fqcn}' is not allowed. RSX classes are path-agnostic and should be referenced by simple name only.";
-                    $suggestion = "Replace '{$fqcn}' with '{$simple_name}'. The autoloader will automatically resolve the class.";
+                    // THE IMPORT IS PART OF THE REMEDY. A bare simple name resolves through the
+                    // autoloader for `new` and a static call, but a `catch` clause and
+                    // `instanceof` never invoke the autoloader: with no import, whether they
+                    // match depends on whether something earlier in the request happened to
+                    // load that name in this namespace. The import is also exactly what the
+                    // fixer writes.
+                    $import = ltrim($fqcn, '\\');
+                    $suggestion = "Add 'use {$import};' and reference the class as '{$simple_name}'. The import is required: a catch clause or instanceof with an unimported simple name never invokes the autoloader and silently fails to match.";
 
                     // Get the code snippet if we can access the file
                     $code_snippet = '';

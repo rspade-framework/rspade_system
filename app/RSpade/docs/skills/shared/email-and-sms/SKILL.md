@@ -99,9 +99,11 @@ class Welcome_Email extends Rsx_Email_Abstract
 
 A recipient object's display name comes from `get_printed_name()`, else `first_name`/`last_name`, else nothing. **A `dedupe_key` already used by this site returns THAT row and enqueues nothing** — a replayed webhook cannot double-mail anybody.
 
-Enqueue order (load-bearing): site (portal-aware) -> dedupe -> blocklist (non-transactional to an opted-out address becomes a **BLOCKED** row) -> dev-site gate -> freeze `subject()`/`data()` -> persist attachments -> kick the drain.
+Enqueue order (load-bearing): site (portal-aware) -> dedupe (returns the existing row, any status) -> **site block list** (every category, original addresses: a listed `to` becomes a **BLOCKED** row; a listed cc/bcc is removed and recorded in `withheld_recipients`) -> recipient opt-out (non-transactional to an opted-out address becomes a **BLOCKED** row) -> dev-site gate (`to` AND every cc/bcc) -> freeze `subject()`/`data()` -> persist attachments (Blocked/Suppressed rows too) -> kick the drain.
 
-**Categories**: `TRANSACTIONAL` (always delivers, ignores the blocklist), `NOTIFICATION`, `MARKETING`. Blocklist: `Rsx_Mail::is_blocked/block/unblock/block_all($email, $category)`.
+**Categories**: `TRANSACTIONAL` (ignores the recipient opt-out), `NOTIFICATION`, `MARKETING`.
+
+**Two block rules - never reach for the wrong family.** The recipient OPT-OUT (`_email_recipients`, the recipient's choice, per category, never transactional): `Rsx_Mail::is_blocked/block/unblock/block_all($email, $category)`. The SITE BLOCK LIST (`_email_blocked_addresses`, the site's ruling, EVERY category including transactional): `Rsx_Mail::block_address($email, $reason)` / `unblock_address($email)` (both idempotent) / `is_address_blocked($email)` / `blocked_addresses()` (an `Rsx_Result_Set`), all for the current site (a sessionless script is site 0 - set the site first). The list is checked at enqueue, again when the drain claims a row, and at resend, always on the ORIGINAL address. The framework never writes the list itself, so an app syncing it from its own "do not email" flag may reconcile against the whole list.
 
 A root-relative `<img src="/img/logo.png">` is embedded as a `cid:` part automatically. A remote `https://` src is left alone. **Every embedded image is recorded as what was SENT**: an auto-embedded asset's bytes go into the blob store and an inline `_email_attachments` row (the cid the stored `rendered_html` names) records them at build time, exactly as an `->embed()` part is recorded at `send()`, and the part goes out from that blob. A rebranded or deleted logo changes no historical message; one logo across many messages is one blob, pinned against `File_Disposal_Service` for as long as any row points at it (no window of its own - only `rsx.mail.retention_days` deleting the queue row releases it).
 
@@ -119,7 +121,7 @@ A root-relative `<img src="/img/logo.png">` is embedded as a `cid:` part automat
 | 2 | Sending | claimed right now |
 | 3 | Sent | the transport accepted it |
 | 4 | Failed | attempt cap reached, or the build failed |
-| 5 | Blocked | never queued: the recipient opted out |
+| 5 | Blocked | never sent: `block_cause_id` 1 = recipient opted out, 2 = site block list; `last_error` is the sentence (the `/_sys` badge tooltip) |
 | 6 | Suppressed | rendered and recorded, deliberately not delivered |
 
 `Mail_Queue_Service::send_pending_queue` is `#[Exclusive] #[Schedule('every minute')]`. It reclaims anything stranded in SENDING, then claims rows one at a time.
@@ -167,7 +169,7 @@ php artisan rsx:mail:show 412                               # every column; bodi
 php artisan rsx:mail:resend 412                             # back to Pending, attempts 0, drain kicked
 ```
 
-`--recipient` matches `to_address` **and** `dev_original_to`, so a message redirected to a dev catchall is still found by who it was really for. `rsx:mail:resend` works for Failed, Suppressed and Blocked — but a **Blocked** row requires `--force`, because Blocked is a consent record and overriding it quietly would make the unsubscribe link a lie.
+`--recipient` matches `to_address` **and** `dev_original_to`, so a message redirected to a dev catchall is still found by who it was really for. `rsx:mail:resend` works for Failed, Suppressed and Blocked. A row whose recipient is on the **site block list** now is refused and `--force` does not override it (`Rsx_Mail::RESEND_ADDRESS_BLOCKED`) - remove the entry instead; a row the list blocked whose entry is gone resends without `--force`. A row blocked by an **opt-out** requires `--force`, because that is a consent record and overriding it quietly would make the unsubscribe link a lie.
 
 ---
 
@@ -201,7 +203,8 @@ Every non-transactional message carries a signed footer link and `List-Unsubscri
 | Row is **Failed** with `"Timed out - email was queued too far in the past"` | The stale sweep refused it: it was due more than `rsx.mail.stale_after_days` ago, which means the queue was not running. Fix why, then `rsx:mail:resend <id>` anything still worth sending — that decision is yours, not the drain's. |
 | Rows pile up **Pending** and nothing is even attempted | `MAIL_DELIVERY=disabled` — the queue is deliberately frozen. `rsx:mail:queue` prints the mode first. |
 | Every row Failed with `"expected server aiosmtpd"` | Something other than the dev catcher holds `127.0.0.1:1025`. `supervisorctl status mail-catcher`, or set `MAIL_DELIVERY=live` if this box really is meant to send. |
-| Row is **Blocked** | The recipient opted out of that category. Transactional never blocks — check the categorisation. |
+| Row is **Blocked** | `block_cause_id` / `last_error` say which rule. Cause 1: the recipient opted out of that category (a transactional email never takes this path - check the categorisation). Cause 2: the address is on the site block list, in any category - `Rsx_Mail::unblock_address()` lifts it, and `rsx:mail:resend` then needs no `--force`. |
+| A cc/bcc recipient never got the message | `withheld_recipients` on the row: a listed address (site block list) or, on a `.dev.` host in `live` mode, a copy the dev whitelist does not name. |
 | Row is **Failed** | `last_error` carries the SMTP reply or the build error. A build error is a code bug; no retry helps. |
 | Rows stay **Pending** with attempts unspent | The transport is unreachable — the drain threw. Fix the host and the next sweep sends them. |
 | Drain throws `MAIL_DELIVERY is live, but mailer '...' uses the 'log' transport` / `has no such mailer` | `MAIL_MAILER` names a mailer that delivers nothing or does not exist. Point it at a real mailer, or use `MAIL_DELIVERY=suppressed` to record without sending. |

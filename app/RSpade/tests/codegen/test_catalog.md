@@ -45,6 +45,7 @@ damage-prevention tests, not reporting tests.
 | FIXER-REF-05 | A closure's `use ($captured)` is NOT a trait use | php | closure capture list | name absent | implemented | 2026-08-11 |
 | FIXER-GUARD-01 | A PARTIAL class index blocks all import deletion (guard 2) | php | app entries present, framework `class` metadata missing | index reported unhealthy | implemented | 2026-08-11 |
 | FIXER-GUARD-02 | A class in an unscanned framework zone is proof it exists (guard 1) | php | `Maint_Migrate` (unscanned Commands/) vs a made-up name | true, then false | implemented | 2026-08-11 |
+| FIXER-GUARD-07 | A class in a test tree THIS build does not scan (rsx/tests outside a test run) is proof it exists (guard 1), so an ordinary build keeps the import a test run adds | php | `Analytics_Test` under a build of `rsx` + `Core`, then under the test-run build | true, then false | implemented | 2026-10-06 |
 | FIXER-GUARD-03 | The register-phase set holds the four classes the field report named (guard 3) | php | `Pre_Autoload_Reachability::contains_file()` for the BundleIntegration files | all in the set | implemented | 2026-08-27 |
 | FIXER-GUARD-04 | The set is DERIVED, not universal - it discriminates | php | `Api_Catalog.php`, `rsx/models/client_model.php` | both outside the set | implemented | 2026-08-27 |
 | FIXER-GUARD-05 | A register-phase file never loses an import, even on an unconditional delete verdict | php | the `Route` rule against each of the four files | kept (false) | implemented | 2026-08-27 |

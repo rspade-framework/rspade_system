@@ -19,6 +19,8 @@
 | `_set_manifest_is_bad()` writes the flag and never a partial index | php | not implemented | Phase 4 (`tests/manifest/` build-out) |
 | `Manifest_Fixture_Build_Test::test_two_builds_of_an_unchanged_tree_are_byte_identical` | php | implemented | No timestamp in the index body and a ksorted top-level section map, in any mode: a cold build and the incremental build after it write identical bytes and the same build key |
 | `Manifest_Fixture_Build_Test::test_the_build_writes_both_halves_of_the_index` | php | implemented | The build writes `manifest_index.php` and `manifest_files.php`; a class's method map is in the COLD half, and `file_index` still names it |
+| `Manifest_Fixture_Build_Test::test_a_fixed_file_is_indexed_as_fixed` | php | implemented | A file Php_Fixer rewrote mid-build (a `\Rsx\` FQCN) is indexed as it now is: no pre-fix `rsx_fqcn_violations`, the post-fix hash, and the next build stays clean |
+| `Manifest_Fixture_Build_Test::test_the_bad_flag_discards_every_file_record` | php | implemented | With `manifest_is_bad` raised, a stale finding planted in a fingerprint-matching record (either half of the index) is re-read, not carried forward, and the completed build clears the flag |
 | `Index_Reference_Rule_Test::test_no_top_level_index_duplicates_a_file_record` | php | implemented | THE REFERENCE RULE. No index holds an array that also appears verbatim inside a `files` record |
 | `Index_Reference_Rule_Test::test_hot_index_holds_method_maps_only_for_models_tasks_and_stubs` | php | implemented | The hot index carries no method map nothing on the request path reads |
 | `Index_Reference_Rule_Test::test_file_records_do_not_repeat_their_path` | php | implemented | The path is the key; a record does not repeat it as a value |

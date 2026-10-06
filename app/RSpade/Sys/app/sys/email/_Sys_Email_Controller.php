@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
+use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Sys\App\Sys\Email\_Sys_Email_DataGrid;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
@@ -145,7 +146,22 @@ class _Sys_Email_Controller extends _Sys_Endpoint_Controller_Abstract
             $email['preview_html'] = $email['is_rendered'] ? static::preview_document(Rsx_Mail::displayable_html($record)) : null;
             $email['can_resend'] = $status_id !== Email_Queue_Model::STATUS_PENDING
                 && $status_id !== Email_Queue_Model::STATUS_SENDING;
-            $email['resend_needs_force'] = $status_id === Email_Queue_Model::STATUS_BLOCKED;
+            $email['block_cause'] = $record->block_cause_id === null ? null : $record->block_cause_id__label;
+            $email['status_reason'] = $status_id === Email_Queue_Model::STATUS_BLOCKED ? $record->last_error : null;
+
+            // A recipient on the site block list NOW cannot be resent, force or not; the
+            // entry is removed where it lives. A row the list blocked whose entry is gone
+            // needs no force; an opt-out row does.
+            $listed_reason = Email_Blocked_Address_Model::reason_for(
+                (int) $record->site_id,
+                $record->dev_original_to ?: $record->to_address
+            );
+            $email['resend_refused'] = $listed_reason === null || !$email['can_resend']
+                ? null
+                : 'The recipient is on this site\'s block list (' . $listed_reason . '). Remove the address from the block list to resend.';
+            $email['can_resend'] = $email['can_resend'] && $email['resend_refused'] === null;
+            $email['resend_needs_force'] = $status_id === Email_Queue_Model::STATUS_BLOCKED
+                && (int) $record->block_cause_id !== Email_Queue_Model::BLOCK_CAUSE_SITE_BLOCK_LIST;
 
             return ['email' => $email];
         });
@@ -153,9 +169,10 @@ class _Sys_Email_Controller extends _Sys_Endpoint_Controller_Abstract
 
     /**
      * Resend - the rules of rsx:mail:resend, from the one implementation both call
-     * (Rsx_Mail::resend()): a PENDING or SENDING row is refused, a BLOCKED row needs
-     * force (the recipient's opt-out is a consent record), anything else goes back on the
-     * queue and the drain is kicked.
+     * (Rsx_Mail::resend()): a PENDING or SENDING row is refused, a row whose recipient is
+     * on the site block list is refused whatever force says, an opted-out BLOCKED row
+     * needs force (the recipient's opt-out is a consent record), anything else goes back
+     * on the queue and the drain is kicked.
      *
      * @param array $params id, force (true to resend a BLOCKED row)
      * @return array {id, status, status_label}
@@ -177,6 +194,14 @@ class _Sys_Email_Controller extends _Sys_Endpoint_Controller_Abstract
                 return response_error(
                     Ajax::ERROR_VALIDATION,
                     "Email #{$record->id} is already {$record->status_id__label} - the queue has it."
+                );
+            }
+
+            if ($outcome === Rsx_Mail::RESEND_ADDRESS_BLOCKED) {
+                return response_error(
+                    Ajax::ERROR_VALIDATION,
+                    "Email #{$record->id} cannot be resent: its recipient is on this site's block list. "
+                    . 'Remove the address from the block list first.'
                 );
             }
 

@@ -19,7 +19,12 @@ use Illuminate\Console\Command;
  * This is the remedy the stale sweep names in last_error, and the ordinary answer to a
  * FAILED row once whatever broke has been fixed.
  *
- * A BLOCKED ROW IS DIFFERENT, AND --force IS NOT A FORMALITY. Blocked means the
+ * A RECIPIENT ON THE SITE BLOCK LIST IS REFUSED OUTRIGHT, --force or not: the site has
+ * ruled that no email reaches that address, and the ruling is lifted by removing the
+ * entry (Rsx_Mail::unblock_address()), never by a resend. A row the list blocked whose
+ * entry has since been removed is resent without --force.
+ *
+ * A ROW BLOCKED BY AN OPT-OUT IS DIFFERENT, AND --force IS NOT A FORMALITY. It means the
  * recipient asked not to receive this category. That is a consent record, and a command
  * that quietly overrode it would make the unsubscribe link a lie - so resending one is
  * possible (an operator may genuinely have to reissue a transactional message that was
@@ -37,7 +42,7 @@ class Mail_Resend_Command extends Command
 {
     protected $signature = 'rsx:mail:resend
                             {id : The _email_queue row id}
-                            {--force : Resend even though the recipient has unsubscribed (BLOCKED rows)}';
+                            {--force : Resend even though the recipient has unsubscribed (opted-out BLOCKED rows; never overrides the site block list)}';
 
     protected $description = 'Reset a finished email queue row to PENDING and drain the queue';
 
@@ -64,6 +69,16 @@ class Mail_Resend_Command extends Command
                 );
 
                 return 0;
+            }
+
+            if ($outcome === Rsx_Mail::RESEND_ADDRESS_BLOCKED) {
+                $this->error(
+                    "[ERROR] #{$id} cannot be resent: " . ($record->dev_original_to ?: $record->to_address)
+                    . " is on site #{$record->site_id}'s email block list."
+                );
+                $this->line('--force does not override the site block list. Remove the address from the block list first.');
+
+                return 1;
             }
 
             if ($outcome === Rsx_Mail::RESEND_BLOCKED) {

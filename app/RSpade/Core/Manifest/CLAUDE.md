@@ -709,9 +709,19 @@ It comes from the flag.
 
 **The flag is a SIDECAR FILE**, `build/manifest_is_bad`, and raising it is ALL
 `_set_manifest_is_bad()` does. Its existence is the whole signal; its content is a sentence
-for a human. `_load_cached_data()` refuses the cache outright while it exists, so `init()`
-forces a FULL rebuild, the pass re-fires the same violation, and the build aborts again -
-every request, until the source is fixed.
+for a human. `_load_cached_data()` refuses the cache outright while it exists - BOTH halves:
+it also marks the cold half loaded, so the rebuild cannot merge `manifest_files.php` back in
+and carry a fingerprint-matching record forward unread. `init()` therefore forces a FULL
+rebuild that re-reads every file, the pass re-fires the same violation, and the build aborts
+again - every request, until the source is fixed.
+
+**A file Php_Fixer rewrites is re-scanned from scratch, never merged.** Its entry is replaced
+by `_process_file()` on the rewritten bytes and the file joins the changed set (reflection
+and the per-file quality pass then read it as it now is). The parser writes a key only when
+it has something to say (`rsx_fqcn_violations` exists only while there are violations), so a
+merge of the post-fix parse over the pre-fix entry kept the pre-fix findings beside the
+post-fix fingerprint - every later build reused the entry and re-reported a violation the
+source no longer held (a downstream field report, 2026-10-06).
 
 **It used to call `_save()` from inside a FAILING build**, which overwrote the last good index
 with the half-built one the process happened to be holding, plus a `build_key` computed from

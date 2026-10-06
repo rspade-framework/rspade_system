@@ -2,11 +2,13 @@
 
 namespace App\RSpade\Core\Mail;
 
+use App\RSpade\Core\Database\Rsx_Result_Set;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Mail\Rsx_Email_Abstract;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Models\Email_Attachment_Model;
+use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Email_Recipient_Model;
 use App\RSpade\Core\Portal\Portal_Session;
@@ -23,7 +25,7 @@ use App\RSpade\Core\Task\Task;
  *
  * and send() lands here, in enqueue(). What Rsx_Mail owns is everything that is true
  * of every email regardless of which one it is: the tenant it belongs to, the
- * recipient blocklist, the dev-site recipient gating, the unsubscribe signature, and
+ * site block list, the recipient opt-out, the dev-site recipient gating, the unsubscribe signature, and
  * getting the row onto the queue and the drain kicked.
  *
  * ALL EMAIL IS QUEUED - never sent inline. A slow or down mail host can therefore
@@ -42,15 +44,24 @@ class Rsx_Mail
      * The order of operations is load-bearing:
      *
      *   1. Resolve the tenant (the realm being served, not the identity logged in).
-     *   2. Dedupe: an already-used key returns the EXISTING row and enqueues nothing.
-     *   3. Blocklist: a non-transactional email to an opted-out address is RECORDED
-     *      as BLOCKED, never sent - the audit row is the point.
-     *   4. Dev-site redirect (a second, independent safety layer keyed on hostname).
-     *   5. Freeze subject() and data() into the row. From here the email's own class
+     *   2. Dedupe: an already-used key returns the EXISTING row, whatever its status, and
+     *      enqueues nothing.
+     *   3. Site block list (EVERY category, transactional included): a listed `to` records
+     *      the whole message BLOCKED; a listed cc/bcc entry is removed and recorded on the
+     *      row, and the message still goes to everybody else. Checked BEFORE the opt-out,
+     *      because it is the stronger rule and its reason is the one worth recording, and
+     *      before the dev-site gate, on the ORIGINAL addresses - after it, a dev host would
+     *      look up its own catchall and the list would only ever be exercised in production.
+     *   4. Recipient opt-out: a non-transactional email to an address that unsubscribed is
+     *      RECORDED as BLOCKED, never sent - the audit row is the point.
+     *   5. Dev-site gate (a second, independent safety layer keyed on hostname), on `to`
+     *      AND on every cc/bcc entry.
+     *   6. Freeze subject() and data() into the row. From here the email's own class
      *      is never asked anything again: a template that renders next Tuesday renders
      *      the values the caller had TODAY.
-     *   6. Persist attachments into the content-addressed blob store.
-     *   7. Kick the drain.
+     *   7. Persist attachments into the content-addressed blob store - for a Blocked or
+     *      Suppressed row too, so the row is the whole message and a resend sends it whole.
+     *   8. Kick the drain.
      *
      * @param Rsx_Email_Abstract $email
      * @return Email_Queue_Model The queued (or pre-existing, when deduped) record.
@@ -67,9 +78,6 @@ class Rsx_Mail
             );
         }
 
-        $to = $envelope['to']['address'];
-        $to_name = $envelope['to']['name'];
-
         // A key already used by this tenant means this email has been queued before.
         // Return that row in whatever state it reached - re-running an import or
         // replaying a webhook must not mail anybody twice.
@@ -81,16 +89,56 @@ class Rsx_Mail
             }
         }
 
-        // Transactional email always delivers; the other categories honour the opt-out.
+        $descriptor = [
+            'site_id' => $site_id,
+            'to_address' => $envelope['to']['address'],
+            'to_name' => $envelope['to']['name'],
+            'subject' => $email->subject(),
+            'email_class' => $email::view_id(),
+            'template_data' => $email->data(),
+            'category_id' => $category,
+            'reply_to' => $envelope['reply_to']['address'] ?? null,
+            'reply_to_name' => $envelope['reply_to']['name'] ?? null,
+            'cc' => $envelope['cc'],
+            'bcc' => $envelope['bcc'],
+            'withheld_recipients' => [],
+            'dedupe_key' => $envelope['dedupe_key'],
+            'next_attempt_at' => $envelope['send_at'],
+            'dev_original_to' => null,
+            'related_type' => $envelope['related_type'],
+            'related_id' => $envelope['related_id'],
+        ];
+
+        $to = $descriptor['to_address'];
+
+        // THE SITE BLOCK LIST. One query for every address on the envelope.
+        $listed = Email_Blocked_Address_Model::listed_among($site_id, static::__envelope_addresses($descriptor));
+        $to_reason = $listed[Email_Blocked_Address_Model::normalize($to)] ?? null;
+
+        if ($to_reason !== null) {
+            return static::__record_blocked(
+                $descriptor,
+                $envelope['attachments'],
+                Email_Queue_Model::BLOCK_CAUSE_SITE_BLOCK_LIST,
+                Email_Queue_Model::site_block_list_error($to_reason)
+            );
+        }
+
+        static::__withhold_copies(
+            $descriptor,
+            fn (string $address) => isset($listed[$address])
+                ? Email_Queue_Model::site_block_list_error($listed[$address])
+                : null
+        );
+
+        // THE RECIPIENT OPT-OUT. Transactional email ignores it; the site block list above
+        // is the rule no category escapes.
         if ($category !== self::TRANSACTIONAL && Email_Recipient_Model::is_blocked($site_id, $to, $category)) {
-            return Email_Queue_Model::enqueue_blocked(
-                $site_id,
-                $to,
-                $email->subject(),
-                $email::view_id(),
-                $email->data(),
-                $category,
-                $to_name
+            return static::__record_blocked(
+                $descriptor,
+                $envelope['attachments'],
+                Email_Queue_Model::BLOCK_CAUSE_OPTED_OUT,
+                Email_Queue_Model::OPTED_OUT_ERROR
             );
         }
 
@@ -101,30 +149,19 @@ class Rsx_Mail
         // there would mean a fresh install recorded every message SUPPRESSED and a
         // developer never saw their own mail. Set MAIL_DELIVERY=live and the gating is
         // exactly what it always was.
-        $dev_original_to = null;
+        //
+        // A COPY IS A RECIPIENT TOO. A cc/bcc entry the whitelist does not name is removed
+        // and recorded: redirecting `to` to the catchall while the real copies rode along
+        // would mail exactly the people this layer exists to protect.
         $dev_undeliverable = false;
         if (self::is_dev_mode() && Rsx_Mail_Transport::delivery_mode() === Rsx_Mail_Transport::MODE_LIVE) {
-            [$to, $dev_original_to, $dev_undeliverable] = self::_apply_dev_redirect($to);
-        }
+            [$descriptor['to_address'], $descriptor['dev_original_to'], $dev_undeliverable] = self::_apply_dev_redirect($to);
 
-        $descriptor = [
-            'site_id' => $site_id,
-            'to_address' => $to,
-            'to_name' => $to_name,
-            'subject' => $email->subject(),
-            'email_class' => $email::view_id(),
-            'template_data' => $email->data(),
-            'category_id' => $category,
-            'reply_to' => $envelope['reply_to']['address'] ?? null,
-            'reply_to_name' => $envelope['reply_to']['name'] ?? null,
-            'cc' => $envelope['cc'],
-            'bcc' => $envelope['bcc'],
-            'dedupe_key' => $envelope['dedupe_key'],
-            'next_attempt_at' => $envelope['send_at'],
-            'dev_original_to' => $dev_original_to,
-            'related_type' => $envelope['related_type'],
-            'related_id' => $envelope['related_id'],
-        ];
+            static::__withhold_copies(
+                $descriptor,
+                fn (string $address) => self::_dev_whitelisted($address) ? null : 'dev site: not whitelisted'
+            );
+        }
 
         // A dev host with no whitelist match and no catchall has nowhere to send this.
         // That is known NOW, so the row is written SUPPRESSED now - queueing it and
@@ -148,6 +185,133 @@ class Rsx_Mail
         static::_kick_drain();
 
         return $record;
+    }
+
+    /**
+     * Write the whole message as a BLOCKED row, attachments included. The drain is not
+     * kicked: there is nothing for it to do.
+     */
+    private static function __record_blocked(array $descriptor, array $attachments, int $block_cause_id, string $reason): Email_Queue_Model
+    {
+        $record = Email_Queue_Model::enqueue_blocked($descriptor, $block_cause_id, $reason);
+
+        static::_persist_attachments($record, $attachments);
+
+        return $record;
+    }
+
+    /**
+     * Every address on a descriptor or row's envelope - the real `to` and every copy.
+     *
+     * @return array<int, string>
+     */
+    private static function __envelope_addresses(array $envelope): array
+    {
+        $addresses = [($envelope['dev_original_to'] ?? null) ?: $envelope['to_address']];
+
+        foreach (['cc', 'bcc'] as $field) {
+            foreach ($envelope[$field] ?? [] as $entry) {
+                $addresses[] = $entry['address'];
+            }
+        }
+
+        return $addresses;
+    }
+
+    /**
+     * Remove every cc/bcc entry $reason_for names a reason for, and record each one in
+     * withheld_recipients with the field it was on and why. A recipient never vanishes
+     * from a message without the row saying so.
+     *
+     * @param array    $envelope   A descriptor (or a row's envelope as an array), edited in place
+     * @param callable $reason_for fn (string $normalized_address): ?string - null keeps the entry
+     * @return bool Whether anything was withheld
+     */
+    private static function __withhold_copies(array &$envelope, callable $reason_for): bool
+    {
+        $withheld_any = false;
+
+        foreach (['cc', 'bcc'] as $field) {
+            $kept = [];
+
+            foreach ($envelope[$field] ?? [] as $entry) {
+                $reason = $reason_for(Email_Blocked_Address_Model::normalize($entry['address']));
+
+                if ($reason === null) {
+                    $kept[] = $entry;
+                    continue;
+                }
+
+                $envelope['withheld_recipients'][] = [
+                    'field' => $field,
+                    'address' => $entry['address'],
+                    'name' => $entry['name'] ?? null,
+                    'reason' => $reason,
+                ];
+                $withheld_any = true;
+            }
+
+            $envelope[$field] = $kept;
+        }
+
+        return $withheld_any;
+    }
+
+    /**
+     * The drain's re-check of the site block list, for a row it has just claimed.
+     *
+     * A row can wait PENDING for days - send_at(), a retry delay, an outage - and an
+     * address listed in that window must not be mailed by a decision made before the
+     * listing existed. A listed `to` (the ORIGINAL recipient, not a dev catchall) marks
+     * the row BLOCKED without counting an attempt; a listed copy is removed and recorded,
+     * and the row goes on to be sent.
+     *
+     * Framework-internal: Mail_Queue_Service is the one caller.
+     *
+     * @return bool true when the row is now BLOCKED and must not be sent
+     */
+    public static function _recheck_block_list(Email_Queue_Model $row): bool
+    {
+        $envelope = [
+            'to_address' => $row->to_address,
+            'dev_original_to' => $row->dev_original_to,
+            'cc' => $row->cc ?? [],
+            'bcc' => $row->bcc ?? [],
+            'withheld_recipients' => $row->withheld_recipients ?? [],
+        ];
+
+        $listed = Email_Blocked_Address_Model::listed_among((int) $row->site_id, static::__envelope_addresses($envelope));
+
+        if (empty($listed)) {
+            return false;
+        }
+
+        $to_reason = $listed[Email_Blocked_Address_Model::normalize($row->dev_original_to ?: $row->to_address)] ?? null;
+
+        if ($to_reason !== null) {
+            $row->mark_blocked(
+                Email_Queue_Model::BLOCK_CAUSE_SITE_BLOCK_LIST,
+                Email_Queue_Model::site_block_list_error($to_reason)
+            );
+
+            return true;
+        }
+
+        $withheld = static::__withhold_copies(
+            $envelope,
+            fn (string $address) => isset($listed[$address])
+                ? Email_Queue_Model::site_block_list_error($listed[$address])
+                : null
+        );
+
+        if ($withheld) {
+            $row->cc = $envelope['cc'];
+            $row->bcc = $envelope['bcc'];
+            $row->withheld_recipients = $envelope['withheld_recipients'];
+            $row->save();
+        }
+
+        return false;
     }
 
     /**
@@ -437,8 +601,14 @@ class Rsx_Mail
     /** resend() did nothing: the row is PENDING or SENDING, so the queue already has it. */
     const RESEND_ALREADY_QUEUED = 'already_queued';
 
-    /** resend() did nothing: the row is BLOCKED and $force was not given. */
+    /** resend() did nothing: the row is BLOCKED by the recipient's opt-out and $force was not given. */
     const RESEND_BLOCKED = 'blocked';
+
+    /**
+     * resend() did nothing: the row's recipient is on the site block list NOW. $force does
+     * not override this - the entry is removed where it lives (Rsx_Mail::unblock_address()).
+     */
+    const RESEND_ADDRESS_BLOCKED = 'address_blocked';
 
     /**
      * Put a finished queue row back on the queue - the ONE implementation of the resend
@@ -446,12 +616,21 @@ class Rsx_Mail
      *
      *   PENDING / SENDING  refused (RESEND_ALREADY_QUEUED): the queue already has it, and
      *                      resetting a row a drain is mid-way through would send it twice.
-     *   BLOCKED            refused (RESEND_BLOCKED) unless $force: Blocked means the
-     *                      recipient asked not to receive this category. That is a consent
-     *                      record, and a resend that quietly overrode it would make the
-     *                      unsubscribe link a lie - so it is possible, never accidental.
-     *   anything else      reset_for_resend() (status PENDING, attempts 0, error cleared,
-     *                      due now) and the drain kicked (RESEND_QUEUED).
+     *   recipient listed   refused (RESEND_ADDRESS_BLOCKED) whatever $force says, whatever
+     *                      the row's status: the original recipient is on the site block
+     *                      list right now. A site block is lifted by removing the entry,
+     *                      where that removal is itself recorded - never by a resend.
+     *   BLOCKED, opt-out   refused (RESEND_BLOCKED) unless $force: the recipient asked not
+     *                      to receive this category. That is a consent record, and a
+     *                      resend that quietly overrode it would make the unsubscribe link
+     *                      a lie - so it is possible, never accidental.
+     *   BLOCKED, list      requeued WITHOUT $force: the entry that held it is gone, so the
+     *                      reason it was held no longer exists.
+     *   anything else      reset_for_resend() (status PENDING, attempts 0, error and block
+     *                      cause cleared, due now) and the drain kicked (RESEND_QUEUED).
+     *
+     * A cc/bcc entry withheld when the row was queued stays withheld: withheld_recipients
+     * records it, and a resend sends the message the row holds.
      *
      * SCOPE: the row is saved under whatever site scope the caller runs in. An operator
      * surface acting on any tenant's row (the command, the panel) runs this inside
@@ -467,7 +646,19 @@ class Rsx_Mail
             return self::RESEND_ALREADY_QUEUED;
         }
 
-        if ($status_id === Email_Queue_Model::STATUS_BLOCKED && !$force) {
+        $listed_reason = Email_Blocked_Address_Model::reason_for(
+            (int) $record->site_id,
+            $record->dev_original_to ?: $record->to_address
+        );
+
+        if ($listed_reason !== null) {
+            return self::RESEND_ADDRESS_BLOCKED;
+        }
+
+        if ($status_id === Email_Queue_Model::STATUS_BLOCKED
+            && (int) $record->block_cause_id !== Email_Queue_Model::BLOCK_CAUSE_SITE_BLOCK_LIST
+            && !$force
+        ) {
             return self::RESEND_BLOCKED;
         }
 
@@ -478,7 +669,52 @@ class Rsx_Mail
     }
 
     // =========================================================================
-    // BLOCKLIST API
+    // SITE BLOCK LIST API - the SITE's rule, every category
+    // =========================================================================
+
+    /**
+     * Every entry on the current site's block list: email, reason, created_at.
+     *
+     * The list is the SITE's rule that no email of any category - transactional included -
+     * may reach an address. It is not the recipient opt-out (is_blocked() / block() below):
+     * nothing a recipient can reach writes it, and the framework never writes it on its own,
+     * so an application may treat the whole list for a site as its own and reconcile it.
+     *
+     * Iterated under the current site's scope, which is the site it lists.
+     */
+    public static function blocked_addresses(): Rsx_Result_Set
+    {
+        return Email_Blocked_Address_Model::all_for_site(static::__current_site_id());
+    }
+
+    /**
+     * Is $email on the current site's block list? Case- and whitespace-insensitive.
+     */
+    public static function is_address_blocked(string $email): bool
+    {
+        return Email_Blocked_Address_Model::reason_for(static::__current_site_id(), $email) !== null;
+    }
+
+    /**
+     * Put $email on the current site's block list, with the sentence a Blocked row and its
+     * tooltip will show. IDEMPOTENT: an address already listed takes the new reason.
+     */
+    public static function block_address(string $email, string $reason): void
+    {
+        Email_Blocked_Address_Model::block(static::__current_site_id(), $email, $reason);
+    }
+
+    /**
+     * Take $email off the current site's block list. IDEMPOTENT: an address that is not
+     * listed is not an error.
+     */
+    public static function unblock_address(string $email): void
+    {
+        Email_Blocked_Address_Model::unblock(static::__current_site_id(), $email);
+    }
+
+    // =========================================================================
+    // RECIPIENT OPT-OUT API - the RECIPIENT's choice, per category
     // =========================================================================
 
     /**
@@ -570,6 +806,33 @@ class Rsx_Mail
     // =========================================================================
 
     /**
+     * Does the dev-site whitelist (an address, or the address's domain) name $address?
+     */
+    private static function _dev_whitelisted(string $address): bool
+    {
+        $address = strtolower(trim($address));
+
+        $address_whitelist = config('rsx.mail.dev_site.address_whitelist', '');
+        if ($address_whitelist) {
+            $addresses = array_map('trim', array_map('strtolower', explode(',', $address_whitelist)));
+            if (in_array($address, $addresses, true)) {
+                return true;
+            }
+        }
+
+        $domain_whitelist = config('rsx.mail.dev_site.domain_whitelist', '');
+        if ($domain_whitelist) {
+            $domains = array_map('trim', array_map('strtolower', explode(',', $domain_whitelist)));
+            $domain = substr($address, strpos($address, '@') + 1);
+            if (in_array($domain, $domains, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Check if dev site email gating is active
      *
      * Uses Rsx::is_dev_site() - hostname-based detection. This is a SECOND layer,
@@ -599,25 +862,8 @@ class Rsx_Mail
      */
     private static function _apply_dev_redirect(string $to): array
     {
-        $to_lower = strtolower($to);
-
-        // Check address whitelist
-        $address_whitelist = config('rsx.mail.dev_site.address_whitelist', '');
-        if ($address_whitelist) {
-            $addresses = array_map('trim', array_map('strtolower', explode(',', $address_whitelist)));
-            if (in_array($to_lower, $addresses)) {
-                return [$to, null, false];
-            }
-        }
-
-        // Check domain whitelist
-        $domain_whitelist = config('rsx.mail.dev_site.domain_whitelist', '');
-        if ($domain_whitelist) {
-            $domains = array_map('trim', array_map('strtolower', explode(',', $domain_whitelist)));
-            $to_domain = substr($to_lower, strpos($to_lower, '@') + 1);
-            if (in_array($to_domain, $domains)) {
-                return [$to, null, false];
-            }
+        if (self::_dev_whitelisted($to)) {
+            return [$to, null, false];
         }
 
         // Redirect to catchall address

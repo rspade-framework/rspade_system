@@ -1894,29 +1894,29 @@ class Manifest
         if (!Rsx::is_production()) {
             $php_fixer_modified_files = static::_run_php_fixer($files_to_process);
 
-            // Re-parse files that Php_Fixer modified to update manifest with corrected metadata
-            // This ensures namespace/class/fqcn data matches what's actually in the file
-            // CRITICAL: Without this, we'd have stale FQCNs from before Php_Fixer ran
+            // A FILE THE FIXER REWROTE IS RE-SCANNED FROM SCRATCH, and joins the changed set.
+            //
+            // The entry is REPLACED, never merged. The parser only writes a key a file has
+            // something to say about (rsx_fqcn_violations exists only while there are
+            // violations), so merging the post-fix parse over the pre-fix entry kept every
+            // finding the fix had just removed - beside the post-fix hash, mtime and size.
+            // Every later build then matched that fingerprint, reused the entry and
+            // re-reported a violation the source no longer contained: a downstream field
+            // report (2026-10-06) of every artisan command, --help included, aborting on a
+            // PHP-RSX-FQCN-01 that was already fixed.
+            //
+            // Joining the changed set gives the rewritten bytes the same treatment as any
+            // other edit: reflection and the per-file quality pass read the file as it now is.
             if (!empty($php_fixer_modified_files)) {
-                console_debug('MANIFEST', 'Re-parsing ' . count($php_fixer_modified_files) . ' files modified by Php_Fixer');
+                console_debug('MANIFEST', 'Re-scanning ' . count($php_fixer_modified_files) . ' files modified by Php_Fixer');
                 foreach ($php_fixer_modified_files as $file_path) {
-                    // Re-extract metadata with corrected namespace
-                    $absolute_path = base_path($file_path);
-                    $php_metadata = \App\RSpade\Core\PHP\Php_Parser::parse($absolute_path);
-
-                    // Update manifest with corrected metadata
-                    static::$data['data']['files'][$file_path] = array_merge(
-                        static::$data['data']['files'][$file_path],
-                        $php_metadata
-                    );
-
-                    // Recalculate file hash since file was modified
-                    clearstatcache(true, $absolute_path);
-                    $updated_stat = stat($absolute_path);
-                    static::$data['data']['files'][$file_path]['hash'] = sha1_file($absolute_path);
-                    static::$data['data']['files'][$file_path]['mtime'] = $updated_stat['mtime'];
-                    static::$data['data']['files'][$file_path]['size'] = $updated_stat['size'];
+                    clearstatcache(true, base_path($file_path));
+                    static::$data['data']['files'][$file_path] = static::_process_file($file_path);
                 }
+
+                $files_to_process = array_values(array_unique(array_merge($files_to_process, $php_fixer_modified_files)));
+                $changed_across_passes = array_values(array_unique(array_merge($changed_across_passes, $php_fixer_modified_files)));
+                static::$_changed_files = $changed_across_passes;
             }
 
             // THE FIXER'S MEMORY IS STORED AFTER THE RE-PARSE, not before it. A fix that

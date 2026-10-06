@@ -130,8 +130,15 @@ class Manifest_Store
 
         // A raised bad-manifest flag refuses the cache outright - the index on disk may be
         // perfectly well-formed and still describe a tree that failed its own validation.
+        //
+        // BOTH HALVES. The rebuild that follows merges the cold half before it compares a
+        // single fingerprint, so refusing only the hot file left every per-file record in
+        // play: a record whose fingerprint matched the file was carried forward unread, and a
+        // stale finding inside it re-fired on every load while the flag promised a rebuild
+        // from scratch. Marking the cold half loaded is what makes it one.
         if (file_exists(static::_bad_flag_path())) {
             Manifest::$data = static::_empty_data();
+            Manifest::$_cold_loaded = true;
 
             return false;
         }

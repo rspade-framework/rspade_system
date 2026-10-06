@@ -84,6 +84,20 @@ class _Sys_Email_View_Action extends Spa_Action {
     }
 
     /**
+     * The cc/bcc entries removed before sending, each with its field and the
+     * reason, or null when nothing was withheld.
+     */
+    static withheld_list(list) {
+        if (!Array.isArray(list) || !list.length) {
+            return null;
+        }
+
+        return list
+            .map((entry) => entry.field.toUpperCase() + ' ' + _Sys_Email_View_Action.address(entry.address, entry.name) + ' - ' + entry.reason)
+            .join('; ');
+    }
+
+    /**
      * A CC/BCC list on one line, or null when empty. Entries are {address, name} or strings.
      */
     static address_list(list) {

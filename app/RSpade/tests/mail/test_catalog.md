@@ -282,3 +282,21 @@ the queue is one table for the install, and a worker's declared site never narro
 | MAIL-270 | another site's message is claimed, sent and recorded | php | row queued as site 2, drain as site 1 with an accepting stub | the stub received it; row SENT, site_id still 2; a site-2 recipient row counts one send | implemented | 2026-09-25 |
 | MAIL-271 | the stranded-row reclaim reaches another site | php | site-2 row forced to SENDING | reclaimed > 0, then SENT on the same pass | implemented | 2026-09-25 |
 | MAIL-272 | retention prunes every site's rows | php | site-2 SENT row backdated 90 days, `cleanup` (catcher pointed at nothing) | row gone | implemented | 2026-09-25 |
+
+## The site block list (`php/Email_Site_Block_List_Test.php`)
+
+The SITE's ruling that no email reaches an address, in every category; checked at enqueue (original addresses, before the dev gate), at the drain, and at resend.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| BLK-01 | the API is idempotent both ways; a re-block takes the new reason; a blank reason throws | php | block twice, unblock twice | one entry with the second reason; then not listed | implemented | 2026-10-06 |
+| BLK-02 | matching ignores case and whitespace | php | padded uppercase entry, mixed-case send | listed; send Blocked | implemented | 2026-10-06 |
+| BLK-03 | a listed `to` is Blocked in every category, cause 2, the entry's reason in last_error; nothing reaches the transport | php | transactional, notification, marketing sends + drain | three Blocked rows; stub send_count 0 | implemented | 2026-10-06 |
+| BLK-04 | a listed cc and bcc are withheld and recorded; the message goes to `to` and the unlisted copy | php | one kept cc, one listed cc, one listed bcc | row Pending, withheld_recipients has both; delivered message cc = the kept one | implemented | 2026-10-06 |
+| BLK-05 | the list is per site | php | listed on site 1, sent from a new site | Pending | implemented | 2026-10-06 |
+| BLK-06 | on a dev host in live mode a listed address is Blocked, not redirected; an unwhitelisted cc is withheld, not carried beside a catchall `to` | php | catchall set, no whitelist | Blocked at the original address; `dev site: not whitelisted` | implemented | 2026-10-06 |
+| BLK-07 | a Blocked row is the whole message and dedupes | php | listed `to`, cc, dedupe key, attachment, sent twice | one row; cc and attachment recorded | implemented | 2026-10-06 |
+| BLK-08 | an opt-out records cause 1; transactional still ignores the opt-out | php | block_all, notification + transactional | cause 1 + OPTED_OUT_ERROR; transactional Pending | implemented | 2026-10-06 |
+| BLK-09 | an address listed after enqueue is Blocked by the drain, no attempt counted | php | send_at tomorrow, list, age the row, drain | Blocked cause 2, attempts 0, counts.blocked 1, nothing sent | implemented | 2026-10-06 |
+| BLK-10 | resend of a list-blocked row: refused while listed with and without force; requeued without force once unlisted | php | resend, resend force, unblock, resend | ADDRESS_BLOCKED x2, then QUEUED with cause cleared | implemented | 2026-10-06 |
+| BLK-11 | resend of an opted-out row still needs force | php | block_all row | BLOCKED, then QUEUED with force | implemented | 2026-10-06 |

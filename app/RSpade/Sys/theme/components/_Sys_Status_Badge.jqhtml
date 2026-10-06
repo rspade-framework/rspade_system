@@ -7,6 +7,7 @@ $status - the status key (required, case-insensitive). Either a tone -
             mail/SMS: pending, sending, sent, failed, blocked, suppressed
             login identities: active, inactive, suspended
 $label - the text shown [optional; default: the status word, capitalised]
+$title - a tooltip saying WHY the record has this status [optional]
 
 An unknown status THROWS rather than painting a grey pill: a new status value is
 a decision about what colour it is, made once in _Sys_Status_Badge.TONES.
@@ -23,5 +24,9 @@ a decision about what colour it is, made once in _Sys_Status_Badge.TONES.
             : _key.charAt(0).toUpperCase() + _key.slice(1);
         const _class = '_Sys_Status_Badge__pill _Sys_Status_Badge__pill--' + _tone;
     %>
-    <span class="<%= _class %>"><%= _label %></span>
+    <% if (this.args.title) { %>
+        <span class="<%= _class %>" title="<%= this.args.title %>"><%= _label %></span>
+    <% } else { %>
+        <span class="<%= _class %>"><%= _label %></span>
+    <% } %>
 </Define:_Sys_Status_Badge>

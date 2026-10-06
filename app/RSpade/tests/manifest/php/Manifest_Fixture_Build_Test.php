@@ -443,6 +443,95 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * A FILE THE FIXER REWROTE IS INDEXED AS IT NOW IS.
+     *
+     * The fixture carries a direct \\Rsx\\ FQCN, which the parser records as a
+     * PHP-RSX-FQCN-01 finding and Php_Fixer rewrites to a simple name in the same build. The
+     * index entry must describe the rewritten file - its hash AND its findings - or the next
+     * build matches the fingerprint, reuses the entry and re-reports a violation the source
+     * no longer contains, on every artisan command.
+     */
+    public static function test_a_fixed_file_is_indexed_as_fixed()
+    {
+        static::__make_tree();
+
+        try {
+            $relative = static::$tree . '/fixture_fqcn_probe.php';
+            $absolute = base_path($relative);
+            $namespace = 'App\\RSpade\\Temp\\' . static::__namespace_segment();
+
+            file_put_contents(
+                $absolute,
+                "<?php\n\nnamespace {$namespace};\n\nclass Fixture_Fqcn_Probe\n{\n"
+                . "    public static function target(): string\n    {\n        return \\Rsx\\Models\\Party_Model::class;\n    }\n}\n"
+            );
+
+            $entry = static::__build()['data']['files'][$relative] ?? null;
+
+            static::__assert_false(
+                str_contains(file_get_contents($absolute), '\\Rsx\\Models\\Party_Model'),
+                'the fixer rewrote the FQCN'
+            );
+            static::__assert_not_null($entry, 'the probe is indexed');
+            static::__assert_false(isset($entry['rsx_fqcn_violations']), 'the entry carries no pre-fix finding');
+            static::__assert_equals(sha1_file($absolute), $entry['hash'], 'the entry fingerprints the rewritten file');
+
+            static::__build();
+        } finally {
+            static::__remove_tree();
+        }
+    }
+
+    /**
+     * A RAISED manifest_is_bad FLAG REBUILDS FROM SCRATCH - BOTH HALVES OF THE INDEX.
+     *
+     * A stale finding is planted in a record whose fingerprint still matches its file, which
+     * is the shape a poisoned index takes. With the flag raised the build must re-read the
+     * file rather than carry the record forward, so the stale finding never fires.
+     */
+    public static function test_the_bad_flag_discards_every_file_record()
+    {
+        static::__make_tree();
+
+        try {
+            static::__build();
+
+            $relative = static::$tree . '/fixture_widget.php';
+            $stale = [['line' => 1, 'fqcn' => '\\Rsx\\Models\\Party_Model', 'message' => 'stale']];
+            $planted = false;
+
+            foreach (['manifest_index.php', 'manifest_files.php'] as $half) {
+                $path = static::$build_root . '/' . $half;
+                $data = include $path;
+                $files = &$data;
+
+                if ($half === 'manifest_index.php') {
+                    $files = &$data['data']['files'];
+                }
+
+                if (isset($files[$relative])) {
+                    $files[$relative]['rsx_fqcn_violations'] = $stale;
+                    file_put_contents($path, '<?php return ' . var_export($data, true) . ";\n");
+                    $planted = true;
+                }
+
+                unset($files);
+            }
+
+            static::__assert_true($planted, 'the fixture record was found in the index');
+
+            file_put_contents(static::$build_root . '/manifest_is_bad', 'raised by the test');
+
+            $entry = static::__build()['data']['files'][$relative] ?? null;
+
+            static::__assert_false(isset($entry['rsx_fqcn_violations']), 'the planted record was re-read, not carried forward');
+            static::__assert_false(file_exists(static::$build_root . '/manifest_is_bad'), 'the completed build cleared the flag');
+        } finally {
+            static::__remove_tree();
+        }
+    }
+
+    /**
      * A MISSING SCAN ROOT IS FATAL - unless it is one of the three test trees.
      *
      * The test trees are put on the list by the test RUN, not by the operator, and every one

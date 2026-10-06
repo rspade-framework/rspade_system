@@ -856,8 +856,8 @@ class Php_Fixer
      *
      * GUARD 1 (backlog B-68, the F-021 half). The manifest indexes a short list of paths;
      * everything else under app/RSpade/ - Commands, Database, Http, Ide, SchemaQuality - is
-     * PERMANENTLY invisible to it by design, and app/RSpade/tests and app/RSpade/temp are
-     * invisible to every build that is not a test run. An import of a class living in any of
+     * PERMANENTLY invisible to it by design, and the test trees (app/RSpade/tests,
+     * app/RSpade/temp, rsx/tests) are invisible to every build that is not a test run. An import of a class living in any of
      * them is therefore unresolvable on a perfectly healthy index, and was being deleted
      * every single build.
      *
@@ -890,6 +890,22 @@ class Php_Fixer
     {
 
         $scanned = \App\RSpade\Core\Manifest\Manifest::scan_directories();
+
+        // The test trees this build leaves out, rsx/tests among them. A test file outside
+        // rsx/tests (one living beside the code it tests) is indexed by every build, while a
+        // fixture class it imports from rsx/tests is indexed only by a test run - so without
+        // this the import was deleted by every ordinary build and re-added by the next test
+        // run, and the working tree never stayed clean.
+        foreach (\App\RSpade\Core\Manifest\Manifest_Scanner::TEST_SCAN_DIRECTORIES as $tree) {
+            if (in_array($tree, $scanned, true) || !is_dir(base_path($tree))) {
+                continue;
+            }
+
+            if (self::__find_php_file_named(base_path($tree), $simple_name . '.php')) {
+                return true;
+            }
+        }
+
         $framework_root = base_path('app/RSpade');
 
         if (!is_dir($framework_root)) {
@@ -916,15 +932,20 @@ class Php_Fixer
         return false;
     }
 
-    /** Recursive filename lookup, first hit wins. */
+    /**
+    * Recursive filename lookup, first hit wins. Case-insensitive: an rsx/ file is named
+    * lowercase_with_underscores while a framework file carries its class's own spelling.
+    */
     private static function __find_php_file_named(string $directory, string $filename): bool
     {
+        $filename = strtolower($filename);
+
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS)
         );
 
         foreach ($iterator as $file) {
-            if ($file->isFile() && $file->getFilename() === $filename) {
+            if ($file->isFile() && strtolower($file->getFilename()) === $filename) {
                 return true;
             }
         }

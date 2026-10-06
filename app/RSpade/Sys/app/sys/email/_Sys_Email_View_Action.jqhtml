@@ -28,7 +28,7 @@ for anything else), and the record. The body tabs keep the hash key "body".
         %>
         <_Sys_Page_Header $title=(_e.subject || '(no subject)') $icon="bi-envelope" $subtitle=('#' + _e.id + ' to ' + _e.to_address)>
             <Slot:meta>
-                <_Sys_Status_Badge $status=_e.status />
+                <_Sys_Status_Badge $status=_e.status $title=_e.status_reason />
                 <span class="_Sys_Email_View_Action__chip"><%= _e.category_id__label %></span>
             </Slot:meta>
             <Slot:actions>
@@ -38,6 +38,12 @@ for anything else), and the record. The body tabs keep the hash key "body".
                 <a class="btn btn-sm btn-secondary" href="<%= Rsx.Route('_Sys_Email_Action') %>">All email</a>
             </Slot:actions>
         </_Sys_Page_Header>
+
+        <% if (_e.resend_refused) { %>
+            <_Sys_Section $title="Cannot be resent" $icon="bi-slash-circle">
+                <_Sys_Code_Pane $text=_e.resend_refused />
+            </_Sys_Section>
+        <% } %>
 
         <% if (_e.last_error) { %>
             <%-- On a Suppressed row last_error is the REASON nothing was delivered, and
@@ -49,12 +55,14 @@ for anything else), and the record. The body tabs keep the hash key "body".
 
         <_Sys_Section $title="Details" $icon="bi-info-circle">
             <_Sys_Detail_List>
-                <_Sys_Detail_Item $label="Status"><_Sys_Status_Badge $status=_e.status /></_Sys_Detail_Item>
+                <_Sys_Detail_Item $label="Status"><_Sys_Status_Badge $status=_e.status $title=_e.status_reason /></_Sys_Detail_Item>
+                <_Sys_Detail_Item $label="Blocked by" $value=_e.block_cause />
                 <_Sys_Detail_Item $label="To" $value=(_address(_e.to_address, _e.to_name)) />
                 <_Sys_Detail_Item $label="Originally to" $value=_e.dev_original_to />
                 <_Sys_Detail_Item $label="Reply-To" $value=(_address(_e.reply_to, _e.reply_to_name)) />
                 <_Sys_Detail_Item $label="CC" $value=_list(_e.cc) />
                 <_Sys_Detail_Item $label="BCC" $value=_list(_e.bcc) />
+                <_Sys_Detail_Item $label="Withheld" $value=(_Sys_Email_View_Action.withheld_list(_e.withheld_recipients)) />
                 <_Sys_Detail_Item $label="Category" $value=_e.category_id__label />
                 <_Sys_Detail_Item $label="Site" $value=_site />
                 <_Sys_Detail_Item $label="Email class" $value=_e.email_class $mono=true />

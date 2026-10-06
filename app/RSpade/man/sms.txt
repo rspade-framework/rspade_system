@@ -102,6 +102,11 @@ BLOCKLIST / OPT-OUT (STOP)
 
     An app's carrier "STOP" handler calls block_all(); "START" unblocks.
 
+    THERE IS NO SITE BLOCK LIST FOR SMS YET. Email has one (rsx:man email, the site's
+    ruling that no message of any category reaches an address); its SMS mirror is
+    deliberately deferred until a provider is wired, because with none wired no SMS can
+    leave the box. Until then a transactional SMS ignores every block, as above.
+
 STATUSES
         Id  Status       Meaning
         --  -----------  --------------------------------------------------------

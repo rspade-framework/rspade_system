@@ -166,10 +166,14 @@ DESCRIPTION
     that was never recorded, and nothing on the screen reads or mentions the
     development mail catcher, so it renders the same on every host. Resend puts a finished message back on the
     queue with exactly the rules of rsx:mail:resend - one implementation
-    serves both: a pending or sending row is refused, and a blocked row
-    (the recipient opted out) asks first, because resending it overrides a
-    consent record. The dashboard's pending-mail tile opens the queue
-    filtered to pending.
+    serves both: a pending or sending row is refused, a row whose
+    recipient is on the site block list is refused outright (the screen
+    says so in place of the button), and a row blocked by an opt-out asks
+    first, because resending it overrides a consent record. A Blocked
+    badge, in the grid and on the row, carries the sentence saying which
+    rule blocked it as its tooltip; the row also shows the cause and any
+    cc/bcc copies withheld before sending. The dashboard's pending-mail
+    tile opens the queue filtered to pending.
 
     SMS is the SMS queue, read-only. The same tile per status (a click
     narrows the SMS queue to it), the SMS delivery mode (rsx.sms.delivery:

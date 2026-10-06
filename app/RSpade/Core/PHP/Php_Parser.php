@@ -551,7 +551,7 @@ class Php_Parser
                         $rsx_fqcn_violations[] = [
                             'line' => $line,
                             'fqcn' => $token_value,
-                            'message' => "Direct FQCN reference '{$token_value}' not allowed. Use simple class name instead - the autoloader will resolve it.",
+                            'message' => "Direct FQCN reference '{$token_value}' not allowed. Import it with a use statement and reference it by simple name.",
                         ];
                         $has_rsx_fqcn_usage = true;
                     }
@@ -578,7 +578,7 @@ class Php_Parser
                         $rsx_fqcn_violations[] = [
                             'line' => $line,
                             'fqcn' => $fqcn,
-                            'message' => "Direct FQCN reference '{$fqcn}' not allowed. Use simple class name instead - the autoloader will resolve it.",
+                            'message' => "Direct FQCN reference '{$fqcn}' not allowed. Import it with a use statement and reference it by simple name.",
                         ];
                         $has_rsx_fqcn_usage = true;
                     }

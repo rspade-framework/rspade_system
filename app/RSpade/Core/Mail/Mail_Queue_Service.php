@@ -19,6 +19,7 @@ use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\TransportInterface;
 use Symfony\Component\Mime\Email;
 use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
+use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Builder;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Models\Email_Queue_Model;
@@ -89,6 +90,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                 'server_errors' => 0,
                 'failed' => 0,
                 'suppressed' => 0,
+                'blocked' => 0,
                 'reclaimed' => 0,
                 'stale' => 0,
             ];
@@ -148,6 +150,16 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
 
                 if (!$row) {
                     break;
+                }
+
+                // THE SITE BLOCK LIST, AGAIN. The row may have waited long enough for its
+                // recipient to be listed since it was queued; a listed copy is dropped here
+                // and the rest of the message goes on. Before the suppressed branch too: a
+                // listed address is Blocked in every mode, not merely not-delivered.
+                if (Rsx_Mail::_recheck_block_list($row)) {
+                    $task->info("Blocked #{$row->id} to {$row->to_address}: {$row->last_error}");
+                    $counts['blocked']++;
+                    continue;
                 }
 
                 // The inner loop runs a row TWICE at most: once, and once more after the
