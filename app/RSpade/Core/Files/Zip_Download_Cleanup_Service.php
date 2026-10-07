@@ -58,12 +58,14 @@ class Zip_Download_Cleanup_Service extends Rsx_Service_Abstract
         }
 
         if ($total > 0) {
-            $task->info("Deleted {$total} zip download requests older than {$retention_hours} hours");
+            $task->stdout("Deleted {$total} zip download requests older than {$retention_hours} hours");
         }
 
-        return [
+        $task->state([
             'deleted' => $total,
             'retention_hours' => $retention_hours,
-        ];
+        ]);
+
+        return null;
     }
 }

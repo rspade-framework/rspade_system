@@ -1,0 +1,7 @@
+// xterm.js's own stylesheet, for Task_Output.
+//
+// @import is legal here because the path contains '/vendor/' (the SCSS bundle processor's
+// rule). The stylesheet is a FRAMEWORK npm dependency (system/node_modules/@xterm/xterm),
+// reached by relative path because node_modules is never a bundle include of its own:
+// system/app/RSpade/Core/Task/ui/vendor -> system/
+@import "../../../../../../node_modules/@xterm/xterm/css/xterm";

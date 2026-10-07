@@ -17,6 +17,34 @@
         font-weight: 600;
     }
 
+    // A sized dialog (show({height, mobile_height})): the CONTENT box carries the height, so
+    // the dialog itself stays Bootstrap's modal-dialog-centered flex box and is centered by
+    // CSS alone - a window resize re-centres and re-sizes it (the heights are vh-relative)
+    // with no script. The body takes what the header and footer leave.
+    &__dialog--sized {
+        width: calc(100% - 32px);
+        margin-left: auto;
+        margin-right: auto;
+
+        .modal-content {
+            height: var(--sys-modal-height);
+        }
+
+        @media (max-width: 1023px) {
+            width: calc(100% - 16px);
+
+            .modal-content {
+                height: var(--sys-modal-mobile-height);
+            }
+        }
+
+        ._Sys_Modal__body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+        }
+    }
+
     &__text {
         color: var(--rsx-muted);
         line-height: 1.55;

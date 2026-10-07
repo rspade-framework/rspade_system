@@ -7,9 +7,9 @@ use Illuminate\Support\Facades\DB;
 use Throwable;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Blob_Locks;
+use App\RSpade\Core\Files\File_Blob_References;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
-use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
@@ -34,19 +34,21 @@ use App\RSpade\Core\Time\Rsx_Time;
  * "count remaining attachments" of the old inline hook would under-count and free a blob a
  * recoverable attachment still needs.
  *
- * _file_attachments is NOT the only thing that pins a blob. _email_attachments does too:
- * a queued email's PDF lives in the same content-addressed store, and releasing those
- * bytes would turn a pending send into a message that arrives with an empty attachment -
- * silently, hours later, in a background task. Every reference check below asks both
- * tables, and any future table that points at _file_storage.id must be added here.
+ * _file_attachments is NOT the only thing that pins a blob. A queued email's part does too, and
+ * so does a task's attachment: they live in the same content-addressed store, and releasing
+ * their bytes would turn a pending send into a message that arrives with an empty attachment -
+ * silently, hours later, in a background task. Every table that can hold a reference DECLARES
+ * it with #[Blob_Reference] on its model, and every reference check below asks each declared
+ * table (File_Blob_References). A table referencing _file_storage.id with no declaration
+ * FAILs the "Blob References" health row.
  *
  * RACE-PROOF RELEASE. A reference can be recorded at any moment, deduplicated onto the very
  * blob being released. Two mechanisms close that window:
  *   - the PER-BLOB LOCK (File_Blob_Locks, file_blob:<hash>). Every reference creator holds the
  *     read lock from before its storage lookup until its reference row commits; every destroyer
- *     here holds the write lock and re-checks both reference tables inside it.
+ *     here holds the write lock and re-checks every declared reference table inside it.
  *   - DELETE THE ROW BEFORE THE FILE. The storage row is deleted in a transaction first, where
- *     the ON DELETE RESTRICT foreign keys of _file_attachments and _email_attachments refuse it
+ *     the ON DELETE RESTRICT foreign keys of the reference tables refuse it
  *     if any reference exists; the file and its derived caches are unlinked only after that
  *     commits. So a reference the lock somehow did not exclude makes the release FAIL SAFE
  *     (nothing unlinked) instead of leaving a row that points at a missing file.
@@ -60,12 +62,13 @@ class File_Disposal_Service extends Rsx_Service_Abstract
 {
     /**
      * Release a storage blob IFF nothing still pins it under the retention-aware refcount rule
-     * (a live-or-retained attachment, or a queued email's part). Purges the blob-keyed caches
+     * (any declared reference - a live-or-retained attachment, a queued email's part, a task's
+     * attachment). Purges the blob-keyed caches
      * too: the search index rides along on File_Storage_Model::delete()'s own cascade; the
      * rendition + thumbnails are NOT cascade-cleaned, so they are unlinked explicitly here.
      *
-     * Runs under the blob's WRITE lock (File_Blob_Locks) and re-checks both reference tables
-     * inside it. Order inside the lock: re-check -> transaction (release the destroyed
+     * Runs under the blob's WRITE lock (File_Blob_Locks) and re-checks every declared
+     * reference table inside it. Order inside the lock: re-check -> transaction (release the destroyed
      * tombstones' claim, delete the storage row) -> commit -> unlink the file and purge the
      * caches. Inside a caller's open transaction the unlink waits for the OUTERMOST commit
      * (DB::afterCommit; a rollback restores the row and keeps the file), and the write lock is
@@ -99,24 +102,14 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Is the blob still pinned? Retention-aware: any live-or-retained attachment counts, from
+     * Is the blob still pinned? Every declared reference counts (File_Blob_References), from
      * EVERY site (the blob is deduplicated across the whole install, so a site-scoped count
-     * would release bytes another tenant still holds), and so does any queued email's part
-     * (there is no retention window there - the row exists until the email row is deleted).
+     * would release bytes another tenant still holds). An attachment counts while live or
+     * retained - its declaration excludes only destroyed tombstones.
      */
     private static function __blob_is_referenced(int $storage_id): bool
     {
-        $pinned = File_Attachment_Model::without_site_scope(
-            fn () => File_Attachment_Model::withTrashed()
-                ->where('file_storage_id', $storage_id)
-                ->whereNull('destroyed_at')
-                ->exists()
-        );
-        if ($pinned) {
-            return true;
-        }
-
-        return Email_Attachment_Model::where('file_storage_id', $storage_id)->exists();
+        return File_Blob_References::is_referenced($storage_id);
     }
 
     /**
@@ -156,7 +149,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             });
         } catch (QueryException $e) {
             // ONLY the foreign-key refusal is expected here (MySQL 1451, SQLSTATE 23000): a
-            // reference row in _file_attachments or _email_attachments still points at this
+            // declared reference row (File_Blob_References) still points at this
             // storage row. The transaction rolled back, nothing was unlinked, and the blob stays
             // for whoever references it - the fail-safe outcome. Every other database error is
             // a real fault and propagates.
@@ -247,7 +240,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     {
         // Retention is install policy and the blob store is shared, so every pass below walks
         // every site's attachments; a worker's declared site says nothing about what is due.
-        return File_Attachment_Model::without_site_scope(function () use ($task, $params) {
+        $task->state(File_Attachment_Model::without_site_scope(function () use ($task, $params) {
             $chunk = 1000;
             $retention_days = self::__deleted_retention_days();
             $lookback_days = (int) config('rsx.files.disposal_lookback_days', 60);
@@ -302,11 +295,13 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             }
 
             if ($destroyed || $held || $released) {
-                $task->info("Destroyed {$destroyed} attachment(s), {$held} held; released {$released} blob(s).");
+                $task->stdout("Destroyed {$destroyed} attachment(s), {$held} held; released {$released} blob(s).");
             }
 
             return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => $released];
-        });
+        }));
+
+        return null;
     }
 
     /**
@@ -349,7 +344,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     public static function run_monthly_deep_sweep(Task_Instance $task, array $params = [])
     {
         // Every site's attachments, for the reason run_daily_disposal() gives.
-        return File_Attachment_Model::without_site_scope(function () use ($task, $params) {
+        $task->state(File_Attachment_Model::without_site_scope(function () use ($task, $params) {
             if (empty($params['force']) && (int) date('j') > 7) {
                 return ['skipped' => 'not the first Sunday of the month'];
             }
@@ -362,19 +357,10 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             $released = 0;
             $last_sid = 0;
             while (true) {
-                $orphan_ids = DB::table('_file_storage as s')
-                    ->where('s.id', '>', $last_sid)
-                    ->whereNotExists(function ($q) {
-                        $q->select(DB::raw(1))
-                            ->from('_file_attachments as a')
-                            ->whereColumn('a.file_storage_id', 's.id')
-                            ->whereNull('a.destroyed_at');
-                    })
-                    ->whereNotExists(function ($q) {
-                        $q->select(DB::raw(1))
-                            ->from('_email_attachments as e')
-                            ->whereColumn('e.file_storage_id', 's.id');
-                    })
+                $orphan_ids = File_Blob_References::where_unreferenced(
+                    DB::table('_file_storage as s')->where('s.id', '>', $last_sid),
+                    's'
+                )
                     ->orderBy('s.id')
                     ->limit($chunk)
                     ->pluck('s.id');
@@ -409,11 +395,13 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             }
 
             if ($released || $disk_deleted || $uploads_swept) {
-                $task->info("Released {$released} orphaned blob(s); removed {$disk_deleted} orphaned disk file(s); swept {$uploads_swept} stale unassigned upload(s).");
+                $task->stdout("Released {$released} orphaned blob(s); removed {$disk_deleted} orphaned disk file(s); swept {$uploads_swept} stale unassigned upload(s).");
             }
 
             return ['blobs_released' => $released, 'disk_files_removed' => $disk_deleted, 'uploads_swept' => $uploads_swept];
-        });
+        }));
+
+        return null;
     }
 
     /**
@@ -441,7 +429,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     public static function sweep_unclaimed_uploads(Task_Instance $task, array $params = [])
     {
         // Every site's attachments, for the reason run_daily_disposal() gives.
-        return File_Attachment_Model::without_site_scope(function () use ($task, $params) {
+        $task->state(File_Attachment_Model::without_site_scope(function () use ($task, $params) {
             $window_hours = (int) config('rsx.attachments.unattached_claim_window_hours', 24);
             if ($window_hours <= 0) {
                 return ['skipped' => 'claim-window sweep disabled', 'swept' => 0];
@@ -466,11 +454,13 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             }
 
             if ($swept) {
-                $task->info("Swept {$swept} unattached upload(s) past the {$window_hours}h claim window.");
+                $task->stdout("Swept {$swept} unattached upload(s) past the {$window_hours}h claim window.");
             }
 
             return ['swept' => $swept, 'window_hours' => $window_hours];
-        });
+        }));
+
+        return null;
     }
 
     /**
@@ -491,7 +481,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
         } catch (Throwable $e) {
             // A throwing listener ABORTS this attachment's destruction (fail-loud, not
             // half-done): leave it un-stamped and retry next run.
-            $task->error('file.attachment.destroyed listener threw for attachment ' . $attachment->id . '; deferring: ' . $e->getMessage());
+            $task->stderr('file.attachment.destroyed listener threw for attachment ' . $attachment->id . '; deferring: ' . $e->getMessage());
             return false;
         }
 

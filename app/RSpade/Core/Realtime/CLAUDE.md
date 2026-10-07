@@ -179,7 +179,8 @@ HEADLESS (no session — everything from `$site_id`/`$filter`).
   three need the frame. Suppressing here silently swallowed the first change after any hash
   gap. Identity includes `class::method` (two emitters on one topic must not clobber each other).
 - **Baselines are seeded at SUBSCRIBE time** — `seed_subscriptions` (`#[Task]`, deliberately
-  UNMANAGED: coalescing enqueue drops params and would lose seed targets) computes each
+  UNMANAGED: an `#[Exclusive]` enqueue coalesces onto the pending run and keeps ITS params,
+  which would lose seed targets) computes each
   serving emitter once and stores the baseline with NO publish, because the subscribe ack IS
   the resync signal. Driven by the relay's new-member notify: `rewrite_registry()` diffs the
   written member set against an in-memory baseline that advances only on a successful write

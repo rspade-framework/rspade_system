@@ -36,12 +36,14 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
     #[Task('Rotate, compress and prune storage/logs')]
     #[Exclusive]
     #[Schedule('daily at 12:00am')]
-    public static function rotate(Task_Instance $task, array $params = []): array
+    public static function rotate(Task_Instance $task, array $params = [])
     {
         if (!config('rsx.logging.rotation.enabled')) {
             // Unix silent success: the operator turned it off and does not need
             // to be told again every night.
-            return ['skipped' => 'disabled'];
+            $task->state(['skipped' => 'disabled']);
+
+            return null;
         }
 
         $days_uncompressed = (int) config('rsx.logging.rotation.days_uncompressed');
@@ -65,16 +67,18 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
         }
 
         if ($rotated > 0 || $compressed > 0 || $deleted > 0) {
-            $task->info("Rotated {$rotated} log(s); compressed {$compressed}, deleted {$deleted}");
+            $task->stdout("Rotated {$rotated} log(s); compressed {$compressed}, deleted {$deleted}");
         }
 
         // A repair is worth a line of its own: it means the numbering on disk had
         // gaps or a shared slot, which is a thing an operator may want to know
         // happened even though it is not an error.
         if ($renumbered > 0) {
-            $task->info("Renumbered {$renumbered} generation(s) into contiguous order before rotating");
+            $task->stdout("Renumbered {$renumbered} generation(s) into contiguous order before rotating");
         }
 
-        return $report;
+        $task->state($report);
+
+        return null;
     }
 }

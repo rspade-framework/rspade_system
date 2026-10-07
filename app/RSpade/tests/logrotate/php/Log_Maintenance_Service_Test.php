@@ -3,7 +3,6 @@
 namespace App\RSpade\Tests\Logrotate\Php;
 
 use App\RSpade\Core\Logging\Log_Maintenance_Service;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -28,8 +27,7 @@ class Log_Maintenance_Service_Test extends Rsx_Test_Abstract
 
         $before = self::__log_directory_listing();
 
-        $task = new Task_Instance(Log_Maintenance_Service::class, 'rotate');
-        $result = Log_Maintenance_Service::rotate($task);
+        $result = static::__run_task_method(Log_Maintenance_Service::class, 'rotate');
 
         $after = self::__log_directory_listing();
 

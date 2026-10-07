@@ -1,0 +1,34 @@
+<%--
+Task_Output - a task run's output, live, in a non-interactive xterm.js terminal.
+
+$task_id  (required) the run (_tasks id)
+$streams  'both' (default) | 'stdout' | 'stderr' - which lines to show at first
+$filter   true (default) shows the stdout / stderr / both selector; false hides it
+
+stdout is plain white, stderr bold amber, on black. Operator lines (a stop, a kill, a cancel
+someone performed on the run) are stderr. The terminal follows new output unless the reader
+has scrolled up, and keeps the whole output in its scrollback. Hovering a line shows the time
+it was written (to the millisecond) as the row's title.
+
+Live updates ride Task_Output_Topic and need realtime (REALTIME_ENABLED); without it the
+console shows the output as it was when it opened, and Refresh reads what is new. Reading
+needs the run's view gate (Task_Gates) like every task widget.
+
+The terminal library loads on first use from /_task/xterm.mjs - pages without a console never
+download it.
+--%>
+<Define:Task_Output tag="div">
+    <% if (!this.args.task_id) { throw new Error('Task_Output requires $task_id'); } %>
+    <% if (this.args.filter !== false) { %>
+        <div class="Task_Output__toolbar">
+            <div class="Task_Output__filter" role="group" aria-label="Streams">
+                <% for (const _option of [['both', 'Both'], ['stdout', 'stdout'], ['stderr', 'stderr']]) { %>
+                    <button type="button" class="Task_Output__filter_button<%= this.state.streams === _option[0] ? ' Task_Output__filter_button--active' : '' %>" data-streams="<%= _option[0] %>"><%= _option[1] %></button>
+                <% } %>
+            </div>
+            <span class="Task_Output__status" $sid="status"></span>
+            <button type="button" class="Task_Output__refresh" data-action="refresh" title="Read new output"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+    <% } %>
+    <div class="Task_Output__screen" $sid="screen"></div>
+</Define:Task_Output>

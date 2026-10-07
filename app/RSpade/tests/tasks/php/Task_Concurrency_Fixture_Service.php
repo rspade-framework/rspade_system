@@ -13,27 +13,33 @@ use App\RSpade\Core\Task\Task_Instance;
 /**
  * Test-only service exercising the concurrency attributes (#[Exclusive] /
  * #[Debounce]) and the plain (unmanaged) case. No #[Schedule] - never auto-run by
- * the cron. Methods are trivial and side-effect-free.
+ * the cron. Methods are trivial and side-effect-free; each reports what ran.
  */
 class Task_Concurrency_Fixture_Service extends Rsx_Service_Abstract
 {
     #[Task('Fixture exclusive task (test-only)')]
     #[Exclusive]
-    public static function exclusive_task(Task_Instance $task, array $params = []): array
+    public static function exclusive_task(Task_Instance $task, array $params = [])
     {
-        return ['ran' => 'exclusive'];
+        $task->state(['ran' => 'exclusive']);
+
+        return null;
     }
 
     #[Task('Fixture debounce task (test-only)')]
     #[Debounce(30)]
-    public static function debounce_task(Task_Instance $task, array $params = []): array
+    public static function debounce_task(Task_Instance $task, array $params = [])
     {
-        return ['ran' => 'debounce'];
+        $task->state(['ran' => 'debounce']);
+
+        return null;
     }
 
     #[Task('Fixture plain unmanaged task (test-only)')]
-    public static function plain_task(Task_Instance $task, array $params = []): array
+    public static function plain_task(Task_Instance $task, array $params = [])
     {
-        return ['ran' => 'plain'];
+        $task->state(['ran' => 'plain']);
+
+        return null;
     }
 }

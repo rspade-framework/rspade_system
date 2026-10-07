@@ -1,0 +1,60 @@
+// The run's three columns. Every size here is this component's own - no framework grid or
+// breakpoint classes - so the layout reads the same wherever it is hosted:
+//
+//   460px and wider   three columns filling the host's height; each column scrolls or
+//                     stretches inside it, so the output and the report viewer end on the
+//                     same line at the bottom.
+//   below 460px       one column, each section 350px tall, the host scrolling.
+//
+// The host gives the height: the run dialog is a sized _Sys_Modal (its body), the full
+// page gives _Sys_Task_View_Action__detail.
+._Sys_Task_Detail {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1.2fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 16px;
+    height: 100%;
+    min-height: 0;
+
+    &__facts,
+    &__output,
+    &__reports {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+    }
+
+    // The facts are the one column whose content can outgrow the height: it scrolls.
+    &__facts {
+        overflow-y: auto;
+        padding-right: 4px;
+    }
+
+    &__heading {
+        flex: 0 0 auto;
+        margin-bottom: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--rsx-dim);
+    }
+
+    &__console {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    @media (max-width: 459px) {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: none;
+        height: auto;
+
+        &__facts,
+        &__output,
+        &__reports {
+            height: 350px;
+        }
+    }
+}

@@ -71,7 +71,7 @@ class Session_Values_Cleanup_Service extends Rsx_Service_Abstract
             + Rsx_Portal_Two_Factor::record_expired_passkey_enrollments();
 
         if ($abandoned > 0) {
-            $task->info("Recorded {$abandoned} abandoned passkey enrollments");
+            $task->stdout("Recorded {$abandoned} abandoned passkey enrollments");
         }
 
         $now = now();
@@ -94,9 +94,11 @@ class Session_Values_Cleanup_Service extends Rsx_Service_Abstract
         }
 
         if ($total > 0) {
-            $task->info("Deleted {$total} expired session values");
+            $task->stdout("Deleted {$total} expired session values");
         }
 
-        return ['deleted' => $total, 'abandoned_passkey_enrollments' => $abandoned];
+        $task->state(['deleted' => $total, 'abandoned_passkey_enrollments' => $abandoned]);
+
+        return null;
     }
 }

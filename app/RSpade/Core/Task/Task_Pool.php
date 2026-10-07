@@ -12,7 +12,7 @@ use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Locks\Lockd_Connection;
 
 /**
- * The task worker pool, as accounted by rsx-lockd (the `pool.*` ops, system/bin/rsx-lockd
+ * The task worker pools, as accounted by rsx-lockd (the `pool.*` ops, system/bin/rsx-lockd
  * README "Worker pools"). The daemon is the ONE party that knows how many workers exist:
  * membership belongs to a connection, so a worker that exits, crashes or is `kill -9`'d
  * stops being a member the moment its socket closes, with no heartbeat, lease or reaper.
@@ -47,10 +47,30 @@ use App\RSpade\Core\Locks\Lockd_Connection;
  *
  * The client-side bookkeeping (holds_lock(), wid(), generation()) follows the daemon's answers
  * and nothing else, so a call site can assert THE RULE's preconditions cheaply.
+ *
+ * THREE POOLS, each counted and capped on its own (rsx.tasks.pools.<pool>.max_workers):
+ *
+ *   - on_demand: workers that run dispatched work;
+ *   - scheduled: workers that run #[Schedule] work, taking queued on-demand work FIRST;
+ *   - kill:      the kill workers (Task_Kill_Worker) that carry out force stops and kills.
+ *
+ * A process is a member of at most one pool and holds at most one pool's lock at a time.
  */
 class Task_Pool
 {
-    /** Prefix of the pool name; the rest is the per-environment scope token. */
+    /** The pool that runs dispatched work. */
+    const ON_DEMAND = 'on_demand';
+
+    /** The pool that runs #[Schedule] work, and queued on-demand work first. */
+    const SCHEDULED = 'scheduled';
+
+    /** The pool of kill workers. */
+    const KILL = 'kill';
+
+    /** Every pool, in the order a status screen lists them. */
+    const POOLS = [self::ON_DEMAND, self::SCHEDULED, self::KILL];
+
+    /** Prefix of every pool name; the pool and the per-environment scope token follow. */
     private const POOL_PREFIX = 'tasks:';
 
     private static ?Lockd_Connection $connection = null;
@@ -62,79 +82,93 @@ class Task_Pool
     private static ?array $membership = null;
 
     /**
-     * The pool's name: one pool per (database, host) scope - the scope RsxLocks and every
-     * other box-wide coordinator uses (Rsx_Connection_Scope) - because the pool counts the
-     * workers that operate on one `_tasks` table. Two environments sharing a daemon never
+     * A pool's daemon-side name: one pool per (pool, database, host) scope - the scope RsxLocks
+     * and every other box-wide coordinator uses (Rsx_Connection_Scope) - because a pool counts
+     * the workers that operate on one `_tasks` table. Two environments sharing a daemon never
      * share a pool.
      */
-    public static function pool_name(): string
+    public static function pool_name(string $pool): string
     {
-        return self::POOL_PREFIX . Rsx_Connection_Scope::token();
+        static::__assert_pool($pool);
+
+        return self::POOL_PREFIX . $pool . ':' . Rsx_Connection_Scope::token();
     }
 
-    /** The pool's cap: rsx.tasks.global_max_workers, never below one. */
-    public static function max_workers(): int
+    /**
+     * A pool's cap: rsx.tasks.pools.<pool>.max_workers. Below one is a configuration error and
+     * throws - a pool that can hold no worker would leave its work queued forever.
+     */
+    public static function max_workers(string $pool): int
     {
-        return max(1, (int) config('rsx.tasks.global_max_workers', 1));
+        static::__assert_pool($pool);
+
+        $value = config("rsx.tasks.pools.{$pool}.max_workers");
+        if (!is_numeric($value) || (int) $value != $value || (int) $value < 1) {
+            throw new RuntimeException("rsx.tasks.pools.{$pool}.max_workers must be an integer of at least 1, got " . var_export($value, true));
+        }
+
+        return (int) $value;
     }
 
-    /** Take the pool lock (FIFO). Returns once the daemon has granted it; waits forever. */
-    public static function lock(): void
+    /** Take a pool's lock (FIFO). Returns once the daemon has granted it; waits forever. */
+    public static function lock(string $pool): void
     {
-        $pool = self::pool_name();
-        self::__request('pool.lock', ['pool' => $pool], 'granted');
-        self::$locked_pool = $pool;
+        if (self::$locked_pool !== null) {
+            shouldnt_happen("Task_Pool::lock({$pool}) while this process holds the " . self::$locked_pool . ' lock');
+        }
+
+        $name = self::pool_name($pool);
+        self::__request('pool.lock', ['pool' => $name], 'granted');
+        self::$locked_pool = $name;
     }
 
-    /** Release the pool lock, handing it to the next waiter. */
-    public static function unlock(): void
+    /** Release a pool's lock, handing it to the next waiter. */
+    public static function unlock(string $pool): void
     {
-        $pool = self::pool_name();
-        self::__request('pool.unlock', ['pool' => $pool]);
+        self::__request('pool.unlock', ['pool' => self::pool_name($pool)]);
         self::$locked_pool = null;
     }
 
     /**
-     * Join the pool. Requires the lock. Returns the member's identity as the daemon assigned
-     * it - store BOTH wherever another process must ask whether this worker is alive; neither
-     * is meaningful alone.
+     * Join a pool. Requires its lock. Returns the member's identity as the daemon assigned it -
+     * store BOTH wherever another process must ask whether this worker is alive; neither is
+     * meaningful alone.
      *
      * @return array{wid: int, generation: int}
      */
-    public static function join(): array
+    public static function join(string $pool): array
     {
-        $pool = self::pool_name();
-        $response = self::__request('pool.join', ['pool' => $pool]);
+        $name = self::pool_name($pool);
+        $response = self::__request('pool.join', ['pool' => $name]);
 
         $wid = $response['wid'] ?? null;
         $generation = $response['generation'] ?? null;
         if (!is_int($wid) || !is_int($generation)) {
-            throw new RuntimeException("rsx-lockd answered pool.join on {$pool} without an integer wid and generation: " . json_encode($response));
+            throw new RuntimeException("rsx-lockd answered pool.join on {$name} without an integer wid and generation: " . json_encode($response));
         }
 
-        self::$membership = ['pool' => $pool, 'wid' => $wid, 'generation' => $generation];
+        self::$membership = ['pool' => $name, 'wid' => $wid, 'generation' => $generation];
 
         return ['wid' => $wid, 'generation' => $generation];
     }
 
-    /** Leave the pool. Requires the lock. */
-    public static function leave(): void
+    /** Leave a pool. Requires its lock. */
+    public static function leave(string $pool): void
     {
-        $pool = self::pool_name();
-        self::__request('pool.leave', ['pool' => $pool]);
+        self::__request('pool.leave', ['pool' => self::pool_name($pool)]);
         self::$membership = null;
     }
 
-    /** The number of members, EXCLUDING this process when it is one. Requires the lock. */
-    public static function count(): int
+    /** A pool's member count, EXCLUDING this process when it is one. Requires the lock. */
+    public static function count(string $pool): int
     {
-        $response = self::__request('pool.count', ['pool' => self::pool_name()]);
+        $response = self::__request('pool.count', ['pool' => self::pool_name($pool)]);
 
         return (int) $response['members'];
     }
 
     /**
-     * Whether the worker (wid, generation) is still a member. Requires the lock.
+     * Whether the worker (wid, generation) is still a member of $pool. Requires the lock.
      *
      * `known` is false when the generation is not the daemon's own (it restarted since that
      * worker joined): `alive` is then false and means nothing - settle the question with the
@@ -143,10 +177,10 @@ class Task_Pool
      *
      * @return array{alive: bool, known: bool}
      */
-    public static function member_alive(int $wid, int $generation): array
+    public static function member_alive(string $pool, int $wid, int $generation): array
     {
         $response = self::__request('pool.member_alive', [
-            'pool' => self::pool_name(),
+            'pool' => self::pool_name($pool),
             'wid' => $wid,
             'generation' => $generation,
         ]);
@@ -155,13 +189,13 @@ class Task_Pool
     }
 
     /**
-     * member_alive() for many workers in one round trip. Requires the lock.
+     * member_alive() for many workers of one pool in one round trip. Requires the lock.
      *
      * @param array<int, array{wid: int, generation: int}> $items
      * @return array<int, array{wid: int, generation: int, alive: bool, known: bool}> One result
      *         per item, in the same order and under the same keys.
      */
-    public static function members_alive(array $items): array
+    public static function members_alive(string $pool, array $items): array
     {
         $keys = array_keys($items);
         $wire = [];
@@ -170,7 +204,7 @@ class Task_Pool
         }
 
         $response = self::__request('pool.members_alive', [
-            'pool' => self::pool_name(),
+            'pool' => self::pool_name($pool),
             'items' => $wire,
         ]);
 
@@ -193,16 +227,16 @@ class Task_Pool
     }
 
     /**
-     * Read-only, unlocked snapshot of this pool, for health checks and dashboards.
+     * Read-only, unlocked snapshot of one pool, for health checks and dashboards.
      *
      * `generation` is the daemon's current generation - what a RUNNING row's worker_generation
      * is compared with to find rows a previous daemon lifetime's workers claimed.
      *
      * @return array{generation: int, members: int, holder: bool, waiting: int}
      */
-    public static function stats(): array
+    public static function stats(string $pool): array
     {
-        $response = self::__request('pool.stats', ['pool' => self::pool_name()]);
+        $response = self::__request('pool.stats', ['pool' => self::pool_name($pool)]);
 
         return [
             'generation' => (int) $response['generation'],
@@ -212,22 +246,45 @@ class Task_Pool
         ];
     }
 
-    /** True when this process holds the pool lock, per the daemon's answers so far. */
-    public static function holds_lock(): bool
+    /**
+     * True when this process holds $pool's lock - or, with no argument, ANY pool's lock - per
+     * the daemon's answers so far.
+     */
+    public static function holds_lock(?string $pool = null): bool
     {
-        return self::$locked_pool !== null && self::$locked_pool === self::pool_name();
+        if (self::$locked_pool === null) {
+            return false;
+        }
+
+        return $pool === null || self::$locked_pool === self::pool_name($pool);
     }
 
-    /** This process's worker id, or null when it is not a member. */
+    /** The pool this process is a member of, or null. */
+    public static function member_pool(): ?string
+    {
+        if (self::$membership === null) {
+            return null;
+        }
+
+        foreach (self::POOLS as $pool) {
+            if (self::$membership['pool'] === self::pool_name($pool)) {
+                return $pool;
+            }
+        }
+
+        return null;
+    }
+
+    /** This process's worker id, or null when it is not a member of any pool. */
     public static function wid(): ?int
     {
-        return self::__own_membership()['wid'] ?? null;
+        return self::$membership['wid'] ?? null;
     }
 
     /** The generation of the daemon that issued this process's wid, or null when it is not a member. */
     public static function generation(): ?int
     {
-        return self::__own_membership()['generation'] ?? null;
+        return self::$membership['generation'] ?? null;
     }
 
     /**
@@ -253,6 +310,13 @@ class Task_Pool
     // ---------------------------------------------------------------------------------
     // Internals
     // ---------------------------------------------------------------------------------
+
+    private static function __assert_pool(string $pool): void
+    {
+        if (!in_array($pool, self::POOLS, true)) {
+            throw new RuntimeException("Unknown task pool '{$pool}'; expected one of " . implode(', ', self::POOLS) . '.');
+        }
+    }
 
     /**
      * One acknowledged round trip. The answer must carry $expected_status; anything else -
@@ -290,15 +354,6 @@ class Task_Pool
         }
 
         return $response;
-    }
-
-    private static function __own_membership(): ?array
-    {
-        if (self::$membership === null || self::$membership['pool'] !== self::pool_name()) {
-            return null;
-        }
-
-        return self::$membership;
     }
 
     private static function __forget(): void

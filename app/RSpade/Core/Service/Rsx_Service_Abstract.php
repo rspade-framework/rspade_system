@@ -20,12 +20,16 @@ use App\RSpade\Core\Task\Task_Instance;
 abstract class Rsx_Service_Abstract
 {
     /**
-     * Pre-task hook called before any task execution
-     * Override in child classes to add pre-task logic
+     * Pre-task hook, called before every run of every task of this service - by a worker,
+     * inline or from a command alike. Override it to add pre-task logic.
      *
-     * @param Task_Instance $task Task instance for logging and status tracking
+     * Return null to let the task run. Any other value ends the run WITHOUT running the task,
+     * with that value as the task's return (the return contract, Task_Run_Outcome: true or 0
+     * succeeds, false or another integer fails with that code). A throw fails the run.
+     *
+     * @param Task_Instance $task The run's handle (report through it like the task would)
      * @param array $params Task parameters
-     * @return mixed|null Return null to continue, or throw exception to halt
+     * @return mixed|null
      */
     public static function pre_task(Task_Instance $task, array $params = [])
     {

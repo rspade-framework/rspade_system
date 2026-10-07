@@ -10,24 +10,38 @@ namespace App\RSpade\Core\Task;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Task\Task_Lock;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Run_Model;
 
 /**
- * Task_Concurrency - per-task-identity concurrency control for the task queue.
+ * Task_Concurrency - per-identity concurrency control for tasks.
  *
  * A task method may carry (mutually exclusive) markers:
- *   #[Exclusive]          - at most one instance runs at a time (== #[Debounce(0)])
+ *   #[Exclusive]          - at most one instance runs at a time
  *   #[Debounce(seconds)]  - same single-instance guarantee, and the coalesced
  *                           follow-up run fires `seconds` after the prior run COMPLETED.
  *
  * Both mean the SAME invariant, a distributed translation of the JS debounce()
- * (Core/Js/async.js): per identity (class::method), AT MOST ONE RUNNING + AT MOST
- * ONE PENDING ("queued") execution. State is durable (`_tasks` rows) + cluster-safe
- * (Task_Lock, a named rsx-lockd lock through RsxLocks), so correctness never depends on an
- * in-memory trigger:
- *   - running  -> the identity run-lock is held by a worker
- *   - queued   -> exactly one PENDING execution row for the identity
- *   - last_end -> the last run's completed_at
+ * (Core/Js/async.js): per IDENTITY, AT MOST ONE RUNNING + AT MOST ONE PENDING execution.
+ * The identity differs:
+ *   - #[Exclusive]: the method - class::method, whatever the params. A queue drain is one
+ *     job however it was asked for.
+ *   - #[Debounce]:  the method AND its params - class::method + params_hash. Two different
+ *     parameter sets are two pieces of work, each debounced on its own.
+ *
+ * It holds however the task runs:
+ *   - Task::dispatch() enqueues through enqueue_coalesced(): the existing pending run of the
+ *     identity is returned, or a new one is created - so the caller always gets the id of THE
+ *     pending run to watch.
+ *   - a worker claims a run only while holding the identity's RUN lock (try_acquire_run_lock),
+ *     and a schedule tick whose identity is already running is coalesced into that run;
+ *   - an inline run (Task::internal(), rsx:task:run, a #[Command]) takes the run lock too,
+ *     waiting for a running instance to finish.
+ *
+ * State is durable (`_tasks` rows) + cluster-safe (Task_Lock, a named rsx-lockd lock through
+ * RsxLocks), so correctness never depends on an in-memory trigger:
+ *   - running  -> the identity run-lock is held by a worker (or an inline runner)
+ *   - queued   -> exactly one PENDING row for the identity
+ *   - last_end -> the identity's last completed_at
  *   - timer    -> the pending row's scheduled_for (= last completed + delay)
  * The cron poller (rsx:task:process) is the backstop that runs a due pending row
  * even if the completing worker's eager re-check races or misses it.
@@ -70,95 +84,105 @@ class Task_Concurrency
     }
 
     /**
+     * The canonical hash of a parameter set: sha256 of its JSON with every object's keys
+     * sorted, so {a:1,b:2} and {b:2,a:1} are one parameter set.
+     */
+    public static function params_hash(array $params): string
+    {
+        return hash('sha256', json_encode(static::__canonical($params), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+
+    /**
+     * The identity's key: class::method for #[Exclusive], class::method::params_hash for
+     * #[Debounce]. Null for an unmanaged task.
+     */
+    public static function identity_key(string $class, string $method, string $params_hash): ?string
+    {
+        $mode = static::get_policy($class, $method)['mode'];
+
+        if ($mode === 'exclusive') {
+            return $class . '::' . $method;
+        }
+        if ($mode === 'debounce') {
+            return $class . '::' . $method . '::' . $params_hash;
+        }
+
+        return null;
+    }
+
+    /**
      * Lock name for "this identity is running" (a Task_Lock / RsxLocks named lock).
      */
-    public static function run_lock_name(string $class, string $method): string
+    public static function run_lock_name(string $identity_key): string
     {
-        return 'rsxtask_run_' . md5($class . '::' . $method);
+        return 'rsxtask_run_' . md5($identity_key);
     }
 
     /**
      * Lock name guarding the coalescing check-and-enqueue section.
      */
-    public static function enqueue_lock_name(string $class, string $method): string
+    public static function enqueue_lock_name(string $identity_key): string
     {
-        return 'rsxtask_enq_' . md5($class . '::' . $method);
+        return 'rsxtask_enq_' . md5($identity_key);
     }
 
     /**
-     * Coalescing enqueue: ensure AT MOST ONE pending execution row exists for the
-     * identity. Returns the (new or existing) pending row id, or null if it could
-     * not take the enqueue lock (a concurrent enqueuer is handling it).
+     * Coalescing enqueue: ensure AT MOST ONE pending execution row exists for the identity,
+     * and return its id - the existing one, or the one just created by $insert.
      *
      * scheduled_for honors the debounce delay measured from the last completion:
-     * max(now, last_completed_at + delay). Wrapped in a cluster-safe named lock
-     * so two enqueuers can never both insert.
+     * max(now, last_completed_at + delay). Wrapped in a cluster-safe named lock so two
+     * enqueuers can never both insert.
      *
-     * @return int|null
+     * @param callable $insert fn (string $scheduled_for): int - writes the pending row.
      */
-    public static function enqueue_coalesced(string $class, string $method, array $params, string $queue): ?int
+    public static function enqueue_coalesced(string $class, string $method, string $params_hash, callable $insert): int
     {
-        $policy = static::get_policy($class, $method);
+        $identity = static::identity_key($class, $method, $params_hash);
+        if ($identity === null) {
+            shouldnt_happen("enqueue_coalesced() for {$class}::{$method}, which is neither #[Exclusive] nor #[Debounce]");
+        }
 
-        // Waits forever. This previously waited 5 seconds and then RETURNED NULL - a
-        // silently dropped enqueue, no log, no error, on exactly the busy box where the
-        // work mattered most. Coalescing is cheap and the wait is short in practice;
-        // whatever holds the lock is another enqueue of the same identity, which is the
-        // thing this lock exists to serialize.
-        $lock = new Task_Lock(static::enqueue_lock_name($class, $method));
+        // Waits forever: whatever holds the lock is another enqueue of the same identity,
+        // which is the thing this lock exists to serialize.
+        $lock = new Task_Lock(static::enqueue_lock_name($identity));
         $lock->acquire();
 
         try {
-            $existing = static::pending_row_id($class, $method, $queue);
+            $existing = static::pending_row_id($class, $method, $params_hash);
             if ($existing !== null) {
-                return $existing; // already coalesced
+                return $existing;
             }
 
-            $scheduled_for = static::_next_scheduled_for($class, $method, $policy['delay']);
-
-            return DB::table('_tasks')->insertGetId([
-                'class' => $class,
-                'method' => $method,
-                'queue' => $queue,
-                'status' => Task_Status::PENDING,
-                'params' => json_encode($params),
-                'scheduled_for' => $scheduled_for,
-                'lock_key' => static::run_lock_name($class, $method),
-                'timeout' => config('rsx.tasks.default_timeout'),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+            return (int) $insert(static::_next_scheduled_for($class, $method, $params_hash));
         } finally {
             $lock->release();
         }
     }
 
     /**
-     * The id of the single pending execution row for an identity, or null.
-     * (Excludes recurring-schedule tracker rows, which carry next_run_at.)
+     * The id of the single pending row for the identity of ($class, $method, $params_hash),
+     * or null.
      */
-    public static function pending_row_id(string $class, string $method, string $queue): ?int
+    public static function pending_row_id(string $class, string $method, string $params_hash): ?int
     {
-        $row = DB::table('_tasks')
-            ->where('class', $class)
-            ->where('method', $method)
-            ->where('queue', $queue)
-            ->where('status', Task_Status::PENDING)
-            ->whereNull('next_run_at')
-            ->orderBy('created_at', 'asc')
-            ->first();
+        $id = static::__identity_query($class, $method, $params_hash)
+            ->where('status_id', Task_Run_Model::STATUS_PENDING)
+            ->orderBy('id')
+            ->value('id');
 
-        return $row?->id;
+        return $id !== null ? (int) $id : null;
     }
 
     /**
      * Non-blocking attempt to acquire the identity run-lock. Returns the held lock
-     * (keep it and release when the run finishes) or null if another worker is
-     * already running this identity.
+     * (keep it and release when the run finishes) or null if another run of the identity
+     * holds it. Null for an unmanaged task is never returned: such a task has no run lock and
+     * the caller must not ask.
      */
-    public static function try_acquire_run_lock(string $class, string $method): ?Task_Lock
+    public static function try_acquire_run_lock(string $class, string $method, string $params_hash): ?Task_Lock
     {
-        $lock = new Task_Lock(static::run_lock_name($class, $method), 0); // 0 = non-blocking
+        $lock = new Task_Lock(static::run_lock_name(static::__require_identity($class, $method, $params_hash)), 0);
         if ($lock->acquire()) {
             return $lock;
         }
@@ -167,15 +191,28 @@ class Task_Concurrency
     }
 
     /**
+     * Acquire the identity run-lock, waiting for as long as a running instance holds it. The
+     * inline runner's path: an inline run of a managed task waits its turn instead of running
+     * beside the instance already running.
+     */
+    public static function acquire_run_lock(string $class, string $method, string $params_hash): Task_Lock
+    {
+        $lock = new Task_Lock(static::run_lock_name(static::__require_identity($class, $method, $params_hash)));
+        $lock->acquire();
+
+        return $lock;
+    }
+
+    /**
      * Re-anchor a coalesced pending run after a run of the same identity completes:
-     * its scheduled_for becomes completed_at + delay (matching the JS debounce
+     * its scheduled_for becomes now + delay (matching the JS debounce
      * `finally { if queued -> setTimeout(delay) }`). No-op if nothing is pending.
      */
-    public static function reschedule_pending_after_completion(string $class, string $method, string $queue): void
+    public static function reschedule_pending_after_completion(string $class, string $method, string $params_hash): void
     {
         $policy = static::get_policy($class, $method);
 
-        $pending_id = static::pending_row_id($class, $method, $queue);
+        $pending_id = static::pending_row_id($class, $method, $params_hash);
         if ($pending_id === null) {
             return;
         }
@@ -191,29 +228,68 @@ class Task_Concurrency
     // =========================================================================
 
     /**
+     * Rows of one identity: every row of the method for #[Exclusive], the rows with the same
+     * params_hash for #[Debounce]. Served by idx_tasks_identity.
+     */
+    private static function __identity_query(string $class, string $method, string $params_hash)
+    {
+        $query = DB::table('_tasks')->where('class', $class)->where('method', $method);
+
+        if (static::get_policy($class, $method)['mode'] === 'debounce') {
+            $query->where('params_hash', $params_hash);
+        }
+
+        return $query;
+    }
+
+    private static function __require_identity(string $class, string $method, string $params_hash): string
+    {
+        $identity = static::identity_key($class, $method, $params_hash);
+        if ($identity === null) {
+            shouldnt_happen("Run lock asked for {$class}::{$method}, which is neither #[Exclusive] nor #[Debounce]");
+        }
+
+        return $identity;
+    }
+
+    /**
      * scheduled_for for a fresh coalesced enqueue: not before the debounce delay
      * has elapsed since the last completion of this identity.
      */
-    private static function _next_scheduled_for(string $class, string $method, int $delay)
+    private static function _next_scheduled_for(string $class, string $method, string $params_hash): string
     {
+        $delay = static::get_policy($class, $method)['delay'];
+
         if ($delay <= 0) {
-            return now();
+            return now()->format('Y-m-d H:i:s.v');
         }
 
-        $last = DB::table('_tasks')
-            ->where('class', $class)
-            ->where('method', $method)
+        $last = static::__identity_query($class, $method, $params_hash)
             ->whereNotNull('completed_at')
             ->orderBy('completed_at', 'desc')
             ->value('completed_at');
 
         if (!$last) {
-            return now();
+            return now()->format('Y-m-d H:i:s.v');
         }
 
         $earliest = \Illuminate\Support\Carbon::parse($last)->addSeconds($delay);
 
-        return $earliest->isFuture() ? $earliest : now();
+        return ($earliest->isFuture() ? $earliest : now())->format('Y-m-d H:i:s.v');
+    }
+
+    /** Recursively sort the keys of every associative array, leaving lists in order. */
+    private static function __canonical($value)
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        if (!array_is_list($value)) {
+            ksort($value);
+        }
+
+        return array_map(fn ($item) => static::__canonical($item), $value);
     }
 
     /**

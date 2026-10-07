@@ -46,8 +46,72 @@ RETENTION-AWARE REFCOUNT
     not just live ones. Any refcount query uses
     withTrashed()->whereNull('destroyed_at').
 
-    A queued email's part (_email_attachments) pins its blob too, with no window of
-    its own: the row lives until its email row is deleted.
+    Every OTHER kind of row that points at a blob pins it too, for as long as the
+    row exists: a queued email's part (_email_attachments, until its email row is
+    deleted) and a task run's attachment (_task_attachments, until the run's output
+    is truncated or the run is purged - rsx:man tasks, RETENTION). Neither has a
+    window of its own.
+
+DECLARED BLOB REFERENCES
+    The disposal side may release a blob only when NO row references it, so it must
+    know every table that can hold one - and that knowledge is DECLARED on the model
+    that owns the reference, never listed by hand:
+
+        #[Blob_Reference('file_storage_id')]
+        abstract class Email_Attachment_Model_Abstract extends Rsx_Model_Abstract
+        {
+            use Blob_Referencing;
+            ...
+        }
+
+        #[Blob_Reference(column: 'file_storage_id', where_null: 'destroyed_at')]
+
+    `column` names the column holding _file_storage.id. `where_null`, when given,
+    names a column that must be NULL for the row to count (an attachment's
+    destroyed tombstone keeps its row but no longer pins the bytes). Arguments are
+    literals - an attribute argument is read by reflection before the autoloader
+    is ready, so never a class constant. File_Blob_References::declarations() reads
+    them from the manifest; release_blob_if_orphaned() asks every declared table
+    (each row counted from every site, soft-deleted or not) and the monthly deep
+    sweep excludes every blob any declared table references.
+
+    The Blob_Referencing trait is the WRITE side: its save() holds the blob's read
+    lock while a write that sets file_storage_id commits (RACE-PROOF RELEASE). A
+    model that declares a reference uses the trait; inside store_blob() /
+    store_bytes() the lock is already held and the save is a reentrant hold.
+
+    AN UNDECLARED REFERENCE IS A FAILED HEALTH ROW. rsx:health "Blob References"
+    reads every foreign key to _file_storage.id in the live schema and FAILs naming
+    each table.column no declaration covers - such a table would let the disposal
+    sweeps free bytes it still needs. An application table that stores blobs (a
+    model of its own pointing at _file_storage) declares the reference the same
+    way; the framework's own declarations are File_Attachment_Model_Abstract (with
+    where_null destroyed_at), Email_Attachment_Model_Abstract and
+    Task_Attachment_Model_Abstract.
+
+THE CENTRAL BLOB API (File_Storage_Model)
+    A consumer stores and reads bytes through the storage row and never by its path,
+    so the store's location is the store's business.
+
+        File_Storage_Model::store_blob($temp_path, fn ($storage) => ...)
+            THE way bytes enter the store: content-addressed (sha256), deduplicated,
+            immutable. The callback writes the referencing row; the blob's read lock
+            is held from before the lookup until that row commits.
+        File_Storage_Model::store_bytes($bytes, fn ($storage) => ...)
+            store_blob() for bytes held in memory (a scratch file is written and
+            removed around it).
+        $storage->read_bytes()                      the whole contents
+        $storage->read_stream()                     an open read stream; the caller
+                                                    closes it
+        $storage->download_response($file_name, $mime_type = null)
+        $storage->inline_response($file_name, $mime_type = null)
+                                                    hardened file responses (the same
+                                                    headers every file response gets);
+                                                    authorizing the caller is the
+                                                    caller's job
+
+    Each throws when the bytes are not on disk. A reference recorded OUTSIDE the
+    store_blob()/store_bytes() callback has no race protection - record it inside.
 
 RACE-PROOF RELEASE
     A reference can be recorded at any moment, deduplicated onto the very blob a
@@ -58,12 +122,12 @@ RACE-PROOF RELEASE
         READERS  every reference creator. File_Storage_Model::store_blob() takes the
                  read lock BEFORE the storage row is looked up or created and holds it
                  until the reference written in its callback is COMMITTED; the save()
-                 of File_Attachment_Model and Email_Attachment_Model does the same for
-                 any write that sets file_storage_id (a reference to an EXISTING row),
-                 and throws if the row was released first.
+                 of every Blob_Referencing model does the same for any write that
+                 sets file_storage_id (a reference to an EXISTING row), and throws if
+                 the row was released first.
         WRITERS  release_blob_if_orphaned() and the monthly disk-orphan sweep. Each
-                 re-checks both reference tables (or, for a disk file, the storage
-                 row) inside the write lock.
+                 re-checks every declared reference table (or, for a disk file, the
+                 storage row) inside the write lock.
     "Until committed" means: at once when no transaction is open, else at the end
     of the OUTERMOST transaction (commit or rollback). A reference inside an open
     transaction is invisible to every other connection, so a lock released at the
@@ -75,8 +139,9 @@ RACE-PROOF RELEASE
            _file_storage row (its search-index row cascades in the same transaction)
         -> commit
         -> unlink the blob file and purge its rendition + thumbnail caches
-    Both reference tables carry an ON DELETE RESTRICT foreign key to
-    _file_storage, so a reference that exists after all makes the delete FAIL:
+    Every declared reference table carries a foreign key to _file_storage that
+    refuses the delete (RESTRICT), so a reference that exists after all makes the
+    delete FAIL:
     release_blob_if_orphaned() returns false and nothing is unlinked. Only
     destroyed tombstones are un-claimed, so a live reference keeps its claim.
 
@@ -173,7 +238,7 @@ SCHEDULED TASKS (File_Disposal_Service)
     run_monthly_deep_sweep   #[Schedule('0 2 * * 0')] + first-Sunday guard
         Classic cron cannot express "first Sunday", so it fires every Sunday and
         returns early unless the day-of-month is 1..7. Full reconciliation, no time
-        window: (a) release every storage blob with a zero retention-aware refcount;
+        window: (a) release every storage blob no declared reference pins;
         (b) stream-walk blob_root() and unlink files older than
         rsx.files.disk_orphan_min_age_days (default 14) that have no storage row (the
         age guard protects a just-written blob whose row commits after the file
@@ -241,6 +306,7 @@ INTERACTIONS / PITFALLS
 
 SEE ALSO
     rsx:man file_upload, rsx:man document_search, rsx:man tasks,
-    rsx:man event_hooks, rsx:man locks, rsx:man maintenance_mode
+    rsx:man event_hooks, rsx:man locks, rsx:man maintenance_mode,
+    rsx:man health
 
 RSpade                              2026                    RSX_FILE_DISPOSAL(1)

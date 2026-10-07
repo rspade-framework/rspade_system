@@ -71,7 +71,7 @@ class Email_Site_Block_List_Test extends Rsx_Test_Abstract
         Rsx_Mail_Transport::$override_for_tests = $stub;
 
         try {
-            return Task::internal('Mail_Queue_Service', 'send_pending_queue');
+            return Task::internal('Mail_Queue_Service', 'send_pending_queue')->state();
         } finally {
             Rsx_Mail_Transport::$override_for_tests = null;
         }

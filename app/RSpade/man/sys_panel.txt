@@ -49,7 +49,7 @@ DESCRIPTION
     concepts and they stay in the application.
 
     It has eight screens, in sidebar order: Dashboard, Debug Flags, Tasks,
-    Task Queues, Email & SMS, Logs, Sites and Users, each described below. A screen over
+    Task Workers, Email & SMS, Logs, Sites and Users, each described below. A screen over
     site-scoped data reads EVERY site, never the developer's own tenant. What
     an application has to coexist with is the panel's SHAPE - the tree, the
     URL, the gate, the switch and the reserved namespace - covered in the
@@ -87,65 +87,85 @@ DESCRIPTION
     came from: this browser's override, the environment (naming the key), or a
     config file. rsx:man console_debug.
 
-    Tasks (`/_sys/tasks`) is the `_tasks` table, install-wide, in three tabs.
-    RUNNING lists every row marked running - id, task, WORKER, PID, start
-    time, heartbeat age, queue - with a Kill action that takes an optional
-    explanation and does what `rsx:tasks:kill` does: SIGTERM, a 5 second
-    grace, SIGKILL, the explanation recorded as the row's status reason
-    ("killed from the control panel" when none is given) (a
-    schedule's tracker row goes back to pending rather than terminal).
-    WORKER is evidence that the row is really running, read from the process
-    that claimed it on this host: alive, gone (the worker died - the row is
-    abandoned, and rsx:task:process settles it on its next tick, so a gone row
-    that stays means the cron tick is not running), on another host (whose
-    processes this one cannot see) or no pid recorded. Heartbeat is when the
-    task last called $task->heartbeat(); "never" says only that it does not.
-    HISTORY is every row, newest first, filtered by status, task class, queue and
-    "finished within" (by completed_at, the dashboard's own definition of a
-    recent failure), searched by class or method, sortable by id, start and
-    finish. A row opens its detail (`/_sys/tasks/<id>`): every column with the
-    worker's state while it runs, the params and result as JSON, the error,
-    and the log in a live CONSOLE (an xterm.js terminal): every line the task
-    writes - its info/error/debug/progress calls and, in a worker run, what it
-    prints, as `output` lines - appears as it is written, with the status,
-    line count and last heartbeat under it. It follows the row over
-    realtime (Task_Changed_Topic); with realtime disabled it shows the log as
-    of the page load and Refresh reads what is new. Kill while it
-    runs, and Re-dispatch for a failed or killed one-shot row - the same
-    service, method, params and queue enqueued as a NEW row, the old row left
-    as it was. Datetimes show in the viewer's timezone. The dashboard's
-    worker and failed-task tiles open the Running tab and the history
-    filtered to failures in the last 24 hours.
+    Tasks (`/_sys/tasks`) is every task RUN, install-wide (rsx:man tasks: each
+    execution - dispatched, scheduled or inline - is one run), in two tabs,
+    TASKS and SCHEDULES.
+    The developer is a developer, so every task gate passes here: the console
+    shows and controls every run whatever the application's own gates say.
 
-    SCHEDULES lists every #[Schedule] declaration beside its tracker row:
-    the declared phrase and its cron form, whether the task is #[Exclusive]
-    or #[Debounce], the tracker's status, next run, the LAST RUN (when it
-    ran and whether it completed, failed or was abandoned by a worker that
-    died or disconnected), last success, consecutive failures and, when the
-    last run did not complete, the last error (linking to the tracker's
-    detail).
-    A declaration the scheduler has not reconciled yet reads "not yet
-    scheduled". A schedule whose consecutive failures reach
+    TASKS is one realtime grid of every run: the live runs on top - running
+    runs first, oldest start first, then queued runs, earliest due first -
+    and the finished runs below them, newest first. Columns: id, task and
+    origin, status, scheduled or started time, finished time, and progress
+    (a live run's bar and status line; a finished run's status only - its
+    error, reason or last status line); a running run's row is
+    highlighted. Filters: scope ("All active and completed tasks", "Active tasks", "Completed tasks" -
+    completed being every finished status: completed, failed, stopped,
+    killed, cancelled), status, task, origin and "finished within" (by
+    completed_at, the dashboard's own definition of a recent failure);
+    search by class or method. The grid reloads whenever a run is queued,
+    starts, finishes or reports (Task_List_Changed_Topic, and each running
+    row's Task_Changed_Topic), through one reload debounced by
+    Rsx_Task.LIVE_UPDATE_DELAY (250 ms). "Pause live updates", beside the
+    filters, holds those reloads until it is cleared, then reloads once;
+    the run dialog keeps updating either way. "Play the sample task", left
+    of the search box, starts _Sys_Oregon_Trail_Service::travel - a
+    scripted three-minute game of the Oregon Trail that uses every report a
+    task can make and stops gracefully when asked - and opens its run.
+
+    Every row carries the lifecycle buttons that apply to it now - Graceful
+    stop, Force stop and Force kill for a running run; Graceful stop and
+    Cancel for a queued one; Run again for a finished one - each opening a
+    confirmation that says what the action does and takes an optional
+    explanation (and, for a force stop, the grace in seconds; blank is
+    rsx.tasks.stop_grace_seconds). The action is recorded on the run's output
+    as an operator line naming the developer. A force stop or kill is carried
+    out by a kill worker on the run's host (Task Workers lists it while it is
+    pending). Run again dispatches the same task and params as a NEW run and
+    names it.
+
+    A row opens the RUN DIALOG, three columns: the run's facts and actions
+    (task, status, the status line and progress, origin, pool, queued /
+    scheduled / started / finished times, stop requested, the worker while
+    the run is running - PID, host and whether that process is alive here,
+    gone (abandoned; the next rsx:task:process tick settles it), on another
+    host, or unknown - the
+    heartbeat, return code, reason, error, the parameters as JSON, and the
+    files the run attached, each a download link); the live OUTPUT
+    (Task_Output: an xterm.js console of stdout, stderr and operator lines
+    with a stdout / stderr / both filter); and the REPORTS the run has set,
+    one at a time from a select (state object first, then the queue, then
+    the rest - Task_Report). Each column follows the run over realtime on its
+    own; with realtime disabled the console shows the output as of opening
+    and its Refresh reads what is new. "Open as page" shows the same three
+    columns at `/_sys/tasks/<id>`. Datetimes show in the viewer's timezone.
+    The dashboard's failed-task tile opens the history filtered to failures
+    in the last 24 hours; its worker tile opens Task Workers.
+
+    SCHEDULES lists every #[Schedule] declaration beside its registration
+    (its _task_schedules row): the declared phrase and its cron form, whether
+    the task is #[Exclusive] or #[Debounce], the next run, the LAST RUN (its
+    outcome, opening that run), last success, consecutive failures and the
+    last error. A declaration the scheduler has not reconciled yet reads "not
+    yet scheduled". A schedule whose consecutive failures reach
     rsx.tasks.failing_schedule_warn_after - the threshold the rsx:health
-    "Failing Schedules" row uses - is marked failing. Run now dispatches the
-    task once, with no params, on its declared queue, as an ordinary
-    one-shot row; the tracker and its next run are not touched. An
-    #[Exclusive] or #[Debounce] task that already has a queued run coalesces
-    onto it, and the flash says so and links to that row instead.
+    "Task Schedule Failures" row uses - is marked failing. Run now dispatches
+    the task once, with no params, as an ordinary dispatched run; the schedule
+    and its next run are not touched. An #[Exclusive] or #[Debounce] task that
+    already has a queued run coalesces onto it, and the flash says so and
+    links to that run instead.
 
-    Task Queues (`/_sys/queues`) is what each queue label is waiting on,
-    beside the one worker pool that drains them all. A queue is a LABEL
-    (Task::dispatch()'s 'queue' option, #[Task(queue: ...)]): workers are
-    generic, never assigned to a queue, capped together at
-    rsx.tasks.global_max_workers, and a worker claims run-now work first,
-    oldest first, then due schedules, whatever the label. So the tiles are
-    the pool - its cap, the workers connected to rsx-lockd now - and the
-    totals of running rows (with how many have no live worker) and pending
-    rows due now; the table has one row per label with pending or running
-    work: running (and stale), pending due now, held for later (a delayed
-    dispatch or a retry backoff), schedule trackers (and how many are due)
-    and how long the oldest due row has waited. Each count links to the
-    Tasks history filtered to that queue and status.
+    Task Workers (`/_sys/workers`) is the worker pools at work. A tile per
+    pool - on demand (dispatched work), scheduled (#[Schedule] work, taking
+    queued dispatched work first) and kill (force stops and kills) - shows
+    its workers against its cap (rsx.tasks.pools) and how many processes wait
+    for its lock. Beneath: every RUNNING run with its pool, worker (PID, host
+    and state, as in the run dialog), start and live progress, with its
+    actions; the pending KILL REQUESTS (task, force stop or kill, host, when
+    due, which kill worker holds it, the explanation); the oldest ten QUEUED
+    runs with the queued total; and the next ten SCHEDULES due with the
+    schedule total. Any run opens the run dialog. It refreshes as runs start
+    and finish (Task_List_Changed_Topic).
 
     Email & SMS (`/_sys/email`) is the two outbound queues, install-wide -
     every site's rows - in two tabs, EMAIL (the default) and SMS.
@@ -602,6 +622,8 @@ SEE ALSO
     rsx:man external_api - the API console's engine, keys, and mount contract
     rsx:man auth_gates - #[Auth], the check vocabulary, can_access()
     rsx:man session - IMPERSONATION: the mechanism the Users screen drives
+    rsx:man tasks - runs, lifecycle control, kill workers and the pools the Tasks
+        and Task Workers screens show
     rsx:man console_debug - the per-browser override the Debug Flags screen stores
     rsx:man class_override - the copy-and-replace pattern is_sysadmin uses
     rsx:man config_rsx - the two-tier config merge and where to override

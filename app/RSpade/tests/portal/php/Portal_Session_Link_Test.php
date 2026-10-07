@@ -23,7 +23,6 @@ use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\Session_Cleanup_Service;
 use App\RSpade\Core\Session\Session_Link;
 use App\RSpade\Core\Session\Session_Link_Controller;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Portal\Php\Portal_Impersonation_Grant_Fixture;
 
@@ -540,8 +539,7 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
             'expires_at' => now()->subSeconds(1),
         ]);
 
-        $task = new Task_Instance(Session_Cleanup_Service::class, 'cleanup_session_links');
-        $result = Session_Cleanup_Service::cleanup_session_links($task);
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_session_links');
 
         static::__assert_true($result['total_deleted'] >= 1, 'the expired link is reclaimed');
         static::__assert_equals(0, DB::table('_session_links')->where('expires_at', '<', now())->count(), 'no expired link remains');

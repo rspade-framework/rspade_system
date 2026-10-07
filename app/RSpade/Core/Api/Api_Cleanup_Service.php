@@ -56,12 +56,14 @@ class Api_Cleanup_Service extends Rsx_Service_Abstract
         }
 
         if ($total > 0) {
-            $task->info("Deleted {$total} API request log rows older than {$retention_days} days");
+            $task->stdout("Deleted {$total} API request log rows older than {$retention_days} days");
         }
 
-        return [
+        $task->state([
             'deleted' => $total,
             'retention_days' => $retention_days,
-        ];
+        ]);
+
+        return null;
     }
 }

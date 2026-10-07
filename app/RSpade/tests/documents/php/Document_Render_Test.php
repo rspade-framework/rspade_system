@@ -18,7 +18,6 @@ use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Realtime\Realtime_Emissions;
 use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -109,12 +108,6 @@ class Document_Render_Test extends Rsx_Test_Abstract
         return "RSpade render test {$marker} " . bin2hex(random_bytes(8));
     }
 
-    private static function __task(): Task_Instance
-    {
-        // Immediate (non-DB-backed) instance: info() buffers in memory, heartbeat() no-ops
-        // outside a worker - safe for direct in-test invocation.
-        return new Task_Instance(Document_Render_Service::class, 'render_pending');
-    }
 
     // ============================================================================================
     // STATE MACHINE
@@ -349,7 +342,7 @@ class Document_Render_Test extends Rsx_Test_Abstract
         config(['rsx.libreoffice.enabled' => false]);
 
         try {
-            Document_Render_Service::render_pending(static::__task());
+            static::__run_task_method(Document_Render_Service::class, 'render_pending');
         } finally {
             config(['rsx.libreoffice.enabled' => true]);
         }

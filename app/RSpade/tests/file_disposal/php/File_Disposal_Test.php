@@ -12,7 +12,6 @@ use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Tests\FileDisposal\Php\File_Disposal_Test_Listener;
@@ -79,9 +78,7 @@ class File_Disposal_Test extends Rsx_Test_Abstract
 
     private static function __run_daily(): void
     {
-        File_Disposal_Service::run_daily_disposal(
-            new Task_Instance(File_Disposal_Service::class, 'run_daily_disposal')
-        );
+        static::__run_task_method(File_Disposal_Service::class, 'run_daily_disposal');
     }
 
     // -------------------------------------------------------------------------

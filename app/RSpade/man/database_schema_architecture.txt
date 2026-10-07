@@ -84,10 +84,21 @@ _migrations
   Records: Migration batch history, execution timestamps
 
 _tasks
-  Purpose: Background job queue and scheduled task execution
-  Managed by: RSpade Task system (Task.php, Task_Instance.php)
-  Records: Queued jobs, scheduled tasks, execution logs, status tracking
-  Schema: class, method, params, status, logs, scheduled_for, worker_pid
+  Purpose: Background work - ONE ROW PER RUN (dispatched, scheduled or inline)
+  Managed by: RSpade Task system (Task, Task_Runner, Task_Instance)
+  Records: The run's lifecycle, origin, who dispatched it and for which site,
+           the worker that ran it, and its small live reports (status text,
+           progress, ETA, heartbeat)
+  Developer API: Task_Run_Model (readers, search, lifecycle operations)
+  Side tables (each cascades from _tasks): _task_reports (state JSON, state
+           list, summary), _task_output (stdout / stderr / operator lines),
+           _task_messages, _task_attachments (a declared blob reference),
+           _task_kill_requests (force stops and kills for the kill workers)
+
+_task_schedules
+  Purpose: One row per #[Schedule] declaration - cadence, next run and the
+           schedule's run statistics (each run is a _tasks row)
+  Managed by: rsx:task:process (reconciled from the manifest every tick)
 
 _file_storage
   Purpose: Content-addressable blob storage backend

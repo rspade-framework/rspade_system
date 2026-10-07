@@ -2,7 +2,8 @@ RSX TASK SYSTEM
 ================
 
 NAME
-    Tasks - Unified background task execution with scheduling and queueing
+    Tasks - background and scheduled work: one recorded run per execution, structured
+    reports, gated lifecycle control and the widgets that show a run live
 
 SYNOPSIS
     Define a task (a public static Service method with #[Task]):
@@ -10,169 +11,222 @@ SYNOPSIS
     #[Task('Generate report')]
     public static function generate_report(Task_Instance $task, array $params = [])
     {
-        $task->info('Starting');
-        $task->update_progress(50, 'halfway');
-        return ['status' => 'complete'];   // stored as JSON result
+        $task->status('Loading rows');
+        $task->progress_count(120, 480);
+        $task->stdout('wrote report.csv');
+        $task->attach_file('report', $path);
+        $task->summary('480 rows exported.');
+        return null;                          // null, true or 0 = success
     }
 
-    Run it now (synchronous CLI):
+    Run it now, in this process (CLI):
         php artisan rsx:task:run Service_Name generate_report --param=value
 
-    Run it in the background (returns a pollable id, runs in ~1s):
-        $id = Task::dispatch('Service_Name', 'generate_report', $params);
-        $status = Task::status($id);   // array; ['status'] => pending|running|completed|failed
+    Run it in the background (returns the run's id):
+        $id  = Task::dispatch('Service_Name', 'generate_report', $params);
+        $run = Task_Run_Model::find($id);     // status_id, status_text(), progress_percent(), ...
 
-    Run on a schedule (recurring):
+    Run it on a schedule:
         #[Task('Nightly cleanup')]
-        #[Schedule('daily at 3am')]        // or standard cron '0 3 * * *'
+        #[Schedule('daily at 3am')]           // or standard cron '0 3 * * *'
         public static function cleanup(Task_Instance $task, array $params = []) { ... }
 
-DESCRIPTION
-    RSX runs background work as static Service methods marked #[Task]. There is one
-    durable queue (the _tasks table) and one shared pool of generic worker processes.
-    You never write a worker loop or a queue driver - the framework spawns, caps, and
-    reaps workers, and reconciles schedules, automatically.
+    Act on a run:
+        $run->request_stop();                 // graceful: the task stops at its next check
+        $run->force_stop(30);                 // ask, then kill after 30 s
+        $run->force_kill();                   // kill now
+        $run->cancel();                       // a pending run never runs
+        $new_id = $run->rerun();              // a finished run, again
 
-    Unlike Laravel queues (job classes, a queue driver, `queue:work` daemons, Horizon),
-    RSX tasks are just annotated methods; dispatch/scheduling/worker-management are
-    built in. MySQL backs the durable queue; the rsx-lockd daemon backs every lock a task
-    takes and is the one count of the worker pool (see THE WORKER POOL). Redis plays no
-    part in running tasks.
+    Show a run in a page (Core widgets, every bundle):
+        <Task_Status_Badge $task_id=this.args.id />
+        <Task_Report $task_id=this.args.id $kind="progress" $bar=true />
+        <Task_Output $task_id=this.args.id />
+        <Task_Report_Browser $task_id=this.args.id />
+
+DESCRIPTION
+    RSX runs background work as static Service methods marked #[Task]. Unlike Laravel
+    queues (job classes, a queue driver, queue:work daemons, Horizon), there is nothing to
+    write but the annotated method: the framework owns the durable queue (MySQL), three
+    worker pools accounted by the rsx-lockd daemon, the schedule, and the recovery of work
+    whose worker died. Redis plays no part in running tasks.
+
+    EVERY EXECUTION IS A RUN, AND EVERY RUN IS A _tasks ROW (Task_Run_Model): a dispatched
+    run, each run of a #[Schedule], and every inline run - Task::internal(), rsx:task:run
+    and a #[Command] alias included. The row carries the lifecycle, who started it and for
+    which site, the worker that ran it, and the task's small live reports; the larger
+    reports, the output lines, the messages and the attached files live in side tables
+    keyed to it. A task WRITES all of it through its Task_Instance; outside code READS it
+    through Task_Run_Model and acts on the run through the lifecycle methods.
 
     THE ONE KEY POINT: TASKS RUN CONCURRENTLY AND UNGUARDED
     -------------------------------------------------------
     NOTHING takes a global application lock - not artisan, not task workers, and not web
-    requests (a read-only request now takes no lock at all). Multiple workers run at the
-    same time, and a task shares the database with concurrent web requests and other tasks.
-    Therefore:
+    requests. Multiple workers run at the same time, and a task shares the database with
+    concurrent web requests and other tasks. Therefore:
 
       * A #[Task] method MUST NOT assume it is the only writer, or that only one kind of
         task runs at a time. If a critical section cannot tolerate a concurrent writer,
         the task acquires its own lock (RsxLocks, see LOCKS).
-      * #[Exclusive] / #[Debounce] guarantee single-instance for ONE identity
-        (class::method) - they do NOT protect a shared table from OTHER tasks or from web
-        writers. Use a named or per-site lock for that.
+      * #[Exclusive] / #[Debounce] guarantee single-instance for ONE identity - they do
+        NOT protect a shared table from OTHER tasks or from web writers. Use a named or
+        per-site lock for that.
 
-EXECUTION MODES
+RUNS
 
-    1. Immediate (synchronous)
-       php artisan rsx:task:run Service_Name task_name --param=value
-       Runs in-process, no queue row, no timeout. STDOUT is the return value as JSON and
-       nothing else; STDERR carries the task's log lines live (-q silences them, never the
-       value) - see OUTPUT CONTRACT in rsx:man task_commands. Also available in code as
-       Task::internal($service, $task, $params), which returns the task's value and, called
-       from application code, prints nothing anywhere.
+    Origins (origin_id):
+        Dispatched   Task::dispatch(), and a rerun - claimed by a pool worker
+        Scheduled    a due #[Schedule] - its run row is created by the scheduled-pool
+                     worker that claims it, linked by schedule_id
+        Inline       Task::internal(), rsx:task:run, a #[Command] alias and
+                     rsx:task:process --once - run in the calling process
 
+    Status (status_id), with the Task_Run_Model constants:
+        1 Pending    STATUS_PENDING     queued; scheduled_for says when it is due
+        2 Running    STATUS_RUNNING     claimed; worker_pid / worker_host say where
+        3 Completed  STATUS_COMPLETED   the task returned success
+        4 Failed     STATUS_FAILED      a failure return, a throw, or an abandonment
+                                        that is not retried
+        5 Stopped    STATUS_STOPPED     the task returned success after a stop was
+                                        requested: it stopped early, at a clean point
+        6 Killed     STATUS_KILLED      a kill worker killed it (force stop, force
+                                        kill, timeout, rsx:tasks:kill-all)
+        7 Cancelled  STATUS_CANCELLED   taken off the queue before it ran
+
+    Pending and Running are LIVE (Task_Run_Model::LIVE_STATUSES, is_live()); the other
+    five are terminal (is_terminal()). A terminal run never changes again, except that a
+    rerun creates a NEW run.
+
+    Each row records dispatched_by (a type-ref pair: the User_Model, Portal_User_Model or
+    Login_User_Model signed in when the run was created, null for a schedule, a worker or
+    the CLI) and site_id (the current site, 0 when there is none). Those two columns are
+    what an application's view gate keys on (GATES AND THE BROWSER API).
+
+REPORTING (Task_Instance)
+
+    The $task handle passed to every task method. Every report is optional; a task uses
+    whichever describe its work.
+
+        $task->heartbeat()                     "still alive" - stamps last_heartbeat_at
+        $task->status(string $text)            one line of status, replacing the last; a
+                                               CHANGED status is also written to stderr,
+                                               so the output reads as a narrative.
+                                               Newlines become spaces; cut to 1000 chars.
+        $task->progress(float $percent)        0-100, two decimals, clamped
+        $task->progress_count(int $done, int $total)   "3 of 257"
+        $task->eta(int $seconds)               seconds from now; stored as the moment
+                                               (eta_at), so a viewer counts down alone
+        $task->state(array|object $state)      a JSON state object, replacing the last
+        $task->state_list(array $items)        a LIST (sequential keys) - a work queue, a
+                                               sync list - replacing the last. The report
+                                               exists once the list has held an item: an
+                                               empty list before then records nothing
+        $task->message(string $text)           a message for whoever is watching; kept,
+                                               in order, for as long as the run is
+        $task->stdout(string $text)            output lines, one row per line
+        $task->stderr(string $text)
+        $task->attach_file(string $name, string $path, ?string $file_name = null,
+                           ?string $mime_type = null)
+        $task->attach_bytes(string $name, string $bytes, string $file_name,
+                            ?string $mime_type = null)
+                                               a named file for outside consumers; the
+                                               bytes go into the central blob store and
+                                               the same name again replaces the file
+        $task->summary(string $text)           the completion summary
+        $task->flush()                         write every held report now
+
+    ECHO IS STDOUT. Everything the task prints (echo, print, var_dump) is captured line by
+    line as stdout, wherever the run executes - a worker, an inline run, a console run -
+    and passed through unchanged, so a console runner still shows it. Output the task
+    buffers itself (ob_start around a rendered view) is its own and is never recorded.
+
+    WRITE RATE, NOT A TIMEOUT. A task may report on every item of a long loop, and writing
+    each report would cost a database write and a realtime frame per item. Reports are held
+    in memory and written together: the first report after a quiet spell is written at
+    once, and further reports within Task_Instance::FLUSH_INTERVAL (0.25 s) of the last
+    write wait for the next reporting call, is_stop_requested(), flush() or the end of the
+    run. A task about to go quiet for a long step calls flush() first so its watchers see
+    where it is. Attachments are written immediately. The heartbeat plays no part in worker
+    liveness (THE WORKER POOLS): a task may run for hours without reporting anything.
+
+    Stop check (cooperative - see LIFECYCLE CONTROL):
+        $task->is_stop_requested()             writes held reports, then reads the row
+
+    Identity and scratch space:
+        $task->get_id(), get_class(), get_method(), get_params()
+        $dir = $task->get_temp_dir()           tmp/tasks/task_<id>/, removed when the
+                                               run ends
+
+    A console runner (rsx:task:run, a #[Command]) also hands the instance its own stdout
+    and stderr, and output lines are echoed there live. Nothing else does: a task run from
+    a web request or a worker prints to nobody's console. A task cannot tell which is
+    happening and must not try to.
+
+THE RETURN CONTRACT
+
+    A task's return value is its RETURN CODE (Task_Run_Outcome, decided in one place):
+
+        null, true, 0        success          (compared with ===; 0 is never "false")
+        false                failure, return code 1
+        any other integer    failure, that return code
+        anything else        failure, return code 1, with an error naming the contract
+        a throw              failure, return code 1, the exception recorded as the error
+
+    A task reports DATA with summary(), state(), state_list() or an attachment - never
+    through its return value; returning an array is a failed run. Any Throwable counts as
+    a throw: a TypeError settles exactly like an Exception.
+
+    A successful run settles COMPLETED, or STOPPED when a stop had been requested; a
+    failed run settles FAILED, with a "Task failed: <error>" line written to its stderr.
+    The settle matches only a row still RUNNING, so a run a kill worker already settled
+    KILLED keeps that verdict.
+
+STARTING A RUN
+
+    1. Background: Task::dispatch($service, $method, $params = [], $options = []): int
+       Inserts a PENDING row and, when it is due now, spawns a detached worker if a pool
+       has room (on_demand first, then scheduled). Returns the run's id. With both pools
+       full nothing is spawned: a busy worker reaches the row when it finishes its current
+       one, and the cron tick covers the rest. A process that called
+       Task::spawn_workers(false) - and every test, unless it opted in - ENQUEUES ONLY (see
+       SPAWNING OFF and TESTING).
+
+       $options (any other key throws):
+         'scheduled_for'  earliest run time. A FUTURE value is the only thing that defers a
+                          run (the cron tick or a later spawn picks it up once due). Refused
+                          (throws) for an #[Exclusive]/#[Debounce] task, whose timing is the
+                          coalesced pending row's (CONCURRENCY).
+         'timeout'        the run's execution cap in seconds (EXECUTION TIMEOUT)
+
+       For an #[Exclusive]/#[Debounce] task the id returned is THE pending run of its
+       identity - the existing one, or the one just created.
+
+    2. Inline: Task::internal($service, $method, $params = []): Task_Run_Model
+       Runs the task in THIS process and returns its settled row. The run is recorded like
+       any other (origin Inline): its row, its reports, its output, its revision unit of
+       work. A task that THROWS is settled FAILED and the exception is rethrown; a failure
+       return is settled FAILED and returned (read status_id and return_code). An
+       #[Exclusive]/#[Debounce] task first takes its identity's run lock, waiting for a
+       running instance to finish. A fatal error that ends the process mid-run settles the
+       row FAILED from a shutdown function, so it is never left RUNNING.
+
+    3. Console: php artisan rsx:task:run <Service> <method> [--key=value ...]
+       Task::internal() with the command's own stdout and stderr attached: the task's
+       stdout is the command's stdout, its stderr (every status() change and the failure
+       line included) is the command's stderr, and the exit code is the run's return code.
        A task worth invoking by hand gets its own artisan command by adding
-       #[Command('myapp:name', 'Description')] beside its #[Task]. That alias IS this line
-       under a friendlier name - same params, same output, same exit codes. Full treatment:
-       rsx:man task_commands.
+       #[Command('myapp:name', 'Description')] beside its #[Task] - that alias IS this
+       line under a friendlier name. Full treatment: rsx:man task_commands.
 
-    2. Background (async)
-       $id = Task::dispatch($service, $task, $params, $options);
-       Inserts a pending row AND, when the task is due now and the pool has room,
-       spawns a detached worker so it runs within ~1 second (at the cap nothing is spawned:
-       a busy worker reaches the row when it finishes its current task, and the cron tick
-       covers the rest). A process that called Task::spawn_workers(false) - and every test,
-       unless it opted in - ENQUEUES ONLY; see SPAWNING OFF and TESTING below.
-       Returns the pollable task id (for #[Exclusive]/#[Debounce]
-       identities that coalesce onto an already-pending run, returns that pending row's id).
-       $options: 'queue', 'timeout' (the execution cap enforced by the cron tick's reaper -
-       see EXECUTION TIMEOUT below), and 'scheduled_for' - a FUTURE 'scheduled_for' is the
-       only thing that defers the run (that row waits and the cron tick runs it when due).
+    4. Schedule: #[Schedule('<cron-or-phrase>')] on the method (SCHEDULES).
 
-    3. Scheduled (recurring)
-       #[Schedule('<cron-or-phrase>')] on the task method. The cron tick keeps one
-       persistent tracker row per scheduled task and runs it when due.
-
-TASK_INSTANCE API
-
-    The $task object passed to every task method:
-
-    Logging (appends a timestamped line; persisted for queued/scheduled tasks):
-        $task->info($message)
-        $task->error($message)
-        $task->debug($message)
-    (There is no warning() level.)
-
-    Printed output: in a run a pool worker executes, everything the task prints
-    (echo, print, var_dump) is recorded on the same log, one `[output]` line per printed
-    line, as it is printed - a trailing partial line when the run ends. Output the task
-    buffers itself (ob_start around a rendered view) is its own and is not recorded. An
-    immediate run (Task::internal(), rsx:task:run, a #[Command]) is not captured: there
-    stdout is the command's value.
-
-    Every log line is persisted the moment it is written, and the /_sys task detail shows
-    the log in a live console that follows the run line by line (Task_Changed_Topic, when
-    realtime is enabled). That console, the Running list's Worker column (whether the
-    claiming process is still alive) and the Task Queues screen are where to look first
-    when a task seems stuck - rsx:man sys_panel.
-
-    Progress and result:
-        $task->update_progress(int $percent, ?string $message = null)  // 0-100, logged
-                                                    // logs as "[45%] message", or "[45%]"
-        $task->set_result($value)                                      // JSON result, mid-run
-    (There is no set_status() / progress() method.)
-
-    Progress stamp for long runs:
-        $task->heartbeat()
-    Records last_heartbeat_at on the row, which the task screens display. Optional: it
-    plays no part in worker liveness. A worker is counted alive for exactly as long as its
-    rsx-lockd connection is open (THE WORKER POOL), so a task may run for hours without
-    calling anything.
-
-    Stop requests (cooperative - see STOPPING A TASK):
-        $task->is_stop_requested()      // true once Task::request_stop($id) flagged the row
-
-    Temp workspace (auto-deleted on completion/failure):
-        $dir = $task->get_temp_dir()    // tmp/tasks/task_<id>/
-
-    Misc: $task->get_id(), get_status(), get_params(), get_queue().
-
-DISPATCH & STATUS
-
-    $id = Task::dispatch($service, $task, $params, $opts);  // enqueue + run now, returns id
-
-    Task::status($id) returns an ARRAY (or null if unknown):
-        [
-            'id', 'class', 'method', 'queue', 'status',   // status: pending|running|completed|failed|killed
-            'params'  => array,
-            'result'  => array|null,                      // the task's return value when completed
-            'logs'    => string[],                        // one entry per logged line
-            'error'   => string|null,
-            'scheduled_for', 'started_at', 'completed_at', 'created_at', 'updated_at',
-            'stop_requested' => bool,                     // Task::request_stop() was called
-        ]
-
-    Example:
-        $s = Task::status($id);
-        if ($s['status'] === 'completed') {
-            $out = $s['result']['output_path'];
-        }
-
-SCHEDULING
-
-    #[Schedule('<expression>')] registers a recurring task. Standard 5-field cron is
-    accepted:
-        '0 3 * * *'      Daily at 3am
-        '0 */6 * * *'    Every 6 hours
-        '0 9 * * 1-5'    Weekdays at 9am
-
-    Human-readable phrases are also accepted (normalized to cron). PREFER THESE - they
-    contain no asterisk-slash step token, which is unsafe to write in a block comment (the
-    asterisk-slash pair terminates a /* */ or /** */ comment and corrupts the file):
-        'every minute'                 'every 5 minutes'        'every 6 hours'
-        'hourly'                       'daily' / 'daily at 2am' / 'daily at 14:30'
-        'weekly' / 'weekly on monday at 9:30am'                'monthly'
-
-    Schedule edits take effect within one cron tick: the processor compares the manifest
-    expression to the stored one and regenerates the tracker (recomputing next_run_at)
-    when they differ, so an old cadence never lingers.
+    A service may override Rsx_Service_Abstract::pre_task($task, $params), which runs
+    before every run of its tasks; a non-null return ends the run with that value as the
+    task's return.
 
 CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
 
-    Two mutually-exclusive markers control concurrency for ONE identity (class::method);
-    declaring both fails rsx:check (TASK-CONCURRENCY-01):
+    Two mutually-exclusive markers; declaring both fails rsx:check (TASK-CONCURRENCY-01):
 
         #[Task('Send pending email')]
         #[Exclusive]                     // at most one instance runs at a time
@@ -180,14 +234,26 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
         public static function drain(Task_Instance $task, array $params = []) { ... }
 
         #[Task('Rebuild search index')]
-        #[Debounce(30)]                  // single-instance; follow-up waits 30s after the
+        #[Debounce(30)]                  // single-instance; the coalesced follow-up runs
         public static function reindex(Task_Instance $task, array $params = []) { ... }
-                                         // previous run COMPLETED
+                                         // 30 s after the previous run COMPLETED
 
-    Both guarantee AT MOST ONE RUNNING + AT MOST ONE PENDING per identity (a distributed
-    translation of the JS debounce()). #[Exclusive] == #[Debounce(0)].
-    State is durable (_tasks rows) + cluster-safe (Task_Lock, a named RsxLocks lock). Tasks with
-    neither marker may run concurrently with copies of themselves.
+    Both guarantee, per IDENTITY, AT MOST ONE RUNNING + AT MOST ONE PENDING run - a
+    distributed translation of the JS debounce(). #[Exclusive] has no delay. The
+    identity differs:
+
+        #[Exclusive]   the method - class::method, whatever the params
+        #[Debounce]    the method AND its parameter set - class::method + params_hash
+                       (sha256 of the params' JSON with every object's keys sorted), so
+                       two different parameter sets are debounced independently
+
+    The guarantee holds however the task runs: dispatch() coalesces onto the identity's
+    pending run and returns its id; a worker claims a run only while holding the
+    identity's run lock (a non-blocking try - a run whose identity is busy is passed over);
+    a schedule tick whose identity is already running is coalesced into that run (its
+    next_run_at advances and nothing runs); an inline run waits for the run lock. When a
+    run settles, a coalesced pending run is re-anchored to now + the debounce delay. State
+    is durable (_tasks rows) and cluster-safe (Task_Lock, a named RsxLocks lock).
 
     IMPORTANT: these guard ONE identity against ITSELF. They do NOT stop a different task
     (or a web request) from writing the same table concurrently. For that, lock.
@@ -195,348 +261,183 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
 LOCKS: PROTECTING CRITICAL SECTIONS
 
     Because tasks are unguarded and concurrent, a task that must serialize a critical
-    section acquires its own lock. RsxLocks provides web-cluster reader/writer locks (many
-    concurrent readers; exclusive writers) served by the rsx-lockd daemon, which must be
-    running. Every acquire returns a token; release it with RsxLocks::release_lock($token)
-    (use try/finally).
-
-    A lock is held until it is released or until the holder DIES - there is no lease, no
-    TTL and no renewal, so a task that holds a lock for six hours still holds it at the end,
-    and a task killed with SIGKILL frees its lock instantly. This matters most for exactly
-    the work tasks do: long syncs, big imports, whole-table rebuilds.
-
-    Custom named lock (guard a named resource):
-        use App\RSpade\Core\Locks\RsxLocks;
+    section acquires its own lock. RsxLocks provides cluster reader/writer locks served by
+    the rsx-lockd daemon. Every acquire returns a token; release it with
+    RsxLocks::release_lock($token) in a finally.
 
         $token = RsxLocks::named_write_lock('rebuild_report_cache');   // exclusive
         try {
-            // ... critical section; no other writer of this name runs concurrently ...
+            // ... critical section ...
         } finally {
             RsxLocks::release_lock($token);
         }
 
-        $token = RsxLocks::named_read_lock('rebuild_report_cache');    // shared reader
+        $token = RsxLocks::site_write_lock($site_id);   // exclusive for one tenant
 
-    Per-site (tenant) lock - the SAME lock the framework takes automatically for a web
-    request that mutates a tenant's data. Use it when a task performs a multi-step
-    mutation of one site that must be atomic against those web writers and other tasks:
+    A lock is held until it is released or until the holder DIES - there is no lease, no
+    TTL and no renewal. $timeout on an acquire is a WAIT budget only and defaults to wait
+    forever. RsxLocks::system_lock($name) is the this-box-only flock kind.
 
-        $token = RsxLocks::site_write_lock($site_id);   // exclusive for this tenant
-        try {
-            // ... mutate site $site_id atomically ...
-        } finally {
-            RsxLocks::release_lock($token);
-        }
+    YOUR LOCKS ARE RELEASED WHEN THE TASK ENDS. A worker is one long-lived process running
+    many unrelated tasks, so it checkpoints the lock state before each task and releases
+    everything acquired during it. A task that ends still holding a lock has it released
+    AND named on its stderr and in a [WORKER] log warning - that is a defect in the task.
+    An inline run keeps its caller's locks.
 
-        $token = RsxLocks::site_read_lock($site_id);    // shared reader for this tenant
+    THE AUTOMATIC PER-TENANT WRITE LOCK IS CURRENTLY DISABLED (backlog B-87). A task that
+    wants tenant-wide exclusivity asks for RsxLocks::site_write_lock($site_id) - and for a
+    long sync, import or reindex, holding it blocks every web write to that tenant for the
+    whole run. Backlog B-85 tracks making that choice an explicit declaration.
 
-    All four accept an optional $timeout, which is a WAIT budget and NEVER a limit on how
-    long the lock is held. It defaults to NULL = wait forever; pass a number only when the
-    task genuinely has something better to do than wait, and it throws when that number
-    elapses. Grants are FIFO, and a request that would close a wait-for cycle is refused
-    immediately (with the cycle described) rather than parked forever.
+    SPAWNING artisan from inside a task goes through Rsx_Artisan, never
+    passthru/exec_safe - a subprocess is a different lock connection and would queue
+    behind locks this task holds, forever. Full contract: rsx:man locks.
 
-    release_lock() returns a BOOL: false means the lock daemon restarted while the task
-    held the lock, so mutual exclusion was not in force for the whole critical section (it
-    is logged as an error either way). A long task that can act on that news should check it.
+THE WORKER POOLS
 
-    RsxLocks::system_lock($name) is the other kind: THIS BOX ONLY, exclusive only, backed
-    by flock. Use it only when the contended resource is local to the machine - a task
-    coordinating with other servers wants the cluster locks above.
+    Three pools, each capped on its own in rsx.tasks.pools (every cap at least 1, or boot
+    throws):
 
-    YOUR LOCKS ARE RELEASED WHEN THE TASK ENDS. A worker is one long-lived process
-    running many unrelated tasks, but an ordinary application lock is held until the
-    PROCESS exits - so without a boundary the first task to write to a tenant would hold
-    that tenant against the whole cluster for the worker's entire life. The worker takes a
-    checkpoint before each task and releases anything acquired during it; locks the WORKER
-    itself holds are unaffected. Still release your own in a finally: a task that ends
-    holding one is released AND named in a [WORKER] warning, because that is a defect in
-    the task.
+        on_demand  runs dispatched work                       default 3
+                                                              (RSX_TASK_MAX_WORKERS)
+        scheduled  runs #[Schedule] work - and claims queued  default 1
+                   dispatched work FIRST
+        kill       the kill workers that carry out force      default 10
+                   stops and kills (LIFECYCLE CONTROL)
 
-    THE AUTOMATIC PER-TENANT WRITE LOCK IS CURRENTLY DISABLED (backlog B-87). A save()
-    against a site-scoped model no longer takes cluster:SITE_<id> by itself, so a task that
-    wants tenant-wide exclusivity must ask for it: RsxLocks::site_write_lock($site_id).
-    Think before you do - for a long-running task (an external sync, a bulk import, a
-    reindex) holding it blocks every web request that writes to that tenant for the whole
-    run, and such a task is usually better written to tolerate concurrent writers. Backlog
-    B-85 tracks making that choice an explicit declaration.
-
-    SPAWNING artisan from inside a task goes through Rsx_Artisan, never passthru/exec_safe
-    - a subprocess is a different lock connection and would otherwise queue behind locks
-    this task holds, forever. See rsx:man locks (LOCK GROUPS AND SUBPROCESSES).
-
-    See rsx:man locks for the full contract. Task_Lock, which holds the #[Exclusive] /
-    #[Debounce] identity locks, is a thin object over an RsxLocks named lock - there is no
-    second lock mechanism behind it.
-
-THE WORKER POOL
-
-    One shared pool of generic workers drains the queue. Concurrency is capped by
-    rsx.tasks.global_max_workers, and the ONE count of workers is kept by the rsx-lockd
-    daemon (Task_Pool; rsx:man locks, THE RSX LOCKD DAEMON) - NOT by counting rows, and not
-    by anything with a clock on it.
+    The ONE count of workers is kept by the rsx-lockd daemon (Task_Pool; rsx:man locks,
+    THE RSX LOCKD DAEMON) - not by counting rows, and not by anything with a clock on it.
+    Each pool is named per environment (tasks:<pool>:<scope>), so two environments sharing
+    a daemon never share a pool.
 
     MEMBERSHIP IS A CONNECTION. Each worker opens one pool connection to rsx-lockd and holds
-    it for its whole life. Joining the pool is a membership on that connection, so a worker
-    that exits, crashes or is SIGKILLed stops being counted the instant its socket closes -
-    on any host, with no heartbeat, no lease, no TTL and no reservation anywhere. A Redis
-    flush changes nothing about the pool.
+    it for its whole life. A worker that exits, crashes or is SIGKILLed stops being counted
+    the instant its socket closes - on any host, with no heartbeat, no lease, no TTL and no
+    reservation anywhere. Joining answers a worker id (wid) and the daemon's GENERATION (a
+    random integer picked once at daemon startup); a claim records both on the run, with
+    the worker's host and pid.
 
-    A WORKER IS NAMED BY (wid, generation). Joining answers an integer worker id (wid) and
-    the daemon's GENERATION - a random integer rsx-lockd picks once at startup, so every
-    daemon restart is a new generation. A wid is meaningful only with its generation: a
-    restarted daemon cannot know whether an older generation's worker still runs, and says
-    so (known: false) rather than guessing. The claim records both on the row, with the
-    worker's host and pid (see TASK DATABASE SCHEMA).
+    THE WORKER'S LOOP (rsx:task:worker --pool=on_demand|scheduled). Every pool step runs
+    under that pool's POOL LOCK, a FIFO mutex in the daemon:
 
-    THE WORKER'S LOOP. Every pool step runs under the POOL LOCK, a FIFO mutex the daemon
-    holds per pool:
-
-        1. Take the pool lock. If global_max_workers OTHER workers are already members,
-           release it and exit 0 - the pool is full. Otherwise join.
-        2. Still under the lock, claim the next row by the priority order below and mark it
-           RUNNING with this worker's worker_id, worker_generation, worker_host and
-           worker_pid. Release the lock. A worker whose pool connection is lost at that
-           release - after the claim, before the run - puts the row back to PENDING exactly
-           as it found it, logs "[WORKER] Lost the task pool connection after claiming task
-           ..." and exits 1; nothing ran.
+        1. Take the pool lock. If the cap's worth of OTHER workers are members, release it
+           and exit 0. Otherwise join.
+        2. Still under the lock, claim the next run: the oldest due PENDING run (both
+           pools); in the scheduled pool only, when none is due, the earliest due schedule,
+           whose run row is created here (origin Scheduled) in the same transaction that
+           advances its next_run_at. Release the lock.
         3. Run the task, holding no pool lock.
-        4. Take the pool lock, record the outcome on the row, and claim again (back to 2).
-           When nothing is claimable, or --max-time has passed, leave the pool, release the
-           lock and exit.
+        4. Take the lock, settle the run, and claim again (back to 2). When nothing is
+           claimable, or --max-time (300 s) has passed, leave the pool and exit.
 
-    The worker ADMITS ITSELF in step 1 - that is where the cap is enforced. Every pool call
-    waits for the daemon's acknowledgement, so no worker sends a pool command and moves on
-    (or exits) before the accountant has applied it.
+    Two pools claim the same pending rows and each holds only its own lock, so EVERY CLAIM
+    IS A GUARDED WRITE (WHERE the row is still PENDING) that must affect exactly one row; a
+    worker that loses the race claims again.
 
-    THE RULE: while holding the pool lock a process runs only pool ops and reads/writes of
-    _tasks rows (plus a non-blocking try or a release of an #[Exclusive]/#[Debounce] run
-    lock). No other blocking lock, no subprocess, no outbound call. Pool waits are invisible
-    to the daemon's deadlock detector, and THE RULE is what makes that safe. It governs
-    framework code only - a task itself never runs under the pool lock.
+    THE RULE: while holding a pool lock a process runs only pool ops and reads/writes of the
+    task tables (plus a non-blocking try or a release of an identity run lock). No other
+    blocking lock, no subprocess, no outbound call - realtime frames are held back and sent
+    after the unlock. A process holds at most one pool's lock at a time. THE RULE governs
+    framework code only: a task never runs under a pool lock.
 
-    SPAWNING. Every spawn - Task::dispatch() and the cron tick alike - goes through
-    Task::spawn_worker(), which starts a detached `rsx:task:worker` only when all four hold:
+    A lost pool connection ends the worker. Lost after a claim and before the run: the
+    claim is handed back (a dispatched run returns to PENDING; a scheduled run's row is
+    deleted and that tick is lost), "[WORKER] Lost the task pool connection after claiming
+    task ..." is logged and the worker exits 1. Lost while the task ran: the run's outcome
+    is recorded, the loss is logged and the worker exits 1.
 
-        - this process spawns workers at all (see SPAWNING OFF below);
-        - maintenance mode is not up (see MAINTENANCE MODE);
-        - fewer than global_max_workers of the workers THIS process spawned are still
-          running (read from /proc, no daemon round trip). This is what caps a script that
-          dispatches on every write: once its own spawns fill the cap, each further dispatch
-          returns at once until one of them exits;
-        - the pool, counted by rsx-lockd under the pool lock (released again BEFORE the
-          process is started), is below the cap. A worker whose own task dispatches counts
-          itself as one of the members.
+    SPAWNING. Every spawn - dispatch(), a force stop or kill, the cron tick - goes through
+    Task::spawn_worker($pool), which starts a detached rsx:task:worker (or rsx:task:killer
+    for the kill pool) only when all four hold:
 
-    These checks only avoid starting a process that is doomed to exit; two spawners racing
-    can both see room, and the loser's worker finds the pool full in step 1 and exits.
-    A worker run by hand is admitted exactly the same way.
+        - this process spawns workers at all (SPAWNING OFF);
+        - maintenance mode is not up;
+        - fewer than the pool's cap of the workers THIS process spawned into it are still
+          running (read from /proc, no daemon round trip);
+        - the pool, counted by rsx-lockd under its lock (released BEFORE the process is
+          started), is below the cap. A worker whose own task dispatches counts itself.
 
-    The cron tick tries ONE spawn per tick, and only when work is due. That is enough: a
-    worker drains until nothing is claimable, and every dispatch() tries a spawn of its own.
-
-    Priority order (a single order, no per-queue routing): a worker claims run-now tasks
-    first (dispatched, FIFO by enqueue time), then due scheduled tasks (by next_run_at).
-    The `queue` column is a label only; it does not isolate workers.
-
-    rsx-lockd is a hard dependency, exactly as it is for locks: when the daemon cannot be
-    reached, a dispatch() that would spawn THROWS (after its row is written, so the work is
-    queued), and the cron tick throws. Neither ever spawns around an admission count it
-    could not read. See TROUBLESHOOTING.
+    These checks only avoid starting a process that is doomed to exit; the worker's own
+    admission in step 1 is what enforces the cap. rsx-lockd is a hard dependency: when it
+    cannot be reached, a dispatch() that would spawn THROWS (after its row is written, so
+    the work is queued), and the cron tick throws.
 
 SPAWNING OFF: LONG-RUNNING SCRIPTS
 
-    Every dispatch() that finds room in the pool starts a worker, and a lot of ordinary code
+    Every dispatch() that finds room in a pool starts a worker, and ordinary code
     dispatches: a model save whose hooks queue a task, a mail send, an upload. A script that
-    writes thousands of rows can therefore start a process per write for as long as the pool
-    has room. Turn that off for the rest of the process:
+    writes thousands of rows turns that off for the rest of the process:
 
         Task::spawn_workers(false);
 
-    dispatch() still writes every row exactly as before and returns its id; it starts no
-    worker. The cron tick (rsx:task:process, every minute) spawns the workers that drain the
-    queue, so the work runs on the pool's own schedule instead of competing with the script
-    for the CPU. Task::spawning_workers() reports the current setting. The switch governs
-    THIS process only - web requests, the cron tick and the workers themselves are
-    unaffected. It is the same switch the test suite uses (see TESTING).
+    dispatch() still writes every row and returns its id; it starts no worker. The cron
+    tick spawns the workers that drain the queue. Task::spawning_workers() reports the
+    setting. The switch governs THIS process only. See rsx:man scripting.
 
-    Neither `supervisorctl stop tasks` nor rsx:maintenance:enable is the answer: the
-    supervisor program only runs the cron tick, and maintenance mode stops rsx-lockd and
-    Redis, which the script needs. See rsx:man scripting.
+SCHEDULES
 
-CONFIGURATION (config/rsx.php 'tasks')
+    #[Schedule('<expression>')] registers a recurring task. Standard 5-field cron works:
+        '0 3 * * *'      Daily at 3am
+        '0 9 * * 1-5'    Weekdays at 9am
 
-    'tasks' => [
-        'global_max_workers'   => env('RSX_TASK_MAX_WORKERS', 3),  // pool size (fixed per env)
-        'default_timeout'      => 1800,   // execution cap for a row carrying no timeout (0 = none)
-        'task_retention_days'  => 30,     // how long completed/failed rows are kept
-        'failing_schedule_warn_after' => 3,  // consecutive failed runs before rsx:health WARNs
-        'retry' => [
-            'base_seconds' => 600,  // first retry of an ABANDONED one-shot, doubling per abandonment
-            'attempts'     => 5,    // the abandonment that FAILS an abandoned one-shot for good
-        ],
-    ],
+    Human-readable phrases are also accepted (normalized to cron). PREFER THESE - they
+    contain no asterisk-slash step token, which is unsafe to write in a block comment (the
+    pair terminates a /* */ or /** */ comment and corrupts the file):
+        'every minute'                 'every 5 minutes'        'every 6 hours'
+        'hourly'                       'daily' / 'daily at 2am' / 'daily at 14:30'
+        'weekly' / 'weekly on monday at 9:30am'                'monthly'
 
-    'retry' is pacing for re-running work a dead or disconnected worker abandoned (STUCK TASK
-    RECOVERY). It is not a timeout: it bounds nothing's run time. It never applies to a task
-    that throws. base_seconds must be an integer >= 0 and attempts an integer >= 1, or the
-    reaper throws.
+    Each declaration is one _task_schedules row (Task_Schedule_Model): its class, method,
+    cron expression, next_run_at, and its run statistics - last_task_id, last_success_at,
+    last_error_at, last_error, consecutive_failures. EACH RUN of a schedule is a run row of
+    its own (origin Scheduled, schedule_id set), so a schedule has a full run history.
 
-    #[Task('...', queue: 'reports')] sets a per-task queue LABEL. NOTE: 'timeout' is NOT a
-    #[Task] argument - it is a Task::dispatch() option and a _tasks column.
+    rsx:task:process reconciles the table every tick: a new declaration is registered at
+    its next cadence; a changed expression is re-registered with next_run_at recomputed
+    (statistics kept), so an old cadence never lingers; a removed declaration's row is
+    deleted (its past runs keep their rows, schedule_id cleared). A scheduled-pool worker
+    advances next_run_at BEFORE running, so the cadence holds across a slow or crashed run.
 
-EXECUTION TIMEOUT
+    A scheduled task that fails does not stop its schedule: the run is FAILED, the schedule
+    counts the failure (consecutive_failures + 1, last_error, last_error_at) and runs again
+    at its next cadence. A success resets the streak. Visibility:
 
-    A running task is capped by its own _tasks.timeout, or by rsx.tasks.default_timeout when
-    the row carries none. With both absent (or 0) the task runs unbounded.
+        php artisan rsx:tasks:list     the Schedules table: next run, last success,
+                                       consecutive failures, the last error
+        php artisan rsx:health         Task Schedule Failures WARNs once a schedule
+                                       reaches rsx.tasks.failing_schedule_warn_after (3)
+                                       consecutive failures
 
-    Enforcement lives in the cron tick's reaper (rsx:task:process -> detect_stuck_tasks): a
-    RUNNING row whose worker is STILL ALIVE - a pool member, with its pid running on the host
-    the tick runs on - past its cap is killed through Task_Killer -
-    SIGTERM, 5s grace, SIGKILL - exactly as rsx:tasks:kill does, then settled KILLED with a
-    "timed out after Ns (cap Ms)" status_reason. A recurring cron TRACKER row is recycled to
-    PENDING instead, so a timeout never silently stops a schedule. One [TASK TIMEOUT] line is
-    logged per kill.
+LIFECYCLE CONTROL
 
-    Granularity is the cron tick interval (one minute), not the second: a task may overrun its
-    cap by up to a tick before the reaper sees it. The kill signals a pid, so it acts only on a
-    row whose worker_host is the host where the tick runs. The separate abandoned-worker sweep
-    (STUCK TASK RECOVERY) handles the other case - a RUNNING row whose worker is GONE.
+    Five operations on a Task_Run_Model. Each appends an OPERATOR line to the run's output
+    naming who did it (the signed-in identity's printed name, else "the command line" or
+    "an anonymous request") and the explanation when one is given; operator lines show as
+    stderr. None is gated in PHP: an endpoint acting for a user asks
+    Task_Gates::can_control() first. Each answers false when it no longer applies.
 
-COMMANDS
+        request_stop(?string $explanation = null): bool
+            GRACEFUL STOP. Sets stop_requested_at and does nothing else - nothing is ever
+            killed. A live run only.
+        force_stop(?int $grace_seconds = null, ?string $explanation = null): bool
+            Sets stop_requested_at, then a kill worker kills the run's worker if it is
+            still running after the grace (default rsx.tasks.stop_grace_seconds, 60). A
+            PENDING run is cancelled instead.
+        force_kill(?string $explanation = null): bool
+            A kill worker kills the run's worker now. A PENDING run is cancelled instead.
+        cancel(?string $explanation = null): bool
+            PENDING only: CANCELLED, never runs.
+        rerun(): int
+            A finished run only (a live run throws): Task::dispatch() of the same service,
+            method and params, returning the new run's id (an already-pending run's, for a
+            coalesced task). The original is untouched.
 
-    php artisan rsx:task:run Service method [--param=value]   Run synchronously (CLI)
-    php artisan rsx:task:list                                 List discovered tasks, with
-                                                              the #[Command] each is
-                                                              reachable as (or '-')
-    php artisan rsx:tasks:list                                Running instances + every schedule
-    php artisan rsx:task:process [--once] [--force-scheduled] The cron tick (below)
-    php artisan rsx:task:worker  [--max-time=300]             A pool worker (spawned for you)
-
-    rsx:task:process is the scheduler/dispatcher tick. Install it in cron:
-
-        * * * * * cd /var/www/html && php artisan rsx:task:process
-
-    Each tick it: (1) recovers stuck tasks (STUCK TASK RECOVERY) and enforces timeouts;
-    (2) revives any cron tracker found sitting in a terminal state (see FAILURE BEHAVIOR);
-    (3) reconciles #[Schedule] tracker rows from the manifest; (4) if work is due, tries ONE
-    Task::spawn_worker(). It does NOT itself become a worker. --once claims one task under the pool lock and runs it inline without joining
-    the pool (testing); --force-scheduled marks all schedules due now.
-
-    You rarely run rsx:task:worker by hand - the processor and Task::dispatch() spawn
-    them. A worker admits itself to the pool under the pool lock (exiting at once when it
-    is full), drains by the priority order until empty (or --max-time, checked between
-    tasks), then leaves the pool and exits - see THE WORKER POOL.
-
-MAINTENANCE MODE
-
-    While maintenance mode is up (rsx:maintenance:enable, or the window rsx:framework:pull
-    raises for an update) the CLI gate is allow-most-deny-some, and the task commands are
-    exactly the "some":
-
-        rsx:task:process   REFUSED (exit 75) - the cron tick must not fire into a stopped
-                           environment. Cron keeps calling it; every call exits immediately.
-        rsx:task:worker    REFUSED (exit 75). Task::spawn_worker() starts nothing at all
-                           while the window is up, so a dispatch made during it leaves
-                           its row PENDING, and the first tick after the window lifts
-                           starts its worker.
-        rsx:task:run       REFUSED unless --force. A human may insist; --force is consumed
-                           by the gate and never reaches the task's parameters.
-
-    Enabling maintenance also runs rsx:tasks:kill-all (see KILLING RUNNING TASKS) so nothing
-    is mid-write when the services stop. Nothing is lost: on-demand rows go terminal KILLED
-    with the explanation, cron trackers recycle to PENDING and keep their schedule.
-
-    See `rsx:man maintenance_mode`.
-
-TASK DATABASE SCHEMA (_tasks)
-
-    id, class, method, queue, status,   // status: pending|running|completed|failed|killed
-    params (JSON), result (JSON), logs (TEXT), error (TEXT),
-    status_reason (TEXT; one-line explanation for a KILLED, kill-recycled, failure-recycled or
-      abandoned transition; NULL otherwise, and cleared by a success),
-    consecutive_failures (INT; failed runs since the last success - on a tracker, runs that
-      threw or were abandoned; on a pending one-shot, its abandoned attempts; 0 after a success),
-    last_error_at (TIMESTAMP; when the last failure was recorded; NULL if none),
-    scheduled_for (run no earlier than), next_run_at (recurring tracker; NULL on one-shots),
-    cron_expression (stored schedule for tracker rows; NULL otherwise),
-    started_at, completed_at, last_heartbeat_at,
-    timeout, worker_pid,
-    worker_id, worker_generation (BIGINT; the claiming worker's rsx-lockd pool identity -
-      its wid and the daemon generation that issued it; NULL on a row run inline by --once
-      or Task::internal(), which are not pool members),
-    worker_host (VARCHAR; the claiming worker's hostname - the only host whose pid evidence
-      may settle or signal the row),
-    lock_key, created_at, updated_at
-
-    worker_pid, worker_id, worker_generation and worker_host are written together by the
-    claim and cleared together wherever a row is recycled or killed.
-
-    On a TRACKER row, completed_at means LAST SUCCESSFUL RUN (the row is never terminal, so
-    nothing else records it). On a one-shot it means what it always did: when the row settled.
-
-FAILURE BEHAVIOR
-
-    A SCHEDULED task that throws does not stop its schedule. The tracker row is recycled to
-    PENDING in the SAME update that records the failure, so it fires again at its next
-    cadence - exactly like cron itself, where one bad night is not an unsubscribe. Recorded
-    on the row: error (full text), status_reason ("failed (recycled): <first line>"),
-    last_error_at, and consecutive_failures + 1. completed_at is NOT touched, so it still
-    names the last run that actually worked. The row never passes THROUGH a terminal status
-    on its way back to pending - one atomic write - so a worker SIGKILLed mid-settle cannot
-    strand the schedule.
-
-    A ONE-SHOT (dispatched) task that throws goes terminal FAILED with completed_at and
-    last_error_at set, as always. A task that throws is NEVER retried, and there is no opt-in:
-    a failed one-shot stays failed until something dispatches it again. The only retry in the
-    task system is for work a dead or disconnected worker ABANDONED - the task never reported
-    an outcome at all (STUCK TASK RECOVERY).
-
-    Any Throwable counts. A TypeError inside a task settles and records its message exactly
-    like an Exception.
-
-    A success resets consecutive_failures to 0, clears status_reason and stamps completed_at -
-    on a tracker and on a one-shot alike.
-
-    THE INVARIANT: A CRON TRACKER IS NEVER PERMANENTLY TERMINAL. One tracker row exists per
-    #[Schedule] and IS that schedule - park it in FAILED or KILLED and the schedule stops
-    forever, silently, while the row still looks registered. Every settle path (failure,
-    kill, timeout, abandoned-worker recovery) therefore recycles a tracker instead of failing it,
-    and rsx:task:process ENFORCES the rule each tick: a tracker found in any terminal state
-    is revived to pending, loudly ([STRANDED SCHEDULE], logged), with its failure record
-    preserved. That sweep should never fire - it exists for strands the settle paths cannot
-    reach: rows written by hand in SQL, and rows carried in from a pre-fix release by a
-    framework update.
-
-    VISIBILITY. A recycled tracker looks PENDING like every healthy one, so status says
-    nothing about health - the failure columns do:
-
-        php artisan rsx:tasks:list     Schedules table: next run, last success, consecutive
-                                       failures, and the last error for any failing schedule
-        php artisan rsx:health         WARNs once a tracker reaches
-                                       rsx.tasks.failing_schedule_warn_after (3) consecutive
-                                       failures, naming each offender and its reason
-
-STOPPING A TASK
-
-    A long task can be asked to stop early - but ONLY IF IT IS WRITTEN TO STOP. This is a
-    convention the task implements, not an automatic feature: the framework never interrupts
-    a task because a stop was requested.
-
-        Task::request_stop($id)          // bool: flags a pending or running task
-        $task->is_stop_requested()       // the task's own check, inside its loop
-
-    Task::request_stop() sets _tasks.stop_requested and does nothing else. It answers true
-    when a pending or running row was flagged, and false for a task that does not exist or
-    has already finished. Task::status($id) reports it as 'stop_requested'.
-
-    The task checks between units of work - every batch, every page of a result set, every
-    file - and when the answer is true it finishes cleanly (leaves its data consistent,
-    logs or returns what it did) and returns. A task that never calls is_stop_requested()
-    runs to completion whatever is requested. Each call reads the row, so a request made
-    while the task runs is seen at its next check; a task that was still pending when the
-    request arrived sees it at its first check. Returning normally after a stop is a
-    COMPLETED run; record in the result or the log that it stopped early if that matters.
+    A STOP IS COOPERATIVE. A task that can be stopped calls $task->is_stop_requested()
+    between units of work - every batch, every page, every file - and when it answers true
+    finishes cleanly (leaves its data consistent, says what it did) and returns; the run
+    then settles STOPPED. A task that never asks runs to completion - unless it was force
+    stopped, and then it is killed when the grace ends. A pending run that was asked to stop
+    sees the request at its first check.
 
         #[Task('Reindex documents')]
         public static function reindex(Task_Instance $task, array $params = [])
@@ -544,217 +445,443 @@ STOPPING A TASK
             $done = 0;
             foreach (Document_Model::query()->result_set() as $document) {
                 if ($task->is_stop_requested()) {
-                    $task->info("Stopped on request after {$done} documents");
-                    break;
+                    $task->summary("Stopped on request after {$done} documents.");
+                    return null;
                 }
                 $document->reindex();
-                $done++;
+                $task->progress_count(++$done, $total);
             }
-            return ['indexed' => $done];
+            $task->summary("Indexed {$done} documents.");
+            return null;
         }
 
-    Immediate mode (Task::internal(), rsx:task:run, a #[Command]) has no row: the check
-    always answers false there.
+    KILL WORKERS. A kill never happens inside the request that asked for it. force_stop()
+    and force_kill() record a _task_kill_requests row (Task_Kill_Request_Model) bound to the
+    HOST that runs the target's worker - a pid names a process on one machine only - and,
+    when that is this host, spawn a kill worker (rsx:task:killer, the kill pool). Every
+    host's rsx:task:process tick spawns kill workers for its own pending requests, so a
+    request made on another host, or left when the kill pool was full, is carried out
+    within a minute. A kill worker:
 
-    A recurring #[Schedule] task keeps one tracker row, so a request on it applies to the run
-    in progress (or the next run, if none is) and is CLEARED when that run ends - completed,
-    failed, killed, abandoned or revived. A one-shot task keeps its request: a retry after
-    an abandonment still sees it.
+        1. claims one request (a guarded write), earliest due first;
+        2. re-reads the run every second until the request is due - a run that ended on its
+           own, or whose worker is no longer the one the request names, makes the request
+           MOOT. The force-stop grace is the window a cooperative task gets to finish
+           cleanly; the poll is a condition check, not a deadline;
+        3. sends SIGKILL to the worker's pid on this host (the grace period is the polite
+           window, so there is no SIGTERM step) and waits for the process to be gone;
+        4. settles the run KILLED with the explanation as status_reason and an operator
+           line; a scheduled run counts as a failure on its schedule.
 
-    To end a task that does not check, or one that is stuck, kill it (KILLING RUNNING TASKS).
+    An INLINE run inside a WEB REQUEST is never signalled - its pid is a php-fpm worker that
+    serves other requests. Its kill request is settled moot with an operator line saying
+    only a graceful stop applies. An inline run in an artisan process (rsx:task:run, a
+    #[Command]) is killed like a worker.
 
-KILLING RUNNING TASKS
+    Nothing else needs releasing after a kill: an identity run lock and a pool membership
+    both belong to the dead process's rsx-lockd connections. A kill request whose kill
+    worker died mid-wait is handed back to the queue by the next tick on its host.
 
-    Force-kill running task instances (distinct from the stuck-task reaper, which acts only on
-    a row whose worker is gone). Used by rsx:framework:pull to quiesce work before an update.
+READING A RUN (Task_Run_Model)
 
-        php artisan rsx:tasks:list                                  Running instances (+ schedules)
-        php artisan rsx:tasks:kill <id> --explanation="..."          Kill one running task
-        php artisan rsx:tasks:kill-all --explanation="..."           Kill every running task
+    Lifecycle: status_id (+ status_id__label), origin_id, pool_id, is_live(),
+    is_terminal(), task_name() ("Service::method"), service_name(), scheduled_for,
+    started_at, completed_at, stop_requested_at, status_reason, error, return_code,
+    schedule (relationship), dispatched_by (relationship).
 
-    Each kill sends SIGTERM, waits 5 seconds, then SIGKILL to the row's worker_pid. --explanation
-    is REQUIRED and recorded on status_reason. An ON-DEMAND task becomes terminal KILLED; a
-    recurring CRON TRACKER row is RECYCLED to pending instead (a terminal status would silently
-    stop its schedule). Nothing else needs releasing: an #[Exclusive]/#[Debounce] run lock and
-    the worker's pool membership both belong to the worker's rsx-lockd connections, which the
-    daemon drops the moment the process dies. The kill signals a pid, so it signals only a row
-    whose worker_host is the host where the command runs (or is NULL); a row claimed on
-    another host is settled without any signal, and its worker runs on until it finishes.
+    Reports:
+        status_text()                 the last status line, or null
+        progress_percent()            0-100, derived from the count when only a count
+                                      was reported; null when neither
+        progress_count()              ['done' => int, 'total' => int] or null
+        eta_at()                      ISO moment or null
+        state(), state_list(), summary()
+        available_reports()           the report names this run has actually set:
+                                      state_json, state_list, status_text, progress,
+                                      progress_count, eta, heartbeat, messages, summary,
+                                      return_code
+        output_after(?int $after_id, array $streams = ['stdout','stderr','operator'],
+                     int $limit = 1000)  [{id, stream, line, at}], oldest first
+        messages_after(?int $after_id, int $limit = 1000)  [{id, body, at}]
+        attachments(), attachment($name)  Task_Attachment_Model rows; read the bytes with
+                                      read_bytes() / read_stream() / download_response()
+        to_status_array()             the JSON shape the endpoints and widgets read
 
-    A recurring schedule keeps exactly ONE tracker row (next_run_at + cron_expression). When
-    due, a worker advances next_run_at (so the cadence holds even if the run is slow or
-    crashes), runs the task, then recycles the row back to pending.
+    The output and message readers are cursor reads: pass the last id seen for the next
+    page. A task attachment is a declared blob reference (#[Blob_Reference],
+    rsx:man file_disposal) - it is not a File_Attachment_Model: no site, no owner, no file
+    gates and no deletion window; the task's view gate is who may read it, and an
+    application serves one through its own gated endpoint with download_response().
 
-    Atomic dequeue: the task pool lock plus SELECT ... FOR UPDATE guard task selection;
-    per-identity run-locks (lock_key) enforce #[Exclusive]/#[Debounce].
+    SEARCH. Task_Run_Model::search_query(array $filter) returns a Builder; an unknown key
+    throws. Keys: id, ids, class (simple name or FQCN), method, params (an EXACT parameter
+    set, matched by its hash), params_contains (JSON_CONTAINS - pair it with class/method),
+    status (name or id, or a list), live (bool), origin, schedule_id, site_id,
+    dispatched_by (['type' => 'User_Model', 'id' => 5]), and
+    {scheduled,started,completed}_{after,before} (ISO moments, inclusive).
 
-STUCK TASK RECOVERY
+        Task_Run_Model::find_first_1000($filter)          newest first, capped by its name
+        Task_Run_Model::find_page($filter, $cursor = null, $page_size = 1000)
+                                          ['tasks' => [...], 'next_cursor' => ?string],
+                                          keyset on id, newest first
 
-    A RUNNING row whose worker is gone is ABANDONED, and the cron tick settles it. The task
-    never reported an outcome, so abandonment is not a failure of the task, and neither kind
-    of row is failed for it outright. There is NO grace period: every verdict below is
-    evidence, never an age.
+    These are ungated server-side reads like any model read. An endpoint showing runs to a
+    user narrows the query with Task_Gates::scope_viewable() first.
 
-    ABANDONMENT RETRIES. An abandoned ONE-SHOT goes back to PENDING with
+GATES AND THE BROWSER API
 
-        scheduled_for = now + rsx.tasks.retry.base_seconds * 2^(n-1)
+    A run's params, reports, output and files are operator data, and stopping or rerunning
+    one is an operator act, so the APPLICATION decides who may do either - through event
+    handlers in /rsx/handlers/. WITH NO HANDLER, NOBODY MAY (deny by default, in both
+    realms). Task_Gates is the single seam every task endpoint, topic and widget asks:
 
-    where n is this abandonment's number, counted in consecutive_failures (600s, 1200s,
-    2400s, 4800s at the defaults). started_at and the four worker columns are cleared; error
-    and last_error_at describe the abandonment ("Task abandoned - worker <wid> is no longer
-    connected to rsx-lockd ..."); status_reason names the attempt ("abandoned: <reason>;
-    retry as attempt 2 of 5 at <ISO time>"). A worker claims it once scheduled_for is due,
-    like any deferred dispatch. The rsx.tasks.retry.attempts-th abandonment (5) FAILS the row
-    for good, completed_at set, the error naming the attempts. Task::status() on the id reads
-    'pending' again while a retry waits.
+        staff realm                        portal realm
+        task.view.authorize    (gate)      portal.task.view.authorize    (gate)
+        task.view.scope        (filter)    portal.task.view.scope        (filter)
+        task.control.authorize (gate)      portal.task.control.authorize (gate)
 
-    An abandoned CRON TRACKER counts the run as done: PENDING, next_run_at the next cadence
-    strictly after now (never due at once - a long run may already be past the next_run_at
-    its claim advanced), the four worker columns cleared, status_reason "abandoned (recycled):
-    <reason>". The abandonment is recorded as a failed run (error, last_error_at,
-    consecutive_failures + 1), so a schedule whose runs keep dying reaches the Failing
-    Schedules health row - the same rule FAILURE BEHAVIOR states, applied to a row that will
-    never settle itself.
+      - the view GATE answers for one run: data {task, user}; return true to allow;
+      - the view SCOPE narrows a list query to the runs the viewer may see: each handler
+        receives the Task_Run_Model builder and returns it narrowed. Keep the gate and the
+        scope the same rule;
+      - the control GATE answers for one action on one run: data {task, user, action},
+        action one of stop, force_stop, force_kill, cancel, rerun.
 
-    Each host's tick asks rsx-lockd about every RUNNING row carrying a worker_id in ONE
-    pool.members_alive round trip, under the pool lock, and settles under that same lock, so
-    the verdicts are one consistent view of the pool and the rows:
+    `user` is the realm's identity (Session::get_user() on staff, the portal user on a
+    portal request). A DEVELOPER (Session::is_developer(), staff realm) passes every gate
+    with no handler asked - the /_sys console shows and controls every run.
+    PHP: Task_Gates::can_view($run), scope_viewable($query), can_control($run, $action).
 
-        the daemon's own generation     not alive -> abandoned, at once, whatever host ran it
-                                        (its connection is gone). Alive -> running.
-        an older generation, THIS host  the daemon restarted since the claim and cannot know;
-                                        the pid decides. Dead -> abandoned. Alive -> left
-                                        alone: the worker records its own outcome.
-        an older generation, ANOTHER    left alone - only that host's pid evidence can settle
-        host                            it, on that host's own tick. rsx:health's Task Worker
-                                        Pool row WARNs while any such row remains.
-        no worker_id                    run inline (--once, Task::internal()), not a pool
-                                        member: the pid on its own host decides (a NULL
-                                        worker_host is taken as local); another host's row is
-                                        left alone.
+        #[OnEvent('task.view.authorize', priority: 10)]
+        public static function view_own_runs($data)
+        {
+            return $data['task']->dispatched_by_type === 'User_Model'
+                && (int) $data['task']->dispatched_by_id === Session::get_user_id();
+        }
+
+    Worked example: system/app/RSpade/resource/reference_app/handlers/Task_Gate_Handlers.php
+    (a staff user sees, stops, cancels and reruns the runs they started; never force-kills).
+
+    ENDPOINTS. Rsx_Task_Controller (#[Auth('public')], #[Auth_Realm('any')] - the gates
+    decide): get, report, output, messages, find, page, stop, force_stop, force_kill, cancel,
+    rerun. A run the viewer may not see answers "not found", exactly like a missing one.
+    The read endpoints are #[Portal_Impersonation_Readable]; the lifecycle ones are not, so
+    View as Client can watch a run and never stop one. get() answers to_status_array() plus
+    `can`: which actions the viewer may take.
+
+    JS: Rsx_Task.
+        await Rsx_Task.get(id)                        {status, progress_percent, can, ...}
+        await Rsx_Task.report(id, kind)               {kind, value, status}
+        await Rsx_Task.output_after(id, after_id, streams)   {lines, last_id, more, is_live}
+        await Rsx_Task.messages_after(id, after_id)   {messages, last_id, more}
+        await Rsx_Task.find(filter)                   {tasks} (newest, at most 1000)
+        await Rsx_Task.page(filter, cursor, page_size)  {tasks, next_cursor}
+        await Rsx_Task.stop(id, explanation) / force_stop(id, grace, explanation) /
+              force_kill(id, explanation) / cancel(id, explanation)
+        await Rsx_Task.rerun(id)                      {task_id}
+        await Rsx_Task.watch(id, cb) / watch_output(id, cb) / watch_list(cb)
+                                                      {stop(), established}
+
+    TOPICS. Frames are notification-only; refetch on each (rsx:man realtime):
+
+        Task_Changed_Topic {id}       lifecycle, reports, messages, attachments
+        Task_Output_Topic {id}        output lines (the busy feed, only a console needs it)
+        Task_List_Changed_Topic {}    a run entered, left or changed lifecycle state
+
+    can_subscribe() is Task_Gates: the run's view gate for the two {id} topics; for the
+    list topic, a developer or a signed-in viewer in a realm whose view scope has a
+    handler. A frame is published only to the sites holding a matching subscription, and
+    not at all when nobody watches. Inside a component prefer
+    this.subscribe('Task_Changed_Topic', {id}, () => this.refresh()).
+
+WIDGETS
+
+    Core components in every bundle (Core/Task/ui), each reading through Rsx_Task - so each
+    needs the run's view gate, and shows "Unavailable" otherwise - and each following the
+    run over realtime with refresh().
+
+        <Task_Status_Badge $task_id=... />      the status, toned; or $task=<a status
+                                                object> to draw one already in hand
+                                                (a list row) and fetch nothing
+        <Task_Report $task_id=... $kind=... [$bar=true] />
+                                                one report: status_text, progress,
+                                                progress_count, progress_text (whichever of
+                                                the two, one line - a grid cell), eta (a
+                                                live countdown), heartbeat, state_json (a
+                                                tree, every node open), state_list (a stack
+                                                of blocks), messages, summary, return_code.
+                                                $bar draws a fill behind progress text.
+                                                Fills its host box and scrolls inside it.
+        <Task_Report_Browser $task_id=... [$kind=...] />
+                                                every report the run has set: the kinds
+                                                down a left column, the selected one on
+                                                the right; grows as the run reports more
+        <Task_Output $task_id=... [$streams="both|stdout|stderr"] [$filter=false] />
+                                                the output in a non-interactive xterm.js
+                                                terminal: stdout plain white, stderr and
+                                                operator lines bold amber, on black; a
+                                                stdout / stderr / both selector; follows
+                                                new output unless scrolled up. xterm.js
+                                                loads on first use from /_task/xterm.mjs
+                                                (both realms), so pages without a console
+                                                never download it. Without realtime it
+                                                shows the output as of opening, and its
+                                                Refresh button reads what is new.
+
+    Size every widget with ordinary CSS on its host. Worked example:
+    system/app/RSpade/resource/reference_app/app/frontend/system/tasks/ (a user's own runs,
+    a run card with the badge, a progress bar, the report browser and the console).
+
+THE SAMPLE TASK
+
+    system/app/RSpade/Sys/app/sys/tasks/_Sys_Oregon_Trail_Service.php is a complete task
+    to read: a scripted, deterministic, three-minute game of the Oregon Trail. It uses
+    every report - status(), progress(), progress_count(), eta(), heartbeat(), state()
+    (the wagon), state_list() (the landmarks ahead), message() (landmarks, deaths,
+    encounters), stdout() (the narrative), stderr() (hazards), attach_bytes() (the
+    journal and the epitaphs) and summary() - and it answers a graceful stop: it asks
+    is_stop_requested() before every beat and twice a second while one plays, and on yes
+    makes camp, attaches the journal so far and returns null (STOPPED).
+
+    Start it from /_sys/tasks ("Play the sample task"), or:
+        php artisan rsx:task:run _Sys_Oregon_Trail_Service travel            # in your terminal
+        php artisan rsx:task:run _Sys_Oregon_Trail_Service travel --speed=0  # no pauses
+    then try rsx:tasks:stop <id> while it runs.
+
+EXECUTION TIMEOUT
+
+    A run a POOL WORKER executes is capped by its timeout (a dispatch() option), else
+    rsx.tasks.default_timeout (1800 s; 0 on both = no cap). An INLINE run (Task::internal(),
+    rsx:task:run, a #[Command]) is never capped: it belongs to the process that started it,
+    and how long it takes is that caller's business.
+
+    Enforcement lives in the cron tick: a RUNNING pool-worker run whose worker is STILL ALIVE
+    on the host the tick runs on, past its cap, gets a force-kill request ("timed out after Ns
+    (cap Ms)"), carried out by a kill worker and settled KILLED; one [TASK TIMEOUT] line is
+    logged. Granularity is the cron tick (one minute). This reaper cap is framework
+    infrastructure - you never add a timeout to your own task.
+
+FAILURE AND ABANDONMENT
+
+    A task that fails (a failure return or a throw) settles FAILED and is NEVER retried -
+    there is no retry for a failure and no opt-in. A failed dispatched run stays failed
+    until something dispatches it again (rerun()); a schedule runs again at its cadence.
+
+    A RUNNING run whose worker is gone is ABANDONED - the task never reported an outcome -
+    and the cron tick settles it, with NO grace period: every verdict is evidence, never an
+    age. Each host's tick asks rsx-lockd about every RUNNING run carrying a worker_id, one
+    members_alive round trip per pool, under that pool's lock:
+
+        the daemon's own generation     not alive -> abandoned, whatever host ran it.
+                                        Alive -> running.
+        an older generation, THIS host  the daemon restarted since the claim and cannot
+                                        know; the pid decides.
+        an older generation, ANOTHER    left alone for that host's own tick; rsx:health's
+        host                            Task Worker Pools row WARNs while any remains.
+        no worker_id (inline)           the pid on its own host decides.
+
+    Settling an abandoned run:
+
+        Dispatched   back to PENDING with scheduled_for = now +
+                     rsx.tasks.retry.base_seconds * 2^(n-1), n = this abandonment's number
+                     (abandon_count): 600 s, 1200 s, 2400 s, 4800 s at the defaults. The
+                     rsx.tasks.retry.attempts-th abandonment (5) FAILS it for good. So a
+                     dispatched task's body may run more than once when a worker dies under
+                     it - write it to be safe to re-run from the start.
+        Scheduled    FAILED; the schedule counts the failure and runs at its next cadence.
+        Inline       FAILED; its caller is gone.
+
+    Each settle writes status_reason and an operator line naming the reason.
 
     A daemon restart therefore never reaps live work: every running worker is then of an
-    older generation and is judged by its own pid. Such a worker notices the lost connection
-    when it next takes the pool lock, records its own row's outcome, logs the loss and exits 1.
+    older generation and is judged by its own pid. A worker of the CURRENT generation whose
+    connection dropped while its process lives on is reaped at once; if it then finishes,
+    its own settle no longer matches (the row is no longer RUNNING under it).
 
-    A worker of the CURRENT generation whose connection dropped while its process lives on is
-    reaped at once. If it then finishes, its own settle overwrites the reaper's verdict with
-    its real outcome. Until then the row may be claimed again once its retry (or, for a
-    tracker, its next cadence) is due, so a task that outlives its own worker's connection by
-    that long runs twice at once. For an #[Exclusive]/#[Debounce] identity the run lock
-    prevents that only while the original worker's RsxLocks connection, which holds it, is
-    still open.
+RETENTION
 
-EXAMPLES
+    Task_Retention_Service::sweep (#[Exclusive], every 30 minutes) keeps history to the
+    size rsx.tasks.retention allows, over FINISHED runs only, walking each set by keyset:
 
-    Concurrent-safe scheduled task using a per-site lock:
-        use App\RSpade\Core\Locks\RsxLocks;
+        output_truncate_after_minutes (10080 = 7 days) after a run finished, its output is
+            cut to its last output_keep_lines (150) lines and its attachments are unlinked
+            - each blob released once nothing else references it; the run is stamped
+            output_truncated_at and never visited again;
+        purge_after_minutes (30240 = 21 days) after it finished, the run is deleted - its
+            reports, output and messages with it;
+        a task temp directory that outlived its run is removed.
 
-        #[Task('Recompute a tenant balance sheet')]
-        public static function recompute(Task_Instance $task, array $params = [])
-        {
-            $site_id = (int) $params['site_id'];
-            $token = RsxLocks::site_write_lock($site_id);   // exclude concurrent site writers
-            try {
-                $task->info("Recomputing site {$site_id}");
-                // ... multi-step mutation that must be atomic ...
-                return ['recomputed' => true];
-            } finally {
-                RsxLocks::release_lock($token);
-            }
-        }
+MAINTENANCE MODE
 
-    Dispatch + poll from a controller:
-        #[Ajax_Endpoint]
-        public static function start_export(Request $request, array $params = [])
-        {
-            $id = Task::dispatch('Export_Service', 'generate', ['kind' => 'clients']);
-            return ['task_id' => $id];
-        }
+    While maintenance mode is up (rsx:maintenance:enable, or the window rsx:framework:pull
+    raises) the CLI gate refuses the automation:
 
-        #[Ajax_Endpoint]
-        public static function export_status(Request $request, array $params = [])
-        {
-            $s = Task::status((int) $params['task_id']);
-            return ['status' => $s['status'], 'result' => $s['result']];
-        }
+        rsx:task:process   REFUSED (exit 75). Cron keeps calling it; every call exits.
+        rsx:task:worker    REFUSED (exit 75). Task::spawn_worker() starts nothing for any
+                           pool while the window is up, so a dispatch made during it leaves
+                           its row PENDING for the first tick after the window.
+        rsx:task:run       REFUSED unless --force. --force is consumed by the gate and
+                           never reaches the task's parameters.
+
+    Enabling maintenance first runs rsx:tasks:kill-all, which force-kills this host's
+    running runs synchronously, in its own process (no kill worker can be spawned in the
+    window): each is SIGKILLed and settled KILLED with the explanation. See
+    rsx:man maintenance_mode.
+
+COMMANDS
+
+    php artisan rsx:task:run Service method [--key=value]    Run inline (rsx:man task_commands)
+    php artisan rsx:task:list                                Discovered tasks, with the
+                                                             #[Command] each is reachable
+                                                             as (or '-')
+    php artisan rsx:tasks:list                               Pools (workers of cap), running
+                                                             runs with worker PIDs, the
+                                                             queued count, every schedule
+    php artisan rsx:tasks:stop <id> [--force [--grace=N]] [--kill] [--explanation="..."]
+                                                             Graceful stop; --force = force
+                                                             stop; --kill = force kill
+    php artisan rsx:tasks:cancel <id> [--explanation="..."]  Cancel a pending run
+    php artisan rsx:tasks:kill-all --explanation="..."       Force-kill every running run:
+                                                             this host's at once, another
+                                                             host's queued for its kill
+                                                             workers
+    php artisan rsx:task:process [--once] [--force-scheduled]  The cron tick (below)
+    php artisan rsx:task:worker [--pool=on_demand|scheduled] [--max-time=300]
+    php artisan rsx:task:killer                              A kill worker (spawned for you)
+
+    rsx:task:process is the scheduler/dispatcher tick. Install it in cron:
+
+        * * * * * cd /var/www/html && php artisan rsx:task:process
+
+    Each tick it: (1) settles abandoned runs and requests force kills for timed-out ones;
+    (2) hands back kill requests whose kill worker died; (3) reconciles _task_schedules
+    from the manifest; (4) tries ONE spawn per pool with due work - on_demand (else
+    scheduled) for due dispatched runs, scheduled for due schedules, kill for this host's
+    pending kill requests. It never becomes a worker, and is silent on an idle tick.
+    --once runs one due dispatched run inline in the tick's process (testing);
+    --force-scheduled makes every schedule due now.
+
+CONFIGURATION (config/rsx.php 'tasks')
+
+    'tasks' => [
+        'pools' => [
+            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 3)],
+            'scheduled' => ['max_workers' => 1],
+            'kill'      => ['max_workers' => 10],
+        ],
+        'default_timeout'             => 1800,  // execution cap (0 = none); EXECUTION TIMEOUT
+        'stop_grace_seconds'          => 60,    // force_stop()'s default grace
+        'failing_schedule_warn_after' => 3,     // rsx:health threshold
+        'retry' => [
+            'base_seconds' => 600,              // first re-run of an ABANDONED dispatched run
+            'attempts'     => 5,                // the abandonment that FAILS it
+        ],
+        'retention' => [
+            'output_truncate_after_minutes' => 10080,
+            'output_keep_lines'             => 150,
+            'purge_after_minutes'           => 30240,
+        ],
+    ],
+
+    stop_grace_seconds is owner-set: the window a cooperative task gets to finish cleanly,
+    not a bound on any operation. 'retry' is pacing for work a dead worker ABANDONED, never
+    a timeout, and never applied to a task that failed.
+
+DATABASE SCHEMA
+
+    _tasks (Task_Run_Model) - one row per run:
+        class, method, params (JSON), params_hash, origin_id, schedule_id, pool_id,
+        site_id, dispatched_by_id + dispatched_by_type,
+        status_id, status_reason, error, return_code,
+        scheduled_for, started_at, completed_at, stop_requested_at, abandon_count, timeout,
+        status_text, progress_percent, progress_done, progress_total, eta_at,
+        last_heartbeat_at, last_report_at,
+        worker_pid, worker_id, worker_generation, worker_host  (written together by a claim,
+            cleared together wherever a run is handed back),
+        output_truncated_at, created_at, updated_at
+    _task_reports      (task_id, kind_id) unique: state JSON, state list, summary
+    _task_output       one row per line; stream_id 1 stdout, 2 stderr, 3 operator
+    _task_messages     one row per message
+    _task_attachments  (task_id, name) unique; file_storage_id pins a blob
+    _task_schedules    one row per #[Schedule] (SCHEDULES)
+    _task_kill_requests  force stops and kills waiting for a kill worker
+
+    The side tables cascade from _tasks. All are framework system tables - read them
+    through the models and the readers above.
 
 TESTING
 
-    Under the test suite (rsx:test, Rsx_Test_Abstract::suite_is_running()) spawning is OFF
-    by default - Task::spawning_workers() is false: Task::dispatch() writes its row and
-    returns, and an rsx:task:process tick a test runs spawns nothing either. A detached
-    worker would be a whole PHP boot racing the test that queued it. A test that asserts on
-    queued work drives it itself:
+    Under the test suite spawning is OFF by default: Task::dispatch() writes its row and
+    returns, and a tick a test runs spawns nothing either. A test drives queued work itself:
 
-        Task::internal('My_Service', 'my_task', $params);    // run the task in-process
-        Artisan::call('rsx:task:worker');                     // drain the queue in-process
+        Task::internal('My_Service', 'my_task', $params);       // a real inline run
+        Artisan::call('rsx:task:worker');                       // drain in-process
 
-    A test whose SUBJECT is the spawn opts in for its class:
-
-        Task::spawn_workers(true);
-
-    The runner calls Task::spawn_workers(false) at every class boundary, and the harness
-    waits at that boundary for every detached process the class started (rsx:man testing,
-    CLASS BOUNDARIES AND DETACHED PROCESSES).
+    A test whose SUBJECT is the spawn calls Task::spawn_workers(true); the runner resets it
+    at every class boundary and waits there for every detached process the class started
+    (rsx:man testing). Rsx_Test_Abstract::__run_task_method($class, $method, $params) calls
+    a task method directly as a real inline run (no pre_task(), no run lock, no capture),
+    settles it, and returns what it reported with state().
 
     An in-process worker is a real pool member: it needs rsx-lockd, joins under the pool
-    lock and leaves before Artisan::call() returns (a throw closes its pool connection, so
-    the test process is never left a member). The pool is named by the connection scope,
-    so the test database's pool is never the developer database's pool.
+    lock and leaves before Artisan::call() returns. Pools are named by the connection
+    scope, so the test database's pools are never the developer database's.
 
 TROUBLESHOOTING
 
-    Dispatched task stays 'pending'
-        - Is the pool at global_max_workers? rsx:health "Task Worker Pool" shows the
-          members against the cap, whether the pool lock is held and how many wait for it;
-          `node system/bin/rsx-lockd/lockd.js dump` names every member's host and pid.
-          A full pool is normal: a busy worker reaches the row when it finishes.
-        - Did this process call Task::spawn_workers(false)? Then the cron tick drains it.
-        - Inside a test? dispatch() spawns nothing under the suite (see TESTING).
-        - Did you pass a future 'scheduled_for'? Then it waits until due.
-        - Cron is the backstop for due rows: * * * * * php artisan rsx:task:process
+    A dispatched run stays Pending
+        - Are the pools full? rsx:health "Task Worker Pools" shows each pool's members
+          against its cap; /_sys/workers shows what they are running. A busy worker
+          reaches the row when it finishes.
+        - Did this process call Task::spawn_workers(false), or is it a test? Then the cron
+          tick drains it.
+        - A future 'scheduled_for', a retry backoff after an abandonment (status_reason
+          says so), or an #[Exclusive]/#[Debounce] identity whose run is still running.
+        - Cron is the backstop: * * * * * php artisan rsx:task:process
+
+    A stop did nothing
+        - A graceful stop is cooperative: the task must call is_stop_requested(). Use
+          force_stop() (rsx:tasks:stop <id> --force) to kill it after a grace period.
+        - A run inside a web request is never signalled; only a graceful stop applies.
+
+    A force stop or kill has not happened
+        - The kill worker runs on the TARGET's host. /_sys/workers lists pending kill
+          requests; that host's next rsx:task:process tick spawns its kill workers.
+
+    A run reports "Unavailable" / "Task not found" in a widget
+        - The viewer fails the view gate. With no task.view.authorize handler, nobody but
+          a developer sees any run (GATES AND THE BROWSER API).
 
     Two tasks corrupt shared data
         - Tasks are unguarded and concurrent. Guard the critical section with a named or
-          per-site lock (see LOCKS). #[Exclusive]/#[Debounce] only guard ONE identity.
-
-    Scheduled task not running
-        - Confirm the tracker row exists (next_run_at, cron_expression) after one tick.
-        - A changed #[Schedule] is picked up within one tick; force with --force-scheduled.
+          per-site lock. #[Exclusive]/#[Debounce] only guard ONE identity.
 
     "Cannot reach rsx-lockd ..." from Task::dispatch() or rsx:task:process
-        - The daemon is down or unreachable (rsx:health "Lock Server"; rsx:man locks). A
-          dispatch() that would spawn throws AFTER writing its row, so the work is queued
-          and runs once the daemon is back. The cron tick throws before recovering or
-          spawning anything.
-        - Running workers keep running their current task. Their memberships ended with
-          their connections, so when each next takes the pool lock it records its row's
-          outcome, logs "[WORKER] Lost the task pool connection ..." and exits 1; the next
-          tick spawns a fresh worker. A restarted daemon is a new generation, so its rows
-          are judged by their pids and still-running tasks are not reaped (STUCK TASK
-          RECOVERY).
+        - The daemon is down (rsx:health "Lock Server"; rsx:man locks). A dispatch() that
+          would spawn throws AFTER writing its row, so the work is queued. Running workers
+          finish their current task, record its outcome, log "[WORKER] Lost the task pool
+          connection ..." and exit 1; the next tick spawns fresh ones.
 
-    Task Worker Pool WARN: more members than global_max_workers
-        - Admission happens under the pool lock, so this means the cap was lowered under
-          running workers (they drain as they finish), or two configurations share one
-          database and host.
+    Task Worker Pools WARN: more members than rsx.tasks.pools.<pool>.max_workers
+        - The cap was lowered under running workers (they drain as they finish), or two
+          configurations share one database and host.
 
-    Task Worker Pool WARN: running task(s) from a previous rsx-lockd generation on host(s) ...
-        - Rows claimed before the daemon last restarted, on other hosts. Each host's
-          rsx:task:process settles its own by pid; a host that no longer runs one (retired,
-          or its cron is gone) leaves them RUNNING. Restore that host's cron, or settle the
-          rows with rsx:tasks:kill <id> --explanation="..." (no signal is sent to a row
-          from another host).
+    Task Worker Pools WARN: running task(s) from a previous rsx-lockd generation on host(s)
+        - Runs claimed before the daemon last restarted, on other hosts. Each host's tick
+          settles its own by pid; for a host that is gone, settle them with
+          rsx:tasks:stop <id> --kill --explanation="...".
 
-    Scheduled task runs but never succeeds
-        - php artisan rsx:tasks:list - the Schedules table shows consecutive failures and
-          the last error; the schedule keeps retrying regardless (see FAILURE BEHAVIOR).
-        - php artisan rsx:health WARNs once the streak reaches failing_schedule_warn_after.
+    A schedule runs but never succeeds
+        - rsx:tasks:list (Schedules table) and /_sys/tasks (Schedules tab) show the streak
+          and the last error; the schedule keeps running regardless.
 
 SEE ALSO
-    rsx:man task_commands - #[Command]: giving a task its own artisan command, and the
-        stdout-is-the-value / stderr-is-the-narration output contract every console run has
-    rsx:man locks - cluster/system locks, wait-forever timeouts, semaphores (see LOCKS above)
-    rsx:man health - the Task Worker Pool, scheduler and failing-schedule rows
-    rsx:man logrotate - Log_Maintenance_Service::rotate, the framework's own nightly storage/logs sweep
+    rsx:man task_commands - #[Command] and the console output contract
+    rsx:man sys_panel - the Tasks and Task Workers screens of the developer console
+    rsx:man locks - cluster/system locks, wait-forever timeouts, the pool daemon
+    rsx:man realtime - topics, subscriptions, refresh() vs reload()
+    rsx:man event_hooks - the gate and filter trigger kinds Task_Gates uses
+    rsx:man file_disposal - declared blob references; task attachments are one
+    rsx:man health - the Task Worker Pools, scheduler and schedule-failure rows
+    rsx:man scripting - spawning off in a long-running script
+    skill rspade:background-tasks - writing, reporting, dispatching and watching a task

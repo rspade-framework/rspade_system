@@ -127,7 +127,8 @@ THE ROTATION
         gzipped generation - is not a failure: it is repaired by THE RENUMBERING above.
 
     THE REPORT
-        rotate() returns an array keyed by log basename:
+        Rsx_Logrotate::rotate() returns an array keyed by log basename, and the task
+        records it as its run's state report ($task->state(), shown in /_sys/tasks):
 
             'laravel.log' => [
                 'rotated'    => bool,    // false when there was nothing to rotate
@@ -152,8 +153,10 @@ THE TASK
     ago". #[Exclusive] because a slow run - a very large log being gzipped - overlapping
     its own next tick would shift generations twice for one day.
 
-    With rotation disabled the task returns silently: the operator turned it off and does
-    not need to be told again every night.
+    With rotation disabled the task succeeds silently, its state report reading
+    {"skipped": "disabled"}: the operator turned it off and does not need to be told
+    again every night. A run that rotated something writes one stdout line counting the
+    rotated, compressed and deleted generations.
 
 COMMAND
     php artisan rsx:logrotate
@@ -196,10 +199,10 @@ TROUBLESHOOTING
         above. It corrects itself the next time that process reopens the file.
 
     The nightly sweep never runs
-        `php artisan rsx:tasks:list` should show a Log_Maintenance_Service::rotate tracker
-        with a next run at the coming midnight. If there is no row, the scheduler has not
-        reconciled yet - that happens on the next `rsx:task:process` tick, which is the
-        cron entry.
+        `php artisan rsx:tasks:list` should show a Log_Maintenance_Service::rotate schedule
+        with a next run at the coming midnight, and /_sys/tasks (Schedules tab) its last
+        run. If there is no schedule, the scheduler has not reconciled yet - that happens
+        on the next `rsx:task:process` tick, which is the cron entry.
 
 SEE ALSO
     rsx:man tasks

@@ -329,7 +329,7 @@ class Sms_Queue_Test extends Rsx_Test_Abstract
         $sms->status_id = Sms_Queue_Model::STATUS_SENDING;
         $sms->save();
 
-        $counts = Task::internal('Sms_Queue_Service', 'send_pending_queue');
+        $counts = Task::internal('Sms_Queue_Service', 'send_pending_queue')->state();
 
         static::__assert_greater_than(0, $counts['reclaimed'], 'the drain reports the reclaim');
         static::__assert_equals(
@@ -344,7 +344,7 @@ class Sms_Queue_Test extends Rsx_Test_Abstract
     {
         static::__enqueue();
 
-        $counts = Task::internal('Sms_Queue_Service', 'send_pending_queue');
+        $counts = Task::internal('Sms_Queue_Service', 'send_pending_queue')->state();
 
         static::__assert_equals(0, $counts['reclaimed'], 'nothing was stranded, so nothing is narrated');
     }
@@ -363,7 +363,7 @@ class Sms_Queue_Test extends Rsx_Test_Abstract
         $recent = static::__enqueue();
         $recent->mark_suppressed('no SMS provider');
 
-        $result = Task::internal('Sms_Queue_Service', 'cleanup', ['days' => 30]);
+        $result = Task::internal('Sms_Queue_Service', 'cleanup', ['days' => 30])->state();
 
         static::__assert_greater_than(0, $result['deleted'], 'something past the window was deleted');
         static::__assert_null(Sms_Queue_Model::find($old->id), 'the old terminal row is gone');

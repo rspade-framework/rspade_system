@@ -62,7 +62,7 @@ class Sms_Drain_All_Sites_Test extends Rsx_Test_Abstract
 
         static::__assert_true($other_site_id !== self::WORKER_SITE_ID, 'the row belongs to another site');
 
-        $counts = Task::internal('Sms_Queue_Service', 'send_pending_queue');
+        $counts = Task::internal('Sms_Queue_Service', 'send_pending_queue')->state();
 
         static::__assert_greater_than(0, $counts['suppressed'], 'a worker declaring site 1 processed it');
 
@@ -79,7 +79,7 @@ class Sms_Drain_All_Sites_Test extends Rsx_Test_Abstract
             Sms_Queue_Model::where('id', $row->id)->update(['status_id' => Sms_Queue_Model::STATUS_SENDING]);
         });
 
-        $counts = Task::internal('Sms_Queue_Service', 'send_pending_queue');
+        $counts = Task::internal('Sms_Queue_Service', 'send_pending_queue')->state();
 
         static::__assert_greater_than(0, $counts['reclaimed'], 'the other site\'s stranded row was reclaimed');
         static::__assert_equals(

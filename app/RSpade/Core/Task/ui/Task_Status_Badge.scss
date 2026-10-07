@@ -1,0 +1,76 @@
+// SELF-CONTAINED: the badge is embedded in somebody else's application, so it inherits nothing
+// and sets every property it draws with, nested under its own root so a host's element or
+// descendant rule (`.card span`, `.table td *`) does not outrank it. No CSS custom properties
+// (an undefined var() invalidates the whole declaration); dark mode is `body.rsx-dark`.
+.Task_Status_Badge {
+    @include rsx-text-sans;
+    display: inline-block;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    line-height: 1;
+    vertical-align: middle;
+
+    .Task_Status_Badge__badge {
+        @include rsx-text-sans;
+        display: inline-block;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 2px 8px;
+        border: 0;
+        border-radius: 10px;
+        box-shadow: none;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.5;
+        text-align: center;
+        text-shadow: none;
+        white-space: nowrap;
+        vertical-align: baseline;
+        color: #fff;
+        background: #6c757d;
+    }
+
+    .Task_Status_Badge__badge--active {
+        background: #0d6efd;
+    }
+
+    .Task_Status_Badge__badge--success {
+        background: #198754;
+    }
+
+    .Task_Status_Badge__badge--danger {
+        background: #dc3545;
+    }
+
+    .Task_Status_Badge__badge--warning {
+        background: #e0a100;
+        color: #1a1a1a;
+    }
+
+    body.rsx-dark & {
+        .Task_Status_Badge__badge {
+            background: #495057;
+            color: #f1f3f5;
+        }
+
+        .Task_Status_Badge__badge--active {
+            background: #2f6fd6;
+        }
+
+        .Task_Status_Badge__badge--success {
+            background: #1f7a50;
+        }
+
+        .Task_Status_Badge__badge--danger {
+            background: #b8323f;
+        }
+
+        .Task_Status_Badge__badge--warning {
+            background: #d39e00;
+            color: #1a1a1a;
+        }
+    }
+}

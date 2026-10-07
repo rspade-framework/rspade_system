@@ -13,7 +13,6 @@ use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
 
@@ -83,9 +82,7 @@ class Attachment_Ownership_Test extends Rsx_Test_Abstract
 
     private static function __run_sweep(): array
     {
-        return File_Disposal_Service::sweep_unclaimed_uploads(
-            new Task_Instance(File_Disposal_Service::class, 'sweep_unclaimed_uploads')
-        );
+        return static::__run_task_method(File_Disposal_Service::class, 'sweep_unclaimed_uploads');
     }
 
     private static function __is_soft_deleted(int $id): bool

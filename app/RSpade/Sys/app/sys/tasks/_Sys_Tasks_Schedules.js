@@ -2,9 +2,9 @@
  * _Sys_Tasks_Schedules - the Schedules tab. See _Sys_Tasks_Schedules.jqhtml.
  *
  * Three states: loading, error, the table (or its empty state). Run now confirms,
- * dispatches the schedule as a one-shot (_Sys_Tasks_Controller.run_schedule_now -
- * the tracker's next run is untouched), flashes the outcome with a link to the row,
- * and fires "tasks_changed" so the screen refreshes the tabs that show it.
+ * dispatches the schedule as a separate run (_Sys_Tasks_Controller.run_schedule_now - the
+ * schedule's next run is untouched), flashes the outcome, opens the run, and fires
+ * "tasks_changed" so the screen refreshes the tasks grid. A last-run link opens that run.
  */
 class _Sys_Tasks_Schedules extends Component {
     on_create() {
@@ -34,6 +34,12 @@ class _Sys_Tasks_Schedules extends Component {
             that.reload();
         });
 
+        this.$.on('click._sys_tasks_schedules', '[data-action="open_run"]', function (e) {
+            const $element = $(this);
+            e.preventDefault();
+            _Sys_Task_Detail.open(int($element.attr('data-task-id')));
+        });
+
         this.$.on('click._sys_tasks_schedules', '[data-action="run_now"]', async function () {
             const $element = $(this);
             const row = that.data.rows[int($element.attr('data-index'))];
@@ -41,7 +47,7 @@ class _Sys_Tasks_Schedules extends Component {
 
             const confirmed = await _Sys_Modal.confirm(
                 'Run ' + name + ' now?',
-                'It is dispatched once now, on the "' + row.queue + '" queue, as a separate task. ' +
+                'It is dispatched once now, as a separate run. ' +
                     'The schedule is not changed: its next run stays as it is.',
                 'Run now'
             );
@@ -51,18 +57,15 @@ class _Sys_Tasks_Schedules extends Component {
             }
 
             const result = await _Sys_Tasks_Controller.run_schedule_now({ class: row.class, method: row.method });
-            const link = '<a href="' + escape_html(Rsx.Route('_Sys_Task_View_Action', result.id)) + '">task #' + result.id + '</a>';
 
             if (result.outcome === 'coalesced') {
-                Flash_Alert.info(
-                    escape_html(name) + ' is ' + escape_html(result.concurrency) +
-                        ' and already has a queued run (' + link + '); nothing new was queued.'
-                );
+                Flash_Alert.info(escape_html(name) + ' is ' + result.concurrency + ' and already has a queued run (task #' + result.id + '); nothing new was queued.');
             } else {
-                Flash_Alert.success('Dispatched ' + escape_html(name) + ' as ' + link + '.');
+                Flash_Alert.success('Dispatched ' + escape_html(name) + ' as task #' + result.id + '.');
             }
 
             that.trigger('tasks_changed');
+            _Sys_Task_Detail.open(result.id);
         });
     }
 }

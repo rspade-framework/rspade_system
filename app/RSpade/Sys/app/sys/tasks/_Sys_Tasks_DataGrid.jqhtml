@@ -1,30 +1,51 @@
 <%--
-_Sys_Tasks_DataGrid - the Tasks screen's history: every _tasks row, newest first.
+_Sys_Tasks_DataGrid - the Tasks screen's grid: every run, active ones on top - running runs
+(oldest start first), then queued runs (earliest due first) - and finished runs below them,
+newest first.
 
-Server half: _Sys_Tasks_DataGrid.php (filters status / class / queue / since, search on
-class or method). State lives in the URL hash under the grid key "tasks", so the
-Dashboard's failed-tasks tile links here as
-Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'history', tasks_f_status: 'failed', tasks_f_since: '24h'}).
+Server half: _Sys_Tasks_DataGrid.php. Filters: scope (all / active / completed - completed
+being every finished status: completed, failed, stopped, killed, cancelled), status, task,
+origin, finished-within; search on class or method. State lives in the URL hash under the
+grid key "tasks", so the Dashboard's failed-tasks tile links here as
+Rsx.Route('_Sys_Tasks_Action', {}, {tasks_f_status: 4, tasks_f_since: '24h'}).
 
-Every row links to its detail screen (_Sys_Task_View_Action).
+LIVE: the grid reloads itself when a run is queued, starts, finishes or reports
+(Task_List_Changed_Topic, and Task_Changed_Topic for each running row), through ONE
+debounced reload. "Pause live updates" stops those reloads until it is cleared (the run
+dialog is not affected). Rows draw from the data each reload brings: a live row its progress
+bar and status line, a finished row only its status (error, reason or last status line); a
+running row is highlighted.
+
+"Play the sample task" starts _Sys_Oregon_Trail_Service::travel (start_sample) and opens its
+run. Clicking a row opens the run (_Sys_Task_Detail); the buttons in a row act on it.
 --%>
 <Define:_Sys_Tasks_DataGrid extends="_Sys_DataGrid_Abstract"
     $grid_key="tasks"
-    $data_source=_Sys_Tasks_Controller.datagrid_fetch
-    $sort="id"
-    $order="desc"
+    $data_source=_Sys_Tasks_Controller.tasks_fetch
+    $sort="lifecycle_order"
+    $order="asc"
     $per_page=25
     $search="Search class or method..."
     $filters=([
-        {key: 'status', label: 'All statuses', options: [
-            {value: 'pending', label: 'Pending'},
-            {value: 'running', label: 'Running'},
-            {value: 'completed', label: 'Completed'},
-            {value: 'failed', label: 'Failed'},
-            {value: 'killed', label: 'Killed'},
+        {key: 'scope', label: 'All active and completed tasks', options: [
+            {value: 'active', label: 'Active tasks'},
+            {value: 'completed', label: 'Completed tasks'},
         ]},
-        {key: 'class', label: 'All classes', options: _Sys_Tasks_Controller.class_options},
-        {key: 'queue', label: 'All queues', options: _Sys_Tasks_Controller.queue_options},
+        {key: 'status', label: 'Any status', options: [
+            {value: 1, label: 'Pending'},
+            {value: 2, label: 'Running'},
+            {value: 3, label: 'Completed'},
+            {value: 4, label: 'Failed'},
+            {value: 5, label: 'Stopped'},
+            {value: 6, label: 'Killed'},
+            {value: 7, label: 'Cancelled'},
+        ]},
+        {key: 'class', label: 'All tasks', options: _Sys_Tasks_Controller.class_options},
+        {key: 'origin', label: 'Any origin', options: [
+            {value: 1, label: 'Dispatched'},
+            {value: 2, label: 'Scheduled'},
+            {value: 3, label: 'Inline'},
+        ]},
         {key: 'since', label: 'Finished any time', options: [
             {value: '1h', label: 'Finished in the last hour'},
             {value: '24h', label: 'Finished in the last 24 hours'},
@@ -32,32 +53,59 @@ Every row links to its detail screen (_Sys_Task_View_Action).
             {value: '30d', label: 'Finished in the last 30 days'},
         ]},
     ])>
+    <Slot:toolbar_start>
+        <button type="button" class="btn btn-sm btn-primary" data-action="start_sample" title="Start the sample task: a scripted three-minute game of the Oregon Trail">
+            <i class="bi bi-play-fill"></i> Play the sample task
+        </button>
+    </Slot:toolbar_start>
+    <Slot:toolbar>
+        <label class="_Sys_Tasks_DataGrid__pause" title="Stop reloading this grid as runs change (the run dialog keeps updating)">
+            <input type="checkbox" class="form-check-input" data-action="pause_live" />
+            Pause live updates
+        </label>
+    </Slot:toolbar>
     <Slot:header>
         <tr>
-            <th data-sortby="id">ID</th>
+            <th>ID</th>
             <th>Task</th>
             <th>Status</th>
-            <th>Queue</th>
-            <th data-sortby="started_at">Started</th>
-            <th data-sortby="completed_at">Finished</th>
+            <th>Scheduled / started</th>
+            <th>Finished</th>
+            <th>Progress</th>
+            <th></th>
         </tr>
     </Slot:header>
     <Slot:row>
-        <tr data-href="<%= Rsx.Route('_Sys_Task_View_Action', row.id) %>">
+        <%
+            const _progress_text = Rsx_Task.progress_text(row);
+            const _percent = row.progress_percent !== null ? row.progress_percent
+                : (row.progress_count && row.progress_count.total > 0 ? Math.min(100, row.progress_count.done * 100 / row.progress_count.total) : null);
+            const _note = row.is_live ? row.status_text : (row.error || row.status_reason || row.status_text);
+        %>
+        <tr class="_Sys_Tasks_DataGrid__row<%= row.status_id === 2 ? ' _Sys_Tasks_DataGrid__row--running' : '' %>" data-task-id="<%= row.id %>">
             <td class="_Sys_Tasks_DataGrid__id"><%= row.id %></td>
             <td>
-                <span class="_Sys_Tasks_DataGrid__task"><%= row.class_short %>::<%= row.method %></span>
-                <% if (row.is_cron) { %>
-                    <span class="_Sys_Tasks_DataGrid__cron">schedule</span>
+                <span class="_Sys_Tasks_DataGrid__task"><%= row.name %></span>
+                <span class="_Sys_Tasks_DataGrid__origin"><%= row.origin %></span>
+            </td>
+            <td><Task_Status_Badge $task=row /></td>
+            <td><%= Rsx_Time.format_datetime(row.started_at || row.scheduled_for) %></td>
+            <td><%= row.completed_at ? Rsx_Time.format_datetime(row.completed_at) : '' %></td>
+            <td class="_Sys_Tasks_DataGrid__progress">
+                <% if (row.is_live && _progress_text) { %>
+                    <div class="_Sys_Tasks_DataGrid__bar">
+                        <div class="_Sys_Tasks_DataGrid__bar_fill" style="width: <%= _percent === null ? 0 : _percent %>%"></div>
+                        <div class="_Sys_Tasks_DataGrid__bar_text"><%= _progress_text %></div>
+                    </div>
+                <% } %>
+                <% if (_note) { %>
+                    <div class="_Sys_Tasks_DataGrid__note"><%= _note %></div>
                 <% } %>
             </td>
-            <td><_Sys_Status_Badge $status=row.status /></td>
-            <td><%= row.queue %></td>
-            <td><%= row.started_at ? Rsx_Time.format_datetime(row.started_at) : '' %></td>
-            <td><%= row.completed_at ? Rsx_Time.format_datetime(row.completed_at) : '' %></td>
+            <td class="text-end"><_Sys_Task_Actions $task=row /></td>
         </tr>
     </Slot:row>
     <Slot:empty>
-        <_Sys_Empty_State $icon="bi-list-check" $title="No tasks yet" $body="Nothing has been dispatched on this install." />
+        <_Sys_Empty_State $icon="bi-list-check" $title="No task runs" $body="Nothing has been dispatched, scheduled or run on this install yet." />
     </Slot:empty>
 </Define:_Sys_Tasks_DataGrid>

@@ -85,12 +85,14 @@ class Flash_Alert_Cleanup_Service extends Rsx_Service_Abstract
         }
 
         if ($total > 0) {
-            $task->info("Deleted {$total} flash alerts older than " . self::RETENTION_MINUTES . ' minutes');
+            $task->stdout("Deleted {$total} flash alerts older than " . self::RETENTION_MINUTES . ' minutes');
         }
 
-        return [
+        $task->state([
             'deleted' => $total,
             'retention_minutes' => self::RETENTION_MINUTES,
-        ];
+        ]);
+
+        return null;
     }
 }

@@ -3,6 +3,8 @@ _Sys_Page_Scaffold - the panel's page shell.
 
 <Slot:main> - the page's content (required)
 
+class="_Sys_Page_Scaffold--wide" on the invocation widens the page to 1600px (default 1400px).
+
 Owns the panel's page max width and page padding, and nothing else, so no page
 of the panel authors a layout shell of its own. Mirrors the template app's
 Page_Scaffold with the sidebar column dropped: the panel has no entity sidebar.

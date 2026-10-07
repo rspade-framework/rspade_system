@@ -1,0 +1,29 @@
+<%--
+_Sys_Task_Action_Form - the confirmation dialog's body for one lifecycle action on a run,
+posted to _Sys_Tasks_Controller.act. Open it through _Sys_Task_Action_Form.open(task, action),
+which hosts it in _Sys_Modal.form().
+
+$task_id - the run (required)
+$action  - stop | force_stop | force_kill | cancel | rerun (required)
+
+Every action is recorded on the run's output as an operator line, with the explanation when
+one is given. A force stop also takes the grace period (blank: rsx.tasks.stop_grace_seconds).
+--%>
+<Define:_Sys_Task_Action_Form>
+    <Rsx_Form $controller="_Sys_Tasks_Controller" $method="act">
+        <Form_Errors />
+        <input type="hidden" name="task_id" value="<%= this.args.task_id %>" />
+        <input type="hidden" name="task_action" value="<%= this.args.action %>" />
+        <p class="_Sys_Task_Action_Form__what"><%= _Sys_Task_Action_Form.DESCRIPTIONS[this.args.action] %></p>
+        <% if (this.args.action === 'force_stop') { %>
+            <_Sys_Form_Field $label="Grace period (seconds)" $help="How long the task gets to stop on its own before its worker is killed. Blank: the configured default.">
+                <_Sys_Text_Input $name="grace_seconds" $max_length=6 $placeholder="60" />
+            </_Sys_Form_Field>
+        <% } %>
+        <% if (this.args.action !== 'rerun') { %>
+            <_Sys_Form_Field $label="Explanation" $help="Optional. Recorded on the run's output beside the action.">
+                <_Sys_Textarea_Input $name="explanation" $max_length=1000 $rows=2 />
+            </_Sys_Form_Field>
+        <% } %>
+    </Rsx_Form>
+</Define:_Sys_Task_Action_Form>

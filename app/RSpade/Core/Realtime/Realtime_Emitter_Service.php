@@ -195,13 +195,15 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
      */
     #[Task('Run realtime emitters')]
     #[Debounce(2)]
-    public static function run_emitters(Task_Instance $task, array $params = []): array
+    public static function run_emitters(Task_Instance $task, array $params = [])
     {
         $result = self::run_emitters_engine();
 
-        $task->info("Realtime emitters: ran {$result['ran']}, published {$result['published']}.");
+        $task->stdout("Realtime emitters: ran {$result['ran']}, published {$result['published']}.");
 
-        return $result;
+        $task->state($result);
+
+        return null;
     }
 
     /**
@@ -323,15 +325,17 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
      * are cheap and idempotent, and the relay already coalesces bursts into one POST.
      */
     #[Task('Seed emitter baselines for newly subscribed identities')]
-    public static function seed_subscriptions(Task_Instance $task, array $params = []): array
+    public static function seed_subscriptions(Task_Instance $task, array $params = [])
     {
         $entries = is_array($params['entries'] ?? null) ? $params['entries'] : [];
 
         $result = self::seed_subscriptions_engine($entries);
 
-        $task->info("Realtime emitter seed: entries {$result['entries']}, seeded {$result['seeded']}.");
+        $task->stdout("Realtime emitter seed: entries {$result['entries']}, seeded {$result['seeded']}.");
 
-        return $result;
+        $task->state($result);
+
+        return null;
     }
 
     /**

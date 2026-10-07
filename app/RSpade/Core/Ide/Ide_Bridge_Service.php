@@ -61,13 +61,15 @@ class Ide_Bridge_Service extends Rsx_Service_Abstract
         // Silent on the ordinary path. A rotation is routine and happens 96 times a day;
         // logging each one would bury the runs that actually said something.
         if ($result['mode'] === 'purged' && $result['removed'] > 0) {
-            $task->log('info', sprintf(
+            $task->stdout(sprintf(
                 'Purged %d IDE bridge grant(s): the bridge is development-only and this box is %s.',
                 $result['removed'],
                 Rsx::get_mode()
             ));
         }
 
-        return $result;
+        $task->state($result);
+
+        return null;
     }
 }

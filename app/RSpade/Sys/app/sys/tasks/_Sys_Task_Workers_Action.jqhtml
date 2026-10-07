@@ -1,0 +1,125 @@
+<%--
+_Sys_Task_Workers_Action - the worker pools at work: each pool's workers against its cap,
+every running run with the worker running it, the kill workers' pending force stops and
+kills, and what comes next - the oldest queued runs and the next schedules due, each with
+its total.
+
+Pools (rsx.tasks.pools): on_demand runs dispatched work; scheduled runs #[Schedule] work and
+takes queued dispatched work first; kill carries out force stops and kills. Clicking a run
+opens it (_Sys_Task_Detail). Live: refreshes on Task_List_Changed_Topic.
+--%>
+<Define:_Sys_Task_Workers_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Page_Header $title="Task Workers" $icon="bi-cpu" $subtitle="What the worker pools are running, and what comes next">
+            <Slot:actions>
+                <button type="button" class="btn btn-sm btn-secondary" data-action="refresh"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+            </Slot:actions>
+        </_Sys_Page_Header>
+        <% if (this.data.error_data) { %>
+            <_Sys_Error $error_data=this.data.error_data />
+        <% } else if (!this.data.workers) { %>
+            <Spinner class="_Sys_Task_Workers_Action__loading" />
+        <% } else { %>
+            <% const _w = this.data.workers; %>
+            <_Sys_Stat_Grid>
+                <% for (const _p of _w.pools) { %>
+                    <_Sys_Stat_Tile $label=(_Sys_Task_Workers_Action.POOL_LABELS[_p.pool] || _p.pool) $value=(_p.members + ' of ' + _p.max_workers) $sub=(_p.waiting ? _p.waiting + ' waiting for the pool lock' : 'workers running') $tone=(_p.members >= _p.max_workers ? 'warn' : 'ok') />
+                <% } %>
+            </_Sys_Stat_Grid>
+
+            <_Sys_Section $title="Running" $icon="bi-play-circle" $count=_w.running.length $flush=true>
+                <Slot:body>
+                    <% if (!_w.running.length) { %>
+                        <_Sys_Empty_State $icon="bi-moon" $title="Nothing running" $body="Every worker is idle." />
+                    <% } else { %>
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead><tr><th>Task</th><th>Pool</th><th>Worker</th><th>Started</th><th>Progress</th><th></th></tr></thead>
+                                <tbody>
+                                    <% for (const _t of _w.running) { %>
+                                        <tr class="_Sys_Task_Workers_Action__row" data-task-id="<%= _t.id %>">
+                                            <td><span class="_Sys_Task_Workers_Action__mono">#<%= _t.id %> <%= _t.name %></span> <span class="_Sys_Task_Workers_Action__dim"><%= _t.origin %></span></td>
+                                            <td><%= _t.pool || 'inline' %></td>
+                                            <td class="_Sys_Task_Workers_Action__mono">PID <%= _t.worker_pid %> on <%= _t.worker_host %> <span class="_Sys_Task_Workers_Action__dim">(<%= _t.worker_state %>)</span></td>
+                                            <td><%= Rsx_Time.relative(_t.started_at) %></td>
+                                            <td class="_Sys_Task_Workers_Action__progress"><Task_Report $task_id=_t.id $kind="progress_text" $bar=true /></td>
+                                            <td class="text-end"><_Sys_Task_Actions $task=_t /></td>
+                                        </tr>
+                                    <% } %>
+                                </tbody>
+                            </table>
+                        </div>
+                    <% } %>
+                </Slot:body>
+            </_Sys_Section>
+
+            <% if (_w.kill_requests.length) { %>
+                <_Sys_Section $title="Kill requests" $icon="bi-x-octagon" $count=_w.kill_requests.length $flush=true>
+                    <Slot:body>
+                        <div class="table-responsive">
+                            <table class="table mb-0">
+                                <thead><tr><th>Task</th><th>Mode</th><th>Host</th><th>Due</th><th>Kill worker</th><th>Explanation</th></tr></thead>
+                                <tbody>
+                                    <% for (const _k of _w.kill_requests) { %>
+                                        <tr>
+                                            <td><a href="#" data-action="open_run" data-task-id="<%= _k.task_id %>">#<%= _k.task_id %></a></td>
+                                            <td><%= _k.mode %></td>
+                                            <td class="_Sys_Task_Workers_Action__mono"><%= _k.host %></td>
+                                            <td><%= Rsx_Time.format_datetime(_k.kill_after_at) %></td>
+                                            <td><%= _k.claimed ? ('PID ' + _k.worker_pid) : 'waiting for a kill worker' %></td>
+                                            <td><%= _k.explanation %></td>
+                                        </tr>
+                                    <% } %>
+                                </tbody>
+                            </table>
+                        </div>
+                    </Slot:body>
+                </_Sys_Section>
+            <% } %>
+
+            <_Sys_Section $title=('Queued (' + _w.queued_total + ' in all)') $icon="bi-hourglass-split" $count=_w.queued.length $flush=true>
+                <Slot:body>
+                    <% if (!_w.queued.length) { %>
+                        <_Sys_Empty_State $icon="bi-inbox" $title="Nothing queued" $body="No dispatched run is waiting for a worker." />
+                    <% } else { %>
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead><tr><th>Task</th><th>Due</th><th></th></tr></thead>
+                                <tbody>
+                                    <% for (const _t of _w.queued) { %>
+                                        <tr class="_Sys_Task_Workers_Action__row" data-task-id="<%= _t.id %>">
+                                            <td><span class="_Sys_Task_Workers_Action__mono">#<%= _t.id %> <%= _t.name %></span></td>
+                                            <td><%= Rsx_Time.format_datetime(_t.scheduled_for) %></td>
+                                            <td class="text-end"><_Sys_Task_Actions $task=_t /></td>
+                                        </tr>
+                                    <% } %>
+                                </tbody>
+                            </table>
+                        </div>
+                    <% } %>
+                </Slot:body>
+            </_Sys_Section>
+
+            <_Sys_Section $title=('Next schedules (' + _w.schedules_total + ' in all)') $icon="bi-calendar-event" $count=_w.schedules_due.length $flush=true>
+                <Slot:body>
+                    <div class="table-responsive">
+                        <table class="table mb-0">
+                            <thead><tr><th>Schedule</th><th>Cadence</th><th>Next run</th></tr></thead>
+                            <tbody>
+                                <% for (const _s of _w.schedules_due) { %>
+                                    <tr>
+                                        <td class="_Sys_Task_Workers_Action__mono"><%= _s.name %></td>
+                                        <td><%= _s.cron_expression %></td>
+                                        <td><%= Rsx_Time.format_datetime(_s.next_run_at) %></td>
+                                    </tr>
+                                <% } %>
+                            </tbody>
+                        </table>
+                    </div>
+                </Slot:body>
+            </_Sys_Section>
+        <% } %>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Task_Workers_Action>

@@ -9,175 +9,147 @@ namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Tests for the #[Schedule] reconciliation logic in rsx:task:process
- * (App\RSpade\Commands\Rsx\Task_Process_Command::reconcile_schedules()).
+ * The #[Schedule] reconciliation in rsx:task:process
+ * (App\RSpade\Commands\Rsx\Task_Process_Command::reconcile_schedules()): each tick brings
+ * _task_schedules - one row per declared schedule - in line with the manifest.
  *
- * Each cron tick reconciles recurring schedule "tracker" rows (a _tasks row with
- * next_run_at NOT NULL and cron_expression NOT NULL, one per scheduled class::method)
- * against the manifest's #[Schedule] attributes:
- *   - CREATE   : a scheduled task with no tracker gets one inserted.
- *   - REGENERATE: a tracker with a stored cron_expression differing from the manifest
- *                 is DELETED and re-inserted fresh (new row id, recomputed next_run_at).
- *   - MATCH    : a tracker whose cron_expression equals the manifest is left untouched.
- *   - DELETE-ORPHAN: a tracker whose class::method is no longer in the manifest is deleted.
+ *   - REGISTER : a declaration with no row gets one, next_run_at its next cadence;
+ *   - CHANGE   : a row whose cron_expression differs is re-registered IN PLACE - the new
+ *                expression and a recomputed next_run_at, the run statistics kept;
+ *   - MATCH    : a matching row is left untouched;
+ *   - REMOVE   : a row the manifest no longer declares is deleted; its past runs keep their
+ *                rows, schedule_id cleared;
+ *   - --force-scheduled makes every schedule due now.
  *
- * Reconciliation is driven with Artisan::call('rsx:task:process') (no --once, which
- * would drain a task). Trackers are created with a FUTURE next_run_at (the next cron
- * occurrence), so has_pending_work() stays false and no detached worker is spawned.
- *
- * This class COMMITS rows via a real console command, so it declares both a DB reset
- * and no per-test transactions (see Task_Dispatch_Test for the same pattern). Every
- * test normalizes state itself and does not assume a run order.
+ * Driven with Artisan::call('rsx:task:process'); under the suite the tick spawns no worker.
+ * The tick COMMITS, so this class provisions a clean baseline and opts out of transactions;
+ * every test normalizes the state it reads first.
  */
 class Task_Schedule_Reconcile_Test extends Rsx_Test_Abstract
 {
     protected static $requires_db_reset = true;
     protected static $use_database_transactions = false;
 
-    /**
-     * Return the first real scheduled task definition from the manifest, or null if
-     * there are none. Each definition is ['class', 'method', 'cron_expression', 'queue'].
-     */
-    private static function __first_scheduled_def(): ?array
+    private static function __first_scheduled_def(): array
     {
         $defs = Task::get_scheduled_tasks();
         if (empty($defs)) {
-            return null;
+            static::__skip('No scheduled tasks in the manifest to reconcile');
         }
+
         return $defs[0];
     }
 
-    /**
-     * Fetch the single tracker row (next_run_at NOT NULL) for a class::method, or null.
-     */
-    private static function __tracker_for(string $class, string $method): ?object
+    private static function __schedule_for(string $class, string $method): ?object
     {
-        return DB::table('_tasks')
-            ->where('class', $class)
-            ->where('method', $method)
-            ->whereNotNull('next_run_at')
-            ->first();
+        return DB::table('_task_schedules')->where('class', $class)->where('method', $method)->first();
     }
 
-    // -------------------------------------------------------------------------
-    // CREATE
-    // -------------------------------------------------------------------------
-
-    public static function test_reconcile_creates_tracker()
+    public static function test_reconcile_registers_every_declared_schedule()
     {
-        $def = static::__first_scheduled_def();
-        if ($def === null) {
-            static::__skip('No scheduled tasks in the manifest to reconcile');
-        }
-
-        // Remove any existing tracker so this tick must create one from scratch.
-        DB::table('_tasks')
-            ->where('class', $def['class'])
-            ->where('method', $def['method'])
-            ->whereNotNull('next_run_at')
-            ->delete();
+        DB::table('_task_schedules')->delete();
 
         Artisan::call('rsx:task:process');
 
-        $tracker = static::__tracker_for($def['class'], $def['method']);
-        static::__assert_not_null($tracker, 'A tracker should be created for the scheduled task');
-        static::__assert_equals($def['cron_expression'], $tracker->cron_expression, 'Tracker cron_expression should match the manifest');
-        static::__assert_not_null($tracker->next_run_at, 'Tracker next_run_at should not be null');
-        // next_run_at is the next cron occurrence: at or after now (allow a small skew).
-        static::__assert_greater_than(time() - 60, strtotime($tracker->next_run_at), 'Tracker next_run_at should be at or after now');
+        $defs = Task::get_scheduled_tasks();
+        static::__assert_equals(count($defs), DB::table('_task_schedules')->count(), 'one row per declaration');
+
+        foreach ($defs as $def) {
+            $schedule = static::__schedule_for($def['class'], $def['method']);
+            static::__assert_not_null($schedule, "{$def['class']}::{$def['method']} is registered");
+            static::__assert_equals($def['cron_expression'], $schedule->cron_expression);
+            static::__assert_greater_than(time() - 1, strtotime($schedule->next_run_at), 'next_run_at is the next cadence, never the past');
+            static::__assert_equals(0, (int) $schedule->consecutive_failures);
+        }
     }
 
-    // -------------------------------------------------------------------------
-    // REGENERATE (delete + re-insert, NOT in-place update)
-    // -------------------------------------------------------------------------
-
-    public static function test_reconcile_regenerates_on_changed_expression()
+    public static function test_a_changed_expression_is_reregistered_in_place_keeping_its_statistics()
     {
         $def = static::__first_scheduled_def();
-        if ($def === null) {
-            static::__skip('No scheduled tasks in the manifest to reconcile');
-        }
-
-        // Ensure a matching tracker exists first.
         Artisan::call('rsx:task:process');
-        $before = static::__tracker_for($def['class'], $def['method']);
-        static::__assert_not_null($before, 'Precondition: a tracker should exist after a tick');
+        $before = static::__schedule_for($def['class'], $def['method']);
 
-        // Corrupt the stored expression so it differs from the manifest. Feb 29 is a
-        // deliberately odd, valid cron unlikely to equal any real schedule; if it
-        // somehow matches, pick another equally-unlikely expression.
-        $wrong_expression = '0 0 29 2 *';
-        if ($wrong_expression === $def['cron_expression']) {
-            $wrong_expression = '17 4 1 1 *';
-        }
-
-        DB::table('_tasks')->where('id', $before->id)->update([
+        $wrong_expression = $def['cron_expression'] === '0 0 29 2 *' ? '17 4 1 1 *' : '0 0 29 2 *';
+        DB::table('_task_schedules')->where('id', $before->id)->update([
             'cron_expression' => $wrong_expression,
             'next_run_at' => date('Y-m-d H:i:s', time() + 86400 * 365),
-            'updated_at' => now(),
+            'consecutive_failures' => 2,
+            'last_error' => 'kept across the change',
         ]);
 
+        $parser = new Cron_Parser($def['cron_expression']);
+        $earliest = $parser->get_next_run_time();
         Artisan::call('rsx:task:process');
+        $latest = $parser->get_next_run_time();
 
-        $after = static::__tracker_for($def['class'], $def['method']);
-        static::__assert_not_null($after, 'A regenerated tracker should exist');
-        static::__assert_equals($def['cron_expression'], $after->cron_expression, 'Tracker cron_expression should be restored to the manifest value');
-        static::__assert_not_equals($before->id, $after->id, 'Regenerate should delete + re-insert (new row id), not update in place');
+        $after = static::__schedule_for($def['class'], $def['method']);
+        static::__assert_equals((int) $before->id, (int) $after->id, 'the same row');
+        static::__assert_equals($def['cron_expression'], $after->cron_expression, 'the manifest expression is restored');
+        $next = strtotime($after->next_run_at);
+        static::__assert_true($next >= $earliest && $next <= $latest, "next_run_at {$after->next_run_at} is recomputed from the expression");
+        static::__assert_equals(2, (int) $after->consecutive_failures, 'statistics are kept');
+        static::__assert_equals('kept across the change', $after->last_error);
     }
 
-    // -------------------------------------------------------------------------
-    // MATCH (untouched)
-    // -------------------------------------------------------------------------
-
-    public static function test_reconcile_leaves_matching_tracker_untouched()
+    public static function test_a_matching_schedule_is_left_untouched()
     {
         $def = static::__first_scheduled_def();
-        if ($def === null) {
-            static::__skip('No scheduled tasks in the manifest to reconcile');
-        }
-
-        // Normalize so the tracker matches the manifest expression.
         Artisan::call('rsx:task:process');
-        $before = static::__tracker_for($def['class'], $def['method']);
-        static::__assert_not_null($before, 'Precondition: a matching tracker should exist');
+        $before = static::__schedule_for($def['class'], $def['method']);
 
         Artisan::call('rsx:task:process');
 
-        $after = static::__tracker_for($def['class'], $def['method']);
-        static::__assert_not_null($after, 'The matching tracker should still exist');
-        static::__assert_equals($before->id, $after->id, 'A matching tracker should be left untouched (same row id)');
+        $after = static::__schedule_for($def['class'], $def['method']);
+        static::__assert_equals((int) $before->id, (int) $after->id);
+        static::__assert_equals($before->next_run_at, $after->next_run_at, 'next_run_at is not moved');
     }
 
-    // -------------------------------------------------------------------------
-    // DELETE-ORPHAN
-    // -------------------------------------------------------------------------
-
-    public static function test_reconcile_deletes_orphan_tracker()
+    public static function test_a_schedule_no_longer_declared_is_removed_and_its_runs_kept()
     {
-        $ghost_class = 'App\\Nowhere\\Ghost_Reconcile_Probe_Service';
-        $ghost_method = 'ghost';
-
-        // A tracker for a class::method that is not in the manifest.
-        DB::table('_tasks')->insert([
-            'class' => $ghost_class,
-            'method' => $ghost_method,
-            'queue' => 'scheduled',
-            'status' => 'pending',
-            'params' => '[]',
-            'next_run_at' => date('Y-m-d H:i:s', time() + 86400),
+        $schedule_id = DB::table('_task_schedules')->insertGetId([
+            'class' => 'App\\Nowhere\\Ghost_Reconcile_Probe_Service',
+            'method' => 'ghost',
             'cron_expression' => '0 3 * * *',
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s'),
+            'next_run_at' => date('Y-m-d H:i:s', time() + 86400),
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
-
-        static::__assert_not_null(static::__tracker_for($ghost_class, $ghost_method), 'Precondition: the orphan tracker was inserted');
+        $past_run = Task_Runner::insert_row('App\\Nowhere\\Ghost_Reconcile_Probe_Service', 'ghost', [], Task_Run_Model::ORIGIN_SCHEDULED, [
+            'status_id' => Task_Run_Model::STATUS_COMPLETED,
+            'schedule_id' => $schedule_id,
+            'completed_at' => now()->format('Y-m-d H:i:s.v'),
+        ]);
 
         Artisan::call('rsx:task:process');
 
-        static::__assert_null(static::__tracker_for($ghost_class, $ghost_method), 'An orphan tracker (not in the manifest) should be deleted');
+        static::__assert_null(DB::table('_task_schedules')->where('id', $schedule_id)->first(), 'the undeclared schedule is removed');
+        $run = Task_Run_Model::find($past_run);
+        static::__assert_not_null($run, 'its past run is history and is kept');
+        static::__assert_null($run->schedule_id, 'with the schedule cleared');
+
+        DB::table('_tasks')->where('id', $past_run)->delete();
+    }
+
+    public static function test_force_scheduled_makes_every_schedule_due_now()
+    {
+        Artisan::call('rsx:task:process');
+        static::__assert_equals(0, DB::table('_task_schedules')->where('next_run_at', '<=', now())->count(), 'fixture: nothing is due');
+
+        $before = time();
+        Artisan::call('rsx:task:process', ['--force-scheduled' => true]);
+
+        $latest = DB::table('_task_schedules')->max('next_run_at');
+        static::__assert_true(strtotime($latest) <= time() && strtotime($latest) >= $before - 1, 'every schedule is due now');
+
+        // Put the cadences back for whatever runs next.
+        DB::table('_task_schedules')->delete();
+        Artisan::call('rsx:task:process');
     }
 }

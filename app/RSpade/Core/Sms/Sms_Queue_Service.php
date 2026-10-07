@@ -37,16 +37,16 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
     #[Task('Send pending outgoing SMS queue')]
     #[Exclusive]
     #[Schedule('every minute')]
-    public static function send_pending_queue(Task_Instance $task, array $params = []): array
+    public static function send_pending_queue(Task_Instance $task, array $params = [])
     {
         // THE DRAIN SERVES EVERY SITE, exactly as the mail drain does: one queue, one
         // consumer, and a worker's declared site says nothing about which messages are due.
-        return Sms_Queue_Model::without_site_scope(function () use ($task) {
+        $task->state(Sms_Queue_Model::without_site_scope(function () use ($task) {
             $counts = ['sent' => 0, 'server_errors' => 0, 'failed' => 0, 'suppressed' => 0, 'reclaimed' => 0];
 
             if (Rsx_Sms::delivery_mode() === Rsx_Sms::MODE_DISABLED) {
                 $pending = Sms_Queue_Model::pending_count();
-                $task->info("SMS delivery is disabled - {$pending} message(s) left pending");
+                $task->stdout("SMS delivery is disabled - {$pending} message(s) left pending");
 
                 return $counts;
             }
@@ -57,7 +57,7 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
             $counts['reclaimed'] = Sms_Queue_Model::reclaim_stranded();
 
             if ($counts['reclaimed'] > 0) {
-                $task->info(
+                $task->stdout(
                     "Reclaimed {$counts['reclaimed']} stranded message(s) left SENDING by a drain that ended mid-send"
                 );
             }
@@ -69,13 +69,15 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
                 }
 
                 $queued->mark_suppressed('no SMS provider configured');
-                $task->info("Suppressed SMS #{$queued->id} to {$queued->to_number}: no SMS provider configured");
+                $task->stdout("Suppressed SMS #{$queued->id} to {$queued->to_number}: no SMS provider configured");
 
                 $counts['suppressed']++;
             }
 
             return $counts;
-        });
+        }));
+
+        return null;
     }
 
     /**
@@ -83,14 +85,16 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
      */
     #[Task('Clean up old SMS queue records')]
     #[Schedule('daily at 3am')]
-    public static function cleanup(Task_Instance $task, array $params = []): array
+    public static function cleanup(Task_Instance $task, array $params = [])
     {
         $days = $params['days'] ?? config('rsx.sms.retention_days', 30);
 
         // Every site's rows age out on the same clock: retention is install policy.
         $deleted = Sms_Queue_Model::without_site_scope(fn () => Sms_Queue_Model::cleanup_old($days));
-        $task->info("Deleted {$deleted} SMS records older than {$days} days");
+        $task->stdout("Deleted {$deleted} SMS records older than {$days} days");
 
-        return ['deleted' => $deleted];
+        $task->state(['deleted' => $deleted]);
+
+        return null;
     }
 }

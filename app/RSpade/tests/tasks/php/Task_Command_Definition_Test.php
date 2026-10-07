@@ -242,7 +242,7 @@ class Task_Command_Definition_Test extends Rsx_Test_Abstract
     // -------------------------------------------------------------------------
 
     /**
-     * The fixture service in this directory declares two aliases; they must be in the
+     * The fixture service in this directory declares three aliases; they must be in the
      * table this build produced, pointing at the right task.
      */
     public static function test_the_real_manifest_table_names_the_fixture_tasks()
@@ -255,6 +255,9 @@ class Task_Command_Definition_Test extends Rsx_Test_Abstract
 
         static::__assert_array_has_key('rsx_test:fail', $table);
         static::__assert_equals('always_fail', $table['rsx_test:fail']['method']);
+
+        static::__assert_array_has_key('rsx_test:exit', $table);
+        static::__assert_equals('exit_with', $table['rsx_test:exit']['method']);
     }
 
     /**
@@ -267,10 +270,11 @@ class Task_Command_Definition_Test extends Rsx_Test_Abstract
 
         static::__assert_equals('myapp:import', $alias->getName());
         static::__assert_equals('Import the feed', $alias->getDescription());
-        static::__assert_true(
-            $alias->getDefinition()->hasOption('debug'),
-            'an alias keeps --debug, exactly as rsx:task:run has it'
+        static::__assert_false(
+            $alias->getDefinition()->hasArgument('service') || $alias->getDefinition()->hasArgument('task'),
+            'the service and task are fixed by the alias, not read from argv'
         );
+        static::__assert_equals([], array_keys($alias->getDefinition()->getOptions()), 'every --option is a task parameter, as on rsx:task:run');
     }
 
     /**

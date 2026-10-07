@@ -1,22 +1,20 @@
 <%--
-_Sys_Tasks_Action - the Tasks screen shell: three tabs, each a self-loading region.
+_Sys_Tasks_Action - the Tasks screen: two tabs.
 
-    running   - _Sys_Tasks_Running (what workers are executing now; Kill)
-    history   - _Sys_Tasks_DataGrid (every _tasks row; filters, search, row -> detail)
-    schedules - _Sys_Tasks_Schedules (every #[Schedule] and its tracker; Run now)
+    tasks     - _Sys_Tasks_DataGrid (every run: active ones on top, finished below; live)
+    schedules - _Sys_Tasks_Schedules (every #[Schedule] with its run statistics; Run now)
 
-The active tab is the hash key "tab"; the history grid's state is under "tasks_*".
+Any row opens the run (_Sys_Task_Detail) in a dialog; a row's buttons act on it. The active
+tab is the hash key "tab"; the grid's state is under the grid key "tasks".
 --%>
 <Define:_Sys_Tasks_Action>
-<_Sys_Page_Scaffold>
+<_Sys_Page_Scaffold class="_Sys_Page_Scaffold--wide">
     <Slot:main>
         <_Sys_Tabs $sid="tabs" $hash="tab" $tabs=([
-            {key: 'running', label: 'Running', icon: 'bi-play-circle'},
-            {key: 'history', label: 'History', icon: 'bi-clock-history'},
+            {key: 'tasks', label: 'Tasks', icon: 'bi-list-check'},
             {key: 'schedules', label: 'Schedules', icon: 'bi-calendar-event'},
         ])>
-            <Slot:running><_Sys_Tasks_Running $sid="running" /></Slot:running>
-            <Slot:history><_Sys_Tasks_DataGrid $sid="history" /></Slot:history>
+            <Slot:tasks><_Sys_Tasks_DataGrid $sid="tasks" /></Slot:tasks>
             <Slot:schedules><_Sys_Tasks_Schedules $sid="schedules" /></Slot:schedules>
         </_Sys_Tabs>
     </Slot:main>

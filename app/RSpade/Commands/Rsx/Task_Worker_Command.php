@@ -11,47 +11,51 @@ use RuntimeException;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Revisions\Revision;
+use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task_Concurrency;
-use App\RSpade\Core\Task\Task_Changed_Topic;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Lock;
+use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
-use App\RSpade\Core\Task\Task_Status;
-use App\RSpade\Core\Task\Cron_Parser;
+use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Runner;
 
 /**
  * Task Worker Command
  *
- * The executor. Spawned detached by rsx:task:process (or by Task::dispatch, which fires a
- * worker on enqueue). There is ONE worker pool - workers are generic, not bound to a queue.
+ * The executor. Spawned detached into one pool (--pool=on_demand|scheduled) by Task::dispatch
+ * or the rsx:task:process tick.
  *
- * THE POOL IS ACCOUNTED BY rsx-lockd (Task_Pool). This process's pool connection, opened on
- * its first pool call and held for its whole life, IS its membership: when the process
- * exits, crashes or is SIGKILLed the daemon drops the membership and frees the pool lock
- * with no heartbeat, lease or reaper. The loop:
+ * THE POOLS ARE ACCOUNTED BY rsx-lockd (Task_Pool). This process's pool connection, opened on
+ * its first pool call and held for its whole life, IS its membership: when the process exits,
+ * crashes or is SIGKILLed the daemon drops the membership and frees the pool lock with no
+ * heartbeat, lease or reaper. The loop:
  *
- *   1. Pool lock. If the pool already holds global_max_workers OTHER members: unlock and
- *      exit 0. Otherwise join.
- *   2. Still under the lock: claim the next row by the single priority order (run-now tasks
- *      FIFO, then due cron tasks by next_run_at) and mark it RUNNING with this worker's pool
- *      identity (worker_id + worker_generation), worker_host and worker_pid. Unlock.
+ *   1. Pool lock. If the pool already holds its cap of OTHER members: unlock and exit 0.
+ *      Otherwise join.
+ *   2. Still under the lock: claim the next run - a due PENDING run (dispatched work), or, in
+ *      the scheduled pool when no dispatched work is due, a due #[Schedule], whose run row is
+ *      created here - marked RUNNING with this worker's pool identity (worker_id +
+ *      worker_generation), worker_host and worker_pid. Unlock.
  *   3. Run the task - no pool lock held.
- *   4. Pool lock. Record the outcome, then claim the next row (back to 2). When nothing is
+ *   4. Pool lock. Record the outcome, then claim the next run (back to 2). When nothing is
  *      claimable, or --max-time has passed: leave, unlock, exit.
  *
- * THE RULE, at every step that holds the pool lock: only pool ops and reads/writes of
- * `_tasks` rows (plus non-blocking tries and releases of the identity run lock). No other
- * blocking lock, no subprocess, no outbound call - pool waits are invisible to the daemon's
- * deadlock detector, and this is what makes that safe. claim_next_task() asserts it holds
- * the lock, because a claim without it double-runs work silently.
+ * TWO POOLS CLAIM THE SAME PENDING ROWS (the scheduled pool takes dispatched work first), and
+ * each holds only its own lock - so every claim is a GUARDED write (WHERE status is still
+ * PENDING) that must affect exactly one row; a worker that loses the race claims again.
+ *
+ * THE RULE, at every step that holds the pool lock: only pool ops and reads/writes of the task
+ * tables (plus non-blocking tries and releases of the identity run lock). No other blocking
+ * lock, no subprocess, no outbound call - pool waits are invisible to the daemon's deadlock
+ * detector, and this is what makes that safe. claim_next_task() asserts it holds the lock.
  *
  * A LOST POOL CONNECTION ends the worker, and the daemon has already dropped its membership:
  *
- *   - lost at the unlock right after a claim, before the task ran: the worker puts its own row
- *     back to PENDING exactly as it found it (release_unrun_claim()), says so loudly and exits
- *     non-zero - nothing ran, so there is no outcome to record;
- *   - lost while the task ran: it records the outcome of the row it holds (a row already
+ *   - lost at the unlock right after a claim, before the task ran: the worker puts its claim
+ *     back (release_unrun_claim()), says so loudly and exits non-zero - nothing ran;
+ *   - lost while the task ran: it records the outcome of the run it holds (a run already
  *     claimed by this worker cannot race another claim), says so loudly and exits non-zero.
  *
  * Workers are UNGUARDED: nothing serializes them for you - they run concurrently, and each
@@ -60,22 +64,23 @@ use App\RSpade\Core\Task\Cron_Parser;
 class Task_Worker_Command extends Command
 {
     protected $signature = 'rsx:task:worker
-        {--queue= : Ignored (retained for compatibility; workers are generic)}
-        {--max-time=300 : Maximum execution time in seconds (default: 5 minutes)}';
+        {--pool=on_demand : The pool this worker joins: on_demand or scheduled}
+        {--max-time=300 : Stop claiming new work after this many seconds (default: 5 minutes)}';
 
     protected $description = 'Background worker for processing queued tasks';
 
     private int $start_time;
     private int $max_time;
     private int $tasks_processed = 0;
+    private string $pool;
 
-    /** claim_next_task()'s answer for a row it set aside without claiming it. */
+    /** claim_next_task()'s answer for a run it set aside without claiming it. */
     private const CLAIM_SKIPPED = 'skipped';
 
     /**
-     * Pending on-demand rows this worker skipped because their identity is already
-     * running elsewhere (the coalesced pending run). Excluded from selection so the
-     * worker doesn't busy-loop; the running instance / cron poller picks them up.
+     * Pending runs this worker skipped because their identity is already running elsewhere
+     * (the coalesced pending run). Excluded from selection so the worker doesn't busy-loop;
+     * the running instance / cron poller picks them up.
      *
      * @var int[]
      */
@@ -83,22 +88,35 @@ class Task_Worker_Command extends Command
 
     public function handle()
     {
+        $this->pool = (string) $this->option('pool');
+        if (!in_array($this->pool, [Task_Pool::ON_DEMAND, Task_Pool::SCHEDULED], true)) {
+            $this->error("[WORKER] --pool must be on_demand or scheduled, got '{$this->pool}'");
+
+            return 1;
+        }
+
         $this->max_time = (int) $this->option('max-time');
         $this->start_time = time();
+
+        // Per-invocation state. The console application resolves a command ONCE and reuses
+        // the instance for every in-process call (Artisan::call), so a run set aside by an
+        // earlier invocation must not stay excluded from this one.
+        $this->skip_ids = [];
+        $this->tasks_processed = 0;
 
         try {
             // Admission, under the pool lock: count() is the OTHER members, so a full pool is
             // one this worker would push past the cap.
-            Task_Pool::lock();
-            if (Task_Pool::count() >= Task_Pool::max_workers()) {
-                Task_Pool::unlock();
-                $this->info('[WORKER] Worker pool is full, exiting');
+            Task_Pool::lock($this->pool);
+            if (Task_Pool::count($this->pool) >= Task_Pool::max_workers($this->pool)) {
+                Task_Pool::unlock($this->pool);
+                $this->info("[WORKER] The {$this->pool} pool is full, exiting");
 
                 return 0;
             }
 
-            $identity = Task_Pool::join();
-            $this->info("[WORKER] Joined the pool (wid {$identity['wid']}, generation {$identity['generation']})");
+            $identity = Task_Pool::join($this->pool);
+            $this->info("[WORKER] Joined the {$this->pool} pool (wid {$identity['wid']}, generation {$identity['generation']})");
 
             // Invariant at the top of every iteration: this process holds the pool lock and
             // is a member.
@@ -114,24 +132,24 @@ class Task_Worker_Command extends Command
                     continue;
                 }
 
-                [$task_row, $run_lock] = $claim;
+                [$task_id, $run_lock] = $claim;
 
                 try {
-                    Task_Pool::unlock();
+                    Task_Pool::unlock($this->pool);
                 } catch (RuntimeException $e) {
                     // The daemon has already dropped this worker - the reaper may treat the
-                    // row as abandoned - and the task has not started. Hand the row back.
-                    $this->release_unrun_claim($task_row, $run_lock, $identity, $e->getMessage());
+                    // run as abandoned - and the task has not started. Hand the claim back.
+                    $this->release_unrun_claim($task_id, $run_lock, $identity, $e->getMessage());
                     Task_Pool::disconnect();
 
                     return 1;
                 }
 
                 // The previous run's settle (written under the lock) and this claim.
-                Task_Changed_Topic::flush_deferred();
-                Task_Changed_Topic::notify((int) $task_row->id);
+                Task_Notify::flush_deferred();
+                Task_Notify::lifecycle($task_id);
 
-                [$task_instance, $outcome] = $this->run_task($task_row);
+                [$instance, $outcome] = $this->run_task($task_id);
 
                 // Re-take the lock to settle. A connection that died while the task ran has
                 // taken the membership with it; a fresh connection (redialled by some other
@@ -139,7 +157,7 @@ class Task_Worker_Command extends Command
                 // worker is no longer counted, and must not claim again.
                 $lost = null;
                 try {
-                    Task_Pool::lock();
+                    Task_Pool::lock($this->pool);
                 } catch (RuntimeException $e) {
                     $lost = $e->getMessage();
                 }
@@ -147,17 +165,18 @@ class Task_Worker_Command extends Command
                     $lost = 'the pool membership ended while the task ran';
                 }
 
-                $this->settle_task($task_row, $task_instance, $outcome, $run_lock);
+                Task_Runner::settle($instance, $outcome, $run_lock);
                 $this->tasks_processed++;
+                $this->info("[WORKER] Task {$task_id} " . ($outcome->success ? 'completed' : 'failed: ' . $outcome->error));
 
                 if ($lost !== null) {
                     if (Task_Pool::holds_lock()) {
-                        Task_Pool::unlock();
+                        Task_Pool::unlock($this->pool);
                     }
-                    Task_Changed_Topic::flush_deferred();
+                    Task_Notify::flush_deferred();
 
-                    $message = "[WORKER] Lost the task pool connection while running task {$task_row->id}"
-                        . " ({$task_row->class}::{$task_row->method}); its outcome was recorded and this worker"
+                    $message = "[WORKER] Lost the task pool connection while running task {$task_id}"
+                        . " ({$instance->get_class()}::{$instance->get_method()}); its outcome was recorded and this worker"
                         . " is exiting: {$lost}";
                     $this->error($message);
                     Log::error($message);
@@ -171,9 +190,9 @@ class Task_Worker_Command extends Command
                 }
             }
 
-            Task_Pool::leave();
-            Task_Pool::unlock();
-            Task_Changed_Topic::flush_deferred();
+            Task_Pool::leave($this->pool);
+            Task_Pool::unlock($this->pool);
+            Task_Notify::flush_deferred();
         } catch (\Throwable $e) {
             // Whatever escaped left this process a member and perhaps the lock holder.
             // Closing the pool connection ends both at the daemon - which matters when the
@@ -189,54 +208,50 @@ class Task_Worker_Command extends Command
     }
 
     /**
-     * Claim the next task by the single priority order:
-     *   Tier 1 - run-now rows (dispatched): next_run_at IS NULL, FIFO by created_at.
-     *   Tier 2 - due cron rows: next_run_at IS NOT NULL AND due, by next_run_at ascending.
+     * Claim the next run: a due pending run (dispatched work, oldest due first) in either pool;
+     * then, in the scheduled pool only, a due schedule.
      *
      * UNDER THE POOL LOCK, and it never releases it. Everything here is THE RULE's allowance:
-     * `_tasks` reads and writes, plus a NON-BLOCKING try of the identity run lock.
+     * task-table reads and writes, plus a NON-BLOCKING try of the identity run lock.
      *
-     * @return array{0: object, 1: Task_Lock|null}|string|null The claimed row with its held
-     *         run lock; CLAIM_SKIPPED for a row set aside (claim again); null when nothing is
-     *         claimable.
+     * @return array{0: int, 1: Task_Lock|null}|string|null The claimed run's id with its held
+     *         run lock; CLAIM_SKIPPED for a candidate set aside (claim again); null when nothing
+     *         is claimable.
      */
     private function claim_next_task(array $identity)
     {
-        // Two workers claiming without the lock both select the same row and both run it -
-        // and nothing downstream would ever notice.
-        if (!Task_Pool::holds_lock()) {
-            shouldnt_happen('Task_Worker_Command claimed a task row without holding the task pool lock');
+        if (!Task_Pool::holds_lock($this->pool)) {
+            shouldnt_happen('Task_Worker_Command claimed a task without holding its pool lock');
         }
 
-        // Tier 1: run-now tasks.
-        $is_cron = false;
-        $task_row = DB::table('_tasks')
-            ->where('status', Task_Status::PENDING)
-            ->whereNull('next_run_at')
-            ->where(function ($query) {
-                $query->whereNull('scheduled_for')->orWhere('scheduled_for', '<=', now());
-            })
+        $pending = $this->claim_pending_run($identity);
+        if ($pending !== null) {
+            return $pending;
+        }
+
+        if ($this->pool === Task_Pool::SCHEDULED) {
+            return $this->claim_due_schedule($identity);
+        }
+
+        return null;
+    }
+
+    /**
+     * The oldest due PENDING run, claimed by a guarded write.
+     */
+    private function claim_pending_run(array $identity)
+    {
+        $row = DB::table('_tasks')
+            ->where('status_id', Task_Run_Model::STATUS_PENDING)
+            ->where('scheduled_for', '<=', now()->format('Y-m-d H:i:s.v'))
             ->when($this->skip_ids, function ($query) {
                 $query->whereNotIn('id', $this->skip_ids);
             })
-            ->orderBy('created_at', 'asc')
-            ->lockForUpdate()
-            ->first();
+            ->orderBy('scheduled_for')
+            ->orderBy('id')
+            ->first(['id', 'class', 'method', 'params_hash']);
 
-        // Tier 2: due cron tasks (only when no run-now work remains).
-        if (!$task_row) {
-            $is_cron = true;
-            $task_row = DB::table('_tasks')
-                ->where('status', Task_Status::PENDING)
-                ->whereNotNull('next_run_at')
-                ->whereNotNull('cron_expression')
-                ->where('next_run_at', '<=', now())
-                ->orderBy('next_run_at', 'asc')
-                ->lockForUpdate()
-                ->first();
-        }
-
-        if (!$task_row) {
+        if (!$row) {
             return null;
         }
 
@@ -244,260 +259,168 @@ class Task_Worker_Command extends Command
         // time, cluster-wide, via the identity run lock. A NON-BLOCKING try - the only kind
         // of other lock THE RULE allows under the pool lock.
         $run_lock = null;
-        if (Task_Concurrency::is_managed($task_row->class, $task_row->method)) {
-            $run_lock = Task_Concurrency::try_acquire_run_lock($task_row->class, $task_row->method);
+        if (Task_Concurrency::is_managed($row->class, $row->method)) {
+            $run_lock = Task_Concurrency::try_acquire_run_lock($row->class, $row->method, $row->params_hash);
             if (!$run_lock) {
-                if ($is_cron) {
-                    // Identity already running (an on-demand run): coalesce this tick
-                    // into it - advance the schedule and leave the tracker pending.
-                    DB::table('_tasks')->where('id', $task_row->id)->update([
-                        'next_run_at' => date('Y-m-d H:i:s', (new Cron_Parser($task_row->cron_expression))->get_next_run_time()),
-                        'updated_at' => now(),
-                    ]);
-                } else {
-                    $this->skip_ids[] = $task_row->id;
-                }
+                $this->skip_ids[] = (int) $row->id;
 
                 return self::CLAIM_SKIPPED;
             }
         }
 
-        $claim = [
-            'status' => Task_Status::RUNNING,
-            'started_at' => now(),
-            'worker_pid' => getmypid(),
-            'worker_id' => $identity['wid'],
-            'worker_generation' => $identity['generation'],
-            'worker_host' => Task_Pool::host(),
-            'updated_at' => now(),
-        ];
+        $claimed = DB::table('_tasks')
+            ->where('id', $row->id)
+            ->where('status_id', Task_Run_Model::STATUS_PENDING)
+            ->update($this->claim_fields($identity) + ['pool_id' => $this->pool_id()]);
 
-        if ($is_cron) {
-            // Advance next_run_at BEFORE running so the cadence holds even if the run is
-            // slow or crashes - in the same write that marks it running.
-            $claim['next_run_at'] = date('Y-m-d H:i:s', (new Cron_Parser($task_row->cron_expression))->get_next_run_time());
+        if (!$claimed) {
+            // The other pool's worker took it, or it was cancelled, between the read and the
+            // write.
+            $run_lock?->release();
+
+            return self::CLAIM_SKIPPED;
         }
 
-        DB::table('_tasks')->where('id', $task_row->id)->update($claim);
+        return [(int) $row->id, $run_lock];
+    }
 
-        return [$task_row, $run_lock];
+    /**
+     * A due #[Schedule]: advance its next_run_at and create its run row, RUNNING under this
+     * worker, in one transaction. A schedule whose identity is already running (an on-demand
+     * run of an #[Exclusive] task) has this tick coalesced into that run: next_run_at is
+     * advanced and nothing runs.
+     */
+    private function claim_due_schedule(array $identity)
+    {
+        $schedule = DB::table('_task_schedules')
+            ->where('next_run_at', '<=', now()->format('Y-m-d H:i:s.v'))
+            ->orderBy('next_run_at')
+            ->first();
+
+        if (!$schedule) {
+            return null;
+        }
+
+        $next_run_at = date('Y-m-d H:i:s', (new Cron_Parser($schedule->cron_expression))->get_next_run_time());
+        $params_hash = Task_Concurrency::params_hash([]);
+
+        $run_lock = null;
+        if (Task_Concurrency::is_managed($schedule->class, $schedule->method)) {
+            $run_lock = Task_Concurrency::try_acquire_run_lock($schedule->class, $schedule->method, $params_hash);
+            if (!$run_lock) {
+                DB::table('_task_schedules')->where('id', $schedule->id)->update([
+                    'next_run_at' => $next_run_at,
+                    'updated_at' => now(),
+                ]);
+
+                return self::CLAIM_SKIPPED;
+            }
+        }
+
+        $task_id = DB::transaction(function () use ($schedule, $next_run_at, $identity) {
+            // Advance the cadence BEFORE running, so it holds even if the run is slow or
+            // crashes - guarded on the due time this worker read.
+            $advanced = DB::table('_task_schedules')
+                ->where('id', $schedule->id)
+                ->where('next_run_at', $schedule->next_run_at)
+                ->update(['next_run_at' => $next_run_at, 'updated_at' => now()]);
+
+            if (!$advanced) {
+                return null;
+            }
+
+            return Task_Runner::insert_row(
+                $schedule->class,
+                $schedule->method,
+                [],
+                Task_Run_Model::ORIGIN_SCHEDULED,
+                $this->claim_fields($identity) + ['schedule_id' => $schedule->id, 'pool_id' => Task_Run_Model::POOL_SCHEDULED]
+            );
+        });
+
+        if ($task_id === null) {
+            $run_lock?->release();
+
+            return self::CLAIM_SKIPPED;
+        }
+
+        return [(int) $task_id, $run_lock];
+    }
+
+    /** The columns a claim writes: RUNNING here, by this pid, under this pool identity. */
+    private function claim_fields(array $identity): array
+    {
+        return Task_Runner::running_fields() + [
+            'worker_id' => $identity['wid'],
+            'worker_generation' => $identity['generation'],
+        ];
+    }
+
+    private function pool_id(): int
+    {
+        return $this->pool === Task_Pool::SCHEDULED ? Task_Run_Model::POOL_SCHEDULED : Task_Run_Model::POOL_ON_DEMAND;
     }
 
     /**
      * Hand back a claim whose task never ran: the pool connection was lost between the claim
-     * and the run. The row goes back to PENDING as the claim found it - the four worker
-     * columns and started_at cleared, a cron tracker's next_run_at restored to the due time
-     * the claim advanced - so the next worker claims it again. The identity run lock is
-     * released (it lives on this process's RsxLocks connection, not the pool's).
+     * and the run. A dispatched run goes back to PENDING (the worker columns and started_at
+     * cleared) for the next worker; a scheduled run, created by the claim, is deleted - its
+     * schedule's next_run_at was advanced, so that tick is lost, which is what a crash at
+     * that point costs. The identity run lock is released.
      *
-     * The write matches only the row still RUNNING under THIS worker's identity: once the
+     * The write matches only the run still RUNNING under THIS worker's identity: once the
      * daemon dropped the membership, a reaper tick may already have settled it, and that
-     * verdict stands.
-     *
-     * Loud on purpose, and the worker exits non-zero after it.
-     *
-     * @param object $task_row The row as claim_next_task() selected it
-     * @param Task_Lock|null $run_lock Held identity run lock for managed tasks (else null)
-     * @param array{wid: int, generation: int} $identity This worker's pool identity
-     * @param string $reason Why the pool connection is gone
+     * verdict stands. Loud on purpose, and the worker exits non-zero after it.
      */
-    private function release_unrun_claim(object $task_row, ?Task_Lock $run_lock, array $identity, string $reason): void
+    private function release_unrun_claim(int $task_id, ?Task_Lock $run_lock, array $identity, string $reason): void
     {
-        $restored = DB::table('_tasks')
-            ->where('id', $task_row->id)
-            ->where('status', Task_Status::RUNNING)
+        $mine = DB::table('_tasks')
+            ->where('id', $task_id)
+            ->where('status_id', Task_Run_Model::STATUS_RUNNING)
             ->where('worker_id', $identity['wid'])
-            ->where('worker_generation', $identity['generation'])
-            ->update([
-                'status' => Task_Status::PENDING,
+            ->where('worker_generation', $identity['generation']);
+
+        $origin = (int) DB::table('_tasks')->where('id', $task_id)->value('origin_id');
+        if ($origin === Task_Run_Model::ORIGIN_SCHEDULED) {
+            $restored = (clone $mine)->delete();
+        } else {
+            $restored = (clone $mine)->update([
+                'status_id' => Task_Run_Model::STATUS_PENDING,
                 'started_at' => null,
-                'next_run_at' => $task_row->next_run_at,
+                'pool_id' => null,
                 'worker_pid' => null,
                 'worker_id' => null,
                 'worker_generation' => null,
                 'worker_host' => null,
                 'updated_at' => now(),
             ]);
+        }
 
         $run_lock?->release();
 
-        $message = "[WORKER] Lost the task pool connection after claiming task {$task_row->id}"
-            . " ({$task_row->class}::{$task_row->method}) and before running it; "
-            . ($restored ? 'the row is back to pending' : 'the row was already settled by the reaper')
+        $message = "[WORKER] Lost the task pool connection after claiming task {$task_id} and before running it; "
+            . ($restored ? 'the claim was handed back' : 'the run was already settled by the reaper')
             . " and this worker is exiting: {$reason}";
         $this->error($message);
         Log::error($message);
     }
 
     /**
-     * Run a claimed task row - with NO pool lock held - and report what happened. The row is
-     * not settled here: settle_task() records the outcome under the pool lock.
+     * Run a claimed task - with NO pool lock held - and report what happened. The run is not
+     * settled here: Task_Runner::settle() records the outcome under the pool lock.
      *
-     * @param object $task_row Task database row
-     * @return array{0: Task_Instance|null, 1: array{ok: bool, result?: mixed, error?: string}|null}
-     *         The instance (null when the row could not be loaded) and the outcome.
+     * @return array{0: Task_Instance, 1: \App\RSpade\Core\Task\Task_Run_Outcome}
      */
-    private function run_task(object $task_row): array
+    private function run_task(int $task_id): array
     {
-        $this->info("[WORKER] Executing task {$task_row->id}: {$task_row->class}::{$task_row->method}");
-
-        $task_instance = Task_Instance::find($task_row->id);
-
-        if (!$task_instance) {
-            $this->error("[WORKER] Could not load task instance for task {$task_row->id}");
-
-            return [null, null];
-        }
-
-        // Locks taken from here on belong to THIS TASK, and are released when it ends (see
-        // the finally below). Anything the worker itself already holds is in the
-        // checkpoint and is left alone - the identity run lock among them.
-        $lock_checkpoint = RsxLocks::_checkpoint();
+        $instance = Task_Instance::find($task_id);
+        $this->info("[WORKER] Executing task {$task_id}: {$instance->get_class()}::{$instance->get_method()}");
 
         // One task is one unit of work for revision history. A worker is a LONG-LIVED
         // process running unrelated tasks back to back; without this, every revision the
         // worker ever recorded would be filed under the first task's transaction.
-        \App\RSpade\Core\Revisions\Revision::_reset_request_state('task', $task_row->class . '::' . $task_row->method);
+        Revision::_reset_request_state('task', $instance->get_class() . '::' . $instance->get_method());
 
-        try {
-            $class = $task_row->class;
-            $method = $task_row->method;
-            $params = json_decode($task_row->params, true) ?? [];
-
-            if (!class_exists($class)) {
-                throw new \Exception("Class not found: {$class}");
-            }
-            if (!method_exists($class, $method)) {
-                throw new \Exception("Method not found: {$class}::{$method}");
-            }
-
-            $outcome = ['ok' => true, 'result' => $this->call_capturing_output($task_instance, fn () => $class::$method($task_instance, $params))];
-        } catch (\Throwable $e) {
-            // Throwable, not Exception: a TypeError inside a task must record its error
-            // on the row like any other failure, not vanish unrecorded.
-            $outcome = ['ok' => false, 'error' => $e->getMessage()];
-        } finally {
-            // Hand back every lock this task took. A worker is a LONG-LIVED process running
-            // unrelated tasks back to back, but an ordinary application lock is held until
-            // the PROCESS exits (Rsx_Site_Model_Abstract registers a shutdown handler and
-            // nothing else ever lets go). Without this, the first task to write to a site
-            // would hold that tenant's write lock against the whole cluster for the rest of
-            // the worker's lifetime, and every later task in this worker would silently
-            // inherit it instead of contending for it.
-            //
-            // Loud on purpose: a task that ends still holding a lock is a defect in that
-            // task. This is a safety net, not a license.
-            $leaked = RsxLocks::_release_since($lock_checkpoint);
-            foreach ($leaked as $lock_name) {
-                $this->warn(
-                    "[WORKER] Task {$task_row->id} ({$task_row->class}::{$task_row->method}) "
-                    . "ended still holding {$lock_name} - released by the worker. "
-                    . 'Release your locks in a finally block.'
-                );
-            }
-        }
-
-        // The temp directory goes now, while no pool lock is held: removing a tree is not
-        // a `_tasks` write, and the settle below would otherwise do it under the lock.
-        $task_instance->cleanup_temp_dir();
-
-        return [$task_instance, $outcome];
-    }
-
-    /**
-     * Run $call with everything it prints recorded on the task's log, line by line, as it is
-     * printed.
-     *
-     * A worker is spawned detached with its stdout on /dev/null, so a task's echo, print or
-     * var_dump would otherwise reach nobody. Each COMPLETE line becomes an `[output]` log
-     * line the moment it is written (the handler runs on every write: chunk size 1), so the
-     * live console shows it while the task is still running; a trailing partial line is
-     * recorded when the call returns or throws. The text is also passed through, so a worker
-     * run in a terminal still prints it.
-     *
-     * Output a task buffers itself (a view rendered with ob_start) is the task's own and never
-     * reaches this handler; buffers the task opened and left open are flushed down into it
-     * before the capture ends.
-     *
-     * @return mixed What $call returned.
-     */
-    private function call_capturing_output(Task_Instance $task_instance, callable $call): mixed
-    {
-        $partial = '';
-
-        ob_start(function (string $chunk) use ($task_instance, &$partial) {
-            $partial .= $chunk;
-            while (($newline = strpos($partial, "\n")) !== false) {
-                $task_instance->log('output', rtrim(substr($partial, 0, $newline), "\r"));
-                $partial = substr($partial, $newline + 1);
-            }
-
-            return $chunk;
-        }, 1);
-        $level = ob_get_level();
-
-        try {
-            return $call();
-        } finally {
-            while (ob_get_level() > $level) {
-                ob_end_flush();
-            }
-            ob_end_flush();
-
-            if ($partial !== '') {
-                $task_instance->log('output', rtrim($partial, "\r"));
-            }
-        }
-    }
-
-    /**
-     * Record a run's outcome on its row, then hand back the identity run lock.
-     *
-     * Called under the pool lock in the ordinary loop (THE RULE: `_tasks` writes plus the
-     * non-blocking run-lock release), and without it when the pool connection was lost -
-     * the row is this worker's, so its outcome cannot race another worker's claim.
-     *
-     * The worker does not settle the row itself: Task_Instance::mark_completed() /
-     * mark_failed() are the sole terminal writers and already know whether the row is an
-     * on-demand row (terminal completed/failed) or a cron tracker (recycled to pending in
-     * the SAME update, so its already-advanced next_run_at fires the next cadence).
-     *
-     * Releasing the run lock and re-anchoring the coalesced pending run happen while the
-     * pool lock is still held, so no worker can claim that pending row in between.
-     *
-     * @param object $task_row Task database row
-     * @param Task_Instance|null $task_instance Null when the row could not be loaded
-     * @param array|null $outcome run_task()'s outcome (null with a null instance)
-     * @param Task_Lock|null $run_lock Held identity run lock for managed tasks (else null)
-     */
-    private function settle_task(object $task_row, ?Task_Instance $task_instance, ?array $outcome, ?Task_Lock $run_lock): void
-    {
-        if ($task_instance !== null) {
-            if ($outcome['ok']) {
-                try {
-                    $task_instance->mark_completed($outcome['result']);
-                    $this->info("[WORKER] Task {$task_row->id} completed successfully");
-                } catch (\Throwable $e) {
-                    // A result the completion write cannot record is a failed run, recorded
-                    // as one rather than stranding the row RUNNING.
-                    $task_instance->mark_failed($e->getMessage());
-                    $this->error("[WORKER] Task {$task_row->id} failed: " . $e->getMessage());
-                }
-            } else {
-                $task_instance->mark_failed($outcome['error']);
-                $this->error("[WORKER] Task {$task_row->id} failed: " . $outcome['error']);
-            }
-        }
-
-        if ($run_lock) {
-            // Release the identity run lock and re-anchor any coalesced pending run
-            // (mirrors the JS debounce finally{}).
-            $run_lock->release();
-            Task_Concurrency::reschedule_pending_after_completion(
-                $task_row->class,
-                $task_row->method,
-                $task_row->queue
-            );
-        }
+        return [$instance, Task_Runner::execute($instance, true)];
     }
 }

@@ -8,7 +8,6 @@
 namespace App\RSpade\Tests\Flash\Php;
 
 use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Lib\Flash\Flash_Alert_Cleanup_Service;
 use App\RSpade\Lib\Flash\Flash_Alert_Model;
@@ -22,8 +21,8 @@ use App\RSpade\Lib\Flash\Flash_Alert_Model;
  * until their SESSION is deleted months later. This unconditional age rule is what
  * collects it, on any session - an abandoned alert is abandoned whoever queued it.
  *
- * The task is invoked directly with an immediate Task_Instance (info() buffers,
- * heartbeat() no-ops off a worker). Default transaction isolation: the DELETE is
+ * The task method is called directly as a real inline run (__run_task_method()), and
+ * its counts are read from the state it reports. Default transaction isolation: the DELETE is
  * visible on the same connection and rolls back afterward.
  */
 class Flash_Alert_Sweep_Test extends Rsx_Test_Abstract
@@ -87,10 +86,6 @@ class Flash_Alert_Sweep_Test extends Rsx_Test_Abstract
         return Flash_Alert_Model::where('id', $id)->exists();
     }
 
-    private static function __task(): Task_Instance
-    {
-        return new Task_Instance(Flash_Alert_Cleanup_Service::class, 'cleanup_expired_alerts');
-    }
 
     // =====================================================================
 
@@ -98,7 +93,7 @@ class Flash_Alert_Sweep_Test extends Rsx_Test_Abstract
     {
         $stale = static::__seed(static::$_session_a_id, 'abandoned', 45);
 
-        $result = Flash_Alert_Cleanup_Service::cleanup_expired_alerts(static::__task());
+        $result = static::__run_task_method(Flash_Alert_Cleanup_Service::class, 'cleanup_expired_alerts');
 
         static::__assert_false(static::__exists($stale), 'a 45-minute-old alert is collected');
         static::__assert_equals(30, $result['retention_minutes']);
@@ -109,7 +104,7 @@ class Flash_Alert_Sweep_Test extends Rsx_Test_Abstract
     {
         $fresh = static::__seed(static::$_session_a_id, 'still waiting', 2);
 
-        Flash_Alert_Cleanup_Service::cleanup_expired_alerts(static::__task());
+        static::__run_task_method(Flash_Alert_Cleanup_Service::class, 'cleanup_expired_alerts');
 
         static::__assert_true(
             static::__exists($fresh),
@@ -123,7 +118,7 @@ class Flash_Alert_Sweep_Test extends Rsx_Test_Abstract
         $stale_b = static::__seed(static::$_session_b_id, 'abandoned b', 60);
         $fresh_b = static::__seed(static::$_session_b_id, 'fresh b', 1);
 
-        Flash_Alert_Cleanup_Service::cleanup_expired_alerts(static::__task());
+        static::__run_task_method(Flash_Alert_Cleanup_Service::class, 'cleanup_expired_alerts');
 
         static::__assert_false(static::__exists($stale_a), 'one session swept');
         static::__assert_false(static::__exists($stale_b), 'the other swept too - the rule is session-agnostic');
@@ -139,7 +134,7 @@ class Flash_Alert_Sweep_Test extends Rsx_Test_Abstract
             static::__seed(static::$_session_a_id, 'batch ' . $i, 90);
         }
 
-        Flash_Alert_Cleanup_Service::cleanup_expired_alerts(static::__task(), ['chunk_size' => 2]);
+        static::__run_task_method(Flash_Alert_Cleanup_Service::class, 'cleanup_expired_alerts', ['chunk_size' => 2]);
 
         static::__assert_equals(
             0,

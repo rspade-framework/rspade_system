@@ -1,0 +1,53 @@
+._Sys_Task_Reports_Pane {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    height: 100%;
+
+    &__loading {
+        display: block;
+        width: 40px;
+        height: 40px;
+        margin: 20px auto;
+    }
+
+    &__heading {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--rsx-dim);
+    }
+
+    &__heading,
+    &__select {
+        flex: 0 0 auto;
+    }
+
+    // Fills the column to its bottom edge - the line the output beside it ends on.
+    &__report {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        padding: 8px;
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+    }
+
+    // The queue beneath the state: only where the viewport is large enough to give the state
+    // 250px and still read well.
+    &__queue {
+        display: none;
+        flex: 0 0 250px;
+        min-height: 0;
+        overflow: auto;
+        padding: 8px;
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+
+        @media (min-width: 1600px) and (min-height: 900px) {
+            display: block;
+        }
+    }
+}

@@ -11,7 +11,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Sys\App\Sys\Dashboard\_Sys_Dashboard_Controller;
 
@@ -106,24 +107,22 @@ class Sys_Dashboard_Summary_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * RP-DASH-04 - Failed tasks count one-shot FAILED rows completed within 24 hours; an
-     * older failure and a recent completion do not count.
+     * RP-DASH-04 - Failed tasks count runs that settled FAILED within 24 hours; an older
+     * failure and a recent completion do not count.
      */
     public static function test_failed_tasks_count_the_last_day()
     {
         $before = static::__summary()['failed_tasks_24h'];
 
         $rows = [
-            [Task_Status::FAILED, now()->subHours(2)],
-            [Task_Status::FAILED, now()->subDays(2)],
-            [Task_Status::COMPLETED, now()->subHours(2)],
+            [Task_Run_Model::STATUS_FAILED, now()->subHours(2)],
+            [Task_Run_Model::STATUS_FAILED, now()->subDays(2)],
+            [Task_Run_Model::STATUS_COMPLETED, now()->subHours(2)],
         ];
 
-        foreach ($rows as [$status, $completed_at]) {
-            DB::table('_tasks')->insert([
-                'class' => 'Sys_Dashboard_Probe_Service',
-                'method' => 'probe',
-                'status' => $status,
+        foreach ($rows as [$status_id, $completed_at]) {
+            Task_Runner::insert_row('Sys_Dashboard_Probe_Service', 'probe', [], Task_Run_Model::ORIGIN_DISPATCHED, [
+                'status_id' => $status_id,
                 'completed_at' => $completed_at,
             ]);
         }

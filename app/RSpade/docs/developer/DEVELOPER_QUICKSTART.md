@@ -925,18 +925,24 @@ class Seeder_Service extends Rsx_Service_Abstract
     #[Schedule('daily at 3am')]
     public static function seed_clients(Task_Instance $task, array $params = [])
     {
-        $task->log('info', 'starting');
+        $task->status('Seeding');
+        // ... work, reporting progress_count() / stdout() as it goes ...
+        $task->summary('Seeded 20 clients.');
+        return null;   // the return value is the return code: null/true/0 = success
     }
 }
 ```
 
 ```php
-$id = Task::dispatch('Seeder_Service', 'seed_clients', ['count' => 20]);
-$status = Task::status($id);
+$id  = Task::dispatch('Seeder_Service', 'seed_clients', ['count' => 20]);
+$run = Task_Run_Model::find($id);   // status, progress, summary, output...
 ```
 
-`dispatch()` enqueues the job, spawns a detached worker when it is due, and hands
-back a pollable id. One cron entry drives the whole system.
+`dispatch()` enqueues the run, spawns a detached worker when it is due, and hands
+back the run's id. Every run - dispatched, scheduled or inline - is a `_tasks` row a
+page can show live with `<Task_Status_Badge>`, `<Task_Report>` and `<Task_Output>`,
+once the application's task gates let the viewer see it. One cron entry drives the
+whole system.
 
 **Tasks run concurrently and unguarded.** There is no automatic application lock:
 several workers may run at once, and a task shares tables with web requests and

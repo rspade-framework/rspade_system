@@ -9,25 +9,17 @@ namespace App\RSpade\Tests\Revisions\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Revisions\Revision_Cleanup_Service;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Revision_Cleanup_Service: the retention window, the keep-forever default, and the FK
  * cascade that takes a pruned transaction's revisions with it.
  *
- * The task is driven directly (it is a plain static method) with a Task_Instance the
- * dispatcher would otherwise supply, so nothing here depends on the worker pool.
+ * The task method is called directly as a real inline run (__run_task_method()), and its
+ * counts are read from the state it reports, so nothing here depends on the worker pool.
  */
 class Revision_Cleanup_Test extends Rsx_Test_Abstract
 {
-    /**
-     * A Task_Instance to hand the task, standing in for the one a worker would build.
-     */
-    private static function __task(): Task_Instance
-    {
-        return new Task_Instance(Revision_Cleanup_Service::class, 'cleanup_revisions', [], 'default', true);
-    }
 
     /**
      * Insert one transaction dated $days_ago with one revision under it, and return its id.
@@ -63,7 +55,7 @@ class Revision_Cleanup_Test extends Rsx_Test_Abstract
     {
         $old = static::__seed_transaction(400);
 
-        $result = Revision_Cleanup_Service::cleanup_revisions(static::__task(), ['retention_days' => 0]);
+        $result = static::__run_task_method(Revision_Cleanup_Service::class, 'cleanup_revisions', ['retention_days' => 0]);
 
         static::__assert_equals(0, $result['deleted']);
         static::__assert_true($result['kept_forever'], 'zero means keep forever, and the result says so');
@@ -75,7 +67,7 @@ class Revision_Cleanup_Test extends Rsx_Test_Abstract
         $old = static::__seed_transaction(60);
         $recent = static::__seed_transaction(1);
 
-        $result = Revision_Cleanup_Service::cleanup_revisions(static::__task(), ['retention_days' => 30]);
+        $result = static::__run_task_method(Revision_Cleanup_Service::class, 'cleanup_revisions', ['retention_days' => 30]);
 
         static::__assert_greater_than(0, $result['deleted']);
         static::__assert_equals(0, (int) DB::table('_transactions')->where('id', $old)->count(), 'the old transaction is gone');
@@ -86,7 +78,7 @@ class Revision_Cleanup_Test extends Rsx_Test_Abstract
     {
         $old = static::__seed_transaction(60);
 
-        Revision_Cleanup_Service::cleanup_revisions(static::__task(), ['retention_days' => 30]);
+        static::__run_task_method(Revision_Cleanup_Service::class, 'cleanup_revisions', ['retention_days' => 30]);
 
         static::__assert_equals(
             0,
@@ -101,7 +93,7 @@ class Revision_Cleanup_Test extends Rsx_Test_Abstract
             static::__seed_transaction(60 + $i);
         }
 
-        $result = Revision_Cleanup_Service::cleanup_revisions(static::__task(), [
+        $result = static::__run_task_method(Revision_Cleanup_Service::class, 'cleanup_revisions', [
             'retention_days' => 30,
             'chunk_size' => 2,
         ]);

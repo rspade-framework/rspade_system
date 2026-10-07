@@ -1,7 +1,7 @@
 # app/RSpade/Sys - the framework's own application
 
 This tree is an RSpade APPLICATION that happens to ship inside the framework: the
-control panel served at `/_sys` (eight screens - dashboard, debug flags, tasks, task queues, email
+control panel served at `/_sys` (eight screens - dashboard, debug flags, tasks, task workers, email
 & SMS, logs, sites, users; `app/sys/CLAUDE.md` has the per-screen detail), plus the
 API console beside it. It is built exactly the way `rsx/` is built - a
 module with a bundle, a SPA bootstrap controller, JS actions, a theme directory of
@@ -68,7 +68,7 @@ contract; this is the roster.
 
 | Component | What it is |
 |---|---|
-| `_Sys_Page_Scaffold` | the page shell (`<Slot:main>`): max width, padding, block gap |
+| `_Sys_Page_Scaffold` | the page shell (`<Slot:main>`): max width (1400px; `class="_Sys_Page_Scaffold--wide"` 1600px), padding, block gap |
 | `_Sys_Page_Header` | a record heading: `$title`, `$subtitle`, `$icon`, `<Slot:meta>`, `<Slot:actions>` |
 | `_Sys_Section` | a `.card` section: `$title`, `$icon`, `$count`, `$flush`; `<Slot:actions>` + `<Slot:body>`, or a loose body |
 | `_Sys_Stat_Grid` / `_Sys_Stat_Tile` | headline numbers: `$label`, `$value`, `$sub`, `$tone`, `$href` |
@@ -114,7 +114,8 @@ A grid is three small files beside the screen that shows it: a PHP class, a
   $order="desc" ...>` with `<Slot:header>` (a `<tr>` whose sortable `<th>` carry
   the LITERAL `data-sortby="key"`), `<Slot:row>` (one `<tr>`, receives `row`;
   `data-href` makes every plain cell a link) and optionally `<Slot:empty>` and
-  `<Slot:toolbar>`. `$search` adds the search box (200ms debounce);
+  `<Slot:toolbar>` (buttons after the filters), `<Slot:toolbar_start>` (buttons before
+  the search box). `$search` adds the search box (200ms debounce);
   `$filters=([{key, label, options, default?}])` adds one select per entry, where
   `options` is `[{value, label}]` or an Ajax endpoint answering that list.
   `$base_params` (passed where the grid is used: `<_Sys_Site_Members_DataGrid
@@ -125,10 +126,11 @@ A grid is three small files beside the screen that shows it: a PHP class, a
 
 State lives in the URL hash under the declared, STABLE `$grid_key` - `<key>_page`,
 `_sort`, `_order`, `_q`, `_f_<filter>` (a cleared defaulted filter is `~`) - so a
-link addresses a filtered grid: `Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'history',
-tasks_f_status: 'failed'})` (the `tab` key is the screen's `_Sys_Tabs` `$hash`). The
+link addresses a filtered grid: `Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'tasks',
+tasks_f_status: 4})` (the `tab` key is the screen's `_Sys_Tabs` `$hash`). The
 first load shows a spinner; a later load keeps the previous page painted, dimmed,
-until the next arrives. A zero-row answer shows "No matches" with
+until the next arrives - except `reload({dim: false})`, a live grid's realtime reload,
+which repaints directly. A zero-row answer shows "No matches" with
 Clear filters when the search or a filter narrowed it, otherwise `<Slot:empty>`.
 No selection, mass actions or export.
 

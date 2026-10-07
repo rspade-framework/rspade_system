@@ -66,6 +66,18 @@ Every method starts from cleared `_email_queue` / `_file_attachments` / `_file_s
 | fd-57 | A blob pinned by an attachment AND an email part survives until both are gone | attachment + `record_part()` on one blob; destroy the attachment; delete the email row | kept after the first, released after the second | implemented |
 | fd-58 | The disk sweep removes only files no storage row claims | `__sweep_disk_batch()` over a claimed file and an unclaimed planted file | 1 removed (the unclaimed one), claimed kept, per-blob lock released | implemented |
 
+## Blob_Reference_Registry_Test (php, `$requires_db_reset` + no transaction) - declared blob references + the central blob API
+
+Commits: the undeclared-column probe creates and drops a table (DDL).
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| br-01 | The framework's reference tables are declared | `File_Blob_References::declarations()` | `_file_attachments.file_storage_id` with `where_null` `destroyed_at`; `_email_attachments.file_storage_id` with none | implemented |
+| br-02 | `where_null` decides whether a row pins | live attachment, then the same row stamped destroyed | referenced, then not | implemented |
+| br-03 | The deep sweep's narrowing asks every declaration | one attachment-held blob, one orphan | only the orphan selected by `where_unreferenced()` | implemented |
+| br-04 | An undeclared reference is reported | probe table with an FK to `_file_storage` | listed by `undeclared_referencing_columns()`; the health row FAILs | implemented |
+| br-05 | Bytes from memory dedupe with a file and read back through the blob API | `store_bytes()` and `store_blob()` of identical bytes | one storage row; `read_bytes()` / `read_stream()` return the bytes; `download_response()` is attachment + nosniff, `inline_response()` inline | implemented |
+
 ## Not implemented
 
 | ID | Purpose | Why not | Status |

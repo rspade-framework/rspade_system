@@ -97,14 +97,16 @@ class Document_Render_Service extends Rsx_Service_Abstract
     #[Task('Render documents: PDF rendition + text extraction, one blob at a time')]
     #[Exclusive]
     #[Schedule('every 10 minutes')]
-    public static function render_pending(Task_Instance $task, array $params = []): array
+    public static function render_pending(Task_Instance $task, array $params = [])
     {
         $render_enabled = (bool) config('rsx.libreoffice.enabled', true);
         $extract_enabled = (bool) config('rsx.search.enabled', true);
 
         if (!$render_enabled && !$extract_enabled) {
-            $task->info('Document render pipeline disabled (rsx.libreoffice.enabled=false, rsx.search.enabled=false) - nothing to do');
-            return ['processed' => 0];
+            $task->stdout('Document render pipeline disabled (rsx.libreoffice.enabled=false, rsx.search.enabled=false) - nothing to do');
+            $task->state(['processed' => 0]);
+
+            return null;
         }
 
         $processed = 0;
@@ -120,14 +122,16 @@ class Document_Render_Service extends Rsx_Service_Abstract
             static::render_storage($storage);
             $processed++;
 
-            $task->info("Rendered storage #{$storage->id} [{$storage->render_status_id__label}]");
+            $task->stdout("Rendered storage #{$storage->id} [{$storage->render_status_id__label}]");
         }
 
         if ($processed > 0) {
-            $task->info("Render pass complete: {$processed} blob(s) processed");
+            $task->stdout("Render pass complete: {$processed} blob(s) processed");
         }
 
-        return ['processed' => $processed];
+        $task->state(['processed' => $processed]);
+
+        return null;
     }
 
     /**

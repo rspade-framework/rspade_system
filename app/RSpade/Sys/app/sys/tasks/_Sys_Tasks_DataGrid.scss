@@ -5,18 +5,73 @@
         white-space: nowrap;
     }
 
+    &__pause {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0;
+        font-size: 13px;
+        white-space: nowrap;
+        cursor: pointer;
+
+        .form-check-input {
+            margin: 0;
+        }
+    }
+
+    &__row {
+        cursor: pointer;
+    }
+
+    // A running run stands out from the queued and finished rows around it.
+    &__row--running > td {
+        background-color: rgba(56, 139, 253, 0.16);
+    }
+
     &__id,
     &__task {
         font-family: var(--rsx-mono);
         font-size: 12.5px;
     }
 
-    &__cron {
+    &__origin {
         margin-left: 6px;
-        padding: 1px 6px;
-        border: 1px solid var(--rsx-border);
-        border-radius: 4px;
         color: var(--rsx-dim);
         font-size: 11px;
+    }
+
+    td#{&}__progress {
+        min-width: 200px;
+        max-width: 360px;
+        white-space: normal;
+    }
+
+    &__bar {
+        position: relative;
+        height: 20px;
+        background: var(--rsx-border);
+        border-radius: 3px;
+        overflow: hidden;
+    }
+
+    &__bar_fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        background: rgba(13, 110, 253, 0.45);
+    }
+
+    &__bar_text {
+        position: relative;
+        text-align: center;
+        font-size: 12px;
+        line-height: 20px;
+        font-variant-numeric: tabular-nums;
+    }
+
+    &__note {
+        margin-top: 2px;
+        font-size: 12px;
+        color: var(--rsx-muted);
+        overflow-wrap: anywhere;
     }
 }

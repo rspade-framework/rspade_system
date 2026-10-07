@@ -5,7 +5,7 @@ NAME
 
 SYNOPSIS
     config('rsx.mode')                       # read one key
-    config('rsx.tasks.global_max_workers')   # read a nested key
+    config('rsx.tasks.default_timeout')      # read a nested key
     config('rsx.portal', [])                 # read a whole section
 
 DESCRIPTION
@@ -645,21 +645,36 @@ FILE SUBSYSTEM
 
 TASK SYSTEM
     'tasks' => [
-        'global_max_workers' => env('RSX_TASK_MAX_WORKERS', 3),
+        'pools' => [
+            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 3)],
+            'scheduled' => ['max_workers' => 1],
+            'kill' => ['max_workers' => 10],
+        ],
         'default_timeout' => 1800,             # 30 min
-        'temp_directory_default_ttl' => 3600,  # 1 hour
-        'task_retention_days' => 30,
+        'stop_grace_seconds' => 60,
         'failing_schedule_warn_after' => 3,
         'retry' => ['base_seconds' => 600, 'attempts' => 5],
+        'retention' => [
+            'output_truncate_after_minutes' => 10080,  # 7 days
+            'output_keep_lines' => 150,
+            'purge_after_minutes' => 30240,            # 21 days
+        ],
     ]
 
-    Unified task execution: worker concurrency, timeouts and retention.
-    global_max_workers bounds the single shared pool; there are no
-    per-queue caps (the queue column is a label). 'retry' paces the re-run of
-    a one-shot whose worker died or disconnected (ABANDONED): back to pending
-    base_seconds * 2^(n-1) after its n-th abandonment, FAILED on the
-    attempts-th. It is pacing, not a timeout, and a task that throws is never
-    retried. See: rsx:man tasks (STUCK TASK RECOVERY)
+    'pools' caps each worker pool on its own: on_demand runs dispatched work,
+    scheduled runs #[Schedule] work (and queued dispatched work first), kill
+    carries out force stops and kills. A cap below 1 throws. default_timeout is
+    the execution cap the cron tick enforces with a force kill (0 = none).
+    stop_grace_seconds is the default grace of Task_Run_Model::force_stop() -
+    the window a cooperative task gets to finish, owner-set, not a bound on any
+    operation. 'retry' paces the re-run of a dispatched run whose worker died or
+    disconnected (ABANDONED): back to pending base_seconds * 2^(n-1) after its
+    n-th abandonment, FAILED on the attempts-th; it is pacing, not a timeout, and
+    a task that fails is never retried. 'retention' is in MINUTES, applied every
+    30 minutes by Task_Retention_Service: a finished run's output is cut to its
+    last output_keep_lines lines and its attachments unlinked after
+    output_truncate_after_minutes; the run is purged after purge_after_minutes.
+    See: rsx:man tasks (THE WORKER POOLS, FAILURE AND ABANDONMENT, RETENTION)
 
 LOCKS
     'locks' => [

@@ -8,25 +8,40 @@
 namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Concurrency;
+use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Tests\Tasks\Php\Test_Echo_Service;
 
 /**
- * Tests for Task::dispatch(), Task::status(), and Task::internal().
+ * Task::dispatch() writes a PENDING run row; Task::internal() runs a task in this process and
+ * returns its settled row.
  *
- * dispatch()/status() commit rows to the `_tasks` table, so this class sets
- * $requires_db_reset = true and $use_database_transactions = false (the runner
- * gives it a clean migrated baseline and restores it before the next class).
- * Task::internal() executes synchronously in-process.
+ * dispatch() commits rows to `_tasks`, so this class sets $requires_db_reset = true and
+ * $use_database_transactions = false (the runner gives it a clean migrated baseline and
+ * restores it before the next class). Under the suite dispatch() spawns no worker, so every
+ * dispatched row is still pending when it is read back.
  */
 class Task_Dispatch_Test extends Rsx_Test_Abstract
 {
     protected static $requires_db_reset = true;
     protected static $use_database_transactions = false;
 
+    public static function teardown()
+    {
+        Session::logout();
+    }
+
+    private static function __row(int $id): Task_Run_Model
+    {
+        return Task_Run_Model::find($id);
+    }
+
     // -------------------------------------------------------------------------
-    // Task::dispatch() - validation checks (do not require the DB table)
+    // Task::dispatch() - validation
     // -------------------------------------------------------------------------
 
     public static function test_dispatch_throws_for_unknown_service()
@@ -44,132 +59,134 @@ class Task_Dispatch_Test extends Rsx_Test_Abstract
         });
     }
 
-    // -------------------------------------------------------------------------
-    // Task::dispatch() - persists a pending task row in the _tasks table
-    // -------------------------------------------------------------------------
-
-    public static function test_dispatch_returns_integer_id()
-    {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', ['key' => 'value']);
-        static::__assert_true(is_int($id));
-        static::__assert_greater_than(0, $id);
-    }
-
-    public static function test_dispatch_creates_row_in_tasks_table()
+    public static function test_dispatch_refuses_an_unknown_option()
     {
         $before = DB::table('_tasks')->count();
-        Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        static::__assert_equals($before + 1, DB::table('_tasks')->count());
+
+        static::__assert_throws(\Exception::class, function () {
+            Task::dispatch('Test_Echo_Service', 'echo_params', [], ['queue' => 'reports']);
+        }, 'options are scheduled_for and timeout; unknown: queue');
+
+        static::__assert_equals($before, DB::table('_tasks')->count(), 'nothing was enqueued');
     }
 
-    public static function test_dispatch_stores_pending_status()
+    public static function test_dispatch_refuses_scheduled_for_on_a_managed_task()
     {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        $row = DB::table('_tasks')->where('id', $id)->first();
-        static::__assert_equals(Task_Status::PENDING, $row->status);
+        $before = DB::table('_tasks')->count();
+
+        static::__assert_throws(\Exception::class, function () {
+            Task::dispatch('Task_Concurrency_Fixture_Service', 'exclusive_task', [], ['scheduled_for' => '2030-01-01 00:00:00']);
+        }, 'times its own runs; scheduled_for cannot be given');
+
+        static::__assert_equals($before, DB::table('_tasks')->count(), 'nothing was enqueued');
     }
 
-    public static function test_dispatch_stores_class_and_method()
+    // -------------------------------------------------------------------------
+    // Task::dispatch() - the pending row
+    // -------------------------------------------------------------------------
+
+    public static function test_dispatch_returns_the_id_of_one_new_row()
     {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        $row = DB::table('_tasks')->where('id', $id)->first();
-        // dispatch() stores the resolved fully-qualified class name.
-        static::__assert_true(str_ends_with($row->class, 'Test_Echo_Service'), 'class should resolve to Test_Echo_Service, got ' . $row->class);
+        $before = DB::table('_tasks')->count();
+        $id = Task::dispatch('Test_Echo_Service', 'echo_params', ['key' => 'value']);
+
+        static::__assert_true(is_int($id) && $id > 0, 'an integer id');
+        static::__assert_equals($before + 1, DB::table('_tasks')->count(), 'exactly one row');
+        static::__assert_not_null(static::__row($id));
+    }
+
+    public static function test_dispatch_writes_a_pending_dispatched_row()
+    {
+        $params = ['a' => 1, 'b' => 'two'];
+        $before = time();
+        $id = Task::dispatch('Test_Echo_Service', 'echo_params', $params);
+        $row = static::__row($id);
+
+        static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) $row->status_id);
+        static::__assert_equals(Task_Run_Model::ORIGIN_DISPATCHED, (int) $row->origin_id);
+        static::__assert_equals(Test_Echo_Service::class, $row->class, 'the resolved fully-qualified class');
         static::__assert_equals('echo_params', $row->method);
+        static::__assert_equals($params, $row->params);
+        static::__assert_equals(Task_Concurrency::params_hash($params), $row->params_hash);
+        static::__assert_true(strtotime($row->scheduled_for) <= time() && strtotime($row->scheduled_for) >= $before - 1, 'due now');
+        static::__assert_equals((int) config('rsx.tasks.default_timeout'), (int) $row->timeout, 'the configured default cap');
+        static::__assert_null($row->started_at);
+        static::__assert_null($row->completed_at);
+        static::__assert_null($row->stop_requested_at);
+        static::__assert_null($row->pool_id, 'no pool until a worker claims it');
+        static::__assert_null($row->worker_pid);
+        static::__assert_null($row->schedule_id);
+        static::__assert_equals(0, (int) $row->abandon_count);
     }
 
-    public static function test_dispatch_stores_params_as_json()
+    public static function test_dispatch_options_set_the_timeout_and_a_future_start()
     {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', ['a' => 1, 'b' => 'two']);
-        $row = DB::table('_tasks')->where('id', $id)->first();
-        static::__assert_equals(['a' => 1, 'b' => 'two'], json_decode($row->params, true));
+        $later = date('Y-m-d H:i:s', time() + 3600);
+        $id = Task::dispatch('Test_Echo_Service', 'echo_params', [], ['timeout' => 45, 'scheduled_for' => $later]);
+        $row = static::__row($id);
+
+        static::__assert_equals(45, (int) $row->timeout);
+        static::__assert_equals(strtotime($later), strtotime($row->scheduled_for), 'a future scheduled_for defers the run');
     }
 
-    public static function test_dispatch_uses_default_queue()
+    public static function test_dispatch_records_who_dispatched_it()
     {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        $row = DB::table('_tasks')->where('id', $id)->first();
-        static::__assert_equals('default', $row->queue);
-    }
+        Session::logout();
+        $anonymous = static::__row(Task::dispatch('Test_Echo_Service', 'echo_params'));
+        static::__assert_null($anonymous->dispatched_by_id, 'nobody signed in: no dispatcher');
+        static::__assert_null($anonymous->dispatched_by_type);
 
-    public static function test_dispatch_respects_custom_queue_option()
-    {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', [], ['queue' => 'reports']);
-        $row = DB::table('_tasks')->where('id', $id)->first();
-        static::__assert_equals('reports', $row->queue);
-    }
+        static::__acting_as_user(1);
+        $signed_in = static::__row(Task::dispatch('Test_Echo_Service', 'echo_params'));
+        $actor = \App\RSpade\Core\Database\Models\Rsx_Model_Abstract::_resolve_context_actor();
 
-    // -------------------------------------------------------------------------
-    // Task::status() - reads back a dispatched task
-    // -------------------------------------------------------------------------
-
-    public static function test_status_returns_array_for_known_id()
-    {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        static::__assert_true(is_array(Task::status($id)));
-    }
-
-    public static function test_status_returns_null_for_unknown_id()
-    {
-        static::__assert_null(Task::status(999999999));
-    }
-
-    public static function test_status_contains_expected_keys()
-    {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        $status = Task::status($id);
-        foreach (['id', 'class', 'method', 'queue', 'status', 'params', 'result', 'logs', 'error'] as $key) {
-            static::__assert_array_has_key($key, $status);
-        }
-    }
-
-    public static function test_status_status_field_is_pending_after_dispatch()
-    {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        static::__assert_equals(Task_Status::PENDING, Task::status($id)['status']);
-    }
-
-    public static function test_status_id_matches_dispatched_task()
-    {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        static::__assert_equals($id, Task::status($id)['id']);
-    }
-
-    public static function test_status_result_null_for_pending_task()
-    {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        static::__assert_null(Task::status($id)['result']);
-    }
-
-    public static function test_status_logs_is_empty_array_for_pending_task()
-    {
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', []);
-        static::__assert_equals([], Task::status($id)['logs']);
+        static::__assert_not_null($actor, 'fixture: a signed-in identity resolves');
+        $stored = DB::table('_tasks')->where('id', $signed_in->id)->first();
+        static::__assert_equals((int) $actor['id'], (int) $stored->dispatched_by_id, 'the dispatcher id');
+        static::__assert_equals(Type_Ref_Registry::class_to_id($actor['type']), (int) $stored->dispatched_by_type, 'the dispatcher type, as a type-ref id');
+        static::__assert_equals(1, (int) $signed_in->site_id, 'and the site it was dispatched for');
     }
 
     // -------------------------------------------------------------------------
-    // Task::internal() - immediate execution using test service
+    // Task::internal() - a recorded run in this process
     // -------------------------------------------------------------------------
 
-    public static function test_internal_returns_task_return_value()
+    public static function test_internal_returns_the_settled_inline_row()
     {
-        $result = Task::internal('Test_Echo_Service', 'echo_params', ['key' => 'value']);
-        static::__assert_not_null($result);
-        static::__assert_array_has_key('echo', $result);
-        static::__assert_equals('value', $result['echo']['key']);
+        $run = Task::internal('Test_Echo_Service', 'echo_params', ['key' => 'value']);
+
+        static::__assert_instance_of(Task_Run_Model::class, $run);
+        static::__assert_equals(Task_Run_Model::STATUS_COMPLETED, (int) $run->status_id);
+        static::__assert_equals(Task_Run_Model::ORIGIN_INLINE, (int) $run->origin_id);
+        static::__assert_equals(0, (int) $run->return_code);
+        static::__assert_null($run->error);
+        static::__assert_not_null($run->started_at);
+        static::__assert_not_null($run->completed_at);
+        static::__assert_equals(getmypid(), (int) $run->worker_pid, 'run by this process');
+        static::__assert_null($run->worker_id, 'which is no pool member');
+        static::__assert_equals(['echo' => ['key' => 'value']], $run->state(), 'its reports are on the run');
     }
 
-    public static function test_internal_re_throws_exception_from_task()
+    public static function test_internal_settles_a_throwing_task_failed_then_rethrows()
     {
+        $before = (int) DB::table('_tasks')->max('id');
+
         static::__assert_throws(\Exception::class, function () {
             Task::internal('Test_Echo_Service', 'always_fail', []);
         }, 'deliberate test failure');
+
+        $run = Task_Run_Model::where('id', '>', $before)->where('method', 'always_fail')->first();
+        static::__assert_not_null($run, 'the run was recorded');
+        static::__assert_equals(Task_Run_Model::STATUS_FAILED, (int) $run->status_id, 'and settled before the rethrow');
+        static::__assert_equals(1, (int) $run->return_code);
+        static::__assert_equals('Exception: deliberate test failure', $run->error);
     }
 
-    public static function test_internal_with_empty_params_returns_empty_echo()
+    public static function test_internal_returns_a_failure_code_without_throwing()
     {
-        $result = Task::internal('Test_Echo_Service', 'echo_params', []);
-        static::__assert_array_has_key('echo', $result);
-        static::__assert_count(0, $result['echo']);
+        $run = Task::internal('Test_Echo_Service', 'exit_with', ['code' => 4]);
+
+        static::__assert_equals(Task_Run_Model::STATUS_FAILED, (int) $run->status_id);
+        static::__assert_equals(4, (int) $run->return_code);
     }
 }

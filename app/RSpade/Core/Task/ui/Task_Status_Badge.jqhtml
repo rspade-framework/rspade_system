@@ -1,0 +1,25 @@
+<%--
+Task_Status_Badge - a coloured badge naming a task run's lifecycle status: Pending, Running,
+Completed, Failed, Stopped, Killed, Cancelled.
+
+$task_id  the run (_tasks id): the badge loads the run and follows it live
+$task     a status object already in hand (Rsx_Task.get(), a find()/page() row): the badge
+          draws it and fetches nothing - a list that reloads on Task_List_Changed_Topic
+          passes this rather than one live badge per row
+
+One of the two is required. Reading needs the run's view gate (Task_Gates); a run the viewer
+may not see shows as "Unavailable".
+--%>
+<Define:Task_Status_Badge tag="span">
+    <%
+        if (!this.args.task_id && !this.args.task) { throw new Error('Task_Status_Badge requires $task_id or $task'); }
+        const _status = this.args.task || this.data.status;
+    %>
+    <% if (this.data.error_data) { %>
+        <span class="Task_Status_Badge__badge Task_Status_Badge__badge--neutral">Unavailable</span>
+    <% } else if (!_status) { %>
+        <span class="Task_Status_Badge__badge Task_Status_Badge__badge--neutral">...</span>
+    <% } else { %>
+        <span class="Task_Status_Badge__badge Task_Status_Badge__badge--<%= Rsx_Task.tone(_status.status_id) %>" title="<%= _status.status_reason || '' %>"><%= _status.status %></span>
+    <% } %>
+</Define:Task_Status_Badge>

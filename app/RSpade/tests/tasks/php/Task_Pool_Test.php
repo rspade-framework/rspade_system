@@ -18,7 +18,8 @@ use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * Task_Pool against the running rsx-lockd: the PHP client of the daemon's worker-pool
- * accountant (the `pool.*` ops).
+ * accountant (the `pool.*` ops), exercised on the on_demand pool - every pool is the same
+ * client over its own daemon-side name.
  *
  * The daemon's own behavior (FIFO, isolation, drop-on-disconnect) is proven on a scratch
  * daemon by tests/locks/http/lockd_pool_*.sh. What is proven HERE is the PHP side of the
@@ -63,24 +64,28 @@ class Task_Pool_Test extends Rsx_Test_Abstract
         Task_Pool::disconnect();
         $base = static::__observe()['members'];
 
-        Task_Pool::lock();
+        Task_Pool::lock(Task_Pool::ON_DEMAND);
         static::__assert_true(Task_Pool::holds_lock(), 'the client records the granted lock');
         static::__assert_true(static::__observe()['holder'], 'the daemon shows the pool lock held once lock() returns');
 
-        $identity = Task_Pool::join();
+        $identity = Task_Pool::join(Task_Pool::ON_DEMAND);
         $wid = $identity['wid'];
         $generation = $identity['generation'];
         static::__assert_true(is_int($wid) && $wid >= 0 && $wid < 1000000000, 'join() returns the daemon-assigned integer wid: ' . var_export($wid, true));
         static::__assert_true(is_int($generation) && $generation > 0, 'and the daemon generation: ' . var_export($generation, true));
         static::__assert_equals($wid, Task_Pool::wid(), 'the client records its wid');
+        static::__assert_equals(Task_Pool::ON_DEMAND, Task_Pool::member_pool(), 'and the pool it is a member of');
+        static::__assert_true(Task_Pool::holds_lock(Task_Pool::ON_DEMAND), 'it holds that pool\'s lock');
+        static::__assert_false(Task_Pool::holds_lock(Task_Pool::SCHEDULED), 'and no other pool\'s');
+        static::__assert_not_equals(Task_Pool::pool_name(Task_Pool::ON_DEMAND), Task_Pool::pool_name(Task_Pool::SCHEDULED), 'each pool has its own daemon-side name');
         static::__assert_equals($generation, Task_Pool::generation(), 'and its generation');
         static::__assert_equals($generation, static::__observe()['generation'], 'the generation is the one pool.stats reports');
         static::__assert_equals($base + 1, static::__observe()['members'], 'the daemon counts the member once join() returns');
 
-        static::__assert_equals(['alive' => true, 'known' => true], Task_Pool::member_alive($wid, $generation), 'a joined member is alive');
+        static::__assert_equals(['alive' => true, 'known' => true], Task_Pool::member_alive(Task_Pool::ON_DEMAND, $wid, $generation), 'a joined member is alive');
         static::__assert_equals(
             ['alive' => false, 'known' => false],
-            Task_Pool::member_alive($wid, $generation === 1 ? 2 : $generation - 1),
+            Task_Pool::member_alive(Task_Pool::ON_DEMAND, $wid, $generation === 1 ? 2 : $generation - 1),
             'another generation is unknown to the daemon'
         );
         static::__assert_equals(
@@ -88,25 +93,26 @@ class Task_Pool_Test extends Rsx_Test_Abstract
                 'a' => ['wid' => $wid, 'generation' => $generation, 'alive' => true, 'known' => true],
                 'b' => ['wid' => $wid, 'generation' => $generation === 1 ? 2 : $generation - 1, 'alive' => false, 'known' => false],
             ],
-            Task_Pool::members_alive([
+            Task_Pool::members_alive(Task_Pool::ON_DEMAND, [
                 'a' => ['wid' => $wid, 'generation' => $generation],
                 'b' => ['wid' => (string) $wid, 'generation' => (string) ($generation === 1 ? 2 : $generation - 1)],
             ]),
             'members_alive() answers each item under its own key, in order, integers or not'
         );
-        static::__assert_equals([], Task_Pool::members_alive([]), 'an empty batch is answered empty');
+        static::__assert_equals([], Task_Pool::members_alive(Task_Pool::ON_DEMAND, []), 'an empty batch is answered empty');
 
-        Task_Pool::leave();
+        Task_Pool::leave(Task_Pool::ON_DEMAND);
         static::__assert_null(Task_Pool::wid(), 'the client forgets its membership on leave');
         static::__assert_null(Task_Pool::generation(), 'generation included');
+        static::__assert_null(Task_Pool::member_pool(), 'and the pool');
         static::__assert_equals($base, static::__observe()['members'], 'the daemon dropped the member once leave() returns');
-        static::__assert_equals(['alive' => false, 'known' => true], Task_Pool::member_alive($wid, $generation), 'a member that left is not alive');
+        static::__assert_equals(['alive' => false, 'known' => true], Task_Pool::member_alive(Task_Pool::ON_DEMAND, $wid, $generation), 'a member that left is not alive');
 
-        Task_Pool::unlock();
+        Task_Pool::unlock(Task_Pool::ON_DEMAND);
         static::__assert_false(Task_Pool::holds_lock(), 'the client records the release');
         static::__assert_false(static::__observe()['holder'], 'the daemon shows the pool lock free once unlock() returns');
 
-        $stats = Task_Pool::stats();
+        $stats = Task_Pool::stats(Task_Pool::ON_DEMAND);
         static::__assert_equals(
             ['generation' => $generation, 'members' => $base, 'holder' => false, 'waiting' => 0],
             $stats,
@@ -122,29 +128,29 @@ class Task_Pool_Test extends Rsx_Test_Abstract
     {
         Task_Pool::disconnect();
 
-        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::join(), 'refused pool.join');
+        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::join(Task_Pool::ON_DEMAND), 'refused pool.join');
         static::__assert_null(Task_Pool::wid(), 'a refused join records no membership');
 
-        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::count(), 'refused pool.count');
-        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::member_alive(0, 1), 'refused pool.member_alive');
-        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::members_alive([]), 'refused pool.members_alive');
-        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::leave(), 'refused pool.leave');
-        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::unlock(), 'refused pool.unlock');
+        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::count(Task_Pool::ON_DEMAND), 'refused pool.count');
+        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::member_alive(Task_Pool::ON_DEMAND, 0, 1), 'refused pool.member_alive');
+        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::members_alive(Task_Pool::ON_DEMAND, []), 'refused pool.members_alive');
+        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::leave(Task_Pool::ON_DEMAND), 'refused pool.leave');
+        static::__assert_throws(RuntimeException::class, fn () => Task_Pool::unlock(Task_Pool::ON_DEMAND), 'refused pool.unlock');
 
         // Holding the lock, a second join by the same connection is refused, and the first
         // membership stands.
-        Task_Pool::lock();
+        Task_Pool::lock(Task_Pool::ON_DEMAND);
         try {
-            $identity = Task_Pool::join();
-            static::__assert_throws(RuntimeException::class, fn () => Task_Pool::join(), 'refused pool.join');
+            $identity = Task_Pool::join(Task_Pool::ON_DEMAND);
+            static::__assert_throws(RuntimeException::class, fn () => Task_Pool::join(Task_Pool::ON_DEMAND), 'refused pool.join');
             static::__assert_equals($identity['wid'], Task_Pool::wid(), 'a refused second join leaves the first membership recorded');
-            static::__assert_true(Task_Pool::member_alive($identity['wid'], $identity['generation'])['alive'], 'and in force at the daemon');
-            Task_Pool::leave();
+            static::__assert_true(Task_Pool::member_alive(Task_Pool::ON_DEMAND, $identity['wid'], $identity['generation'])['alive'], 'and in force at the daemon');
+            Task_Pool::leave(Task_Pool::ON_DEMAND);
 
             // Leaving twice is refused too.
-            static::__assert_throws(RuntimeException::class, fn () => Task_Pool::leave(), 'refused pool.leave');
+            static::__assert_throws(RuntimeException::class, fn () => Task_Pool::leave(Task_Pool::ON_DEMAND), 'refused pool.leave');
         } finally {
-            Task_Pool::unlock();
+            Task_Pool::unlock(Task_Pool::ON_DEMAND);
         }
     }
 
@@ -156,16 +162,16 @@ class Task_Pool_Test extends Rsx_Test_Abstract
     {
         Task_Pool::disconnect();
 
-        Task_Pool::lock();
+        Task_Pool::lock(Task_Pool::ON_DEMAND);
         try {
-            $before = Task_Pool::count();
-            Task_Pool::join();
-            static::__assert_equals($before, Task_Pool::count(), 'count() does not include the caller once it has joined');
-            static::__assert_equals($before + 1, Task_Pool::stats()['members'], 'while stats() counts every member');
-            Task_Pool::leave();
-            static::__assert_equals($before, Task_Pool::count(), 'and count() is unchanged after it leaves');
+            $before = Task_Pool::count(Task_Pool::ON_DEMAND);
+            Task_Pool::join(Task_Pool::ON_DEMAND);
+            static::__assert_equals($before, Task_Pool::count(Task_Pool::ON_DEMAND), 'count() does not include the caller once it has joined');
+            static::__assert_equals($before + 1, Task_Pool::stats(Task_Pool::ON_DEMAND)['members'], 'while stats() counts every member');
+            Task_Pool::leave(Task_Pool::ON_DEMAND);
+            static::__assert_equals($before, Task_Pool::count(Task_Pool::ON_DEMAND), 'and count() is unchanged after it leaves');
         } finally {
-            Task_Pool::unlock();
+            Task_Pool::unlock(Task_Pool::ON_DEMAND);
         }
     }
 
@@ -181,21 +187,21 @@ class Task_Pool_Test extends Rsx_Test_Abstract
     {
         Task_Pool::disconnect();
 
-        Task_Pool::lock();
-        $base = Task_Pool::count();
-        Task_Pool::unlock();
+        Task_Pool::lock(Task_Pool::ON_DEMAND);
+        $base = Task_Pool::count(Task_Pool::ON_DEMAND);
+        Task_Pool::unlock(Task_Pool::ON_DEMAND);
         Task_Pool::disconnect();
 
         $child = static::__start_child('member');
 
         try {
             $ready = static::__await_ready($child);
-            static::__assert_equals(Task_Pool::pool_name(), $ready['pool'], 'the child joined THIS environment\'s pool');
+            static::__assert_equals(Task_Pool::pool_name(Task_Pool::ON_DEMAND), $ready['pool'], 'the child joined THIS environment\'s pool');
 
-            Task_Pool::lock();
-            static::__assert_equals($base + 1, Task_Pool::count(), 'the joined child is counted');
-            static::__assert_true(Task_Pool::member_alive($ready['wid'], $ready['generation'])['alive'], 'and alive');
-            Task_Pool::unlock();
+            Task_Pool::lock(Task_Pool::ON_DEMAND);
+            static::__assert_equals($base + 1, Task_Pool::count(Task_Pool::ON_DEMAND), 'the joined child is counted');
+            static::__assert_true(Task_Pool::member_alive(Task_Pool::ON_DEMAND, $ready['wid'], $ready['generation'])['alive'], 'and alive');
+            Task_Pool::unlock(Task_Pool::ON_DEMAND);
 
             static::__kill($child);
 
@@ -203,10 +209,10 @@ class Task_Pool_Test extends Rsx_Test_Abstract
             // own event loop - so ask until it has.
             $alive = true;
             for ($poll = 0; $poll < self::CHILD_POLLS && $alive; $poll++) {
-                Task_Pool::lock();
-                $alive = Task_Pool::member_alive($ready['wid'], $ready['generation'])['alive'];
-                $count = Task_Pool::count();
-                Task_Pool::unlock();
+                Task_Pool::lock(Task_Pool::ON_DEMAND);
+                $alive = Task_Pool::member_alive(Task_Pool::ON_DEMAND, $ready['wid'], $ready['generation'])['alive'];
+                $count = Task_Pool::count(Task_Pool::ON_DEMAND);
+                Task_Pool::unlock(Task_Pool::ON_DEMAND);
                 if ($alive) {
                     usleep(100000);
                 }
@@ -238,14 +244,14 @@ class Task_Pool_Test extends Rsx_Test_Abstract
             static::__assert_true(static::__observe()['holder'], 'the child holds the pool lock');
 
             // Parks until the child is dead. No deadline: the child ends itself.
-            Task_Pool::lock();
+            Task_Pool::lock(Task_Pool::ON_DEMAND);
             static::__assert_true(Task_Pool::holds_lock(), 'the waiter was granted the lock the dead holder had');
 
             static::__reap($child['process']);
             static::__assert_equals(137, static::__exit_code($child['process']), 'the holder died by SIGKILL, with no unlock sent');
-            static::__assert_false(Task_Pool::member_alive($ready['wid'], $ready['generation'])['alive'], 'and its membership went with it');
+            static::__assert_false(Task_Pool::member_alive(Task_Pool::ON_DEMAND, $ready['wid'], $ready['generation'])['alive'], 'and its membership went with it');
 
-            Task_Pool::unlock();
+            Task_Pool::unlock(Task_Pool::ON_DEMAND);
         } finally {
             static::__kill($child);
             Task_Pool::disconnect();
@@ -268,7 +274,7 @@ class Task_Pool_Test extends Rsx_Test_Abstract
 
         $token = RsxLocks::named_write_lock($lock_name);
         try {
-            Task_Pool::lock();
+            Task_Pool::lock(Task_Pool::ON_DEMAND);
 
             static::__assert_true(
                 RsxLocks::get_lock_stats(RsxLocks::CLUSTER_LOCK, $lock_name)['writer_active'],
@@ -284,7 +290,7 @@ class Task_Pool_Test extends Rsx_Test_Abstract
                     continue;
                 }
                 foreach ($connection['pools'] as $view) {
-                    if ($view['pool'] === Task_Pool::pool_name() && $view['holds_lock']) {
+                    if ($view['pool'] === Task_Pool::pool_name(Task_Pool::ON_DEMAND) && $view['holds_lock']) {
                         $pool_connection = $connection;
                     }
                 }
@@ -321,16 +327,16 @@ class Task_Pool_Test extends Rsx_Test_Abstract
         }
 
         // Closing the RsxLocks connection - release_all and all - leaves the pool lock held.
-        Task_Pool::lock();
+        Task_Pool::lock(Task_Pool::ON_DEMAND);
         try {
             Lockd_Client::close();
             static::__assert_false(Lockd_Client::is_connected(), 'the RsxLocks connection is closed');
 
-            $stats = Task_Pool::stats();
+            $stats = Task_Pool::stats(Task_Pool::ON_DEMAND);
             static::__assert_true($stats['holder'], 'the pool lock survives release_all and close on the RsxLocks connection');
             static::__assert_true(Task_Pool::holds_lock(), 'and the client still records it');
         } finally {
-            Task_Pool::unlock();
+            Task_Pool::unlock(Task_Pool::ON_DEMAND);
             Task_Pool::disconnect();
         }
     }
@@ -348,7 +354,7 @@ class Task_Pool_Test extends Rsx_Test_Abstract
         Task_Pool::disconnect();
         $before = RsxLocks::inherited_lock_fds();
 
-        Task_Pool::stats();
+        Task_Pool::stats(Task_Pool::ON_DEMAND);
         try {
             $inodes = Lockd_Connection::open_socket_inodes();
             static::__assert_not_empty($inodes, 'the open pool connection is a daemon socket');
@@ -416,9 +422,9 @@ class Task_Pool_Test extends Rsx_Test_Abstract
             // The daemon's view: the membership ended with the member.
             $alive = true;
             for ($poll = 0; $poll < self::CHILD_POLLS && $alive; $poll++) {
-                Task_Pool::lock();
-                $alive = Task_Pool::member_alive($ready['wid'], $ready['generation'])['alive'];
-                Task_Pool::unlock();
+                Task_Pool::lock(Task_Pool::ON_DEMAND);
+                $alive = Task_Pool::member_alive(Task_Pool::ON_DEMAND, $ready['wid'], $ready['generation'])['alive'];
+                Task_Pool::unlock(Task_Pool::ON_DEMAND);
                 if ($alive) {
                     usleep(100000);
                 }
@@ -458,7 +464,7 @@ class Task_Pool_Test extends Rsx_Test_Abstract
     /** pool.stats for this environment's pool, asked over the RsxLocks connection. */
     protected static function __observe(): array
     {
-        $response = Lockd_Client::request(['op' => 'pool.stats', 'pool' => Task_Pool::pool_name()]);
+        $response = Lockd_Client::request(['op' => 'pool.stats', 'pool' => Task_Pool::pool_name(Task_Pool::ON_DEMAND)]);
         static::__assert_equals('ok', $response['status'] ?? null, 'the observer\'s pool.stats is answered');
 
         return $response;
@@ -583,10 +589,10 @@ Illuminate\Support\Facades\DB::purge('test');
 
 [\$script, \$mode, \$ready_file] = \$argv;
 
-Task_Pool::lock();
-\$identity = Task_Pool::join();
+Task_Pool::lock(Task_Pool::ON_DEMAND);
+\$identity = Task_Pool::join(Task_Pool::ON_DEMAND);
 if (\$mode === 'member' || \$mode === 'spawner') {
-    Task_Pool::unlock();
+    Task_Pool::unlock(Task_Pool::ON_DEMAND);
 }
 
 // spawner: start a detached process the way a task does, while a member.
@@ -600,7 +606,7 @@ file_put_contents(\$ready_file, json_encode([
     'pid' => getmypid(),
     'wid' => \$identity['wid'],
     'generation' => \$identity['generation'],
-    'pool' => Task_Pool::pool_name(),
+    'pool' => Task_Pool::pool_name(Task_Pool::ON_DEMAND),
     'grandchild_pid' => \$grandchild_pid,
     'socket_inodes' => App\\RSpade\\Core\\Locks\\Lockd_Connection::open_socket_inodes(),
 ]));
@@ -614,7 +620,7 @@ if (\$mode === 'member' || \$mode === 'spawner') {
 // holder: keep the lock until a waiter is parked behind it, then die without a word.
 \$stdin = [STDIN];
 while (true) {
-    if (Task_Pool::stats()['waiting'] > 0) {
+    if (Task_Pool::stats(Task_Pool::ON_DEMAND)['waiting'] > 0) {
         posix_kill(getmypid(), SIGKILL);
     }
 

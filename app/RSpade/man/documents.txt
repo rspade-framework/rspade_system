@@ -266,6 +266,6 @@ SEE ALSO
     rsx:man libreoffice      Headless soffice and its one sanctioned timeout
     rsx:man file_upload      Attachments and the deduplicated blob store
     rsx:man health           rsx:health and the Document Render Backlog row
-    rsx:man tasks            #[Exclusive], #[Schedule] and the worker pool
+    rsx:man tasks            #[Exclusive], #[Schedule] and the worker pools
 
 RSX Framework              Last updated 2026-08-22                DOCUMENTS(1)

@@ -121,28 +121,27 @@ class Documents_Status_Command extends Command
     /**
      * The one closing line: is the 10-minute sweeper registered, and when does it next run.
      *
-     * The tracker row is the #[Schedule] row reconciled by rsx:task:process (class + method, with
-     * next_run_at set - see Task_Process_Command::reconcile_schedules). Its ABSENCE is the answer
-     * to "why has nothing rendered for an hour" often enough to earn a line of its own.
+     * The schedule is the _task_schedules row rsx:task:process registers for the #[Schedule]
+     * (Task_Process_Command::reconcile_schedules). Its ABSENCE is the answer to "why has nothing
+     * rendered for an hour" often enough to earn a line of its own.
      *
      * @return void
      */
     private function __print_worker_schedule(): void
     {
-        $tracker = DB::table('_tasks')
+        $schedule = DB::table('_task_schedules')
             ->where('class', Document_Render_Service::class)
             ->where('method', 'render_pending')
-            ->whereNotNull('next_run_at')
             ->first();
 
-        if (!$tracker) {
+        if (!$schedule) {
             $this->line('Worker schedule: not registered - run php artisan rsx:task:process');
 
             return;
         }
 
-        $next = Rsx_Time::format_datetime($tracker->next_run_at);
-        $this->line("Worker schedule: {$tracker->cron_expression}, next run {$next}");
+        $next = Rsx_Time::format_datetime($schedule->next_run_at);
+        $this->line("Worker schedule: {$schedule->cron_expression}, next run {$next}");
     }
 
     /**

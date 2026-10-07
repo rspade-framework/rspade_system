@@ -3,6 +3,15 @@
     font-size: 13px;
     line-height: 1.4;
     text-align: left;
+    // The tree is embedded in whatever page shows it, so it inherits none of that page's
+    // typography and states its own text colour.
+    font-weight: normal;
+    font-style: normal;
+    letter-spacing: normal;
+    text-transform: none;
+    text-decoration: none;
+    text-shadow: none;
+    color: #222;
     width: 800px;
     max-width: 100%;
     height: 250px;
@@ -147,5 +156,75 @@
     .js-tree-debug-pending {
         color: #999;
         font-style: italic;
+    }
+
+    // Dark mode: the Darcula palette. Nested under the tree's own root so every rule above is
+    // outranked by its counterpart here.
+    body.rsx-dark & {
+        border-color: #515151;
+        background: #2b2b2b;
+        color: #a9b7c6;
+
+        .js-tree-debug-children {
+            border-left-color: #3c3f41;
+        }
+
+        .js-tree-debug-toggle .js-tree-debug-arrow {
+            color: #808080;
+        }
+
+        .js-tree-debug-toggle:hover .js-tree-debug-arrow {
+            color: #bbbbbb;
+        }
+
+        .js-tree-debug-key,
+        .js-tree-debug-class-badge .js-tree-debug-class-name {
+            color: #9876aa;
+        }
+
+        .js-tree-debug-colon,
+        .js-tree-debug-preview,
+        .js-tree-debug-bracket-close,
+        .js-tree-debug-class-badge .js-tree-debug-class-paren {
+            color: #808080;
+        }
+
+        .js-tree-debug-preview-collapsed {
+            color: #6f737a;
+        }
+
+        .js-tree-debug-string {
+            color: #6a8759;
+        }
+
+        .js-tree-debug-number,
+        .js-tree-debug-class-badge .js-tree-debug-class-id {
+            color: #6897bb;
+        }
+
+        .js-tree-debug-boolean,
+        .js-tree-debug-null,
+        .js-tree-debug-undefined {
+            color: #cc7832;
+        }
+
+        .js-tree-debug-class-badge {
+            border-color: #515151;
+            background: #3c3f41;
+        }
+
+        .js-tree-debug-relationship .js-tree-debug-rel-key {
+            color: #589df6;
+        }
+
+        .js-tree-debug-loading,
+        .js-tree-debug-empty,
+        .js-tree-debug-pending {
+            color: #808080;
+        }
+
+        .js-tree-debug-error {
+            color: #ff6b68;
+        }
     }
 }

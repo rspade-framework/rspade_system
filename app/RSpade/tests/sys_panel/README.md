@@ -56,7 +56,7 @@ its only writer.
 | `Sys/lib/_Sys_Endpoint_Controller_Abstract.php` | the base every panel controller extends: the ONE `rsx.sys_panel.enabled` refusal in `pre_dispatch()` (RP-GATE-03, RP-GATE-06). `Sys_Panel_Gate_Test` also enumerates every panel surface for `is_sysadmin` and refuses a non-developer (RP-GATE-*). |
 | `Sys/theme/components/_Sys_DataGrid_Abstract.php` | the panel grid's server half - `fetch()` over an Eloquent, Query\Builder or row-list source (RP-GRID-*). |
 | `Sys/app/sys/_Sys_Error_Screens.js` + `Core/SPA/Error_Screens.js` | the panel's registration with the SPA error-screen registry, and the registry's fail-loud paths (RP-ERR-*). |
-| `Sys/app/sys/tasks/_Sys_Tasks_Controller.php` + `_Sys_Tasks_DataGrid.php` | the Tasks screen's endpoints over `_tasks`: `running`, the history grid and its filters, `detail`, `kill` (explanation required, `Task_Killer`), `redispatch`, `schedules`, `run_schedule_now` (RP-TASKS-*; fixture `Sys_Tasks_Probe_Service`). `kill` is also the real form endpoint RP-MODAL-07 drives in the browser. |
+| `Sys/app/sys/tasks/_Sys_Tasks_Controller.php` + `_Sys_Tasks_DataGrid.php` | the Tasks and Task Workers screens' endpoints over the task runs (`Task_Run_Model`): the tasks grid (running, then queued, then finished) with its filters, `detail`, `act` (stop / force_stop / force_kill / cancel / rerun through the `Task_Run_Model` lifecycle methods, `task_action` + optional grace and explanation), `schedules`, `run_schedule_now`, `workers` (RP-TASKS-*; fixture `Sys_Tasks_Probe_Service`). `act` is also the real form endpoint RP-MODAL-07 drives in the browser. |
 | `Sys/app/sys/email/_Sys_Email_Controller.php` + `_Sys_Email_DataGrid.php` | the Email screen's endpoints over `_email_queue`, every site: `summary`, the queue grid and its option endpoints, `detail` (preview document through `Rsx_Mail::displayable_html()`, database only), `resend` (`Rsx_Mail::resend()`, the rules shared with `rsx:mail:resend`) (RP-EMAIL-*). |
 | `Sys/app/sys/email/_Sys_Sms_Controller.php` + `_Sys_Sms_DataGrid.php` | the SMS tab's read-only endpoints over `_sms_queue`, every site: `summary` (`Sms_Queue_Model::status_counts()` / `oldest_pending()`, `Rsx_Sms::delivery_mode()`), the grid and its option endpoints, `detail` (RP-SMS-*). Both queues' words and site labels come from `_Sys_Enum_Words`. |
 | `Sys/app/sys/logs/_Sys_Log_Reader.php` + `_Sys_Logs_Controller.php` + `_Sys_Logs_DataGrid.php` | the Logs screen: the listing and the one name-to-path resolution (never a path join), windowed reads by byte offset (tail, backward pages, Follow with rotation detection), the .gz forward read, laravel entry grouping, csp pretty-printing, the server-side filter (RP-LOGS-*; a fixture directory through `_Sys_Log_Reader::$directory_for_tests`, never the install's own logs). |
@@ -73,9 +73,9 @@ Behavior of record: `Sys/CLAUDE.md`, `Sys/app/sys/CLAUDE.md` and
 
 `playwright/sys_panel_toolkit.js` (RP-ERR-*, RP-MODAL-*) runs on `/_sys` as user 1 with
 self-minted dev-auth headers: `node system/app/RSpade/tests/sys_panel/playwright/sys_panel_toolkit.js`.
-It depends on no application code. RP-MODAL-07 plants one RUNNING `_tasks` row with no
-worker_pid in the site's database (`php artisan db:query`), kills it through the Tasks
-screen's Kill dialog, and deletes it afterwards.
+It depends on no application code. RP-MODAL-07 plants one queued `_tasks` run due in 2030
+in the site's database (`php artisan db:query`), cancels it through the Tasks screen's
+action dialog (`_Sys_Task_Action_Form`), and deletes it afterwards.
 
 ## Not automated here
 

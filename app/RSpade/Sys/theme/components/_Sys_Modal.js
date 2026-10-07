@@ -101,6 +101,11 @@ class _Sys_Modal extends Component {
      * @param {string|jQuery} [options.body] Text (escaped) or an element (appended)
      * @param {Array} [options.buttons] [{label, value, class, default, callback}]
      * @param {number} [options.max_width=500] Dialog width cap, px
+     * @param {string} [options.height] A FIXED dialog height (any CSS length, e.g.
+     *        'min(1075px, 80vh)'). The body then fills what the header and footer leave and
+     *        scrolls when its content is taller; a body component sized height: 100% fills it.
+     * @param {string} [options.mobile_height] The fixed height below 1024px wide (defaults to
+     *        height)
      * @returns {Promise<*>} The pressed button's value/callback result; false on dismissal
      */
     static show(options) {
@@ -112,6 +117,8 @@ class _Sys_Modal extends Component {
                 body: options.body === undefined || options.body === null ? '' : options.body,
                 buttons: options.buttons || [],
                 max_width: options.max_width || 500,
+                height: options.height || null,
+                mobile_height: options.mobile_height || null,
                 on_mount: options.on_mount || null,
                 on_closed: resolve,
             });

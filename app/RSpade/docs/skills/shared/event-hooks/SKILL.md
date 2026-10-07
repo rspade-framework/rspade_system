@@ -77,7 +77,7 @@ if (!Event_Registry::has_handlers('file.upload.authorize')) {
 }
 ```
 
-That is exactly what the three FILE gates do (`Rsx_File_Gates::require_handler()`) - an unhandled upload gate would be an anonymous upload endpoint and an unhandled read gate a public file server, so each throws instead. **Every app ships a `file.upload.authorize`, a `file.thumbnail.authorize` and a `file.download.authorize` handler** (minimum: require login); see `rspade:file-attachments`.
+That is exactly what the three FILE gates do (`Rsx_File_Gates::require_handler()`) - an unhandled upload gate would be an anonymous upload endpoint and an unhandled read gate a public file server, so each throws instead. **Every app ships a `file.upload.authorize`, a `file.thumbnail.authorize` and a `file.download.authorize` handler** (minimum: require login); see `rspade:file-attachments`. The TASK gates (`task.view.authorize`, `task.view.scope`, `task.control.authorize`, portal `portal.task.*`) fail closed the same way, by denying rather than throwing: with no handler nobody but a developer sees or controls a background task run (`Task_Gates`; `rspade:background-tasks`).
 
 ### Resolve - intercept a framework default
 

@@ -26,12 +26,12 @@
  *        Rename dialog (_Sys_Site_Rename_Form -> _Sys_Sites_Controller.rename) with the
  *        name cleared comes back as a field error, the dialog stays open with the input
  *        marked and outlined, and dismissing it saves nothing. A success round trip: the
- *        Tasks screen's Kill dialog (_Sys_Task_Kill_Form -> _Sys_Tasks_Controller.kill)
- *        kills the row and resolves the server result.
+ *        Tasks screen's action dialog (_Sys_Task_Action_Form -> _Sys_Tasks_Controller.act)
+ *        cancels a queued run and resolves the server result.
  *
- * Step 7 renames nothing (site 1 is only opened, never saved), and plants its own RUNNING
- * _tasks row with NO worker_pid (so the kill signals no process) through
- * `php artisan db:query`, deleting it afterwards.
+ * Step 7 renames nothing (site 1 is only opened, never saved), and plants its own queued
+ * _tasks run (due in the future, so no worker claims it) through `php artisan db:query`,
+ * deleting it afterwards.
  *
  * Self-contained: mints its own dev-auth headers (system/bin/dev-auth.js), so it runs with a
  * bare `node sys_panel_toolkit.js` against the dev web server on localhost. User 1 is the
@@ -302,22 +302,22 @@ async function run() {
         check(db_query('SELECT name FROM sites WHERE id = 1')[0].name === site_before,
             'form(): the refused submit saved nothing', 'the refused rename changed the site');
 
-        // 7b. form() success round trip against the Kill endpoint.
+        // 7b. form() success round trip against the lifecycle endpoint: cancel a queued run.
         const marker = 'sys_panel_toolkit_probe_' + Date.now();
-        db_query("INSERT INTO _tasks (class, method, queue, status, started_at, created_at) VALUES " +
-            "('Sys_Panel_Toolkit_Probe_Service', '" + marker + "', 'default', 'running', UTC_TIMESTAMP(), UTC_TIMESTAMP())");
+        db_query("INSERT INTO _tasks (class, method, params, params_hash, origin_id, status_id, scheduled_for, created_at) VALUES " +
+            "('Sys_Panel_Toolkit_Probe_Service', '" + marker + "', '[]', SHA2('[]', 256), 1, 1, '2030-01-01 00:00:00', UTC_TIMESTAMP())");
         probe_task_id = db_query("SELECT id FROM _tasks WHERE method = '" + marker + "'")[0].id;
 
-        await open_dialog(page, "_Sys_Modal.form({title: 'Kill', component: '_Sys_Task_Kill_Form', " +
-            "component_args: {task_id: " + probe_task_id + ", task_label: 'Probe'}, submit_label: 'Kill'})");
+        await open_dialog(page, "_Sys_Modal.form({title: 'Cancel', component: '_Sys_Task_Action_Form', " +
+            "component_args: {task_id: " + probe_task_id + ", action: 'cancel'}, submit_label: 'Cancel run'})");
         await page.fill('._Sys_Modal textarea', 'toolkit round trip');
         await page.click('._Sys_Modal .modal-footer [data-sys-modal-default]');
-        const kill_result = await dialog_result(page);
-        const killed_row = db_query('SELECT status, status_reason FROM _tasks WHERE id = ' + probe_task_id)[0];
-        check(kill_result && kill_result.id === probe_task_id && kill_result.outcome === 'killed_no_process'
-                && killed_row.status === 'killed' && killed_row.status_reason === 'toolkit round trip',
+        const cancel_result = await dialog_result(page);
+        const cancelled_row = db_query('SELECT status_id, status_reason FROM _tasks WHERE id = ' + probe_task_id)[0];
+        check(cancel_result && cancel_result.task && cancel_result.task.id === probe_task_id && cancel_result.task.status_id === 7
+                && Number(cancelled_row.status_id) === 7 && String(cancelled_row.status_reason).endsWith(': toolkit round trip'),
             'form(): a valid submit resolves the server result and the endpoint acted',
-            'form() success round trip wrong: ' + JSON.stringify({ kill_result, killed_row }));
+            'form() success round trip wrong: ' + JSON.stringify({ cancel_result, cancelled_row }));
     } catch (e) {
         fail('exception: ' + (e && e.message ? e.message : String(e)));
     } finally {

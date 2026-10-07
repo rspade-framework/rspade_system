@@ -1401,72 +1401,70 @@ return [
     | Task System
     |--------------------------------------------------------------------------
     |
-    | Configuration for the unified task execution system supporting:
-    | - Immediate CLI execution
-    | - Scheduled tasks (cron-based)
-    | - Queued async tasks with worker management
+    | Background tasks (rsx:man tasks). Every run is a _tasks row: a dispatched run, a run of
+    | a #[Schedule], and an inline run (Task::internal(), rsx:task:run, a #[Command]).
     |
-    | Worker Concurrency:
-    | - global_max_workers: Maximum total workers across all queues
-    | - Per-queue max_workers: Maximum concurrent workers for specific queue
-    | - Workers are spawned up to configured limits
-    |
-    | Task Lifecycle:
-    | - Tasks start as "pending" in database
-    | - Worker process marks as "running" and updates heartbeat
-    | - Completes as "completed" or "failed"
-    | - Stuck tasks detected via timeout + pool membership (rsx-lockd) + PID checking
-    |
-    | Queues:
-    | - default: General purpose task queue
-    | - scheduled: Auto-created tasks from #[Schedule] attributes
-    | - Custom queues: Define as needed (video, export, email, etc.)
+    | Worker pools (rsx-lockd counts the members of each):
+    | - on_demand: runs dispatched work (Task::dispatch, framework drains included).
+    | - scheduled: runs #[Schedule] work, and takes queued on-demand work FIRST when there is
+    |   any - so a cap of 1 in each lets two on-demand runs proceed at once.
+    | - kill: the kill workers that carry out force stops and force kills.
+    | Each cap is at least 1; a lower value throws.
     |
     | Commands:
     | - php artisan rsx:task:process (run via cron every minute)
     | - php artisan rsx:task:run Service method [params]
-    | - php artisan rsx:task:list
+    | - php artisan rsx:tasks:list / rsx:tasks:stop / rsx:tasks:cancel
     |
     */
     'tasks' => [
-        // Maximum concurrent workers in the single worker pool (fixed per environment).
-        // rsx-lockd accounts the pool (Task_Pool): a worker joins under the pool lock iff
-        // fewer than this many other workers are members, else it exits cleanly. A worker's
-        // membership is its daemon connection, so a dead worker stops counting at once.
-        'global_max_workers' => env('RSX_TASK_MAX_WORKERS', 3),
+        'pools' => [
+            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 3)],
+            'scheduled' => ['max_workers' => 1],
+            'kill' => ['max_workers' => 10],
+        ],
 
         // Execution cap for a task that does not carry its own timeout (seconds).
         // Enforced by the rsx:task:process reaper: each cron tick, a RUNNING task whose
-        // worker is still alive past its cap is killed (SIGTERM -> 5s -> SIGKILL) and
-        // settled KILLED, or recycled to PENDING if it is a recurring cron tracker.
-        // Granularity is therefore the cron tick interval (one minute), not the second.
+        // worker is still alive past its cap is force-killed by a kill worker and settled
+        // KILLED. Granularity is therefore the cron tick interval (one minute), not the second.
         // Set to 0 to run uncapped tasks unbounded (a row's own timeout still applies).
         'default_timeout' => 1800,  // 30 minutes
 
-        // Default TTL for task temp directories (seconds)
-        'temp_directory_default_ttl' => 3600,  // 1 hour
+        // How long a FORCE STOP waits for the task to stop on its own before its worker is
+        // killed (Task_Run_Model::force_stop(), when the caller names no grace). Owner-set: it is
+        // the window a cooperative task gets to finish cleanly, not a bound on any operation -
+        // a graceful stop (request_stop()) never kills, whatever this says.
+        'stop_grace_seconds' => 60,
 
-        // How long to keep completed/failed task records (days)
-        'task_retention_days' => 30,
-
-        // Consecutive failed runs before rsx:health WARNs about a #[Schedule] tracker.
-        // A tracker is never terminal - a run that throws recycles it to pending and the
-        // schedule retries next cadence - so this is the line between "retrying" and
-        // "broken every run". A reporting threshold only: the schedule keeps running
-        // whatever this is set to.
+        // Consecutive failed runs before rsx:health WARNs about a #[Schedule].
+        // A failing schedule is never stopped - each run that throws is FAILED and the
+        // schedule runs again at its next cadence - so this is the line between "retrying"
+        // and "broken every run". A reporting threshold only.
         'failing_schedule_warn_after' => 3,
 
         // Re-running work a dead or disconnected worker ABANDONED (the rsx:task:process
         // reaper's verdict - never a task that threw, which is FAILED as always). Owner-set
         // pacing, not a timeout: it bounds nothing's run time and cuts nothing short.
-        // An abandoned one-shot row goes back to PENDING with scheduled_for =
+        // An abandoned dispatched run goes back to PENDING with scheduled_for =
         // now + base_seconds * 2^(n-1), n being that row's abandonment count; the
-        // attempts-th abandonment FAILS it for good. An abandoned #[Schedule] tracker is
-        // not retried here - that run counts as done and the tracker waits for its next
-        // cadence.
+        // attempts-th abandonment FAILS it for good. An abandoned scheduled or inline run is
+        // FAILED at once: the schedule runs again at its next cadence, and an inline caller
+        // is gone.
         'retry' => [
             'base_seconds' => 600,  // 10 minutes, doubling per abandonment
-            'attempts' => 5,        // runs allowed before an abandoned one-shot is FAILED
+            'attempts' => 5,        // runs allowed before an abandoned run is FAILED
+        ],
+
+        // Task history retention, in MINUTES, applied by Task_Retention_Service every 30
+        // minutes. A finished task's output is cut to its last output_keep_lines lines, and
+        // its attachments are unlinked (their blobs released once nothing else references
+        // them), output_truncate_after_minutes after it finished; the whole task - output,
+        // reports, messages - is purged purge_after_minutes after it finished.
+        'retention' => [
+            'output_truncate_after_minutes' => 10080,  // 7 days
+            'output_keep_lines' => 150,
+            'purge_after_minutes' => 30240,            // 21 days
         ],
     ],
 

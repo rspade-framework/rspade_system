@@ -33,7 +33,7 @@ DESCRIPTION
 
        WHAT IT DOES NOT DO. No command is dispatched: Symfony's console is bootstrapped
        but never handed an input, so there is no command name, no Task_Instance, no
-       $task->info() and no progress bar. A script prints its own output and chooses
+       task run and no progress report. A script prints its own output and chooses
        its own exit code. The script's arguments are the SCRIPT'S - the framework reads
        no command name out of argv, and `php my_tool.php help` boots exactly as
        `php my_tool.php` does.
@@ -100,13 +100,13 @@ REVISION HISTORY: THE SCRIPT OWNS ITS UNITS OF WORK
 TASK DISPATCH: A WRITE MAY START A WORKER
        Everything the script does that dispatches a task (Task::dispatch() - a model
        whose hooks queue work, a mail send, an upload, an application service) does so
-       exactly as it would in a web request: the row is queued, and when the worker
+       exactly as it would in a web request: the run is queued, and when a worker
        pool has room a detached rsx:task:worker is started on the spot. Each of those
-       is a whole PHP process. The pool cap still holds - rsx-lockd counts the pool, and
-       a spawn is refused once this process's own still-running spawns, or the pool's
-       members, reach rsx.tasks.global_max_workers - but a script writing tens of
-       thousands of rows keeps that pool busy for its whole run, and every one of those
-       processes competes with the script for the CPU.
+       is a whole PHP process. The pool caps still hold - rsx-lockd counts each pool,
+       and a spawn is refused once this process's own still-running spawns, or the
+       pool's members, reach rsx.tasks.pools.<pool>.max_workers - but a script
+       writing tens of thousands of rows keeps the pools busy for its whole run, and
+       every one of those processes competes with the script for the CPU.
 
        A script that writes many rows turns spawning off, once, after the include:
 
@@ -116,8 +116,8 @@ TASK DISPATCH: A WRITE MAY START A WORKER
        For the rest of the process dispatch() still queues every row and returns its
        id; it starts nothing. The cron tick (rsx:task:process, every minute) spawns the
        workers that drain the queue, on the pool's own schedule. Nothing is lost and
-       nothing runs twice: #[Exclusive]/#[Debounce] coalescing works on the queued rows
-       exactly as before. Task::spawning_workers() reports the setting.
+       nothing runs twice: #[Exclusive]/#[Debounce] coalescing works on the queued
+       runs either way. Task::spawning_workers() reports the setting.
 
        Not the answer: `supervisorctl stop tasks` (that program only runs the cron
        tick; the script itself is the spawner) and rsx:maintenance:enable (it stops

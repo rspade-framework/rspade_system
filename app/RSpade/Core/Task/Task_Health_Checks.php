@@ -11,24 +11,24 @@ use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Task\Task_Pool;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Task_Health_Checks - scheduler probes for rsx:health.
  *
- * Declared next to the task machinery they probe. One reads the worker pool as rsx-lockd
- * accounts it; the other two read the recurring #[Schedule] tracker rows: one asks whether
- * the `rsx:task:process` cron is ticking at all, the other whether a schedule that IS
- * ticking keeps throwing.
+ * Declared next to the task machinery they probe. One reads the worker pools as rsx-lockd
+ * accounts them; the other two read _task_schedules: one asks whether the
+ * `rsx:task:process` cron is ticking at all, the other whether a schedule that IS ticking
+ * keeps failing.
  *
  * There is NO scheduler heartbeat timestamp in the system - the only durable signal is
- * the recurring #[Schedule] tracker rows (`_tasks` rows with next_run_at NOT NULL), which
- * the cron reconciles and advances each tick. Zero trackers => the cron has never run.
- * A tracker whose next_run_at is well in the past => the cron is not advancing it. That
+ * _task_schedules, which the cron reconciles and a scheduled-pool worker advances. Zero
+ * schedules => the cron has never run. A schedule whose next_run_at is well in the past =>
+ * nothing is advancing it. That
  * staleness signal CANNOT distinguish a missing cron tick from a wedged worker pool, so
  * it is a WARN-with-caveat in development - where a box that is never left running is
- * expected to have a stale tracker.
+ * expected to have a stale schedule.
  *
  * ON A SEALED BUILD IT IS A FAIL. A production box with no scheduler is a box where
  * nothing is sweeping the mail queue, rendering documents, rotating logs or reaping
@@ -38,19 +38,19 @@ use App\RSpade\Core\Time\Rsx_Time;
  */
 class Task_Health_Checks
 {
-    /** Minutes past next_run_at before the oldest tracker is considered stale. */
+    /** Minutes past next_run_at before the oldest schedule is considered stale. */
     private const STALE_MINUTES = 10;
 
     /** Characters of a failing schedule's explanation carried into the WARN detail. */
     private const REASON_EXCERPT_LENGTH = 60;
 
     /**
-     * The task worker pool as rsx-lockd accounts it (Task_Pool::stats(), read without the
-     * pool lock): how many workers are members against the cap, and how many processes are
-     * parked waiting for the pool lock.
+     * The task worker pools as rsx-lockd accounts them (Task_Pool::stats(), read without the
+     * pool locks): how many workers each pool holds against its cap, and how many processes
+     * are parked waiting for its lock.
      *
-     * More members than the cap is a WARN - admission happens under the pool lock, so it
-     * means the cap was lowered under running workers, or two configurations share a pool.
+     * More members than a cap is a WARN - admission happens under the pool lock, so it means
+     * the cap was lowered under running workers, or two configurations share a pool.
      *
      * RUNNING rows claimed under a previous rsx-lockd generation on ANOTHER host are a WARN
      * too (previous_generation_rows()): each host's rsx:task:process settles its own such
@@ -62,7 +62,7 @@ class Task_Health_Checks
      *
      * @return array
      */
-    #[Health_Check('Task Worker Pool')]
+    #[Health_Check('Task Worker Pools')]
     public static function task_worker_pool(): array
     {
         if (Framework_Maintenance::is_active_on_disk()) {
@@ -72,34 +72,43 @@ class Task_Health_Checks
             ];
         }
 
-        // The probe's expected failure is the finding itself: Task_Pool throws for an
-        // unreachable daemon and for a refused pool.stats alike.
-        try {
-            $stats = Task_Pool::stats();
-        } catch (\RuntimeException $e) {
-            return [
-                'status' => 'FAIL',
-                'detail' => 'cannot read the task worker pool from rsx-lockd: ' . $e->getMessage(),
-                'remediation' => 'check the Lock Server row; a daemon that predates the pool.* ops must be'
-                    . ' restarted (supervisorctl restart rsx-lockd)',
-            ];
+        $parts = [];
+        $over = [];
+        $generation = null;
+        foreach (Task_Pool::POOLS as $pool) {
+            // The probe's expected failure is the finding itself: Task_Pool throws for an
+            // unreachable daemon and for a refused pool.stats alike.
+            try {
+                $stats = Task_Pool::stats($pool);
+            } catch (\RuntimeException $e) {
+                return [
+                    'status' => 'FAIL',
+                    'detail' => "cannot read the {$pool} task worker pool from rsx-lockd: " . $e->getMessage(),
+                    'remediation' => 'check the Lock Server row; a daemon that predates the pool.* ops must be'
+                        . ' restarted (supervisorctl restart rsx-lockd)',
+                ];
+            }
+
+            $cap = Task_Pool::max_workers($pool);
+            $generation = $stats['generation'];
+            $parts[] = "{$pool} {$stats['members']} of {$cap}" . ($stats['waiting'] ? " ({$stats['waiting']} waiting)" : '');
+            if ($stats['members'] > $cap) {
+                $over[] = $pool;
+            }
         }
 
-        $cap = Task_Pool::max_workers();
-        $detail = $stats['members'] . ' of ' . $cap . ' worker(s) in the pool; '
-            . ($stats['holder'] ? 'pool lock held, ' : 'pool lock free, ')
-            . $stats['waiting'] . ' waiting for it';
+        $detail = implode('; ', $parts);
 
-        if ($stats['members'] > $cap) {
+        if ($over !== []) {
             return [
                 'status' => 'WARN',
-                'detail' => $detail . ' - more members than rsx.tasks.global_max_workers',
+                'detail' => $detail . ' - more members than rsx.tasks.pools.<pool>.max_workers in ' . implode(', ', $over),
                 'remediation' => 'the cap was lowered under running workers (they drain as they finish),'
                     . ' or two configurations share one database and host',
             ];
         }
 
-        $previous = self::previous_generation_rows($stats['generation']);
+        $previous = self::previous_generation_rows((int) $generation);
         if ($previous['count'] > 0) {
             return [
                 'status' => 'WARN',
@@ -107,7 +116,7 @@ class Task_Health_Checks
                     . ' generation on host(s) ' . implode(', ', $previous['hosts']) . '; each host\'s'
                     . ' rsx:task:process reaps its own - a host that no longer runs one leaves them RUNNING',
                 'remediation' => 'confirm the rsx:task:process cron runs on each named host; for a host'
-                    . ' that is gone, settle its rows with rsx:tasks:kill <id> --explanation="..."',
+                    . ' that is gone, settle its runs with rsx:tasks:stop <id> --kill --explanation="..."',
             ];
         }
 
@@ -127,7 +136,7 @@ class Task_Health_Checks
     public static function previous_generation_rows(int $generation): array
     {
         $rows = DB::table('_tasks')
-            ->where('status', Task_Status::RUNNING)
+            ->where('status_id', Task_Run_Model::STATUS_RUNNING)
             ->whereNotNull('worker_id')
             ->where('worker_generation', '!=', $generation)
             ->where('worker_host', '!=', Task_Pool::host())
@@ -144,35 +153,35 @@ class Task_Health_Checks
     }
 
     /**
-     * Infer scheduler liveness from #[Schedule] tracker-row staleness.
+     * Infer scheduler liveness from _task_schedules staleness.
      *
      * @return array
      */
     #[Health_Check('Task Scheduler Liveness')]
     public static function task_scheduler_liveness(): array
     {
-        $tracker_count = DB::table('_tasks')->whereNotNull('next_run_at')->count();
+        $schedule_count = DB::table('_task_schedules')->count();
 
         // A missing scheduler is silent, and on a sealed build everything it drives is
         // load-bearing - so the same finding gates a deploy there and advises here.
         $severity = Rsx::is_production() ? 'FAIL' : 'WARN';
 
-        if ($tracker_count === 0) {
+        if ($schedule_count === 0) {
             return [
                 'status' => $severity,
-                'detail' => 'no #[Schedule] tracker rows - rsx:task:process has never run',
+                'detail' => 'no schedules registered - rsx:task:process has never run',
                 'remediation' => 'install the cron entry: * * * * * cd '
                     . base_path() . ' && php artisan rsx:task:process',
             ];
         }
 
-        $oldest = DB::table('_tasks')->whereNotNull('next_run_at')->min('next_run_at');
+        $oldest = DB::table('_task_schedules')->min('next_run_at');
         $stale_seconds = Rsx_Time::seconds_since($oldest);
 
         if ($stale_seconds > self::STALE_MINUTES * 60) {
             return [
                 'status' => $severity,
-                'detail' => $tracker_count . ' tracker(s); oldest is due ' . Rsx_Time::relative($oldest)
+                'detail' => $schedule_count . ' schedule(s); oldest is due ' . Rsx_Time::relative($oldest)
                     . ' (over ' . self::STALE_MINUTES . 'min stale). NOTE: this cannot distinguish a'
                     . ' missing cron tick from a stalled worker pool',
                 'remediation' => 'verify the rsx:task:process cron is running and the worker pool is not wedged',
@@ -181,17 +190,17 @@ class Task_Health_Checks
 
         return [
             'status' => 'OK',
-            'detail' => $tracker_count . ' schedule tracker(s); next due ' . Rsx_Time::relative($oldest),
+            'detail' => $schedule_count . ' schedule(s); next due ' . Rsx_Time::relative($oldest),
         ];
     }
 
     /**
-     * Report #[Schedule] tracker rows whose task keeps throwing.
+     * Report schedules whose runs keep failing.
      *
-     * A failing schedule is INVISIBLE without this. A tracker is never terminal - a run
-     * that throws recycles it to PENDING so the schedule retries at its next cadence -
-     * so the row looks healthy while the work never succeeds. consecutive_failures is
-     * what distinguishes "retrying" from "broken every night for a week".
+     * A failing schedule is easy to miss: each failing run is FAILED, but the schedule runs
+     * again at its next cadence, so it looks alive while the work never succeeds.
+     * consecutive_failures is what distinguishes "retrying" from "broken every night for a
+     * week".
      *
      * WARN, never FAIL: the schedule is still running, and one repeatedly-failing task
      * is not a reason to fail the environment's health.
@@ -203,11 +212,10 @@ class Task_Health_Checks
     {
         $threshold = (int) config('rsx.tasks.failing_schedule_warn_after', 3);
 
-        $failing = DB::table('_tasks')
-            ->whereNotNull('next_run_at')
+        $failing = DB::table('_task_schedules')
             ->where('consecutive_failures', '>=', $threshold)
             ->orderByDesc('consecutive_failures')
-            ->get(['class', 'method', 'consecutive_failures', 'status_reason', 'error']);
+            ->get(['class', 'method', 'consecutive_failures', 'last_error']);
 
         if ($failing->isEmpty()) {
             return [
@@ -219,11 +227,11 @@ class Task_Health_Checks
         // Bounded by the number of #[Schedule] definitions in the manifest, so the whole
         // offender list is named rather than a count with a "see the logs" pointer.
         $offenders = [];
-        foreach ($failing as $tracker) {
-            $offender = class_basename($tracker->class) . '::' . $tracker->method
-                . ' (' . (int) $tracker->consecutive_failures . ' consecutive failures';
+        foreach ($failing as $schedule) {
+            $offender = class_basename($schedule->class) . '::' . $schedule->method
+                . ' (' . (int) $schedule->consecutive_failures . ' consecutive failures';
 
-            $reason = static::__excerpt_reason($tracker->status_reason ?? $tracker->error);
+            $reason = static::__excerpt_reason($schedule->last_error);
             if ($reason !== '') {
                 $offender .= ', last: ' . $reason;
             }
@@ -242,7 +250,7 @@ class Task_Health_Checks
     /**
      * First line of a failure explanation, capped for a one-line health detail.
      *
-     * @param string|null $reason status_reason (the recycle summary) or the raw error text.
+     * @param string|null $reason The schedule's last_error.
      * @return string Empty when the row carries no explanation.
      */
     private static function __excerpt_reason(?string $reason): string

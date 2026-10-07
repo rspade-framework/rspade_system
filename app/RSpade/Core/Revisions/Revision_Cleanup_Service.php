@@ -53,13 +53,15 @@ class Revision_Cleanup_Service extends Rsx_Service_Abstract
         $retention_days = (int) ($params['retention_days'] ?? config('rsx.revisions.retention_days', 0));
 
         if ($retention_days <= 0) {
-            $task->info('rsx.revisions.retention_days is 0 - revision history is kept forever and nothing was deleted.');
+            $task->stdout('rsx.revisions.retention_days is 0 - revision history is kept forever and nothing was deleted.');
 
-            return [
+            $task->state([
                 'deleted' => 0,
                 'retention_days' => $retention_days,
                 'kept_forever' => true,
-            ];
+            ]);
+
+            return null;
         }
 
         $cutoff = now()->subDays($retention_days);
@@ -80,13 +82,15 @@ class Revision_Cleanup_Service extends Rsx_Service_Abstract
         }
 
         if ($total > 0) {
-            $task->info("Deleted {$total} revision transactions older than {$retention_days} days");
+            $task->stdout("Deleted {$total} revision transactions older than {$retention_days} days");
         }
 
-        return [
+        $task->state([
             'deleted' => $total,
             'retention_days' => $retention_days,
             'kept_forever' => false,
-        ];
+        ]);
+
+        return null;
     }
 }

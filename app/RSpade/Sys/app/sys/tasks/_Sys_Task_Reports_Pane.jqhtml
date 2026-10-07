@@ -1,0 +1,40 @@
+<%--
+_Sys_Task_Reports_Pane - the reports a run has set, one at a time: a select listing only the
+reports the run actually set - the state object first, then the queue, then the rest - and the
+selected report beneath it (a Task_Report).
+
+$task_id - the run (required)
+
+On a viewport at least 1600px wide and 900px tall, while the state object is shown and the
+run has a queue report (its queue has or has had items), the queue is shown too: a 250px
+Task_Report beneath the state, which gives up that height. The viewport rule is CSS, so it
+follows a window resize.
+
+The list grows as the run reports more (Task_Changed_Topic, refresh() - the pane is rebuilt
+only when the list itself changed).
+--%>
+<Define:_Sys_Task_Reports_Pane tag="div">
+<% if (this.data.error_data) { %>
+    <_Sys_Error $error_data=this.data.error_data />
+<% } else if (!this.data.reports) { %>
+    <Spinner class="_Sys_Task_Reports_Pane__loading" />
+<% } else if (!this.data.reports.length) { %>
+    <div class="_Sys_Task_Reports_Pane__heading">Reports</div>
+    <_Sys_Empty_State $icon="bi-clipboard-data" $title="No reports" $body="This run has not reported anything yet." />
+<% } else { %>
+    <div class="_Sys_Task_Reports_Pane__heading">Reports</div>
+    <select class="form-select form-select-sm _Sys_Task_Reports_Pane__select" $sid="kind">
+        <% for (const _kind of this.data.reports) { %>
+            <option value="<%= _kind %>" <% if (_kind === this.selected_kind()) { %>selected<% } %>><%= Rsx_Task.REPORT_LABELS[_kind] || _kind %></option>
+        <% } %>
+    </select>
+    <div class="_Sys_Task_Reports_Pane__report">
+        <Task_Report $task_id=this.args.task_id $kind=this.selected_kind() $bar=true />
+    </div>
+    <% if (this.selected_kind() === 'state_json' && this.data.reports.includes('state_list')) { %>
+        <div class="_Sys_Task_Reports_Pane__queue">
+            <Task_Report $task_id=this.args.task_id $kind="state_list" />
+        </div>
+    <% } %>
+<% } %>
+</Define:_Sys_Task_Reports_Pane>

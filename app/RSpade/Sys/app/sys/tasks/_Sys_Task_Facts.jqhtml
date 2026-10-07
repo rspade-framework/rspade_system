@@ -1,0 +1,78 @@
+<%--
+_Sys_Task_Facts - a run's identity, lifecycle and live status: the task name with its status
+badge and the actions that apply now, the facts (origin, pool, schedule and finish times, the reported ETA, the
+worker and whether it is alive here, the return code, the error), the status line and progress,
+the parameters, and the files it attached.
+
+$task_id - the run (required)
+
+Repaints on every Task_Changed_Topic frame (refresh(): only when what it shows changed).
+Fires 'acted' after a lifecycle action.
+--%>
+<Define:_Sys_Task_Facts tag="div">
+<% if (this.data.error_data) { %>
+    <_Sys_Error $error_data=this.data.error_data />
+<% } else if (!this.data.task) { %>
+    <Spinner class="_Sys_Task_Facts__loading" />
+<% } else { %>
+    <% const _t = this.data.task; %>
+    <div class="_Sys_Task_Facts__title">
+        <span class="_Sys_Task_Facts__name"><%= _t.name %></span>
+        <Task_Status_Badge $task=_t />
+    </div>
+    <div class="_Sys_Task_Facts__actions">
+        <_Sys_Task_Actions $sid="actions" $task=_t $size="md" />
+    </div>
+    <% if (_t.status_text || _t.progress_percent !== null || _t.progress_count) { %>
+        <div class="_Sys_Task_Facts__live">
+            <% if (_t.status_text) { %>
+                <div class="_Sys_Task_Facts__status_text"><%= _t.status_text %></div>
+            <% } %>
+            <% if (_t.progress_percent !== null || _t.progress_count) { %>
+                <div class="_Sys_Task_Facts__bar">
+                    <div class="_Sys_Task_Facts__bar_fill" style="width: <%= _t.progress_percent === null ? 0 : _t.progress_percent %>%"></div>
+                    <div class="_Sys_Task_Facts__bar_text"><%= Rsx_Task.progress_text(_t) %></div>
+                </div>
+            <% } %>
+        </div>
+    <% } %>
+    <_Sys_Detail_List>
+        <_Sys_Detail_Item $label="ID" $value=_t.id $mono=true />
+        <_Sys_Detail_Item $label="Origin" $value=_t.origin />
+        <_Sys_Detail_Item $label="Pool" $value=_t.pool />
+        <_Sys_Detail_Item $label="Queued" $value=(_t.created_at ? Rsx_Time.format_datetime(_t.created_at) : null) />
+        <_Sys_Detail_Item $label="Scheduled for" $value=(_t.scheduled_for ? Rsx_Time.format_datetime(_t.scheduled_for) : null) />
+        <_Sys_Detail_Item $label="Started" $value=(_t.started_at ? Rsx_Time.format_datetime(_t.started_at) : null) />
+        <_Sys_Detail_Item $label="Finished" $value=(_t.completed_at ? Rsx_Time.format_datetime(_t.completed_at) : null) />
+        <_Sys_Detail_Item $label="ETA" $value=(_t.eta_at ? (_t.is_live ? Rsx_Time.relative(_t.eta_at) + ' (' + Rsx_Time.format_time(_t.eta_at) + ')' : Rsx_Time.format_datetime(_t.eta_at)) : null) />
+        <% if (_t.stop_requested_at) { %>
+            <_Sys_Detail_Item $label="Stop requested" $value=Rsx_Time.format_datetime(_t.stop_requested_at) />
+        <% } %>
+        <% if (_t.worker_pid) { %>
+            <_Sys_Detail_Item $label="Worker" $value=('PID ' + _t.worker_pid + ' on ' + _t.worker_host + (_t.worker_state ? ' (' + _t.worker_state + ')' : '')) $mono=true />
+        <% } %>
+        <_Sys_Detail_Item $label="Heartbeat" $value=(_t.last_heartbeat_at ? Rsx_Time.relative(_t.last_heartbeat_at) : null) />
+        <% if (_t.return_code !== null) { %>
+            <_Sys_Detail_Item $label="Return code" $value=_t.return_code $mono=true />
+        <% } %>
+        <% if (_t.status_reason) { %>
+            <_Sys_Detail_Item $label="Reason" $value=_t.status_reason />
+        <% } %>
+    </_Sys_Detail_List>
+    <% if (_t.error) { %>
+        <_Sys_Code_Pane $label="Error" $text=_t.error $max_height=200 />
+    <% } %>
+    <_Sys_Code_Pane $label="Parameters" $json=_t.params $max_height=240 />
+    <% if (_t.attachments.length) { %>
+        <div class="_Sys_Task_Facts__attachments">
+            <div class="_Sys_Task_Facts__heading">Attachments</div>
+            <% for (const _a of _t.attachments) { %>
+                <a class="_Sys_Task_Facts__attachment" href="<%= _a.url %>" download="<%= _a.file_name %>">
+                    <i class="bi bi-paperclip"></i> <%= _a.name %>
+                    <span class="_Sys_Task_Facts__size"><%= _a.file_name %>, <%= _a.size %> bytes</span>
+                </a>
+            <% } %>
+        </div>
+    <% } %>
+<% } %>
+</Define:_Sys_Task_Facts>

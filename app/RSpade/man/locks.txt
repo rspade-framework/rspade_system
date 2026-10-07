@@ -268,15 +268,18 @@ LOCKS INSIDE A TASK
     the worker's whole life, and every later task in that worker would inherit
     exclusivity it never asked for.
 
-    Task_Worker_Command therefore takes RsxLocks::_checkpoint() before each task
-    and RsxLocks::_release_since($checkpoint) in its finally. Locks acquired during
+    A worker's run of a task (Task_Runner::execute()) therefore takes
+    RsxLocks::_checkpoint() before the task and RsxLocks::_release_since($checkpoint)
+    in its finally. Locks acquired during
     the task are released at its boundary; locks the WORKER holds are in the
     checkpoint and survive. Reentrancy counts are flattened (a count describes a
     call stack that has ended), and the site-lock registry is purged in step so the
     next task re-acquires rather than believing it still holds one.
 
     This is a safety net, not a licence. Release your own locks in a finally - a
-    task that ends still holding one is released AND named in a [WORKER] warning.
+    task that ends still holding one is released AND named on the run's stderr and
+    in a [WORKER] warning. An inline run (Task::internal()) keeps its caller's
+    locks: the boundary is a worker's.
 
     Both methods are framework-internal (the `_` prefix). Application code has no
     reason to call them.
@@ -425,10 +428,10 @@ THE RSX LOCKD DAEMON
     worker serves thousands of requests, and a socket that outlived a request
     would carry that request's locks into the next one on the same worker.
 
-    A task worker holds a SECOND, independent connection for its whole life: its
-    task pool connection (Task_Pool). It names no lock group, is never sent
+    A task or kill worker holds a SECOND, independent connection for its whole
+    life: its pool connection (Task_Pool). It names no lock group, is never sent
     release_all, and is never touched by RsxLocks; its only job is the worker
-    pool described below. So one PHP process may have two daemon connections,
+    pools described below. So one PHP process may have two daemon connections,
     and dump shows them as two connections with the same host:pid.
 
     A DAEMON SOCKET NEVER REACHES A CHILD. PHP sets no close-on-exec flag on a
@@ -445,11 +448,13 @@ THE RSX LOCKD DAEMON
     RsxLocks::command_without_inherited_locks() /
     shell_prefix_without_inherited_locks() directly.
 
-    THE TASK WORKER POOL is a separate state machine in the daemon (pool.* ops,
-    lib/pool.js), not built on locks or semaphores: a named FIFO mutex, the POOL
-    LOCK, plus a set of member connections. A task worker takes the pool lock,
-    counts the other members, joins if there is room, claims a _tasks row and
-    releases the lock; its membership is its connection, so a worker that exits,
+    THE TASK WORKER POOLS are a separate state machine in the daemon (pool.* ops,
+    lib/pool.js), not built on locks or semaphores: per pool, a named FIFO mutex,
+    the POOL LOCK, plus a set of member connections. The task system runs three
+    pools - on_demand, scheduled and kill - each with its own lock and cap. A
+    worker takes its pool's lock, counts the other members, joins if there is
+    room, claims a run (or a kill request) with a guarded write and releases the
+    lock; its membership is its connection, so a worker that exits,
     crashes or is SIGKILLed stops being counted at once, and a pool lock its
     connection held passes to the next waiter. A member is identified by a
     worker id (wid, from one daemon-wide counter) plus the daemon's GENERATION,
@@ -457,12 +462,12 @@ THE RSX LOCKD DAEMON
     wid, the daemon answers "unknown" rather than "gone", since it cannot know
     about a previous daemon's workers. Every pool op is answered with
     exactly one acknowledgement frame, and the PHP client waits for it on every
-    call. The pool name is the application's connection scope token, so two
-    applications sharing one daemon never share a pool. Full treatment:
-    rsx:man tasks (THE WORKER POOL).
+    call. A pool's name carries the application's connection scope token
+    (tasks:<pool>:<scope>), so two applications sharing one daemon never share a
+    pool. Full treatment: rsx:man tasks (THE WORKER POOLS).
 
-    THE RULE for the pool lock: while holding it, a process runs only pool ops
-    and reads/writes of _tasks rows. It takes no other blocking lock (a
+    THE RULE for a pool lock: while holding it, a process runs only pool ops
+    and reads/writes of the task tables, and it holds no other pool's lock. It takes no other blocking lock (a
     non-blocking try is fine), waits on no subprocess and makes no outbound
     call. Pool waits are deliberately invisible to the deadlock detector, and
     THE RULE is what makes that safe - a pool-lock holder never waits on
@@ -600,9 +605,9 @@ NOTES
 SEE ALSO
     rsx:man maintenance_mode  The no-op grant and why the daemon stops
     rsx:man tasks             Task concurrency (#[Exclusive]/#[Debounce], Task_Lock)
-                              and the worker pool the daemon accounts
+                              and the worker pools the daemon accounts
     rsx:man libreoffice       Document rendering (one #[Exclusive] worker)
-    rsx:man health            The Lock Server and Task Worker Pool checks
+    rsx:man health            The Lock Server and Task Worker Pools checks
     rsx:man config_rsx        The rsx.locks config block
     system/bin/rsx-lockd/README.md   The daemon's own protocol and CLI reference
 

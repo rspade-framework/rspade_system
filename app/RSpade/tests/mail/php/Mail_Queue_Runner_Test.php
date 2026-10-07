@@ -95,7 +95,7 @@ class Mail_Queue_Runner_Test extends Rsx_Test_Abstract
         Rsx_Mail_Transport::$override_for_tests = $stub;
 
         try {
-            return Task::internal('Mail_Queue_Service', 'send_pending_queue');
+            return Task::internal('Mail_Queue_Service', 'send_pending_queue')->state();
         } finally {
             Rsx_Mail_Transport::$override_for_tests = null;
         }
@@ -486,7 +486,7 @@ class Mail_Queue_Runner_Test extends Rsx_Test_Abstract
         config(['rsx.mail.catcher_maildir' => $maildir]);
 
         try {
-            $result = Task::internal('Mail_Queue_Service', 'cleanup', ['days' => 30]);
+            $result = Task::internal('Mail_Queue_Service', 'cleanup', ['days' => 30])->state();
 
             static::__assert_greater_than(0, $result['deleted'], 'something past the window was deleted');
             static::__assert_equals(1, $result['catcher_pruned'], 'exactly the stale captured message was pruned');
@@ -517,7 +517,7 @@ class Mail_Queue_Runner_Test extends Rsx_Test_Abstract
         config(['rsx.mail.catcher_maildir' => Rsx_Project_Paths::tmp_path('no_such_catcher_' . uniqid())]);
 
         try {
-            $result = Task::internal('Mail_Queue_Service', 'cleanup', ['days' => 30]);
+            $result = Task::internal('Mail_Queue_Service', 'cleanup', ['days' => 30])->state();
 
             static::__assert_equals(0, $result['catcher_pruned'], 'no catcher means nothing to prune');
         } finally {

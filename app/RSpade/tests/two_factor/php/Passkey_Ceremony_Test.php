@@ -20,7 +20,6 @@ use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\Session_Values_Cleanup_Service;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Core\TwoFactor\Passkeys;
@@ -378,9 +377,7 @@ class Passkey_Ceremony_Test extends Rsx_Test_Abstract
         $begun = static::__row((int) $login_user->id, Login_History::STATUS_PASSKEY_ENROLL_BEGUN);
         static::__expire_enrollment(Rsx_Two_Factor::class);
 
-        $result = Session_Values_Cleanup_Service::cleanup_expired_values(
-            new Task_Instance(Session_Values_Cleanup_Service::class, 'cleanup_expired_values')
-        );
+        $result = static::__run_task_method(Session_Values_Cleanup_Service::class, 'cleanup_expired_values');
 
         static::__assert_greater_than(0, $result['abandoned_passkey_enrollments']);
 

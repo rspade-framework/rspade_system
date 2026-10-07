@@ -1367,106 +1367,108 @@ SUBSYSTEM PRIMERS
       Skills: rspade:file-attachments, rspade:document-preview.
 
   6. THE TASK RUNNER, LOCKS AND SUBPROCESSES
-    ONE TABLE, _tasks, AND NO SIDE TABLES. Every queued job and every
-    recurring schedule is a row in it. The status vocabulary is pending,
-    running, completed, failed, killed, and the last three are terminal for a
-    ONE-SHOT row. A recurring job is distinguished from a one-shot by exactly
-    one predicate - it has a next_run_at (and a cron expression) - and that
-    predicate is the tracker test everywhere in the code. On a tracker,
-    completed_at means LAST SUCCESSFUL RUN and the row never reaches a
-    terminal state.
+    ONE ROW PER RUN. Every execution of a task is a _tasks row: a dispatched
+    run, each run of a schedule, and every inline run (the in-process entry,
+    the console runner and every named command). A schedule is a row of its
+    own table, _task_schedules - cadence, next run and failure statistics -
+    and never a run. Side tables keyed to the run hold what does not fit on
+    it: the larger reports (state object, state list, summary), the output
+    lines (stdout, stderr and operator), the messages, the attachments (a
+    declared blob reference), and the kill requests. The status vocabulary
+    is pending, running, completed, failed, stopped, killed, cancelled;
+    pending and running are live, the rest terminal.
+
+    ONE PATH FOR EVERY RUN: insert the row, execute, settle. Execution runs
+    the service's pre-task hook and the method, captures everything printed
+    as stdout line by line, and turns a throw into an outcome. The return
+    value is the return code, decided in one class: null, true or 0 succeed
+    (compared strictly), false and any other value fail. Settling flushes
+    the held reports and writes the outcome with a GUARDED update on a row
+    still running, so a run a kill worker settled keeps that verdict.
+    Reports are held in memory and written at a capped rate - a write rate,
+    never a timeout.
 
     ONE TICK OF rsx:task:process does four things in order, and is silent
     when there is nothing to do:
 
-        1  REAP. Under the pool lock, load every running row and ask the
-           daemon, in one batch, about each row's worker identity (wid plus
-           the daemon generation that issued it). The daemon's own generation
-           and not a member: abandoned at once - tracker recycled to pending,
-           one-shot failed. An older generation (the daemon restarted and
-           cannot know): only the row's own host judges it, by pid, and
-           another host's row is left for that host's tick. A row with no
-           wid is the pid probe on its own host. There is no age threshold.
-           After the lock is released, a live worker on this host is held to
-           the row's timeout (or the configured default; zero on both means
-           unbounded) and killed if it is over. This is the only place a task
-           timeout is enforced, so its granularity is the cron interval.
-        2  REVIVE STRANDED SCHEDULES. Any tracker sitting in failed or
-           killed goes back to pending, loudly, touching only the status -
-           the failure record survives.
-        3  RECONCILE SCHEDULES against the manifest: insert a missing
-           tracker; delete and reinsert one whose expression changed, so the
-           next run time is recomputed; delete one whose method is gone.
-        4  SPAWN. If work is due, try ONE spawn; the call declines under
-           maintenance mode or when its own spawns or the pool's members have
-           reached the cap. A worker drains until nothing is claimable, so
-           one try per tick is enough.
+        1  REAP. Per pool, under that pool's lock, load the running runs and
+           ask the daemon, in one batch, about each run's worker identity
+           (wid plus the daemon generation that issued it). The daemon's own
+           generation and not a member: abandoned at once. An older
+           generation (the daemon restarted and cannot know): only the run's
+           own host judges it, by pid. An inline run is the pid probe on its
+           own host. There is no age threshold. An abandoned dispatched run
+           goes back to pending after a doubling backoff and fails on the
+           configured attempt; a scheduled or inline run fails. A live local
+           run past its timeout gets a force-kill request.
+        2  RECOVER KILL REQUESTS whose kill worker died, back to pending.
+        3  RECONCILE SCHEDULES against the manifest: insert a missing one,
+           recompute the next run of one whose expression changed, delete one
+           whose method is gone.
+        4  SPAWN. Try ONE spawn per pool with due work; the call declines
+           under maintenance mode or when its own spawns or the pool's members
+           have reached that pool's cap.
 
-    THE TICK NEVER BECOMES A WORKER. A worker is a separate process
-    (rsx:task:worker) that holds ONE lifelong connection to the lock daemon
-    for the pool. The daemon is the pool's accountant: a named FIFO mutex
+    THREE POOLS, ONE ACCOUNTANT. on_demand runs dispatched work, scheduled
+    runs schedules and takes queued dispatched work first, kill runs the kill
+    workers. The lock daemon is each pool's accountant: a named FIFO mutex
     (the pool lock) plus a member set, where a membership belongs to the
     connection, so a worker that dies - however it dies - stops being counted
-    at once. There is no heartbeat, lease, TTL or reservation. Under the pool
-    lock the worker counts the OTHER members, exits if the cap is reached,
+    at once. There is no heartbeat, lease, TTL or reservation. Under its pool
+    lock a worker counts the OTHER members, exits if the cap is reached,
     otherwise joins; every pool op is acknowledged before the caller moves
-    on. It loops until its time budget, and leaves the pool before exiting.
+    on. A process holds at most one pool lock at a time.
 
-    DEQUEUE IS UNDER THE SAME LOCK. The pool lock is held across the row
-    selection and the status flip, and RELEASED BEFORE THE TASK RUNS; the
-    outcome is recorded and the next row claimed under it again. While it is
-    held only pool ops and task-row reads and writes run - no other blocking
-    lock, no subprocess, no outbound call - because pool waits are invisible
-    to the deadlock detector.
-    Priority is one-shots first, in creation order, then due trackers by next
-    run time. The queue column is a LABEL - the worker does not filter on it.
+    THE CLAIM IS A GUARDED WRITE. Two pools claim the same pending rows and
+    each holds only its own lock, so the status flip must affect exactly one
+    row; a scheduled worker creates a schedule's run row in the same
+    transaction that advances its next run. The pool lock is RELEASED BEFORE
+    THE TASK RUNS; the outcome is recorded and the next run claimed under it
+    again. While it is held only pool ops and task-table reads and writes run
+    - no other blocking lock, no subprocess, no outbound call (realtime frames
+    are deferred to the unlock) - because pool waits are invisible to the
+    deadlock detector.
 
     COALESCING. #[Exclusive] and #[Debounce(n)] are the same mechanism;
-    exclusive is debounce with a zero delay. The invariant is ONE RUNNING
-    PLUS AT MOST ONE PENDING per class-and-method - the distributed
-    translation of the JavaScript debounce helper. On enqueue, a lock named
-    for the identity is taken (WAITING FOREVER - an earlier version dropped
-    the enqueue after a few seconds, which was the bug), and an existing
-    pending row is returned instead of inserting a second. On dispatch, the
-    run lock is attempted NON-BLOCKING, and "not acquired" is an answer, not
-    a failure: a tracker advances its next run and stays pending, an
-    on-demand row is skipped so the worker does not spin. On completion, any
-    coalesced pending row is re-anchored to now plus the delay. Declaring
-    both attributes is a code-quality violation.
+    exclusive is debounce with a zero delay. The identity is the method for
+    exclusive and the method plus a canonical hash of the params for
+    debounce. The invariant is ONE RUNNING PLUS AT MOST ONE PENDING per
+    identity - the distributed translation of the JavaScript debounce helper.
+    On enqueue, a lock named for the identity is taken (WAITING FOREVER), and
+    the existing pending run's id is returned instead of inserting a second.
+    A worker attempts the run lock NON-BLOCKING, and "not acquired" is an
+    answer, not a failure: the run is passed over, and a schedule tick is
+    coalesced into the running instance. An inline run waits for the run
+    lock. On settle, a coalesced pending run is re-anchored to now plus the
+    delay. Declaring both attributes is a code-quality violation.
 
     THESE GUARD ONE IDENTITY AGAINST ITSELF AND NOTHING ELSE. They do not
     protect a shared table from other writers. Tasks run concurrently and
     unguarded; a task shares tables with web requests and with other tasks,
     and must never assume it is the only writer. Use a lock for that.
 
-    FAILURE AND RETRY. Both kinds settle through one class, which is the sole
-    terminal writer. A completed tracker returns to pending with its failure
-    counter cleared; a completed one-shot is completed. A failure writes the
-    error, the timestamp and an incremented consecutive-failure counter in
-    ONE atomic update - a tracker returns to pending with a reason string, a
-    one-shot becomes failed. THE ROW NEVER PASSES THROUGH A TERMINAL STATE ON
-    ITS WAY BACK TO PENDING. A kill sends a term signal, polls, then a kill
-    signal, and recycles or terminates the same way. The next run time is
-    advanced BEFORE the run, under the pool lock, so cadence holds across
-    a slow or crashed run.
+    LIFECYCLE CONTROL. A graceful stop only stamps the run; the task decides.
+    A force stop and a force kill write a kill request bound to the target's
+    HOST (a pid names a process on one machine), carried out by a kill worker
+    there: it polls until due or moot, sends SIGKILL, and settles the run
+    killed. A run inside a web request is never signalled. Cancel is a
+    guarded pending-to-cancelled write; rerun dispatches the same task and
+    params. Every operation is an operator line on the run's output. A
+    failed run is never retried - only an abandoned one is.
 
-    THERE IS NO RETRY MECHANISM. A failed one-shot stays failed. A schedule
-    "retries" only by firing again on its cadence. Repeated failures surface
-    through a health check, not through escalation.
+    GATES. Who may see or act on a run is the application's: a view gate, a
+    view scope and a control gate per realm, asked through one class, DENY BY
+    DEFAULT, a staff developer bypassing. The browser endpoints, the three
+    realtime topics and the Core widgets all ask it.
 
-    THE THREE ENTRY POINTS:
+    THE ENTRY POINTS:
 
-        Task::dispatch($service, $method, $params, $options): ?int
-            enqueue and, when due, spawn; returns a pollable id
-        Task::status($id): ?array
-            the pollable view
-        Task::internal($service, $method, $params): mixed
-            SYNCHRONOUS, in-process, NO ROW AT ALL
-
-    internal() resolves the service by basename through the manifest,
-    requires the service base class and the #[Task] attribute, resets the
-    revision state, calls an optional pre-task hook whose non-null return
-    short-circuits, runs, and JSON round-trips the result.
+        Task::dispatch($service, $method, $params, $options): int
+            enqueue and, when due, spawn; returns the run id
+        Task::internal($service, $method, $params): Task_Run_Model
+            SYNCHRONOUS, in-process, recorded as an inline run
+        Task_Run_Model
+            the run: readers, search, lifecycle operations
 
     #[Command] AND THE CONSOLE CONTRACT. An artisan command in RSpade is a
     #[Task] with a name attached; an application writes no command classes.
@@ -1475,12 +1477,11 @@ SUBSYSTEM PRIMERS
     collision with another command or a framework signature; a missing
     description. At boot a registrar turns each entry into an alias command.
 
-    The output contract: STDOUT IS THE VALUE - pretty JSON, written at quiet
-    verbosity so -q never suppresses it. STDERR IS THE NARRATION - every log
-    line, live. --debug wraps the value in a success envelope; a thrown error
-    prints a failure envelope and exits 1. Arguments are parsed from the raw
-    argv, so a task command takes free-form flags; values beginning with a
-    brace or bracket are JSON-decoded.
+    The console contract: the task's stdout is the command's stdout, its
+    stderr (every status change included) the command's stderr, and its
+    return code the exit code - no envelope. Arguments are parsed from the
+    raw argv, so a task command takes free-form flags; values beginning with
+    a brace or bracket are JSON-decoded.
 
     LOCKS. Two families, and conflating them is the classic mistake.
 
@@ -1560,11 +1561,13 @@ SUBSYSTEM PRIMERS
       Man pages: tasks, task_commands, locks, maintenance_mode, health,
       realtime, revisions.
       Colocated: Core/Task/CLAUDE.md, bin/rsx-lockd/CLAUDE.md.
-      Source: Core/Task/ (Task.php, Task_Instance, Task_Status,
-      Task_Concurrency, Task_Pool, Task_Killer, Task_Lock,
-      Cleanup_Service, Task_Command_ManifestSupport, Task_Alias_Command),
-      Commands/Rsx/Task_Process_Command.php, Task_Worker_Command.php,
-      Task_Run_Command.php, Core/Locks/ (RsxLocks.php, Lockd_Client.php,
+      Source: Core/Task/ (Task.php, Task_Runner, Task_Run_Outcome,
+      Task_Instance, Task_Run_Model, Task_Concurrency, Task_Pool, Task_Lock,
+      Task_Kill_Worker, Task_Gates, Task_Notify, Rsx_Task_Controller,
+      Task_Retention_Service, ui/, Task_Command_ManifestSupport,
+      Task_Alias_Command), Commands/Rsx/Task_Process_Command.php,
+      Task_Worker_Command.php, Task_Killer_Command.php, Task_Run_Command.php,
+      Tasks_*_Command.php, Core/Locks/ (RsxLocks.php, Lockd_Client.php,
       Lockd_Connection.php),
       Core/Console/Rsx_Artisan.php, system/bin/rsx-lockd/,
       config/rsx.php (tasks, locks).

@@ -1547,6 +1547,17 @@ class BundleCompiler
             }
         }
 
+        // The task widgets (Core/Task/ui, in Core_Bundle) read through Rsx_Task_Controller,
+        // a framework-core controller no bundle's file set carries - the same reason as the
+        // controllers above.
+        $task_controller_source = 'app/RSpade/Core/Task/Rsx_Task_Controller.php';
+        if (isset($manifest_files[$task_controller_source]['js_stub'])) {
+            $task_stub = rsx_project_file_path($manifest_files[$task_controller_source]['js_stub']);
+            if (file_exists($task_stub)) {
+                $stubs[] = $task_stub;
+            }
+        }
+
         // And once more, for the same structural reason as the second-factor controller: the
         // SSO components live in Core_Bundle (so they reach every bundle), and <Sso_Buttons>
         // renders on the LOGIN page - a bundle that contains no application controller at

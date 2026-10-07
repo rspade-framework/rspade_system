@@ -19,8 +19,10 @@ use App\RSpade\Core\Task\Task_Instance;
 class Sys_Tasks_Probe_Service extends Rsx_Service_Abstract
 {
     #[Task('Echo params back (sys_panel test fixture)')]
-    public static function probe(Task_Instance $task, array $params = []): array
+    public static function probe(Task_Instance $task, array $params = [])
     {
-        return ['echo' => $params];
+        $task->state(['echo' => $params]);
+
+        return null;
     }
 }

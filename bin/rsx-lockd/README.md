@@ -271,8 +271,8 @@ with its own evidence (a pid on its own host).
 #### pool.lock
 
 ```json
---> {"op":"pool.lock","pool":"tasks:9f2c...","id":"p1"}
-<-- {"id":"p1","status":"granted","pool":"tasks:9f2c..."}
+--> {"op":"pool.lock","pool":"tasks:on_demand:9f2c...","id":"p1"}
+<-- {"id":"p1","status":"granted","pool":"tasks:on_demand:9f2c..."}
 ```
 
 FIFO: granted to the head waiter only. **Waiting is silence** - a parked request gets no
@@ -283,8 +283,8 @@ connection that already holds or is already waiting for that pool is `error`.
 #### pool.unlock
 
 ```json
---> {"op":"pool.unlock","pool":"tasks:9f2c...","id":"p2"}
-<-- {"id":"p2","status":"ok","pool":"tasks:9f2c..."}
+--> {"op":"pool.unlock","pool":"tasks:on_demand:9f2c...","id":"p2"}
+<-- {"id":"p2","status":"ok","pool":"tasks:on_demand:9f2c..."}
 ```
 
 Hands the lock to the next waiter. `error` when the caller is not the holder.
@@ -292,8 +292,8 @@ Hands the lock to the next waiter. `error` when the caller is not the holder.
 #### pool.join
 
 ```json
---> {"op":"pool.join","pool":"tasks:9f2c...","id":"p3"}
-<-- {"id":"p3","status":"ok","pool":"tasks:9f2c...","wid":4812077,"generation":6120548213388411}
+--> {"op":"pool.join","pool":"tasks:on_demand:9f2c...","id":"p3"}
+<-- {"id":"p3","status":"ok","pool":"tasks:on_demand:9f2c...","wid":4812077,"generation":6120548213388411}
 ```
 
 Makes this connection a member and assigns it the next free wid. Store the `wid` and
@@ -304,8 +304,8 @@ this pool.
 #### pool.leave
 
 ```json
---> {"op":"pool.leave","pool":"tasks:9f2c...","id":"p4"}
-<-- {"id":"p4","status":"ok","pool":"tasks:9f2c...","wid":4812077}
+--> {"op":"pool.leave","pool":"tasks:on_demand:9f2c...","id":"p4"}
+<-- {"id":"p4","status":"ok","pool":"tasks:on_demand:9f2c...","wid":4812077}
 ```
 
 `error` when the caller does not hold the lock or is not a member. Leaving is the polite
@@ -314,8 +314,8 @@ path; closing the connection does the same thing.
 #### pool.count
 
 ```json
---> {"op":"pool.count","pool":"tasks:9f2c...","id":"p5"}
-<-- {"id":"p5","status":"ok","pool":"tasks:9f2c...","members":3}
+--> {"op":"pool.count","pool":"tasks:on_demand:9f2c...","id":"p5"}
+<-- {"id":"p5","status":"ok","pool":"tasks:on_demand:9f2c...","members":3}
 ```
 
 The number of members, **excluding the caller** when the caller is one - so "is there room
@@ -324,8 +324,8 @@ for me?" is `members < max` whether or not the caller has joined yet. Requires t
 #### pool.member_alive
 
 ```json
---> {"op":"pool.member_alive","pool":"tasks:9f2c...","wid":4812077,"generation":6120548213388411,"id":"p6"}
-<-- {"id":"p6","status":"ok","pool":"tasks:9f2c...","wid":4812077,"generation":6120548213388411,"alive":false,"known":true}
+--> {"op":"pool.member_alive","pool":"tasks:on_demand:9f2c...","wid":4812077,"generation":6120548213388411,"id":"p6"}
+<-- {"id":"p6","status":"ok","pool":"tasks:on_demand:9f2c...","wid":4812077,"generation":6120548213388411,"alive":false,"known":true}
 ```
 
 `known: true` when `generation` is this daemon's; `alive` then says whether that wid is a
@@ -337,9 +337,9 @@ positive safe integer. Requires the lock.
 #### pool.members_alive
 
 ```json
---> {"op":"pool.members_alive","pool":"tasks:9f2c...","id":"p9",
+--> {"op":"pool.members_alive","pool":"tasks:on_demand:9f2c...","id":"p9",
      "items":[{"wid":4812077,"generation":6120548213388411},{"wid":17,"generation":88}]}
-<-- {"id":"p9","status":"ok","pool":"tasks:9f2c...","results":[
+<-- {"id":"p9","status":"ok","pool":"tasks:on_demand:9f2c...","results":[
      {"wid":4812077,"generation":6120548213388411,"alive":true,"known":true},
      {"wid":17,"generation":88,"alive":false,"known":false}]}
 ```
@@ -356,11 +356,11 @@ answers for that pool (a name never used is simply empty); without one it lists 
 pool. `holder` says whether the lock is currently held.
 
 ```json
---> {"op":"pool.stats","pool":"tasks:9f2c...","id":"p7"}
-<-- {"id":"p7","status":"ok","generation":6120548213388411,"pool":"tasks:9f2c...","members":3,"holder":false,"waiting":0}
+--> {"op":"pool.stats","pool":"tasks:on_demand:9f2c...","id":"p7"}
+<-- {"id":"p7","status":"ok","generation":6120548213388411,"pool":"tasks:on_demand:9f2c...","members":3,"holder":false,"waiting":0}
 
 --> {"op":"pool.stats","id":"p8"}
-<-- {"id":"p8","status":"ok","generation":6120548213388411,"pools":[{"pool":"tasks:9f2c...","members":3,"holder":false,"waiting":0}]}
+<-- {"id":"p8","status":"ok","generation":6120548213388411,"pools":[{"pool":"tasks:on_demand:9f2c...","members":3,"holder":false,"waiting":0}]}
 ```
 
 `dump` includes `pool_generation`, every pool (holder, queue, members with their wids) and,
@@ -475,7 +475,7 @@ rsx-lockd state
 
 c17  web-01:2346918  via 127.0.0.1:48398  up 1.4s
     HELD     WRITE SITE_1   for 1.4s
-    MEMBER   POOL  tasks:9f2c...   as wid 4812077
+    MEMBER   POOL  tasks:on_demand:9f2c...   as wid 4812077
 
 c18  web-01:2346926  via 127.0.0.1:48406  up 0.7s
     WAITING  WRITE SITE_1   for 0.7s   (no timeout)
@@ -486,7 +486,7 @@ locks
     queue:   c18/write
 
 pools
-  tasks:9f2c...
+  tasks:on_demand:9f2c...
     lock:    free
     queue:   empty
     members: 1 (c17 wid 4812077)

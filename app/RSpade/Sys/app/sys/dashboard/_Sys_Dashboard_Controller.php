@@ -18,7 +18,7 @@ use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Task\Task_Pool;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 
 /**
@@ -39,13 +39,11 @@ class _Sys_Dashboard_Controller extends _Sys_Endpoint_Controller_Abstract
     /**
      * The headline numbers.
      *
-     * live_workers is the task worker pool's member count as rsx-lockd accounts it
-     * (Task_Pool::stats(), read without the pool lock).
+     * live_workers is the members of every task worker pool (on demand, scheduled, kill) as
+     * rsx-lockd accounts them (Task_Pool::stats(), read without the pool locks).
      *
-     * failed_tasks_24h counts one-shot rows that went terminal FAILED within the last
-     * day, dated by completed_at (Task_Instance::mark_failed() and the stuck-task reaper
-     * both stamp it). A failing cron TRACKER is not among them: it is recycled to
-     * pending with consecutive_failures + 1, and is the Tasks screen's schedule view.
+     * failed_tasks_24h counts runs - dispatched, scheduled and inline alike - that settled
+     * FAILED within the last day, dated by completed_at.
      *
      * sites excludes site 0, the Default site - an infrastructure FK target for
      * sessionless writes, never a tenant (Site_Model_Abstract::booted()).
@@ -57,9 +55,9 @@ class _Sys_Dashboard_Controller extends _Sys_Endpoint_Controller_Abstract
             'mode_label' => Rsx::get_mode_label(),
             'is_sealed' => Rsx_Prod_Seal::is_sealed(),
             'build_key' => Manifest::get_build_key(),
-            'live_workers' => Task_Pool::stats()['members'],
+            'live_workers' => array_sum(array_map(fn ($pool) => Task_Pool::stats($pool)['members'], Task_Pool::POOLS)),
             'failed_tasks_24h' => DB::table('_tasks')
-                ->where('status', Task_Status::FAILED)
+                ->where('status_id', Task_Run_Model::STATUS_FAILED)
                 ->where('completed_at', '>=', now()->subDay())
                 ->count(),
             'pending_mail' => Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::pending_count()),

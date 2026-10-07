@@ -10,89 +10,55 @@ namespace App\RSpade\Tests\Tasks\Php;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Pool;
+use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
 
 /**
  * Tests for task definition discovery and metadata.
  *
- * These tests read manifest metadata only - no tasks are dispatched or run,
- * so no DB writes occur. Default transaction-based isolation is correct here.
+ * Metadata and handles: the run model's lifecycle vocabulary, the cron parser, scheduled-task
+ * discovery from the manifest, the Task_Instance of a run row, and the guard errors of
+ * Task::internal(). The few rows written roll back with the per-test transaction.
  */
 class Task_Definition_Test extends Rsx_Test_Abstract
 {
     // -------------------------------------------------------------------------
-    // Task_Status value object
+    // Task_Run_Model - the lifecycle vocabulary of a run
     // -------------------------------------------------------------------------
 
-    public static function test_task_status_pending_constant()
+    public static function test_status_constants_are_the_seven_lifecycle_states()
     {
-        static::__assert_equals('pending', Task_Status::PENDING);
+        static::__assert_equals(
+            [1 => 'STATUS_PENDING', 2 => 'STATUS_RUNNING', 3 => 'STATUS_COMPLETED', 4 => 'STATUS_FAILED', 5 => 'STATUS_STOPPED', 6 => 'STATUS_KILLED', 7 => 'STATUS_CANCELLED'],
+            array_map(fn ($enum) => $enum['constant'], Task_Run_Model::$enums['status_id'])
+        );
+        static::__assert_equals(1, Task_Run_Model::STATUS_PENDING);
+        static::__assert_equals(7, Task_Run_Model::STATUS_CANCELLED);
     }
 
-    public static function test_task_status_running_constant()
+    public static function test_only_pending_and_running_are_live()
     {
-        static::__assert_equals('running', Task_Status::RUNNING);
+        static::__assert_equals([Task_Run_Model::STATUS_PENDING, Task_Run_Model::STATUS_RUNNING], Task_Run_Model::LIVE_STATUSES);
+
+        foreach (Task_Run_Model::$enums['status_id'] as $id => $enum) {
+            $run = new Task_Run_Model();
+            $run->status_id = $id;
+            $live = in_array($id, Task_Run_Model::LIVE_STATUSES, true);
+
+            static::__assert_equals($live, $run->is_live(), "{$enum['constant']} is_live()");
+            static::__assert_equals(!$live, $run->is_terminal(), "{$enum['constant']} is_terminal()");
+            static::__assert_equals(!$live, $enum['terminal'], "{$enum['constant']} carries terminal in its enum");
+        }
     }
 
-    public static function test_task_status_completed_constant()
+    public static function test_origin_and_pool_constants()
     {
-        static::__assert_equals('completed', Task_Status::COMPLETED);
-    }
-
-    public static function test_task_status_failed_constant()
-    {
-        static::__assert_equals('failed', Task_Status::FAILED);
-    }
-
-    public static function test_task_status_value_returns_string()
-    {
-        $s = new Task_Status(Task_Status::PENDING);
-        static::__assert_equals('pending', $s->value());
-    }
-
-    public static function test_task_status_is_pending()
-    {
-        $s = new Task_Status(Task_Status::PENDING);
-        static::__assert_true($s->is_pending());
-        static::__assert_false($s->is_running());
-        static::__assert_false($s->is_completed());
-        static::__assert_false($s->is_failed());
-    }
-
-    public static function test_task_status_is_running()
-    {
-        $s = new Task_Status(Task_Status::RUNNING);
-        static::__assert_true($s->is_running());
-        static::__assert_false($s->is_pending());
-    }
-
-    public static function test_task_status_is_completed()
-    {
-        $s = new Task_Status(Task_Status::COMPLETED);
-        static::__assert_true($s->is_completed());
-        static::__assert_true($s->is_terminal());
-        static::__assert_false($s->is_pending());
-    }
-
-    public static function test_task_status_is_failed()
-    {
-        $s = new Task_Status(Task_Status::FAILED);
-        static::__assert_true($s->is_failed());
-        static::__assert_true($s->is_terminal());
-    }
-
-    public static function test_task_status_to_string()
-    {
-        $s = new Task_Status(Task_Status::COMPLETED);
-        static::__assert_equals('completed', (string) $s);
-    }
-
-    public static function test_task_status_rejects_invalid_value()
-    {
-        static::__assert_throws(\InvalidArgumentException::class, function () {
-            new Task_Status('invalid_status');
-        });
+        static::__assert_equals([1, 2, 3], [Task_Run_Model::ORIGIN_DISPATCHED, Task_Run_Model::ORIGIN_SCHEDULED, Task_Run_Model::ORIGIN_INLINE]);
+        static::__assert_equals([1, 2], [Task_Run_Model::POOL_ON_DEMAND, Task_Run_Model::POOL_SCHEDULED]);
+        static::__assert_equals(['on_demand', 'scheduled', 'kill'], Task_Pool::POOLS);
     }
 
     // -------------------------------------------------------------------------
@@ -242,7 +208,6 @@ class Task_Definition_Test extends Rsx_Test_Abstract
             static::__assert_array_has_key('class', $task);
             static::__assert_array_has_key('method', $task);
             static::__assert_array_has_key('cron_expression', $task);
-            static::__assert_array_has_key('queue', $task);
         }
     }
 
@@ -260,87 +225,53 @@ class Task_Definition_Test extends Rsx_Test_Abstract
     }
 
     // -------------------------------------------------------------------------
-    // Task_Instance construction and getters
+    // Task_Instance - the handle of one run's row
     // -------------------------------------------------------------------------
 
-    public static function test_task_instance_getters_for_immediate_mode()
+    /** A RUNNING inline run of the exec fixture in this process, and its instance. */
+    private static function __instance(array $params = []): Task_Instance
     {
-        $instance = new Task_Instance('My_Service', 'my_task', ['foo' => 'bar'], 'default', true);
+        $id = Task_Runner::insert_row(Task_Exec_Fixture_Service::class, 'marker_a', $params, Task_Run_Model::ORIGIN_INLINE, Task_Runner::running_fields());
 
-        static::__assert_equals('My_Service', $instance->get_class());
-        static::__assert_equals('my_task', $instance->get_method());
+        return Task_Instance::find($id);
+    }
+
+    public static function test_task_instance_has_no_public_constructor()
+    {
+        static::__assert_true(
+            (new \ReflectionMethod(Task_Instance::class, '__construct'))->isPrivate(),
+            'an instance exists only for a run row: find() / for_row()'
+        );
+        static::__assert_null(Task_Instance::find(2147480000), 'a missing run has no instance');
+    }
+
+    public static function test_task_instance_getters_read_the_row()
+    {
+        $instance = static::__instance(['foo' => 'bar']);
+
+        static::__assert_equals(Task_Exec_Fixture_Service::class, $instance->get_class());
+        static::__assert_equals('marker_a', $instance->get_method());
         static::__assert_equals(['foo' => 'bar'], $instance->get_params());
-        static::__assert_equals('default', $instance->get_queue());
-        static::__assert_true($instance->is_immediate());
-        static::__assert_null($instance->get_id());
-    }
-
-    public static function test_task_instance_initial_status_is_pending()
-    {
-        $instance = new Task_Instance('My_Service', 'my_task', [], 'default', true);
-        static::__assert_equals(Task_Status::PENDING, $instance->get_status()->value());
-    }
-
-    public static function test_task_instance_mark_started_changes_status_to_running()
-    {
-        $instance = new Task_Instance('My_Service', 'my_task', [], 'default', true);
-        $instance->mark_started();
-        static::__assert_equals(Task_Status::RUNNING, $instance->get_status()->value());
-    }
-
-    public static function test_task_instance_mark_completed_changes_status()
-    {
-        $instance = new Task_Instance('My_Service', 'my_task', [], 'default', true);
-        $instance->mark_completed(['result' => 'ok']);
-        static::__assert_equals(Task_Status::COMPLETED, $instance->get_status()->value());
-    }
-
-    public static function test_task_instance_mark_failed_changes_status()
-    {
-        $instance = new Task_Instance('My_Service', 'my_task', [], 'default', true);
-        $instance->mark_failed('something went wrong');
-        static::__assert_equals(Task_Status::FAILED, $instance->get_status()->value());
-    }
-
-    public static function test_task_instance_info_appends_log_entry()
-    {
-        $instance = new Task_Instance('My_Service', 'my_task', [], 'default', true);
-        $instance->info('first message');
-        $instance->info('second message');
-
-        $logs = $instance->get_logs();
-        static::__assert_count(2, $logs);
-        static::__assert_contains('first message', $logs[0]);
-        static::__assert_contains('[info]', $logs[0]);
-    }
-
-    public static function test_task_instance_error_log_includes_level()
-    {
-        $instance = new Task_Instance('My_Service', 'my_task', [], 'default', true);
-        $instance->error('something broke');
-
-        $logs = $instance->get_logs();
-        static::__assert_count(1, $logs);
-        static::__assert_contains('[error]', $logs[0]);
-        static::__assert_contains('something broke', $logs[0]);
+        static::__assert_greater_than(0, $instance->get_id());
+        static::__assert_equals($instance->get_id(), Task_Instance::for_row(Task_Run_Model::find($instance->get_id()))->get_id());
     }
 
     public static function test_task_instance_get_temp_dir_creates_directory()
     {
-        $instance = new Task_Instance('My_Service', 'my_task', [], 'default', true);
+        $instance = static::__instance();
         $dir = $instance->get_temp_dir();
 
         static::__assert_not_empty($dir);
         static::__assert_true(is_dir($dir), "Temp directory does not exist: {$dir}");
+        static::__assert_true(str_ends_with($dir, '/task_' . $instance->get_id()), 'named for its run');
 
-        // Clean up
         $instance->cleanup_temp_dir();
         static::__assert_false(is_dir($dir), 'Temp directory should have been removed after cleanup');
     }
 
     public static function test_task_instance_get_temp_dir_same_on_second_call()
     {
-        $instance = new Task_Instance('My_Service', 'my_task', [], 'default', true);
+        $instance = static::__instance();
         $dir1 = $instance->get_temp_dir();
         $dir2 = $instance->get_temp_dir();
 
@@ -350,7 +281,7 @@ class Task_Definition_Test extends Rsx_Test_Abstract
     }
 
     // -------------------------------------------------------------------------
-    // Task::internal() - immediate execution
+    // Task::internal() - guard errors
     // -------------------------------------------------------------------------
 
     public static function test_task_internal_throws_for_unknown_service()

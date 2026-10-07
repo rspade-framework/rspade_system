@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Files;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Files\Document_Render_Service;
+use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Blob_Locks;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
@@ -269,6 +270,112 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
 
             return $storage;
         });
+    }
+
+    /**
+     * store_blob() for bytes held in memory: the bytes go to a scratch file in the temp directory,
+     * are stored, and the scratch file is removed whatever happens. $reference is
+     * the same contract as store_blob()'s - record the reference row inside it.
+     *
+     * @param string   $bytes
+     * @param callable $reference fn (File_Storage_Model $storage): mixed - writes the reference.
+     * @return static
+     */
+    public static function store_bytes(string $bytes, callable $reference): File_Storage_Model
+    {
+        $temp_path = sys_get_temp_dir() . '/rspade_blob_' . random_hash() . '.bin';
+
+        if (file_put_contents_safe($temp_path, $bytes) === false) {
+            throw new \RuntimeException('Failed to write blob bytes to a temporary file.');
+        }
+
+        try {
+            return static::store_blob($temp_path, $reference);
+        } finally {
+            if (file_exists($temp_path)) {
+                @unlink($temp_path);
+            }
+        }
+    }
+
+    /**
+     * An open read stream over the blob's bytes. The caller closes it.
+     *
+     * The blob store's byte-access surface is this, read_bytes() and the two response
+     * builders: a consumer never needs the blob's location, so the store can move.
+     *
+     * @return resource
+     */
+    public function read_stream()
+    {
+        $path = $this->get_full_path();
+        $stream = @fopen($path, 'rb');
+        if ($stream === false) {
+            throw new \RuntimeException("File storage #{$this->id} has no bytes on disk.");
+        }
+
+        return $stream;
+    }
+
+    /**
+     * The blob's whole contents.
+     */
+    public function read_bytes(): string
+    {
+        $bytes = @file_get_contents($this->get_full_path());
+        if ($bytes === false) {
+            throw new \RuntimeException("File storage #{$this->id} has no bytes on disk.");
+        }
+
+        return $bytes;
+    }
+
+    /**
+     * A download (attachment disposition) response for the blob, hardened the way every file
+     * response is (File_Attachment_Controller::harden_file_response()). Authorizing the
+     * caller is the caller's job.
+     *
+     * @param string $file_name The name the browser saves it under.
+     * @param string|null $mime_type Content-Type; sniffed from the bytes when null.
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    public function download_response(string $file_name, ?string $mime_type = null)
+    {
+        return File_Attachment_Controller::harden_file_response(
+            \Illuminate\Support\Facades\Response::download($this->__existing_path(), $file_name, $this->__type_header($mime_type))
+        );
+    }
+
+    /**
+     * An inline-disposition response for the blob, hardened like download_response().
+     *
+     * @param string $file_name
+     * @param string|null $mime_type
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    public function inline_response(string $file_name, ?string $mime_type = null)
+    {
+        $headers = $this->__type_header($mime_type);
+        $headers['Content-Disposition'] = \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition('inline', $file_name, 'file');
+
+        return File_Attachment_Controller::harden_file_response(
+            \Illuminate\Support\Facades\Response::file($this->__existing_path(), $headers)
+        );
+    }
+
+    private function __existing_path(): string
+    {
+        $path = $this->get_full_path();
+        if (!file_exists($path)) {
+            throw new \RuntimeException("File storage #{$this->id} has no bytes on disk.");
+        }
+
+        return $path;
+    }
+
+    private function __type_header(?string $mime_type): array
+    {
+        return $mime_type !== null && $mime_type !== '' ? ['Content-Type' => $mime_type] : [];
     }
 
     /**

@@ -15,17 +15,20 @@ use App\RSpade\Core\Locks\Lockd_Client;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Pool;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Testing\Rsx_Test_Detached_Processes;
+use App\RSpade\Tests\Tasks\Php\Test_Echo_Service;
 
 /**
- * Task_Spawn_Admission_Test - who gets into the task worker pool, and who is never started.
+ * Task_Spawn_Admission_Test - who gets into a task worker pool, and who is never started.
  *
- * rsx-lockd accounts the pool (Task_Pool). A worker ADMITS ITSELF: under the pool lock it
- * counts the other members, exits when they fill rsx.tasks.global_max_workers, and joins
- * otherwise. Task::spawn_worker() reads the same count before starting a process, so a full
- * pool starts nothing, and a worker whose own task dispatches counts itself. Ahead of both,
+ * rsx-lockd accounts each pool (Task_Pool). A worker ADMITS ITSELF: under its pool's lock it
+ * counts the other members, exits when they fill rsx.tasks.pools.<pool>.max_workers, and joins
+ * otherwise. Exercised on the on_demand pool; every pool admits the same way.
+ * Task::spawn_worker($pool) reads the same count before starting a process, so a full pool
+ * starts nothing, and a worker whose own task dispatches counts itself. Ahead of both,
  * the workers this process spawned that are still running cap a bulk script without a
  * daemon round trip - exercised against a fixture process whose command line is a worker's
  * (a php process that blocks on a FIFO until the test releases it, so it lives exactly as
@@ -57,7 +60,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_a_worker_exits_when_the_pool_is_full()
     {
-        config(['rsx.tasks.global_max_workers' => 1]);
+        config(['rsx.tasks.pools.on_demand.max_workers' => 1]);
 
         self::_phantom_join();
         try {
@@ -65,18 +68,18 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
             $output = Artisan::output();
 
             static::__assert_equals(0, $exit_code, 'a full pool is an ordinary exit');
-            static::__assert_contains('Worker pool is full', $output);
+            static::__assert_contains('The on_demand pool is full', $output);
             static::__assert_null(Task_Pool::wid(), 'the worker never joined');
             static::__assert_false(Task_Pool::holds_lock(), 'and released the pool lock');
 
-            $stats = Task_Pool::stats();
+            $stats = Task_Pool::stats(Task_Pool::ON_DEMAND);
             static::__assert_equals(1, $stats['members'], 'only the other member is in the pool');
             static::__assert_false($stats['holder'], 'nobody holds the pool lock');
         } finally {
             self::_phantom_leave();
         }
 
-        static::__assert_equals(0, Task_Pool::stats()['members'], 'the other member left');
+        static::__assert_equals(0, Task_Pool::stats(Task_Pool::ON_DEMAND)['members'], 'the other member left');
     }
 
     /**
@@ -85,7 +88,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_a_worker_below_the_cap_joins_and_leaves()
     {
-        config(['rsx.tasks.global_max_workers' => 2]);
+        config(['rsx.tasks.pools.on_demand.max_workers' => 2]);
 
         self::_phantom_join();
         try {
@@ -94,14 +97,14 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 
             static::__assert_equals(0, $exit_code);
             static::__assert_true(
-                preg_match('/Joined the pool \(wid \d+, generation \d+\)/', $output) === 1,
+                preg_match('/Joined the on_demand pool \(wid \d+, generation \d+\)/', $output) === 1,
                 'the worker joined and named its wid and generation: ' . $output
             );
             static::__assert_contains('No more pending tasks', $output);
             static::__assert_null(Task_Pool::wid(), 'the worker left');
             static::__assert_false(Task_Pool::holds_lock(), 'and released the pool lock');
 
-            $stats = Task_Pool::stats();
+            $stats = Task_Pool::stats(Task_Pool::ON_DEMAND);
             static::__assert_equals(1, $stats['members'], 'the pool is back to the other member alone');
             static::__assert_false($stats['holder']);
         } finally {
@@ -119,7 +122,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_spawn_worker_is_gated_on_the_pool_count()
     {
-        config(['rsx.tasks.global_max_workers' => 1]);
+        config(['rsx.tasks.pools.on_demand.max_workers' => 1]);
         self::_set_spawned_pids([]);
 
         $registry_before = self::_detached_registry();
@@ -128,14 +131,14 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
         try {
             self::_phantom_join();
             try {
-                static::__assert_equals(false, Task::spawn_worker(), 'the pool is full');
+                static::__assert_equals(false, Task::spawn_worker(Task_Pool::ON_DEMAND), 'the pool is full');
                 static::__assert_equals($registry_before, self::_detached_registry(), 'no process was started');
                 static::__assert_false(Task_Pool::holds_lock(), 'the count was read and the lock released');
             } finally {
                 self::_phantom_leave();
             }
 
-            static::__assert_equals(true, Task::spawn_worker(), 'with room, a worker is started');
+            static::__assert_equals(true, Task::spawn_worker(Task_Pool::ON_DEMAND), 'with room, a worker is started');
         } finally {
             Task::spawn_workers(false);
         }
@@ -147,7 +150,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
         // rsx:task:worker ends as soon as it finds no pending task.
         Rsx_Test_Detached_Processes::contain();
 
-        static::__assert_equals(0, Task_Pool::stats()['members'], 'the worker left the pool when it exited');
+        static::__assert_equals(0, Task_Pool::stats(Task_Pool::ON_DEMAND)['members'], 'the worker left the pool when it exited');
         self::_set_spawned_pids([]);
     }
 
@@ -157,24 +160,24 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_a_member_counts_itself()
     {
-        config(['rsx.tasks.global_max_workers' => 1]);
+        config(['rsx.tasks.pools.on_demand.max_workers' => 1]);
         self::_set_spawned_pids([]);
 
         $registry_before = self::_detached_registry();
 
-        Task_Pool::lock();
-        Task_Pool::join();
-        Task_Pool::unlock();
+        Task_Pool::lock(Task_Pool::ON_DEMAND);
+        Task_Pool::join(Task_Pool::ON_DEMAND);
+        Task_Pool::unlock(Task_Pool::ON_DEMAND);
 
         Task::spawn_workers(true);
         try {
-            static::__assert_equals(false, Task::spawn_worker(), 'this member fills the pool of one');
+            static::__assert_equals(false, Task::spawn_worker(Task_Pool::ON_DEMAND), 'this member fills the pool of one');
             static::__assert_equals($registry_before, self::_detached_registry(), 'no process was started');
         } finally {
             Task::spawn_workers(false);
-            Task_Pool::lock();
-            Task_Pool::leave();
-            Task_Pool::unlock();
+            Task_Pool::lock(Task_Pool::ON_DEMAND);
+            Task_Pool::leave(Task_Pool::ON_DEMAND);
+            Task_Pool::unlock(Task_Pool::ON_DEMAND);
         }
     }
 
@@ -185,11 +188,11 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
     public static function test_spawn_worker_refuses_under_the_pool_lock()
     {
         Task::spawn_workers(true);
-        Task_Pool::lock();
+        Task_Pool::lock(Task_Pool::ON_DEMAND);
         try {
-            static::__assert_throws(RuntimeException::class, fn () => Task::spawn_worker(), 'holds the task pool lock');
+            static::__assert_throws(RuntimeException::class, fn () => Task::spawn_worker(Task_Pool::ON_DEMAND), 'holds a task pool lock');
         } finally {
-            Task_Pool::unlock();
+            Task_Pool::unlock(Task_Pool::ON_DEMAND);
             Task::spawn_workers(false);
         }
     }
@@ -200,24 +203,24 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_spawn_worker_starts_nothing_under_maintenance()
     {
-        config(['rsx.tasks.global_max_workers' => 3]);
+        config(['rsx.tasks.pools.on_demand.max_workers' => 3]);
         self::_set_spawned_pids([]);
 
         $registry_before = self::_detached_registry();
-        static::__assert_equals(0, Task_Pool::stats()['members'], 'the pool is empty');
+        static::__assert_equals(0, Task_Pool::stats(Task_Pool::ON_DEMAND)['members'], 'the pool is empty');
 
         Task::spawn_workers(true);
         Framework_Maintenance::$force_active_for_tests = true;
         try {
             $id = Task::dispatch('Test_Echo_Service', 'echo_params', ['probe' => 'maintenance']);
-            static::__assert_equals(false, Task::spawn_worker(), 'maintenance mode starts no worker');
+            static::__assert_equals(false, Task::spawn_worker(Task_Pool::ON_DEMAND), 'maintenance mode starts no worker');
         } finally {
             Framework_Maintenance::$force_active_for_tests = null;
             Task::spawn_workers(false);
         }
 
         static::__assert_equals($registry_before, self::_detached_registry(), 'no process was started');
-        static::__assert_equals(Task_Status::PENDING, DB::table('_tasks')->where('id', $id)->value('status'), 'the row stays pending');
+        static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) DB::table('_tasks')->where('id', $id)->value('status_id'), 'the row stays pending');
     }
 
     // =========================================================================
@@ -230,22 +233,14 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_the_tick_tries_one_spawn()
     {
-        config(['rsx.tasks.global_max_workers' => 3]);
+        config(['rsx.tasks.pools.on_demand.max_workers' => 3]);
         self::_set_spawned_pids([]);
 
-        static::__assert_equals(0, Task_Pool::stats()['members'], 'the pool is empty');
+        static::__assert_equals(0, Task_Pool::stats(Task_Pool::ON_DEMAND)['members'], 'the pool is empty');
 
         // Due on-demand work, visible to the tick (it runs in this transaction). The worker
         // it starts cannot see the uncommitted row, finds nothing and exits.
-        DB::table('_tasks')->insert([
-            'class' => 'Test_Echo_Service',
-            'method' => 'echo_params',
-            'queue' => 'default',
-            'status' => Task_Status::PENDING,
-            'params' => json_encode(['probe' => 'one-per-tick']),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        Task_Runner::insert_row(Test_Echo_Service::class, 'echo_params', ['probe' => 'one-per-tick'], Task_Run_Model::ORIGIN_DISPATCHED);
 
         $registry_before = self::_detached_registry();
 
@@ -277,19 +272,19 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_our_own_live_workers_fill_the_cap()
     {
-        config(['rsx.tasks.global_max_workers' => 1]);
+        config(['rsx.tasks.pools.on_demand.max_workers' => 1]);
 
         $fixture = self::_start_fixture_worker();
         try {
             static::__assert_true(Task::is_worker_process($fixture['pid']), 'the fixture reads as a worker');
-            static::__assert_equals(0, Task_Pool::stats()['members'], 'the pool is empty');
+            static::__assert_equals(0, Task_Pool::stats(Task_Pool::ON_DEMAND)['members'], 'the pool is empty');
 
             self::_set_spawned_pids([$fixture['pid']]);
             $registry_before = self::_detached_registry();
 
             Task::spawn_workers(true);
             try {
-                static::__assert_equals(false, Task::spawn_worker(), 'our own live worker fills the cap');
+                static::__assert_equals(false, Task::spawn_worker(Task_Pool::ON_DEMAND), 'our own live worker fills the cap');
             } finally {
                 Task::spawn_workers(false);
             }
@@ -314,7 +309,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_dispatch_under_the_suite_enqueues_only()
     {
-        config(['rsx.tasks.global_max_workers' => 3]);
+        config(['rsx.tasks.pools.on_demand.max_workers' => 3]);
 
         $registry_before = self::_detached_registry();
 
@@ -322,10 +317,10 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 
         $row = DB::table('_tasks')->where('id', $id)->first();
         static::__assert_not_null($row, 'the row was enqueued');
-        static::__assert_equals(Task_Status::PENDING, $row->status);
+        static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) $row->status_id);
 
         static::__assert_equals($registry_before, self::_detached_registry(), 'no detached process was started');
-        static::__assert_equals(false, Task::spawn_worker(), 'spawn_worker() itself declines under the suite');
+        static::__assert_equals(false, Task::spawn_worker(Task_Pool::ON_DEMAND), 'spawn_worker() itself declines under the suite');
     }
 
     /**
@@ -334,7 +329,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_the_off_switch_enqueues_without_spawning()
     {
-        config(['rsx.tasks.global_max_workers' => 3]);
+        config(['rsx.tasks.pools.on_demand.max_workers' => 3]);
 
         Task::spawn_workers(true);
         static::__assert_equals(true, Task::spawning_workers());
@@ -347,7 +342,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 
         $row = DB::table('_tasks')->where('id', $id)->first();
         static::__assert_not_null($row, 'the row was enqueued');
-        static::__assert_equals(Task_Status::PENDING, $row->status);
+        static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) $row->status_id);
         static::__assert_equals($registry_before, self::_detached_registry(), 'no detached process was started');
     }
 
@@ -399,7 +394,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
     /** One acknowledged pool op on the RsxLocks connection. */
     private static function _phantom(string $op, string $expected_status = 'ok'): array
     {
-        $response = Lockd_Client::request(['op' => $op, 'pool' => Task_Pool::pool_name()]);
+        $response = Lockd_Client::request(['op' => $op, 'pool' => Task_Pool::pool_name(Task_Pool::ON_DEMAND)]);
         static::__assert_equals($expected_status, $response['status'] ?? null, "{$op} on the phantom connection: " . json_encode($response));
 
         return $response;
@@ -465,13 +460,14 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Replace the pids Task records as spawned by this process.
+     * Replace the pids Task records as spawned by this process into the on_demand pool (and
+     * forget every other pool's).
      *
      * @param int[] $pids
      * @return void
      */
     private static function _set_spawned_pids(array $pids): void
     {
-        (new \ReflectionProperty(Task::class, 'spawned_worker_pids'))->setValue(null, $pids);
+        (new \ReflectionProperty(Task::class, 'spawned_worker_pids'))->setValue(null, $pids === [] ? [] : [Task_Pool::ON_DEMAND => $pids]);
     }
 }

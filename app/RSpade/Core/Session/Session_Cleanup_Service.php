@@ -142,15 +142,17 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         if ($total > 0) {
             foreach ($deleted as $name => $count) {
                 if ($count > 0) {
-                    $task->info("Deleted {$count} {$name} sessions");
+                    $task->stdout("Deleted {$count} {$name} sessions");
                 }
             }
-            $task->info("Total sessions deleted: {$total}");
+            $task->stdout("Total sessions deleted: {$total}");
         }
 
         $deleted['total_deleted'] = $total;
 
-        return $deleted;
+        $task->state($deleted);
+
+        return null;
     }
 
     /**
@@ -175,7 +177,9 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         $retention_days = (int) config('rsx.sessions.login_history_retention_days');
 
         if ($retention_days <= 0) {
-            return ['total_deleted' => 0];
+            $task->state(['total_deleted' => 0]);
+
+            return null;
         }
 
         $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);
@@ -188,10 +192,12 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         );
 
         if ($deleted > 0) {
-            $task->info("Deleted {$deleted} login history rows older than {$retention_days} days");
+            $task->stdout("Deleted {$deleted} login history rows older than {$retention_days} days");
         }
 
-        return ['total_deleted' => $deleted];
+        $task->state(['total_deleted' => $deleted]);
+
+        return null;
     }
 
     /**
@@ -221,10 +227,12 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         );
 
         if ($deleted > 0) {
-            $task->info("Deleted {$deleted} expired session links");
+            $task->stdout("Deleted {$deleted} expired session links");
         }
 
-        return ['total_deleted' => $deleted];
+        $task->state(['total_deleted' => $deleted]);
+
+        return null;
     }
 
     /**

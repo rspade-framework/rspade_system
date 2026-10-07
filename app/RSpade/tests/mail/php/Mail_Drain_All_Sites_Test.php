@@ -101,7 +101,7 @@ class Mail_Drain_All_Sites_Test extends Rsx_Test_Abstract
         Rsx_Mail_Transport::$override_for_tests = $stub;
 
         try {
-            $counts = Task::internal('Mail_Queue_Service', 'send_pending_queue');
+            $counts = Task::internal('Mail_Queue_Service', 'send_pending_queue')->state();
         } finally {
             Rsx_Mail_Transport::$override_for_tests = null;
         }
@@ -138,7 +138,7 @@ class Mail_Drain_All_Sites_Test extends Rsx_Test_Abstract
         Rsx_Mail_Transport::$override_for_tests = $stub;
 
         try {
-            $counts = Task::internal('Mail_Queue_Service', 'send_pending_queue');
+            $counts = Task::internal('Mail_Queue_Service', 'send_pending_queue')->state();
         } finally {
             Rsx_Mail_Transport::$override_for_tests = null;
         }

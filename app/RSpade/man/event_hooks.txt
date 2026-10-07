@@ -482,6 +482,36 @@ FRAMEWORK EVENT CATALOG
                      the thumbnail (e.g. allow the preview thumb but gate the
                      original download).
 
+    Task Gates (rsx:man tasks, GATES AND THE BROWSER API)
+
+        Who may see a background task run and act on one. Asked through
+        Task_Gates by every task endpoint (Rsx_Task_Controller), realtime topic
+        and widget. DENY BY DEFAULT: with no handler registered the gate answers
+        false and the scope matches nothing - never open. A staff developer
+        (Session::is_developer()) passes all three with no handler asked. The
+        portal realm asks its own trio, portal.task.view.authorize,
+        portal.task.view.scope and portal.task.control.authorize, with the
+        portal user as `user`.
+
+        task.view.authorize (gate)
+            Fired from: Task_Gates::can_view(), before any read of one run.
+            Data: {task: Task_Run_Model, user: User_Model|null}
+            Return: true to allow.
+            Use for: "users see the runs they started" (dispatched_by), tenant
+                     scoping (site_id).
+
+        task.view.scope (filter)
+            Fired from: Task_Gates::scope_viewable(), on every list of runs.
+            Data: the Task_Run_Model query builder.
+            Return: the builder, narrowed to the runs the viewer may see - the
+                    SAME rule as task.view.authorize.
+
+        task.control.authorize (gate)
+            Fired from: Task_Gates::can_control(), before a lifecycle action.
+            Data: {task, user, action} - action one of stop, force_stop,
+                  force_kill, cancel, rerun.
+            Return: true to allow.
+
     Document Pipeline Events (resolve; rsx:man document_search)
 
         Each is a trigger_resolve chain: return null to decline (the framework

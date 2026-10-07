@@ -3,10 +3,9 @@
 namespace App\RSpade\Core\Models;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
-use App\RSpade\Core\Files\File_Blob_Locks;
+use App\RSpade\Core\Files\Blob_Referencing;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
-
 /**
  * Email_Attachment_Model_Abstract - one file (or inline image) belonging to one queued email.
  *
@@ -61,6 +60,7 @@ use App\RSpade\Core\Models\Email_Queue_Model;
  *
  * @mixin \Eloquent
  */
+#[Blob_Reference('file_storage_id')]
 abstract class Email_Attachment_Model_Abstract extends Rsx_Model_Abstract
 {
     /**
@@ -68,6 +68,10 @@ abstract class Email_Attachment_Model_Abstract extends Rsx_Model_Abstract
      */
     const DISPOSITION_ATTACHMENT = 1;
     const DISPOSITION_INLINE = 2;
+
+    // A queued email's part pins its blob for as long as the row exists (File_Blob_References).
+    use Blob_Referencing;
+
     // Infrastructure table: nothing in a UI subscribes to these rows, so writes here
     // must not kick the emitter engine.
     public static $realtime_silent = true;
@@ -117,27 +121,6 @@ abstract class Email_Attachment_Model_Abstract extends Rsx_Model_Abstract
         $attachment->save();
 
         return $attachment;
-    }
-
-    /**
-     * A write that points this row at a blob is a REFERENCE being recorded: it holds the
-     * blob's read lock until it commits, so File_Disposal_Service cannot release the bytes
-     * between the caller finding the storage row and this row pinning it. Throws if the storage
-     * row was released first. See File_Blob_Locks.
-     *
-     * @param array $options
-     * @return bool
-     */
-    public function save(array $options = [])
-    {
-        if ($this->file_storage_id !== null && $this->isDirty('file_storage_id')) {
-            return File_Blob_Locks::referencing_storage(
-                (int) $this->file_storage_id,
-                fn () => parent::save($options)
-            );
-        }
-
-        return parent::save($options);
     }
 
     /**

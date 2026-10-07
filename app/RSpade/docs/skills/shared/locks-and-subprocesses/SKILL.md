@@ -81,7 +81,7 @@ use App\RSpade\Core\Console\Rsx_Artisan;
 
 $exit = Rsx_Artisan::passthru('rsx:bundle:compile');                 // streams output
 $exit = Rsx_Artisan::run('migrate', ['--force'], $output);           // captures output
-Rsx_Artisan::dispatch_detached('rsx:task:worker');                   // fire and forget
+Rsx_Artisan::dispatch_detached('rsx:task:worker', ['--pool=on_demand']);   // fire and forget
 ```
 
 Command name and argv tokens stay **separate** (the helper escapes each).
@@ -104,7 +104,7 @@ You never construct a group id: `Rsx_Artisan` attaches `--_lock-group=<id>` (the
 
 **No lock descriptor reaches a long-lived child.** PHP sets no close-on-exec on a socket or an flock fd, and a grant lives on the connection (a flock on the open file description) - so a child holding an inherited descriptor keeps its parent's locks alive after the parent dies. `dispatch_detached()`, the SSR daemon and the node parser daemons close every flock fd AND every open rsx-lockd socket in the child (`RsxLocks::inherited_lock_fds()`, sockets matched by inode via `Lockd_Connection::open_socket_inodes()`). A synchronous child gets its parent's locks through the lock GROUP on its own connection, never the parent's socket. A new path that starts a long-lived child uses one of those seams or `RsxLocks::command_without_inherited_locks()` / `shell_prefix_without_inherited_locks()`.
 
-**A task worker holds a second daemon connection** - its task pool connection (`Task_Pool`, lifelong, no lock group, never touched by `RsxLocks`), whose membership IS the worker's liveness. While a process holds the pool lock it runs only pool ops and `_tasks` row reads/writes: no other blocking lock (a non-blocking try is fine), no subprocess, no outbound call - pool waits are invisible to the deadlock detector. See `rspade:background-tasks` and `rsx:man locks` (THE RSX LOCKD DAEMON).
+**A task or kill worker holds a second daemon connection** - its pool connection (`Task_Pool`, lifelong, no lock group, never touched by `RsxLocks`), whose membership IS the worker's liveness. There are three pools (`on_demand`, `scheduled`, `kill`), each with its own pool lock; a process is a member of at most one and holds at most one pool lock at a time. While a process holds a pool lock it runs only pool ops and task-table reads/writes: no other blocking lock (a non-blocking try is fine), no subprocess, no outbound call - pool waits are invisible to the deadlock detector. See `rspade:background-tasks` and `rsx:man locks` (THE RSX LOCKD DAEMON).
 
 ---
 

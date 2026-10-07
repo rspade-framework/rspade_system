@@ -1,0 +1,30 @@
+<%--
+Task_Report_Browser - every report a task run has set, in one widget: the report kinds down a
+left column, the selected report on the right (a Task_Report).
+
+$task_id  (required) the run (_tasks id)
+$kind     the report to show first (default: the first the run has set, state_json first)
+
+Only reports the run has actually set are offered, and the list grows as the run reports
+more (Task_Changed_Topic). Size it with ordinary CSS; the report pane scrolls inside it.
+Reading needs the run's view gate (Task_Gates).
+--%>
+<Define:Task_Report_Browser tag="div">
+    <% if (!this.args.task_id) { throw new Error('Task_Report_Browser requires $task_id'); } %>
+    <% if (this.data.error_data) { %>
+        <div class="Task_Report_Browser__notice">(Unavailable)</div>
+    <% } else if (!this.data.reports) { %>
+        <div class="Task_Report_Browser__notice">(Loading...)</div>
+    <% } else if (this.data.reports.length === 0) { %>
+        <div class="Task_Report_Browser__notice">(No reports yet)</div>
+    <% } else { %>
+        <div class="Task_Report_Browser__kinds">
+            <% for (const _kind of this.data.reports) { %>
+                <button type="button" class="Task_Report_Browser__kind<%= _kind === this.selected_kind() ? ' Task_Report_Browser__kind--active' : '' %>" data-kind="<%= _kind %>"><%= Rsx_Task.REPORT_LABELS[_kind] || _kind %></button>
+            <% } %>
+        </div>
+        <div class="Task_Report_Browser__pane">
+            <Task_Report $sid="report" $task_id=this.args.task_id $kind=this.selected_kind() $bar=true />
+        </div>
+    <% } %>
+</Define:Task_Report_Browser>

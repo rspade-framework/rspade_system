@@ -41,7 +41,7 @@ class File_Rendition_Service extends Rsx_Service_Abstract
 
         if (!is_dir($dir)) {
             // Directory doesn't exist yet - no cleanup needed.
-            $task->info('Rendition cache directory does not exist yet');
+            $task->stdout('Rendition cache directory does not exist yet');
             return;
         }
 
@@ -79,7 +79,7 @@ class File_Rendition_Service extends Rsx_Service_Abstract
         }
 
         $freed_mb = round($freed_bytes / 1024 / 1024, 2);
-        $task->info("Rendition cleanup: {$deleted_count} files deleted, {$freed_mb} MB freed");
+        $task->stdout("Rendition cleanup: {$deleted_count} files deleted, {$freed_mb} MB freed");
     }
 
     /**

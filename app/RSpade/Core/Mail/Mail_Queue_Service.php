@@ -77,14 +77,14 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
     #[Task('Send pending outgoing email queue')]
     #[Exclusive]
     #[Schedule('every minute')]
-    public static function send_pending_queue(Task_Instance $task, array $params = []): array
+    public static function send_pending_queue(Task_Instance $task, array $params = [])
     {
         // THE DRAIN SERVES EVERY SITE. The queue is one table for the whole install and this
         // task is its only consumer, so it must see every tenant's rows - a worker's declared
         // site says nothing about which messages are due. Every read and write below, the
         // claimed row's own status updates and the recipient counters included, therefore
         // runs outside the site scope; each row keeps the site_id it was queued under.
-        return Email_Queue_Model::without_site_scope(function () use ($task) {
+        $task->state(Email_Queue_Model::without_site_scope(function () use ($task) {
             $counts = [
                 'sent' => 0,
                 'server_errors' => 0,
@@ -103,7 +103,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
             // needs the number, not silence.
             if ($mode === Rsx_Mail_Transport::MODE_DISABLED) {
                 $pending = Email_Queue_Model::pending_count();
-                $task->info("mail delivery is disabled - {$pending} message(s) left pending");
+                $task->stdout("mail delivery is disabled - {$pending} message(s) left pending");
 
                 return $counts;
             }
@@ -114,7 +114,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
             $counts['reclaimed'] = Email_Queue_Model::reclaim_stranded();
 
             if ($counts['reclaimed'] > 0) {
-                $task->info(
+                $task->stdout(
                     "Reclaimed {$counts['reclaimed']} stranded message(s) left SENDING by a drain that ended mid-send"
                 );
             }
@@ -128,7 +128,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
             );
 
             if ($counts['stale'] > 0) {
-                $task->error(
+                $task->stderr(
                     "Refused to send {$counts['stale']} message(s) that were due more than "
                     . config('rsx.mail.stale_after_days', 2) . " day(s) ago - resend any that "
                     . "are still wanted with: php artisan rsx:mail:resend <id>"
@@ -157,7 +157,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                 // and the rest of the message goes on. Before the suppressed branch too: a
                 // listed address is Blocked in every mode, not merely not-delivered.
                 if (Rsx_Mail::_recheck_block_list($row)) {
-                    $task->info("Blocked #{$row->id} to {$row->to_address}: {$row->last_error}");
+                    $task->stdout("Blocked #{$row->id} to {$row->to_address}: {$row->last_error}");
                     $counts['blocked']++;
                     continue;
                 }
@@ -171,7 +171,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                             // a suppressed send is still reviewable.
                             Rsx_Mail_Builder::build($row);
                             $row->mark_suppressed('delivery mode is suppressed');
-                            $task->info("Suppressed #{$row->id} to {$row->to_address}: delivery mode is suppressed");
+                            $task->stdout("Suppressed #{$row->id} to {$row->to_address}: delivery mode is suppressed");
                             $counts['suppressed']++;
                             break;
                         }
@@ -192,7 +192,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
 
                         static::_recipient($row)->increment_sent();
 
-                        $task->info("Sent #{$row->id} to {$row->to_address} ({$message_id})");
+                        $task->stdout("Sent #{$row->id} to {$row->to_address} ({$message_id})");
                         $counts['sent']++;
                         break;
                     } catch (UnexpectedResponseException $e) {
@@ -201,14 +201,14 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                         static::_recipient($row)->increment_failed();
 
                         $attempts = (int) config('rsx.mail.retry.attempts', 3);
-                        $task->error("Server error #{$row->id} attempt {$row->attempt_count}/{$attempts}: {$reply}");
+                        $task->stderr("Server error #{$row->id} attempt {$row->attempt_count}/{$attempts}: {$reply}");
                         $counts['server_errors']++;
                         break;
                     } catch (TransportExceptionInterface $e) {
                         $row->release_to_pending($e->getMessage());
 
                         if ($reconnected) {
-                            $task->error(
+                            $task->stderr(
                                 "Mail transport still unreachable after reconnecting to "
                                 . Rsx_Mail_Transport::describe() . " - queue left PENDING."
                             );
@@ -220,7 +220,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                         }
 
                         $reconnected = true;
-                        $task->error(
+                        $task->stderr(
                             "Mail transport failure on #{$row->id} (" . $e->getMessage()
                             . ") - reconnecting to " . Rsx_Mail_Transport::describe() . " and retrying this message."
                         );
@@ -236,7 +236,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                         continue;
                     } catch (\Throwable $e) {
                         $row->mark_failed($e->getMessage());
-                        $task->error("Failed to build #{$row->id}: " . $e->getMessage());
+                        $task->stderr("Failed to build #{$row->id}: " . $e->getMessage());
                         $counts['failed']++;
                         break;
                     }
@@ -244,7 +244,9 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
             }
 
             return $counts;
-        });
+        }));
+
+        return null;
     }
 
     /**
@@ -253,21 +255,23 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
      */
     #[Task('Clean up old email queue records')]
     #[Schedule('daily at 3am')]
-    public static function cleanup(Task_Instance $task, array $params = []): array
+    public static function cleanup(Task_Instance $task, array $params = [])
     {
         $days = $params['days'] ?? config('rsx.mail.retention_days', 30);
 
         // Every site's rows age out on the same clock: retention is install policy.
         $deleted = Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::cleanup_old($days));
-        $task->info("Deleted {$deleted} email records older than {$days} days");
+        $task->stdout("Deleted {$deleted} email records older than {$days} days");
 
         $pruned = static::_prune_catcher_maildir((int) $days);
 
         if ($pruned > 0) {
-            $task->info("Pruned {$pruned} captured messages from the development mail catcher");
+            $task->stdout("Pruned {$pruned} captured messages from the development mail catcher");
         }
 
-        return ['deleted' => $deleted, 'catcher_pruned' => $pruned];
+        $task->state(['deleted' => $deleted, 'catcher_pruned' => $pruned]);
+
+        return null;
     }
 
     /**

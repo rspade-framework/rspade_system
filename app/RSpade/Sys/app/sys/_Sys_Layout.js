@@ -52,10 +52,10 @@ class _Sys_Layout extends Spa_Layout {
                             href: Rsx.Route('_Sys_Tasks_Action'),
                         },
                         {
-                            label: 'Task Queues',
-                            icon: 'bi-stack',
-                            route: '_Sys_Task_Queues_Action',
-                            href: Rsx.Route('_Sys_Task_Queues_Action'),
+                            label: 'Task Workers',
+                            icon: 'bi-cpu',
+                            route: '_Sys_Task_Workers_Action',
+                            href: Rsx.Route('_Sys_Task_Workers_Action'),
                         },
                         {
                             label: 'Email & SMS',

@@ -726,6 +726,39 @@ abstract class Rsx_Test_Abstract
     }
 
     /**
+     * Call a #[Task] method directly, as a real inline run, and return the state it reported.
+     *
+     * The run gets its _tasks row (origin Inline, RUNNING in this process) and the method is
+     * called with that row's Task_Instance - no pre_task(), no run lock, no output capture, so
+     * the method under test is exercised exactly as written. A throw leaves the method's
+     * exception to the caller. On return the held reports are written and the run is settled
+     * by the method's return value, then the state object it reported with $task->state() is
+     * returned (null when it reported none).
+     *
+     * @param string $class Fully-qualified service class
+     * @param string $method The static #[Task] method
+     * @param array $params The $params the method receives
+     * @return mixed The run's state() report
+     */
+    protected static function __run_task_method(string $class, string $method, array $params = [])
+    {
+        $task_id = \App\RSpade\Core\Task\Task_Runner::insert_row(
+            $class,
+            $method,
+            $params,
+            \App\RSpade\Core\Task\Task_Run_Model::ORIGIN_INLINE,
+            \App\RSpade\Core\Task\Task_Runner::running_fields()
+        );
+        $task = \App\RSpade\Core\Task\Task_Instance::find($task_id);
+
+        $value = $class::$method($task, $params);
+
+        \App\RSpade\Core\Task\Task_Runner::settle($task, \App\RSpade\Core\Task\Task_Run_Outcome::from_return($value));
+
+        return \App\RSpade\Core\Task\Task_Run_Model::find($task_id)->state();
+    }
+
+    /**
      * Make a test HTTP request
      *
      * @param string $url

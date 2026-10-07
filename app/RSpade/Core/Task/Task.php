@@ -12,239 +12,162 @@ use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
+use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Task - Unified task execution system
- *
- * Handles background task execution:
- * - Internal PHP task calls (internal method)
- * - Future: Queue integration, scheduling, progress tracking
+ * Task - starting background work: dispatch() a run to the worker pools, or run one
+ * internal()ly in this process. Either way the run is a _tasks row (Task_Run_Model) that
+ * outside code reads and acts on, and the task reports into through its Task_Instance.
  */
 class Task
 {
     /**
-     * Execute a task internally from PHP code
+     * Run a task in THIS process and return its settled row.
      *
-     * Used for server-side code to invoke tasks without CLI overhead.
-     * This is useful for calling tasks from other tasks, background jobs, etc.
+     * The run is recorded like any other (origin Inline): its row, its reports, its output.
+     * A task that is #[Exclusive] or #[Debounce] waits for a running instance of its identity
+     * to finish first - an inline run is a run, and the single-instance guarantee holds.
+     *
+     * The return value is the run's row, settled. A task that THROWS is settled FAILED and the
+     * exception is rethrown to the caller; a task that returns a failure code is settled
+     * FAILED and returned (read status_id / return_code).
      *
      * @param string $rsx_service Service name (e.g., 'Seeder_Service')
      * @param string $rsx_task Task/method name (e.g., 'seed_clients')
      * @param array $params Parameters to pass to the task
-     * @param resource|null $console_sink RUNNER-ONLY. A writable stream every log line is
-     *        echoed to, live. rsx:task:run and the #[Command] aliases pass STDERR; every
-     *        other caller passes nothing, so a web request or a task calling another task
-     *        prints nothing to anyone's console.
-     * @return mixed The response from the task method
-     * @throws Exception
+     * @param array{0: resource|null, 1: resource|null}|null $console_streams RUNNER-ONLY.
+     *        [stdout, stderr] the run's output lines are echoed to, live. rsx:task:run and the
+     *        #[Command] aliases pass their own; every other caller passes nothing, so a web
+     *        request or a task calling another task prints to nobody's console.
+     * @return Task_Run_Model
+     * @throws \Throwable whatever the task threw
      */
-    public static function internal($rsx_service, $rsx_task, $params = [], $console_sink = null)
+    public static function internal($rsx_service, $rsx_task, $params = [], ?array $console_streams = null): Task_Run_Model
     {
-        // ONE LOOKUP in the class map, then the #[Task] check through _find_task_class() -
-        // which is the same question, asked once, in one place. Both used to be a linear
-        // scan of every indexed file, per dispatch.
-        $service_class = static::_find_task_class($rsx_service, $rsx_task);
+        $service_class = static::resolve_task_class($rsx_service, $rsx_task);
+        $params_hash = Task_Concurrency::params_hash($params);
 
-        // Check if class exists
-        if (!class_exists($service_class)) {
-            throw new Exception("Service class does not exist: {$service_class}");
+        // An inline run of a single-instance task takes the identity's run lock like a
+        // worker would, waiting for a running instance to finish.
+        $run_lock = Task_Concurrency::is_managed($service_class, $rsx_task)
+            ? Task_Concurrency::acquire_run_lock($service_class, $rsx_task, $params_hash)
+            : null;
+
+        $id = Task_Runner::insert_row($service_class, $rsx_task, $params, Task_Run_Model::ORIGIN_INLINE, Task_Runner::running_fields());
+        Task_Notify::lifecycle($id);
+
+        // A fatal error ends this process without returning here; the run must not be left
+        // RUNNING behind it.
+        register_shutdown_function([Task_Runner::class, 'settle_abandoned_inline'], $id);
+
+        $instance = Task_Instance::find($id);
+        if ($console_streams !== null) {
+            $instance->set_console_streams($console_streams[0] ?? null, $console_streams[1] ?? null);
         }
-
-        // Create task instance for immediate execution
-        $task_instance = new Task_Instance(
-            $service_class,
-            $rsx_task,
-            $params,
-            'default',
-            true  // immediate execution
-        );
-
-        if ($console_sink !== null) {
-            $task_instance->set_console_sink($console_sink);
-        }
-
-        // Mark as started
-        $task_instance->mark_started();
 
         // One task is one unit of work for revision history - the in-process twin of the
-        // reset Task_Worker_Command performs per task. The caller's unit is handed back in
-        // the finally below, exactly as Ajax::execute() does for a nested call: a web
-        // request that runs a task in-process keeps filing its own later writes under its
-        // own transaction, not under the task's.
-        $previous_revision_state = \App\RSpade\Core\Revisions\Revision::_snapshot_request_state();
-        \App\RSpade\Core\Revisions\Revision::_reset_request_state('task', $service_class . '::' . $rsx_task);
+        // reset a worker performs per task. The caller's unit is handed back in the finally
+        // below: a web request that runs a task in-process keeps filing its own later writes
+        // under its own transaction, not under the task's.
+        $previous_revision_state = Revision::_snapshot_request_state();
+        Revision::_reset_request_state('task', $service_class . '::' . $rsx_task);
 
         try {
-            // Call pre_task() if exists
-            if (method_exists($service_class, 'pre_task')) {
-                $pre_result = $service_class::pre_task($task_instance, $params);
-                if ($pre_result !== null) {
-                    // pre_task returned something, use that as response
-                    $task_instance->mark_completed($pre_result);
-                    return $pre_result;
-                }
-            }
-
-            // Call the actual task method
-            $response = $service_class::$rsx_task($task_instance, $params);
-
-            // Mark as completed
-            $task_instance->mark_completed($response);
-
-            // Filter response through JSON encode/decode to remove PHP objects
-            // (similar to Ajax behavior)
-            $filtered_response = json_decode(json_encode($response), true);
-
-            return $filtered_response;
-        } catch (Exception $e) {
-            // Mark as failed
-            $task_instance->mark_failed($e->getMessage());
-            throw $e;
+            $outcome = Task_Runner::execute($instance, false);
+            Task_Runner::settle($instance, $outcome, $run_lock);
         } finally {
-            \App\RSpade\Core\Revisions\Revision::_restore_request_state($previous_revision_state);
+            Revision::_restore_request_state($previous_revision_state);
         }
+
+        if ($outcome->throwable !== null) {
+            throw $outcome->throwable;
+        }
+
+        return Task_Run_Model::find($id);
     }
 
     /**
-     * Format task response for CLI output
-     * Wraps the response in a consistent format
+     * Dispatch a task: enqueue a run and start it promptly. Returns the run's id - the row to
+     * watch (Task_Run_Model::find($id)).
      *
-     * @param mixed $response Task return value
-     * @return array Formatted response
-     */
-    public static function format_task_response($response): array
-    {
-        return [
-            'success' => true,
-            'result' => $response,
-        ];
-    }
-
-    /**
-     * Dispatch a task: enqueue it and run it promptly.
+     * The row is written PENDING and, when the run is due now, a detached worker is spawned
+     * if a pool has room (on_demand first, then scheduled - the scheduled pool takes on-demand
+     * work first). The ONLY thing that defers a run is a future 'scheduled_for': it waits and
+     * is picked up by the cron tick (or a later spawn) once due. A process that turned
+     * spawning off - and every test, unless it opted in - enqueues only; see spawn_workers().
      *
-     * Inserts a pending _tasks row and, when the task is due now and the worker pool has
-     * room, immediately spawns a detached worker so it runs within ~a second (spawn_worker():
-     * the pool rsx-lockd counts is read BEFORE anything is started, so a full pool starts
-     * nothing). The ONLY thing that defers a run is a future
-     * 'scheduled_for': such a one-shot waits and is picked up by the cron tick (or a later
-     * spawn) once it comes due. A process that turned spawning off - and every test, unless
-     * it opted in - enqueues only; see spawn_workers().
-     *
-     * For #[Exclusive]/#[Debounce] tasks the enqueue is coalescing (at most one running +
-     * one pending per identity - see Task_Concurrency); unmanaged tasks get their own row.
-     * The result is pollable via status().
+     * A task that is #[Exclusive] or #[Debounce] is coalesced: at most one run of its identity
+     * is ever pending (Task_Concurrency), and the id returned is that pending run's, whether it
+     * already existed or was just created.
      *
      * @param string $rsx_service Service name (basename, e.g. 'Seeder_Service')
      * @param string $rsx_task    Static task method (e.g. 'seed_clients')
      * @param array  $params      Parameters to pass to the task
      * @param array  $options     Optional:
-     *   - 'queue'         => Queue label (default: 'default')
-     *   - 'scheduled_for' => Earliest run time (default: now). A future value defers the run
-     *                        (unmanaged tasks only; managed tasks time themselves).
+     *   - 'scheduled_for' => Earliest run time (default: now). A future value defers the run.
+     *                        Refused (throws) for an #[Exclusive] / #[Debounce] task, which
+     *                        times its own runs.
      *   - 'timeout'       => Maximum execution time in seconds (default: from config)
-     * @return int|null The enqueued (or coalesced-onto) task id.
-     * @throws Exception
+     * @return int The run's id (the existing pending run's, when coalesced).
      */
-    public static function dispatch(string $rsx_service, string $rsx_task, array $params = [], array $options = []): ?int
+    public static function dispatch(string $rsx_service, string $rsx_task, array $params = [], array $options = []): int
     {
-        $service_class = static::_find_task_class($rsx_service, $rsx_task);
+        $unknown = array_diff(array_keys($options), ['scheduled_for', 'timeout']);
+        if ($unknown !== []) {
+            throw new Exception('Task::dispatch() options are scheduled_for and timeout; unknown: ' . implode(', ', $unknown));
+        }
 
-        $queue = $options['queue'] ?? 'default';
-        $scheduled_for = $options['scheduled_for'] ?? now();
+        $service_class = static::resolve_task_class($rsx_service, $rsx_task);
         $managed = Task_Concurrency::is_managed($service_class, $rsx_task);
 
+        if ($managed && isset($options['scheduled_for'])) {
+            throw new Exception("Task::dispatch(): {$rsx_service}::{$rsx_task} is #[Exclusive] or #[Debounce], which times its own runs; scheduled_for cannot be given.");
+        }
+
+        $fields = [];
+        if (array_key_exists('timeout', $options)) {
+            $fields['timeout'] = $options['timeout'];
+        }
+
+        $scheduled_for = null;
         if ($managed) {
-            // Coalescing enqueue: at most one pending run per identity. enqueue_coalesced()
-            // returns the new-or-existing pending id, or null only if a concurrent enqueuer
-            // held the lock - in that race the pending row it is creating is the answer.
-            $id = Task_Concurrency::enqueue_coalesced($service_class, $rsx_task, $params, $queue)
-                ?? Task_Concurrency::pending_row_id($service_class, $rsx_task, $queue);
+            $id = Task_Concurrency::enqueue_coalesced(
+                $service_class,
+                $rsx_task,
+                Task_Concurrency::params_hash($params),
+                function (string $coalesced_for) use ($service_class, $rsx_task, $params, $fields) {
+                    $id = Task_Runner::insert_row($service_class, $rsx_task, $params, Task_Run_Model::ORIGIN_DISPATCHED, $fields + ['scheduled_for' => $coalesced_for]);
+                    Task_Notify::lifecycle($id);
+
+                    return $id;
+                }
+            );
         } else {
-            $id = DB::table('_tasks')->insertGetId([
-                'class' => $service_class,
-                'method' => $rsx_task,
-                'queue' => $queue,
-                'status' => Task_Status::PENDING,
-                'params' => json_encode($params),
-                'scheduled_for' => $scheduled_for,
-                'timeout' => $options['timeout'] ?? config('rsx.tasks.default_timeout'),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+            if (isset($options['scheduled_for'])) {
+                $scheduled_for = \Illuminate\Support\Carbon::parse($options['scheduled_for']);
+                $fields['scheduled_for'] = $scheduled_for->format('Y-m-d H:i:s.v');
+            }
+            $id = Task_Runner::insert_row($service_class, $rsx_task, $params, Task_Run_Model::ORIGIN_DISPATCHED, $fields);
+            Task_Notify::lifecycle($id);
         }
 
         // Run promptly. Managed tasks always spawn now (the coalesced row governs their
         // debounce timing); an unmanaged task with a future scheduled_for is deferred to the
-        // cron tick. At the cap nothing is spawned: a busy worker reaches this row when it
-        // finishes its current one, and the cron tick covers the rest.
-        if ($managed || !\Illuminate\Support\Carbon::parse($scheduled_for)->isFuture()) {
-            static::spawn_worker();
+        // cron tick. With both pools full nothing is spawned: a busy worker reaches this row
+        // when it finishes its current one, and the cron tick covers the rest.
+        if ($managed || $scheduled_for === null || !$scheduled_for->isFuture()) {
+            static::spawn_worker(Task_Pool::ON_DEMAND) || static::spawn_worker(Task_Pool::SCHEDULED);
         }
 
         return $id;
-    }
-
-    /**
-     * Get the status of a task
-     *
-     * Returns task information including status, logs, result, and error.
-     *
-     * @param int $task_id Task ID
-     * @return array|null Task status data or null if not found
-     */
-    public static function status(int $task_id): ?array
-    {
-        $row = DB::table('_tasks')->where('id', $task_id)->first();
-
-        if (!$row) {
-            return null;
-        }
-
-        return [
-            'id' => $row->id,
-            'class' => $row->class,
-            'method' => $row->method,
-            'queue' => $row->queue,
-            'status' => $row->status,
-            'params' => json_decode($row->params, true),
-            'result' => json_decode($row->result, true),
-            'logs' => $row->logs ? explode("\n", $row->logs) : [],
-            'error' => $row->error,
-            'scheduled_for' => $row->scheduled_for,
-            'stop_requested' => (bool) $row->stop_requested,
-            'started_at' => $row->started_at,
-            'completed_at' => $row->completed_at,
-            'created_at' => $row->created_at,
-            'updated_at' => $row->updated_at,
-        ];
-    }
-
-    /**
-     * Ask a pending or running task to stop.
-     *
-     * Sets the row's stop_requested flag and nothing else: the task is NOT interrupted. It
-     * stops only if its own code checks Task_Instance::is_stop_requested() and ends its work
-     * when the answer is true; a task that never checks runs to completion. A pending task
-     * sees the request from its first check. On a recurring task's tracker row the request
-     * applies to the run in progress (or the next one) and is cleared when that run ends.
-     *
-     * @param int $task_id
-     * @return bool True when a pending or running row was flagged; false when the task does
-     *              not exist or has already finished
-     */
-    public static function request_stop(int $task_id): bool
-    {
-        return DB::table('_tasks')
-            ->where('id', $task_id)
-            ->whereIn('status', [Task_Status::PENDING, Task_Status::RUNNING])
-            ->update(['stop_requested' => 1, 'updated_at' => now()]) > 0;
     }
 
     /**
@@ -284,7 +207,6 @@ class Task
                     'class' => $fqcn,
                     'method' => $row['member'],
                     'cron_expression' => $cron_expression,
-                    'queue' => $attr_instance[1] ?? 'scheduled',
                 ];
             }
         }
@@ -301,11 +223,10 @@ class Task
     private static ?bool $spawn_workers = null;
 
     /**
-     * Pids of the workers THIS process spawned, pruned to the ones still running at every
-     * spawn_worker() call (is_worker_process()). Never holds more than
-     * rsx.tasks.global_max_workers entries.
+     * Pids of the workers THIS process spawned, per pool, pruned to the ones still running at
+     * every spawn_worker() call (is_worker_process()). Never holds more than a pool's cap.
      *
-     * @var int[]
+     * @var array<string, int[]>
      */
     private static array $spawned_worker_pids = [];
 
@@ -316,8 +237,8 @@ class Task
      * worker; the cron tick (rsx:task:process, every minute) spawns the workers that drain the
      * queue. This is the sanctioned switch for a long-running script that writes many rows:
      * every model save, mail send or upload may dispatch a task, and each dispatch that finds
-     * room in the pool starts a whole PHP process. Turning spawning off leaves the work to the
-     * pool's own schedule and keeps the script's CPU for the script.
+     * room in a pool starts a whole PHP process. Turning spawning off leaves the work to the
+     * pools' own schedule and keeps the script's CPU for the script.
      *
      * It is also the test-suite behaviour. Under rsx:test the default is OFF: a detached worker
      * is a whole PHP boot racing the test that dispatched it, so a test that asserts on queued
@@ -349,36 +270,36 @@ class Task
     }
 
     /**
-     * Spawn a detached background worker (fire-and-forget) - if, and only if, the pool has
-     * room for it.
+     * Spawn a detached worker for $pool (fire-and-forget) - if, and only if, the pool has
+     * room for it. A task pool (on_demand, scheduled) gets an rsx:task:worker, the kill pool an
+     * rsx:task:killer.
      *
      * Three refusals come before the spawn, cheapest first:
      *
      *   0. Maintenance mode (Framework_Maintenance::is_active()): nothing is started while the
-     *      window is up - the worker command itself is refused there. The row stays PENDING,
+     *      window is up - the worker command itself is refused there. The work stays queued,
      *      and the first rsx:task:process tick after the window closes starts its worker.
-     *   1. The workers THIS process spawned that are still running (is_worker_process(),
-     *      /proc, no shared state). This is what caps a script that dispatches on every
-     *      write: once its own spawns fill the cap, every further dispatch returns here,
-     *      with no daemon round trip, until one of them exits.
-     *   2. The pool itself, counted by rsx-lockd (Task_Pool): under the pool lock, the
-     *      members OTHER than this process (count()) plus this process when it is a member
-     *      itself - a worker whose task dispatches is one of the workers. At the cap,
-     *      nothing is started.
+     *   1. The workers THIS process spawned into the pool that are still running
+     *      (is_worker_process(), /proc, no shared state). This is what caps a script that
+     *      dispatches on every write: once its own spawns fill the cap, every further
+     *      dispatch returns here, with no daemon round trip, until one of them exits.
+     *   2. The pool itself, counted by rsx-lockd (Task_Pool): under the pool lock, the members
+     *      OTHER than this process (count()) plus this process when it is a member itself - a
+     *      worker whose task dispatches is one of the workers. At the cap, nothing is started.
      *
      * The count is read and the lock released BEFORE the spawn: starting a process waits on
-     * a shell handshake, and nothing but pool ops and _tasks rows may run under the pool
-     * lock (Task_Pool, THE RULE). So concurrent spawners can each see room and each start a
-     * worker; the worker ADMITS ITSELF under the lock (Task_Worker_Command) and one that
-     * finds the pool full exits at once. The cap is enforced there, never here.
+     * a shell handshake, and nothing but pool ops and task rows may run under a pool lock
+     * (Task_Pool, THE RULE). So concurrent spawners can each see room and each start a
+     * worker; the worker ADMITS ITSELF under the lock and one that finds the pool full exits
+     * at once. The cap is enforced there, never here.
      *
      * A lost or unreachable daemon THROWS: the pool is the admission count, and rsx-lockd is
-     * a hard framework dependency. Workers are generic - one pool, no queue routing.
+     * a hard framework dependency.
      *
      * @return bool True when a worker was spawned; false when the pool is full, maintenance
      *              mode is up, or this process does not spawn workers (spawn_workers()).
      */
-    public static function spawn_worker(): bool
+    public static function spawn_worker(string $pool): bool
     {
         if (!self::spawning_workers()) {
             return false;
@@ -388,31 +309,31 @@ class Task
             return false;
         }
 
-        $cap = Task_Pool::max_workers();
+        $cap = Task_Pool::max_workers($pool);
 
-        self::$spawned_worker_pids = array_values(array_filter(
-            self::$spawned_worker_pids,
+        self::$spawned_worker_pids[$pool] = array_values(array_filter(
+            self::$spawned_worker_pids[$pool] ?? [],
             [self::class, 'is_worker_process']
         ));
-        if (count(self::$spawned_worker_pids) >= $cap) {
+        if (count(self::$spawned_worker_pids[$pool]) >= $cap) {
             return false;
         }
 
-        // Taking the lock while holding it would park this process behind itself forever.
-        // Only a worker's claim/settle section holds it, and nothing there dispatches.
+        // Taking a pool lock while holding one would park this process behind itself.
+        // Only a worker's claim/settle section holds one, and nothing there dispatches.
         if (Task_Pool::holds_lock()) {
-            shouldnt_happen('Task::spawn_worker() called while this process holds the task pool lock');
+            shouldnt_happen('Task::spawn_worker() called while this process holds a task pool lock');
         }
 
         // THE RULE: under the pool lock, pool ops only.
-        Task_Pool::lock();
+        Task_Pool::lock($pool);
         try {
-            $members = Task_Pool::count() + (Task_Pool::wid() !== null ? 1 : 0);
+            $members = Task_Pool::count($pool) + (Task_Pool::member_pool() === $pool ? 1 : 0);
         } finally {
             // A lost connection already released the lock at the daemon (and holds_lock()
             // says so); unlocking then would only bury the real failure under a refusal.
-            if (Task_Pool::holds_lock()) {
-                Task_Pool::unlock();
+            if (Task_Pool::holds_lock($pool)) {
+                Task_Pool::unlock($pool);
             }
         }
 
@@ -424,24 +345,26 @@ class Task
         // lock group. A worker that ran concurrently while holding a lock this process
         // also holds would break the exclusion both of them think they have - which is
         // why propagation is opt-in and this caller does not opt in.
-        $pid = Rsx_Artisan::dispatch_detached('rsx:task:worker');
+        $pid = $pool === Task_Pool::KILL
+            ? Rsx_Artisan::dispatch_detached('rsx:task:killer')
+            : Rsx_Artisan::dispatch_detached('rsx:task:worker', ['--pool=' . $pool]);
 
         if ($pid === null) {
             return false;
         }
 
-        self::$spawned_worker_pids[] = $pid;
+        self::$spawned_worker_pids[$pool][] = $pid;
 
         return true;
     }
 
     /**
-     * Is this pid a running task worker of THIS project? Read from /proc/<pid>/cmdline, so it
-     * needs no shared state at all.
+     * Is this pid a running task or kill worker of THIS project? Read from /proc/<pid>/cmdline,
+     * so it needs no shared state at all.
      *
      * A worker is a process whose command line names both this project's artisan path and
-     * the rsx:task:worker command - the command line Rsx_Artisan::dispatch_detached() builds.
-     * The match is on the command-line TEXT, not on exact argv tokens, so a worker is
+     * rsx:task:worker or rsx:task:killer - the command line Rsx_Artisan::dispatch_detached()
+     * builds. The match is on the command-line TEXT, not on exact argv tokens, so a worker is
      * recognised from the moment it is forked: until its exec the child is a copy of the
      * spawning bash, whose single `-c` argument carries that same text. And the command line,
      * rather than bare pid existence, is what makes the answer safe to act on: a pid the
@@ -463,18 +386,20 @@ class Task
             return false;
         }
 
-        return str_contains($cmdline, 'rsx:task:worker') && str_contains($cmdline, base_path('artisan'));
+        return (str_contains($cmdline, 'rsx:task:worker') || str_contains($cmdline, 'rsx:task:killer'))
+            && str_contains($cmdline, base_path('artisan'));
     }
 
     /**
-     * Resolve a service basename to its FQCN and validate it is a #[Task] method.
+     * Resolve a service basename to its FQCN and validate that $rsx_task is a #[Task] method of
+     * it. Throws, naming what is wrong, when it is not.
      *
      * @param string $rsx_service
      * @param string $rsx_task
      * @return string Fully-qualified service class
      * @throws Exception
      */
-    private static function _find_task_class(string $rsx_service, string $rsx_task): string
+    public static function resolve_task_class(string $rsx_service, string $rsx_task): string
     {
         $record = Manifest::php_class_metadata($rsx_service);
         $service_class = $record['fqcn'] ?? null;

@@ -537,8 +537,10 @@ THE DRAIN AND THE FAILURE POLICY
                                           with the reason recorded. Read as an outage, one
                                           poisoned message would stop the queue forever.
 
-    The task returns ['sent', 'server_errors', 'failed', 'suppressed', 'reclaimed',
-    'stale'].
+    The task records its counts as its run's state report ($task->state(): sent,
+    server_errors, failed, suppressed, reclaimed, stale) and writes a stdout line per
+    message delivered, blocked or suppressed and a stderr line per failure - all visible
+    on the run in /_sys/tasks.
 
 THE STALE-MESSAGE WINDOW
 

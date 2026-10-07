@@ -21,24 +21,27 @@ use App\RSpade\Core\Task\Task_Instance;
  * A build that is not a test run does not index it at all, which is the point: a fixture
  * task must not exist on a served site.
  *
- * The two #[Command] attributes give the tasks/cli tests a pair of REAL registered artisan
- * aliases to drive - one that returns a value and one that throws - without touching a
- * database or a template feature. They exist only in the monorepo: bin/publish ships no
- * framework tests, so no release registers rsx_test:*.
+ * The #[Command] attributes give the tasks/cli tests REAL registered artisan aliases to
+ * drive - one that writes to both streams, one that throws, one that returns a chosen exit
+ * code - without touching a template feature. They exist only in the monorepo: bin/publish
+ * ships no framework tests, so no release registers rsx_test:*.
  */
 class Test_Echo_Service extends Rsx_Service_Abstract
 {
     /**
-     * A simple task that echoes its params back as the return value.
-     * Safe: pure data, no DB writes, no side effects.
+     * Writes its params to stdout as JSON ({"echo": params}), narrates on stderr, and reports
+     * the same value as its state.
      */
     #[Task('Echo params back (test-only)')]
     #[Command('rsx_test:echo', 'Echo params back (framework test fixture)')]
-    public static function echo_params(Task_Instance $task, array $params = []): array
+    public static function echo_params(Task_Instance $task, array $params = [])
     {
-        $task->info('echo_params started');
-        $task->info('received ' . count($params) . ' param(s)');
-        return ['echo' => $params];
+        $task->stderr('echo_params started');
+        $task->stderr('received ' . count($params) . ' param(s)');
+        $task->stdout(json_encode(['echo' => $params], JSON_UNESCAPED_SLASHES));
+        $task->state(['echo' => $params]);
+
+        return null;
     }
 
     /**
@@ -47,9 +50,19 @@ class Test_Echo_Service extends Rsx_Service_Abstract
      */
     #[Task('Always throw an exception (test-only)')]
     #[Command('rsx_test:fail', 'Always throw (framework test fixture)')]
-    public static function always_fail(Task_Instance $task, array $params = []): array
+    public static function always_fail(Task_Instance $task, array $params = [])
     {
-        $task->info('about to throw');
+        $task->stderr('about to throw');
         throw new \Exception('deliberate test failure');
+    }
+
+    /**
+     * Returns the integer --code it was given: the exit code a console runner exits with.
+     */
+    #[Task('Return a chosen exit code (test-only)')]
+    #[Command('rsx_test:exit', 'Return the --code given (framework test fixture)')]
+    public static function exit_with(Task_Instance $task, array $params = [])
+    {
+        return (int) ($params['code'] ?? 0);
     }
 }

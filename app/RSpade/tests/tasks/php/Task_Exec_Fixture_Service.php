@@ -8,23 +8,24 @@
 namespace App\RSpade\Tests\Tasks\Php;
 
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
-use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
+use App\RSpade\Core\Task\Task_Run_Model;
 
 /**
- * Test-only service used by Task_Worker_Execution_Test to observe the WORKER's
- * execution behavior (claim priority, cron recycle, completion).
+ * Test-only service the tasks/ tests run through workers, Task::internal() and the runner.
  *
- * No #[Schedule] attribute - these tasks are never auto-run by the cron
- * processor. The worker runs in the SAME process as the test, so the static
- * $run_order array records the real execution order across the worker's task
- * calls and is readable by the test afterward (DATETIME started_at has no
- * sub-second resolution, so ordering can only be captured this way).
+ * No #[Schedule] attribute - the cron tick never registers these; a test that needs a schedule
+ * writes its own _task_schedules row pointed at a method here. The worker runs in the SAME
+ * process as the test, so the static $run_order array records the real execution order
+ * across the worker's runs and is readable by the test afterward.
+ *
+ * Every method follows the return contract: null for success, an integer or false for a
+ * failure code, and any data it produces reported through the run ($task->state()).
  */
 class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
 {
     /**
-     * Records the marker of each task run, in execution order.
+     * Records the marker of each run, in execution order.
      * @var array
      */
     public static array $run_order = [];
@@ -33,14 +34,40 @@ class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
     public static function marker_a(Task_Instance $task, array $params = [])
     {
         self::$run_order[] = 'A';
-        return ['marker' => 'A'];
+        $task->state(['marker' => 'A']);
+
+        return null;
     }
 
     #[Task('exec fixture marker b')]
     public static function marker_b(Task_Instance $task, array $params = [])
     {
         self::$run_order[] = 'B';
-        return ['marker' => 'B'];
+        $task->state(['marker' => 'B']);
+
+        return null;
+    }
+
+    /**
+     * Returns the value named by $params['kind'] - every shape the return contract decides.
+     */
+    #[Task('exec fixture returning a chosen value')]
+    public static function returns_kind(Task_Instance $task, array $params = [])
+    {
+        return match ($params['kind']) {
+            'null' => null,
+            'true' => true,
+            'false' => false,
+            'zero' => 0,
+            'seven' => 7,
+            'negative' => -3,
+            'large' => 300,
+            'array' => ['done' => true],
+            'string' => 'ok',
+            'zero_string' => '0',
+            'float' => 1.5,
+            'object' => new \stdClass(),
+        };
     }
 
     /**
@@ -61,15 +88,17 @@ class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
             $done++;
 
             if ($batch === (int) ($params['request_stop_after'] ?? 0)) {
-                Task::request_stop($task->get_id());
+                Task_Run_Model::find($task->get_id())->request_stop('fixture operator');
             }
         }
 
-        return ['batches_done' => $done];
+        $task->state(['batches_done' => $done]);
+
+        return null;
     }
 
     /**
-     * Always throws an ordinary Exception - the failure path of the terminal writers.
+     * Always throws an ordinary Exception.
      */
     #[Task('exec fixture that always throws')]
     public static function always_throws(Task_Instance $task, array $params = [])
@@ -79,8 +108,7 @@ class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Always throws an \Error (not an Exception) - the widened Throwable catch in the
-     * worker is what records this on the row at all.
+     * Always throws an \Error (not an Exception) - recorded like any other failure.
      */
     #[Task('exec fixture that raises a TypeError')]
     public static function raises_type_error(Task_Instance $task, array $params = [])
@@ -90,20 +118,20 @@ class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Prints between log calls, opens a buffer it never closes, and ends on a partial line -
-     * every shape the worker's stdout capture records.
+     * Writes between echoes, opens a buffer it never closes, and ends on a partial line -
+     * every shape the runner's stdout capture records.
      */
     #[Task('exec fixture that prints')]
     public static function prints_output(Task_Instance $task, array $params = [])
     {
-        $task->info('before the echo');
+        $task->stdout('before the echo');
         echo "first printed line\nsecond printed line\n";
-        $task->info('between');
+        $task->stderr('between');
         ob_start();
         echo "from a buffer left open\n";
         print 'trailing partial';
 
-        return ['printed' => true];
+        return null;
     }
 
     /**

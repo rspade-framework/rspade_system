@@ -1,0 +1,16 @@
+<%--
+_Sys_Task_Actions - the lifecycle buttons that apply to a run now: graceful stop, force stop
+and force kill for a running run; graceful stop and cancel for a queued one; run again for a
+finished one. Each opens _Sys_Task_Action_Form's confirmation.
+
+$task - the run as _Sys_Tasks_Controller presents it ({id, name, actions}) (required)
+$size - 'sm' (default) for a grid row, 'md' for the run detail
+
+Fires 'acted' {action, result} after an action was performed. A host with one per row binds
+them all with _Sys_Task_Actions.on_acted_within($container, callback) after each repaint.
+--%>
+<Define:_Sys_Task_Actions tag="span">
+    <% for (const _action of this.args.task.actions) { %>
+        <button type="button" class="btn <%= this.args.size === 'md' ? '' : 'btn-sm' %> btn-<%= _Sys_Task_Actions.BUTTON_TONES[_action] %>" data-task-action="<%= _action %>"><%= _Sys_Task_Action_Form.LABELS[_action] %></button>
+    <% } %>
+</Define:_Sys_Task_Actions>

@@ -84,7 +84,7 @@ class Mail_Delivery_Mode_Test extends Rsx_Test_Abstract
         Rsx_Mail_Transport::$banner_for_tests = $banner;
 
         try {
-            return Task::internal('Mail_Queue_Service', 'send_pending_queue');
+            return Task::internal('Mail_Queue_Service', 'send_pending_queue')->state();
         } finally {
             Rsx_Mail_Transport::$override_for_tests = null;
             Rsx_Mail_Transport::$banner_for_tests = null;

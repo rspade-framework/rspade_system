@@ -1,52 +1,67 @@
 <?php
+/**
+ * CODING CONVENTION:
+ * This file follows the coding convention where variable_names and function_names
+ * use snake_case (underscore_wherever_possible).
+ */
 
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Task\Task_Status;
-use App\RSpade\Core\Task\Task_Killer;
+use App\RSpade\Core\Task\Task_Kill_Request_Model;
+use App\RSpade\Core\Task\Task_Kill_Worker;
+use App\RSpade\Core\Task\Task_Pool;
+use App\RSpade\Core\Task\Task_Run_Model;
 
 /**
- * Force-kill ALL running tasks: SIGTERM, 5s grace, SIGKILL each. Used by rsx:framework:pull to
- * quiesce background work before an update. An --explanation is required and recorded on every
- * killed task. On-demand tasks go KILLED; recurring cron tracker rows recycle to PENDING so their
- * schedule survives.
+ * Force-kill EVERY running task run, synchronously. Used by rsx:maintenance:enable (and so by
+ * rsx:framework:pull) to quiesce background work before the window: it returns only once this
+ * host's runs are killed and settled KILLED.
+ *
+ * Each run gets a force-kill request; this host's are carried out right here, in this process
+ * (a kill worker could not be spawned - maintenance mode refuses every spawn). A run on
+ * another host keeps its request for that host's kill workers.
  */
 class Tasks_Kill_All_Command extends Command
 {
     protected $signature = 'rsx:tasks:kill-all
-        {--explanation= : Required human reason recorded on every killed task}';
+        {--explanation= : Required human reason recorded on every killed run}';
 
-    protected $description = 'Force-kill ALL running tasks (SIGTERM, 5s grace, SIGKILL); cron trackers recycle to pending';
+    protected $description = "Force-kill every running task run (this host's at once, synchronously)";
 
     public function handle()
     {
         $explanation = trim((string) $this->option('explanation'));
         if ($explanation === '') {
-            $this->error('An --explanation="..." is required to kill tasks.');
+            $this->error('[ERROR] An --explanation="..." is required to kill tasks.');
+
             return 1;
         }
 
-        $rows = DB::table('_tasks')->where('status', Task_Status::RUNNING)->get();
-        if ($rows->isEmpty()) {
+        $runs = Task_Run_Model::where('status_id', Task_Run_Model::STATUS_RUNNING)->orderBy('id')->get();
+        if ($runs->isEmpty()) {
             $this->info('No running tasks to kill.');
+
             return 0;
         }
 
-        $killed = 0;
-        $recycled = 0;
-        foreach ($rows as $row) {
-            $outcome = Task_Killer::kill($row, $explanation);
-            if ($outcome === 'recycled') {
-                $recycled++;
-            } else {
-                $killed++;
+        $here = Task_Pool::host();
+        foreach ($runs as $run) {
+            $request = Task_Kill_Worker::request($run, Task_Kill_Request_Model::MODE_FORCE_KILL, 0, $explanation, 'the command line');
+            if ($request === null) {
+                continue;
             }
-            $this->line("  {$row->id} {$row->class}::{$row->method} -> {$outcome}");
+
+            if ($request->host !== $here) {
+                $this->line("  {$run->id} {$run->task_name()} -> queued for host {$request->host}");
+                continue;
+            }
+
+            if (Task_Kill_Worker::claim_for_this_process((int) $request->id)) {
+                $this->line('  ' . Task_Kill_Worker::carry_out((int) $request->id));
+            }
         }
 
-        $this->info("Killed {$killed} task(s)" . ($recycled ? ", recycled {$recycled} cron tracker(s)" : '') . '.');
         return 0;
     }
 }

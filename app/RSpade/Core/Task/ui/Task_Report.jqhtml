@@ -1,0 +1,106 @@
+<%--
+Task_Report - one report of a task run, live.
+
+$task_id  (required) the run (_tasks id)
+$kind     (required) which report:
+            status_text      the last status line
+            progress         the percentage
+            progress_count   "3 of 257"
+            progress_text    whichever of the two the run reports, as one line (for a grid cell)
+            eta              a countdown to the reported completion time
+            heartbeat        when the run last reported it was alive
+            state_json       the state object, as a tree with every node open
+            state_list       the reported list, as a stack of blocks ("No items are queued",
+                             centred, once the list has emptied)
+            messages         the messages the run emitted, oldest first
+            summary          the completion summary
+            return_code      the return code, once the run has finished
+$bar      progress / progress_count / progress_text only: draw a bar filling behind the
+          centred text
+
+The widget fills the box its host gives it and scrolls inside it, so size it with ordinary
+CSS (style="width: 500px; height: 400px"). It repaints when the run reports (Task_Changed_Topic)
+and shows "(Not reported)" until the run sets the report. Reading needs the run's view gate.
+--%>
+<Define:Task_Report tag="div">
+    <%
+        if (!this.args.task_id) { throw new Error('Task_Report requires $task_id'); }
+        if (!Task_Report.KINDS.includes(this.args.kind)) { throw new Error('Task_Report: unknown $kind "' + this.args.kind + '"'); }
+        const _kind = this.args.kind;
+        const _status = this.data.status;
+        const _value = this.data.value;
+    %>
+    <% if (this.data.error_data) { %>
+        <div class="Task_Report__notice">(Unavailable)</div>
+    <% } else if (!_status) { %>
+        <div class="Task_Report__notice">(Loading...)</div>
+    <% } else if (_kind === 'progress' || _kind === 'progress_count' || _kind === 'progress_text') { %>
+        <%
+            const _percent = Task_Report.percent_of(_status);
+            const _text = _kind === 'progress' ? (_status.progress_percent !== null ? Rsx_Task.format_percent(_status.progress_percent) : '')
+                : (_kind === 'progress_count' ? (_status.progress_count ? _status.progress_count.done + ' of ' + _status.progress_count.total : '')
+                : Rsx_Task.progress_text(_status));
+        %>
+        <% if (_text === '') { %>
+            <div class="Task_Report__notice">(Not reported)</div>
+        <% } else if (this.args.bar) { %>
+            <div class="Task_Report__bar">
+                <div class="Task_Report__bar_fill" style="width: <%= _percent === null ? 0 : _percent %>%"></div>
+                <div class="Task_Report__bar_text"><%= _text %></div>
+            </div>
+        <% } else { %>
+            <span class="Task_Report__inline"><%= _text %></span>
+        <% } %>
+    <% } else if (_kind === 'eta') { %>
+        <% if (!_status.eta_at) { %>
+            <div class="Task_Report__notice">(Not reported)</div>
+        <% } else { %>
+            <span class="Task_Report__inline"><span $sid="countdown"></span> remaining</span>
+        <% } %>
+    <% } else if (_kind === 'heartbeat') { %>
+        <% if (!_status.last_heartbeat_at) { %>
+            <div class="Task_Report__notice">(Not reported)</div>
+        <% } else { %>
+            <span class="Task_Report__inline" title="<%= Rsx_Time.format_datetime(_status.last_heartbeat_at) %>"><%= Rsx_Time.relative(_status.last_heartbeat_at) %></span>
+        <% } %>
+    <% } else if (_kind === 'status_text') { %>
+        <% if (!_status.status_text) { %>
+            <div class="Task_Report__notice">(Not reported)</div>
+        <% } else { %>
+            <div class="Task_Report__text"><%= _status.status_text %></div>
+        <% } %>
+    <% } else if (_kind === 'return_code') { %>
+        <% if (_status.return_code === null) { %>
+            <div class="Task_Report__notice"><%= _status.is_live ? '(Still running)' : '(None)' %></div>
+        <% } else { %>
+            <span class="Task_Report__inline"><%= _status.return_code %> <span class="Task_Report__muted">(<%= _status.return_code === 0 ? 'success' : 'failure' %>)</span></span>
+        <% } %>
+    <% } else if (_value === null || _value === undefined || (Array.isArray(_value) && _kind === 'messages' && _value.length === 0)) { %>
+        <div class="Task_Report__notice">(Not reported)</div>
+    <% } else if (_kind === 'state_json') { %>
+        <div class="Task_Report__scroll Task_Report__tree">
+            <JS_Tree_Debug_Component $data=_value $expand_depth=1000 />
+        </div>
+    <% } else if (_kind === 'state_list' && _value.length === 0) { %>
+        <div class="Task_Report__empty_list">No items are queued</div>
+    <% } else if (_kind === 'state_list') { %>
+        <div class="Task_Report__scroll">
+            <div class="Task_Report__list">
+                <% for (const _item of _value) { %>
+                    <div class="Task_Report__list_item"><%= typeof _item === 'string' ? _item : JSON.stringify(_item) %></div>
+                <% } %>
+            </div>
+        </div>
+    <% } else if (_kind === 'messages') { %>
+        <div class="Task_Report__scroll">
+            <% for (const _message of _value) { %>
+                <div class="Task_Report__message">
+                    <span class="Task_Report__muted"><%= Rsx_Time.format_time(_message.at) %></span>
+                    <span class="Task_Report__message_body"><%= _message.body %></span>
+                </div>
+            <% } %>
+        </div>
+    <% } else { %>
+        <div class="Task_Report__scroll"><div class="Task_Report__text"><%= _value %></div></div>
+    <% } %>
+</Define:Task_Report>

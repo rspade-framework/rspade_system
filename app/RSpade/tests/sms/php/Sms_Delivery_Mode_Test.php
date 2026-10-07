@@ -58,7 +58,7 @@ class Sms_Delivery_Mode_Test extends Rsx_Test_Abstract
         config(['rsx.sms.delivery' => $mode]);
 
         try {
-            return Task::internal('Sms_Queue_Service', 'send_pending_queue');
+            return Task::internal('Sms_Queue_Service', 'send_pending_queue')->state();
         } finally {
             config(['rsx.sms.delivery' => $previous]);
         }

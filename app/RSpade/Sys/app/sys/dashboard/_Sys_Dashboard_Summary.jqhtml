@@ -2,7 +2,7 @@
 _Sys_Dashboard_Summary - the Dashboard's headline numbers, install-wide.
 
 Self-loading (_Sys_Dashboard_Controller.summary). Each tile that has a screen links
-to it: workers to the Tasks screen's Running tab, failed tasks to its history
+to it: workers to the Task Workers screen, failed tasks to the Tasks screen's history
 filtered to failed in the last 24 hours, pending mail to the Email queue filtered
 to pending ({tab: 'email', mail_f_status: 'pending'}), the delivery mode to Email, sites to Sites,
 sign-in identities to Users.
@@ -17,8 +17,8 @@ sign-in identities to Users.
 <% } else { %>
     <%
         const _s = this.data.summary;
-        const _running_url = Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'running'});
-        const _failed_url = Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'history', tasks_f_status: 'failed', tasks_f_since: '24h'});
+        const _running_url = Rsx.Route('_Sys_Task_Workers_Action');
+        const _failed_url = Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'tasks', tasks_f_status: 4, tasks_f_since: '24h'});
         const _email_url = Rsx.Route('_Sys_Email_Action');
         const _pending_mail_url = Rsx.Route('_Sys_Email_Action', {}, {tab: 'email', mail_f_status: 'pending'});
         const _short_key = _s.build_key.substring(0, 12);

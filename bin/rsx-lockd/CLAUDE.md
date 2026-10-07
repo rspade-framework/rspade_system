@@ -145,14 +145,15 @@ anything that can say hello is already trusted to name a group. The charset boun
 ## Worker pools (`lib/pool.js`)
 
 A pool is a named FIFO mutex (the pool lock) plus a set of member connections. The task
-system uses one per application (the pool name is the app's connection scope token) as its
-worker accountant: a worker takes the pool lock, counts the other members, joins if there
-is room, claims a task row, and releases the lock; a crashed worker stops being a member
+system uses three per application - on_demand, scheduled and kill, named
+`tasks:<pool>:<scope>` (the app's connection scope token) - as its worker accountant: a
+worker takes its pool's lock, counts the other members, joins if there is room, claims a
+run (or a kill request) with a guarded write, and releases the lock; a crashed worker stops being a member
 the moment its connection closes. Owner requirements it exists to meet: membership and
 the pool lock are released on disconnect whether or not the worker sent leave/unlock, and
 every pool command is acknowledged so a worker never sends one and quits unanswered.
 
-The worker stores the `(wid, generation)` that `pool.join` answered on the task row it
+The worker stores the `(wid, generation)` that `pool.join` answered on the run it
 claims, and the reaper asks `pool.member_alive` / `pool.members_alive` about it. `known:
 true, alive: false` is proof the worker is gone (its connection closed under this daemon);
 `known: false` means the row predates this daemon, and only the claiming host's own pid
@@ -165,7 +166,7 @@ subprocess count as the worker).
 
 **THE RULE - the reason pool waits are invisible to the deadlock detector.** While holding
 a pool lock, a process runs only pool ops and reads/writes of the rows the pool
-coordinates (the `_tasks` rows). It takes **no other blocking lock** (a non-blocking try
+coordinates (the task tables), and holds no other pool's lock. It takes **no other blocking lock** (a non-blocking try
 is allowed), **waits on no subprocess**, and **makes no outbound call**. A pool-lock
 holder therefore never waits on anything but the database, so no wait-for cycle can pass
 through a pool lock, and there is nothing for the detector to find. Putting pool waits in

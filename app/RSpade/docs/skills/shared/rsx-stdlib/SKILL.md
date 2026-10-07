@@ -18,7 +18,7 @@ Before hand-rolling anything, search first:
 Those two man pages carry the full rosters with exact signatures. The judgment worth repeating here:
 
 - **`escape_html()` vs `sanitize_rich_text_html()` is a security decision, not a style one.** Escape by default; sanitize only content that is SUPPOSED to be markup (WYSIWYG output). Same names, same rule in PHP. `nl2br()` does NOT escape - plain text with line breaks is `nl2br(escape_html($text))`. The sanitizer returns a STRING: markup bound for a declared text column goes through `Type::from_untrusted_encoded()`, never a sanitized string (a string is plain text there).
-- **`debounce(fn, delay)` - always use it, never a hand-rolled timer.** The behavioural gotcha: the delay timer starts AFTER your callback completes, so a slow callback cannot stack up behind itself. Decorator form `@debounce(250)` (with the `/** @decorator */` comment).
+- **`debounce(fn, delay)` - always use it, never a hand-rolled timer.** The behavioural gotcha: the delay timer starts AFTER your callback completes, so a slow callback cannot stack up behind itself. Decorator form `@debounce(250)` (with the `/** @decorator */` comment). **250 ms is the recommended delay for almost everything** - pick another only for a compelling, stated reason.
 - **`clone()` is SHALLOW** and **`empty(0)` is true** - these globals follow PHP semantics, not JavaScript ones.
 - **`hash()` ignores the `$` key by default**, because jqhtml component data carries a jQuery reference that would otherwise hash the DOM. Supplying your own `ignored_keys` REPLACES that default.
 - **`deep_equal(a, b)`** is the right "did this actually change" test before a repaint.

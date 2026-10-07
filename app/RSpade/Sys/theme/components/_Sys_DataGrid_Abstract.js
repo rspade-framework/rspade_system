@@ -12,8 +12,9 @@
  * default that the user cleared is written as '~', because absence already means
  * "use the default".
  *
- * Public API: load_page(page), reload(), set_filter(key, value), get_filter(key),
- * clear_filters(). Every page load fires "grid_loaded" ({total, page, total_pages}).
+ * Public API: load_page(page, options), reload(options), set_filter(key, value),
+ * get_filter(key), clear_filters(). options.dim (default true): false skips dimming the
+ * painted rows while the page loads - a live grid's realtime reload. Every page load fires "grid_loaded" ({total, page, total_pages}).
  */
 class _Sys_DataGrid_Abstract extends Component {
     on_create() {
@@ -153,8 +154,10 @@ class _Sys_DataGrid_Abstract extends Component {
      * Load one page with the current sort, search and filters.
      *
      * @param {number} page
+     * @param {{dim?: boolean}} [options] dim: false keeps the painted rows undimmed while the
+     *        page loads (a live reload, which should read as a direct update)
      */
-    async load_page(page) {
+    async load_page(page, options = {}) {
         this.state.page = Math.max(1, int(page));
 
         const params = {
@@ -176,20 +179,27 @@ class _Sys_DataGrid_Abstract extends Component {
 
         // The previous page stays painted until the next one arrives; the modifier
         // dims it meanwhile, so a slow page reads as loading rather than as stuck.
-        this.$.addClass('_Sys_DataGrid_Abstract--loading');
+        const dim = options.dim !== false;
+        if (dim) {
+            this.$.addClass('_Sys_DataGrid_Abstract--loading');
+        }
 
         try {
             await body.reload();
         } finally {
-            this.$.removeClass('_Sys_DataGrid_Abstract--loading');
+            if (dim) {
+                this.$.removeClass('_Sys_DataGrid_Abstract--loading');
+            }
         }
     }
 
     /**
      * Reload the current page - for a caller that knows the rows changed.
+     *
+     * @param {{dim?: boolean}} [options] as load_page()
      */
-    async reload() {
-        await this.load_page(this.state.page);
+    async reload(options = {}) {
+        await this.load_page(this.state.page, options);
     }
 
     /**

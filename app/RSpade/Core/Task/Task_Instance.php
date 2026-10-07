@@ -1,464 +1,424 @@
 <?php
+/**
+ * CODING CONVENTION:
+ * This file follows the coding convention where variable_names and function_names
+ * use snake_case (underscore_wherever_possible).
+ */
 
 namespace App\RSpade\Core\Task;
 
-use Exception;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Files\File_Disposal_Service;
+use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
-use App\RSpade\Core\Task\Task_Changed_Topic;
-use App\RSpade\Core\Task\Task_Pool;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Attachment_Model;
+use App\RSpade\Core\Task\Task_Notify;
+use App\RSpade\Core\Task\Task_Run_Model;
 
 /**
- * Task_Instance
+ * Task_Instance - the `$task` handle every task method receives: how a running task REPORTS.
  *
- * Represents a single task execution instance with logging, status tracking,
- * and temp directory management. Passed to all task methods for tracking.
+ * Every report is optional; a task uses whichever describe its work:
+ *
+ *   heartbeat()                      "still alive" - stamps last_heartbeat_at
+ *   status($text)                    one line of status, replacing the last (also a stderr line)
+ *   progress($percent)               0-100, two decimals
+ *   progress_count($done, $total)    "3 of 257"
+ *   eta($seconds)                    seconds from now until done (stored as a moment)
+ *   state($array_or_object)          a JSON state object, replacing the last
+ *   state_list($items)               a list (a sync queue, a work list), replacing the last
+ *   message($text)                   a message for whoever is watching (kept, in order)
+ *   stdout($text) / stderr($text)    output lines; echo / print are captured as stdout too
+ *   attach_file() / attach_bytes()   a named file for outside consumers to retrieve
+ *   summary($text)                   the completion summary
+ *
+ * and the run's RETURN VALUE is its return code: null, true or 0 is success; false or any
+ * other integer is failure (Task_Run_Outcome).
+ *
+ * WRITE RATE, NOT A TIMEOUT. A task may report on every item of a long loop, and writing each
+ * report would be a database write and a realtime frame per item. Reports are therefore held
+ * in memory and written together: the first report after a quiet spell is written at once,
+ * and further reports within FLUSH_INTERVAL of the last write wait for the next reporting
+ * call, is_stop_requested(), flush() or the end of the run - whichever comes first. A task
+ * about to go quiet for a long step calls flush() so its watchers see the latest state.
+ * Attachments are written immediately.
+ *
+ * Every run - dispatched, scheduled or inline - has its _tasks row, so every report is
+ * recorded the same way wherever the task runs. A console runner (rsx:task:run, a #[Command])
+ * also hands the instance its own stdout/stderr, and output lines are echoed there live.
  */
 #[Instantiatable]
 class Task_Instance
 {
-    private ?int $id;
+    /** Seconds between two writes of held reports. A write rate; see the class docblock. */
+    const FLUSH_INTERVAL = 0.25;
+
+    /** status_text is a VARCHAR(1000); a longer status is cut to fit. */
+    const STATUS_TEXT_MAX = 1000;
+
+    private int $id;
     private string $class;
     private string $method;
-    private string $queue;
     private array $params;
-    private Task_Status $status;
-    private array $logs = [];
     private ?string $temp_dir = null;
-    private bool $is_immediate;
 
-    /**
-     * A writable stream every log line is echoed to, live, or null.
-     *
-     * Set ONLY by a console RUNNER (rsx:task:run and the #[Command] aliases, which pass
-     * STDERR). Application code calling Task::internal() never sets one, so a web request
-     * or another task prints nothing. This is display only: the in-memory log array and
-     * the queued DB writes are unaffected by its presence.
-     *
-     * @var resource|null
-     */
-    private $console_sink = null;
+    /** @var resource|null The runner's stdout, or null. */
+    private $stdout_sink = null;
 
-    /**
-     * The row's next_run_at when this instance was loaded from the database, or null.
-     *
-     * A non-null value means this row is a recurring #[Schedule] TRACKER, which changes
-     * what a terminal outcome means (see mark_completed/mark_failed). Only find() can
-     * populate it - a directly-constructed instance is immediate mode and never writes
-     * to the database at all.
-     */
-    private ?string $next_run_at = null;
+    /** @var resource|null The runner's stderr, or null. */
+    private $stderr_sink = null;
 
-    /**
-     * Create a new task instance
-     *
-     * @param string $class Fully qualified class name
-     * @param string $method Static method name
-     * @param array $params Task parameters
-     * @param string $queue Queue name
-     * @param bool $is_immediate True for immediate execution, false for database-backed
-     */
-    public function __construct(
-        string $class,
-        string $method,
-        array $params = [],
-        string $queue = 'default',
-        bool $is_immediate = true
-    ) {
+    /** _tasks columns waiting to be written. */
+    private array $pending_row = [];
+
+    /** _task_reports bodies waiting to be written, by kind id. */
+    private array $pending_reports = [];
+
+    /** Output lines waiting to be written: [stream_id, line, at]. */
+    private array $pending_output = [];
+
+    /** Messages waiting to be written: [body, at]. */
+    private array $pending_messages = [];
+
+    /** microtime(true) of the last write; 0 means none yet, so the first report goes at once. */
+    private float $last_flush = 0.0;
+
+    /** The status text last reported, so an unchanged status writes no stderr line. */
+    private ?string $last_status_text = null;
+
+    /** Whether this run's queue report exists (held an item); null until first asked. */
+    private ?bool $state_list_reported = null;
+
+    private function __construct(int $id, string $class, string $method, array $params)
+    {
+        $this->id = $id;
         $this->class = $class;
         $this->method = $method;
         $this->params = $params;
-        $this->queue = $queue;
-        $this->is_immediate = $is_immediate;
-        $this->status = new Task_Status(Task_Status::PENDING);
-        $this->id = null;
     }
 
     /**
-     * Load task instance from database by ID
-     *
-     * @param int $id Task ID
-     * @return self|null
+     * The instance for one run's row.
      */
-    public static function find(int $id): ?self
+    public static function for_row(Task_Run_Model $row): self
     {
-        $row = DB::table('_tasks')->where('id', $id)->first();
-
-        if (!$row) {
-            return null;
-        }
-
-        $instance = new self(
-            $row->class,
-            $row->method,
-            json_decode($row->params, true) ?? [],
-            $row->queue,
-            false
-        );
-
-        $instance->id = $row->id;
-        $instance->status = new Task_Status($row->status);
-        $instance->logs = $row->logs ? explode("\n", $row->logs) : [];
-        $instance->next_run_at = $row->next_run_at;
+        $instance = new self((int) $row->id, (string) $row->class, (string) $row->method, $row->params ?? []);
+        $instance->last_status_text = $row->status_text;
 
         return $instance;
     }
 
     /**
-     * Whether this instance is a recurring #[Schedule] tracker row.
-     *
-     * One tracker row exists per scheduled task and lives forever: the worker advances
-     * its next_run_at BEFORE the run, so the row's only job afterward is to be pending
-     * again in time for the next cadence.
+     * Load the instance for a run by id, or null when the row does not exist.
      */
-    public function is_cron_tracker(): bool
+    public static function find(int $id): ?self
     {
-        return $this->next_run_at !== null;
+        $row = Task_Run_Model::find($id);
+
+        return $row === null ? null : static::for_row($row);
     }
 
     /**
-     * Save task instance to database
+     * RUNNER-ONLY: the console streams output lines are echoed to, live. rsx:task:run and the
+     * #[Command] aliases pass their own stdout and stderr (stderr null under -q); nothing else
+     * sets them, so a task run from a web request or a worker prints to nobody's console.
      *
-     * @return int Task ID
+     * @param resource|null $stdout
+     * @param resource|null $stderr
      */
-    public function save(): int
+    public function set_console_streams($stdout, $stderr): void
     {
-        if ($this->is_immediate) {
-            throw new Exception("Cannot save immediate task to database");
-        }
-
-        $data = [
-            'class' => $this->class,
-            'method' => $this->method,
-            'queue' => $this->queue,
-            'status' => $this->status->value(),
-            'params' => json_encode($this->params),
-            'logs' => implode("\n", $this->logs),
-            'updated_at' => now(),
-        ];
-
-        if ($this->id === null) {
-            $data['created_at'] = now();
-            $this->id = DB::table('_tasks')->insertGetId($data);
-        } else {
-            DB::table('_tasks')->where('id', $this->id)->update($data);
-        }
-
-        return $this->id;
+        $this->stdout_sink = $stdout;
+        $this->stderr_sink = $stderr;
     }
 
-    /**
-     * Update task status in database.
-     *
-     * A raw setter with no knowledge of what the row IS. Settling a run goes through
-     * mark_completed()/mark_failed(), which are the only writers allowed to decide a
-     * terminal status - a terminal status written here onto a cron tracker would stop
-     * that schedule permanently.
-     *
-     * @param Task_Status $status New status
-     */
-    public function update_status(Task_Status $status): void
-    {
-        $this->status = $status;
-
-        if (!$this->is_immediate && $this->id !== null) {
-            DB::table('_tasks')
-                ->where('id', $this->id)
-                ->update(['status' => $status->value(), 'updated_at' => now()]);
-        }
-    }
+    // ------------------------------------------------------------------------------------
+    // Reports
+    // ------------------------------------------------------------------------------------
 
     /**
-     * Mark task as started
-     */
-    public function mark_started(): void
-    {
-        $this->update_status(new Task_Status(Task_Status::RUNNING));
-
-        if (!$this->is_immediate && $this->id !== null) {
-            DB::table('_tasks')
-                ->where('id', $this->id)
-                ->update([
-                    'started_at' => now(),
-                    'worker_pid' => getmypid(),
-                    'worker_host' => Task_Pool::host(),
-                    'updated_at' => now(),
-                ]);
-        }
-    }
-
-    /**
-     * Mark task as completed.
-     *
-     * A ONE-SHOT row goes terminal COMPLETED. Either kind has its failure streak cleared
-     * (consecutive_failures 0, status_reason null) - on a one-shot the streak is the attempts
-     * the reaper saw abandoned before this one succeeded.
-     *
-     * A CRON TRACKER goes straight back to PENDING - it is not "done", it is waiting for
-     * the next cadence its already-advanced next_run_at names. completed_at is still
-     * written, and on a tracker it means LAST SUCCESSFUL RUN (the row itself is never
-     * terminal, so nothing else would record that).
-     *
-     * The row write is a single UPDATE either way: there is no COMPLETED-then-PENDING
-     * window for a SIGKILL to strand the schedule in.
-     *
-     * @param mixed $result Optional result data
-     */
-    public function mark_completed($result = null): void
-    {
-        $is_tracker = $this->is_cron_tracker();
-
-        // Assigned rather than routed through update_status(), which would issue its own
-        // status UPDATE ahead of the one below - the settle is deliberately a single write.
-        $this->status = new Task_Status($is_tracker ? Task_Status::PENDING : Task_Status::COMPLETED);
-
-        if (!$this->is_immediate && $this->id !== null) {
-            $update = [
-                'status' => $this->status->value(),
-                'completed_at' => now(),
-                'updated_at' => now(),
-            ];
-
-            if ($result !== null) {
-                $update['result'] = json_encode($result);
-            }
-
-            // A success ends the streak on EVERY row: a tracker counts failed runs, and a
-            // one-shot retried after an abandonment counts its abandoned attempts. The recycle
-            // or retry wrote status_reason so the listing could say what went wrong; a success
-            // must clear it, or the row reads as failing beside a zero failure count.
-            $update['consecutive_failures'] = 0;
-            $update['status_reason'] = null;
-
-            if ($is_tracker) {
-                $update['worker_pid'] = null;
-                $update['worker_id'] = null;
-                $update['worker_generation'] = null;
-                $update['worker_host'] = null;
-                // A stop request applied to the run that just ended, not to the schedule.
-                $update['stop_requested'] = 0;
-            }
-
-            DB::table('_tasks')->where('id', $this->id)->update($update);
-        }
-
-        $this->cleanup_temp_dir();
-    }
-
-    /**
-     * Mark task as failed.
-     *
-     * INVARIANT: a cron tracker is never permanently terminal. A #[Schedule] whose task
-     * throws retries at its next cadence, exactly like cron itself - one bad night does
-     * not silently stop the schedule. (This is the same rule the dead-worker reaper states
-     * as "failing them would silently kill the cron"; it now holds on EVERY path.) So a
-     * tracker is recycled to PENDING here, with the failure recorded on the row - error,
-     * a status_reason naming the recycle, last_error_at, and consecutive_failures+1 - and
-     * NO completed_at, which on a tracker means "last successful run".
-     *
-     * A ONE-SHOT row goes terminal FAILED with completed_at, as always.
-     *
-     * The row write is ONE atomic UPDATE: the row never passes through FAILED on its way
-     * back to PENDING, so a worker SIGKILLed mid-settle cannot strand a schedule in a
-     * terminal state that nothing would ever revive.
-     *
-     * @param string $error Error message
-     */
-    public function mark_failed(string $error): void
-    {
-        $is_tracker = $this->is_cron_tracker();
-
-        // Assigned rather than routed through update_status(), which would issue its own
-        // status UPDATE ahead of the one below - the settle is deliberately a single write.
-        $this->status = new Task_Status($is_tracker ? Task_Status::PENDING : Task_Status::FAILED);
-        $this->error("Task failed: {$error}");
-
-        if (!$this->is_immediate && $this->id !== null) {
-            $update = [
-                'status' => $this->status->value(),
-                'error' => $error,
-                'last_error_at' => now(),
-                'consecutive_failures' => DB::raw('consecutive_failures + 1'),
-                'updated_at' => now(),
-            ];
-
-            if ($is_tracker) {
-                $update['worker_pid'] = null;
-                $update['worker_id'] = null;
-                $update['worker_generation'] = null;
-                $update['stop_requested'] = 0;
-                $update['worker_host'] = null;
-                $update['status_reason'] = 'failed (recycled): ' . self::__summarize_error($error);
-            } else {
-                $update['completed_at'] = now();
-            }
-
-            DB::table('_tasks')->where('id', $this->id)->update($update);
-        }
-
-        $this->cleanup_temp_dir();
-    }
-
-    /**
-     * One-line, length-capped rendering of an error for the status_reason column.
-     *
-     * status_reason is the at-a-glance column (rsx:tasks:list, the kill reason); the full
-     * text always remains on `error`.
-     *
-     * @param string $error
-     * @return string
-     */
-    private static function __summarize_error(string $error): string
-    {
-        $first_line = trim(explode("\n", $error)[0]);
-
-        if (mb_strlen($first_line) > 200) {
-            $first_line = mb_substr($first_line, 0, 197) . '...';
-        }
-
-        return $first_line;
-    }
-
-    /**
-     * Attach (or detach, with null) the live console sink.
-     *
-     * The runner owns this decision. Every subsequent log() line is written to the stream
-     * and flushed immediately, so an operator watches a long task narrate itself instead
-     * of receiving one dump at the end.
-     *
-     * @param resource|null $stream An open writable stream, or null to detach.
-     */
-    public function set_console_sink($stream): void
-    {
-        $this->console_sink = $stream;
-    }
-
-    /**
-     * Add a log message
-     *
-     * The line's shape is identical on every channel - the in-memory array, the _tasks.logs
-     * column and the console sink all get the same text, so a console transcript and
-     * Task::status()['logs'] read the same.
-     *
-     * @param string $level Log level (info, error, debug)
-     * @param string $message Log message
-     */
-    public function log(string $level, string $message): void
-    {
-        $timestamp = date('Y-m-d H:i:s');
-        $log_line = "[{$timestamp}] [{$level}] {$message}";
-        $this->logs[] = $log_line;
-
-        if ($this->console_sink !== null) {
-            fwrite($this->console_sink, $log_line . "\n");
-            fflush($this->console_sink);
-        }
-
-        if (!$this->is_immediate && $this->id !== null) {
-            DB::table('_tasks')
-                ->where('id', $this->id)
-                ->update([
-                    'logs' => implode("\n", $this->logs),
-                    'updated_at' => now(),
-                ]);
-            Task_Changed_Topic::notify($this->id);
-        }
-    }
-
-    /**
-     * Log an info message
-     *
-     * @param string $message
-     */
-    public function info(string $message): void
-    {
-        $this->log('info', $message);
-    }
-
-    /**
-     * Log an error message
-     *
-     * @param string $message
-     */
-    public function error(string $message): void
-    {
-        $this->log('error', $message);
-    }
-
-    /**
-     * Log a debug message
-     *
-     * @param string $message
-     */
-    public function debug(string $message): void
-    {
-        $this->log('debug', $message);
-    }
-
-    /**
-     * Update task progress percentage
-     *
-     * Logged as an ordinary info line reading "[45%] message" (or "[45%]" with no
-     * message), so it reaches every channel log() reaches - the console sink included.
-     *
-     * @param int $percent Progress percentage (0-100)
-     * @param string|null $message Optional progress message
-     */
-    public function update_progress(int $percent, ?string $message = null): void
-    {
-        $percent = max(0, min(100, $percent));
-
-        if ($message) {
-            $this->info("[{$percent}%] {$message}");
-        } else {
-            $this->info("[{$percent}%]");
-        }
-    }
-
-    /**
-     * Set task result data
-     *
-     * @param mixed $result Result data (will be JSON-encoded)
-     */
-    public function set_result($result): void
-    {
-        if (!$this->is_immediate && $this->id !== null) {
-            DB::table('_tasks')
-                ->where('id', $this->id)
-                ->update([
-                    'result' => json_encode($result),
-                    'updated_at' => now(),
-                ]);
-            Task_Changed_Topic::notify($this->id);
-        }
-    }
-
-    /**
-     * Send heartbeat to indicate task is still running.
-     *
-     * Long-running tasks may call this periodically; it records last_heartbeat_at on the
-     * row, which the task screens display. It has no part in worker liveness: the pool
-     * rsx-lockd accounts knows a worker is alive for exactly as long as its connection is
-     * open.
+     * Record that the task is alive. Every write of held reports also stamps last_report_at;
+     * a heartbeat is the explicit "still working" for a step that reports nothing else.
      */
     public function heartbeat(): void
     {
-        if (!$this->is_immediate && $this->id !== null) {
-            DB::table('_tasks')
-                ->where('id', $this->id)
-                ->update([
-                    'last_heartbeat_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            Task_Changed_Topic::notify($this->id);
-        }
+        $this->pending_row['last_heartbeat_at'] = static::__now();
+        $this->__maybe_flush();
     }
 
     /**
-     * Get or create temporary directory for this task
+     * Report the task's status as one line of text, replacing the last. A status that differs
+     * from the last one is also written to stderr, so the console reads as a narrative.
+     */
+    public function status(string $text): void
+    {
+        $text = trim(str_replace(["\r\n", "\r", "\n"], ' ', $text));
+        if (mb_strlen($text) > self::STATUS_TEXT_MAX) {
+            $text = mb_substr($text, 0, self::STATUS_TEXT_MAX - 3) . '...';
+        }
+
+        if ($text === $this->last_status_text) {
+            return;
+        }
+
+        $this->last_status_text = $text;
+        $this->pending_row['status_text'] = $text;
+        $this->__append_output(Task_Run_Model::STREAM_STDERR, $text);
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Report progress as a percentage: 0 to 100, kept to two decimals. Values outside the
+     * range are clamped.
+     */
+    public function progress(float $percent): void
+    {
+        $this->pending_row['progress_percent'] = round(max(0, min(100, $percent)), 2);
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Report progress as a count: $done of $total items.
+     */
+    public function progress_count(int $done, int $total): void
+    {
+        if ($total < 0 || $done < 0) {
+            throw new \InvalidArgumentException("progress_count() takes non-negative counts, got {$done} of {$total}.");
+        }
+
+        $this->pending_row['progress_done'] = $done;
+        $this->pending_row['progress_total'] = $total;
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Report the expected time to completion, in seconds from now. Stored as the moment it
+     * names, so a viewer counts down without another report.
+     */
+    public function eta(int $seconds): void
+    {
+        if ($seconds < 0) {
+            throw new \InvalidArgumentException("eta() takes a number of seconds from now, got {$seconds}.");
+        }
+
+        $this->pending_row['eta_at'] = date('Y-m-d H:i:s', time() + $seconds) . '.000';
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Report the task's state as a JSON object (an array or object), replacing the last.
      *
-     * @return string Absolute path to temp directory
+     * @param array|object $state
+     */
+    public function state(array|object $state): void
+    {
+        $this->pending_reports[Task_Run_Model::REPORT_STATE_JSON] = static::__json($state, 'state()');
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Report the task's state as a list - a sync queue, a work list - replacing the last. Each
+     * item is a string or a JSON value.
+     *
+     * The report comes into being with its first ITEM: an empty list is not recorded until the
+     * run's queue has held something, so "the run has a queue report" means "its queue has or
+     * has had items" - and once it has, an emptied queue is recorded as the empty list.
+     */
+    public function state_list(array $items): void
+    {
+        if (!array_is_list($items)) {
+            throw new \InvalidArgumentException('state_list() takes a list (sequential keys); for keyed state use state().');
+        }
+
+        if ($this->state_list_reported === null) {
+            $this->state_list_reported = DB::table('_task_reports')
+                ->where('task_id', $this->id)
+                ->where('kind_id', Task_Run_Model::REPORT_STATE_LIST)
+                ->exists();
+        }
+        if ($items === [] && !$this->state_list_reported) {
+            return;
+        }
+        $this->state_list_reported = true;
+
+        $this->pending_reports[Task_Run_Model::REPORT_STATE_LIST] = static::__json($items, 'state_list()');
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Set the completion summary: the text a reader is shown about what the run did.
+     */
+    public function summary(string $text): void
+    {
+        $this->pending_reports[Task_Run_Model::REPORT_SUMMARY] = $text;
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Emit a message to whoever is watching the run. Messages are kept, in order, for as long
+     * as the run is; a watcher reads the ones after the last it saw.
+     */
+    public function message(string $text): void
+    {
+        $this->pending_messages[] = [$text, static::__now()];
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Write to the task's stdout: recorded one row per line, and echoed live to the runner's
+     * stdout when there is one.
+     */
+    public function stdout(string $text): void
+    {
+        foreach (static::__lines($text) as $line) {
+            $this->__append_output(Task_Run_Model::STREAM_STDOUT, $line);
+        }
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Write to the task's stderr: recorded one row per line, and echoed live to the runner's
+     * stderr when there is one.
+     */
+    public function stderr(string $text): void
+    {
+        foreach (static::__lines($text) as $line) {
+            $this->__append_output(Task_Run_Model::STREAM_STDERR, $line);
+        }
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Attach a file on disk to the run under $name, for outside consumers to retrieve
+     * (Task_Run_Model::attachment($name)). The bytes are copied into the blob store; the source
+     * file is left where it is. Attaching a name again replaces the earlier file.
+     */
+    public function attach_file(string $name, string $path, ?string $file_name = null, ?string $mime_type = null): void
+    {
+        if (!is_file($path) || !is_readable($path)) {
+            throw new \InvalidArgumentException("attach_file('{$name}'): {$path} is not a readable file.");
+        }
+
+        $file_name ??= basename($path);
+        $mime_type ??= (mime_content_type($path) ?: 'application/octet-stream');
+        $size = (int) filesize($path);
+
+        $this->__attach($name, fn (callable $record) => File_Storage_Model::store_blob($path, $record), $file_name, $mime_type, $size);
+    }
+
+    /**
+     * Attach bytes the task generated to the run under $name. Attaching a name again
+     * replaces the earlier file.
+     */
+    public function attach_bytes(string $name, string $bytes, string $file_name, ?string $mime_type = null): void
+    {
+        $mime_type ??= ((new \finfo(FILEINFO_MIME_TYPE))->buffer($bytes) ?: 'application/octet-stream');
+
+        $this->__attach($name, fn (callable $record) => File_Storage_Model::store_bytes($bytes, $record), $file_name, $mime_type, strlen($bytes));
+    }
+
+    /**
+     * Write every held report now. A task about to spend a long time without reporting calls
+     * this so its watchers see where it is.
+     */
+    public function flush(): void
+    {
+        if ($this->pending_row === [] && $this->pending_reports === [] && $this->pending_output === [] && $this->pending_messages === []) {
+            return;
+        }
+
+        $now = static::__now();
+        $changed = $this->pending_row !== [] || $this->pending_reports !== [] || $this->pending_messages !== [];
+        $output_written = $this->pending_output !== [];
+
+        $row = $this->pending_row;
+        $row['last_report_at'] = $now;
+        $row['updated_at'] = $now;
+        DB::table('_tasks')->where('id', $this->id)->update($row);
+
+        foreach ($this->pending_reports as $kind_id => $body) {
+            DB::statement(
+                'INSERT INTO _task_reports (task_id, kind_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+                . ' ON DUPLICATE KEY UPDATE body = VALUES(body), updated_at = VALUES(updated_at)',
+                [$this->id, $kind_id, $body, $now, $now]
+            );
+        }
+
+        if ($this->pending_output !== []) {
+            $rows = [];
+            foreach ($this->pending_output as [$stream_id, $line, $at]) {
+                $rows[] = ['task_id' => $this->id, 'stream_id' => $stream_id, 'line' => $line, 'created_at' => $at, 'updated_at' => $at];
+            }
+            foreach (array_chunk($rows, 500) as $chunk) {
+                DB::table('_task_output')->insert($chunk);
+            }
+        }
+
+        if ($this->pending_messages !== []) {
+            $rows = [];
+            foreach ($this->pending_messages as [$body, $at]) {
+                $rows[] = ['task_id' => $this->id, 'body' => $body, 'created_at' => $at, 'updated_at' => $at];
+            }
+            DB::table('_task_messages')->insert($rows);
+        }
+
+        $this->pending_row = [];
+        $this->pending_reports = [];
+        $this->pending_output = [];
+        $this->pending_messages = [];
+        $this->last_flush = microtime(true);
+
+        Task_Notify::changed($this->id, $changed, $output_written);
+    }
+
+    /**
+     * Has a stop been requested for this run (Task_Run_Model::request_stop() / force_stop())?
+     *
+     * A COOPERATIVE stop: the framework never interrupts a task for a graceful stop. A task
+     * that can be stopped calls this between units of work - every batch, every page of a
+     * loop - and, when it answers true, finishes cleanly (leaves its data consistent, records
+     * what it did) and returns; the run then settles STOPPED. A task that never asks simply
+     * runs to completion - unless it was FORCE-stopped, in which case its worker is killed
+     * when the grace period ends.
+     *
+     * Writes any held reports first, and reads the row on every call, so it sees a request
+     * made while the task is running.
+     */
+    public function is_stop_requested(): bool
+    {
+        $this->flush();
+
+        return DB::table('_tasks')->where('id', $this->id)->value('stop_requested_at') !== null;
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Identity and scratch space
+    // ------------------------------------------------------------------------------------
+
+    public function get_id(): int
+    {
+        return $this->id;
+    }
+
+    public function get_class(): string
+    {
+        return $this->class;
+    }
+
+    public function get_method(): string
+    {
+        return $this->method;
+    }
+
+    public function get_params(): array
+    {
+        return $this->params;
+    }
+
+    /**
+     * A temporary directory for this run, created on first use and removed when the run ends.
+     *
+     * @return string Absolute path
      */
     public function get_temp_dir(): string
     {
@@ -467,19 +427,11 @@ class Task_Instance
         }
 
         $base_temp_dir = Rsx_Project_Paths::tasks_dir();
-
         if (!is_dir($base_temp_dir)) {
             mkdir($base_temp_dir, 0755, true);
         }
 
-        if ($this->is_immediate) {
-            $dir_name = 'immediate_' . uniqid();
-        } else {
-            $dir_name = 'task_' . $this->id;
-        }
-
-        $this->temp_dir = $base_temp_dir . '/' . $dir_name;
-
+        $this->temp_dir = $base_temp_dir . '/task_' . $this->id;
         if (!is_dir($this->temp_dir)) {
             mkdir($this->temp_dir, 0755, true);
         }
@@ -488,7 +440,7 @@ class Task_Instance
     }
 
     /**
-     * Clean up temporary directory
+     * Remove the run's temporary directory. The runner calls this when the run ends.
      */
     public function cleanup_temp_dir(): void
     {
@@ -500,106 +452,123 @@ class Task_Instance
         $this->temp_dir = null;
     }
 
+    // ------------------------------------------------------------------------------------
+    // Runner seams
+    // ------------------------------------------------------------------------------------
+
     /**
-     * Has a stop been requested for this task (Task::request_stop())?
-     *
-     * A COOPERATIVE stop: the framework never interrupts a task for it. A task that can be
-     * stopped calls this between units of work - every batch, every page of a loop - and,
-     * when it answers true, finishes cleanly (leaves its data consistent, records what it
-     * did) and returns. A task that never calls it simply runs to completion.
-     *
-     * Each call reads the row, so it sees a request made while the task is running. An
-     * immediate-mode instance (Task::internal(), rsx:task:run, a #[Command]) has no row and
-     * always answers false.
-     *
-     * @return bool
+     * RUNNER-ONLY: record one line the task printed (echo / print / var_dump), captured by the
+     * runner's output buffer. The text already reached the runner's own stdout through the
+     * buffer, so it is recorded, not echoed again.
      */
-    public function is_stop_requested(): bool
+    public function _record_captured_stdout(string $line): void
     {
-        if ($this->is_immediate || $this->id === null) {
-            return false;
+        $this->pending_output[] = [Task_Run_Model::STREAM_STDOUT, $line, static::__now()];
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Append an OPERATOR line - a lifecycle operation someone performed on a run - to that
+     * run's output. Written at once, shown as stderr, never echoed to any process's stderr.
+     */
+    public static function record_operator_line(int $task_id, string $line): void
+    {
+        $now = static::__now();
+        DB::table('_task_output')->insert([
+            'task_id' => $task_id,
+            'stream_id' => Task_Run_Model::STREAM_OPERATOR,
+            'line' => $line,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        Task_Notify::changed($task_id, false, true);
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Internals
+    // ------------------------------------------------------------------------------------
+
+    private function __append_output(int $stream_id, string $line): void
+    {
+        $this->pending_output[] = [$stream_id, $line, static::__now()];
+
+        $sink = $stream_id === Task_Run_Model::STREAM_STDOUT ? $this->stdout_sink : $this->stderr_sink;
+        if ($sink !== null) {
+            fwrite($sink, $line . "\n");
+            fflush($sink);
+        }
+    }
+
+    private function __maybe_flush(): void
+    {
+        if (microtime(true) - $this->last_flush >= self::FLUSH_INTERVAL) {
+            $this->flush();
+        }
+    }
+
+    /**
+     * Store the bytes, then record (or replace) the named attachment inside the blob store's
+     * reference scope, so the blob cannot be released before the row pins it. A replaced
+     * attachment's blob is released afterwards if nothing else references it.
+     *
+     * @param callable $store fn (callable $record): File_Storage_Model
+     */
+    private function __attach(string $name, callable $store, string $file_name, string $mime_type, int $size): void
+    {
+        if ($name === '' || mb_strlen($name) > 255) {
+            throw new \InvalidArgumentException('An attachment name is 1 to 255 characters.');
         }
 
-        return (bool) DB::table('_tasks')->where('id', $this->id)->value('stop_requested');
+        $previous_storage_id = null;
+
+        $store(function (File_Storage_Model $storage) use ($name, $file_name, $mime_type, $size, &$previous_storage_id) {
+            $attachment = Task_Attachment_Model::where('task_id', $this->id)->where('name', $name)->first();
+            if ($attachment === null) {
+                $attachment = new Task_Attachment_Model();
+                $attachment->task_id = $this->id;
+                $attachment->name = $name;
+            } elseif ((int) $attachment->file_storage_id !== (int) $storage->id) {
+                $previous_storage_id = (int) $attachment->file_storage_id;
+            }
+
+            $attachment->file_storage_id = $storage->id;
+            $attachment->file_name = mb_substr($file_name, 0, 255);
+            $attachment->mime_type = mb_substr($mime_type, 0, 255);
+            $attachment->size = $size;
+            $attachment->save();
+        });
+
+        if ($previous_storage_id !== null) {
+            File_Disposal_Service::release_blob_if_orphaned($previous_storage_id);
+        }
+
+        Task_Notify::changed($this->id, true, false);
     }
 
-    /**
-     * Get task ID
-     *
-     * @return int|null
-     */
-    public function get_id(): ?int
+    /** @return string[] */
+    private static function __lines(string $text): array
     {
-        return $this->id;
+        $text = str_replace(["\r\n", "\r"], "\n", $text);
+        if (str_ends_with($text, "\n")) {
+            $text = substr($text, 0, -1);
+        }
+
+        return explode("\n", $text);
     }
 
-    /**
-     * Get task class name
-     *
-     * @return string
-     */
-    public function get_class(): string
+    private static function __json($value, string $caller): string
     {
-        return $this->class;
+        $json = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+        if ($json === false) {
+            throw new \InvalidArgumentException("{$caller} was handed a value that cannot be encoded as JSON: " . json_last_error_msg());
+        }
+
+        return $json;
     }
 
-    /**
-     * Get task method name
-     *
-     * @return string
-     */
-    public function get_method(): string
+    private static function __now(): string
     {
-        return $this->method;
-    }
-
-    /**
-     * Get task parameters
-     *
-     * @return array
-     */
-    public function get_params(): array
-    {
-        return $this->params;
-    }
-
-    /**
-     * Get task queue name
-     *
-     * @return string
-     */
-    public function get_queue(): string
-    {
-        return $this->queue;
-    }
-
-    /**
-     * Get task status
-     *
-     * @return Task_Status
-     */
-    public function get_status(): Task_Status
-    {
-        return $this->status;
-    }
-
-    /**
-     * Get all task logs
-     *
-     * @return array
-     */
-    public function get_logs(): array
-    {
-        return $this->logs;
-    }
-
-    /**
-     * Check if task is immediate (not database-backed)
-     *
-     * @return bool
-     */
-    public function is_immediate(): bool
-    {
-        return $this->is_immediate;
+        return now()->format('Y-m-d H:i:s.v');
     }
 }

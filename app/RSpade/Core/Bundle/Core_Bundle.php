@@ -38,6 +38,8 @@ class Core_Bundle extends Rsx_Bundle_Abstract
                 'app/RSpade/Core/Turnstile',  // Cloudflare Turnstile widget (Turnstile_Input)
                 'app/RSpade/Core/TwoFactor',  // Second-factor components (Totp_Enrollment, Passkey_Register, Two_Factor_Challenge, Passkey_Sign_In) + Rsx_Two_Factor.js
                 'app/RSpade/Core/Sso',  // Federated sign-in buttons (Sso_Buttons) + Rsx_Sso.js - the login page is its own bundle
+                'app/RSpade/Core/Task/ui',  // Task widgets (Task_Status_Badge, Task_Output, Task_Report, Task_Report_Browser) + Rsx_Task.js
+                'app/RSpade/Core/Task/ui/vendor/xterm.scss',  // xterm.js's stylesheet for Task_Output; vendor/ is never scanned by a directory include
                 'app/RSpade/Breadcrumbs',  // Progressive breadcrumb resolution
                 'app/RSpade/Lib',
             ],

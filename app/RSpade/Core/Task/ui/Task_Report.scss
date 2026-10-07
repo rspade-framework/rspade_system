@@ -1,0 +1,193 @@
+// SELF-CONTAINED: the report is embedded in somebody else's application, so it inherits nothing
+// and sets every property it draws with, nested under its own root so a host's element or
+// descendant rule (`.card div`, `.table td span`) does not outrank it. Its surface is
+// transparent (the host's panel shows through) and its text colour is its own in each theme.
+// No CSS custom properties (an undefined var() invalidates the whole declaration); dark mode
+// is `body.rsx-dark`.
+.Task_Report {
+    @include rsx-text-sans;
+    // Fills the box its host gives it; a report taller than that scrolls inside it.
+    display: block;
+    box-sizing: border-box;
+    min-width: 0;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #212529;
+    text-align: left;
+    text-indent: 0;
+    text-shadow: none;
+    word-spacing: normal;
+    white-space: normal;
+    overflow: hidden;
+
+    *,
+    *::before,
+    *::after {
+        box-sizing: border-box;
+    }
+
+    .Task_Report__notice,
+    .Task_Report__muted {
+        margin: 0;
+        padding: 0;
+        color: #6c757d;
+    }
+
+    .Task_Report__notice {
+        font-style: italic;
+    }
+
+    .Task_Report__inline {
+        margin: 0;
+        padding: 0;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .Task_Report__scroll {
+        height: 100%;
+        max-height: inherit;
+        margin: 0;
+        padding: 0;
+        overflow: auto;
+    }
+
+    // The JSON tree on a surface of its own: the tree's light palette on white, Darcula on
+    // its own dark surface in dark mode (js_tree_debug_component.scss).
+    .Task_Report__tree {
+        padding: 6px 8px;
+        border: 0;
+        border-radius: 3px;
+        background: #fff;
+        color: #222;
+        overflow: hidden;
+
+        // The tree component draws a fixed-size, resizable framed box of its own; here it
+        // fills the report instead and scrolls inside it.
+        .js-tree-debug {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            resize: none;
+            background: transparent;
+        }
+    }
+
+    .Task_Report__text {
+        @include rsx-text-sans;
+        margin: 0;
+        padding: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .Task_Report__bar {
+        position: relative;
+        min-width: 80px;
+        height: 22px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 3px;
+        background: #e9ecef;
+        overflow: hidden;
+    }
+
+    .Task_Report__bar_fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        margin: 0;
+        padding: 0;
+        background: #9ec5fe;
+    }
+
+    .Task_Report__bar_text {
+        position: relative;
+        margin: 0;
+        padding: 0;
+        font-size: 12px;
+        line-height: 22px;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    // An emptied queue: one line of ordinary text, centred in the report's box.
+    .Task_Report__empty_list {
+        @include rsx-text-sans;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        margin: 0;
+        padding: 8px;
+        color: #6c757d;
+        text-align: center;
+    }
+
+    .Task_Report__list {
+        display: flex;
+        flex-direction: column;
+        margin: 0;
+        padding: 0;
+    }
+
+    .Task_Report__list_item {
+        @include rsx-text-mono;
+        margin: 0;
+        padding: 4px 8px;
+        border: 1px solid #dee2e6;
+        background: #fff;
+        font-size: 12px;
+        word-break: break-word;
+    }
+
+    .Task_Report__list_item + .Task_Report__list_item {
+        border-top: 0;
+    }
+
+    .Task_Report__message {
+        display: flex;
+        gap: 8px;
+        margin: 0;
+        padding: 2px 0;
+        font-size: 13px;
+    }
+
+    .Task_Report__message_body {
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    body.rsx-dark & {
+        color: #dee2e6;
+
+        .Task_Report__notice,
+        .Task_Report__muted,
+        .Task_Report__empty_list {
+            color: #8a8f98;
+        }
+
+        .Task_Report__tree {
+            background: #2b2b2b;
+            color: #a9b7c6;
+        }
+
+        .Task_Report__bar {
+            background: #2b3035;
+        }
+
+        .Task_Report__bar_fill {
+            background: #1f4f93;
+        }
+
+        .Task_Report__list_item {
+            border-color: #495057;
+            background: #212529;
+        }
+    }
+}

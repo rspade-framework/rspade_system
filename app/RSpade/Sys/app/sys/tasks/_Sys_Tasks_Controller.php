@@ -10,50 +10,50 @@ namespace App\RSpade\Sys\App\Sys\Tasks;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Concurrency;
-use App\RSpade\Core\Task\Task_Killer;
 use App\RSpade\Core\Task\Task_Pool;
-use App\RSpade\Core\Task\Task_Status;
+use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Sys\App\Sys\Tasks\_Sys_Tasks_DataGrid;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 
 /**
- * The Tasks screen's endpoints: the running rows, the history grid, one row's detail and
- * its log tail (the live console), the two actions a developer takes on a row - kill it,
- * or dispatch it again - and the schedules (every #[Schedule] beside its tracker row)
- * with Run now.
+ * The Tasks screens' endpoints: the tasks grid (active runs on top, finished runs below),
+ * one run's detail with its attachments, the lifecycle actions a developer takes on a run
+ * (graceful stop, force stop, force kill, cancel, run again), the schedules with Run now, and
+ * the worker pools.
  *
- * _tasks has no model; every read is DB::table(). Its datetime columns hold UTC wall
- * clock with no zone (the application and the database session both run in UTC), so
- * every datetime leaves here as an ISO 8601 UTC string through Rsx_Time::to_iso() -
- * a bare 'Y-m-d H:i:s' would be read as LOCAL time by the browser.
+ * A run's live views - its output console and its reports - are the Core task widgets
+ * (Task_Output, Task_Report, Task_Report_Browser) reading through Rsx_Task_Controller, where a
+ * developer passes every task gate. This controller adds what only the console shows: the
+ * worker evidence, the schedules and the pools.
+ *
+ * @DB-UNBOUNDED-01-EXCEPTION - workers() lists every RUNNING run, which is bounded by the worker
+ * pools' caps plus the inline runs in flight; its queued list is limited to UPCOMING_LIMIT.
  */
 #[Auth('is_sysadmin')]
 class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
 {
-    /** The _tasks datetime columns, converted to ISO on every row that leaves here. */
-    public const DATETIME_COLUMNS = [
-        'scheduled_for', 'next_run_at', 'started_at', 'completed_at', 'last_error_at',
-        'last_heartbeat_at', 'created_at', 'updated_at', 'last_run_at',
-    ];
+    /** How many queued runs and upcoming schedules the Workers screen lists. */
+    public const UPCOMING_LIMIT = 10;
 
-    /** The status reason a kill records when the developer gave no explanation. */
-    public const KILL_DEFAULT_REASON = 'killed from the control panel';
-
-    /** Characters of a tracker's last error shown on the Schedules tab. */
+    /** Characters of a schedule's last error shown on the Schedules tab. */
     public const ERROR_EXCERPT_LENGTH = 120;
+
+    /** The lifecycle actions act() performs. */
+    public const ACTIONS = ['stop', 'force_stop', 'force_kill', 'cancel', 'rerun'];
 
     /**
      * worker_state values. Answered from evidence on THIS host only - the worker's process,
      * read through /proc - never from the row's age or its heartbeat:
-     *   alive      the worker process that claimed the row is running here
-     *   gone       it is not: the row is abandoned, and rsx:task:process settles it on its
-     *              next tick (if the row stays, that tick is not running)
-     *   elsewhere  the row was claimed on another host, whose processes this one cannot see
-     *   unknown    the row records no pid
+     *   alive      the process that claimed the run is running here
+     *   gone       it is not: the run is abandoned, and rsx:task:process settles it on its
+     *              next tick (if it stays, that tick is not running)
+     *   elsewhere  the run was claimed on another host, whose processes this one cannot see
+     *   unknown    the run records no pid
      */
     public const WORKER_ALIVE = 'alive';
     public const WORKER_GONE = 'gone';
@@ -61,139 +61,17 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
     public const WORKER_UNKNOWN = 'unknown';
 
     /**
-     * Every RUNNING row, oldest start first. The set is bounded by the worker pool
-     * (rsx.tasks.global_max_workers), so it is returned whole.
-     *
-     * @return array {rows: [{id, class, class_short, method, queue, worker_pid, worker_host,
-     *                        worker_state, started_at, last_heartbeat_at, is_cron}]}
+     * The Tasks grid: active runs on top (running, then queued), finished runs below them,
+     * newest first; filtered by scope, status, task, origin and finish time.
      */
     #[Ajax_Endpoint]
-    public static function running(Request $request, array $params = [])
-    {
-        $rows = DB::table('_tasks')
-            ->where('status', Task_Status::RUNNING)
-            ->orderBy('started_at')
-            ->orderBy('id')
-            ->get(['id', 'class', 'method', 'queue', 'worker_pid', 'worker_id', 'worker_host', 'started_at', 'last_heartbeat_at', 'next_run_at'])
-            ->map(function ($row) {
-                $presented = static::present_row((array) $row);
-                $presented['worker_state'] = static::worker_state($row);
-                unset($presented['worker_id']);
-
-                return $presented;
-            })
-            ->all();
-
-        return ['rows' => $rows];
-    }
-
-    /**
-     * The queue labels in use and how much work each holds, beside the one worker pool that
-     * drains them all. A queue is a LABEL: there is one pool of generic workers, capped at
-     * rsx.tasks.global_max_workers, and a worker claims run-now work first (FIFO), then due
-     * schedules - whatever the label.
-     *
-     * Per queue, over the pending and running rows:
-     *   running         RUNNING rows; stale_running of those have a worker that is gone
-     *   pending_due     one-shot rows waiting for a worker now
-     *   pending_later   one-shot rows held for later (a delayed dispatch or a retry backoff)
-     *   schedules       #[Schedule] trackers; schedules_due of them are due now
-     *   oldest_due_at   when the longest-waiting due one-shot row became due
-     *
-     * @return array {pool: {max_workers, members, waiting}, queues: [...]}
-     */
-    #[Ajax_Endpoint]
-    public static function queues(Request $request, array $params = [])
-    {
-        $now = now();
-
-        // One row per queue label in use - the result set is the set of labels.
-        $counts = DB::table('_tasks')
-            ->whereIn('status', [Task_Status::PENDING, Task_Status::RUNNING])
-            ->groupBy('queue')
-            ->orderBy('queue')
-            ->selectRaw(
-                'queue,'
-                . " SUM(status = 'running') AS running,"
-                . " SUM(status = 'pending' AND next_run_at IS NULL AND (scheduled_for IS NULL OR scheduled_for <= ?)) AS pending_due,"
-                . " SUM(status = 'pending' AND next_run_at IS NULL AND scheduled_for > ?) AS pending_later,"
-                . " SUM(status = 'pending' AND next_run_at IS NOT NULL) AS schedules,"
-                . " SUM(status = 'pending' AND next_run_at IS NOT NULL AND next_run_at <= ?) AS schedules_due,"
-                . " MIN(CASE WHEN status = 'pending' AND next_run_at IS NULL AND (scheduled_for IS NULL OR scheduled_for <= ?)"
-                . ' THEN COALESCE(scheduled_for, created_at) END) AS oldest_due_at',
-                [$now, $now, $now, $now]
-            )
-            ->get();
-
-        $stale = [];
-        foreach (DB::table('_tasks')->where('status', Task_Status::RUNNING)->get(['queue', 'worker_pid', 'worker_id', 'worker_host']) as $row) {
-            if (static::worker_state($row) === self::WORKER_GONE) {
-                $stale[$row->queue] = ($stale[$row->queue] ?? 0) + 1;
-            }
-        }
-
-        $queues = [];
-        foreach ($counts as $row) {
-            $queues[] = [
-                'queue' => $row->queue,
-                'running' => (int) $row->running,
-                'stale_running' => $stale[$row->queue] ?? 0,
-                'pending_due' => (int) $row->pending_due,
-                'pending_later' => (int) $row->pending_later,
-                'schedules' => (int) $row->schedules,
-                'schedules_due' => (int) $row->schedules_due,
-                'oldest_due_at' => Rsx_Time::to_iso($row->oldest_due_at),
-            ];
-        }
-
-        $stats = Task_Pool::stats();
-
-        return [
-            'pool' => [
-                'max_workers' => Task_Pool::max_workers(),
-                'members' => $stats['members'],
-                'waiting' => $stats['waiting'],
-            ],
-            'queues' => $queues,
-        ];
-    }
-
-    /**
-     * Whether the worker that claimed a RUNNING row is still there; see the WORKER_*
-     * constants. A row claimed by a pool worker is checked against the worker's command
-     * line (a pid the kernel reused is not that worker); a row run outside the pool
-     * (--once, Task::internal()) has no worker_id, and its pid is simply probed.
-     *
-     * @param object $row A _tasks row with worker_pid, worker_id and worker_host
-     */
-    public static function worker_state(object $row): string
-    {
-        if ($row->worker_host !== null && $row->worker_host !== Task_Pool::host()) {
-            return self::WORKER_ELSEWHERE;
-        }
-
-        $pid = (int) $row->worker_pid;
-        if ($pid <= 0) {
-            return self::WORKER_UNKNOWN;
-        }
-
-        $alive = $row->worker_id !== null ? Task::is_worker_process($pid) : posix_kill($pid, 0);
-
-        return $alive ? self::WORKER_ALIVE : self::WORKER_GONE;
-    }
-
-    /**
-     * The history grid (_Sys_Tasks_DataGrid).
-     */
-    #[Ajax_Endpoint]
-    public static function datagrid_fetch(Request $request, array $params = [])
+    public static function tasks_fetch(Request $request, array $params = [])
     {
         return _Sys_Tasks_DataGrid::fetch($params);
     }
 
     /**
-     * The class filter's options: every task class that has a row, labelled by its
-     * basename.
+     * The task filter's options: every task class that has a run, labelled by its basename.
      *
      * @return array [{value, label}]
      */
@@ -209,211 +87,154 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
     }
 
     /**
-     * The queue filter's options: every queue label that has a row.
-     *
-     * @return array [{value, label}]
-     */
-    #[Ajax_Endpoint]
-    public static function queue_options(Request $request, array $params = [])
-    {
-        return DB::table('_tasks')
-            ->distinct()
-            ->orderBy('queue')
-            ->pluck('queue')
-            ->map(fn ($queue) => ['value' => $queue, 'label' => $queue])
-            ->all();
-    }
-
-    /**
-     * One row: params and result decoded, the worker's state beside it. The logs are not
-     * here - the live console reads them through logs() - and neither is updated_at, which
-     * moves with every log line: the detail screen repaints only when the row's facts change.
+     * One run: its status (Task_Run_Model::to_status_array()), its params, the worker that
+     * runs it, its schedule, its attachments, and the actions that apply to it now.
      *
      * @param array $params id
      */
     #[Ajax_Endpoint]
     public static function detail(Request $request, array $params = [])
     {
-        $row = DB::table('_tasks')->where('id', (int) ($params['id'] ?? 0))->first();
-
-        if (!$row) {
+        $task = Task_Run_Model::find((int) ($params['id'] ?? 0));
+        if ($task === null) {
             return response_not_found('No task with that id.');
         }
 
-        $task = static::present_row((array) $row);
-        $task['params'] = $row->params === null ? null : json_decode($row->params, true);
-        $task['result'] = $row->result === null ? null : json_decode($row->result, true);
-        $task['worker_state'] = $row->status === Task_Status::RUNNING ? static::worker_state($row) : null;
-        unset($task['logs'], $task['updated_at']);
-        $task['can_kill'] = $row->status === Task_Status::RUNNING;
-        $task['can_redispatch'] = static::__can_redispatch($row);
-
-        return ['task' => $task];
+        return ['task' => static::present($task, true)];
     }
 
     /**
-     * A row's log lines from line $offset on, for the live console: it asks again with the
-     * offset and run it was handed back each time the row changes (Task_Changed_Topic), so
-     * asking twice never repeats a line.
+     * Perform a lifecycle action on a run and return its new state.
      *
-     * A #[Schedule] tracker is ONE row across every run, and each run writes its log afresh.
-     * `run` names the run the lines belong to (its started_at); when the caller's run is not
-     * the row's, or the log is shorter than what the caller holds, the answer is the whole
-     * log with restart = true, and the console starts over.
-     *
-     * @param array $params id, offset (lines already held; default 0), run (as last returned)
-     * @return array {lines: string[], offset: int, run: ?string, restart: bool, status: string,
-     *                last_heartbeat_at: ?string}
+     * @param array $params task_id, task_action (stop | force_stop | force_kill | cancel | rerun),
+     *                      grace_seconds (force_stop, optional), explanation (optional)
+     * @return array {task, rerun_id: ?int}
      */
     #[Ajax_Endpoint]
-    public static function logs(Request $request, array $params = [])
+    public static function act(Request $request, array $params = [])
     {
-        $row = DB::table('_tasks')->where('id', (int) ($params['id'] ?? 0))->first(['status', 'logs', 'started_at', 'last_heartbeat_at']);
-
-        if (!$row) {
+        $task = Task_Run_Model::find((int) ($params['task_id'] ?? 0));
+        if ($task === null) {
             return response_not_found('No task with that id.');
         }
 
-        $all = $row->logs ? explode("\n", $row->logs) : [];
-        $offset = max(0, (int) ($params['offset'] ?? 0));
-        $run = Rsx_Time::to_iso($row->started_at);
+        // task_action, not action: a form field named "action" shadows the form element's own
+        // action property in the browser.
+        $action = (string) ($params['task_action'] ?? '');
+        if (!in_array($action, self::ACTIONS, true)) {
+            return response_error(Ajax::ERROR_VALIDATION, 'Unknown action.');
+        }
 
-        $restart = $offset > count($all) || ($offset > 0 && ($params['run'] ?? null) !== $run);
-
-        return [
-            'lines' => array_slice($all, $restart ? 0 : $offset),
-            'offset' => count($all),
-            'run' => $run,
-            'restart' => $restart,
-            'status' => $row->status,
-            'last_heartbeat_at' => Rsx_Time::to_iso($row->last_heartbeat_at),
-        ];
-    }
-
-    /**
-     * Force-kill a running task - the panel's rsx:tasks:kill. The explanation is
-     * optional and recorded on the row as its status reason; left blank, the row records
-     * KILL_DEFAULT_REASON instead. Task_Killer signals the worker (SIGTERM, a 5s grace,
-     * then SIGKILL), so this call can take that long.
-     *
-     * The Kill dialog's form endpoint.
-     *
-     * @param array $params task_id, explanation
-     * @return array {id, outcome} - outcome is Task_Killer's: killed | killed_no_process | recycled
-     */
-    #[Ajax_Endpoint]
-    public static function kill(Request $request, array $params = [])
-    {
         $explanation = trim((string) ($params['explanation'] ?? ''));
-        if ($explanation === '') {
-            $explanation = self::KILL_DEFAULT_REASON;
+        $explanation = $explanation === '' ? null : mb_substr($explanation, 0, 1000);
+
+        $grace = null;
+        if ($action === 'force_stop' && isset($params['grace_seconds']) && $params['grace_seconds'] !== '') {
+            if (!ctype_digit((string) $params['grace_seconds'])) {
+                return response_form_error('The grace period is a whole number of seconds.', ['grace_seconds' => 'Whole seconds, 0 or more']);
+            }
+            $grace = (int) $params['grace_seconds'];
         }
 
-        $row = DB::table('_tasks')->where('id', (int) ($params['task_id'] ?? 0))->first();
+        if ($action === 'rerun') {
+            if ($task->is_live()) {
+                return response_form_error("Task {$task->id} is still " . strtolower($task->status_id__label) . '; only a finished run can be run again.');
+            }
 
-        if (!$row) {
-            return response_not_found('No task with that id.');
+            $new_id = $task->rerun();
+
+            return ['task' => static::present(Task_Run_Model::find($task->id), false), 'rerun_id' => $new_id];
         }
 
-        if ($row->status !== Task_Status::RUNNING) {
-            return response_form_error("Task {$row->id} is not running (status: {$row->status}).");
+        $done = match ($action) {
+            'stop' => $task->request_stop($explanation),
+            'force_stop' => $task->force_stop($grace, $explanation),
+            'force_kill' => $task->force_kill($explanation),
+            'cancel' => $task->cancel($explanation),
+        };
+
+        if (!$done) {
+            return response_form_error("Task {$task->id} is " . strtolower($task->status_id__label) . '; that action no longer applies.');
         }
 
-        return [
-            'id' => (int) $row->id,
-            'outcome' => Task_Killer::kill($row, $explanation),
-        ];
+        return ['task' => static::present(Task_Run_Model::find($task->id), false), 'rerun_id' => null];
     }
 
     /**
-     * Dispatch a failed or killed one-shot row again: the same service, method, params
-     * and queue, as a NEW row. The old row is left as it is.
+     * Start the sample task: a scripted three-minute game of the Oregon Trail
+     * (_Sys_Oregon_Trail_Service::travel) that reports every kind of task status and stops
+     * gracefully when asked.
      *
-     * A cron tracker is refused - it is never terminal (a failure recycles it to
-     * pending), and its next run is the schedule's business.
-     *
-     * @param array $params id
-     * @return array {id} - the new row
+     * @return array {task_id}
      */
     #[Ajax_Endpoint]
-    public static function redispatch(Request $request, array $params = [])
+    public static function start_sample(Request $request, array $params = [])
     {
-        $row = DB::table('_tasks')->where('id', (int) ($params['id'] ?? 0))->first();
-
-        if (!$row) {
-            return response_not_found('No task with that id.');
-        }
-
-        if (!static::__can_redispatch($row)) {
-            return response_error(
-                Ajax::ERROR_VALIDATION,
-                "Task {$row->id} is {$row->status}; only a failed or killed task can be dispatched again."
-            );
-        }
-
-        $task_params = $row->params === null ? [] : (json_decode($row->params, true) ?? []);
-
-        $id = Task::dispatch(class_basename($row->class), $row->method, $task_params, ['queue' => $row->queue]);
-
-        return ['id' => (int) $id];
+        return ['task_id' => Task::dispatch('_Sys_Oregon_Trail_Service', 'travel')];
     }
 
     /**
-     * Every #[Schedule] declaration beside its tracker row, sorted by the displayed name.
+     * Download one of a run's attachments.
+     */
+    #[Route('/_sys/tasks/:id/attachments/:name', methods: ['GET'])]
+    public static function attachment(Request $request, array $params = [])
+    {
+        $task = Task_Run_Model::find((int) ($params['id'] ?? 0));
+        $attachment = $task?->attachment((string) ($params['name'] ?? ''));
+        if ($attachment === null) {
+            return response_not_found('No such attachment.');
+        }
+
+        return $attachment->download_response();
+    }
+
+    /**
+     * Every declared #[Schedule] with its cadence and run statistics.
      *
-     * A tracker is the _tasks row with next_run_at set for that class and method; the
-     * scheduler (rsx:task:process) creates it on its first tick after the declaration
-     * appears, so a declaration may have none yet (tracker null). A tracker is never
-     * terminal: completed_at on it is the LAST SUCCESS, and consecutive_failures counts
-     * runs that threw since. failing = consecutive_failures >= rsx.tasks.failing_schedule_warn_after,
-     * the rsx:health "Failing Schedules" threshold.
-     *
-     * Bounded by the codebase (one row per declaration), so returned whole.
-     *
-     * @return array {failing_threshold, rows: [{class, class_short, method, queue, schedule,
-     *                cron, concurrency, failing, tracker: null|{id, status, next_run_at,
-     *                completed_at, consecutive_failures, last_error_at, error_excerpt,
-     *                last_run_at, last_outcome}}]}
+     * @return array {failing_threshold, rows: [{class, class_short, method, schedule, cron,
+     *                concurrency, failing, registered: null|{id, next_run_at, last_task_id,
+     *                last_success_at, last_error_at, error_excerpt, consecutive_failures,
+     *                last_run_status}}]}
      */
     #[Ajax_Endpoint]
     public static function schedules(Request $request, array $params = [])
     {
         $threshold = (int) config('rsx.tasks.failing_schedule_warn_after');
 
-        $trackers = DB::table('_tasks')
-            ->whereNotNull('next_run_at')
-            ->get(['id', 'class', 'method', 'status', 'next_run_at', 'completed_at',
-                'consecutive_failures', 'last_error_at', 'error', 'status_reason'])
-            ->keyBy(fn ($row) => $row->class . '::' . $row->method);
+        $registered = DB::table('_task_schedules')->get()->keyBy(fn ($row) => $row->class . '::' . $row->method);
+
+        $last_ids = $registered->pluck('last_task_id')->filter()->all();
+        $last_status = $last_ids ? DB::table('_tasks')->whereIn('id', $last_ids)->pluck('status_id', 'id')->all() : [];
 
         $rows = [];
-
         foreach (Task::get_scheduled_tasks() as $declaration) {
-            $tracker = $trackers->get($declaration['class'] . '::' . $declaration['method']);
+            $schedule = $registered->get($declaration['class'] . '::' . $declaration['method']);
 
-            if ($tracker !== null) {
-                $tracker = static::present_row([
-                    'id' => (int) $tracker->id,
-                    'status' => $tracker->status,
-                    'next_run_at' => $tracker->next_run_at,
-                    'completed_at' => $tracker->completed_at,
-                    'consecutive_failures' => (int) $tracker->consecutive_failures,
-                    'last_error_at' => $tracker->last_error_at,
-                    'error_excerpt' => static::__error_excerpt($tracker->error),
-                ] + static::__last_run($tracker));
-                unset($tracker['is_cron']);
+            $presented = null;
+            if ($schedule !== null) {
+                $last_status_id = $schedule->last_task_id !== null ? ($last_status[$schedule->last_task_id] ?? null) : null;
+                $presented = [
+                    'id' => (int) $schedule->id,
+                    'next_run_at' => Rsx_Time::to_iso($schedule->next_run_at),
+                    'last_task_id' => $schedule->last_task_id !== null ? (int) $schedule->last_task_id : null,
+                    'last_success_at' => Rsx_Time::to_iso($schedule->last_success_at),
+                    'last_error_at' => Rsx_Time::to_iso($schedule->last_error_at),
+                    'error_excerpt' => static::__error_excerpt($schedule->last_error),
+                    'consecutive_failures' => (int) $schedule->consecutive_failures,
+                    'last_run_status_id' => $last_status_id !== null ? (int) $last_status_id : null,
+                    'last_run_status' => $last_status_id !== null ? Task_Run_Model::$enums['status_id'][(int) $last_status_id]['label'] : null,
+                ];
             }
 
             $rows[] = [
                 'class' => $declaration['class'],
                 'class_short' => class_basename($declaration['class']),
                 'method' => $declaration['method'],
-                'queue' => $declaration['queue'],
                 'schedule' => $declaration['cron_expression'],
                 'cron' => (new Cron_Parser($declaration['cron_expression']))->get_cron_expression(),
                 'concurrency' => Task_Concurrency::get_policy($declaration['class'], $declaration['method'])['mode'],
-                'failing' => $tracker !== null && $tracker['consecutive_failures'] >= $threshold,
-                'tracker' => $tracker,
+                'failing' => $presented !== null && $presented['consecutive_failures'] >= $threshold,
+                'registered' => $presented,
             ];
         }
 
@@ -423,14 +244,11 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
     }
 
     /**
-     * Run a schedule now: Task::dispatch() of the declared service and method with no
-     * params, on the declared queue, as a ONE-SHOT row. The tracker is not touched - its
-     * next_run_at still names the next cadence.
+     * Run a schedule now: Task::dispatch() of the declared service and method with no params.
+     * The schedule itself is not touched - its next_run_at still names the next cadence.
      *
-     * An #[Exclusive]/#[Debounce] task coalesces as any dispatch does: when a pending
-     * one-shot run of it already exists, that row's id comes back and nothing new is
-     * queued (outcome "coalesced"); otherwise a new row is created ("dispatched"), which
-     * for a managed task waits for a running instance to finish.
+     * An #[Exclusive]/#[Debounce] task coalesces as any dispatch does: when a pending run of it
+     * already exists, that run's id comes back and nothing new is queued (outcome "coalesced").
      *
      * @param array $params class (FQCN, as the schedules list gives it), method
      * @return array {id, outcome: dispatched|coalesced, concurrency: exclusive|debounce|null}
@@ -440,88 +258,173 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
     {
         $class = (string) ($params['class'] ?? '');
         $method = (string) ($params['method'] ?? '');
-        $declaration = null;
 
         // Only a declared schedule may be run from here - never an arbitrary class/method.
+        $declared = false;
         foreach (Task::get_scheduled_tasks() as $candidate) {
             if ($candidate['class'] === $class && $candidate['method'] === $method) {
-                $declaration = $candidate;
+                $declared = true;
                 break;
             }
         }
 
-        if ($declaration === null) {
+        if (!$declared) {
             return response_not_found('No #[Schedule] is declared on that class and method.');
         }
 
         $mode = Task_Concurrency::get_policy($class, $method)['mode'];
-        $pending_before = $mode === null ? null : Task_Concurrency::pending_row_id($class, $method, $declaration['queue']);
+        $params_hash = Task_Concurrency::params_hash([]);
+        $pending_before = $mode === null ? null : Task_Concurrency::pending_row_id($class, $method, $params_hash);
 
-        $id = Task::dispatch(class_basename($class), $method, [], ['queue' => $declaration['queue']]);
+        $id = Task::dispatch(class_basename($class), $method, []);
 
         return [
-            'id' => (int) $id,
+            'id' => $id,
             'outcome' => $pending_before !== null && $pending_before === $id ? 'coalesced' : 'dispatched',
             'concurrency' => $mode,
         ];
     }
 
     /**
-     * A _tasks row as the browser reads it: datetimes as ISO UTC, the class's basename
-     * beside its FQCN, is_cron for a #[Schedule] tracker row.
+     * The worker pools and what they are doing: each pool's members against its cap, every
+     * running run with the worker that runs it, the kill workers' requests, and what comes
+     * next - the oldest queued runs and the next schedules due - with their totals.
      *
-     * @param array $row An associative _tasks row (any subset of its columns)
-     * @return array
+     * @return array {pools: [{pool, members, max_workers, waiting}], running: [run...],
+     *                kill_requests: [...], queued: [run...], queued_total, schedules_due: [...],
+     *                schedules_total}
      */
-    public static function present_row(array $row): array
+    #[Ajax_Endpoint]
+    public static function workers(Request $request, array $params = [])
     {
-        foreach (self::DATETIME_COLUMNS as $column) {
-            if (array_key_exists($column, $row)) {
-                $row[$column] = Rsx_Time::to_iso($row[$column]);
-            }
+        $pools = [];
+        foreach (Task_Pool::POOLS as $pool) {
+            $stats = Task_Pool::stats($pool);
+            $pools[] = [
+                'pool' => $pool,
+                'members' => $stats['members'],
+                'max_workers' => Task_Pool::max_workers($pool),
+                'waiting' => $stats['waiting'],
+            ];
         }
 
-        if (array_key_exists('class', $row)) {
-            $row['class_short'] = class_basename($row['class']);
-        }
+        // Bounded by the pools' caps: every running run is listed.
+        $running = Task_Run_Model::where('status_id', Task_Run_Model::STATUS_RUNNING)
+            ->orderBy('started_at')
+            ->orderBy('id')
+            ->get()
+            ->map(fn ($task) => static::present($task, false))
+            ->all();
 
-        if (array_key_exists('next_run_at', $row)) {
-            $row['is_cron'] = $row['next_run_at'] !== null;
-        }
+        $kill_requests = DB::table('_task_kill_requests')
+            ->whereIn('status_id', [1, 2])
+            ->orderBy('kill_after_at')
+            ->get(['id', 'task_id', 'host', 'mode_id', 'status_id', 'kill_after_at', 'worker_pid', 'explanation'])
+            ->map(fn ($row) => [
+                'id' => (int) $row->id,
+                'task_id' => (int) $row->task_id,
+                'host' => $row->host,
+                'mode' => (int) $row->mode_id === 1 ? 'Force stop' : 'Force kill',
+                'claimed' => (int) $row->status_id === 2,
+                'kill_after_at' => Rsx_Time::to_iso($row->kill_after_at),
+                'worker_pid' => $row->worker_pid !== null ? (int) $row->worker_pid : null,
+                'explanation' => $row->explanation,
+            ])
+            ->all();
 
-        return $row;
+        $queued_query = Task_Run_Model::where('status_id', Task_Run_Model::STATUS_PENDING);
+        $queued = (clone $queued_query)->orderBy('scheduled_for')->orderBy('id')->limit(self::UPCOMING_LIMIT)->get()
+            ->map(fn ($task) => static::present($task, false))
+            ->all();
+
+        $schedules_due = DB::table('_task_schedules')
+            ->orderBy('next_run_at')
+            ->limit(self::UPCOMING_LIMIT)
+            ->get(['id', 'class', 'method', 'cron_expression', 'next_run_at'])
+            ->map(fn ($row) => [
+                'id' => (int) $row->id,
+                'name' => class_basename($row->class) . '::' . $row->method,
+                'cron_expression' => $row->cron_expression,
+                'next_run_at' => Rsx_Time::to_iso($row->next_run_at),
+            ])
+            ->all();
+
+        return [
+            'host' => Task_Pool::host(),
+            'pools' => $pools,
+            'running' => $running,
+            'kill_requests' => $kill_requests,
+            'queued' => $queued,
+            'queued_total' => $queued_query->count(),
+            'schedules_due' => $schedules_due,
+            'schedules_total' => DB::table('_task_schedules')->count(),
+        ];
     }
 
     /**
-     * A tracker's most recent run and how it ended.
-     *
-     * completed_at is stamped only by a success and last_error_at only by a failure or an
-     * abandonment, so the later of the two is the last run. The reaper prefixes an
-     * abandoned run's status_reason with 'abandoned'; any other failure is 'failed'.
-     *
-     * @return array{last_run_at: ?string, last_outcome: ?string}
+     * A run as the panel reads it: the status array, the worker evidence (while it runs), the
+     * schedule and which actions apply. $full adds params and attachments.
      */
-    private static function __last_run(object $tracker): array
+    public static function present(Task_Run_Model $task, bool $full): array
     {
-        $success = $tracker->completed_at;
-        $failure = $tracker->last_error_at;
+        $status = $task->to_status_array();
+        $status['pool'] = $task->pool_id !== null ? Task_Run_Model::$enums['pool_id'][(int) $task->pool_id]['label'] : null;
+        // The worker is shown only while the run is RUNNING: once it settles the process that
+        // ran it is over, and the pid the row keeps as evidence names nothing a reader can act on.
+        $running = (int) $task->status_id === Task_Run_Model::STATUS_RUNNING;
+        $status['worker_pid'] = $running && $task->worker_pid !== null ? (int) $task->worker_pid : null;
+        $status['worker_host'] = $running ? $task->worker_host : null;
+        $status['worker_state'] = $running ? static::worker_state($task) : null;
+        $status['schedule_id'] = $task->schedule_id !== null ? (int) $task->schedule_id : null;
+        $status['created_at'] = Rsx_Time::to_iso($task->created_at);
+        $status['actions'] = static::__actions($task);
 
-        if ($success === null && $failure === null) {
-            return ['last_run_at' => null, 'last_outcome' => null];
+        if (!$full) {
+            unset($status['params']);
+        } else {
+            $status['attachments'] = array_map(fn ($attachment) => $attachment->to_listing_array() + [
+                'url' => Rsx::Route('_Sys_Tasks_Controller::attachment', ['id' => $task->id, 'name' => $attachment->name]),
+            ], $task->attachments());
         }
 
-        if ($failure === null || ($success !== null && strtotime($success) >= strtotime($failure))) {
-            return ['last_run_at' => $success, 'last_outcome' => 'completed'];
-        }
-
-        $abandoned = str_starts_with((string) $tracker->status_reason, 'abandoned');
-
-        return ['last_run_at' => $failure, 'last_outcome' => $abandoned ? 'abandoned' : 'failed'];
+        return $status;
     }
 
     /**
-     * The first line of a tracker's last error, capped at ERROR_EXCERPT_LENGTH; null when
-     * it has none.
+     * Whether the process that claimed a RUNNING run is still there; see the WORKER_*
+     * constants. A run claimed by a pool worker is checked against the worker's command line
+     * (a pid the kernel reused is not that worker); a run outside the pool (inline) has no
+     * worker_id, and its pid is simply probed.
+     */
+    public static function worker_state(Task_Run_Model $task): string
+    {
+        if ($task->worker_host !== null && $task->worker_host !== Task_Pool::host()) {
+            return self::WORKER_ELSEWHERE;
+        }
+
+        $pid = (int) $task->worker_pid;
+        if ($pid <= 0) {
+            return self::WORKER_UNKNOWN;
+        }
+
+        $alive = $task->worker_id !== null ? Task::is_worker_process($pid) : posix_kill($pid, 0);
+
+        return $alive ? self::WORKER_ALIVE : self::WORKER_GONE;
+    }
+
+    /** The lifecycle actions that apply to a run in its present state. */
+    private static function __actions(Task_Run_Model $task): array
+    {
+        return match ((int) $task->status_id) {
+            Task_Run_Model::STATUS_RUNNING => ['stop', 'force_stop', 'force_kill'],
+            Task_Run_Model::STATUS_PENDING => ['stop', 'cancel'],
+            default => ['rerun'],
+        };
+    }
+
+    /**
+     * The first line of a schedule's last error, capped at ERROR_EXCERPT_LENGTH; null when it
+     * has none.
      */
     private static function __error_excerpt(?string $error): ?string
     {
@@ -536,11 +439,5 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
         }
 
         return $text;
-    }
-
-    private static function __can_redispatch(object $row): bool
-    {
-        return in_array($row->status, [Task_Status::FAILED, Task_Status::KILLED], true)
-            && $row->next_run_at === null;
     }
 }

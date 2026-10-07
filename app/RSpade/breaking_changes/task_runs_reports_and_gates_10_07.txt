@@ -1,0 +1,137 @@
+TASKS REPORT THROUGH A NEW API, RETURN A RETURN CODE, AND ARE READ AS Task_Run_Model ROWS
+Date: 2026-10-07
+
+IF YOU DO NOTHING: every #[Task] of yours that calls $task->info(), ->error(), ->debug(), ->log(), ->update_progress() or ->set_result() dies with "Call to undefined method"; every #[Task] that returns an array (or a string) is recorded as a FAILED run; code that calls Task::status() or Task::request_stop(), passes a 'queue' option to Task::dispatch(), reads _tasks columns by name (status, logs, result, queue, next_run_at) or a #[Command] caller that parses the JSON it printed breaks; and an application table with a foreign key to _file_storage turns the "Blob References" health row FAIL.
+
+SUMMARY
+    Every execution of a task is now a run row, read through Task_Run_Model: a
+    dispatched run, each run of a #[Schedule], and every inline run
+    (Task::internal(), rsx:task:run, #[Command]). A task reports through new
+    Task_Instance calls, and its RETURN VALUE IS ITS RETURN CODE. Who may see or
+    stop a run is decided by three task gates that deny by default. The /_sys
+    console shows everything; your application's users see runs only once you
+    register gate handlers.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - The migration 2026_10_07_070855 (php artisan migrate): _tasks rebuilt as one
+      row per run, plus _task_schedules, _task_reports, _task_output,
+      _task_messages, _task_attachments and _task_kill_requests. Queued work and
+      run history in the old _tasks table are not carried over - apply it from
+      a maintenance window, as every framework update is.
+    - Task_Instance's reporting calls: heartbeat(), status(), progress(),
+      progress_count(), eta(), state(), state_list(), summary(), message(),
+      stdout(), stderr(), attach_file(), attach_bytes(), flush().
+    - Task_Run_Model (readers, search_query() / find_first_1000() /
+      find_page(), and the lifecycle operations request_stop(), force_stop(),
+      force_kill(), cancel(), rerun()), Task_Gates, Rsx_Task (JS), the realtime
+      topics Task_Changed_Topic / Task_Output_Topic / Task_List_Changed_Topic,
+      and the Core widgets Task_Status_Badge, Task_Output, Task_Report,
+      Task_Report_Browser - in every bundle.
+    - Worker pools on_demand / scheduled / kill (rsx.tasks.pools), kill workers
+      (rsx:task:killer), rsx:tasks:stop, rsx:tasks:cancel, and retention
+      (Task_Retention_Service, rsx.tasks.retention, every 30 minutes).
+    - The /_sys Tasks screen (Active / History / Schedules, a run dialog with
+      the live console and reports) and /_sys/workers.
+    - Every framework task already reports with the new calls.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    1. Your own #[Task] methods still use the removed reporting calls and may
+       return data.
+    2. Code of yours that reads task state, stops tasks or names _tasks columns.
+    3. Gate handlers, if any non-developer user should see or stop a run.
+    4. A #[Blob_Reference] declaration on any model of yours that points at
+       _file_storage.
+
+PORTING IT
+    1. Find the removed calls:
+           grep -rnE '\$task->(info|error|debug|log|update_progress|set_result|get_logs|get_queue|set_console_sink)\(' rsx/
+       Replace:
+           $task->info($msg)            -> $task->stdout($msg)
+           $task->error($msg)           -> $task->stderr($msg)
+           $task->debug($msg)           -> $task->stdout($msg)
+           $task->log($level, $msg)     -> stdout() or stderr()
+           $task->update_progress($p, $msg)
+                                        -> $task->progress($p); $task->status($msg);
+                                           (or progress_count($done, $total))
+           $task->set_result($data)     -> $task->state($data)
+
+    2. Fix every return value of a #[Task] method. THE RETURN CONTRACT: null,
+       true or 0 is success; false or any other integer is a failure with that
+       return code; ANY other value (an array, a string, a model) is recorded as
+       a failure. Move returned data into a report and return null:
+           Before:  return ['imported' => $n];
+           After:   $task->state(['imported' => $n]);
+                    $task->summary("Imported {$n} rows.");
+                    return null;
+       A pre_task() override follows the same contract: null lets the task run.
+
+    3. Reading a run: Task::status($id) is gone.
+           $run = Task_Run_Model::find($id);
+           $run->status_id            // Task_Run_Model::STATUS_* (int enum)
+           $run->state(), ->summary(), ->output_after(null), ->messages_after(null)
+       Task::internal() now RETURNS the settled Task_Run_Model (it used to return
+       the task's value): read ->state() / ->summary() / ->return_code from it.
+       Task::dispatch() returns the run id (an int) and takes only the options
+       scheduled_for and timeout; drop any 'queue' option. scheduled_for on an
+       #[Exclusive] / #[Debounce] task throws.
+
+    4. Stopping: Task::request_stop($id) -> Task_Run_Model::find($id)->request_stop()
+       (graceful). force_stop($grace_seconds) and force_kill() are new; on the
+       command line, rsx:tasks:kill <id> is now rsx:tasks:stop <id> --kill.
+
+    5. Raw SQL on _tasks: the columns are status_id (int), origin_id,
+       stop_requested_at, return_code, error; there is no status, queue, logs,
+       result, next_run_at, cron_expression or stop_requested. Schedules are
+       _task_schedules rows. Prefer Task_Run_Model::search_query().
+
+    6. #[Debounce] identity now includes the params: two dispatches with
+       different params are two pieces of work, each debounced on its own.
+       #[Exclusive] is still one identity per method. Check that a debounced
+       drain you dispatch with varying params still means what you intend.
+
+    7. #[Command] / rsx:task:run output: the task's stdout() and echo ARE the
+       command's stdout; stderr() and status() lines go to stderr; the exit code
+       is the return code. The JSON value envelope and --debug are gone. A
+       script that parsed `php artisan yourapp:cmd | jq` must read what the task
+       now writes to stdout - have the task stdout() exactly what callers parse.
+
+    8. Gates (optional, application policy): with no handlers, only developers
+       (login_users.is_developer) see or control runs. To let users watch the
+       runs they started, port the reference handlers:
+           system/app/RSpade/resource/reference_app/handlers/Task_Gate_Handlers.php
+       (task.view.authorize, task.view.scope, task.control.authorize; the portal
+       twins are portal.task.*). The scope and the gate must express the same rule.
+
+    9. Showing runs to users (Category 3 - the engine arrived, the screen did
+       not): the reference app's System > Background Tasks screen is a worked
+       example of the widgets and Rsx_Task:
+           system/app/RSpade/resource/reference_app/app/frontend/system/tasks/
+           system/app/RSpade/resource/reference_app/services/task_showcase_service.php
+       Port what fits your app; the showcase task is a demo, not something to ship.
+
+    10. Blob references: if a model of yours has a file_storage_id pointing at
+        _file_storage, declare it so the disposal sweeps never free its bytes:
+            #[Blob_Reference('file_storage_id')]
+            class Your_Model extends ... { use Blob_Referencing; }
+        php artisan rsx:health names every undeclared column ("Blob References").
+
+    11. Config: rsx.tasks.global_max_workers, task_retention_days and
+        temp_directory_default_ttl are gone. If rsx/resource/config/rsx.php
+        overrides them, move to rsx.tasks.pools.<pool>.max_workers (each at
+        least 1) and rsx.tasks.retention.* (minutes). RSX_TASK_MAX_WORKERS still
+        sets the on_demand pool.
+
+VERIFICATION
+    php artisan migrate; php artisan rsx:check is clean; the grep in step 1
+    finds nothing; php artisan rsx:health shows "Task Worker Pools" and
+    "Blob References" OK; run each of your tasks once (php artisan rsx:task:run
+    Service method) and confirm exit code 0 and the run in /_sys/tasks with the
+    reports you expect.
+
+SEE ALSO
+    tasks - runs, reporting, the return contract, gates, widgets, pools
+    task_commands - the #[Command] output contract
+    file_disposal - declared blob references
+    skill rspade:background-tasks

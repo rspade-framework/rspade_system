@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\Session_Cleanup_Service;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -61,12 +60,6 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         return $token;
     }
 
-    private static function __task(): Task_Instance
-    {
-        // Immediate (non-DB-backed) instance: info() buffers in memory, heartbeat()
-        // no-ops outside a worker - safe for direct in-test invocation.
-        return new Task_Instance(Session_Cleanup_Service::class, 'cleanup_sessions');
-    }
 
     /**
      * Insert a _login_history row of the given age and return its id.
@@ -152,7 +145,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         $mid_web = static::__insert_session(['age_days' => 40, 'login_user_id' => 12345]);
         $fresh_anonymous = static::__insert_session(['age_days' => 2]);
 
-        $result = Session_Cleanup_Service::cleanup_sessions(static::__task());
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
 
         static::__assert_greater_than(0, $result['web'], 'web session past its window deleted');
         static::__assert_greater_than(0, $result['anonymous'], 'never-authenticated session past its window deleted');
@@ -189,7 +182,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'last_active'   => now()->subMinutes(10),
         ]);
 
-        $result = Session_Cleanup_Service::cleanup_sessions(static::__task());
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
 
         static::__assert_greater_than(0, $result['playwright'], 'stale harness session deleted');
 
@@ -224,7 +217,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'last_active'   => now()->subMinutes(10),
         ]);
 
-        $result = Session_Cleanup_Service::cleanup_sessions(static::__task());
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
 
         static::__assert_greater_than(0, $result['cli'], 'stale CLI session deleted');
 
@@ -247,7 +240,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             $tokens[] = static::__insert_session(['age_days' => 40]);
         }
 
-        $result = Session_Cleanup_Service::cleanup_sessions(static::__task(), ['chunk_size' => 5]);
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions', ['chunk_size' => 5]);
 
         static::__assert_true($result['anonymous'] >= 12, 'all backlog rows deleted across chunks');
 
@@ -265,7 +258,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         $aged = static::__insert_login_history(400);
         $recent = static::__insert_login_history(10);
 
-        $result = Session_Cleanup_Service::cleanup_login_history(static::__task());
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_login_history');
 
         static::__assert_greater_than(0, $result['total_deleted']);
         static::__assert_equals(0, DB::table('_login_history')->where('id', $aged)->count(), 'the aged row is gone');
@@ -276,7 +269,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
     {
         $recent = static::__insert_login_history(3);
 
-        $result = Session_Cleanup_Service::cleanup_login_history(static::__task());
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_login_history');
 
         static::__assert_equals(0, $result['total_deleted'], 'silent, and no rows touched');
         static::__assert_equals(1, DB::table('_login_history')->where('id', $recent)->count());
@@ -289,7 +282,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
 
         try {
             config(['rsx.sessions.login_history_retention_days' => 0]);
-            $result = Session_Cleanup_Service::cleanup_login_history(static::__task());
+            $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_login_history');
         } finally {
             config(['rsx.sessions.login_history_retention_days' => $original]);
         }
@@ -305,7 +298,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             $ids[] = static::__insert_login_history(400);
         }
 
-        $result = Session_Cleanup_Service::cleanup_login_history(static::__task(), ['chunk_size' => 5]);
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_login_history', ['chunk_size' => 5]);
 
         static::__assert_true($result['total_deleted'] >= 12, 'all backlog rows deleted across chunks');
         static::__assert_equals(0, DB::table('_login_history')->whereIn('id', $ids)->count());
@@ -392,7 +385,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         $portal = static::__insert_portal_session(['age_days' => 40]);
         $anonymous = static::__insert_session(['age_days' => 40]);
 
-        Session_Cleanup_Service::cleanup_sessions(static::__task());
+        static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
 
         $remaining = DB::table('_sessions')
             ->whereIn('session_token', [$portal, $anonymous])
@@ -408,7 +401,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         $stale = static::__insert_portal_session(['age_days' => 200]);
         $fresh = static::__insert_portal_session(['age_days' => 40]);
 
-        $result = Session_Cleanup_Service::cleanup_sessions(static::__task());
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
 
         static::__assert_greater_than(0, $result['web'], 'identified session past 3 months deleted');
 
@@ -429,7 +422,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         ]);
         $same_age_portal_web = static::__insert_portal_session(['age_days' => 2]);
 
-        $result = Session_Cleanup_Service::cleanup_sessions(static::__task());
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
 
         static::__assert_greater_than(0, $result['playwright'], 'stale harness session deleted');
 

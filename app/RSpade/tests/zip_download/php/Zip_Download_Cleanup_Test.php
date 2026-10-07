@@ -9,15 +9,14 @@ namespace App\RSpade\Tests\ZipDownload\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Files\Zip_Download_Cleanup_Service;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Zip_Download_Cleanup_Service::cleanup_expired_requests - the six-hourly retention prune.
  *
  * Rows older than config('rsx.attachments.zip_request_retention_hours') are chunk-deleted;
- * newer rows survive. The task is invoked directly with an immediate Task_Instance (info()
- * buffers, heartbeat() no-ops off a worker). Rows are tagged with a distinctive zip_name
+ * newer rows survive. The task method is called directly as a real
+ * inline run (__run_task_method()), and its counts are read from the state it reports. Rows are tagged with a distinctive zip_name
  * so assertions target exactly the inserted rows. Default transaction isolation - the task
  * DELETE is visible on the same connection and rolls back afterward. A config override is
  * restored in the same test so it never bleeds.
@@ -43,10 +42,6 @@ class Zip_Download_Cleanup_Test extends Rsx_Test_Abstract
         return DB::table('_zip_download_requests')->where('zip_name', self::MARK_NAME)->count();
     }
 
-    private static function __task(): Task_Instance
-    {
-        return new Task_Instance(Zip_Download_Cleanup_Service::class, 'cleanup_expired_requests');
-    }
 
     public static function test_deletes_expired_keeps_fresh_at_default_retention()
     {
@@ -56,7 +51,7 @@ class Zip_Download_Cleanup_Test extends Rsx_Test_Abstract
         static::__insert_request(1);  // within cutoff
         static::__assert_equals(3, static::__marked_count(), 'three marked rows inserted');
 
-        $result = Zip_Download_Cleanup_Service::cleanup_expired_requests(static::__task());
+        $result = static::__run_task_method(Zip_Download_Cleanup_Service::class, 'cleanup_expired_requests');
 
         static::__assert_greater_than(1, $result['deleted'], 'both stale rows pruned');
         static::__assert_equals(24, $result['retention_hours']);
@@ -74,7 +69,7 @@ class Zip_Download_Cleanup_Test extends Rsx_Test_Abstract
             static::__insert_request(1);  // within it
             static::__assert_equals(2, static::__marked_count());
 
-            $result = Zip_Download_Cleanup_Service::cleanup_expired_requests(static::__task());
+            $result = static::__run_task_method(Zip_Download_Cleanup_Service::class, 'cleanup_expired_requests');
 
             static::__assert_equals(6, $result['retention_hours']);
             static::__assert_equals(1, static::__marked_count(), 'only the row inside the 6-hour window survives');
@@ -92,7 +87,7 @@ class Zip_Download_Cleanup_Test extends Rsx_Test_Abstract
         }
         static::__assert_equals(12, static::__marked_count());
 
-        $result = Zip_Download_Cleanup_Service::cleanup_expired_requests(static::__task(), ['chunk_size' => 5]);
+        $result = static::__run_task_method(Zip_Download_Cleanup_Service::class, 'cleanup_expired_requests', ['chunk_size' => 5]);
 
         static::__assert_true($result['deleted'] >= 12, 'all backlog rows deleted across chunks');
         static::__assert_equals(0, static::__marked_count(), 'no backlog row survives');

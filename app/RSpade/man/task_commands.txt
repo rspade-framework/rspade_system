@@ -8,7 +8,7 @@ SYNOPSIS
        #[Command('<prefix:name>', '<command description>')]
        public static function do_work(Task_Instance $task, array $params = []) { }
 
-       php artisan <prefix:name> [--key=value ...] [--debug] [-q]
+       php artisan <prefix:name> [--key=value ...] [-q]
 
 DESCRIPTION
        An application does not write artisan command classes. It writes tasks, and
@@ -18,9 +18,11 @@ DESCRIPTION
            #[Command('myapp:import', 'Import the nightly vendor feed')]
            public static function import(Task_Instance $task, array $params = [])
            {
-               $task->info('Fetching');
-               $task->update_progress(50, 'Parsing');
-               return ['rows' => 1500];
+               $task->status('Fetching');
+               $rows = Vendor_Feed::fetch($params['since'] ?? null);
+               $task->status('Importing');
+               $task->stdout(count($rows) . ' rows');
+               return null;
            }
 
        That declaration IS the command. There is no class to write, no file to place, no
@@ -29,24 +31,25 @@ DESCRIPTION
        declaration at console boot.
 
            $ php artisan myapp:import --since=2026-08-01
-           [2026-08-31 09:12:04] [info] Fetching                      <- stderr
-           [2026-08-31 09:12:09] [info] [50%] Parsing                 <- stderr
-           {                                                          <- stdout
-               "rows": 1500
-           }
+           Fetching                                                   <- stderr
+           Importing                                                  <- stderr
+           1500 rows                                                  <- stdout
+           $ echo $?
+           0
 
        A command declared this way is EXACTLY
 
            php artisan rsx:task:run <Service> <method> [--key=value ...]
 
-       under a friendlier name: the same argv parsing, the same --debug, the same output
-       contract, the same exit codes, the same code path. Nothing about how a task behaves
-       changes because it acquired a name, and a task never learns that it has one.
+       under a friendlier name: the same argv parsing, the same output contract, the same
+       exit codes, the same code path. Nothing about how a task behaves changes because it
+       acquired a name, and a task never learns that it has one.
 
        An application therefore has one way to write CLI-invocable work, not two. Anything
        reachable from cron, from a deploy script or from an operator's shell is a #[Task],
        which means it is also dispatchable in the background, schedulable with #[Schedule],
-       pollable through Task::status(), and recorded in _tasks like every other run.
+       and recorded as a run like every other: a console run is an INLINE run with its own
+       _tasks row (Task_Run_Model), its reports and its output, visible in /_sys/tasks.
 
 THE ATTRIBUTE
        #[Command(string $name, string $description)]
@@ -64,48 +67,60 @@ THE ATTRIBUTE
 
 WHAT IS REGISTERED
        One Task_Alias_Command per declaration - Task_Run_Command with the service and the
-       method already decided. Its signature is
-
-           <name> {--debug}
-
-       plus the same free-form --key=value argv parsing rsx:task:run has, so every option
-       an invocation passes arrives in the task's $params (Laravel's own built-ins - and
-       --debug - are never passed through). A JSON value is decoded: --data='{"a":1}'
-       arrives as an array. A bare --flag arrives as boolean true.
+       method already decided. Its signature is the bare name, plus the same free-form
+       --key=value argv parsing rsx:task:run has, so every option an invocation passes
+       arrives in the task's $params. Laravel's own built-ins (--help, --quiet, --verbose,
+       --version, --ansi, --no-ansi, --no-interaction, --env) and the maintenance gate's
+       --force never do. A JSON value is decoded: --data='{"a":1}' arrives as an array. A
+       bare --flag arrives as boolean true.
 
        The command appears in `php artisan list` under its own prefix, with its
        description, and in `php artisan rsx:task:list` in the COMMAND column beside the
        task that declares it ('-' for a task that declares none).
 
 OUTPUT CONTRACT
-       Shared verbatim with rsx:task:run, and the reason a task's console output is worth
-       piping.
+       Shared verbatim with rsx:task:run.
 
-       STDOUT is the VALUE and nothing else - the task's return value as JSON, pretty
-       printed. --debug wraps it as {"success": true, "result": ...}. On a failure it is
-       {"success": false, "error": ..., "error_type": ..., "trace": ...} and the command
-       exits 1. Nothing else is ever written there: no banner, no progress, no summary.
+       STDOUT is the task's stdout: every $task->stdout() line and everything the task
+       echoes or prints, written live. Nothing else is ever written there - no banner, no
+       envelope, no summary. A task whose output is meant to be piped writes exactly that
+       to stdout.
 
-       STDERR is the NARRATION - every $task->info() / error() / debug() line, written
-       live and flushed immediately, formatted exactly as the lines in the _tasks.logs
-       column. A console transcript and Task::status()['logs'] therefore read identically.
-       update_progress($percent, $message) is an ordinary info line reading "[50%] msg".
+       STDERR is the task's stderr: every $task->stderr() line, every CHANGED status()
+       (one line each, as the status text), and the "Task failed: <error>" line of a run
+       that fails, written live and flushed immediately. Operator lines (a stop or kill
+       performed on the run) are recorded on the run but never echoed to the command's
+       stderr.
 
-           php artisan myapp:import | jq .rows      # the narration goes to the terminal
-           php artisan myapp:import 2>/dev/null     # the narration is discarded
-           php artisan myapp:import -q              # the narration is never produced
-           php artisan myapp:import 2>&1 | tee log  # both, interleaved
+       EXIT CODE is the run's return code (rsx:man tasks, THE RETURN CONTRACT): 0 when the
+       task returned null, true or 0; the integer it returned for a failure, clamped to
+       1..255 (a negative or oversized code exits 1); 1 for false, any other return value,
+       or a throw. A task that THROWS prints its failure line to stderr and exits 1; the
+       exception is recorded on the run's error.
 
-       -q / --quiet suppresses the narration and NEVER the value: the JSON is written at
-       quiet verbosity precisely so a scripted caller can silence everything but the
-       answer.
+           php artisan myapp:import | wc -l          # stdout to the pipe, stderr to the
+                                                     # terminal
+           php artisan myapp:import 2>/dev/null      # discard stderr
+           php artisan myapp:import -q               # stderr is never produced
+           php artisan myapp:import 2>&1 | tee log   # both, interleaved
 
-       THE SINK IS THE RUNNER'S, NOT THE TASK'S. The stream is attached by the command,
-       through Task::internal()'s fourth argument, and by nothing else. Application code
-       calling Task::internal() from a web request or from another task passes three
-       arguments and prints to nobody's console; a queued or scheduled run writes its log
-       lines to the database exactly as it always has. A task's own code cannot tell the
+       -q / --quiet silences stderr and NEVER stdout.
+
+       Everything a console run writes is ALSO recorded on its run, exactly as a worker
+       run's would be: the _task_output lines (stdout, stderr), the reports, the summary.
+       A console transcript and the run's output in /_sys read the same.
+
+       THE STREAMS ARE THE RUNNER'S, NOT THE TASK'S. The command attaches its stdout and
+       stderr through Task::internal()'s fourth argument, and nothing else does.
+       Application code calling Task::internal() from a web request or from another task
+       passes three arguments and prints to nobody's console; a queued or scheduled run
+       writes its lines to the database only. A task's own code cannot tell the
        difference and must not try to.
+
+       A #[Command] run is an inline run, so #[Exclusive]/#[Debounce] hold: a
+       single-instance task waits for a running instance of its identity to finish before
+       it starts. It also carries the configured execution cap (rsx.tasks.default_timeout,
+       rsx:man tasks EXECUTION TIMEOUT).
 
 BUILD-TIME RULES
        Every rule is enforced by Task_Command_ManifestSupport during the manifest build and
@@ -129,8 +144,8 @@ BUILD-TIME RULES
        A name already taken
              "One command name names exactly one task" (another #[Command]), or
              "That name is already a framework command" (the first token of a $signature
-             under app/RSpade/Commands or app/Console/Commands, read from source at build time). Choose another
-             name; a #[Command] never shadows one.
+             under app/RSpade/Commands or app/Console/Commands, read from source at build
+             time). Choose another name; a #[Command] never shadows one.
 
        A missing or empty description
              "The second argument is the description and is required"
@@ -160,7 +175,7 @@ WHEN NOT TO
        A task is not made better by having a command. It is made reachable.
 
 SEE ALSO
-       rsx:man tasks - #[Task], #[Schedule], dispatch, status, the worker pool
+       rsx:man tasks - #[Task], #[Schedule], dispatch, runs, reporting, the worker pools
        rsx:man artisan_commands - hand-written framework commands and why they are unlike
        rsx:man scripting - booting the shell from a PHP script OUTSIDE the application
        skill rspade:task-commands - the recipe, a worked transcript, the FATAL catalogue
@@ -170,4 +185,4 @@ SEE ALSO
 AUTHORS
        RSX Framework Team
 
-RSX Framework                     August 2026                     TASK_COMMANDS(7)
+RSX Framework                     October 2026                    TASK_COMMANDS(7)

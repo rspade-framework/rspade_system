@@ -169,16 +169,22 @@ DEDUPLICATION AND HASH COLLISION HANDLING
 
     Implementation:
         File_Storage_Model::store_blob($temp_file_path, $reference)   (pinned name)
+        File_Storage_Model::store_bytes($bytes, $reference)           (in-memory bytes)
         File_Storage_Model::increment_base16_value($hash)
 
-    store_blob() is the ONLY way bytes enter the store. $reference receives the
-    storage row and writes the row that pins it (an attachment, an email part);
+    store_blob() is the ONLY way bytes enter the store (store_bytes() is it for
+    bytes held in memory). $reference receives the storage row and writes the row
+    that pins it (an attachment, an email part, a task attachment);
     store_blob() returns the storage row. The blob's read lock (file_blob:<hash>)
     is held from before the lookup until that reference is COMMITTED, so disposal
     can never release the bytes in between - see rsx:man file_disposal (RACE-PROOF
     RELEASE). A reference recorded after store_blob() returned has no such
     guarantee: record it inside $reference. A $reference that records nothing is
-    legal; the blob is then an orphan for the disposal sweeps.
+    legal; the blob is then an orphan for the disposal sweeps. Every table whose
+    rows reference a blob DECLARES it with #[Blob_Reference] on its model, or the
+    rsx:health "Blob References" row FAILs (rsx:man file_disposal, DECLARED BLOB
+    REFERENCES). Bytes are read back through the storage row - read_bytes(),
+    read_stream(), download_response(), inline_response() - never through a path.
 
         File_Storage_Model::store_blob($path, function (File_Storage_Model $storage) use ($attachment) {
             $attachment->file_storage_id = $storage->id;
@@ -210,9 +216,9 @@ FILE LIFECYCLE
         frees nothing - the blob stays on disk and undelete() restores the
         attachment. File_Disposal_Service is the only thing that releases a
         blob: the daily pass destroys attachments whose window has passed, and
-        a blob is released only when no attachment (live or still retained)
-        and no queued email part references it, under that blob's write lock
-        (rsx:man file_disposal). force_destroy() is the one immediate erasure.
+        a blob is released only when no declared reference - an attachment
+        (live or still retained), a queued email part, a task attachment -
+        points at it, under that blob's write lock (rsx:man file_disposal). force_destroy() is the one immediate erasure.
 
         However a reference disappears - a destroyed attachment, a purged
         email, a bulk query - a blob nothing references any more is found by

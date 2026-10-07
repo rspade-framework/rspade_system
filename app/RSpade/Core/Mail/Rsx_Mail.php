@@ -404,22 +404,10 @@ class Rsx_Mail
         }
 
         // Raw bytes the caller generated.
-        $temp_path = sys_get_temp_dir() . '/rspade_email_attachment_' . random_hash() . '.bin';
-
-        if (file_put_contents_safe($temp_path, $spec['bytes']) === false) {
-            throw new \RuntimeException('Failed to write email attachment bytes to a temporary file.');
-        }
-
-        try {
-            File_Storage_Model::store_blob(
-                $temp_path,
-                fn (File_Storage_Model $storage) => $record($storage, $spec['name'], $spec['mime'])
-            );
-        } finally {
-            if (file_exists($temp_path)) {
-                @unlink($temp_path);
-            }
-        }
+        File_Storage_Model::store_bytes(
+            $spec['bytes'],
+            fn (File_Storage_Model $storage) => $record($storage, $spec['name'], $spec['mime'])
+        );
     }
 
     /**

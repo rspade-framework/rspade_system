@@ -118,7 +118,8 @@ Behavior of record: `php artisan rsx:man email`. Config: `rsx:man config_rsx`.
 
 - The test runner suppresses the automatic drain kick (`config('database.default') ===
   'test'`), so a test that wants the queue drained runs it explicitly with
-  `Task::internal('Mail_Queue_Service', 'send_pending_queue')`.
+  `Task::internal('Mail_Queue_Service', 'send_pending_queue')` and reads the drain's counts
+  from the returned run's `->state()`.
 - The framework test host is a `.dev.` hostname, so the dev-site recipient gate is LIVE
   for every send. A test whose subject is not the gate whitelists `example.com` past it;
   a test whose subject IS the gate sets `rsx.mail.delivery` to `live`, because the gate

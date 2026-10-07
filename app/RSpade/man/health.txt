@@ -146,6 +146,7 @@ FRAMEWORK INVENTORY
                                                   somewhere to record a
                                                   package - an authoring act
         Application Mode            all           reports WHICH mode is active
+        Blob References             all
         Claude Skills               development   agent tooling for someone
                                                   authoring this source
         Class Override Drift        all           arrives with a framework
@@ -199,7 +200,7 @@ FRAMEWORK INVENTORY
         Task Schedule Failures      all
         Task Scheduler Liveness     all           WARN in development, FAIL on
                                                   a sealed build
-        Task Worker Pool            all
+        Task Worker Pools           all
         Turnstile                   all
         Web Exposure                all           security, and the
                                                   development surface is the
@@ -226,6 +227,14 @@ FRAMEWORK INVENTORY
                                  channel resolves to level debug (remediation:
                                  LOG_LEVEL=info in .env). A stack channel resolves
                                  to the LOUDEST level any of its members accepts.
+        Blob References          every foreign key to _file_storage.id in the live
+                                 schema is covered by a #[Blob_Reference]
+                                 declaration on its model. FAIL naming each
+                                 undeclared table.column - the disposal sweeps
+                                 ask only the declared tables, so an undeclared
+                                 one could have its bytes freed under it
+                                 (rsx:man file_disposal, DECLARED BLOB
+                                 REFERENCES); OK with the declared count.
         Claude Skills            every rsx/resource/skills/<name>/SKILL.md is linked
                                  into .claude/skills/. WARN per unlinked skill,
                                  framework-created dangling link, or blocked/reserved
@@ -383,8 +392,8 @@ FRAMEWORK INVENTORY
                                  drift, naming rsx:build --force.
         Realtime Relay           WebSocket relay reachable when enabled
         Redis Connectivity       Redis reachable (cache, realtime, full page cache,
-                                 counters). The task worker pool does not use
-                                 Redis - see Task Worker Pool.
+                                 counters). The task worker pools do not use
+                                 Redis - see Task Worker Pools.
         Schema Contract          what the framework READS BY NAME on
                                  application-owned (non-underscore) tables is still
                                  there. One row per contracted table (`schema: users`,
@@ -430,29 +439,36 @@ FRAMEWORK INVENTORY
                                  supervisor program answered first, and third-party
                                  scratch is landing outside the project).
         Task Scheduler Liveness  rsx:task:process cron ticking, inferred from
-                                 #[Schedule] tracker staleness. WARN in
+                                 _task_schedules staleness (the oldest
+                                 next_run_at more than 10 minutes past). WARN in
                                  development, where a box that is not left
-                                 running is expected to have a stale tracker;
+                                 running is expected to have a stale schedule;
                                  FAIL on a sealed build, where nothing would be
                                  sweeping the mail queue, rendering documents,
                                  rotating logs or reaping workers and every one
                                  of those failures is silent. The signal cannot
                                  say WHICH of a dead cron and a wedged pool is
                                  wrong, and says so.
-        Task Worker Pool         the pool as rsx-lockd accounts it (rsx:man tasks,
-                                 THE WORKER POOL): members against
-                                 rsx.tasks.global_max_workers, whether the pool
-                                 lock is held, and how many processes wait for
-                                 it. WARN when there are more members than the
-                                 cap (the cap was lowered under running workers,
-                                 or two configurations share one database and
-                                 host); WARN when RUNNING rows claimed under a
+        Task Schedule Failures   WARN naming each #[Schedule] whose
+                                 consecutive failed runs reached
+                                 rsx.tasks.failing_schedule_warn_after (3), with
+                                 an excerpt of its last error. Never FAIL: the
+                                 schedule still runs at its cadence.
+        Task Worker Pools        the three pools (on_demand, scheduled, kill) as
+                                 rsx-lockd accounts them (rsx:man tasks, THE
+                                 WORKER POOLS): each pool's members against
+                                 rsx.tasks.pools.<pool>.max_workers and how many
+                                 processes wait for its lock. WARN when a pool
+                                 has more members than its cap (the cap was
+                                 lowered under running workers, or two
+                                 configurations share one database and host);
+                                 WARN when RUNNING runs claimed under a
                                  previous rsx-lockd generation sit on OTHER hosts
                                  ("N running task(s) from a previous rsx-lockd
                                  generation on host(s) ..." - each host's
                                  rsx:task:process reaps its own, so a host that
                                  no longer runs one leaves them RUNNING; rsx:man
-                                 tasks, STUCK TASK RECOVERY); FAIL when the daemon
+                                 tasks, FAILURE AND ABANDONMENT); FAIL when the daemon
                                  cannot be reached or refuses pool.stats -
                                  nothing can be admitted;
                                  INFO while the maintenance flag is up, when the
@@ -601,7 +617,8 @@ SEE ALSO
     rsx:man prod              the read-only posture the INFO tree rows report on
     rsx:man storage_directories  the three trees the writability rows check
     rsx:man tasks             the scheduler whose liveness is checked, and the
-                              worker pool the Task Worker Pool row reads
+                              worker pools the Task Worker Pools row reads
+    rsx:man file_disposal     the declarations the Blob References row checks
     rsx:man locks             the lock daemon behind the Lock Server check
 
 HEALTH(1)                         RSpade Manual                         HEALTH(1)

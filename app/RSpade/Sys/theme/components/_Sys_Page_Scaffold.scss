@@ -5,6 +5,11 @@
     margin: 0 auto;
     padding: var(--rsx-page-pad);
 
+    // A screen whose table needs the room (the Tasks grid).
+    &--wide {
+        max-width: 1600px;
+    }
+
     &__main {
         display: flex;
         flex-direction: column;

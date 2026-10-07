@@ -1,0 +1,32 @@
+._Sys_Task_Workers_Action {
+    td,
+    th {
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+
+    &__loading {
+        display: block;
+        width: 40px;
+        height: 40px;
+        margin: 20px auto;
+    }
+
+    &__row {
+        cursor: pointer;
+    }
+
+    &__mono {
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+    }
+
+    &__dim {
+        color: var(--rsx-dim);
+        font-size: 11px;
+    }
+
+    &__progress {
+        min-width: 180px;
+    }
+}

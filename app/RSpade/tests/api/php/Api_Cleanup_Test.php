@@ -9,15 +9,14 @@ namespace App\RSpade\Tests\Api\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Api\Api_Cleanup_Service;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Api_Cleanup_Service::cleanup_request_log - the daily retention prune.
  *
  * Rows older than config('rsx.api.log_retention_days') are chunk-deleted; newer rows
- * survive. The task is invoked directly with an immediate Task_Instance (info() buffers,
- * heartbeat() no-ops off a worker). Rows are tagged with a distinctive ip so assertions
+ * survive. The task method is called directly as a real inline run (__run_task_method()), and
+ * its counts are read from the state it reports. Rows are tagged with a distinctive ip so assertions
  * target exactly the inserted rows regardless of anything else in the table. Default
  * transaction isolation - the task DELETE is visible on the same connection and rolls
  * back afterward. A config override is restored in the same test so it never bleeds.
@@ -49,10 +48,6 @@ class Api_Cleanup_Test extends Rsx_Test_Abstract
         return DB::table('_api_request_log')->where('ip', self::MARK_IP)->count();
     }
 
-    private static function __task(): Task_Instance
-    {
-        return new Task_Instance(Api_Cleanup_Service::class, 'cleanup_request_log');
-    }
 
     public static function test_deletes_old_keeps_new_at_default_retention()
     {
@@ -62,7 +57,7 @@ class Api_Cleanup_Test extends Rsx_Test_Abstract
         static::__insert_log(1);  // within cutoff
         static::__assert_equals(3, static::__marked_count(), 'three marked rows inserted');
 
-        $result = Api_Cleanup_Service::cleanup_request_log(static::__task());
+        $result = static::__run_task_method(Api_Cleanup_Service::class, 'cleanup_request_log');
 
         static::__assert_greater_than(1, $result['deleted'], 'both old rows pruned');
         static::__assert_equals(30, $result['retention_days']);
@@ -80,7 +75,7 @@ class Api_Cleanup_Test extends Rsx_Test_Abstract
             static::__insert_log(1);  // within it
             static::__assert_equals(2, static::__marked_count());
 
-            $result = Api_Cleanup_Service::cleanup_request_log(static::__task());
+            $result = static::__run_task_method(Api_Cleanup_Service::class, 'cleanup_request_log');
 
             static::__assert_equals(7, $result['retention_days']);
             static::__assert_equals(1, static::__marked_count(), 'only the row inside the 7-day window survives');
@@ -98,7 +93,7 @@ class Api_Cleanup_Test extends Rsx_Test_Abstract
         }
         static::__assert_equals(12, static::__marked_count());
 
-        $result = Api_Cleanup_Service::cleanup_request_log(static::__task(), ['chunk_size' => 5]);
+        $result = static::__run_task_method(Api_Cleanup_Service::class, 'cleanup_request_log', ['chunk_size' => 5]);
 
         static::__assert_true($result['deleted'] >= 12, 'all backlog rows deleted across chunks');
         static::__assert_equals(0, static::__marked_count(), 'no backlog row survives');

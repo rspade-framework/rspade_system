@@ -1,0 +1,24 @@
+<%--
+_Sys_Task_Detail - one run, in three columns: its facts and lifecycle actions, its live
+output, and the reports it has set. The body of the run dialog (_Sys_Task_Detail.open(id))
+and of the full-page view (_Sys_Task_View_Action).
+
+$task_id - the run (required)
+
+The shell itself never re-renders - the console in the middle keeps its scrollback - and each
+column follows the run on its own: _Sys_Task_Facts and _Sys_Task_Reports_Pane on
+Task_Changed_Topic, Task_Output on Task_Output_Topic.
+--%>
+<Define:_Sys_Task_Detail tag="div">
+    <% if (!this.args.task_id) { throw new Error('_Sys_Task_Detail requires $task_id'); } %>
+    <div class="_Sys_Task_Detail__facts">
+        <_Sys_Task_Facts $sid="facts" $task_id=this.args.task_id />
+    </div>
+    <div class="_Sys_Task_Detail__output">
+        <div class="_Sys_Task_Detail__heading">Output</div>
+        <Task_Output class="_Sys_Task_Detail__console" $task_id=this.args.task_id />
+    </div>
+    <div class="_Sys_Task_Detail__reports">
+        <_Sys_Task_Reports_Pane $task_id=this.args.task_id />
+    </div>
+</Define:_Sys_Task_Detail>

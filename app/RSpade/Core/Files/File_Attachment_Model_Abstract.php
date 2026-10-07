@@ -10,9 +10,9 @@ use ImagickException;
 use Throwable;
 use App\RSpade\Core\Auth\Staff_Authorizable;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Files\Blob_Referencing;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Icons;
-use App\RSpade\Core\Files\File_Blob_Locks;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Imagick_Policy;
@@ -113,6 +113,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  *
  * @mixin \Eloquent
  */
+#[Blob_Reference(column: 'file_storage_id', where_null: 'destroyed_at')]
 abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
 {
     /**
@@ -149,6 +150,13 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * an app states a real policy by overriding the pair, which beats the trait.
      */
     use Staff_Authorizable;
+
+    /**
+     * A row pointing at a blob is a reference: live or soft-deleted, it pins the bytes until
+     * the disposal pass stamps destroyed_at (#[Blob_Reference] above, File_Blob_References).
+     * The trait's save() holds the blob's read lock while the reference commits.
+     */
+    use Blob_Referencing;
 
     /**
      * DERIVED PROPERTIES - computed here, serialized into toArray() and therefore present on the
@@ -285,6 +293,24 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
 
         static::created(function ($attachment) {
             $attachment->__request_render_if_convertible();
+        });
+
+        // Derive file_type_label on EVERY write, not only on create: repoint_storage() and the
+        // re-derivation paths change mime_type / file_extension on an existing row, and the
+        // label is a projection of exactly those two columns. No caller sets it; a caller that
+        // does is overwritten here, which is the contract - the caller supplies the bytes, the
+        // model derives the label.
+        //
+        // The column may not exist yet. A from-zero migration replay writes attachments
+        // through this model BEFORE add_file_type_label_to_file_attachments has run
+        // (import_sample_documents, 2026-07-16, does exactly that), and an unconditional
+        // assignment made that replay fail with "Unknown column 'file_type_label'" - unseen
+        // on any developer box, whose database already had the column. That migration's own
+        // backfill repairs every row written before the column arrived.
+        static::saving(function ($attachment) {
+            if (static::__file_type_label_column_exists()) {
+                $attachment->file_type_label = static::file_type_label_for($attachment->mime_type, $attachment->file_extension);
+            }
         });
     }
 
@@ -2381,46 +2407,6 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         });
 
         return $changed;
-    }
-
-    /**
-     * Derive file_type_label on EVERY write, not only on create: repoint_storage() and the
-     * re-derivation paths change mime_type / file_extension on an existing row, and the label
-     * is a projection of exactly those two columns. No caller sets it; a caller that does is
-     * overwritten here, which is the contract - the caller supplies the bytes, the model
-     * derives the label.
-     *
-     * A write that sets file_storage_id is a blob REFERENCE and runs under the blob's read lock
-     * until it commits (File_Blob_Locks::referencing_storage()); it throws if the storage row was
-     * released before the write.
-     *
-     * @param array $options
-     * @return bool
-     */
-    public function save(array $options = [])
-    {
-        // The column may not exist yet. A from-zero migration replay writes attachments
-        // through this model BEFORE add_file_type_label_to_file_attachments has run
-        // (import_sample_documents, 2026-07-16, does exactly that), and an unconditional
-        // assignment made that replay fail with "Unknown column 'file_type_label'" - unseen
-        // on any developer box, whose database already had the column. That migration's own
-        // backfill repairs every row written before the column arrived.
-        if (static::__file_type_label_column_exists()) {
-            $this->file_type_label = static::file_type_label_for($this->mime_type, $this->file_extension);
-        }
-
-        // A write that points this row at a blob is a REFERENCE being recorded: hold the blob's
-        // read lock until it commits, so File_Disposal_Service cannot release the bytes between
-        // the caller finding the storage row and this row pinning it. Inside store_blob() the
-        // lock is already held and this is a reentrant hold. See File_Blob_Locks.
-        if ($this->file_storage_id !== null && $this->isDirty('file_storage_id')) {
-            return File_Blob_Locks::referencing_storage(
-                (int) $this->file_storage_id,
-                fn () => parent::save($options)
-            );
-        }
-
-        return parent::save($options);
     }
 
     /**
