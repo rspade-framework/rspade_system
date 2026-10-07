@@ -22,7 +22,10 @@ use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
  *
  *   Task_Changed_Topic {id}       a run's lifecycle, reports, messages or attachments
  *   Task_Output_Topic {id}        a run's output lines
- *   Task_List_Changed_Topic {}    a run entered, left or moved between lifecycle states
+ *   Task_List_Changed_Topic {class, method}
+ *                                 a run entered, left or moved between lifecycle states;
+ *                                 a subscription filtered on class / method hears only
+ *                                 that task's runs
  *
  * Each frame is published once per site holding a matching subscription in the relay's
  * registry (the Redis set rsx_rt:subs, seeded here the way the relay writes it) and not at all
@@ -68,6 +71,16 @@ class Task_Notify_Test extends Rsx_Test_Abstract
             'site_id' => $site_id,
             'topic' => $topic,
             'filter' => $task_id === null ? [] : ['id' => $task_id],
+        ]));
+    }
+
+    /** Add one subscription with an arbitrary filter, the way the relay records it. */
+    private static function __watch_filter(string $topic, array $filter, int $site_id): void
+    {
+        Realtime::_testing_redis()->sAdd('rsx_rt:subs', json_encode([
+            'site_id' => $site_id,
+            'topic' => $topic,
+            'filter' => $filter,
         ]));
     }
 
@@ -132,19 +145,30 @@ class Task_Notify_Test extends Rsx_Test_Abstract
         static::__assert_equals([['Task_Changed_Topic', 1, 901], ['Task_Output_Topic', 5, 901]], static::__sorted(static::__published()), 'both');
     }
 
-    public static function test_a_lifecycle_move_reaches_the_run_and_every_list_watcher()
+    public static function test_a_lifecycle_move_reaches_the_run_and_every_matching_list_watcher()
     {
         static::__clean();
-        static::__watch('Task_Changed_Topic', 901, 1);
-        static::__watch('Task_List_Changed_Topic', null, 1);
-        static::__watch('Task_List_Changed_Topic', null, 4);
+        $task = static::__run();
+        $id = $task->get_id();
+        static::__clean();
 
-        Task_Notify::lifecycle(901);
+        static::__watch('Task_Changed_Topic', $id, 1);
+        static::__watch('Task_List_Changed_Topic', null, 1);
+        static::__watch_filter('Task_List_Changed_Topic', ['class' => 'Task_Exec_Fixture_Service'], 4);
+        static::__watch_filter('Task_List_Changed_Topic', ['class' => 'Task_Exec_Fixture_Service', 'method' => 'marker_a'], 6);
+        static::__watch_filter('Task_List_Changed_Topic', ['class' => 'Some_Other_Service'], 5);
+        static::__watch_filter('Task_List_Changed_Topic', ['class' => 'Task_Exec_Fixture_Service', 'method' => 'marker_b'], 8);
+
+        Task_Notify::lifecycle($id);
 
         static::__assert_equals(
-            [['Task_Changed_Topic', 1, 901], ['Task_List_Changed_Topic', 1, null], ['Task_List_Changed_Topic', 4, null]],
-            static::__sorted(static::__published())
+            [['Task_Changed_Topic', 1, $id], ['Task_List_Changed_Topic', 1, null], ['Task_List_Changed_Topic', 4, null], ['Task_List_Changed_Topic', 6, null]],
+            static::__sorted(static::__published()),
+            'unfiltered, by service and by task all hear it; another service or another method does not'
         );
+
+        $list_frames = array_values(array_filter(Realtime::_testing_published(), fn ($p) => $p['topic'] === 'Task_List_Changed_Topic'));
+        static::__assert_equals(['class' => 'Task_Exec_Fixture_Service', 'method' => 'marker_a'], $list_frames[0]['data'], 'the frame names the task by its simple service name');
     }
 
     public static function test_nobody_watching_publishes_nothing()

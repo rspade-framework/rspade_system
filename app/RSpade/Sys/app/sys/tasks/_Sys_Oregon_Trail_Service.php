@@ -15,11 +15,13 @@ use App\RSpade\Core\Task\Task_Instance;
  * the Oregon Trail (with a few additions the original never had), started from the Tasks
  * screen's "Play the sample task" button.
  *
- * It exists to SHOW what a task can report, so it reports everything:
+ * It exists to SHOW what a task can report, so it reports everything a task like it would -
+ * with ONE progress indicator, as every task should (rsx:man tasks, DESIGNING A TASK'S
+ * REPORTING):
  *
  *   status()          where the party is right now (each change is also a stderr line)
- *   progress()        miles travelled of the 2,040
- *   progress_count()  landmarks reached of 14
+ *   progress_count()  landmarks reached of 14 (the percentage is derived from it; the miles
+ *                     travelled are in the state)
  *   eta()             seconds left in the script
  *   heartbeat()       every beat
  *   state()           the wagon: date, miles, weather, pace, rations, provisions, the party
@@ -27,7 +29,8 @@ use App\RSpade\Core\Task\Task_Instance;
  *   message()         a landmark reached, a death, each strange encounter
  *   stdout()          the narrative, text-adventure style ("> " marks a decision)
  *   stderr()          hazards, losses, illness and deaths
- *   attach_bytes()    trail_journal.txt (the whole story) and epitaphs.txt
+ *   attach_bytes()    trail_journal.txt (the whole story) and epitaphs.txt - files for the
+ *                     developer who started the run, the one shape attachments are for
  *   summary()         how the journey ended
  *
  * and it answers a GRACEFUL STOP: before every beat, and twice a second while a beat plays
@@ -405,7 +408,6 @@ class _Sys_Oregon_Trail_Service extends Rsx_Service_Abstract
                 $task->message($beat['message']);
             }
 
-            $task->progress($beat['miles'] * 100 / self::TRAIL_MILES);
             $task->progress_count($landmarks_reached, count(self::LANDMARKS));
             $task->state_list(array_slice(self::LANDMARKS, $landmarks_reached));
             $task->state($wagon);

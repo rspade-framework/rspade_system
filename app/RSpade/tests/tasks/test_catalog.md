@@ -257,7 +257,7 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 |----|---------|-------|----------|--------|
 | task-notify-01 | a change reaches each site watching that run, once | registry with several sites and topics | Task_Changed_Topic to sites 1 and 7 | implemented |
 | task-notify-02 | output has its own topic | changed(output only), changed(both) | Task_Output_Topic; both | implemented |
-| task-notify-03 | a lifecycle move reaches the run and every list watcher | lifecycle() | run topic + list topic per site | implemented |
+| task-notify-03 | a lifecycle move reaches the run and every list watcher whose filter matches its task | lifecycle() on a real run; list watchers unfiltered, {class}, {class, method}, another class, another method | run topic + list topic to the unfiltered, class and class+method sites only; frame data {class: simple name, method} | implemented |
 | task-notify-04 | nobody watching publishes nothing | registry for another run | nothing | implemented |
 | task-notify-05 | under a pool lock frames wait for flush_deferred(), once | two changes under the lock | nothing; one frame; second flush nothing | implemented |
 | task-notify-06 | a run's own writes announce themselves | report, output line, operator line | changed; output; output | implemented |

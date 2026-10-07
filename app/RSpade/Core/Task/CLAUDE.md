@@ -58,9 +58,10 @@ says what is in this DIRECTORY and what must stay true when editing it.
   a staff developer passes); `can_subscribe_to_task()` / `can_subscribe_to_list()` for the
   topics.
 - `Task_Notify.php` + `Task_Changed_Topic.php`, `Task_Output_Topic.php`,
-  `Task_List_Changed_Topic.php` — the realtime frames: published once per site that holds a
-  matching subscription in the relay's registry, nothing when nobody watches; each topic's
-  `can_subscribe()` is `Task_Gates`.
+  `Task_List_Changed_Topic.php` (data `{class, method}`, so a filter can name one task) —
+  the realtime frames: published once per site that holds a subscription the frame matches
+  (shallow: every filter key equal) in the relay's registry, nothing when nobody watches;
+  each topic's `can_subscribe()` is `Task_Gates`.
 - `Rsx_Task_Controller.php` — the browser's endpoints (both realms, `#[Auth('public')]`,
   the gates decide; reads `#[Portal_Impersonation_Readable]`) and the `/_task/xterm.mjs` +
   `/_task/xterm-fit.mjs` module routes. `BundleCompiler` adds its JS stub to every bundle.

@@ -16,11 +16,20 @@
  *     const watcher = await Rsx_Task.watch(327, () => refresh_status());  // lifecycle, reports, messages
  *     await Rsx_Task.watch_output(327, () => read_more_output());          // output lines (the busy feed)
  *     await Rsx_Task.watch_list(() => reload_my_list());                   // any run started or finished
+ *     await Rsx_Task.watch_task('Import_Service', 'run', () => check());   // runs of ONE task, by name
  *     watcher.stop();
  *
+ * IS A TASK RUNNING? Watch it by name and ask on every frame (and once at the start - the
+ * resync does that for you):
+ *
+ *     await Rsx_Task.watch_task('Import_Service', 'run', async () => {
+ *         const runs = await Rsx_Task.live_runs('Import_Service', 'run');   // pending or running
+ *         show_import_busy(runs.length > 0);
+ *     });
+ *
  * Inside a component prefer this.subscribe('Task_Changed_Topic', {id}, cb) (and
- * 'Task_Output_Topic' / 'Task_List_Changed_Topic'): the subscription then ends with the
- * component. Every watch fires once on (re)subscribe as a resync, so write each callback as
+ * 'Task_Output_Topic' / 'Task_List_Changed_Topic', which takes an optional {class, method}
+ * filter): the subscription then ends with the component. Every watch fires once on (re)subscribe as a resync, so write each callback as
  * an idempotent refetch, and route it through debounce(refetch, Rsx_Task.LIVE_UPDATE_DELAY)
  * as the task widgets do:
  *
@@ -137,6 +146,40 @@ class Rsx_Task {
     /** Watch for any run entering, leaving or changing lifecycle. Resolves {stop(), established}. */
     static watch_list(callback) {
         return Rsx_Realtime.watch('Task_List_Changed_Topic', {}, callback);
+    }
+
+    /**
+     * Watch the runs of ONE task by name: the callback fires when a run of it is queued,
+     * starts, settles, is cancelled or killed. Resolves {stop(), established}.
+     *
+     * @param {string} class_name the service's simple name ('Import_Service')
+     * @param {string|null} method the task method; null watches every task of the service
+     * @param {Function} callback
+     */
+    static watch_task(class_name, method, callback) {
+        const filter = { class: class_name };
+        if (method) {
+            filter.method = method;
+        }
+
+        return Rsx_Realtime.watch('Task_List_Changed_Topic', filter, callback);
+    }
+
+    /**
+     * The visible LIVE runs (pending or running) of one task, newest first - "is it running?".
+     * Read through the view scope like find().
+     *
+     * @param {string} class_name the service's simple name
+     * @param {string|null} method null: every task of the service
+     * @returns {Promise<Array>} status objects, as find() answers them
+     */
+    static async live_runs(class_name, method = null) {
+        const filter = { class: class_name, live: true };
+        if (method) {
+            filter.method = method;
+        }
+
+        return (await Rsx_Task.find(filter)).tasks;
     }
 
     /**

@@ -8,24 +8,33 @@ description: "Writing, running and watching RSpade background tasks - #[Task] se
 A task is a `public static` method on a Service class (`Rsx_Service_Abstract`, in `/rsx/services/`) marked `#[Task]`. There is no job class, no queue driver, no `queue:work` daemon - the framework owns the durable queue, the worker pools, the schedule and the recovery of work whose worker died.
 
 ```php
-// /rsx/services/report_service.php
-class Report_Service extends Rsx_Service_Abstract
+// /rsx/services/contact_export_service.php - dispatched by an "Export to CSV" button
+class Contact_Export_Service extends Rsx_Service_Abstract
 {
-    #[Task('Generate the monthly report')]
-    public static function generate(Task_Instance $task, array $params = [])
+    #[Task('Export contacts to CSV')]
+    public static function export(Task_Instance $task, array $params = [])
     {
-        $task->status('Loading rows');
-        $rows = Report::rows((int) $params['month']);
-        foreach ($rows as $i => $row) {
-            if ($task->is_stop_requested()) {
-                $task->summary("Stopped after {$i} rows.");
-                return null;
+        $task->status('Loading contacts');
+        $contacts = Contact_Model::where('client_id', (int) $params['client_id'])->result_set();
+        $total = $contacts->count();
+
+        $task->status('Writing the file');
+        $csv = Writer::createFromString();              // League\Csv\Writer
+        $done = 0;
+        foreach ($contacts as $contact) {
+            if ($task->is_stop_requested()) {           // answer a graceful stop between rows
+                $task->summary("Stopped after {$done} of {$total} contacts.");
+                return null;                            // settles STOPPED
             }
-            // ... work ...
-            $task->progress_count($i + 1, count($rows));
+            $task->heartbeat();                         // still alive, for the watchers
+            $csv->insertOne([$contact->full_name(), $contact->email]);
+            $done++;
+            $task->progress_count($done, $total);       // the ONE progress indicator
         }
-        $task->attach_bytes('report', $csv, 'report.csv', 'text/csv');
-        $task->summary(count($rows) . ' rows exported.');
+
+        // The initiator is waiting for this file: an attachment is the right delivery.
+        $task->attach_bytes('export', $csv->toString(), 'contacts.csv', 'text/csv');
+        $task->summary("{$total} contacts exported.");
         return null;                    // null, true or 0 = success
     }
 }
@@ -79,6 +88,20 @@ $task->get_id(); $task->get_class(); $task->get_method(); $task->get_params();
 **Reports are written at a capped rate, not per call** (`Task_Instance::FLUSH_INTERVAL`, 0.25 s): the first after a quiet spell goes at once, later ones wait for the next report call, `is_stop_requested()`, `flush()` or the end of the run. Report on every item of a loop freely; call `flush()` before a long silent step. That is a write rate, not a timeout.
 
 **Echo is captured as stdout** wherever the run executes, line by line, and passed through unchanged. A console runner echoes the task's stdout/stderr live to its own streams; nothing else does - a task run from a web request prints to nobody's console.
+
+
+## Designing a task's reporting
+
+**Write every task for its watchers.** A run is shown live in `/_sys/tasks` and, through the app's gates, to the user who started it - its reports are all anyone sees of it. Use every report that describes the task's work, and none that does not:
+
+- `status()` - what it is doing now; nearly every multi-step task has one (each change is also a stderr line, so the output reads as a narrative).
+- `stdout()` / `stderr()` - the narrative: what was done, and what went wrong without stopping the run (a skipped record, a retried call).
+- **ONE progress indicator, only if the task has measurable progress.** `progress_count($done, $total)` when it counts items, `progress($percent)` when its measure is not a count - never both. A task whose only honest values are 0% and 100% (one document converted, one remote call) reports NO progress: `status()` and the lifecycle already say working / done.
+- `eta()` when it can estimate; `state()` / `state_list()` for working state worth inspecting (counters, the queue ahead); `message()` for milestones; `summary()` at the end.
+
+**A task that loops - over a queue, records or steps - calls `is_stop_requested()` and `heartbeat()` on every item** (see the example above). Without the stop check a graceful stop is never answered and only a kill ends the run; check between items, where stopping leaves the data coherent, and return `null` so the run settles STOPPED. The heartbeat lets a watcher tell a slow item from a stuck one. Both are cheap (reports are written at a rate). A single long step with no loop needs neither, beyond a `flush()` before it goes quiet.
+
+**Attachments are for ONE shape of task:** a one-time run started by a user action that produces a FILE the initiator is waiting for - they poll or watch the run and take the file when it completes (the CSV export above). The attachment spares that run a storage table, a download endpoint and a cleanup of its own. A run may also attach an advanced DEBUG artifact of itself. **Never use one to deliver results that belong to the application** - converted documents, imported records, a report everyone reads: write those into the app's own tables and files, where they are kept and authorized. Attachments expire with the run's output (`rsx.tasks.retention`), are readable only through the task gates, and belong to no record.
 
 ---
 
@@ -170,7 +193,19 @@ const {tasks, next_cursor} = await Rsx_Task.page({live: true}, null, 50);   // g
 await Rsx_Task.stop(id);  await Rsx_Task.force_stop(id, 30);  await Rsx_Task.rerun(id);
 this.subscribe('Task_Changed_Topic', {id}, () => this.refresh());   // lifecycle + reports
 this.subscribe('Task_List_Changed_Topic', {}, () => this.refresh()); // runs start/finish
+this.subscribe('Task_List_Changed_Topic', {class: 'Import_Service', method: 'run'}, cb);  // ONE task's runs
 ```
+
+**Is a task running?** Watch it BY NAME and ask on each frame - the resync on subscribe gives the first answer:
+
+```javascript
+await Rsx_Task.watch_task('Import_Service', 'run', async () => {        // method null = whole service
+    const runs = await Rsx_Task.live_runs('Import_Service', 'run');     // pending + running, gated
+    show_import_busy(runs.length > 0);
+});
+```
+
+The list frame carries `{class, method}` (the simple service name) and filters match shallowly, so `{}` hears every run, `{class}` one service, `{class, method}` one task. The frame is only "a run of this task changed"; `live_runs()` is the gated search.
 
 `Task_Output_Topic {id}` carries output lines. Frames are "go look" only - refetch with `refresh()`.
 

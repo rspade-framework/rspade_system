@@ -129,9 +129,10 @@ REPORTING (Task_Instance)
                            ?string $mime_type = null)
         $task->attach_bytes(string $name, string $bytes, string $file_name,
                             ?string $mime_type = null)
-                                               a named file for outside consumers; the
-                                               bytes go into the central blob store and
-                                               the same name again replaces the file
+                                               a named file for the run's initiator
+                                               (ATTACHMENTS below); the bytes go into
+                                               the central blob store and the same name
+                                               again replaces the file
         $task->summary(string $text)           the completion summary
         $task->flush()                         write every held report now
 
@@ -162,6 +163,86 @@ REPORTING (Task_Instance)
     a web request or a worker prints to nobody's console. A task cannot tell which is
     happening and must not try to.
 
+DESIGNING A TASK'S REPORTING
+
+    Every task is written with its watchers in mind. A run is shown live in the
+    developer console (/_sys/tasks) and, through the application's gates, to the users
+    who started it; what the task reports is all anyone can see of it. When writing a
+    task, decide which reports describe ITS work and use those - every one that applies,
+    and none that does not:
+
+        status()            what it is doing now ("Importing contacts", "Sending batch
+                            4"). Almost every task that does more than one thing has
+                            one; each change is also a stderr line, so the output
+                            reads as a narrative.
+        stdout() / stderr() the narrative itself: what was done (stdout), and what
+                            went wrong but did not stop the run - a skipped record, a
+                            retried call (stderr).
+        progress indicator  ONE of progress() or progress_count() - see below.
+        eta()               when the task can estimate its finish.
+        state() /           the task's working state worth inspecting - counters, the
+        state_list()        current batch, the queue still ahead.
+        message()           events a watcher should notice (a milestone reached).
+        summary()           what the run did, in a sentence, at the end.
+
+    ONE PROGRESS INDICATOR, AND ONLY WHERE PROGRESS IS A THING THE TASK HAS. A task that
+    works through a measurable amount of work reports it with exactly one indicator:
+    progress_count($done, $total) when it counts items (the percentage is derived from
+    it), or progress($percent) when its measure is not a count (bytes, weighted phases).
+    Never both, and never two percentages for two halves of one run. A task whose only
+    honest values are 0% and 100% - one document converted, one remote call made - has
+    no progress to report and reports none: status() and the run's own lifecycle already
+    say "working" and "done".
+
+    A TASK THAT LOOPS - over a queue, a list of records, a set of steps - calls two
+    things on every item or step:
+
+        $done = 0;
+        foreach ($records as $record) {
+            if ($task->is_stop_requested()) {     // cooperative stop (LIFECYCLE CONTROL)
+                $task->summary("Stopped after {$done} of {$total} records.");
+                return null;                       // settles STOPPED
+            }
+            $task->heartbeat();                    // "still alive", for its watchers
+
+            // ... the work for this item ...
+
+            $done++;
+            $task->progress_count($done, $total);
+        }
+
+    is_stop_requested() is what makes the run stoppable at all: without it a graceful
+    stop is never answered and only a kill ends the run. Check it where stopping leaves
+    the data coherent - between items, never in the middle of one - and return success
+    (null) so the run settles STOPPED with whatever it finished. heartbeat() lets a
+    watcher tell a slow item from a stuck one. Both are cheap: reports are written at a
+    rate (REPORTING, WRITE RATE, NOT A TIMEOUT), not per call. A task with a single long step
+    and no loop needs neither, beyond one flush() before it goes quiet.
+
+ATTACHMENTS: A FILE FOR THE RUN'S INITIATOR
+
+    attach_file() / attach_bytes() exist for ONE shape of task: a one-time run started
+    by a user action, which produces a file the initiator is WAITING FOR - the caller
+    polls (or watches) the run and takes the file when it completes. An export is the
+    archetype: "Export to CSV" dispatches a task, the page shows its progress, and the
+    finished CSV is downloaded from the run. The attachment saves that task from building
+    a storage table, a download endpoint and a cleanup of its own for a file that only
+    one person, once, will fetch. A run may also attach an advanced DEBUG artifact of
+    itself (a trace, a dump of what it saw) for a developer reading the run later.
+
+    It is NOT how a task delivers results. A task whose work belongs to the application
+    - a document converted, records imported, a report built for everyone to read -
+    writes the result into the application's own tables and files, where the application
+    reads it, keeps it and authorizes it. Task attachments are removed with the run's
+    output after rsx.tasks.retention.output_truncate_after_minutes (RETENTION), are
+    readable only through the task gates, and belong to a run, not to any record. (The
+    framework's own document conversion is the example of the other shape: it writes
+    its renditions to the blob it converted, and has no attachment.)
+
+    Use an attachment only when the ordinary pattern - store the result, then let the
+    initiator fetch it - would be needless machinery for a one-time run whose whole
+    output is a file for the person who asked for it.
+
 THE RETURN CONTRACT
 
     A task's return value is its RETURN CODE (Task_Run_Outcome, decided in one place):
@@ -172,8 +253,8 @@ THE RETURN CONTRACT
         anything else        failure, return code 1, with an error naming the contract
         a throw              failure, return code 1, the exception recorded as the error
 
-    A task reports DATA with summary(), state(), state_list() or an attachment - never
-    through its return value; returning an array is a failed run. Any Throwable counts as
+    A task reports DATA with summary(), state(), state_list() or (for a file its
+    initiator is waiting for) an attachment - never through its return value; returning an array is a failed run. Any Throwable counts as
     a throw: a TypeError settles exactly like an Exception.
 
     A successful run settles COMPLETED, or STOPPED when a stop had been requested; a
@@ -581,12 +662,35 @@ GATES AND THE BROWSER API
         await Rsx_Task.rerun(id)                      {task_id}
         await Rsx_Task.watch(id, cb) / watch_output(id, cb) / watch_list(cb)
                                                       {stop(), established}
+        await Rsx_Task.watch_task(class_name, method, cb)
+                                                      runs of ONE task, by name (method
+                                                      null: every task of the service)
+        await Rsx_Task.live_runs(class_name, method)  its pending + running runs
+
+    IS A TASK RUNNING? A page that must know whether a task is running - a button to
+    disable while an import runs, a banner while a sync is in flight - watches the task BY
+    NAME and asks on each frame. The watch fires once on subscribe (the resync), so the
+    first answer needs no separate call:
+
+        await Rsx_Task.watch_task('Import_Service', 'run', async () => {
+            const runs = await Rsx_Task.live_runs('Import_Service', 'run');
+            show_import_busy(runs.length > 0);
+        });
+
+    The frame says only "a run of this task changed"; live_runs() is the gated search
+    (find({class, method, live: true})), so a viewer sees only runs their view scope
+    admits. class_name is the service's simple name (Import_Service), as in every filter.
 
     TOPICS. Frames are notification-only; refetch on each (rsx:man realtime):
 
         Task_Changed_Topic {id}       lifecycle, reports, messages, attachments
         Task_Output_Topic {id}        output lines (the busy feed, only a console needs it)
-        Task_List_Changed_Topic {}    a run entered, left or changed lifecycle state
+        Task_List_Changed_Topic {class, method}
+                                      a run entered, left or changed lifecycle state.
+                                      The frame names the run's task (simple service
+                                      name); filters match shallowly, so {} hears every
+                                      run, {class} every run of one service, {class,
+                                      method} every run of one task
 
     can_subscribe() is Task_Gates: the run's view gate for the two {id} topics; for the
     list topic, a developer or a signed-in viewer in a realm whose view scope has a

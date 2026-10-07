@@ -32,8 +32,8 @@ WHAT YOU ALREADY HAVE
     - Worker pools on_demand / scheduled / kill (rsx.tasks.pools), kill workers
       (rsx:task:killer), rsx:tasks:stop, rsx:tasks:cancel, and retention
       (Task_Retention_Service, rsx.tasks.retention, every 30 minutes).
-    - The /_sys Tasks screen (Active / History / Schedules, a run dialog with
-      the live console and reports) and /_sys/workers.
+    - The /_sys Tasks screen (one live grid of every run, Schedules, a run
+      dialog with the live console and reports) and /_sys/workers.
     - Every framework task already reports with the new calls.
 
 WHAT IS MISSING IN YOUR APPLICATION
@@ -43,6 +43,8 @@ WHAT IS MISSING IN YOUR APPLICATION
     3. Gate handlers, if any non-developer user should see or stop a run.
     4. A #[Blob_Reference] declaration on any model of yours that points at
        _file_storage.
+    5. Tasks written for the new reporting (status, narrative, progress, a stop
+       check), and any progress UI you built by hand moved onto it.
 
 PORTING IT
     1. Find the removed calls:
@@ -123,12 +125,54 @@ PORTING IT
         least 1) and rsx.tasks.retention.* (minutes). RSX_TASK_MAX_WORKERS still
         sets the on_demand pool.
 
+    12. Refactor every task of yours for its WATCHERS, not only for the API
+        rename in step 1 - rsx:man tasks, DESIGNING A TASK'S REPORTING. For each
+        #[Task], decide which reports describe its work and use them:
+          - status() for what it is doing now, stdout()/stderr() for the
+            narrative (what was done; what went wrong without stopping the run);
+          - ONE progress indicator - progress_count($done, $total) for a count,
+            progress($percent) otherwise - and only when the task has measurable
+            progress: a task that can only ever be 0% or 100% (one conversion,
+            one remote call) reports none;
+          - eta(), state()/state_list(), message() and summary() where they apply;
+          - in every loop over a queue, records or steps: $task->heartbeat() and
+            an is_stop_requested() check per item, returning null (STOPPED) at a
+            point where the data is coherent - without the check a graceful stop
+            is never answered;
+          - attach_file()/attach_bytes() ONLY for a file the initiator of a
+            user-started run is waiting to take (an export the page polls for and
+            downloads), or a debug artifact of the run. A task whose results
+            belong to the application keeps writing them to its own tables and
+            files: attachments expire with the run's output, are read only
+            through the task gates, and belong to no record.
+
+    13. Replace hand-rolled task progress UI. If your application built its own
+        way to show a task's progress or result to users - a progress or status
+        column on one of your tables, a cache key the task wrote, a polling
+        endpoint of its own, a status table - replace it with the run's reports
+        (step 12) read through Rsx_Task and the Core widgets (step 9), and
+        delete the old mechanism. Pass the run id to the page that shows it
+        (Task::dispatch() returns it). A page that only needs to know WHETHER
+        a task is running (a busy banner, a button to disable) watches it by
+        name instead: Rsx_Task.watch_task('Service', 'method', cb) with
+        Rsx_Task.live_runs('Service', 'method') on each frame (rsx:man tasks,
+        IS A TASK RUNNING?). Then give users access through the task
+        gates (step 8), expressing the permission rules your application
+        already applies to that data - who started the run, the record it
+        works on, a role or ACL check - in task.view.authorize / task.view.scope
+        and, if users may stop or rerun it, task.control.authorize.
+        If your application only runs tasks in the background and shows no live
+        task progress anywhere, there is nothing to change on the UI side: step
+        12 still applies, and the /_sys console shows every run to developers.
+
 VERIFICATION
     php artisan migrate; php artisan rsx:check is clean; the grep in step 1
     finds nothing; php artisan rsx:health shows "Task Worker Pools" and
     "Blob References" OK; run each of your tasks once (php artisan rsx:task:run
     Service method) and confirm exit code 0 and the run in /_sys/tasks with the
-    reports you expect.
+    reports you expect - a status line, one progress indicator where the task
+    has progress, and, for a looping task, a Graceful stop from its run dialog
+    answered by the run settling STOPPED.
 
 SEE ALSO
     tasks - runs, reporting, the return contract, gates, widgets, pools
