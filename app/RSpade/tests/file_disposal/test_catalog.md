@@ -45,7 +45,8 @@ and restores it in a `finally`.
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | fd-40 | 0 means KEEP FOREVER | retention 0, `deleted_at` backdated 4000 days, daily pass + forced monthly sweep | `destroyed_at` NULL, no destroyed action, blob on disk, listed by `get_deleted_files()`, `undelete()` restores it | implemented |
-| fd-41 | Explicit destruction is unaffected by 0 | retention 0: `force_destroy()`; and a destroyed row whose blob is still present, daily pass | force-destroy immediate and releases; the blob-release pass frees the other blob | implemented |
+| fd-41 | 0 removes NO blob for any reason; the audit lists what stays | retention 0: `force_destroy()`; a destroyed row's blob, daily pass; a stray 400-day-old disk file, forced monthly sweep | destroyed_at stamped but bytes kept; 0 released; `release_blob_if_orphaned()` false; stray file kept; `File_Blob_Audit` lists the row's path and the stray file | implemented |
+| fd-44 | No sweep of the blob tree enters the temp store | retention 30: a 400-day-old temp file, forced monthly sweep; the audit | temp file kept; not listed | implemented |
 | fd-42 | A positive value is honoured at its boundary | retention 5, one deleted 6 days ago, one 4 days ago | the first destroyed and its blob released, the second retained | implemented |
 | fd-43 | A bad value is a config error | -1, `'thirty'`, 1.5 | the daily pass throws `RuntimeException` naming the key; nothing destroyed | implemented |
 

@@ -8,22 +8,22 @@
 namespace App\RSpade\Core\Task;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
-use App\RSpade\Core\Files\Blob_Referencing;
-use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Files\Temp_File_Model;
 use App\RSpade\Core\Task\Task_Run_Model;
+
 /**
  * Task_Attachment_Model - a named file a task produced (_task_attachments).
  *
- * A task attaches a file with $task->attach_file() / attach_bytes(); the bytes go into the
- * central blob store (File_Storage_Model, deduplicated) and this row pins them for as long as
- * it exists - it is a declared blob reference, so File_Disposal_Service never releases bytes a
- * task attachment still points at. It is NOT a File_Attachment_Model: it has no site, no
- * fileable owner, no retention window and no file gates. Who may read it is the task's own
- * view gate (Task_Gates), and Task_Retention_Service deletes the row - releasing the blob when
- * nothing else references it - once the task's output is truncated.
+ * A task attaches a file with $task->attach_file() / attach_bytes(); the bytes become a temp
+ * file of their own (Rsx_Temp_Files - uploads/_temp/, a random key, never shared), and this row
+ * names it under the run. Deleting the temp file deletes this row (the foreign key cascades).
+ * It is NOT a File_Attachment_Model: no fileable owner, no retention window, no file gates. Who
+ * may read it is the task's own view gate (Task_Gates); Task_Retention_Service deletes it once
+ * the task's output is truncated, and the temp file's own expiry is the backstop.
  *
- * Read the bytes through the blob API: read_bytes(), read_stream(), download_response().
+ * Read the bytes through read_bytes(), read_stream(), download_response().
  */
+
 /**
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _task_attachments
@@ -32,25 +32,20 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * @property int $created_by_id
  * @property int $created_by_type
  * @property string $file_name
- * @property int $file_storage_id
  * @property int $id
  * @property string $mime_type
  * @property string $name
  * @property int $size
  * @property int $task_id
+ * @property int $temp_file_id
  * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
  *
  * @mixin \Eloquent
  */
-#[Blob_Reference('file_storage_id')]
 abstract class Task_Attachment_Model_Abstract extends Rsx_Model_Abstract
 {
-    // The write side of the #[Blob_Reference] above: save() holds the blob's read lock while
-    // the reference commits.
-    use Blob_Referencing;
-
     public static $realtime_silent = true;
 
     /**
@@ -61,6 +56,7 @@ abstract class Task_Attachment_Model_Abstract extends Rsx_Model_Abstract
     public static $unbounded = true;
 
     protected $table = '_task_attachments';
+
     protected $fillable = [];
 
     public static $enums = [];
@@ -75,18 +71,18 @@ abstract class Task_Attachment_Model_Abstract extends Rsx_Model_Abstract
     }
 
     /**
-     * The blob holding the bytes.
+     * The temp file holding the bytes.
      */
     #[Relationship]
-    public function file_storage()
+    public function temp_file()
     {
-        return $this->belongsTo(File_Storage_Model::class, 'file_storage_id');
+        return $this->belongsTo(Temp_File_Model::class, 'temp_file_id');
     }
 
     /** The file's whole contents. */
     public function read_bytes(): string
     {
-        return $this->__storage()->read_bytes();
+        return $this->__temp_file()->read_bytes();
     }
 
     /**
@@ -96,7 +92,7 @@ abstract class Task_Attachment_Model_Abstract extends Rsx_Model_Abstract
      */
     public function read_stream()
     {
-        return $this->__storage()->read_stream();
+        return $this->__temp_file()->read_stream();
     }
 
     /**
@@ -107,7 +103,7 @@ abstract class Task_Attachment_Model_Abstract extends Rsx_Model_Abstract
      */
     public function download_response()
     {
-        return $this->__storage()->download_response($this->file_name, $this->mime_type);
+        return $this->__temp_file()->download_response($this->file_name);
     }
 
     /**
@@ -123,13 +119,13 @@ abstract class Task_Attachment_Model_Abstract extends Rsx_Model_Abstract
         ];
     }
 
-    private function __storage(): File_Storage_Model
+    private function __temp_file(): Temp_File_Model
     {
-        $storage = File_Storage_Model::find($this->file_storage_id);
-        if ($storage === null) {
-            shouldnt_happen("Task attachment {$this->id} points at file storage #{$this->file_storage_id}, which does not exist");
+        $temp_file = Temp_File_Model::find($this->temp_file_id);
+        if ($temp_file === null) {
+            shouldnt_happen("Task attachment {$this->id} points at temp file #{$this->temp_file_id}, which does not exist");
         }
 
-        return $storage;
+        return $temp_file;
     }
 }

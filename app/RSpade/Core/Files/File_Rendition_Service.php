@@ -20,6 +20,8 @@ use App\RSpade\Core\Task\Task_Instance;
  * - Runs every 30 minutes via scheduled task (mirrors File_Thumbnail_Service).
  * - LRU eviction (oldest mtime deleted first) down to rsx.preview.quota_max_bytes.
  * - The rendition serve path touch()'es each cache hit so hot renditions survive eviction.
+ * - #[Exclusive]: two overlapping runs would compute the same eviction set and race to
+ *   delete it.
  */
 class File_Rendition_Service extends Rsx_Service_Abstract
 {
@@ -33,6 +35,7 @@ class File_Rendition_Service extends Rsx_Service_Abstract
      * @param array $params Task parameters
      */
     #[Task('Clean document PDF rendition cache (runs every 30 minutes)')]
+    #[Exclusive]
     #[Schedule('*/30 * * * *')]
     public static function cleanup_renditions(Task_Instance $task, array $params = [])
     {

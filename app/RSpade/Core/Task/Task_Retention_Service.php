@@ -9,7 +9,8 @@ namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
-use App\RSpade\Core\Files\File_Disposal_Service;
+use App\RSpade\Core\Files\Rsx_Temp_Files;
+use App\RSpade\Core\Files\Temp_File_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
@@ -21,11 +22,11 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * Every 30 minutes, over FINISHED runs only (completed, failed, stopped, killed, cancelled):
  *
  *   1. TRUNCATE: a run that finished more than output_truncate_after_minutes ago has its output
- *      cut to its last output_keep_lines lines and its attachments unlinked - each blob is then
- *      released if nothing else references it (File_Disposal_Service). The run is stamped
+ *      cut to its last output_keep_lines lines and its attachments deleted - each one's temp
+ *      file (Rsx_Temp_Files), which takes the attachment row with it. The run is stamped
  *      output_truncated_at so it is never visited again.
  *   2. PURGE: a run that finished more than purge_after_minutes ago is deleted, its reports,
- *      output and messages with it (foreign keys cascade); its attachments are unlinked first.
+ *      output and messages with it (foreign keys cascade); its attachments are deleted first.
  *   3. TEMP DIRECTORIES: a run's temp directory that outlived its run is removed.
  *
  * Every pass walks its set by keyset (id), a page at a time, so the whole backlog is handled
@@ -207,18 +208,16 @@ class Task_Retention_Service extends Rsx_Service_Abstract
         DB::table('_task_output')->where('task_id', $task_id)->where('id', '<', $boundary)->delete();
     }
 
-    /** Delete a run's attachment rows, then release each blob nothing else references. */
+    /**
+     * Delete a run's attachments: each one's temp file, which deletes the attachment row with
+     * it (the foreign key cascades).
+     */
     private static function __unlink_attachments(int $task_id): void
     {
-        $storage_ids = DB::table('_task_attachments')->where('task_id', $task_id)->pluck('file_storage_id')->map(fn ($id) => (int) $id)->all();
-        if ($storage_ids === []) {
-            return;
-        }
+        $temp_file_ids = DB::table('_task_attachments')->where('task_id', $task_id)->pluck('temp_file_id')->map(fn ($id) => (int) $id)->all();
 
-        DB::table('_task_attachments')->where('task_id', $task_id)->delete();
-
-        foreach (array_unique($storage_ids) as $storage_id) {
-            File_Disposal_Service::release_blob_if_orphaned($storage_id);
+        foreach (Temp_File_Model::whereIn('id', $temp_file_ids)->result_set() as $temp_file) {
+            Rsx_Temp_Files::delete($temp_file);
         }
     }
 

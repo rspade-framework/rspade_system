@@ -44,6 +44,18 @@ class Rsx_File_Paths
     }
 
     /**
+     * Root of the temp file store (Rsx_Temp_Files): <blob root>/_temp. Inside uploads, the tree
+     * that persists across deployments, under a `_` name no hex shard can collide with - and
+     * the blob store's own sweeps skip every `_` directory at its root.
+     *
+     * @return string
+     */
+    public static function temp_root(): string
+    {
+        return static::blob_root() . '/_temp';
+    }
+
+    /**
      * Root of the thumbnail cache (preset/ and dynamic/ subdirectories live here).
      *
      * @return string

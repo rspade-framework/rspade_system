@@ -1,0 +1,110 @@
+RSX_TEMP_FILES(1)                RSpade Manual                RSX_TEMP_FILES(1)
+
+NAME
+    temp_files - the temp file store: files a pipeline produces from application data
+    and keeps for a while
+
+SYNOPSIS
+    $file = Rsx_Temp_Files::store_bytes($csv, 'contacts.csv', 'text/csv');
+    $file = Rsx_Temp_Files::store_file($path, 'report.pdf', null, 1);   // 1 day
+    $file = Rsx_Temp_Files::find($temp_key);            // null: none, or expired
+    $file->read_bytes(); $file->read_stream(); $file->download_response();
+    Rsx_Temp_Files::delete($file);
+
+DESCRIPTION
+    A temp file is application DATA that somebody is waiting for and that nobody keeps:
+    a CSV export the page will download, a file a task attached for whoever started it.
+    It is neither an attachment nor scratch, and it has a store of its own.
+
+    NOT THE ATTACHMENT STORE. The attachment store is content-addressed and
+    deduplicated: one blob may be held by many owners - perhaps by other environments
+    sharing the same uploads mount - so freeing one takes a reference check under a
+    lock, and rsx.files.deleted_retention_days = 0 switches freeing off entirely
+    (rsx:man file_disposal). A temp file has one producer, one consumer and a short
+    life: a RANDOM key, never derived from its contents, its own namespace, and no
+    sharing - so deleting one asks nobody.
+
+    NOT tmp/. The tmp tree holds what the application can regenerate - build
+    artifacts, caches, runtime state - and may be discarded on a deployment. A temp
+    file lives in uploads/, the tree that persists across deployments.
+
+LAYOUT
+    uploads/_temp/<first two characters of the key>/<key>
+
+    The key is 32 random hex characters. A `_` directory at the root of uploads/ can
+    never collide with a blob shard, and every sweep of the blob store skips the `_`
+    directories (rsx:man file_disposal). Rsx_File_Paths::temp_root() names the
+    directory; a consumer never needs it - bytes are read through the model.
+
+    _temp_files: id, temp_key, site_id, file_name, mime_type, size, expires_at,
+    timestamps and the audit pair. No association columns: a consumer that needs one
+    keeps its own row pointing here (the task system's _task_attachments.temp_file_id,
+    ON DELETE CASCADE - deleting the temp file deletes the attachment row).
+
+API (App\RSpade\Core\Files\Rsx_Temp_Files)
+    store_bytes(string $bytes, string $file_name, ?string $mime_type = null,
+                ?int $retention_days = null): Temp_File_Model
+    store_file(string $source_path, string $file_name, ?string $mime_type = null,
+               ?int $retention_days = null): Temp_File_Model
+        Write the bytes under a fresh key, then record the row (a failed write leaves
+        no row). The type is sniffed when null. store_file() copies; the source stays.
+        $retention_days: how long it lives (at least 1); null is
+        rsx.temp_files.retention_days.
+
+    find(string $temp_key): ?Temp_File_Model
+        The live file, or null when there is none or it has expired.
+
+    delete(Temp_File_Model $file): void
+        Its bytes, then its row. Nothing else holds them, so nothing is asked.
+
+    delete_expired(?Task_Instance $task = null): int
+        Every expired file this database holds; with $task it beats and answers a
+        graceful stop between files.
+
+    Temp_File_Model: read_bytes(), read_stream() (the caller closes it),
+    download_response(?$file_name), inline_response(?$file_name) - hardened like every
+    file response - and is_expired().
+
+EXPIRY
+    Each file carries expires_at, set when it is stored. Temp_File_Cleanup_Service::
+    delete_expired (#[Exclusive], hourly) deletes the expired ones - ONLY the files this
+    database has rows for, never "every old file on disk": an uploads mount shared by
+    several environments holds the others' temp files too, and a sweep by file age
+    would delete them. A file whose row is gone (a database restored from an old dump)
+    stays on disk; removing it is the operator's.
+
+    config('rsx.temp_files.retention_days') - 7. A whole number of days, at least 1;
+    anything else throws when a file is stored. It is a RETENTION window: it bounds how
+    long data is kept, never how long anything may take.
+
+SERVING ONE
+    There is no download endpoint, deliberately. The feature that made the file writes
+    its own: its own route or Ajax endpoint, its own gate, then
+    $file->download_response(). The random key is NOT a capability - nothing is ever
+    served on knowledge of the key alone. The task system is the worked example: a run's
+    attachment is served by an endpoint that asks the task view gate first
+    (rsx:man tasks, ATTACHMENTS; the /_sys run dialog's download links).
+
+RSX VS LARAVEL
+    Laravel: Storage::disk('local')->put() somewhere, a path in a column or a cache key,
+    and a cleanup job written by hand per feature - each one choosing its own directory,
+    lifetime and deletion rule.
+    RSX: one store with one layout, a row per file, an expiry per file, and one sweep
+    that is safe on a shared mount. A feature stores, serves through its own gated
+    endpoint, and is done.
+
+TROUBLESHOOTING
+    find() answers null for a key that exists
+        The file has expired; the sweep deletes it within the hour.
+    "Temp file <key> has no bytes on disk."
+        The row is there and the bytes are not - removed by hand, or the uploads mount
+        changed under the database. Delete the row (Rsx_Temp_Files::delete()).
+    "rsx.temp_files.retention_days must be a whole number of days >= 1"
+        The setting in rsx/resource/config/rsx.php is 0, negative or not an integer.
+
+SEE ALSO
+    rsx:man tasks - task attachments are temp files
+    rsx:man file_disposal - the attachment store, and why this is not in it
+    rsx:man config_rsx
+
+RSpade                              2026                    RSX_TEMP_FILES(1)

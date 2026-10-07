@@ -8,8 +8,8 @@
 namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Files\File_Disposal_Service;
-use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Files\Rsx_Temp_Files;
+use App\RSpade\Core\Files\Temp_File_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task_Attachment_Model;
 use App\RSpade\Core\Task\Task_Notify;
@@ -290,9 +290,10 @@ class Task_Instance
     }
 
     /**
-     * Attach a file on disk to the run under $name, for outside consumers to retrieve
-     * (Task_Run_Model::attachment($name)). The bytes are copied into the blob store; the source
-     * file is left where it is. Attaching a name again replaces the earlier file.
+     * Attach a file on disk to the run under $name, for the run's initiator to retrieve
+     * (Task_Run_Model::attachment($name)). The bytes are copied into the temp file store
+     * (Rsx_Temp_Files); the source file is left where it is. Attaching a name again replaces
+     * the earlier file.
      */
     public function attach_file(string $name, string $path, ?string $file_name = null, ?string $mime_type = null): void
     {
@@ -301,10 +302,7 @@ class Task_Instance
         }
 
         $file_name ??= basename($path);
-        $mime_type ??= (mime_content_type($path) ?: 'application/octet-stream');
-        $size = (int) filesize($path);
-
-        $this->__attach($name, fn (callable $record) => File_Storage_Model::store_blob($path, $record), $file_name, $mime_type, $size);
+        $this->__attach($name, fn (int $days) => Rsx_Temp_Files::store_file($path, mb_substr($file_name, 0, 255), $mime_type, $days));
     }
 
     /**
@@ -313,9 +311,7 @@ class Task_Instance
      */
     public function attach_bytes(string $name, string $bytes, string $file_name, ?string $mime_type = null): void
     {
-        $mime_type ??= ((new \finfo(FILEINFO_MIME_TYPE))->buffer($bytes) ?: 'application/octet-stream');
-
-        $this->__attach($name, fn (callable $record) => File_Storage_Model::store_bytes($bytes, $record), $file_name, $mime_type, strlen($bytes));
+        $this->__attach($name, fn (int $days) => Rsx_Temp_Files::store_bytes($bytes, mb_substr($file_name, 0, 255), $mime_type, $days));
     }
 
     /**
@@ -517,33 +513,40 @@ class Task_Instance
      *
      * @param callable $store fn (callable $record): File_Storage_Model
      */
-    private function __attach(string $name, callable $store, string $file_name, string $mime_type, int $size): void
+    /**
+     * Store the file as a temp file and point the run's attachment row under $name at it. The
+     * temp file outlives the run's output by a day: Task_Retention_Service deletes it when the
+     * output is truncated, and the store's own expiry is only the backstop. A replaced file is
+     * deleted at once - nothing else ever holds a temp file's bytes.
+     */
+    private function __attach(string $name, callable $store): void
     {
         if ($name === '' || mb_strlen($name) > 255) {
             throw new \InvalidArgumentException('An attachment name is 1 to 255 characters.');
         }
 
-        $previous_storage_id = null;
+        $truncate_minutes = (int) config('rsx.tasks.retention.output_truncate_after_minutes', 10080);
+        $temp_file = $store((int) ceil($truncate_minutes / 1440) + 1);
 
-        $store(function (File_Storage_Model $storage) use ($name, $file_name, $mime_type, $size, &$previous_storage_id) {
-            $attachment = Task_Attachment_Model::where('task_id', $this->id)->where('name', $name)->first();
-            if ($attachment === null) {
-                $attachment = new Task_Attachment_Model();
-                $attachment->task_id = $this->id;
-                $attachment->name = $name;
-            } elseif ((int) $attachment->file_storage_id !== (int) $storage->id) {
-                $previous_storage_id = (int) $attachment->file_storage_id;
+        $attachment = Task_Attachment_Model::where('task_id', $this->id)->where('name', $name)->first();
+        $previous_temp_file_id = $attachment !== null ? (int) $attachment->temp_file_id : null;
+        if ($attachment === null) {
+            $attachment = new Task_Attachment_Model();
+            $attachment->task_id = $this->id;
+            $attachment->name = $name;
+        }
+
+        $attachment->temp_file_id = $temp_file->id;
+        $attachment->file_name = $temp_file->file_name;
+        $attachment->mime_type = mb_substr((string) $temp_file->mime_type, 0, 255);
+        $attachment->size = (int) $temp_file->size;
+        $attachment->save();
+
+        if ($previous_temp_file_id !== null) {
+            $previous = Temp_File_Model::find($previous_temp_file_id);
+            if ($previous !== null) {
+                Rsx_Temp_Files::delete($previous);
             }
-
-            $attachment->file_storage_id = $storage->id;
-            $attachment->file_name = mb_substr($file_name, 0, 255);
-            $attachment->mime_type = mb_substr($mime_type, 0, 255);
-            $attachment->size = $size;
-            $attachment->save();
-        });
-
-        if ($previous_storage_id !== null) {
-            File_Disposal_Service::release_blob_if_orphaned($previous_storage_id);
         }
 
         Task_Notify::changed($this->id, true, false);

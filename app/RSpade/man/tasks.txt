@@ -130,9 +130,9 @@ REPORTING (Task_Instance)
         $task->attach_bytes(string $name, string $bytes, string $file_name,
                             ?string $mime_type = null)
                                                a named file for the run's initiator
-                                               (ATTACHMENTS below); the bytes go into
-                                               the central blob store and the same name
-                                               again replaces the file
+                                               (ATTACHMENTS below); the bytes become a
+                                               temp file (rsx:man temp_files) and the
+                                               same name again replaces the file
         $task->summary(string $text)           the completion summary
         $task->flush()                         write every held report now
 
@@ -237,9 +237,12 @@ ATTACHMENTS: A FILE FOR THE RUN'S INITIATOR
     It is NOT how a task delivers results. A task whose work belongs to the application
     - a document converted, records imported, a report built for everyone to read -
     writes the result into the application's own tables and files, where the application
-    reads it, keeps it and authorizes it. Task attachments are removed with the run's
-    output after rsx.tasks.retention.output_truncate_after_minutes (RETENTION), are
-    readable only through the task gates, and belong to a run, not to any record. (The
+    reads it, keeps it and authorizes it. A task attachment is a TEMP FILE
+    (Rsx_Temp_Files; rsx:man temp_files) - its own bytes under uploads/_temp, never a
+    shared blob - deleted with the run's output after
+    rsx.tasks.retention.output_truncate_after_minutes (RETENTION), with the temp file's
+    own expiry a day later as the backstop. It is readable only through the task gates
+    and belongs to a run, not to any record. (The
     framework's own document conversion is the example of the other shape: it writes
     its renditions to the blob it converted, and has no attachment.)
 
@@ -593,10 +596,10 @@ READING A RUN (Task_Run_Model)
         to_status_array()             the JSON shape the endpoints and widgets read
 
     The output and message readers are cursor reads: pass the last id seen for the next
-    page. A task attachment is a declared blob reference (#[Blob_Reference],
-    rsx:man file_disposal) - it is not a File_Attachment_Model: no site, no owner, no file
-    gates and no deletion window; the task's view gate is who may read it, and an
-    application serves one through its own gated endpoint with download_response().
+    page. A task attachment is a temp file (rsx:man temp_files) named under the run - it
+    is not a File_Attachment_Model: no owner, no file gates and no deletion window; the
+    task's view gate is who may read it, and an application serves one through its own
+    gated endpoint with download_response().
 
     SEARCH. Task_Run_Model::search_query(array $filter) returns a Builder; an unknown key
     throws. Keys: id, ids, class (simple name or FQCN), method, params (an EXACT parameter
@@ -946,7 +949,7 @@ DATABASE SCHEMA
     _task_reports      (task_id, kind_id) unique: state JSON, state list, summary
     _task_output       one row per line; stream_id 1 stdout, 2 stderr, 3 operator
     _task_messages     one row per message
-    _task_attachments  (task_id, name) unique; file_storage_id pins a blob
+    _task_attachments  (task_id, name) unique; temp_file_id -> _temp_files (cascade)
     _task_schedules    one row per #[Schedule] (SCHEDULES)
     _task_kill_requests  force stops and kills waiting for a kill worker
 

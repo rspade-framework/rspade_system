@@ -544,6 +544,14 @@ FILE SUBSYSTEM
                handler_class not listed here (fail loud). Apps register
                their handlers in user config.
 
+    'temp_files' => [
+        'retention_days' => 7,                 # days a temp file lives (>= 1)
+    ]
+
+    The temp file store (Rsx_Temp_Files): pipeline output kept for a while
+    under uploads/_temp, deleted hourly once each file expires - only the
+    files this database has rows for. See rsx:man temp_files.
+
     'files' => [
         'deleted_retention_days' => 30,        # 0 = keep forever
         'disposal_lookback_days' => 60,
@@ -559,10 +567,13 @@ FILE SUBSYSTEM
 
     deleted_retention_days      Days a deleted attachment stays recoverable
                                 before the daily disposal task destroys it and
-                                releases its blob. 0 means KEEP FOREVER (nothing
-                                is ever destroyed on schedule; force_destroy()
-                                still erases). Negative throws. See rsx:man
-                                file_disposal.
+                                releases its blob. 0 means KEEP FOREVER: nothing
+                                is destroyed on schedule and NO blob is ever
+                                removed, for any reason - force_destroy()
+                                included (the setting for a blob store shared by
+                                several environments; rsx:files:
+                                unreferenced_blobs lists what stays). Negative
+                                throws. See rsx:man file_disposal.
     disposal_lookback_days      Window of recently-destroyed attachments whose
                                 blobs the daily task re-checks for release.
     disk_orphan_min_age_days    Age guard for the monthly disk and unassigned-

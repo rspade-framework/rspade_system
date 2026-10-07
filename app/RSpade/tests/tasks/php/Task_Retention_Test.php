@@ -8,7 +8,7 @@
 namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Files\Temp_File_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
@@ -23,15 +23,16 @@ use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
  * FINISHED runs only:
  *
  *   TRUNCATE  a run finished longer ago than the truncate window keeps its last N output lines,
- *             its attachments are unlinked (each blob released when nothing else references
- *             it), and it is stamped output_truncated_at so it is never visited again;
+ *             its attachments are deleted (each one's temp file, and the row with it), and it
+ *             is stamped output_truncated_at so it is never visited again;
  *   PURGE     a run finished longer ago than the purge window is deleted with its reports,
  *             output and messages;
  *   TEMP      a temp directory whose run is finished or gone is removed.
  *
  * Runs are planted with completed_at in the past; the passes are called with explicit windows.
- * Every test removes all runs first, so the counts are this test's alone. Attachments release
- * blobs, which commit, so this class provisions a clean baseline and opts out of transactions.
+ * Every test removes all runs first, so the counts are this test's alone. Attachments are temp
+ * files on disk, which commit, so this class provisions a clean baseline and opts out of
+ * transactions.
  */
 class Task_Retention_Test extends Rsx_Test_Abstract
 {
@@ -68,9 +69,9 @@ class Task_Retention_Test extends Rsx_Test_Abstract
         return array_column(Task_Run_Model::find($task->get_id())->output_after(), 'line');
     }
 
-    private static function __storage_id(Task_Instance $task): int
+    private static function __temp_file_id(Task_Instance $task): int
     {
-        return (int) DB::table('_task_attachments')->where('task_id', $task->get_id())->value('file_storage_id');
+        return (int) DB::table('_task_attachments')->where('task_id', $task->get_id())->value('temp_file_id');
     }
 
     // -------------------------------------------------------------------------
@@ -81,7 +82,8 @@ class Task_Retention_Test extends Rsx_Test_Abstract
     {
         static::__clear();
         $old = static::__run(Task_Run_Model::STATUS_COMPLETED, 120);
-        $storage_id = static::__storage_id($old);
+        $temp_file_id = static::__temp_file_id($old);
+        $temp_path = Temp_File_Model::find($temp_file_id)->storage_path();
 
         static::__assert_equals(1, Task_Retention_Service::truncate_finished_runs(60, 3));
 
@@ -89,7 +91,8 @@ class Task_Retention_Test extends Rsx_Test_Abstract
         $run = Task_Run_Model::find($old->get_id());
         static::__assert_not_null($run->output_truncated_at, 'stamped');
         static::__assert_equals([], $run->attachments(), 'attachments are unlinked');
-        static::__assert_null(File_Storage_Model::find($storage_id), 'and the orphaned blob released');
+        static::__assert_null(Temp_File_Model::find($temp_file_id), 'and their temp files deleted');
+        static::__assert_false(is_file($temp_path), 'bytes and all');
         static::__assert_equals(['kept' => true], $run->state(), 'reports are kept');
         static::__assert_equals(['hello'], array_column($run->messages_after(), 'body'), 'and messages');
 
@@ -127,7 +130,7 @@ class Task_Retention_Test extends Rsx_Test_Abstract
     {
         static::__clear();
         $old = static::__run(Task_Run_Model::STATUS_CANCELLED, 600);
-        $storage_id = static::__storage_id($old);
+        $temp_file_id = static::__temp_file_id($old);
         $recent = static::__run(Task_Run_Model::STATUS_COMPLETED, 10);
         $live = static::__run(Task_Run_Model::STATUS_PENDING, null);
 
@@ -137,7 +140,7 @@ class Task_Retention_Test extends Rsx_Test_Abstract
         foreach (['_task_output', '_task_reports', '_task_messages', '_task_attachments'] as $table) {
             static::__assert_equals(0, DB::table($table)->where('task_id', $old->get_id())->count(), "{$table} rows went with it");
         }
-        static::__assert_null(File_Storage_Model::find($storage_id), 'its orphaned blob was released');
+        static::__assert_null(Temp_File_Model::find($temp_file_id), 'its temp file was deleted');
 
         static::__assert_not_null(Task_Run_Model::find($recent->get_id()), 'a recent run is kept');
         static::__assert_not_null(Task_Run_Model::find($live->get_id()), 'a live run is kept');

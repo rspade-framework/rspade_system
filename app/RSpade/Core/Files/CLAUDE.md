@@ -10,6 +10,8 @@ is a pointer, not a second copy.
 - **The render pipeline in operation (`rsx:documents:status|failed|rerender`)**: `rsx:man documents`
 - **Text extraction, full-text search, `<Document_Preview>` / `<Document_Text_Preview>`, PDF renditions**: `rsx:man document_search`
 - **Headless soffice, invoked only by the render worker, and the document sandbox that can contain it (`Document_Sandbox`)**: `rsx:man libreoffice`
+- **The temp file store (`Rsx_Temp_Files`, `Temp_File_Model`, `Temp_File_Cleanup_Service`) - pipeline output under `uploads/_temp/`, outside the blob store**: `rsx:man temp_files`
+- **Keep-forever (`deleted_retention_days = 0`) releases no blob anywhere (`File_Disposal_Service::blob_release_enabled()`); `rsx:files:unreferenced_blobs` (`File_Blob_Audit`) lists what stays**: `rsx:man file_disposal`
 - Skills: `rspade:file-attachments` (working with attachments), `rspade:document-preview`
 
 `Document_Render_Service` is the single background worker behind all of it: one soffice

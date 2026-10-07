@@ -76,11 +76,19 @@ class File_Disposal_Service extends Rsx_Service_Abstract
      *
      * Safe to call for an absent storage id (no-op).
      *
+     * NOTHING IS RELEASED while rsx.files.deleted_retention_days is 0 (blob_release_enabled()):
+     * this is the one release authority, so the daily and monthly passes and force_destroy()
+     * all answer false then and the bytes stay. `rsx:files:unreferenced_blobs` lists them.
+     *
      * @param int $storage_id
      * @return bool true if the storage row was deleted (its bytes are unlinked at commit)
      */
     public static function release_blob_if_orphaned(int $storage_id): bool
     {
+        if (!self::blob_release_enabled()) {
+            return false;
+        }
+
         $hash = DB::table('_file_storage')->where('id', $storage_id)->value('hash');
         if ($hash === null) {
             return false;
@@ -274,10 +282,14 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 }
             }
 
-            // (b) BLOB-RELEASE PASS: distinct blobs of recently-destroyed attachments.
+            // (b) BLOB-RELEASE PASS: distinct blobs of recently-destroyed attachments. Off with
+            // keep-forever (blob_release_enabled()).
+            $released = 0;
+            if (!self::blob_release_enabled()) {
+                return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => 0, 'stopped' => false];
+            }
             $task->status('Releasing blobs of destroyed attachments');
             $release_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $lookback_days * 86400);
-            $released = 0;
             $last_sid = 0;
             while (true) {
                 $storage_ids = File_Attachment_Model::withTrashed()
@@ -317,6 +329,20 @@ class File_Disposal_Service extends Rsx_Service_Abstract
         $task->summary($result['stopped'] ? "Stopped with {$done}." : ucfirst($done) . '.');
 
         return null;
+    }
+
+    /**
+     * Whether anything may remove a blob from the store. FALSE while
+     * rsx.files.deleted_retention_days is 0 (keep forever): then nothing releases a blob or
+     * unlinks a file in the store for ANY reason - an unreferenced row, a destroyed attachment,
+     * a force_destroy(), a file on disk with no row. Keep-forever is also how an install says
+     * its blob store is shared (several environments on one uploads mount): a database cannot
+     * see another environment's references, so no release it decides on is safe.
+     * `rsx:files:unreferenced_blobs` lists what stays behind.
+     */
+    public static function blob_release_enabled(): bool
+    {
+        return self::__deleted_retention_days() > 0;
     }
 
     /**
@@ -378,7 +404,8 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 return ['blobs_released' => $released, 'disk_files_removed' => $disk_deleted, 'uploads_swept' => $uploads_swept, 'stopped' => true];
             };
             $last_sid = 0;
-            while (true) {
+            // Keep-forever releases nothing and removes no file: (a) and (b) are skipped.
+            while (self::blob_release_enabled()) {
                 $orphan_ids = File_Blob_References::where_unreferenced(
                     DB::table('_file_storage as s')->where('s.id', '>', $last_sid),
                     's'
@@ -403,10 +430,14 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             }
 
             // (b) DISK SIDE.
-            $task->status('Removing orphaned disk files');
-            [$disk_deleted, $disk_stopped] = self::__sweep_disk_orphans($task, $min_age_days, $chunk);
-            if ($disk_stopped) {
-                return $stopped();
+            if (self::blob_release_enabled()) {
+                $task->status('Removing orphaned disk files');
+                [$disk_deleted, $disk_stopped] = self::__sweep_disk_orphans($task, $min_age_days, $chunk);
+                if ($disk_stopped) {
+                    return $stopped();
+                }
+            } else {
+                $task->stdout('Blob release is off (rsx.files.deleted_retention_days = 0): no blob released, no disk file removed.');
             }
 
             // (c) UNASSIGNED UPLOADS: soft-delete stale plain-local unattached uploads.
@@ -567,9 +598,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
         $deleted = 0;
         $pending = [];
 
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($blob_root, \FilesystemIterator::SKIP_DOTS)
-        );
+        $iterator = new \RecursiveIteratorIterator(self::blob_tree_iterator($blob_root));
         foreach ($iterator as $file) {
             if (!$file->isFile()) {
                 continue;
@@ -594,6 +623,21 @@ class File_Disposal_Service extends Rsx_Service_Abstract
         }
 
         return [$deleted, false];
+    }
+
+    /**
+     * The blob store's own tree: every shard directory under $blob_root, never a `_` directory
+     * at its root - those hold other stores (uploads/_temp is Rsx_Temp_Files') whose files are
+     * not blobs and never belong to a blob sweep.
+     */
+    public static function blob_tree_iterator(string $blob_root): \RecursiveIterator
+    {
+        return new \RecursiveCallbackFilterIterator(
+            new \RecursiveDirectoryIterator($blob_root, \FilesystemIterator::SKIP_DOTS),
+            function (\SplFileInfo $entry) use ($blob_root): bool {
+                return !($entry->isDir() && $entry->getPath() === $blob_root && str_starts_with($entry->getFilename(), '_'));
+            }
+        );
     }
 
     /**

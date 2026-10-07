@@ -286,7 +286,7 @@ File_Attachment_Model::create_from_url('https://example.com/logo.png', ['site_id
 
 They return an UNATTACHED attachment — attach it yourself with `attach_to()`/`add_to()` (trusted server code, so the claim guard is not in your way for handler-backed rows).
 
-**Raw bytes enter the store only through `File_Storage_Model::store_blob($temp_path, $reference)`** (the factories call it for you). `$reference` receives the storage row and writes the row that pins it; the blob's read lock (`file_blob:<hash>`) is held from before the dedup lookup until that row COMMITS, so disposal can never release the bytes in between. Record the reference INSIDE the callback, never after `store_blob()` returns; `File_Storage_Model::store_bytes($bytes, $reference)` is the same for bytes held in memory. Saving a `Blob_Referencing` model (an attachment, an email part, a task attachment) whose `file_storage_id` changed holds the same lock and THROWS "was released while a reference to it was being recorded" if the row is gone. Read bytes back through the storage row - `read_bytes()`, `read_stream()`, `download_response($name, $mime)`, `inline_response(...)` - never a path.
+**Raw bytes enter the store only through `File_Storage_Model::store_blob($temp_path, $reference)`** (the factories call it for you). `$reference` receives the storage row and writes the row that pins it; the blob's read lock (`file_blob:<hash>`) is held from before the dedup lookup until that row COMMITS, so disposal can never release the bytes in between. Record the reference INSIDE the callback, never after `store_blob()` returns; `File_Storage_Model::store_bytes($bytes, $reference)` is the same for bytes held in memory. Saving a `Blob_Referencing` model (an attachment, an email part) whose `file_storage_id` changed holds the same lock and THROWS "was released while a reference to it was being recorded" if the row is gone. Read bytes back through the storage row - `read_bytes()`, `read_stream()`, `download_response($name, $mime)`, `inline_response(...)` - never a path.
 
 **A table of your own that points at `_file_storage` DECLARES the reference** on its model, or disposal could free bytes it still needs and the `rsx:health` "Blob References" row FAILs naming the column:
 
@@ -318,7 +318,7 @@ $attachment->undelete();
 
 `force_destroy()` is the **only** immediate erasure — it bypasses the retention window AND the `file.attachment.destroy.hold` gate. Use it when a record must genuinely be gone now, not as a tidier `delete()`.
 
-**`File_Disposal_Service` is the SOLE blob-release authority.** No other code unlinks a blob. It runs a daily destroy+release pass and a monthly orphan sweep, plus the 6-hourly unclaimed-upload sweep. A blob is released only when NO live-or-retained attachment pins it — a **retention-aware** refcount, so a file still recoverable in someone's recycle bin keeps its bytes alive. So does every other declared reference - a queued email's part, a task run's attachment. The release deletes the storage row FIRST (the reference foreign keys refuse it if anything still points there) and unlinks the file only after that COMMITS — so `force_destroy()` inside an open transaction unlinks at the outermost commit, and a rollback keeps the file.
+**`File_Disposal_Service` is the SOLE blob-release authority.** No other code unlinks a blob. It runs a daily destroy+release pass and a monthly orphan sweep, plus the 6-hourly unclaimed-upload sweep. A blob is released only when NO live-or-retained attachment pins it — a **retention-aware** refcount, so a file still recoverable in someone's recycle bin keeps its bytes alive. So does every other declared reference - a queued email's part. (A task run's attachment is not a blob at all: it is a temp file, `rsx:man temp_files`.) The release deletes the storage row FIRST (the reference foreign keys refuse it if anything still points there) and unlinks the file only after that COMMITS — so `force_destroy()` inside an open transaction unlinks at the outermost commit, and a rollback keeps the file.
 
 Two hooks, both receiving the attachment:
 
@@ -332,7 +332,9 @@ public static function keep_legal_holds($attachment) {
 public static function log_destruction($attachment) { /* a throw defers, never half-destroys */ }
 ```
 
-Retention windows and lookbacks are `config('rsx.files.*')`; the full contract is `rsx:man file_disposal`. **`deleted_retention_days` = 0 means KEEP FOREVER** (set it in `rsx/resource/config/rsx.php` when deleted files must be kept for audit): the scheduled destroy never runs, every deleted attachment stays restorable with its blob pinned, and `force_destroy()` still erases at once. A negative value throws.
+Retention windows and lookbacks are `config('rsx.files.*')`; the full contract is `rsx:man file_disposal`. **`deleted_retention_days` = 0 means KEEP FOREVER** (set it in `rsx/resource/config/rsx.php` when deleted files must be kept for audit): the scheduled destroy never runs, every deleted attachment stays restorable with its blob pinned, and **NOTHING removes a blob for any reason** - not the daily release pass, not the monthly sweep, not `force_destroy()` (which still destroys the attachment record but keeps the bytes). It is also the setting for a blob store shared by several environments, where no one database can see every reference. `php artisan rsx:files:unreferenced_blobs` lists the bytes that stay (paths on stdout, sizes on stderr). A negative value throws.
+
+**Pipeline output is not an attachment.** A CSV export waiting to be downloaded, a file a task attached for its initiator: `Rsx_Temp_Files::store_bytes()` / `store_file()` - random key under `uploads/_temp/`, expiry per file, swept hourly (only this database's rows), served by the feature's own gated endpoint with `$file->download_response()`. `rsx:man temp_files`.
 
 ---
 
@@ -407,6 +409,6 @@ All of those except `/_icon_by_extension` also accept `Authorization: Bearer rsx
 - **The size label disagrees with enforcement** — a hardcoded number. Use `max_file_size_human()`.
 - **An SVG thumbnail is a generic icon / `width` is null** — by design: SVG never reaches ImageMagick.
 - **422 `unparseable_svg`** — the SVG is not well-formed XML; nothing was stored.
-- **A deleted file is still on disk** — correct: it is in the retention window. Only `File_Disposal_Service` (or `force_destroy()`) releases blobs.
+- **A deleted file is still on disk** — correct: it is in the retention window. Only `File_Disposal_Service` (or `force_destroy()`) releases blobs - and with `deleted_retention_days = 0` nothing does (`rsx:files:unreferenced_blobs` lists them).
 
 Details: `php artisan rsx:man file_upload` · `file_disposal` · `thumbnails` · `droppable`. Related: `rspade:document-preview`, `rspade:event-hooks`, `rspade:auth-gates`, `rspade:external-api` (uploading and attaching over the REST API).

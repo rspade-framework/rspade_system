@@ -177,6 +177,15 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      * @param string $hash
      * @return string
      */
+    /**
+     * Where a blob with this hash lives, relative to the blob root ("ab/cd/<hash>"). For
+     * reporting - rsx:files:unreferenced_blobs prints it; reading bytes goes through the model.
+     */
+    public static function relative_blob_path(string $hash): string
+    {
+        return static::__hash_subpath($hash);
+    }
+
     protected static function __hash_subpath($hash)
     {
         $dir1 = substr($hash, 0, 2);

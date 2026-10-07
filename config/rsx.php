@@ -934,6 +934,27 @@ return [
     |   'handlers' => ['Onedrive_Attachment_Handler', 'S3_Attachment_Handler'],
     |
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Temp file store (Rsx_Temp_Files)
+    |--------------------------------------------------------------------------
+    |
+    | Files a pipeline produces from application data and keeps for a while - a CSV
+    | export waiting to be downloaded, a file a task attached for whoever started it.
+    | They live in uploads/_temp/ under random keys, apart from the content-addressed
+    | attachment store, and Temp_File_Cleanup_Service deletes each one hourly once it
+    | expires (only the files this database has rows for).
+    |
+    | retention_days: how long a temp file lives when its caller does not choose -
+    | a whole number of days, at least 1. A RETENTION window, not a timeout: it bounds
+    | how long data is kept, never how long anything may take.
+    |
+    | See: php artisan rsx:man temp_files
+    */
+    'temp_files' => [
+        'retention_days' => 7,
+    ],
+
     'attachments' => [
         'handlers' => [],
 

@@ -214,18 +214,17 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 | task-out-05 | printed output is captured in order, passes through, is not echoed twice | prints_output | rows interleaved with the task's own; passthrough text; buffer level restored | implemented |
 | task-out-06 | printed output survives a throw | prints_then_throws | FAILED; printed line recorded; buffer closed | implemented |
 
-## Task_Attachments_Test (php, $requires_db_reset + no-tx) - named files a run attaches
+## Task_Attachments_Test (php, $requires_db_reset + no-tx) - named files a run attaches (temp files)
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| task-att-01 | attach_bytes records the file and stores the blob | bytes | row fields, sniffed mime, blob by sha256, read_bytes/read_stream, download response | implemented |
+| task-att-01 | attach_bytes records the file as a temp file | bytes | row fields, sniffed mime, temp file under uploads/_temp keyed at random, nothing in _file_storage, read_bytes/read_stream, download response | implemented |
 | task-att-02 | attach_file copies a file and leaves the source | temp file | source name, given mime, bytes; source kept | implemented |
 | task-att-03 | attachments are listed by name; a missing name is null | two names | alpha, zeta | implemented |
 | task-att-04 | a bad name or unreadable file is refused | '', 256 chars, missing path | throws; nothing recorded | implemented |
-| task-att-05 | replacing a name releases the orphaned blob | two attaches | one row; old blob gone | implemented |
-| task-att-06 | replacing keeps a blob something else references | same bytes on another run | blob kept | implemented |
-| task-att-07 | re-attaching the same bytes keeps the blob | same bytes twice | same storage; row updated | implemented |
-| task-att-08 | an attachment is a declared blob reference | declarations; disposal | declared; is_referenced; release refused, then allowed once unlinked | implemented |
+| task-att-05 | replacing a name deletes the earlier temp file | two attaches | one row; earlier temp row and bytes gone | implemented |
+| task-att-06 | identical bytes are two temp files, never shared | same bytes on two runs | different temp files; replacing one leaves the other | implemented |
+| task-att-08 | deleting the temp file deletes the attachment; no blob reference is declared | declarations; Rsx_Temp_Files::delete | none declared; row gone | implemented |
 
 ## Task_Retention_Test (php, $requires_db_reset + no-tx) - history kept to rsx.tasks.retention
 

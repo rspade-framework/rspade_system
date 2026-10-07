@@ -1626,6 +1626,34 @@ ENTRY 16: CHANGING PORTAL_URL (what the old portal address leaves behind)
         4. Rewrite or expire stored portal URLs your application keeps (the
            template's portal notification payloads among them).
 
+--------------------------------------------------------------------------------
+
+ENTRY 17: KEEP-FOREVER FILE RETENTION (bytes that never leave the disk)
+
+    What to audit
+        config('rsx.files.deleted_retention_days'). At 0 ("keep forever") the
+        framework removes NO blob for any reason: no disposal pass, no deep sweep,
+        and not force_destroy() - it destroys the attachment record and keeps the
+        bytes (rsx:man file_disposal, KEEP FOREVER).
+
+    Why it matters
+        Two silent consequences. Bytes nothing references any more accumulate on
+        disk. And an erasure the application performs with force_destroy() - a
+        "delete my data" request - removes the record but NOT the file. Nothing
+        fails to tell you either.
+
+        0 is the right setting when deleted files must be kept for audit, or when
+        the blob store is shared by several environments (one uploads mount for
+        dev and prod), where no single database can see every reference.
+
+    Guidelines
+        1. Choose the setting deliberately; 0 is never a default to inherit.
+        2. Under 0, decide who removes unreferenced bytes and when: php artisan
+           rsx:files:unreferenced_blobs lists them (paths on stdout, sizes and
+           the total on stderr), for an operator or a script to act on.
+        3. Under 0, an erasure obligation that must reach the disk is a manual
+           step after force_destroy(): write it into the procedure.
+
 SEE ALSO
     rsx:man login_redirect
     rsx:man session

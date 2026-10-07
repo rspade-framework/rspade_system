@@ -76,7 +76,7 @@ $task->state(['done' => 3, 'last' => 'x']); // a JSON state object, replacing th
 $task->state_list(['item 4', 'item 5']);    // a LIST (sequential keys), replacing the last; exists once it has held an item
 $task->message('Halfway');                  // kept, in order, for watchers
 $task->stdout('line');  $task->stderr('line');   // output lines; echo/print are stdout too
-$task->attach_file('report', $path, 'report.csv');          // named file -> blob store
+$task->attach_file('report', $path, 'report.csv');          // named file -> a temp file (rsx:man temp_files)
 $task->attach_bytes('report', $bytes, 'report.csv', 'text/csv');   // same name again replaces
 $task->summary('480 rows exported.');       // the completion summary
 $task->flush();                             // write held reports now
@@ -101,7 +101,7 @@ $task->get_id(); $task->get_class(); $task->get_method(); $task->get_params();
 
 **A task that loops - over a queue, records or steps - calls `is_stop_requested()` and `heartbeat()` on every item** (see the example above). Without the stop check a graceful stop is never answered and only a kill ends the run; check between items, where stopping leaves the data coherent, and return `null` so the run settles STOPPED. The heartbeat lets a watcher tell a slow item from a stuck one. Both are cheap (reports are written at a rate). A single long step with no loop needs neither, beyond a `flush()` before it goes quiet.
 
-**Attachments are for ONE shape of task:** a one-time run started by a user action that produces a FILE the initiator is waiting for - they poll or watch the run and take the file when it completes (the CSV export above). The attachment spares that run a storage table, a download endpoint and a cleanup of its own. A run may also attach an advanced DEBUG artifact of itself. **Never use one to deliver results that belong to the application** - converted documents, imported records, a report everyone reads: write those into the app's own tables and files, where they are kept and authorized. Attachments expire with the run's output (`rsx.tasks.retention`), are readable only through the task gates, and belong to no record.
+**Attachments are for ONE shape of task:** a one-time run started by a user action that produces a FILE the initiator is waiting for - they poll or watch the run and take the file when it completes (the CSV export above). The attachment spares that run a storage table, a download endpoint and a cleanup of its own. A run may also attach an advanced DEBUG artifact of itself. **Never use one to deliver results that belong to the application** - converted documents, imported records, a report everyone reads: write those into the app's own tables and files, where they are kept and authorized. An attachment is a TEMP FILE (`Rsx_Temp_Files`, under `uploads/_temp`, never a shared blob): deleted with the run's output (`rsx.tasks.retention`), readable only through the task gates, belonging to no record. Output a page waits for that is NOT a task's is a temp file too - `Rsx_Temp_Files::store_bytes()`, served by the feature's own gated endpoint.
 
 ---
 

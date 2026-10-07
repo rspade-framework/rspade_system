@@ -48,9 +48,8 @@ RETENTION-AWARE REFCOUNT
 
     Every OTHER kind of row that points at a blob pins it too, for as long as the
     row exists: a queued email's part (_email_attachments, until its email row is
-    deleted) and a task run's attachment (_task_attachments, until the run's output
-    is truncated or the run is purged - rsx:man tasks, RETENTION). Neither has a
-    window of its own.
+    deleted). It has no window of its own. A task run's attachment is NOT a blob: it
+    is a temp file (rsx:man temp_files), outside this store entirely.
 
 DECLARED BLOB REFERENCES
     The disposal side may release a blob only when NO row references it, so it must
@@ -251,6 +250,10 @@ SCHEDULED TASKS (File_Disposal_Service)
     bound; the 6-hourly claim-window sweep is the tight one, and the monthly pass is
     the backstop that also reconciles blobs and disk.
 
+    The disk walk covers the blob store's own shard directories only: every `_`
+    directory at the root of uploads/ holds another store (uploads/_temp is the temp
+    file store) and is never entered.
+
 KEEP FOREVER
     rsx.files.deleted_retention_days = 0 keeps every deleted attachment recoverable,
     and its blob on disk, indefinitely - for a deployment that must retain deleted
@@ -264,9 +267,19 @@ KEEP FOREVER
       get_deleted_files() and get_deleted_attachments(). A deleted attachment is
       therefore retained, restorable and pinning its blob for as long as the setting
       holds. The daily task's destroy cutoff is the only place the number is read.
-    - force_destroy() still erases at once, and the daily BLOB-RELEASE pass still
-      frees the bytes of attachments destroyed that way (once no other attachment
-      pins the blob).
+    - NOTHING REMOVES A BLOB, FOR ANY REASON. File_Disposal_Service::
+      blob_release_enabled() is false, and release_blob_if_orphaned() - the one release
+      authority - answers false without touching anything. So force_destroy() destroys
+      the attachment (stamps destroyed_at, fires the hook) but keeps its bytes; the daily
+      BLOB-RELEASE pass is skipped; the monthly sweep releases no unreferenced row and
+      removes no disk file. The reason is the shared store: keep-forever is also how an
+      install whose blob store is shared by several environments (one uploads mount for
+      dev and prod) keeps one of them from deleting bytes another still references - a
+      database cannot see the other environments' references, so no release decided by
+      one of them is safe.
+    - The cost is unreferenced bytes that stay on disk. php artisan
+      rsx:files:unreferenced_blobs lists them (UNREFERENCED BLOBS below). An erasure
+      that must reach the disk under keep-forever is the operator's, by hand.
     - Stale unattached uploads are still swept (soft-deleted) by the claim-window and
       monthly passes; under keep-forever they then stay in retention forever too.
     - Turning keep-forever OFF later makes the next daily run destroy every
@@ -304,7 +317,27 @@ INTERACTIONS / PITFALLS
       unlinks the file at the outermost COMMIT; a test that runs inside a rolled-back
       per-test transaction therefore never sees the file disappear.
 
+UNREFERENCED BLOBS
+    php artisan rsx:files:unreferenced_blobs
+
+    Read-only. Lists every blob nothing appears to reference (File_Blob_Audit): a
+    _file_storage row no declared reference holds (a retained attachment still counts),
+    then a file in the blob tree with no row at all (`_` directories skipped). STDOUT is
+    one path per line relative to the blob root (ab/cd/<hash>); STDERR carries each
+    blob's size beside its path and, last, the total count and size - so a script reads
+    the paths alone with 2>/dev/null:
+
+        php artisan rsx:files:unreferenced_blobs 2>/dev/null | while read -r path; do
+            ...
+        done
+
+    It exists for keep-forever, which releases nothing. Under a retention window the
+    daily pass releases unreferenced blobs within days, so the list is normally short or
+    empty. On a SHARED store a listed blob may be referenced by another environment's
+    database - check before removing anything.
+
 SEE ALSO
+    rsx:man temp_files - the store for pipeline output, outside the blob store
     rsx:man file_upload, rsx:man document_search, rsx:man tasks,
     rsx:man event_hooks, rsx:man locks, rsx:man maintenance_mode,
     rsx:man health
