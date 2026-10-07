@@ -182,7 +182,11 @@ php artisan rsx:tasks:kill-all --explanation="..."
 | `task.view.scope` | filter (return the narrowed builder) | the `Task_Run_Model` query |
 | `task.control.authorize` | gate | `{task, user, action}` - stop, force_stop, force_kill, cancel, rerun |
 
-Keep the gate and the scope the same rule. Worked example: `system/app/RSpade/resource/reference_app/handlers/Task_Gate_Handlers.php` (a user sees, stops, cancels and reruns the runs THEY started; never force-kills). PHP asks `Task_Gates::can_view()`, `scope_viewable()`, `can_control()`.
+Keep the gate and the scope the same rule.
+
+**Least privilege - write the handlers like an AWS `policy.json`: grant only what your screens were built to do.** Each grant names WHO (the user type - realm, `User_Model` / `Portal_User_Model`, a role or ACL if only some users - and normally ownership: the run's `dispatched_by` is the viewer), WHAT (the specific tasks, `'Service::method'`, a screen shows them - never every task, never a pattern) and ACTIONS (per task, only what that screen offers: a progress panel needs view only; `force_kill` is a developer's, in `/_sys`). A task not granted stays invisible to users, even one they started. **Every new task, and every task whose behaviour changes, is checked against the handlers in the same change** - a grant added, re-checked, or deliberately absent.
+
+Worked example: `system/app/RSpade/resource/reference_app/handlers/Task_Gate_Handlers.php` - a `USER_TASKS` map of `'Service::method' => [actions]`, granted to staff users on the runs THEY started, the scope narrowing to the same owner and the same tasks. PHP asks `Task_Gates::can_view()`, `scope_viewable()`, `can_control()`.
 
 The browser reads through `Rsx_Task_Controller` (public surface; the gates decide; a run the viewer may not see is "not found"):
 

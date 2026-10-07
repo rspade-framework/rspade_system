@@ -105,6 +105,14 @@ PORTING IT
            system/app/RSpade/resource/reference_app/handlers/Task_Gate_Handlers.php
        (task.view.authorize, task.view.scope, task.control.authorize; the portal
        twins are portal.task.*). The scope and the gate must express the same rule.
+       Grant LEAST PRIVILEGE, the way an AWS policy.json is written: only the user
+       types that need it, only the specific tasks ('Service::method') a screen of
+       yours shows them - normally on runs they started - and only the actions that
+       screen offers (rsx:man tasks, LEAST PRIVILEGE). The reference handlers grant
+       through a USER_TASKS map; when you port them, replace its showcase entry
+       with your own tasks rather than widening it. From now on every new task, and
+       every task whose behaviour changes, is checked against these grants in the
+       same change.
 
     9. Showing runs to users (Category 3 - the engine arrived, the screen did
        not): the reference app's System > Background Tasks screen is a worked
@@ -160,7 +168,8 @@ PORTING IT
         gates (step 8), expressing the permission rules your application
         already applies to that data - who started the run, the record it
         works on, a role or ACL check - in task.view.authorize / task.view.scope
-        and, if users may stop or rerun it, task.control.authorize.
+        and, if users may stop or rerun it, task.control.authorize, granted per
+        task and per action and nothing wider (least privilege, step 8).
         If your application only runs tasks in the background and shows no live
         task progress anywhere, there is nothing to change on the UI side: step
         12 still applies, and the /_sys console shows every run to developers.

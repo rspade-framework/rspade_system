@@ -633,15 +633,41 @@ GATES AND THE BROWSER API
     with no handler asked - the /_sys console shows and controls every run.
     PHP: Task_Gates::can_view($run), scope_viewable($query), can_control($run, $action).
 
+        // Only these tasks, only these actions, only on the viewer's own runs.
+        const USER_TASKS = ['Contact_Export_Service::export' => ['stop', 'cancel']];
+
         #[OnEvent('task.view.authorize', priority: 10)]
         public static function view_own_runs($data)
         {
-            return $data['task']->dispatched_by_type === 'User_Model'
-                && (int) $data['task']->dispatched_by_id === Session::get_user_id();
+            $task = $data['task'];
+
+            return $task->dispatched_by_type === 'User_Model'
+                && (int) $task->dispatched_by_id === Session::get_user_id()
+                && isset(self::USER_TASKS[class_basename($task->class) . '::' . $task->method]);
         }
 
+    LEAST PRIVILEGE - THE POLICY.JSON POSTURE. Write the handlers the way an AWS IAM
+    policy is written: grant only what the application's own screens were built to do, and
+    nothing because it might be useful. Each grant names three things:
+
+        WHO      the user type (the realm, and within it User_Model / Portal_User_Model,
+                 a role or ACL check if only some users may), and normally OWNERSHIP - the
+                 run's dispatched_by is the viewer;
+        WHAT     the specific tasks - 'Service::method' - that a screen shows those users;
+                 never "every task", never a pattern;
+        ACTIONS  per task, only the actions that screen offers (a progress panel needs
+                 view and nothing else; a Stop button needs stop). force_kill belongs to
+                 developers in /_sys and is almost never granted.
+
+    A task not granted stays invisible to users - even one they started - and is seen by
+    developers in /_sys. EVERY NEW TASK, and every task whose behaviour changes, is checked
+    against the handlers in the same change: a task users should see gets its own grant, a
+    task that changed gets its grant re-checked, and a task users need not see gets none.
+    The view gate and the view scope must express the same grant (one run vs a list).
+
     Worked example: system/app/RSpade/resource/reference_app/handlers/Task_Gate_Handlers.php
-    (a staff user sees, stops, cancels and reruns the runs they started; never force-kills).
+    - a USER_TASKS map of 'Service::method' => [actions], granted to staff users on the runs
+    they started; the scope narrows to the same owner AND the same listed tasks.
 
     ENDPOINTS. Rsx_Task_Controller (#[Auth('public')], #[Auth_Realm('any')] - the gates
     decide): get, report, output, messages, find, page, stop, force_stop, force_kill, cancel,
