@@ -197,17 +197,23 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
     #[Debounce(2)]
     public static function run_emitters(Task_Instance $task, array $params = [])
     {
-        $result = self::run_emitters_engine();
+        $result = self::run_emitters_engine($task);
 
-        $task->stdout("Realtime emitters: ran {$result['ran']}, published {$result['published']}.");
+        if ($result['published'] > 0) {
+            $task->stdout("Realtime emitters: ran {$result['ran']}, published {$result['published']}.");
+        }
 
         $task->state($result);
+        $task->summary($task->is_stop_requested()
+            ? "Stopped after running {$result['ran']} emitter(s) and publishing {$result['published']} change(s)."
+            : "Ran {$result['ran']} emitter(s) and published {$result['published']} change(s).");
 
         return null;
     }
 
     /**
-     * The engine body, callable directly (no Task_Instance) for deterministic tests.
+     * The engine body, callable directly (no Task_Instance) for deterministic tests. Given
+     * a $task, a stop requested on it ends the run between work items with partial counts.
      *
      * For each Node registry entry (site_id, topic, filter) whose topic has a
      * registered emitter (and, for a model-constrained emitter, whose filter.model matches
@@ -224,7 +230,7 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
      *
      * @return array{ran: int, published: int}
      */
-    public static function run_emitters_engine(): array
+    public static function run_emitters_engine(?Task_Instance $task = null): array
     {
         // Group emitters by topic (normally one per topic, but allow more).
         $by_topic = [];
@@ -270,6 +276,11 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
         $published = 0;
 
         foreach ($work as $item) {
+            if ($task?->is_stop_requested()) {
+                break;
+            }
+            $task?->heartbeat();
+
             foreach ($by_topic[$item['topic']] as $emitter) {
                 // A model-constrained emitter only runs for registry entries whose filter.model
                 // matches — so a Model_Changed_Topic-composed emitter recomputes only for the
@@ -329,18 +340,23 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
     {
         $entries = is_array($params['entries'] ?? null) ? $params['entries'] : [];
 
-        $result = self::seed_subscriptions_engine($entries);
+        $result = self::seed_subscriptions_engine($entries, $task);
 
-        $task->stdout("Realtime emitter seed: entries {$result['entries']}, seeded {$result['seeded']}.");
+        if ($result['seeded'] > 0) {
+            $task->stdout("Realtime emitter seed: entries {$result['entries']}, seeded {$result['seeded']}.");
+        }
 
         $task->state($result);
+        $task->summary($task->is_stop_requested()
+            ? "Stopped after seeding {$result['seeded']} baseline(s) for {$result['entries']} entr(ies)."
+            : "Seeded {$result['seeded']} baseline(s) for {$result['entries']} entr(ies).");
 
         return null;
     }
 
     /**
      * The seed body, callable directly (no Task_Instance) for deterministic tests —
-     * mirroring run_emitters_engine().
+     * mirroring run_emitters_engine(), including the stop between entries when given a $task.
      *
      * The work list IS the notified entries: this does NOT read the subscriber registry
      * (the registry is the run loop's input, and re-reading it here would seed baselines
@@ -354,7 +370,7 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
      * @param array<int, array{site_id?: int, topic?: string, filter?: array}> $entries
      * @return array{entries: int, seeded: int}
      */
-    public static function seed_subscriptions_engine(array $entries): array
+    public static function seed_subscriptions_engine(array $entries, ?Task_Instance $task = null): array
     {
         if (!self::has_emitters()) {
             return ['entries' => 0, 'seeded' => 0];
@@ -364,6 +380,11 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
         $seeded = 0;
 
         foreach ($entries as $entry) {
+            if ($task?->is_stop_requested()) {
+                break;
+            }
+            $task?->heartbeat();
+
             if (!is_array($entry) || !isset($entry['topic'])) {
                 continue;
             }

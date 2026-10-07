@@ -58,7 +58,7 @@ class Flash_Alert_Cleanup_Service extends Rsx_Service_Abstract
      *
      * @param Task_Instance $task Task instance for heartbeats
      * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
-     * @return array Cleanup statistics
+     * @return null
      */
     #[Task('Delete abandoned flash alerts (runs hourly)')]
     #[Exclusive]
@@ -71,6 +71,12 @@ class Flash_Alert_Cleanup_Service extends Rsx_Service_Abstract
         $total = 0;
 
         while (true) {
+            if ($task->is_stop_requested()) {
+                $task->summary("Stopped after deleting {$total} abandoned flash alerts.");
+
+                return null;
+            }
+
             $deleted = DB::table('_flash_alerts')
                 ->where('created_at', '<', $cutoff)
                 ->limit($chunk_size)
@@ -92,6 +98,7 @@ class Flash_Alert_Cleanup_Service extends Rsx_Service_Abstract
             'deleted' => $total,
             'retention_minutes' => self::RETENTION_MINUTES,
         ]);
+        $task->summary("Deleted {$total} flash alerts older than " . self::RETENTION_MINUTES . ' minutes.');
 
         return null;
     }

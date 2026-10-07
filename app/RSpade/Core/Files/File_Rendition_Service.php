@@ -41,8 +41,10 @@ class File_Rendition_Service extends Rsx_Service_Abstract
 
         if (!is_dir($dir)) {
             // Directory doesn't exist yet - no cleanup needed.
-            $task->stdout('Rendition cache directory does not exist yet');
-            return;
+            $task->state(['deleted' => 0, 'freed_bytes' => 0]);
+            $task->summary('The rendition cache directory does not exist yet; nothing to clean.');
+
+            return null;
         }
 
         // Calculate current usage.
@@ -58,7 +60,10 @@ class File_Rendition_Service extends Rsx_Service_Abstract
 
         // Not over quota? Nothing to do.
         if ($total_size <= $max_bytes) {
-            return;
+            $task->state(['deleted' => 0, 'freed_bytes' => 0]);
+            $task->summary('The rendition cache is within its quota; nothing was deleted.');
+
+            return null;
         }
 
         // Over quota - delete oldest files until under limit (LRU eviction).
@@ -80,6 +85,11 @@ class File_Rendition_Service extends Rsx_Service_Abstract
 
         $freed_mb = round($freed_bytes / 1024 / 1024, 2);
         $task->stdout("Rendition cleanup: {$deleted_count} files deleted, {$freed_mb} MB freed");
+
+        $task->state(['deleted' => $deleted_count, 'freed_bytes' => $freed_bytes]);
+        $task->summary("Deleted {$deleted_count} cached renditions, freeing {$freed_mb} MB.");
+
+        return null;
     }
 
     /**

@@ -191,6 +191,22 @@ class Task_Retention_Test extends Rsx_Test_Abstract
         static::__assert_null(Task_Run_Model::find($old->get_id()));
     }
 
+    public static function test_a_stopped_sweep_ends_before_its_next_run_and_says_so()
+    {
+        static::__clear();
+        $old = static::__run(Task_Run_Model::STATUS_COMPLETED, 40000);
+
+        $id = Task_Runner::insert_row(Task_Retention_Service::class, 'sweep', [], Task_Run_Model::ORIGIN_INLINE, Task_Runner::running_fields());
+        DB::table('_tasks')->where('id', $id)->update(['stop_requested_at' => now()->format('Y-m-d H:i:s.v')]);
+        $sweep = Task_Instance::find($id);
+
+        static::__assert_null(Task_Retention_Service::sweep($sweep));
+        $sweep->flush();
+
+        static::__assert_equals('Stopped after truncating 0 run(s), purging 0 run(s) and removing 0 temp director(ies).', Task_Run_Model::find($id)->summary());
+        static::__assert_null(Task_Run_Model::find($old->get_id())->output_truncated_at, 'a run past the window is left for the next sweep');
+    }
+
     public static function test_the_sweep_refuses_an_invalid_configuration()
     {
         $original = config('rsx.tasks.retention');

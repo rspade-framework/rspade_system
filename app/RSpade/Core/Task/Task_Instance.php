@@ -38,8 +38,9 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * WRITE RATE, NOT A TIMEOUT. A task may report on every item of a long loop, and writing each
  * report would be a database write and a realtime frame per item. Reports are therefore held
  * in memory and written together: the first report after a quiet spell is written at once,
- * and further reports within FLUSH_INTERVAL of the last write wait for the next reporting
- * call, is_stop_requested(), flush() or the end of the run - whichever comes first. A task
+ * and further reports within FLUSH_INTERVAL of the last write wait for the first reporting
+ * call or is_stop_requested() after the interval, a flush() or the end of the run - whichever
+ * comes first. A task
  * about to go quiet for a long step calls flush() so its watchers see the latest state.
  * Attachments are written immediately.
  *
@@ -381,12 +382,14 @@ class Task_Instance
      * runs to completion - unless it was FORCE-stopped, in which case its worker is killed
      * when the grace period ends.
      *
-     * Writes any held reports first, and reads the row on every call, so it sees a request
-     * made while the task is running.
+     * Reads the row on every call, so it sees a request made while the task is running - a
+     * primary-key read, cheap enough for every item of a loop. Held reports are written at the
+     * usual rate (FLUSH_INTERVAL), not on every call: a loop calling heartbeat() and this per
+     * item must not turn into a write per item.
      */
     public function is_stop_requested(): bool
     {
-        $this->flush();
+        $this->__maybe_flush();
 
         return DB::table('_tasks')->where('id', $this->id)->value('stop_requested_at') !== null;
     }

@@ -57,7 +57,7 @@ class Session_Values_Cleanup_Service extends Rsx_Service_Abstract
      *
      * @param Task_Instance $task Task instance for heartbeats
      * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
-     * @return array Cleanup statistics
+     * @return null
      */
     #[Task('Delete expired session values (runs hourly)')]
     #[Exclusive]
@@ -79,6 +79,12 @@ class Session_Values_Cleanup_Service extends Rsx_Service_Abstract
         $total = 0;
 
         while (true) {
+            if ($task->is_stop_requested()) {
+                $task->summary("Stopped after deleting {$total} expired session values.");
+
+                return null;
+            }
+
             $deleted = DB::table('_session_values')
                 ->whereNotNull('expires_at')
                 ->where('expires_at', '<', $now)
@@ -98,6 +104,7 @@ class Session_Values_Cleanup_Service extends Rsx_Service_Abstract
         }
 
         $task->state(['deleted' => $total, 'abandoned_passkey_enrollments' => $abandoned]);
+        $task->summary("Deleted {$total} expired session values and recorded {$abandoned} abandoned passkey enrollments.");
 
         return null;
     }

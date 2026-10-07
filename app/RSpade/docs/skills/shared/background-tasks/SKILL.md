@@ -85,7 +85,7 @@ $dir = $task->get_temp_dir();               // removed when the run ends
 $task->get_id(); $task->get_class(); $task->get_method(); $task->get_params();
 ```
 
-**Reports are written at a capped rate, not per call** (`Task_Instance::FLUSH_INTERVAL`, 0.25 s): the first after a quiet spell goes at once, later ones wait for the next report call, `is_stop_requested()`, `flush()` or the end of the run. Report on every item of a loop freely; call `flush()` before a long silent step. That is a write rate, not a timeout.
+**Reports are written at a capped rate, not per call** (`Task_Instance::FLUSH_INTERVAL`, 0.25 s): the first after a quiet spell goes at once, later ones wait for the first report call or `is_stop_requested()` after the interval, a `flush()` or the end of the run. `is_stop_requested()` reads the row every call (a stop is seen at once) but writes only at that rate. Report on every item of a loop freely; call `flush()` before a long silent step. That is a write rate, not a timeout.
 
 **Echo is captured as stdout** wherever the run executes, line by line, and passed through unchanged. A console runner echoes the task's stdout/stderr live to its own streams; nothing else does - a task run from a web request prints to nobody's console.
 
@@ -222,7 +222,7 @@ The list frame carries `{class, method}` (the simple service name) and filters m
 <Task_Output $task_id=id />                            <%-- xterm.js console, stdout/stderr filter --%>
 ```
 
-`Task_Report` kinds: status_text, progress, progress_count, progress_text, eta, heartbeat, state_json, state_list, messages, summary, return_code. Size widgets with CSS on the host. Reference screen: `system/app/RSpade/resource/reference_app/app/frontend/system/tasks/`.
+`Task_Report` kinds: status_text, progress, progress_count, progress_text, eta, heartbeat, state_json, state_list, messages, summary, return_code. Size widgets with CSS on the host. A `state_list` report fetches only the rows its box holds (single-line 24px rows; `Rsx_Task.report(id, 'state_list', limit)` answers the first N plus `total`), shows "+N more" in the last row, and re-measures on `on_viewport_resize()` - so give it a sized box. Reference screen: `system/app/RSpade/resource/reference_app/app/frontend/system/tasks/`.
 
 ---
 

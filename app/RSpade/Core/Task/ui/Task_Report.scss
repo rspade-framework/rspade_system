@@ -136,14 +136,25 @@
         padding: 0;
     }
 
+    // One fixed-height line per item: the widget divides its box by this height to know how
+    // many items to fetch (Task_Report.LIST_ROW_HEIGHT, the same number).
     .Task_Report__list_item {
         @include rsx-text-mono;
+        height: 24px;
         margin: 0;
-        padding: 4px 8px;
+        padding: 0 8px;
         border: 1px solid #dee2e6;
         background: #fff;
         font-size: 12px;
-        word-break: break-word;
+        line-height: 22px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .Task_Report__list_more {
+        color: #6c757d;
+        font-style: italic;
     }
 
     .Task_Report__list_item + .Task_Report__list_item {
@@ -188,6 +199,10 @@
         .Task_Report__list_item {
             border-color: #495057;
             background: #212529;
+        }
+
+        .Task_Report__list_more {
+            color: #8a8f98;
         }
     }
 }

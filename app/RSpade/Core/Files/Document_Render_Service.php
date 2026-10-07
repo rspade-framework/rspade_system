@@ -92,7 +92,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
      *
      * @param Task_Instance $task
      * @param array $params
-     * @return array
+     * @return null
      */
     #[Task('Render documents: PDF rendition + text extraction, one blob at a time')]
     #[Exclusive]
@@ -105,13 +105,23 @@ class Document_Render_Service extends Rsx_Service_Abstract
         if (!$render_enabled && !$extract_enabled) {
             $task->stdout('Document render pipeline disabled (rsx.libreoffice.enabled=false, rsx.search.enabled=false) - nothing to do');
             $task->state(['processed' => 0]);
+            $task->summary('The document render pipeline is disabled; nothing was processed.');
 
             return null;
         }
 
+        // The backlog as it stands now; blobs queued during the pass raise the total as they come.
+        $total = static::__queued_query($render_enabled, $extract_enabled)->count();
         $processed = 0;
+        $failed = 0;
 
         while (true) {
+            if ($task->is_stop_requested()) {
+                $task->summary("Stopped after processing {$processed} blob(s), {$failed} failed.");
+
+                return null;
+            }
+
             $storage = static::__next_queued($render_enabled, $extract_enabled);
             if (!$storage) {
                 break;
@@ -119,17 +129,25 @@ class Document_Render_Service extends Rsx_Service_Abstract
 
             $task->heartbeat();
 
+            $was_failed = (int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_FAILED;
+
+            $task->status("Rendering storage #{$storage->id}");
+            $task->flush();
+
             static::render_storage($storage);
             $processed++;
+            $task->progress_count($processed, max($total, $processed));
 
-            $task->stdout("Rendered storage #{$storage->id} [{$storage->render_status_id__label}]");
-        }
-
-        if ($processed > 0) {
-            $task->stdout("Render pass complete: {$processed} blob(s) processed");
+            if (!$was_failed && (int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_FAILED) {
+                $failed++;
+                $task->stderr("Storage #{$storage->id} failed: {$storage->render_error}");
+            } else {
+                $task->stdout("Rendered storage #{$storage->id} [{$storage->render_status_id__label}]");
+            }
         }
 
         $task->state(['processed' => $processed]);
+        $task->summary("Processed {$processed} blob(s), {$failed} failed.");
 
         return null;
     }
@@ -142,6 +160,18 @@ class Document_Render_Service extends Rsx_Service_Abstract
      * @return File_Storage_Model|null
      */
     protected static function __next_queued(bool $render_enabled, bool $extract_enabled): ?File_Storage_Model
+    {
+        return static::__queued_query($render_enabled, $extract_enabled)->orderBy('id')->first();
+    }
+
+    /**
+     * Every blob still owing work: the one predicate the drain takes from and counts its backlog by.
+     *
+     * @param bool $render_enabled Include PENDING renditions in the queue.
+     * @param bool $extract_enabled Include un-indexed blobs in the queue.
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    private static function __queued_query(bool $render_enabled, bool $extract_enabled)
     {
         $query = File_Storage_Model::query();
 
@@ -156,7 +186,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
             $query->where('is_indexed', 0);
         }
 
-        return $query->orderBy('id')->first();
+        return $query;
     }
 
     /**

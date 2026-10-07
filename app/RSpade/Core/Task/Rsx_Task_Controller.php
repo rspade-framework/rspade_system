@@ -58,7 +58,11 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
      * or any column report (status_text, progress, progress_count, eta, heartbeat, return_code)
      * - which to_status_array() carries too.
      *
-     * @param array $params task_id, kind
+     * state_list takes an optional `limit` (a whole number >= 1): only the FIRST that many
+     * items - the oldest, the head of the queue - are sent, and `total` says how many the list
+     * holds, so a viewer sized to show N rows asks for N. `total` is null for every other kind.
+     *
+     * @param array $params task_id, kind, limit (state_list only)
      */
     #[Ajax_Endpoint]
     #[Portal_Impersonation_Readable]
@@ -70,6 +74,15 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
         }
 
         $kind = (string) ($params['kind'] ?? '');
+
+        $limit = null;
+        if (isset($params['limit']) && $params['limit'] !== '') {
+            $limit = filter_var($params['limit'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+            if ($limit === false) {
+                return response_error(Ajax::ERROR_VALIDATION, 'limit must be a whole number of 1 or more');
+            }
+        }
+
         $value = match ($kind) {
             'state_json' => $task->state(),
             'state_list' => $task->state_list(),
@@ -88,7 +101,15 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
             return response_error(Ajax::ERROR_VALIDATION, "Unknown task report '{$kind}'");
         }
 
-        return ['kind' => $kind, 'value' => $value, 'status' => static::__present($task)];
+        $total = null;
+        if ($kind === 'state_list' && is_array($value)) {
+            $total = count($value);
+            if ($limit !== null) {
+                $value = array_slice($value, 0, $limit);
+            }
+        }
+
+        return ['kind' => $kind, 'value' => $value, 'total' => $total, 'status' => static::__present($task)];
     }
 
     /**

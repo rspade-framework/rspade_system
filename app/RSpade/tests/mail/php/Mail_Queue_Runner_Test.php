@@ -7,12 +7,16 @@
 
 namespace App\RSpade\Tests\Mail\Php;
 
+use App\RSpade\Core\Mail\Mail_Queue_Service;
 use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Email_Recipient_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Task\Task_Instance;
+use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
 use App\RSpade\Tests\Mail\Php\Mail_Transport_Stub;
@@ -454,6 +458,36 @@ class Mail_Queue_Runner_Test extends Rsx_Test_Abstract
         $counts = static::__drain(new Mail_Transport_Stub(Mail_Transport_Stub::MODE_ACCEPT));
 
         static::__assert_equals(0, $counts['reclaimed'], 'nothing was stranded, so nothing is narrated');
+    }
+
+    // =========================================================================
+    // A STOP REQUEST
+    // =========================================================================
+
+    /**
+     * The drain checks for a stop BEFORE it claims a row, so a stopped drain leaves nothing
+     * SENDING: the message waits PENDING for the next run, and the summary says what was done.
+     */
+    public static function test_a_stopped_drain_claims_nothing_and_says_so()
+    {
+        $row = static::__queue('Stop probe');
+
+        $id = Task_Runner::insert_row(Mail_Queue_Service::class, 'send_pending_queue', [], Task_Run_Model::ORIGIN_INLINE, Task_Runner::running_fields());
+        Task_Run_Model::where('id', $id)->update(['stop_requested_at' => now()->format('Y-m-d H:i:s.v')]);
+        $drain = Task_Instance::find($id);
+
+        $stub = new Mail_Transport_Stub(Mail_Transport_Stub::MODE_ACCEPT);
+        Rsx_Mail_Transport::$override_for_tests = $stub;
+        try {
+            static::__assert_null(Mail_Queue_Service::send_pending_queue($drain));
+        } finally {
+            Rsx_Mail_Transport::$override_for_tests = null;
+        }
+        $drain->flush();
+
+        static::__assert_equals(0, $stub->send_count, 'nothing was offered to the transport');
+        static::__assert_equals(Email_Queue_Model::STATUS_PENDING, (int) $row->fresh()->status_id, 'the message waits for the next run');
+        static::__assert_contains('Stopped with 0 sent', (string) Task_Run_Model::find($id)->summary());
     }
 
     // =========================================================================

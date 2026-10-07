@@ -138,9 +138,11 @@ says what is in this DIRECTORY and what must stay true when editing it.
   by `Task::internal()`'s fourth argument, which only `Task_Run_Command` (and therefore every
   alias) passes - so an application calling `internal()` prints to nobody's console. The
   streams are display only: every line is recorded on the run either way.
-- **Reports are written at a rate, never dropped.** A held report is written by the next
-  reporting call, `is_stop_requested()`, `flush()` or the settle; `FLUSH_INTERVAL` is a write
-  rate and must never become a timeout.
+- **Reports are written at a rate, never dropped.** A held report is written by the first
+  reporting call or `is_stop_requested()` after `FLUSH_INTERVAL`, by `flush()` or by the
+  settle; `is_stop_requested()` READS the row on every call (a stop is seen at once) but
+  writes only at the rate, so a per-item stop check is not a per-item write.
+  `FLUSH_INTERVAL` is a write rate and must never become a timeout.
 - **The gates fail closed.** With no handler for a realm's event, `Task_Gates` denies (the
   scope answers `0 = 1`); only a staff developer bypasses. Every new task surface asks it.
 - **The reaper's execution cap is framework infrastructure, not licence to add timeouts.**

@@ -10,8 +10,9 @@ $kind     (required) which report:
             eta              a countdown to the reported completion time
             heartbeat        when the run last reported it was alive
             state_json       the state object, as a tree with every node open
-            state_list       the reported list, as a stack of blocks ("No items are queued",
-                             centred, once the list has emptied)
+            state_list       the reported list, one single-line row per item, oldest first;
+                             only as many rows as the box holds are fetched, the last saying
+                             "+N more" ("No items are queued", centred, once it has emptied)
             messages         the messages the run emitted, oldest first
             summary          the completion summary
             return_code      the return code, once the run has finished
@@ -84,10 +85,20 @@ and shows "(Not reported)" until the run sets the report. Reading needs the run'
     <% } else if (_kind === 'state_list' && _value.length === 0) { %>
         <div class="Task_Report__empty_list">No items are queued</div>
     <% } else if (_kind === 'state_list') { %>
+        <%
+            const _limit = this.data.limit;
+            const _total = this.data.total === null ? _value.length : this.data.total;
+            // When the queue holds more than the box shows, the last row says how many more.
+            const _shown = _limit !== null && _limit >= 2 && _total > _limit ? _value.slice(0, _limit - 1) : _value;
+        %>
         <div class="Task_Report__scroll">
             <div class="Task_Report__list">
-                <% for (const _item of _value) { %>
-                    <div class="Task_Report__list_item"><%= typeof _item === 'string' ? _item : JSON.stringify(_item) %></div>
+                <% for (const _item of _shown) { %>
+                    <% const _text = typeof _item === 'string' ? _item : JSON.stringify(_item); %>
+                    <div class="Task_Report__list_item" title="<%= _text %>"><%= _text %></div>
+                <% } %>
+                <% if (_shown.length < _total) { %>
+                    <div class="Task_Report__list_item Task_Report__list_more">+<%= _total - _shown.length %> more</div>
                 <% } %>
             </div>
         </div>

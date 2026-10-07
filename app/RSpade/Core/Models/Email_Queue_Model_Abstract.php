@@ -379,13 +379,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     public static function claim_next(): ?self
     {
-        $candidate = static::where('status_id', self::STATUS_PENDING)
-            ->where(function ($query) {
-                $query->whereNull('next_attempt_at')
-                    ->orWhere('next_attempt_at', '<=', now());
-            })
-            ->orderBy('created_at', 'asc')
-            ->first();
+        $candidate = self::__due()->orderBy('created_at', 'asc')->first();
 
         if ($candidate === null) {
             return null;
@@ -594,6 +588,28 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
         $this->next_attempt_at = now();
         $this->last_error = null;
         $this->save();
+    }
+
+    /**
+     * How many rows are due now: the set claim_next() takes from. Read by the drain to size
+     * its progress.
+     */
+    public static function due_count(): int
+    {
+        return self::__due()->count();
+    }
+
+    /**
+     * PENDING rows whose retry delay or send_at() moment has arrived - the one predicate
+     * claim_next() and due_count() share.
+     */
+    private static function __due()
+    {
+        return static::where('status_id', self::STATUS_PENDING)
+            ->where(function ($query) {
+                $query->whereNull('next_attempt_at')
+                    ->orWhere('next_attempt_at', '<=', now());
+            });
     }
 
     /**

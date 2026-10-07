@@ -113,6 +113,7 @@ The drain's state machine, via `Mail_Queue_Runner_Test` and the `Mail_Transport_
 | MAIL-91 | a clean queue reports zero reclaimed | php | no stranded rows | `reclaimed` 0 | implemented | 2026-08-31 |
 | MAIL-92 | the daily cleanup deletes old rows and prunes the catcher Maildir by mtime | php | old + recent rows, temp Maildir with a stale and a fresh file | old row deleted, recent kept, exactly the stale file pruned | implemented | 2026-08-31 |
 | MAIL-93 | the cleanup tolerates a host with no catcher at all | php | `catcher_maildir` pointing nowhere | `catcher_pruned` 0, no error | implemented | 2026-08-31 |
+| MAIL-94 | a stop requested before the drain claims nothing | php | queued row; drain run with `stop_requested_at` set, stub ACCEPT | stub never called, row PENDING, "Stopped with 0 sent" summary | implemented | 2026-10-07 |
 
 The signed unsubscribe endpoint, via `Mail_Unsubscribe_Test` (in-process
 `Dispatcher::dispatch()`).

@@ -42,7 +42,7 @@ class Revision_Cleanup_Service extends Rsx_Service_Abstract
      * @param Task_Instance $task Task instance for heartbeats
      * @param array $params Task parameters (chunk_size: rows per DELETE, testing;
      *                      retention_days: override the config, testing)
-     * @return array Cleanup statistics
+     * @return null
      */
     #[Task('Prune revision history past its retention window')]
     #[Exclusive]
@@ -60,19 +60,30 @@ class Revision_Cleanup_Service extends Rsx_Service_Abstract
                 'retention_days' => $retention_days,
                 'kept_forever' => true,
             ]);
+            $task->summary('Revision history is kept forever; nothing was deleted.');
 
             return null;
         }
 
         $cutoff = now()->subDays($retention_days);
 
+        // created_at is indexed, so the backlog is cheap to count up front.
+        $backlog = DB::table('_transactions')->where('created_at', '<', $cutoff)->count();
+
         $total = 0;
         while (true) {
+            if ($task->is_stop_requested()) {
+                $task->summary("Stopped after deleting {$total} of {$backlog} revision transactions.");
+
+                return null;
+            }
+
             $deleted = DB::table('_transactions')
                 ->where('created_at', '<', $cutoff)
                 ->limit($chunk_size)
                 ->delete();
             $total += $deleted;
+            $task->progress_count($total, max($backlog, $total));
 
             if ($deleted < $chunk_size) {
                 break;
@@ -90,6 +101,7 @@ class Revision_Cleanup_Service extends Rsx_Service_Abstract
             'retention_days' => $retention_days,
             'kept_forever' => false,
         ]);
+        $task->summary("Deleted {$total} revision transactions older than {$retention_days} days.");
 
         return null;
     }

@@ -43,9 +43,12 @@ class File_Thumbnail_Service extends Rsx_Service_Abstract
         [$deleted_count, $freed_bytes] = static::clean_directory('preset');
 
         $freed_mb = round($freed_bytes / 1024 / 1024, 2);
-        $task->stdout("Preset thumbnail cleanup: {$deleted_count} files deleted, {$freed_mb} MB freed");
+        if ($deleted_count > 0) {
+            $task->stdout("Preset thumbnail cleanup: {$deleted_count} files deleted, {$freed_mb} MB freed");
+        }
 
         $task->state(['deleted' => $deleted_count, 'freed_bytes' => $freed_bytes]);
+        $task->summary("Deleted {$deleted_count} preset thumbnails, freeing {$freed_mb} MB.");
 
         return null;
     }

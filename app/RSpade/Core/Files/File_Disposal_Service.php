@@ -240,7 +240,8 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     {
         // Retention is install policy and the blob store is shared, so every pass below walks
         // every site's attachments; a worker's declared site says nothing about what is due.
-        $task->state(File_Attachment_Model::without_site_scope(function () use ($task, $params) {
+        // A stop ends the walk between attachments / blobs and comes back as 'stopped'.
+        $result = File_Attachment_Model::without_site_scope(function () use ($task, $params) {
             $chunk = 1000;
             $retention_days = self::__deleted_retention_days();
             $lookback_days = (int) config('rsx.files.disposal_lookback_days', 60);
@@ -249,6 +250,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             $destroyed = 0;
             $held = 0;
             if ($retention_days > 0) {
+                $task->status('Destroying attachments past their retention window');
                 $destroy_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $retention_days * 86400);
                 // Keyset-walked: a HELD attachment keeps destroyed_at NULL and so stays in the
                 // predicate, but the cursor has already passed its id - no re-visit, no spin.
@@ -259,6 +261,10 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                     ->result_set($chunk);
 
                 foreach ($past_retention as $attachment) {
+                    if ($task->is_stop_requested()) {
+                        return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => 0, 'stopped' => true];
+                    }
+
                     if (self::__destroy_attachment($attachment, $task)) {
                         $destroyed++;
                     } else {
@@ -269,6 +275,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             }
 
             // (b) BLOB-RELEASE PASS: distinct blobs of recently-destroyed attachments.
+            $task->status('Releasing blobs of destroyed attachments');
             $release_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $lookback_days * 86400);
             $released = 0;
             $last_sid = 0;
@@ -286,20 +293,28 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                     break;
                 }
                 foreach ($storage_ids as $sid) {
+                    if ($task->is_stop_requested()) {
+                        return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => $released, 'stopped' => true];
+                    }
+                    $task->heartbeat();
+
                     $last_sid = (int) $sid;
                     if (self::release_blob_if_orphaned((int) $sid)) {
                         $released++;
                     }
                 }
-                $task->heartbeat();
             }
 
             if ($destroyed || $held || $released) {
                 $task->stdout("Destroyed {$destroyed} attachment(s), {$held} held; released {$released} blob(s).");
             }
 
-            return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => $released];
-        }));
+            return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => $released, 'stopped' => false];
+        });
+
+        $task->state($result);
+        $done = "{$result['destroyed']} attachment(s) destroyed, {$result['held']} held, {$result['blobs_released']} blob(s) released";
+        $task->summary($result['stopped'] ? "Stopped with {$done}." : ucfirst($done) . '.');
 
         return null;
     }
@@ -344,7 +359,8 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     public static function run_monthly_deep_sweep(Task_Instance $task, array $params = [])
     {
         // Every site's attachments, for the reason run_daily_disposal() gives.
-        $task->state(File_Attachment_Model::without_site_scope(function () use ($task, $params) {
+        // A stop ends the current pass between items and comes back as 'stopped'.
+        $result = File_Attachment_Model::without_site_scope(function () use ($task, $params) {
             if (empty($params['force']) && (int) date('j') > 7) {
                 return ['skipped' => 'not the first Sunday of the month'];
             }
@@ -354,7 +370,13 @@ class File_Disposal_Service extends Rsx_Service_Abstract
 
             // (a) DB SIDE: storage rows with zero retention-aware references. Raw DB::table so the
             // SoftDeletes global scope does not hide the retained rows that must still count.
+            $task->status('Releasing unreferenced blobs');
             $released = 0;
+            $disk_deleted = 0;
+            $uploads_swept = 0;
+            $stopped = function () use (&$released, &$disk_deleted, &$uploads_swept) {
+                return ['blobs_released' => $released, 'disk_files_removed' => $disk_deleted, 'uploads_swept' => $uploads_swept, 'stopped' => true];
+            };
             $last_sid = 0;
             while (true) {
                 $orphan_ids = File_Blob_References::where_unreferenced(
@@ -368,20 +390,28 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                     break;
                 }
                 foreach ($orphan_ids as $sid) {
+                    if ($task->is_stop_requested()) {
+                        return $stopped();
+                    }
+                    $task->heartbeat();
+
                     $last_sid = (int) $sid;
                     if (self::release_blob_if_orphaned((int) $sid)) {
                         $released++;
                     }
                 }
-                $task->heartbeat();
             }
 
             // (b) DISK SIDE.
-            $disk_deleted = self::__sweep_disk_orphans($task, $min_age_days, $chunk);
+            $task->status('Removing orphaned disk files');
+            [$disk_deleted, $disk_stopped] = self::__sweep_disk_orphans($task, $min_age_days, $chunk);
+            if ($disk_stopped) {
+                return $stopped();
+            }
 
             // (c) UNASSIGNED UPLOADS: soft-delete stale plain-local unattached uploads.
+            $task->status('Sweeping stale unassigned uploads');
             $upload_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $min_age_days * 86400);
-            $uploads_swept = 0;
             $stale_uploads = File_Attachment_Model::whereNull('fileable_id')
                 ->whereNull('handler_class')          // plain local uploads only (never WP-A external)
                 ->whereNotNull('file_storage_id')
@@ -389,17 +419,30 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 ->result_set($chunk);
 
             foreach ($stale_uploads as $attachment) {
+                if ($task->is_stop_requested()) {
+                    return $stopped();
+                }
+                $task->heartbeat();
+
                 $attachment->delete();   // soft-delete -> enters the retention window
                 $uploads_swept++;
-                $task->heartbeat();
             }
 
             if ($released || $disk_deleted || $uploads_swept) {
                 $task->stdout("Released {$released} orphaned blob(s); removed {$disk_deleted} orphaned disk file(s); swept {$uploads_swept} stale unassigned upload(s).");
             }
 
-            return ['blobs_released' => $released, 'disk_files_removed' => $disk_deleted, 'uploads_swept' => $uploads_swept];
-        }));
+            return ['blobs_released' => $released, 'disk_files_removed' => $disk_deleted, 'uploads_swept' => $uploads_swept, 'stopped' => false];
+        });
+
+        $task->state($result);
+        if (isset($result['skipped'])) {
+            $task->summary('Skipped: not the first Sunday of the month.');
+
+            return null;
+        }
+        $done = "{$result['blobs_released']} orphaned blob(s) released, {$result['disk_files_removed']} orphaned disk file(s) removed, {$result['uploads_swept']} stale unassigned upload(s) swept";
+        $task->summary($result['stopped'] ? "Stopped with {$done}." : ucfirst($done) . '.');
 
         return null;
     }
@@ -429,7 +472,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     public static function sweep_unclaimed_uploads(Task_Instance $task, array $params = [])
     {
         // Every site's attachments, for the reason run_daily_disposal() gives.
-        $task->state(File_Attachment_Model::without_site_scope(function () use ($task, $params) {
+        $result = File_Attachment_Model::without_site_scope(function () use ($task, $params) {
             $window_hours = (int) config('rsx.attachments.unattached_claim_window_hours', 24);
             if ($window_hours <= 0) {
                 return ['skipped' => 'claim-window sweep disabled', 'swept' => 0];
@@ -440,25 +483,40 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             // Keyset-walked (result_set): an unbounded table, and a backlog of abandoned uploads
             // is exactly the shape that grows without warning. Each delete() removes the row from
             // the predicate, and the cursor only moves forward, so there is no re-visit or spin.
-            $swept = 0;
-            $unclaimed = File_Attachment_Model::whereNull('fileable_type')
+            $unclaimed_query = fn () => File_Attachment_Model::whereNull('fileable_type')
                 ->whereNull('fileable_id')
                 ->whereNull('handler_class')          // plain local uploads only (never WP-A external)
-                ->where('created_at', '<', $cutoff)
-                ->result_set(1000);
+                ->where('created_at', '<', $cutoff);
 
-            foreach ($unclaimed as $attachment) {
+            $total = $unclaimed_query()->count();
+            $swept = 0;
+
+            foreach ($unclaimed_query()->result_set(1000) as $attachment) {
+                if ($task->is_stop_requested()) {
+                    return ['swept' => $swept, 'window_hours' => $window_hours, 'stopped' => true];
+                }
+                $task->heartbeat();
+
                 $attachment->delete();   // soft-delete -> enters the retention window
                 $swept++;
-                $task->heartbeat();
+                $task->progress_count($swept, max($total, $swept));
             }
 
             if ($swept) {
                 $task->stdout("Swept {$swept} unattached upload(s) past the {$window_hours}h claim window.");
             }
 
-            return ['swept' => $swept, 'window_hours' => $window_hours];
-        }));
+            return ['swept' => $swept, 'window_hours' => $window_hours, 'stopped' => false];
+        });
+
+        $task->state($result);
+        if (isset($result['skipped'])) {
+            $task->summary('The claim-window sweep is disabled; nothing was swept.');
+        } elseif ($result['stopped']) {
+            $task->summary("Stopped after sweeping {$result['swept']} unattached upload(s).");
+        } else {
+            $task->summary("Swept {$result['swept']} unattached upload(s) past the {$result['window_hours']}h claim window.");
+        }
 
         return null;
     }
@@ -493,13 +551,16 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     /**
      * Streaming disk-orphan sweep: walk blob_root() with a recursive iterator (never
      * materializing the file list), batch-probe each chunk of hashes against _file_storage,
-     * and unlink files older than the age guard whose hash has no row.
+     * and unlink files older than the age guard whose hash has no row. A stop requested on
+     * $task ends the walk between batches.
+     *
+     * @return array{0: int, 1: bool} [files deleted, stopped]
      */
-    private static function __sweep_disk_orphans(Task_Instance $task, int $min_age_days, int $chunk): int
+    private static function __sweep_disk_orphans(Task_Instance $task, int $min_age_days, int $chunk): array
     {
         $blob_root = Rsx_File_Paths::blob_root();
         if (!is_dir($blob_root)) {
-            return 0;
+            return [0, false];
         }
 
         $age_cutoff = time() - $min_age_days * 86400;
@@ -523,13 +584,16 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 $deleted += self::__sweep_disk_batch($pending);
                 $pending = [];
                 $task->heartbeat();
+                if ($task->is_stop_requested()) {
+                    return [$deleted, true];
+                }
             }
         }
         if (!empty($pending)) {
             $deleted += self::__sweep_disk_batch($pending);
         }
 
-        return $deleted;
+        return [$deleted, false];
     }
 
     /**

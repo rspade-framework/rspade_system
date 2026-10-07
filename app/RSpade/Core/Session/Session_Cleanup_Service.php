@@ -55,9 +55,10 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
     private const DELETE_CHUNK_SIZE = 10000;
 
     /**
-     * Delete rows matching a base query in bounded chunks until none remain.
-     * Heartbeats between chunks so a long backlog-recovery run keeps its worker
-     * slot alive.
+     * Delete rows matching a base query in bounded chunks until none remain, or until
+     * a stop is requested (checked between chunks; the caller re-checks after the pass).
+     * Heartbeats between chunks so a watcher can tell a long backlog-recovery run from a
+     * stuck one.
      *
      * @param callable $query_builder Returns a fresh base query (re-built per chunk;
      *                                a DELETE consumes the builder)
@@ -70,6 +71,10 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         $total = 0;
 
         while (true) {
+            if ($task->is_stop_requested()) {
+                break;
+            }
+
             $deleted = $query_builder()->limit($chunk_size)->delete();
             $total += $deleted;
 
@@ -88,7 +93,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      *
      * @param Task_Instance $task Task instance for logging
      * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
-     * @return array Per-rule deletion counts
+     * @return null
      */
     #[Task('Expire idle sessions by type (runs hourly)')]
     #[Exclusive]
@@ -109,6 +114,12 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
             $chunk_size
         );
 
+        if ($task->is_stop_requested()) {
+            $task->summary('Stopped after deleting ' . array_sum($deleted) . ' idle sessions.');
+
+            return null;
+        }
+
         // Browser sessions that DID carry an identity, staff or portal.
         $deleted['web'] = self::_delete_chunked(
             fn () => DB::table('_sessions')
@@ -121,6 +132,12 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
             $task,
             $chunk_size
         );
+
+        if ($task->is_stop_requested()) {
+            $task->summary('Stopped after deleting ' . array_sum($deleted) . ' idle sessions.');
+
+            return null;
+        }
 
         // Machine types: their own short backstops, whatever identity they carry.
         foreach ([
@@ -135,6 +152,12 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
                 $task,
                 $chunk_size
             );
+
+            if ($task->is_stop_requested()) {
+                $task->summary('Stopped after deleting ' . array_sum($deleted) . ' idle sessions.');
+
+                return null;
+            }
         }
 
         $total = array_sum($deleted);
@@ -151,6 +174,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         $deleted['total_deleted'] = $total;
 
         $task->state($deleted);
+        $task->summary("Deleted {$total} idle sessions.");
 
         return null;
     }
@@ -167,7 +191,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      *
      * @param Task_Instance $task Task instance for logging
      * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
-     * @return array Deletion count
+     * @return null
      */
     #[Task('Prune login history past its retention window (runs hourly)')]
     #[Exclusive]
@@ -178,6 +202,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
 
         if ($retention_days <= 0) {
             $task->state(['total_deleted' => 0]);
+            $task->summary('Login history retention is disabled; nothing was deleted.');
 
             return null;
         }
@@ -191,11 +216,18 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
             $chunk_size
         );
 
+        if ($task->is_stop_requested()) {
+            $task->summary("Stopped after deleting {$deleted} login history rows.");
+
+            return null;
+        }
+
         if ($deleted > 0) {
             $task->stdout("Deleted {$deleted} login history rows older than {$retention_days} days");
         }
 
         $task->state(['total_deleted' => $deleted]);
+        $task->summary("Deleted {$deleted} login history rows older than {$retention_days} days.");
 
         return null;
     }
@@ -210,7 +242,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      *
      * @param Task_Instance $task Task instance for logging
      * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
-     * @return array Deletion count
+     * @return null
      */
     #[Task('Delete expired linked-session handshake codes (runs hourly)')]
     #[Exclusive]
@@ -226,11 +258,18 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
             $chunk_size
         );
 
+        if ($task->is_stop_requested()) {
+            $task->summary("Stopped after deleting {$deleted} expired session links.");
+
+            return null;
+        }
+
         if ($deleted > 0) {
             $task->stdout("Deleted {$deleted} expired session links");
         }
 
         $task->state(['total_deleted' => $deleted]);
+        $task->summary("Deleted {$deleted} expired session links.");
 
         return null;
     }

@@ -145,13 +145,17 @@ REPORTING (Task_Instance)
     each report would cost a database write and a realtime frame per item. Reports are held
     in memory and written together: the first report after a quiet spell is written at
     once, and further reports within Task_Instance::FLUSH_INTERVAL (0.25 s) of the last
-    write wait for the next reporting call, is_stop_requested(), flush() or the end of the
-    run. A task about to go quiet for a long step calls flush() first so its watchers see
+    write wait for the first reporting call or is_stop_requested() after the interval, a
+    flush() or the end of the run. is_stop_requested() reads the run's row on every call,
+    so a stop is seen at once, but writes nothing more often than this rate - which is
+    what makes a stop check and a heartbeat on every item of a loop cheap. A task about to
+    go quiet for a long step calls flush() first so its watchers see
     where it is. Attachments are written immediately. The heartbeat plays no part in worker
     liveness (THE WORKER POOLS): a task may run for hours without reporting anything.
 
     Stop check (cooperative - see LIFECYCLE CONTROL):
-        $task->is_stop_requested()             writes held reports, then reads the row
+        $task->is_stop_requested()             reads the row (every call); held reports
+                                               are written at the usual rate
 
     Identity and scratch space:
         $task->get_id(), get_class(), get_method(), get_params()
@@ -678,7 +682,10 @@ GATES AND THE BROWSER API
 
     JS: Rsx_Task.
         await Rsx_Task.get(id)                        {status, progress_percent, can, ...}
-        await Rsx_Task.report(id, kind)               {kind, value, status}
+        await Rsx_Task.report(id, kind, limit)        {kind, value, total, status}
+                                                      limit (state_list only): the
+                                                      first, oldest N items; total =
+                                                      the list's length (null otherwise)
         await Rsx_Task.output_after(id, after_id, streams)   {lines, last_id, more, is_live}
         await Rsx_Task.messages_after(id, after_id)   {messages, last_id, more}
         await Rsx_Task.find(filter)                   {tasks} (newest, at most 1000)
@@ -738,10 +745,17 @@ WIDGETS
                                                 progress_count, progress_text (whichever of
                                                 the two, one line - a grid cell), eta (a
                                                 live countdown), heartbeat, state_json (a
-                                                tree, every node open), state_list (a stack
-                                                of blocks), messages, summary, return_code.
+                                                tree, every node open), state_list (one
+                                                single-line row per item, oldest first),
+                                                messages, summary, return_code.
                                                 $bar draws a fill behind progress text.
                                                 Fills its host box and scrolls inside it.
+                                                A state_list fetches only the rows its box
+                                                holds (box height / 24px) and says "+N
+                                                more" in the last; it re-measures on
+                                                on_viewport_resize() and refetches when the
+                                                count changes. A box too short for one row
+                                                (unsized, hidden) fetches every item.
         <Task_Report_Browser $task_id=... [$kind=...] />
                                                 every report the run has set: the kinds
                                                 down a left column, the selected one on

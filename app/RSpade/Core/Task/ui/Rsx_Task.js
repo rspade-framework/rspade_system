@@ -67,9 +67,17 @@ class Rsx_Task {
         return Rsx_Task_Controller.get({ task_id: int(task_id) });
     }
 
-    /** One report's value: {kind, value, status}. */
-    static async report(task_id, kind) {
-        return Rsx_Task_Controller.report({ task_id: int(task_id), kind: kind });
+    /**
+     * One report's value: {kind, value, total, status}. For state_list, `limit` asks for only
+     * the first (oldest) that many items; `total` is how many the list holds (null otherwise).
+     */
+    static async report(task_id, kind, limit = null) {
+        const params = { task_id: int(task_id), kind: kind };
+        if (limit) {
+            params.limit = int(limit);
+        }
+
+        return Rsx_Task_Controller.report(params);
     }
 
     /**

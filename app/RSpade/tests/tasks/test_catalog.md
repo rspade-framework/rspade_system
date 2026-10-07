@@ -189,7 +189,7 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 |----|---------|-------|----------|--------|
 | task-rep-01 | the first report after a quiet spell is written at once | status() with no prior write | on the row; last_report_at | implemented |
 | task-rep-02 | a report within the interval is held until flush | last write pinned to now | nothing on the row until flush() | implemented |
-| task-rep-03 | is_stop_requested() writes held reports | held summary | written by the check | implemented |
+| task-rep-03 | is_stop_requested() writes held reports at the write rate, not per call | held summary; check within the interval, then after it | not written; then written | implemented |
 | task-rep-04 | the settle writes held reports | held state; settle | state on the row | implemented |
 | task-rep-05 | each report persists | heartbeat, status, progress, count, eta, state, state_list, summary, messages | each reader; messages in order and by cursor | implemented |
 | task-rep-06 | a report replaces the last; one row per kind | two states, two summaries | the latest; 2 report rows | implemented |
@@ -238,6 +238,7 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 | task-retain-05 | temp dirs of finished or missing runs are removed | finished, running, missing, foreign dirs | 2 removed; running and foreign kept | implemented |
 | task-retain-06 | the scheduled sweep runs every pass and summarizes | run past both windows; Task::internal sweep | "Truncated 1 run(s), purged 1 run(s)" | implemented |
 | task-retain-07 | the sweep refuses an invalid configuration | keep_lines -1; minutes as a string | throws naming the key | implemented |
+| task-retain-08 | a stop requested before the sweep ends it before any run is touched | run past both windows; sweep row with stop_requested_at | "Stopped after truncating 0 run(s), ..." summary; old run not truncated | implemented |
 
 ## Task_Gates_Test (php, default isolation) - who may see and act on a run
 
@@ -334,6 +335,14 @@ child pointed at the test database.
 | task-cmd-cli-08 | an unknown task exits 1 naming it | rsx:task:run ... no_such_task | exit 1, "[ERROR] Task no_such_task not found" | implemented |
 | task-cmd-cli-09 | a command run is a recorded inline run | rsx_test:echo --marker=... | Inline, COMPLETED, stderr lines on the run | implemented |
 | task-cmd-cli-10 | rsx:task:list shows the COMMAND column, '-' for a task with none | rsx:task:list | header; rsx_test:echo; dash for cleanup_request_log | implemented |
+
+## Task_Report_Endpoint_Test (php, default isolation) - one report's value, and a queue's limit
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-rpt-01 | a state_list limit answers the first (oldest) items and the list's total | 5 items; limit 2, none, 50 | first 2 + total 5; all 5; all 5 | implemented |
+| task-rpt-02 | a limit below 1 or not a whole number is refused | limit 0, -3, 'many' | Error_Response | implemented |
+| task-rpt-03 | total is null for every other kind; a limit does not touch it | summary with limit 1 | the summary; total null | implemented |
 
 ## Deferred / planned
 

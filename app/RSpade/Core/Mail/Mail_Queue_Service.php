@@ -84,7 +84,8 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
         // site says nothing about which messages are due. Every read and write below, the
         // claimed row's own status updates and the recipient counters included, therefore
         // runs outside the site scope; each row keeps the site_id it was queued under.
-        $task->state(Email_Queue_Model::without_site_scope(function () use ($task) {
+        $summary = null;
+        $task->state(Email_Queue_Model::without_site_scope(function () use ($task, &$summary) {
             $counts = [
                 'sent' => 0,
                 'server_errors' => 0,
@@ -104,6 +105,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
             if ($mode === Rsx_Mail_Transport::MODE_DISABLED) {
                 $pending = Email_Queue_Model::pending_count();
                 $task->stdout("mail delivery is disabled - {$pending} message(s) left pending");
+                $summary = "Mail delivery is disabled; {$pending} message(s) left pending.";
 
                 return $counts;
             }
@@ -145,7 +147,25 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
             $banner_error = Rsx_Mail_Transport::aiosmtpd_banner_error();
             $reconnected = false;
 
+            $task->status('Sending queued mail');
+            $total = Email_Queue_Model::due_count();
+            $outcome = function () use (&$counts) {
+                return "{$counts['sent']} sent, {$counts['suppressed']} suppressed, {$counts['blocked']} blocked, "
+                    . "{$counts['server_errors']} server error(s), {$counts['failed']} failed, {$counts['stale']} refused as stale";
+            };
+
             while (true) {
+                $done = $counts['sent'] + $counts['suppressed'] + $counts['blocked'] + $counts['server_errors'] + $counts['failed'];
+                $task->progress_count($done, max($total, $done));
+
+                // Between messages: no row is claimed here, so stopping leaves nothing SENDING.
+                if ($task->is_stop_requested()) {
+                    $summary = 'Stopped with ' . $outcome() . '.';
+
+                    return $counts;
+                }
+                $task->heartbeat();
+
                 $row = Email_Queue_Model::claim_next();
 
                 if (!$row) {
@@ -243,8 +263,12 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                 }
             }
 
+            $summary = ucfirst($outcome()) . '.';
+
             return $counts;
         }));
+
+        $task->summary($summary);
 
         return null;
     }
@@ -270,6 +294,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
         }
 
         $task->state(['deleted' => $deleted, 'catcher_pruned' => $pruned]);
+        $task->summary("Deleted {$deleted} email records older than {$days} days and pruned {$pruned} captured messages.");
 
         return null;
     }

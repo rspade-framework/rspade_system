@@ -84,7 +84,7 @@ class Task_Reports_Test extends Rsx_Test_Abstract
         static::__assert_equals(['held line'], array_column($run->output_after(), 'line'));
     }
 
-    public static function test_is_stop_requested_writes_held_reports()
+    public static function test_is_stop_requested_writes_held_reports_at_the_rate()
     {
         $task = static::__instance();
         static::__just_written($task, true);
@@ -93,7 +93,11 @@ class Task_Reports_Test extends Rsx_Test_Abstract
         static::__assert_null(static::__run($task)->summary());
 
         static::__assert_false($task->is_stop_requested());
-        static::__assert_equals('half done', static::__run($task)->summary(), 'the stop check wrote it');
+        static::__assert_null(static::__run($task)->summary(), 'within the interval the stop check reads but does not write');
+
+        static::__just_written($task, false);
+        static::__assert_false($task->is_stop_requested());
+        static::__assert_equals('half done', static::__run($task)->summary(), 'after the interval the stop check wrote it');
     }
 
     public static function test_the_settle_writes_held_reports()

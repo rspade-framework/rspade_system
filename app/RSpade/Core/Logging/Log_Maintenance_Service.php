@@ -42,12 +42,16 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
             // Unix silent success: the operator turned it off and does not need
             // to be told again every night.
             $task->state(['skipped' => 'disabled']);
+            $task->summary('Log rotation is disabled; nothing was done.');
 
             return null;
         }
 
         $days_uncompressed = (int) config('rsx.logging.rotation.days_uncompressed');
         $days_retention = (int) config('rsx.logging.rotation.days_retention');
+
+        $task->status('Rotating logs');
+        $task->flush();
 
         $report = Rsx_Logrotate::rotate(Rsx_Project_Paths::logs_dir(), $days_uncompressed, $days_retention);
 
@@ -78,6 +82,7 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
         }
 
         $task->state($report);
+        $task->summary("Rotated {$rotated} log(s), compressed {$compressed} and deleted {$deleted}.");
 
         return null;
     }

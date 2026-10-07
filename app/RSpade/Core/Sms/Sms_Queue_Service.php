@@ -41,12 +41,14 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
     {
         // THE DRAIN SERVES EVERY SITE, exactly as the mail drain does: one queue, one
         // consumer, and a worker's declared site says nothing about which messages are due.
-        $task->state(Sms_Queue_Model::without_site_scope(function () use ($task) {
+        $summary = null;
+        $task->state(Sms_Queue_Model::without_site_scope(function () use ($task, &$summary) {
             $counts = ['sent' => 0, 'server_errors' => 0, 'failed' => 0, 'suppressed' => 0, 'reclaimed' => 0];
 
             if (Rsx_Sms::delivery_mode() === Rsx_Sms::MODE_DISABLED) {
                 $pending = Sms_Queue_Model::pending_count();
                 $task->stdout("SMS delivery is disabled - {$pending} message(s) left pending");
+                $summary = "SMS delivery is disabled; {$pending} message(s) left pending.";
 
                 return $counts;
             }
@@ -62,7 +64,20 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
                 );
             }
 
+            $task->status('Sending queued SMS');
+            $total = Sms_Queue_Model::due_count();
+
             while (true) {
+                $task->progress_count($counts['suppressed'], max($total, $counts['suppressed']));
+
+                // Between messages: no row is claimed here, so stopping leaves nothing SENDING.
+                if ($task->is_stop_requested()) {
+                    $summary = "Stopped after recording {$counts['suppressed']} SMS message(s) suppressed.";
+
+                    return $counts;
+                }
+                $task->heartbeat();
+
                 $queued = Sms_Queue_Model::claim_next();
                 if (!$queued) {
                     break;
@@ -74,8 +89,12 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
                 $counts['suppressed']++;
             }
 
+            $summary = "Recorded {$counts['suppressed']} SMS message(s) suppressed: no SMS provider is configured.";
+
             return $counts;
         }));
+
+        $task->summary($summary);
 
         return null;
     }
@@ -94,6 +113,7 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
         $task->stdout("Deleted {$deleted} SMS records older than {$days} days");
 
         $task->state(['deleted' => $deleted]);
+        $task->summary("Deleted {$deleted} SMS records older than {$days} days.");
 
         return null;
     }

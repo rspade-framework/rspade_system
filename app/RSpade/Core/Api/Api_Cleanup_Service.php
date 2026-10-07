@@ -29,7 +29,7 @@ class Api_Cleanup_Service extends Rsx_Service_Abstract
      *
      * @param Task_Instance $task Task instance for heartbeats
      * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
-     * @return array Cleanup statistics
+     * @return null
      */
     #[Task('Clean up old API request log records')]
     #[Exclusive]
@@ -40,13 +40,23 @@ class Api_Cleanup_Service extends Rsx_Service_Abstract
         $retention_days = (int) config('rsx.api.log_retention_days', 30);
         $cutoff = now()->subDays($retention_days);
 
+        // created_at is indexed, so the backlog is cheap to count up front.
+        $backlog = DB::table('_api_request_log')->where('created_at', '<', $cutoff)->count();
+
         $total = 0;
         while (true) {
+            if ($task->is_stop_requested()) {
+                $task->summary("Stopped after deleting {$total} of {$backlog} API request log rows.");
+
+                return null;
+            }
+
             $deleted = DB::table('_api_request_log')
                 ->where('created_at', '<', $cutoff)
                 ->limit($chunk_size)
                 ->delete();
             $total += $deleted;
+            $task->progress_count($total, max($backlog, $total));
 
             if ($deleted < $chunk_size) {
                 break;
@@ -63,6 +73,7 @@ class Api_Cleanup_Service extends Rsx_Service_Abstract
             'deleted' => $total,
             'retention_days' => $retention_days,
         ]);
+        $task->summary("Deleted {$total} API request log rows older than {$retention_days} days.");
 
         return null;
     }

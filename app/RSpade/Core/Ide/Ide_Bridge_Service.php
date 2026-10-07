@@ -69,6 +69,11 @@ class Ide_Bridge_Service extends Rsx_Service_Abstract
         }
 
         $task->state($result);
+        $task->summary(match ($result['mode']) {
+            'rotated' => "Minted a new IDE bridge grant and retired {$result['removed']} surplus grant(s).",
+            'purged' => "Purged {$result['removed']} IDE bridge grant(s): the bridge is development-only.",
+            default => 'The IDE bridge is disabled; no grant was minted.',
+        });
 
         return null;
     }

@@ -42,23 +42,47 @@ class Task_Retention_Service extends Rsx_Service_Abstract
     public static function sweep(Task_Instance $task, array $params = [])
     {
         [$truncate_minutes, $keep_lines, $purge_minutes] = static::__config();
+        $truncated = 0;
+        $purged = 0;
+        $temp_dirs = 0;
+        $stopped = function () use (&$truncated, &$purged, &$temp_dirs) {
+            return "Stopped after truncating {$truncated} run(s), purging {$purged} run(s) and removing {$temp_dirs} temp director(ies).";
+        };
 
-        $truncated = static::truncate_finished_runs($truncate_minutes, $keep_lines);
-        $purged = static::purge_finished_runs($purge_minutes);
-        $temp_dirs = static::remove_orphaned_temp_directories();
+        $task->status('Truncating finished runs');
+        $truncated = static::truncate_finished_runs($truncate_minutes, $keep_lines, $task);
+        if ($task->is_stop_requested()) {
+            $task->summary($stopped());
 
-        if ($truncated || $purged || $temp_dirs) {
-            $task->summary("Truncated {$truncated} run(s), purged {$purged} run(s), removed {$temp_dirs} temp director(ies).");
+            return null;
         }
+
+        $task->status('Purging finished runs');
+        $purged = static::purge_finished_runs($purge_minutes, $task);
+        if ($task->is_stop_requested()) {
+            $task->summary($stopped());
+
+            return null;
+        }
+
+        $task->status('Removing orphaned temp directories');
+        $temp_dirs = static::remove_orphaned_temp_directories($task);
+        if ($task->is_stop_requested()) {
+            $task->summary($stopped());
+
+            return null;
+        }
+
+        $task->summary("Truncated {$truncated} run(s), purged {$purged} run(s), removed {$temp_dirs} temp director(ies).");
 
         return null;
     }
 
     /**
      * Truncate every finished run older than $minutes that has not been truncated yet.
-     * Returns how many runs were truncated.
+     * Returns how many runs were truncated; a stop requested on $task ends the pass early.
      */
-    public static function truncate_finished_runs(int $minutes, int $keep_lines): int
+    public static function truncate_finished_runs(int $minutes, int $keep_lines, ?Task_Instance $task = null): int
     {
         $cutoff = static::__cutoff($minutes);
         $count = 0;
@@ -79,6 +103,11 @@ class Task_Retention_Service extends Rsx_Service_Abstract
             }
 
             foreach ($ids as $id) {
+                if ($task?->is_stop_requested()) {
+                    return $count;
+                }
+                $task?->heartbeat();
+
                 $last_id = (int) $id;
                 static::__truncate_output((int) $id, $keep_lines);
                 static::__unlink_attachments((int) $id);
@@ -89,9 +118,10 @@ class Task_Retention_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Delete every finished run older than $minutes. Returns how many were deleted.
+     * Delete every finished run older than $minutes. Returns how many were deleted; a stop
+     * requested on $task ends the pass early.
      */
-    public static function purge_finished_runs(int $minutes): int
+    public static function purge_finished_runs(int $minutes, ?Task_Instance $task = null): int
     {
         $cutoff = static::__cutoff($minutes);
         $count = 0;
@@ -110,6 +140,11 @@ class Task_Retention_Service extends Rsx_Service_Abstract
             }
 
             foreach ($ids as $id) {
+                if ($task?->is_stop_requested()) {
+                    return $count;
+                }
+                $task?->heartbeat();
+
                 static::__unlink_attachments((int) $id);
                 DB::table('_tasks')->where('id', $id)->delete();
                 $count++;
@@ -118,9 +153,10 @@ class Task_Retention_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Remove every task temp directory whose run is gone or finished. Returns how many.
+     * Remove every task temp directory whose run is gone or finished. Returns how many; a stop
+     * requested on $task ends the pass early.
      */
-    public static function remove_orphaned_temp_directories(): int
+    public static function remove_orphaned_temp_directories(?Task_Instance $task = null): int
     {
         $base = Rsx_Project_Paths::tasks_dir();
         if (!is_dir($base)) {
@@ -129,6 +165,11 @@ class Task_Retention_Service extends Rsx_Service_Abstract
 
         $removed = 0;
         foreach (File::directories($base) as $dir) {
+            if ($task?->is_stop_requested()) {
+                return $removed;
+            }
+            $task?->heartbeat();
+
             if (!preg_match('/^task_(\d+)$/', basename($dir), $matches)) {
                 continue;
             }

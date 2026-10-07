@@ -31,7 +31,7 @@ class Zip_Download_Cleanup_Service extends Rsx_Service_Abstract
      *
      * @param Task_Instance $task Task instance for heartbeats
      * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
-     * @return array Cleanup statistics
+     * @return null
      */
     #[Task('Clean up expired zip download requests')]
     #[Exclusive]
@@ -44,6 +44,12 @@ class Zip_Download_Cleanup_Service extends Rsx_Service_Abstract
 
         $total = 0;
         while (true) {
+            if ($task->is_stop_requested()) {
+                $task->summary("Stopped after deleting {$total} expired zip download requests.");
+
+                return null;
+            }
+
             $deleted = DB::table('_zip_download_requests')
                 ->where('created_at', '<', $cutoff)
                 ->limit($chunk_size)
@@ -65,6 +71,7 @@ class Zip_Download_Cleanup_Service extends Rsx_Service_Abstract
             'deleted' => $total,
             'retention_hours' => $retention_hours,
         ]);
+        $task->summary("Deleted {$total} zip download requests older than {$retention_hours} hours.");
 
         return null;
     }
