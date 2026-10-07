@@ -296,6 +296,7 @@ TWO-FACTOR AUTHENTICATION
     'two_factor' => [
         'issuer' => null,
         'challenge_window_minutes' => 10,
+        'challenge_shows_full_email' => false,
         'challenge_max_failures' => 5,
         'identity_max_failures' => 10,
         'identity_failure_window_minutes' => 60,
@@ -322,6 +323,10 @@ TWO-FACTOR AUTHENTICATION
     expiry degrades to a working outcome ("sign in again"). Must be at
     least 1 - anything lower calls shouldnt_happen() rather than minting
     a window that is already closed.
+
+    challenge_shows_full_email (false) lets the login challenge screen
+    print the full address being signed in to instead of the masked one
+    (rsx:man two_factor).
 
     challenge_max_failures and identity_max_failures are ATTEMPT CAPS
     (counts): wrong answers one parked challenge survives (the answer that

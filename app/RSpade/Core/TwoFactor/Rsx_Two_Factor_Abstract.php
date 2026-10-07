@@ -971,11 +971,15 @@ abstract class Rsx_Two_Factor_Abstract
      * expiry rather than trusting a sweeper - so "expired" and "never existed" are the same
      * answer here, which is the only answer a challenge screen needs.
      *
-     * The email is returned MASKED. The screen has to show the user which account they are
-     * signing in to, but the page is reachable by anyone holding the session cookie and the
-     * full address is not theirs to read.
+     * The email is returned MASKED unless rsx.two_factor.challenge_shows_full_email says
+     * otherwise. The screen has to show the user which account they are signing in to, but
+     * the page is reachable by anyone holding the session cookie and the full address is not
+     * necessarily theirs to read; `email` is null unless the application opted in.
      *
-     * @return array|null {email_masked, has_totp, has_passkey}
+     * has_totp, has_passkey and has_recovery_codes are what the screen may ASK for: an
+     * authenticator code, a passkey, a recovery code (one still unspent).
+     *
+     * @return array|null {email, email_masked, has_totp, has_passkey, has_recovery_codes}
      */
     public static function challenge_pending(): ?array
     {
@@ -989,9 +993,11 @@ abstract class Rsx_Two_Factor_Abstract
         $identity_id = $pending['identity_id'];
 
         return [
+            'email' => config('rsx.two_factor.challenge_shows_full_email') ? $pending['email'] : null,
             'email_masked' => static::__mask_email($pending['email']),
             'has_totp' => static::__has_confirmed($identity_id, $model::TYPE_TOTP),
             'has_passkey' => static::__has_confirmed($identity_id, $model::TYPE_PASSKEY),
+            'has_recovery_codes' => Recovery_Codes::remaining(static::class, $identity_id) > 0,
         ];
     }
 

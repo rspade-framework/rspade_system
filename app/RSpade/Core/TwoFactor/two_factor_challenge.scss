@@ -41,6 +41,14 @@
         letter-spacing: 2px;
     }
 
+    // Cancel and Verify, when the host offered Cancel: a row of their own, centred.
+    &__actions {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        width: 100%;
+    }
+
     &__passkey {
         width: 100%;
     }

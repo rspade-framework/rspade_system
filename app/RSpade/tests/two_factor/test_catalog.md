@@ -141,7 +141,7 @@ Enforcement itself is the http row below; the two halves are untestable together
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| tfa-ctl-01 | the gate split: enrollment demands a login, the challenge is public | surface_gates() for all 9 endpoints | ['is_logged_in'] x7, ['public'] x2 | implemented |
+| tfa-ctl-01 | the gate split: enrollment demands a login, the challenge is public | surface_gates() for all 10 endpoints | ['is_logged_in'] x7, ['public'] x3 (challenge_state, challenge_passkey_options, challenge_abandon) | implemented |
 | tfa-ctl-02 | begin then confirm over the endpoints, as the component drives them | totp_begin then a live code | {secret, otpauth_uri, qr_svg}; nothing enrolled by begin alone; 10 codes; is_enabled true | implemented |
 | tfa-ctl-03 | a wrong code is a VALIDATION error with a user-safe message, not an exception | '000000' | Error_Response, ERROR_VALIDATION, non-empty reason | implemented |
 | tfa-ctl-04 | blank is a value: an empty code is refused before the facade is asked | absent, '', '   ' | ERROR_VALIDATION x3; 0 rows written | implemented |
@@ -154,9 +154,12 @@ Enforcement itself is the http row below; the two halves are untestable together
 | tfa-ctl-11 | a malformed attestation is refused before any crypto runs | absent, null, a string | ERROR_VALIDATION x3 | implemented |
 | tfa-ctl-12 | the creation args reach the browser in navigator.credentials.create() shape | passkey_register_begin | publicKey with a challenge, a user handle and pubKeyCredParams | implemented |
 | tfa-ctl-13 | nothing pending reads as NULL, not an error | anonymous session | null | implemented |
-| tfa-ctl-14 | a pending challenge answers exactly what the screen renders, address MASKED | begin_challenge then challenge_state | exactly {email_masked, has_totp, has_passkey}; has_totp true; not the raw address | implemented |
+| tfa-ctl-14 | a pending challenge answers exactly what the screen renders, address MASKED | begin_challenge then challenge_state | exactly {email, email_masked, has_totp, has_passkey, has_recovery_codes}; has_totp + has_recovery_codes true; email null; not the raw address | implemented |
 | tfa-ctl-15 | passkey options with nothing pending is a user-safe refusal, not an exception | anonymous session | Error_Response, ERROR_VALIDATION, non-empty reason | implemented |
 | tfa-ctl-16 | with a challenge pending the options endpoint answers a ceremony shape | begin_challenge then challenge_passkey_options | publicKey with a non-empty challenge | implemented |
+| tfa-ctl-17 | challenge_shows_full_email puts the full address in the challenge state | config true; begin_challenge then challenge_state | email = the address; email_masked still masked | implemented |
+| tfa-ctl-18 | has_recovery_codes is false once no unspent code is left | recovery rows deleted; challenge_state | has_totp true, has_recovery_codes false | implemented |
+| tfa-ctl-19 | challenge_abandon forgets the pending challenge; a second call is a no-op | begin_challenge; challenge_abandon twice | null; nothing pending; not signed in | implemented |
 
 ## Two_Factor_Cli_Test (cli, default isolation) - the operator commands
 

@@ -72,12 +72,44 @@ class Two_Factor_Challenge extends Component {
             });
         }
 
+        const $cancel = this.$sid('cancel');
+        if ($cancel.exists()) {
+            $cancel.click_async(async function () {
+                await that._cancel();
+            });
+        }
+
         const $passkey = this.$sid('passkey');
         if ($passkey.exists()) {
             $passkey.click_async(async function () {
                 await that._verify_passkey();
             });
         }
+    }
+
+    /**
+     * The code box's placeholder: $placeholder, else what this identity can type - see the
+     * template's ONE INPUT FOR TWO KINDS OF ANSWER.
+     */
+    placeholder() {
+        if (this.args.placeholder) {
+            return this.args.placeholder;
+        }
+
+        const challenge = this.data.challenge;
+        if (challenge.has_totp && challenge.has_recovery_codes) {
+            return 'Authenticator or recovery code';
+        }
+
+        return challenge.has_totp ? '6-digit code' : 'Recovery code';
+    }
+
+    /**
+     * Cancel: discard the pending challenge, then go where the host said Cancel leads.
+     */
+    async _cancel() {
+        await Rsx_Two_Factor.controller().challenge_abandon();
+        window.location = this.args.cancel_url;
     }
 
     /**

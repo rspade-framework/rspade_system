@@ -21,7 +21,14 @@ THE ENDPOINT'S CONTRACT, both directions:
 
 ONE INPUT FOR TWO KINDS OF ANSWER. A 6-digit authenticator code and a recovery code both go
 in the same box, because the server tries both and the user should not have to know which
-kind of string they are holding.
+kind of string they are holding. The box asks only for what this identity can answer with
+(has_totp, has_recovery_codes from the challenge state):
+    authenticator + recovery codes   "Authenticator or recovery code"
+    authenticator only               "6-digit code"
+    recovery codes only              "Recovery code"
+    neither (a passkey only)         no box and no Verify - the passkey button is the answer
+$placeholder replaces the derived text (the box still appears only when there is a code to
+type).
 
 THE THROTTLE MESSAGE MUST SURVIVE. Auth_Throttled_Exception surfaces as an ordinary Ajax
 rejection, so it lands in the same inline error as a wrong code. That is deliberate: "you are
@@ -33,9 +40,20 @@ STATES, in the order the template tests them:
   data.challenge === null           nothing is pending              -> a notice; 'no_challenge' fires
   otherwise                         the masked address and the answer controls
 
+THE ADDRESS is the masked one (c***e@example.com) unless the application sets
+rsx.two_factor.challenge_shows_full_email, in which case the challenge state carries the full
+address and this prints it.
+
+CANCEL. With $cancel_url the screen offers Cancel beside Verify: it discards the pending
+challenge (challenge_abandon -> abandon_challenge()) and navigates to $cancel_url. The two
+then sit in a row of their own beneath the box, centred, Cancel first - an input, Verify and
+Cancel do not fit one row. Without $cancel_url nothing changes: Verify sits beside the box.
+
 Args:
-  $controller (required) - the application controller holding the verification endpoint.
-  $method     (required) - the endpoint's method name.
+  $controller  (required) - the application controller holding the verification endpoint.
+  $method      (required) - the endpoint's method name.
+  $cancel_url  - where Cancel leads (normally the login page). Absent: no Cancel.
+  $placeholder - the code box's placeholder, replacing the derived one (e.g. '------').
 
 Events:
   no_challenge - nothing is pending: an expired window, or a direct visit. The host page
@@ -51,19 +69,42 @@ See: php artisan rsx:man two_factor
     <% } else if (!this.data.challenge) { %>
         <div class="Two_Factor_Challenge__notice">This sign-in is no longer waiting for a second step.</div>
     <% } else { %>
+        <%
+            const _c = this.data.challenge;
+            const _code_answer = _c.has_totp || _c.has_recovery_codes;
+            const _passkey = _c.has_passkey && this.state.passkeys_supported;
+            const _cancel = !!this.args.cancel_url;
+        %>
         <div class="Two_Factor_Challenge__body">
             <div class="Two_Factor_Challenge__identity">
-                Signing in as <span class="Two_Factor_Challenge__email"><%= this.data.challenge.email_masked %></span>
+                Signing in as <span class="Two_Factor_Challenge__email"><%= _c.email || _c.email_masked %></span>
             </div>
 
-            <div class="Two_Factor_Challenge__answer">
+            <% if (_code_answer && _cancel) { %>
                 <input type="text" class="form-control Two_Factor_Challenge__code-input" $sid="code"
-                       inputmode="text" autocomplete="one-time-code" autofocus
-                       placeholder="Authenticator or recovery code" aria-label="Verification code" />
-                <button type="button" class="btn btn-primary" $sid="verify">Verify</button>
-            </div>
+                       inputmode="<%= _c.has_recovery_codes ? 'text' : 'numeric' %>" autocomplete="one-time-code" autofocus
+                       placeholder="<%= this.placeholder() %>" aria-label="Verification code" />
+            <% } else if (_code_answer) { %>
+                <div class="Two_Factor_Challenge__answer">
+                    <input type="text" class="form-control Two_Factor_Challenge__code-input" $sid="code"
+                           inputmode="<%= _c.has_recovery_codes ? 'text' : 'numeric' %>" autocomplete="one-time-code" autofocus
+                           placeholder="<%= this.placeholder() %>" aria-label="Verification code" />
+                    <button type="button" class="btn btn-primary" $sid="verify">Verify</button>
+                </div>
+            <% } else if (!_passkey) { %>
+                <div class="Two_Factor_Challenge__notice">This account's second step is a passkey, and this browser cannot use one.</div>
+            <% } %>
 
-            <% if (this.data.challenge.has_passkey && this.state.passkeys_supported) { %>
+            <% if (_cancel) { %>
+                <div class="Two_Factor_Challenge__actions">
+                    <button type="button" class="btn btn-secondary" $sid="cancel">Cancel</button>
+                    <% if (_code_answer) { %>
+                        <button type="button" class="btn btn-primary" $sid="verify">Verify</button>
+                    <% } %>
+                </div>
+            <% } %>
+
+            <% if (_passkey) { %>
                 <button type="button" class="btn btn-outline-secondary Two_Factor_Challenge__passkey" $sid="passkey">
                     Use passkey
                 </button>

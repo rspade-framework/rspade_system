@@ -61,7 +61,8 @@ public static function verify(Request $request, array $params = [])
 ```
 
 ```html
-<Two_Factor_Challenge $controller="Login_Controller" $method="verify_2fa" />
+<Two_Factor_Challenge $controller="Login_Controller" $method="verify_2fa"
+                      $cancel_url="{{ Rsx::Route('Login_Controller::index') }}" />
 ```
 
 **Stage 3 - YOUR verification endpoint.** The framework deliberately does not own it: where a signed-in user lands is application logic.
@@ -200,7 +201,7 @@ if (str_starts_with($handler, 'Rsx\App\Frontend')) {
 |---|---|---|
 | `<Totp_Enrollment />` | none | fires `enrolled` when the user acknowledges the code sheet (the factor is already live) |
 | `<Passkey_Register />` | none | fires `registered`; renders a plain notice instead of a button when WebAuthn is absent |
-| `<Two_Factor_Challenge $controller $method />` | both REQUIRED | posts `{code}` or `{assertion}`; expects `{redirect}` and follows it with `window.location`; fires `no_challenge` when nothing is pending |
+| `<Two_Factor_Challenge $controller $method [$cancel_url] [$placeholder] />` | `$controller`/`$method` REQUIRED | posts `{code}` or `{assertion}`; expects `{redirect}` and follows it with `window.location`; fires `no_challenge` when nothing is pending. `$cancel_url` adds Cancel (`challenge_abandon`, then navigate; Cancel + Verify become a centred row beneath the box). The box's placeholder is derived from `has_totp` / `has_recovery_codes` (no box at all for a passkey-only identity); `$placeholder` replaces it. Full address instead of the masked one: `rsx.two_factor.challenge_shows_full_email` |
 | `<Passkey_Sign_In $controller $method [$label] />` | endpoint REQUIRED | runs the passwordless ceremony, posts `{assertion}`, expects `{redirect}`; fires `signed_in`; renders nothing without WebAuthn |
 
 All four are **layout-neutral by contract** - no card, no heading, no width. The host page owns the box. One input takes both an authenticator code and a recovery code; the server tries both. All four pick the realm from the page.

@@ -235,13 +235,32 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      * when they simply navigated here - and the screen's response to all three is the same,
      * to send them back to the login page.
      *
-     * @return array|null {email_masked, has_totp, has_passkey}
+     * @return array|null {email, email_masked, has_totp, has_passkey, has_recovery_codes}
      */
     #[Ajax_Endpoint]
     #[Auth('public')]
     public static function challenge_state(Request $request, array $params = [])
     {
         return Rsx_Two_Factor::challenge_pending();
+    }
+
+    /**
+     * Discard the pending challenge: the user chose not to finish this sign-in. The session
+     * is already signed out (begin_challenge() did that), so nothing else changes; the
+     * challenge screen navigates wherever its host said Cancel leads.
+     *
+     * Public like the rest of the challenge: it can only forget THIS session's own pending
+     * state, and with nothing pending it does nothing.
+     *
+     * @return null
+     */
+    #[Ajax_Endpoint]
+    #[Auth('public')]
+    public static function challenge_abandon(Request $request, array $params = [])
+    {
+        Rsx_Two_Factor::abandon_challenge();
+
+        return null;
     }
 
     /**

@@ -1826,6 +1826,16 @@ return [
         // already closed.
         'challenge_window_minutes' => 10,
 
+        // Whether the login challenge screen shows the FULL address being signed in
+        // to. false (the default) sends only a masked form (c***e@example.com): the
+        // challenge state is a public endpoint answered for whoever holds the session
+        // cookie, and on an unattended browser that need not be the person who typed
+        // the password. true adds the address itself to the challenge state (`email`,
+        // beside `email_masked`) and <Two_Factor_Challenge> prints it, so the person
+        // completing the sign-in can see which of their accounts it is for. Applies to
+        // both realms.
+        'challenge_shows_full_email' => false,
+
         // ATTEMPT CAPS. These are counts, not timeouts. A six-digit code with a
         // +/-1 step tolerance has three live answers in a million, so an uncapped
         // challenge is a guessing oracle for anyone who already holds the password.

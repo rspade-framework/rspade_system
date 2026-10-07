@@ -150,7 +150,7 @@ class Two_Factor_Controller_Test extends Rsx_Test_Abstract
             );
         }
 
-        foreach (['challenge_state', 'challenge_passkey_options'] as $method) {
+        foreach (['challenge_state', 'challenge_passkey_options', 'challenge_abandon'] as $method) {
             static::__assert_equals(
                 ['public'],
                 Auth_Gates::surface_gates('Rsx_Two_Factor_Controller::' . $method),
@@ -459,13 +459,15 @@ class Two_Factor_Controller_Test extends Rsx_Test_Abstract
         $state = Rsx_Two_Factor_Controller::challenge_state(static::__ajax_request());
 
         static::__assert_equals(
-            ['email_masked', 'has_totp', 'has_passkey'],
+            ['email', 'email_masked', 'has_totp', 'has_passkey', 'has_recovery_codes'],
             array_keys($state),
             'only what the screen renders'
         );
 
         static::__assert_true($state['has_totp']);
         static::__assert_false($state['has_passkey']);
+        static::__assert_true($state['has_recovery_codes'], 'the enrollment minted a sheet');
+        static::__assert_null($state['email'], 'no full address unless the application opted in');
 
         static::__assert_not_equals(
             (string) $enrolled['login_user']->email,
@@ -511,5 +513,68 @@ class Two_Factor_Controller_Test extends Rsx_Test_Abstract
 
         static::__assert_array_has_key('publicKey', $options);
         static::__assert_not_empty($options['publicKey']['challenge']);
+    }
+
+    /**
+     * tfa-ctl-17: rsx.two_factor.challenge_shows_full_email puts the full address in the
+     * challenge state beside the masked one.
+     */
+    public static function test_challenge_state_carries_the_full_address_when_configured()
+    {
+        $enrolled = static::__enroll_totp();
+
+        static::__start_anonymous();
+        Rsx_Two_Factor::begin_challenge($enrolled['login_user']);
+
+        $saved = config('rsx.two_factor');
+        config(['rsx.two_factor' => array_merge($saved, ['challenge_shows_full_email' => true])]);
+        try {
+            $state = Rsx_Two_Factor_Controller::challenge_state(static::__ajax_request());
+        } finally {
+            config(['rsx.two_factor' => $saved]);
+        }
+
+        static::__assert_equals((string) $enrolled['login_user']->email, $state['email']);
+        static::__assert_contains('*', $state['email_masked'], 'the masked form is still there');
+    }
+
+    /**
+     * tfa-ctl-18: has_recovery_codes reads false once no unspent recovery code is left, so the
+     * screen stops asking for one.
+     */
+    public static function test_challenge_state_says_when_no_recovery_code_is_left()
+    {
+        $enrolled = static::__enroll_totp();
+
+        Two_Factor_Credential_Model::where('login_user_id', $enrolled['login_user']->id)
+            ->where('type_id', Two_Factor_Credential_Model::TYPE_RECOVERY_CODE)
+            ->delete();
+
+        static::__start_anonymous();
+        Rsx_Two_Factor::begin_challenge($enrolled['login_user']);
+
+        $state = Rsx_Two_Factor_Controller::challenge_state(static::__ajax_request());
+
+        static::__assert_true($state['has_totp']);
+        static::__assert_false($state['has_recovery_codes']);
+    }
+
+    /**
+     * tfa-ctl-19: challenge_abandon forgets the caller's pending challenge (Cancel), and with
+     * nothing pending it is a quiet no-op.
+     */
+    public static function test_challenge_abandon_forgets_the_pending_challenge()
+    {
+        $enrolled = static::__enroll_totp();
+
+        static::__start_anonymous();
+        Rsx_Two_Factor::begin_challenge($enrolled['login_user']);
+        static::__assert_not_null(Rsx_Two_Factor::challenge_pending());
+
+        static::__assert_null(Rsx_Two_Factor_Controller::challenge_abandon(static::__ajax_request()));
+        static::__assert_null(Rsx_Two_Factor::challenge_pending(), 'nothing is pending');
+        static::__assert_false(Session::is_logged_in(), 'and nobody is signed in');
+
+        static::__assert_null(Rsx_Two_Factor_Controller::challenge_abandon(static::__ajax_request()), 'a second cancel does nothing');
     }
 }

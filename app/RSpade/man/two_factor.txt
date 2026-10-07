@@ -327,17 +327,21 @@ HOW IT WORKS
         only verify_challenge() knows how to redeem.
 
         challenge_pending()
-            {email_masked, has_totp, has_passkey}, or null. An EXPIRED
-            challenge reads as null - get_value() filters on the expiry, so
-            "expired" and "never existed" are the same answer, which is the
-            only answer a challenge screen needs. The address is MASKED: the
-            page is reachable by anyone holding the session cookie.
+            {email, email_masked, has_totp, has_passkey, has_recovery_codes},
+            or null. An EXPIRED challenge reads as null - get_value() filters
+            on the expiry, so "expired" and "never existed" are the same
+            answer, which is the only answer a challenge screen needs. The
+            address is MASKED (email null) unless the application sets
+            rsx.two_factor.challenge_shows_full_email: the page is reachable
+            by anyone holding the session cookie. has_recovery_codes = an
+            unspent recovery code exists, so the screen may ask for one.
 
         verify_challenge($input)
             The order of this method is its contract - see THE FACADE.
 
         abandon_challenge()
-            Forget the pending value. Cancel, or done.
+            Forget the pending value. Cancel, or done. The challenge_abandon
+            endpoint calls it for <Two_Factor_Challenge>'s Cancel.
 
         A SESSION IS NEVER AUTHENTICATED UNTIL THE SECOND FACTOR PASSES.
         That is the invariant the whole design exists to hold.
@@ -617,8 +621,11 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
             recovery_regenerate     -> {recovery_codes}
 
         #[Auth('public')]           - the half-authenticated population
-            challenge_state         -> {email_masked, has_totp, has_passkey}
-                                        or NULL, which is not an error
+            challenge_state         -> {email, email_masked, has_totp,
+                                        has_passkey, has_recovery_codes} or
+                                        NULL, which is not an error
+            challenge_abandon       -> null; forgets this session's pending
+                                        challenge (Cancel)
             challenge_passkey_options
             passkey_login_options   -> the passwordless get() arguments;
                                         names no identity at all
@@ -660,10 +667,15 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         A browser without WebAuthn gets a plain notice instead of a button
         that cannot work; the host page is expected to still offer TOTP.
 
-    <Two_Factor_Challenge $controller $method />
+    <Two_Factor_Challenge $controller $method [$cancel_url] [$placeholder] />
         The login challenge screen.
         Args:   $controller, $method (both REQUIRED) - the application's
                 verification endpoint, named the way <Rsx_Form> names one.
+                $cancel_url - adds Cancel: challenge_abandon, then navigate
+                here (normally the login page). Cancel and Verify then sit
+                in a row of their own beneath the box, centred, Cancel
+                first. Absent: no Cancel, Verify beside the box.
+                $placeholder - replaces the derived placeholder (below).
         Posts:  {code: '...'} from the typed answer, or {assertion: {...}}
                 from a passkey.
         Expects: {redirect: '/somewhere'}, followed with window.location.
@@ -674,6 +686,17 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         ONE INPUT FOR TWO KINDS OF ANSWER: an authenticator code and a
         recovery code go in the same box, because the server tries both and
         the user should not have to know which kind of string they hold.
+        The box asks only for what the identity can answer with:
+
+            has_totp + has_recovery_codes   "Authenticator or recovery code"
+            has_totp only                   "6-digit code"
+            has_recovery_codes only         "Recovery code"
+            neither (a passkey only)        no box, no Verify - the passkey
+                                            button is the answer (a browser
+                                            without WebAuthn gets a notice)
+
+        The address shown is email_masked, or email when the application
+        set rsx.two_factor.challenge_shows_full_email.
 
         Every rejection - a wrong code, an expired window, and the THROTTLE
         REFUSAL - is rendered inline as the server's own message. A component
@@ -1027,7 +1050,7 @@ CLI COMMANDS
         Reports whether the identity was locked ("was_locked" under --json).
 
 CONFIGURATION
-    config('rsx.two_factor') - five keys, and there is no sixth:
+    config('rsx.two_factor') - six keys, and there is no seventh:
 
         'issuer' => null
             The label an authenticator app files the account under. null
@@ -1040,6 +1063,12 @@ CONFIGURATION
             TOTP seed; not a WebAuthn challenge). Must be at least 1;
             challenge_expires_at() calls shouldnt_happen() on anything lower
             rather than minting a window that is already closed.
+
+        'challenge_shows_full_email' => false
+            true: the challenge state carries the full address (email) and
+            <Two_Factor_Challenge> prints it. false: only email_masked - the
+            state is answered for whoever holds the session cookie, which on
+            an unattended browser need not be who typed the password.
 
         'challenge_max_failures' => 5
             Wrong answers one parked challenge survives (ATTEMPT CAPS).
