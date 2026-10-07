@@ -186,9 +186,10 @@ class Migrate_Normalize_Schema_Command extends Command
 
         try {
             // Set all tables to use default timestamps for created_at and updated_at
-            // Laravel's migration tracker (configured as '_migrations' in database.php)
-            // is framework-owned with a fixed schema and must never receive audit columns.
-            $excludedTables = ['_migrations'];
+            // Laravel's migration tracker (configured as '_migrations' in database.php) and the
+            // dump-rollback run record are framework-owned with fixed schemas and must never
+            // receive audit columns.
+            $excludedTables = ['_migrations', \App\RSpade\Core\Database\Migrate_Dump_Rollback::RUNS_TABLE];
             $tables = DB::select('SHOW TABLES');
 
             foreach ($tables as $table) {

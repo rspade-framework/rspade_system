@@ -16,6 +16,8 @@ use Symfony\Component\Console\Output\BufferedOutput;
 use Illuminate\Database\Console\Migrations\MigrateCommand;
 use App\Providers\AppServiceProvider;
 use App\RSpade\Core\Database\MigrationValidator;
+use App\RSpade\Core\Database\Migrate_Dump_Rollback;
+use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Database\SqlQueryTransformer;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Table_Rename;
@@ -40,6 +42,11 @@ use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
  * - On success: commits changes, removes the snapshot, regenerates constants/bundles
  * - On failure: restores the datadir from the snapshot and exits migration mode
  *
+ * DUMP-ROLLBACK run - --dump-rollback where the snapshot is unavailable (production, an
+ * external database host): a gzipped mysqldump is taken first and restored if the run fails;
+ * a later run recovers from what an interrupted one left (Migrate_Dump_Rollback). Where the
+ * datadir snapshot IS available the flag adds nothing and the snapshot is used.
+ *
  * BARE run - anything else, INCLUDING a production-target container and a development
  * run pointed at an external database:
  * - Runs migrations and schema normalization with NO snapshot and NO rollback
@@ -58,7 +65,9 @@ class Maint_Migrate extends Command
 {
     use PrivilegedCommandTrait;
 
-    protected $signature = 'migrate {--force} {--seed} {--step} {--path=*} {--framework-only : Run only framework migrations (system/database/migrations)}';
+    protected $signature = 'migrate {--force} {--seed} {--step} {--path=*} {--framework-only : Run only framework migrations (system/database/migrations)}'
+        . ' {--dump-rollback : Dump the database before migrating and restore it if the run fails (production, or wherever the datadir snapshot is unavailable)}'
+        . ' {--abandon-dump-rollback : Accept the database as it stands and discard what an unfinished --dump-rollback run left}';
 
     protected $description = 'Run migrations with automatic snapshot protection in development mode';
 
@@ -114,11 +123,297 @@ class Maint_Migrate extends Command
             return $this->refuse_development_outside_container();
         }
 
+        if ($this->dump_rollback_option('abandon-dump-rollback')) {
+            return $this->abandon_dump_rollback();
+        }
+
+        // EVERY run settles what an unfinished --dump-rollback run left before it migrates,
+        // whether or not it asked for --dump-rollback itself: a plain migrate must never walk
+        // past a half-migrated database or a pending restore.
+        $dump_rollback = $this->make_dump_rollback();
+        $wants_dump = $this->dump_rollback_option('dump-rollback');
+
+        if (!$wants_dump && !$dump_rollback->has_leftovers()) {
+            return $this->run_by_snapshot_availability(false);
+        }
+
+        if ($wants_dump && $this->is_framework_only_run()) {
+            $this->error('[ERROR] --dump-rollback cannot be combined with --framework-only.');
+
+            return 1;
+        }
+
+        // The dump and any restore run through the MySQL client programs and gzip: fatal
+        // before the lock or the window, when one is missing or does not run.
+        if ($wants_dump) {
+            try {
+                $this->require_dump_rollback_binaries();
+            } catch (\RuntimeException $e) {
+                $this->error('[ERROR] ' . $e->getMessage());
+
+                return 1;
+            }
+        }
+
+        // The lock spans recovery and the protected run. It is released before the datadir
+        // snapshot or a bare run starts: the snapshot stops mysqld, which would take the
+        // lock's connection with it.
+        $dump_rollback->acquire_lock();
+        try {
+            if ($dump_rollback->has_leftovers()) {
+                try {
+                    $dump_rollback->resolve_leftovers(fn () => $this->raise_maintenance_for_dump_rollback());
+                } catch (\Throwable $e) {
+                    $this->error('[ERROR] ' . $e->getMessage());
+                    $this->warn(' Maintenance mode is left as it is: the database is not known to be consistent.');
+
+                    return 1;
+                }
+            }
+
+            if ($wants_dump && !$this->snapshot_protection_engaged()) {
+                return $this->run_with_dump_rollback($dump_rollback);
+            }
+        } finally {
+            $dump_rollback->release_lock();
+            $this->lower_maintenance_for_dump_rollback_if_settled($dump_rollback);
+        }
+
+        return $this->run_by_snapshot_availability($wants_dump);
+    }
+
+    /** The datadir snapshot where it is available, otherwise a bare run. */
+    protected function run_by_snapshot_availability(bool $dump_rollback_requested): int
+    {
         if ($this->snapshot_protection_engaged()) {
+            if ($dump_rollback_requested) {
+                $this->info(' --dump-rollback: the datadir snapshot is available here and is used instead.');
+            }
+
             return $this->run_with_snapshot();
         }
 
         return $this->run_without_snapshot();
+    }
+
+    // -------------------------------------------------------------------------
+    // --dump-rollback
+    // -------------------------------------------------------------------------
+
+    /** We raised the maintenance window for a dump-rollback run and are responsible for lowering it. */
+    protected bool $dump_rollback_raised_maintenance = false;
+
+    /**
+     * A run protected by a gzipped mysqldump (Migrate_Dump_Rollback): nothing pending, no
+     * dump; otherwise maintenance up, dump, migrate, and commit or restore.
+     */
+    protected function run_with_dump_rollback(Migrate_Dump_Rollback $dump_rollback): int
+    {
+        $this->info(' Dump-rollback protection: the database is dumped first and restored if the run fails.');
+        $this->info('');
+
+        $pending = $this->count_pending_migrations();
+        if ($pending === 0) {
+            $this->info('Nothing to migrate - no dump taken.');
+
+            if (Rsx::is_production()) {
+                return $this->call('rsx:migrate:check_consistency');
+            }
+
+            return 0;
+        }
+
+        $this->raise_maintenance_for_dump_rollback();
+
+        $this->info('[1/3] Dumping the database (' . $pending . ' pending ' . ($pending === 1 ? 'migration' : 'migrations') . ')...');
+        try {
+            $dump_rollback->begin($pending);
+        } catch (\Throwable $e) {
+            $this->error('[ERROR] The dump failed, so nothing was migrated: ' . $e->getMessage());
+
+            return 1;
+        }
+
+        $this->info('');
+        $this->info('[2/3] Running migrations...');
+
+        $failure = null;
+        try {
+            if ($this->execute_migrations() !== 0) {
+                $failure = 'a migration failed';
+            }
+        } catch (\Throwable $e) {
+            $failure = 'a migration threw: ' . $e->getMessage();
+        }
+
+        if ($failure !== null) {
+            $this->error('');
+            $this->error('[ERROR] Migration failed (' . $failure . ').');
+            $this->warn(' Restoring the database from the dump...');
+
+            try {
+                $dump_rollback->rollback($failure);
+            } catch (\Throwable $e) {
+                $this->error('[ERROR] The restore failed: ' . $e->getMessage());
+                $this->error(' Maintenance mode stays up. Run php artisan migrate again to retry the restore.');
+
+                return 1;
+            }
+
+            $this->info('[OK] Database restored to its state before this run.');
+            $this->line('Fix the failing migration and run migrate again.');
+
+            return 1;
+        }
+
+        $this->info('');
+        $this->info('[3/3] Committing...');
+        $dump_rollback->commit();
+        $this->info('[OK] Committed; the dump is removed.');
+
+        if (Rsx::is_production()) {
+            AppServiceProvider::disable_query_echo();
+            $this->info('');
+            $consistency_check_exit = $this->call('rsx:migrate:check_consistency');
+            RsxCache::clear();
+
+            if ($consistency_check_exit !== 0) {
+                return $consistency_check_exit;
+            }
+        } else {
+            RsxCache::clear();
+        }
+
+        $this->info('');
+        $this->info('[OK] Migration completed!');
+
+        return 0;
+    }
+
+    /** Pending migrations, counted before anything is touched: every file when no table exists yet. */
+    protected function count_pending_migrations(): int
+    {
+        $repository = app('migration.repository');
+
+        if (!$repository->repositoryExists()) {
+            return count(MigrationPaths::get_all_migration_files());
+        }
+
+        return count(MigrationValidator::get_pending_migrations($repository));
+    }
+
+    /**
+     * Raise the maintenance window unless it is already up: nothing may write between the dump
+     * and the end of the run, or a restore would destroy it. A window somebody else raised is
+     * theirs to lower.
+     */
+    protected function raise_maintenance_for_dump_rollback(): void
+    {
+        if ($this->dump_rollback_raised_maintenance || $this->maintenance_is_up()) {
+            return;
+        }
+
+        $exit_code = $this->maintenance_enable();
+        if ($exit_code !== 0) {
+            throw new \RuntimeException('Could not enter maintenance mode (exit ' . $exit_code . '). Nothing has been touched.');
+        }
+
+        $this->dump_rollback_raised_maintenance = true;
+    }
+
+    /**
+     * Lower the window this run raised - only when nothing is left unsettled. A crash or a
+     * refusal leaves a marker or an unfinished run behind, and the window stays up over a
+     * database not known to be consistent (rsx:maintenance:disable refuses then too).
+     */
+    protected function lower_maintenance_for_dump_rollback_if_settled(Migrate_Dump_Rollback $dump_rollback): void
+    {
+        if (!$this->dump_rollback_raised_maintenance || $dump_rollback->has_leftovers()) {
+            return;
+        }
+
+        $this->maintenance_disable();
+        $this->dump_rollback_raised_maintenance = false;
+    }
+
+    /**
+     * Seams over the mechanism and the maintenance window, so the command flow is testable
+     * against a scratch database without taking this box's real window.
+     */
+    protected function make_dump_rollback(): Migrate_Dump_Rollback
+    {
+        return new Migrate_Dump_Rollback(null, null, $this->dump_rollback_output());
+    }
+
+    protected function require_dump_rollback_binaries(): void
+    {
+        Migrate_Dump_Rollback::require_client_binaries();
+    }
+
+    protected function maintenance_is_up(): bool
+    {
+        return Framework_Maintenance::is_active_on_disk();
+    }
+
+    protected function maintenance_enable(): int
+    {
+        return Rsx_Artisan::passthru('rsx:maintenance:enable', ['--reason=database migration']);
+    }
+
+    protected function maintenance_disable(): void
+    {
+        Rsx_Artisan::passthru('rsx:maintenance:disable');
+    }
+
+    /** migrate --abandon-dump-rollback: the operator's answer to a refusal. */
+    protected function abandon_dump_rollback(): int
+    {
+        $dump_rollback = $this->make_dump_rollback();
+        $dump_rollback->acquire_lock();
+        try {
+            $discarded = $dump_rollback->abandon();
+        } finally {
+            $dump_rollback->release_lock();
+        }
+
+        if (count($discarded) === 0) {
+            $this->info('Nothing to abandon: no unfinished --dump-rollback run.');
+
+            return 0;
+        }
+
+        $this->warn('Accepted the database as it stands. Discarded:');
+        foreach ($discarded as $line) {
+            $this->line('   - ' . $line);
+        }
+        $this->info('');
+        $this->info('Run php artisan migrate to apply what is still pending; lower maintenance mode when the site is ready.');
+
+        return 0;
+    }
+
+    /**
+     * Replaceable: a subclass that does not declare these options (Database_And_Storage_Reset
+     * _Command, Migrate_Restore_Command) answers false instead of asking Symfony for an option
+     * it never declared.
+     */
+    #[Replaceable]
+    protected function dump_rollback_option(string $name): bool
+    {
+        return $this->getDefinition()->hasOption($name) && (bool) $this->option($name);
+    }
+
+    protected function dump_rollback_output(): callable
+    {
+        return function (string $level, string $line): void {
+            if ($level === 'error') {
+                $this->error($line);
+            } elseif ($level === 'warn') {
+                $this->warn($line);
+            } else {
+                $this->info($line);
+            }
+        };
     }
 
     /**

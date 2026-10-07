@@ -53,8 +53,9 @@ WHAT ENABLE DOES (in order - the order is load-bearing)
     programs, simply skips that unit - maintenance mode still works, it just controls nothing.
 
 WHAT DISABLE DOES
-    0. REFUSE if a schema-cache build left live backups on disk, or if the repository has
-       unmerged paths (unless --force in either case). See both guards below.
+    0. REFUSE if a schema-cache build left live backups on disk, or a migrate
+       --dump-rollback run is unsettled (unless --force in either case). See both guards
+       below.
     1. supervisorctl start, in the reverse order: redis FIRST (everything else expects it),
        then rsx-lockd, then php-fpm, realtime, fpc-proxy.
     1a. WAIT FOR rsx-lockd TO ANSWER before starting php-fpm. Spawning is not readiness:
@@ -121,10 +122,21 @@ THE SCHEMA-CACHE GUARD ON DISABLE
     disable runs. There is deliberately no override token: what the guard catches is the
     INTERRUPTED build - a Ctrl-C, or a recovery that could not finish. Re-running
     rsx:db:rebuild_provision_cache_snapshot completes the restore from exactly those backups (it refuses to
-    overwrite them). --force is the deliberate operator override. This is now the ONLY
-    condition disable refuses on, and it is not about code being broken - it is that the
-    database currently holds cache-build scratch data instead of the operator's own.
-    Full treatment in rsx:man migrations, THE SCHEMA CACHE.
+    overwrite them). --force is the deliberate operator override. It is not about code
+    being broken - it is that the database currently holds cache-build scratch data
+    instead of the operator's own. Full treatment in rsx:man migrations, THE SCHEMA CACHE.
+
+THE DUMP-ROLLBACK GUARD ON DISABLE
+    Disable also refuses while a `migrate --dump-rollback` run is unsettled - while
+
+        storage/state/migrate_dump/marker.json
+
+    exists. The database may hold a partial migration that the next migrate will restore
+    over, and anything written in between would be lost by that restore. A run that
+    commits or rolls back deletes the marker before it lowers the window, so only an
+    interrupted run, or one migrate refused to recover, meets this guard. php artisan
+    migrate settles it, or names what an operator must decide; --force overrides. Full
+    treatment in rsx:man migrations, DUMP ROLLBACK.
 
 DISABLE ALWAYS STARTS THE SERVICES
     Disable starts the services. It does not weigh whether the tree deserves them.

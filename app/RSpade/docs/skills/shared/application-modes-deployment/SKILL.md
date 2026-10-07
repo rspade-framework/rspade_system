@@ -71,11 +71,13 @@ Entry-by-entry: `rsx:man storage_directories`.
 ```bash
 php artisan rsx:maintenance:enable --reason="deploying <version>"
 git pull
-php artisan migrate
+php artisan migrate --dump-rollback    # dumped first, restored if a migration fails
 php artisan rsx:mode:set prod          # = a reseal on an already-sealed box
 php artisan rsx:prod:verify
 php artisan rsx:maintenance:disable
 ```
+
+`--dump-rollback` is what makes an unattended pipeline recoverable: a failed migration is restored from its dump, and the next deploy's migrate recovers anything an interrupted one left before applying the fixed migrations. It needs `storage/` to persist between deploys and nothing else writing to the database during the run (skill `rspade:migrations`; `rsx:man migrations`, DUMP ROLLBACK).
 
 **Migrate BEFORE the build.** The manifest bakes every model's column map in at BUILD time; the database moves at MIGRATE time. Build-then-migrate leaves the served code believing in columns the tables do not have yet, for the length of the migration. After a prod-mode migrate, `rsx:migrate:check_consistency` runs automatically and **migrate propagates its exit code**, so a mismatch is a failed migrate rather than a footnote.
 

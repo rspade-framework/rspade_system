@@ -7,7 +7,7 @@ use App\RSpade\SchemaQuality\SchemaViolation;
 abstract class Schema_Rule_Abstract
 {
     protected array $violations = [];
-    protected array $excluded_tables = ['_migrations', '_sessions'];
+    protected array $excluded_tables = ['_migrations', '_sessions', \App\RSpade\Core\Database\Migrate_Dump_Rollback::RUNS_TABLE];
     
     /**
      * Get the unique rule identifier

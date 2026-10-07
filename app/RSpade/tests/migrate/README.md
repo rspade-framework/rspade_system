@@ -14,6 +14,11 @@ validation, and schema normalization.
   `migrate:normalize_schema`, invoked pre-migration, between each migration, and
   post-migration to add framework-required columns and correct drift.
 
+- `app/RSpade/Core/Database/Migrate_Dump_Rollback.php` - `migrate --dump-rollback`: the
+  gzipped mysqldump, the restore (drop + recreate, else empty object by object), the
+  `_migration_runs` record and marker, the migrate lock, and `decide()` - what a later run
+  does with an earlier run's leftovers.
+
 ## Behavior of record
 
 - **The snapshot is taken ONLY where it can actually be performed**:
@@ -61,6 +66,14 @@ validation, and schema normalization.
   try/catch that converts a throw (or non-zero exit) into the same non-zero return.
   The caller (`run_with_snapshot()`) sees a non-zero `execute_migrations()` result
   and runs `rollback_snapshot()` + `cleanup_migration_mode()`.
+
+- **`--dump-rollback` restores only on the database's word.** A leftover dump is restored
+  only when its run's `_migration_runs` row still says `migrating` (or a restore was
+  already under way); a finished run's leftovers are only deleted, so a successful
+  migration is never restored over. Ambiguous states refuse and migrate nothing.
+  `Dump_Rollback_Decision_Test` pins the table, `Dump_Rollback_Scratch_Test` the mechanism
+  against a scratch database (crashes simulated at each step), `Dump_Rollback_Command_Test`
+  the flow in `handle()` through `Dump_Rollback_Probe_Migrate`.
 
 ## Testable surface
 

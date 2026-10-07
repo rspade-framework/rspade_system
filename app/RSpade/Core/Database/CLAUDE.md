@@ -56,6 +56,14 @@ the run proceeds bare and prints every reason protection is off. See
 `rsx:man migrations`, SNAPSHOT PROTECTION.
 
 **Debug/Production mode** (`RSX_MODE=debug` or `production`):
-- No snapshot protection and no rollback
+- No datadir snapshot; no rollback unless `--dump-rollback` is given
 - Schema normalization still runs
 - Constants and bundles NOT regenerated
+
+**`migrate --dump-rollback`** (`Migrate_Dump_Rollback`, this directory): wherever the
+datadir snapshot is unavailable, a gzipped mysqldump in `storage/state/migrate_dump/` is
+taken before migrating and restored on failure. The run record is `_migration_runs`
+(created on first use, excluded from normalization and the schema rules) plus a marker
+file; the next migrate restores an unfinished run's dump only when that run's ROW still
+says `migrating`, and only deletes the leftovers of a finished one. `decide()` is the pure
+decision table. See `rsx:man migrations`, DUMP ROLLBACK.

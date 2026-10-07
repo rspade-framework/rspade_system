@@ -369,6 +369,20 @@ db_cache_in_progress() {
     [ -n "$(db_cache_backups | head -n 1)" ]
 }
 
+# -----------------------------------------------------------------------------
+# Dump-rollback guard - refuse to bring services back up while a `migrate
+# --dump-rollback` run is unsettled.
+#
+# The marker exists from the moment the run's dump is taken until the run commits or
+# restores (Migrate_Dump_Rollback; Rsx_Project_Paths::migrate_dump_marker_file()). While
+# it exists the database may hold a PARTIAL migration that the next migrate will restore
+# over - and anything written in between would be lost by that restore. A successful run
+# deletes the marker before it lowers the window, so this only catches an interrupted run
+# or one migrate refused to recover automatically. `php artisan migrate` settles it (or
+# names what an operator must decide). --force overrides.
+# -----------------------------------------------------------------------------
+MIGRATE_DUMP_MARKER="$(rsx_state_root)/migrate_dump/marker.json"
+
 repo_is_conflicted() {
     command -v git >/dev/null 2>&1 || return 1
 
@@ -401,6 +415,20 @@ do_disable() {
         say ""
         say "  Bringing services up now would serve an application that has lost its data,"
         say "  which is why this is refused. Override deliberately:"
+        say "    php artisan rsx:maintenance:disable --force"
+        exit 1
+    fi
+
+    if [ "$FORCE" != true ] && [ -f "$MIGRATE_DUMP_MARKER" ]; then
+        err "Refusing to leave maintenance mode: a migrate --dump-rollback run is unsettled."
+        say ""
+        say "  Marker: $MIGRATE_DUMP_MARKER"
+        say ""
+        say "  The database may hold a partial migration that the next migrate restores over;"
+        say "  anything written meanwhile would be lost. Settle it with:"
+        say "    php artisan migrate --dump-rollback"
+        say ""
+        say "  Override deliberately:"
         say "    php artisan rsx:maintenance:disable --force"
         exit 1
     fi

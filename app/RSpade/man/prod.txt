@@ -243,10 +243,16 @@ THE RECOMMENDED DEPLOYMENT
 
         php artisan rsx:maintenance:enable --reason="deploying <version>"
         git pull                       # or however the code arrives
-        php artisan migrate
+        php artisan migrate --dump-rollback
         php artisan rsx:mode:set prod  # = rsx:prod:enable = build + seal
         php artisan rsx:prod:verify
         php artisan rsx:maintenance:disable
+
+    --dump-rollback dumps the database first and restores it if a migration
+    fails; the next deploy's migrate recovers whatever an interrupted one left,
+    so a pipeline whose migration failed is repaired by pushing the fix
+    (rsx:man migrations, DUMP ROLLBACK). It needs storage/ to persist between
+    deploys and nothing else writing to the database during the run.
 
     rsx:mode:set prod on a box that is ALREADY in production mode is a
     reseal: it rewrites RSX_MODE (a no-op) and runs rsx:build --force. There

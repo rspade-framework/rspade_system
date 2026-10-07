@@ -437,6 +437,23 @@ class Rsx_Project_Paths
         return self::state_path('.migrating');
     }
 
+    /**
+     * The dump-rollback directory: `migrate --dump-rollback`'s gzipped dump of the database
+     * and its marker, kept in the DURABLE state tree because a later run recovers from them
+     * (Migrate_Dump_Rollback). bin/maintenance-mode.sh refuses to leave maintenance while
+     * the marker exists and spells the same path.
+     */
+    public static function migrate_dump_dir(): string
+    {
+        return self::state_path('migrate_dump');
+    }
+
+    /** The dump-rollback marker: JSON naming the run token, phase and dump. */
+    public static function migrate_dump_marker_file(): string
+    {
+        return self::state_path('migrate_dump/marker.json');
+    }
+
     /** Fingerprint of the environment-update scripts last applied. */
     public static function env_updates_fingerprint_file(): string
     {

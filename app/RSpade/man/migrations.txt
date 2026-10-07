@@ -5,7 +5,8 @@ NAME
 
 SYNOPSIS
        php artisan make:migration:safe <name>
-       php artisan migrate
+       php artisan migrate [--dump-rollback]
+       php artisan migrate --abandon-dump-rollback
        php artisan migrate:status
        php artisan rsx:db:rebuild_provision_cache_snapshot
        php artisan rsx:database_and_storage_reset --yes [--force] [--no-migrate]
@@ -18,7 +19,9 @@ DESCRIPTION
        The migrate command automatically handles snapshot protection wherever that
        protection can actually be performed - no manual steps required. See SNAPSHOT
        PROTECTION for the three conditions, and for what happens where they do not
-       hold.
+       hold. Where the snapshot is unavailable - production, an external database
+       host - --dump-rollback protects a run with a mysqldump instead (DUMP
+       ROLLBACK).
 
 PHILOSOPHY
        1. Forward-only migrations - No rollbacks, no down() methods
@@ -596,6 +599,105 @@ SNAPSHOT PROTECTION
        condition, and leaving the migration flag and any snapshot untouched - wherever
        protection is unavailable.
 
+DUMP ROLLBACK
+
+       php artisan migrate --dump-rollback
+
+       Protection for the places the datadir snapshot cannot reach: a production
+       box, a production-target container, an external database host. It needs only
+       the mysql client and the application's own credentials. Opt-in in every mode;
+       where the datadir snapshot IS available (development, dev container, local
+       database) the snapshot is used and the flag adds nothing. It is meant for a
+       deployment pipeline that migrates unattended:
+
+           php artisan migrate --dump-rollback
+           php artisan rsx:mode:set prod
+
+       A failed migration is rolled back; the pipeline fails; a fixed release is
+       pushed; its migrate recovers whatever the failed one left and applies the
+       fixed migrations - with nobody at a console.
+
+       A PROTECTED RUN
+         0. The client programs: mysqldump, mysql and gzip must be on PATH and
+            run (`<program> --version` exits 0), or migrate is FATAL before the
+            lock, the window or the dump - naming each one that cannot be used.
+            The same check runs again before any restore, so a restore never
+            drops a database it could not then reload.
+         1. The migrate lock: MySQL GET_LOCK('rsx_migrate:<database>') on a
+            connection of its own - one protected migrate per database across every
+            host, waiting as long as the other one takes.
+         2. Leftovers from an earlier run are settled (below).
+         3. Nothing pending: no dump, no window, nothing touched. In a production
+            mode rsx:migrate:check_consistency still runs and is the exit code.
+         4. The maintenance window is raised (rsx:maintenance:enable: workers
+            killed, web 503) unless it is already up. Nothing may write between the
+            dump and the end of the run, or a restore would destroy it.
+         5. A gzipped mysqldump (--single-transaction; --routines / --events when
+            the schema has any) into storage/state/migrate_dump/, verified with
+            gzip -t and checksummed.
+         6. The marker (storage/state/migrate_dump/marker.json: token, phase, the
+            dump and its checksum, the database, its table count and default
+            character set) and a row in _migration_runs (token, status migrating).
+         7. The migrations.
+         8. SUCCESS: the row is marked completed, then the marker and the dump are
+            deleted. FAILURE (a failed migration or a throw): the marker's phase
+            becomes restoring, the database is restored, a rolled_back row is
+            recorded, the marker and dump are deleted; exit 1.
+         9. The window is lowered if this run raised it and nothing is left
+            unsettled. A crash or a refusal leaves it up.
+
+       THE RESTORE drops and recreates the database (its original character set
+       and collation) when the account may - CREATE is probed first with IF NOT
+       EXISTS, so an account that could drop but not create never starts. Otherwise
+       it empties the database in one session: FOREIGN_KEY_CHECKS=0, every view,
+       table, routine and event dropped, FOREIGN_KEY_CHECKS=1. Then the dump is
+       loaded and the table count is checked against the one recorded at dump time.
+
+       THE DATABASE DECIDES. The row lives in the database being migrated, and
+       nothing is ever restored on the marker's word alone: a leftover dump is
+       restored only when the live database says its run is still migrating. The
+       row is marked completed as the FIRST step of committing, so whatever an
+       interrupted cleanup leaves after a success is only ever deleted - a
+       successful migration is never restored over.
+
+       WHAT THE NEXT RUN DOES WITH LEFTOVERS. Every migrate settles them first,
+       with or without --dump-rollback:
+
+           row completed/rolled_back/abandoned  delete the marker and dump
+           phase migrating, row migrating       RESTORE, then migrate
+           phase restoring                      RESTORE again (same dump)
+           files and no marker, no open run     delete them (never committed)
+           REFUSED - the database is left as it is and migrate exits 1:
+             an open run with no marker or dump (the dump was lost)
+             a dump missing or failing its checksum
+             a marker whose run this database has no record of (the
+               database was replaced or restored outside migrate)
+             a marker for another database (the connection was repointed)
+
+       A refusal is a state in which a machine cannot tell a correct dump from a
+       stale one. The operator decides; accepting the database as it stands is
+
+           php artisan migrate --abandon-dump-rollback
+
+       which deletes the marker and dumps and marks every open run abandoned. It
+       migrates nothing.
+
+       REQUIREMENTS
+         - storage/ persists between runs. A pipeline that migrates in a throwaway
+           container loses the dump with the container; the next run then refuses
+           (an open run, no dump) rather than guessing.
+         - Nothing else writes to the database during the run. The window covers
+           THIS host - web 503, task workers killed. Several application hosts
+           behind one database must be drained by the pipeline first.
+         - The account can run mysqldump against the database (and SHOW ROUTINE /
+           EVENT when the schema has routines or events). A dump that fails stops
+           the run before anything is migrated.
+
+       _migration_runs is framework bookkeeping beside _migrations: created on
+       first use, never normalized, never touched by a schema rule, and its history
+       is kept. rsx:maintenance:disable refuses while the marker exists (rsx:man
+       maintenance_mode).
+
 THE SCHEMA CACHE
 
        A fresh install replays every migration ever written to arrive at a schema
@@ -1010,7 +1112,8 @@ AUTOMATIC ROLLBACK
    This happens automatically - no manual intervention required.
 
    Where protection is NOT engaged, there is no rollback of any kind, and the run
-   says so before it starts.
+   says so before it starts - unless --dump-rollback was given, which rolls back by
+   restoring a mysqldump (DUMP ROLLBACK).
 
 SECURITY CONSIDERATIONS
 

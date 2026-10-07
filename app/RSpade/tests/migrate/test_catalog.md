@@ -239,3 +239,57 @@ exists, and an application that reached the column first named its index itself.
 |----|--------------------------|------|-------|----------|--------|--------------|
 | RBC-01 | an application-named single-column index is dropped; a composite containing the column and an index on another column are kept | php | probe with idx_app_named_site, (site_id,user_id), (user_id) | PRIMARY, idx_site_user, idx_user | implemented | 2026-09-26 |
 | RBC-02 | no single-column index on the column drops nothing | php | probe with only (user_id, deleted_at) | PRIMARY, idx_user_deleted | implemented | 2026-09-26 |
+
+## Dump_Rollback_Decision_Test (php, pure)
+
+`Migrate_Dump_Rollback::decide()` - what a migrate does with an earlier --dump-rollback run's
+leftovers, from the evidence alone.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DRB-D-01 | nothing left is nothing to do | php | no marker, no open run | none | implemented | 2026-10-07 |
+| DRB-D-02 | an open run with no marker is refused | php | no marker, a migrating token | refuse_dump_lost | implemented | 2026-10-07 |
+| DRB-D-03 | a finished run only cleans up, never restores | php | completed / rolled_back / abandoned x both phases, dump intact | cleanup | implemented | 2026-10-07 |
+| DRB-D-04 | a run that crashed mid-migration is restored | php | phase migrating, row migrating, dump ok | restore | implemented | 2026-10-07 |
+| DRB-D-05 | a run that crashed mid-restore is restored again | php | phase restoring, row gone or migrating | restore | implemented | 2026-10-07 |
+| DRB-D-06 | an unusable dump is refused | php | dump not ok in either phase | refuse_dump_unusable | implemented | 2026-10-07 |
+| DRB-D-07 | a marker this database has no record of is refused | php | phase migrating, no row | refuse_foreign_database | implemented | 2026-10-07 |
+| DRB-D-08 | a marker for another database is refused, even a finished one | php | marker database differs | refuse_other_database | implemented | 2026-10-07 |
+| DRB-D-10 | a missing or unrunnable client program is named | php | a program not on PATH; `false` | not installed; does not run; the real programs pass | implemented | 2026-10-07 |
+| DRB-D-09 | an unknown phase throws | php | phase 'sideways' | RuntimeException | implemented | 2026-10-07 |
+
+## Dump_Rollback_Scratch_Test (php, scratch database)
+
+`Migrate_Dump_Rollback` end to end against its own scratch database (two FK-linked tables,
+a view, rows); "a later run" is a new instance over the same directory.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DRB-S-01 | a committed run keeps its changes and leaves nothing | php | begin, change, commit | change stands; no files; row completed | implemented | 2026-10-07 |
+| DRB-S-02 | a failed run is restored and recorded | php | begin, change, rollback | fixture state; no files; row rolled_back | implemented | 2026-10-07 |
+| DRB-S-03 | a crash mid-migration is restored by the next run | php | begin, change, new instance resolves | restore; fixture state | implemented | 2026-10-07 |
+| DRB-S-04 | a crash mid-restore is restored by the next run | php | phase restoring, tables half dropped | restore; fixture state | implemented | 2026-10-07 |
+| DRB-S-05 | a success with interrupted cleanup is never restored | php | row completed, marker + dump left | cleanup; the migration and its new table stand | implemented | 2026-10-07 |
+| DRB-S-06 | a lost dump is refused until abandoned | php | files deleted | throws; abandon marks the run abandoned; then none | implemented | 2026-10-07 |
+| DRB-S-07 | a corrupted dump is refused | php | dump overwritten | throws; nothing restored | implemented | 2026-10-07 |
+| DRB-S-08 | a marker this database has no record of is refused | php | row deleted | throws; marker kept | implemented | 2026-10-07 |
+| DRB-S-09 | files no run recorded are removed | php | a .partial, no marker | none; directory empty | implemented | 2026-10-07 |
+| DRB-S-10 | the restore empties the database when it cannot recreate it | php | drop_and_recreate() answers false | fixture state | implemented | 2026-10-07 |
+
+## Dump_Rollback_Command_Test (php, scratch database)
+
+The --dump-rollback flow in `Maint_Migrate::handle()` through `Dump_Rollback_Probe_Migrate`
+(real mechanism; migrations, window and bare run stood in for).
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DRB-C-01 | nothing pending takes no dump and raises nothing | php | pending 0 | exit 0; no events; no files | implemented | 2026-10-07 |
+| DRB-C-02 | a success commits and lowers the window it raised | php | migrations exit 0 | enable, migrations, disable; change stands | implemented | 2026-10-07 |
+| DRB-C-03 | a failure restores and lowers the window | php | migrations exit 1 | exit 1; original state; enable, migrations, disable | implemented | 2026-10-07 |
+| DRB-C-04 | a window somebody else raised is left up | php | window already up | neither raised nor lowered | implemented | 2026-10-07 |
+| DRB-C-05 | a crashed run is recovered before the next migrates | php | earlier begin + change | migrations see the restored state | implemented | 2026-10-07 |
+| DRB-C-06 | a plain migrate recovers a crashed run too | php | no flag | restored, then the bare run | implemented | 2026-10-07 |
+| DRB-C-07 | a refusal migrates nothing and raises no window | php | files deleted | exit 1; no events; output names --abandon-dump-rollback | implemented | 2026-10-07 |
+| DRB-C-08 | abandon settles a refusal | php | --abandon-dump-rollback, then plain | exit 0; next run only the bare run | implemented | 2026-10-07 |
+| DRB-C-10 | an unusable client program is fatal before anything happens | php | binaries check fails | exit 1; no events; no files; the program named | implemented | 2026-10-07 |
+| DRB-C-09 | --framework-only is refused with the flag | php | both flags | exit 1; nothing | implemented | 2026-10-07 |

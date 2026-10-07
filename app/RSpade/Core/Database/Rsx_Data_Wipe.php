@@ -156,11 +156,13 @@ class Rsx_Data_Wipe
      * command line, where `ps` shows it to every user on the box. Same contract as
      * Rsx_Test_Command's dump/restore and Maint_Migrate::wait_for_mysql_ready().
      *
+     * $conn: a connection config array; null is the default connection.
+     *
      * @return array<string, string>
      */
-    public static function mysql_env(): array
+    public static function mysql_env(?array $conn = null): array
     {
-        $conn = self::connection();
+        $conn = $conn ?? self::connection();
         $password = (string) $conn['password'];
 
         return $password === '' ? [] : ['MYSQL_PWD' => $password];
@@ -206,20 +208,26 @@ class Rsx_Data_Wipe
      * mysqlpv progress segment first.
      *
      * The client flags default to the LIVE connection's; a caller dumping another database
-     * (the test runner, against the test connection) passes its own.
+     * (the test runner, against the test connection) passes its own. $extra_options are
+     * further mysqldump options (migrate --dump-rollback adds --routines / --events when the
+     * schema has any).
      */
-    public static function mysqldump_command(string $database, ?string $client_flags = null): string
+    public static function mysqldump_command(string $database, ?string $client_flags = null, string $extra_options = ''): string
     {
         return 'set -o pipefail; mysqldump ' . ($client_flags ?? self::client_flags())
             . ' --no-tablespaces --single-transaction --quick --lock-tables=false '
+            . ($extra_options !== '' ? $extra_options . ' ' : '')
             . escapeshellarg($database)
             . self::definer_filter_segment();
     }
 
-    /** The shared `-h -P -u` prefix for the mysql/mysqldump client. */
-    public static function client_flags(): string
+    /**
+     * The shared `-h -P -u` prefix for the mysql/mysqldump client. $conn: a connection
+     * config array; null is the default connection.
+     */
+    public static function client_flags(?array $conn = null): string
     {
-        $conn = self::connection();
+        $conn = $conn ?? self::connection();
 
         return '-h' . escapeshellarg((string) $conn['host'])
             . ' -P' . escapeshellarg((string) $conn['port'])
