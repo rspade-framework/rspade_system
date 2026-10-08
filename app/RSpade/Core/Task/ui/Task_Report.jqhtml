@@ -10,9 +10,10 @@ $kind     (required) which report:
             eta              a countdown to the reported completion time
             heartbeat        when the run last reported it was alive
             state_json       the state object, as a tree with every node open
-            state_list       the reported list, one single-line row per item, oldest first;
-                             only as many rows as the box holds are fetched, the last saying
-                             "+N more" ("No items are queued", centred, once it has emptied)
+            queue            the head of the run's queue, one single-line row per item,
+                             oldest first; only as many rows as the box holds are fetched,
+                             the last saying "+N more" for the rest of the queue behind them
+                             ("No items are queued", centred, once it has emptied)
             messages         the messages the run emitted, oldest first
             summary          the completion summary
             return_code      the return code, once the run has finished
@@ -82,9 +83,9 @@ and shows "(Not reported)" until the run sets the report. Reading needs the run'
         <div class="Task_Report__scroll Task_Report__tree">
             <JS_Tree_Debug_Component $data=_value $expand_depth=1000 />
         </div>
-    <% } else if (_kind === 'state_list' && _value.length === 0) { %>
+    <% } else if (_kind === 'queue' && _value.length === 0) { %>
         <div class="Task_Report__empty_list">No items are queued</div>
-    <% } else if (_kind === 'state_list') { %>
+    <% } else if (_kind === 'queue') { %>
         <%
             const _limit = this.data.limit;
             const _total = this.data.total === null ? _value.length : this.data.total;

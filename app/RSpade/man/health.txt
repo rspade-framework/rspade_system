@@ -147,6 +147,8 @@ FRAMEWORK INVENTORY
                                                   package - an authoring act
         Application Mode            all           reports WHICH mode is active
         Blob References             all
+        Build Schema                all           the build vs the database it
+                                                  serves
         Claude Skills               development   agent tooling for someone
                                                   authoring this source
         Class Override Drift        all           arrives with a framework
@@ -235,6 +237,17 @@ FRAMEWORK INVENTORY
                                  one could have its bytes freed under it
                                  (rsx:man file_disposal, DECLARED BLOB
                                  REFERENCES); OK with the declared count.
+        Build Schema             the build was made against the migrations this
+                                 database has applied. A build reads every model's
+                                 table and columns from the live schema and records
+                                 which state it read; migrate rebuilds after a run
+                                 that changed the schema, so FAIL is what is left
+                                 after --no-rebuild, a failed rebuild, or a database
+                                 that moved some other way (a restore). Until the
+                                 rebuild, models do not know the tables and columns
+                                 migrated since. Names rsx:build --force (sealed) or
+                                 rsx:manifest:build --force (rsx:man migrations, THE
+                                 BUILD FOLLOWS THE SCHEMA).
         Claude Skills            every rsx/resource/skills/<name>/SKILL.md is linked
                                  into .claude/skills/. WARN per unlinked skill,
                                  framework-created dangling link, or blocked/reserved

@@ -421,12 +421,13 @@ DOCKER-ACCELERATED TESTING
     EVERY INVOCATION IS DISPATCHED TO SIBLING DOCKER CONTAINERS when the gate
     below passes: either suite, any selector, one class or the whole suite. The
     runner builds a test image, serves a work queue over a unix socket, and
-    starts N containers that pull whole classes from it - N is ceil(cores / 3)
+    starts N containers that pull whole classes from it - N is 2 * ceil(cores / 3)
     (cores counted from /proc/cpuinfo), never larger than the number of classes
     selected, so a single class is a single container; --workers=N overrides it.
     Each container is a complete isolated environment: its own mysqld on a RAM
     datadir, its own redis, its own rsx-lockd, its own filesystem and flag
-    files, which is why a container is budgeted three cores rather than one.
+    files, which is why there are two containers per three cores rather than
+    one per core.
     The output and the exit code are identical to a single-process run,
     because both print through the same printer.
 

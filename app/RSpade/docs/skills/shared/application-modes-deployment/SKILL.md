@@ -71,7 +71,7 @@ Entry-by-entry: `rsx:man storage_directories`.
 ```bash
 php artisan rsx:maintenance:enable --reason="deploying <version>"
 git pull
-php artisan migrate --dump-rollback    # dumped first, restored if a migration fails
+php artisan migrate --dump-rollback --no-rebuild   # dumped first, restored on failure; the next line builds
 php artisan rsx:mode:set prod          # = a reseal on an already-sealed box
 php artisan rsx:prod:verify
 php artisan rsx:maintenance:disable
@@ -79,12 +79,12 @@ php artisan rsx:maintenance:disable
 
 `--dump-rollback` is what makes an unattended pipeline recoverable: a failed migration is restored from its dump, and the next deploy's migrate recovers anything an interrupted one left before applying the fixed migrations. It needs `storage/` to persist between deploys and nothing else writing to the database during the run (skill `rspade:migrations`; `rsx:man migrations`, DUMP ROLLBACK).
 
-**Migrate BEFORE the build.** The manifest bakes every model's column map in at BUILD time; the database moves at MIGRATE time. Build-then-migrate leaves the served code believing in columns the tables do not have yet, for the length of the migration. After a prod-mode migrate, `rsx:migrate:check_consistency` runs automatically and **migrate propagates its exit code**, so a mismatch is a failed migrate rather than a footnote.
+**Migrate BEFORE the build.** The manifest bakes every model's column map in at BUILD time; the database moves at MIGRATE time. Build-then-migrate leaves the served code believing in columns the tables do not have yet, for the length of the migration. **A migrate run in the wrong order repairs itself**: the build records the applied migrations it was made against, and a migrate that changed the schema under it runs `rsx:build --force` when it finishes, saying why (never when nothing was migrated; `--no-rebuild` turns it off, which the recipe above uses because its next line builds). After a prod-mode migrate, `rsx:migrate:check_consistency` runs automatically and **migrate propagates its exit code**, so a mismatch that survives is a failed migrate rather than a footnote.
 
-**First install needs the build twice** - the first one has no schema to compile against:
+**First install is a build and a migrate** - the first build has no schema to compile against, and the migrate that creates one rebuilds and reseals when it finishes:
 
 ```bash
-php artisan rsx:build --force && php artisan migrate && php artisan rsx:build --force
+php artisan rsx:build --force && php artisan migrate
 ```
 
 **Do not run `composer install` by hand on an unsealed prod box.** Composer's post-autoload-dump hook spawns a bare `php artisan package:discover`, which is not a build context, and the seal gate refuses it - composer reports that as a failed dump. `rsx:build` dumps the optimized autoloader itself, inside the build context.
@@ -129,8 +129,8 @@ Building elsewhere (a CI artifact, a container image) works because of determini
 | `Refusing to clean a production build tree without --force.` | `rsx:clean` on a sealed box | Almost always you wanted `rsx:build --force`, which cleans as its first step |
 | `... is a build artifact, and only a build may write it.` | Something outside a build context tried to write under `build/` in a prod mode | The guard doing its job. Run the operation through `rsx:build` |
 | `Cannot build - these directories are not writable by this user:` | Preflight, nothing changed | Run the build as the deploy user, or fix the tree's ownership |
-| `[ERROR] N column(s) the manifest declares are missing from the database.` | The build and the schema disagree | `rsx:build --force`; migrate before the build next time |
-| `[ERROR] rsx:migrate:check_consistency runs in a production mode only.` | Ran in development, where the manifest rebuilds from the live schema anyway | Nothing to fix - the check has no meaning there |
+| `[ERROR] N column(s) the manifest declares are missing from the database.` | The build and the schema disagree | `rsx:build --force`; it survives only after `--no-rebuild` or a run that migrated nothing |
+| `[ERROR] rsx:migrate:check_consistency runs in a production mode only.` | Ran in development, where `migrate` rebuilds the manifest itself | Nothing to fix - `rsx:health` "Build Schema" is the check there |
 | verify: asset hash mismatch | Something wrote under `build/` outside the framework (raw `rm`, `cp`, a hand-edited bundle) | `rsx:build --force` |
 | verify: build_key mismatch | The code on disk is not the code that was sealed (a pull without a rebuild) | `rsx:build --force` |
 | `Bundle 'X' not compiled for production mode` | A bundle is missing while sealed | `rsx:build --force` |

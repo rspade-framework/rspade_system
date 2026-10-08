@@ -117,10 +117,12 @@ REPORTING (Task_Instance)
         $task->eta(int $seconds)               seconds from now; stored as the moment
                                                (eta_at), so a viewer counts down alone
         $task->state(array|object $state)      a JSON state object, replacing the last
-        $task->state_list(array $items)        a LIST (sequential keys) - a work queue, a
-                                               sync list - replacing the last. The report
-                                               exists once the list has held an item: an
-                                               empty list before then records nothing
+        $task->queue_push(string|array $item)  THE QUEUE - the items the task has ahead of
+        $task->queue_push_many(array $items)   it, one stored row per item, advanced as
+        $task->queue_pop()                     the work advances. See THE QUEUE below
+        $task->queue_remove(string|array $item)
+        $task->queue_clear()
+        $task->queue_depth(): int
         $task->message(string $text)           a message for whoever is watching; kept,
                                                in order, for as long as the run is
         $task->stdout(string $text)            output lines, one row per line
@@ -150,8 +152,62 @@ REPORTING (Task_Instance)
     so a stop is seen at once, but writes nothing more often than this rate - which is
     what makes a stop check and a heartbeat on every item of a loop cheap. A task about to
     go quiet for a long step calls flush() first so its watchers see
-    where it is. Attachments are written immediately. The heartbeat plays no part in worker
+    where it is. Attachments are written immediately. REPORT ON EVERY ITEM: holding
+    reports back is the framework's job, and a task that batches its own reports - the
+    queue every 25th item, say - only makes its watchers that much staler. The heartbeat plays no part in worker
     liveness (THE WORKER POOLS): a task may run for hours without reporting anything.
+
+    THE QUEUE. A percentage and a counter cannot tell a run that is stuck from one working
+    through something large. The queue can: the same items sitting at its head for ten
+    minutes is a stall, and a head that keeps moving is simply a big job. That signal
+    exists only when the queue is advanced as the work advances, so it is built to be
+    advanced on EVERY item - each item is its own row, a push is one row appended, a pop
+    one row removed, and the rows in between are never rewritten.
+
+        queue_push($item)         append one item to the tail: a string, or an array
+                                  (recorded as JSON)
+        queue_push_many($items)   append a list of items, in order
+        queue_pop()               remove the head - the oldest item: "the head is done".
+                                  Nothing on an empty queue
+        queue_remove($item)       remove ONE item equal to $item, the earliest: work
+                                  finished out of order. The match is the exact value
+                                  that was pushed - case-sensitive, never a substring -
+                                  and a queue holding duplicates loses one of them.
+                                  Nothing when no item matches
+        queue_clear()             empty the queue
+        queue_depth()             how many items it holds
+
+    queue_clear() followed by queue_push_many() DECLARES the queue: whatever it held, it
+    now holds exactly those items. Use that at the start of a phase, and whenever the task
+    would rather restate the truth than adjust it.
+
+    A list of a few hundred items is pushed whole and popped as each finishes; the widget
+    shows the head and counts the rest. For a list too large to push, slide a WINDOW:
+
+        $task->queue_clear();
+        $task->queue_push_many(array_slice($labels, 0, 100));
+
+        foreach ($work as $i => $item) {
+            // ... the work for this item ...
+
+            $task->queue_pop();                          // the head is done
+            if (isset($labels[$i + 100])) {
+                $task->queue_push($labels[$i + 100]);    // one more comes into view
+            }
+        }
+
+    IT IS A REPORT, NOT A WORK QUEUE. The task's real work list is its own array or query;
+    the queue describes it to a watcher. queue_pop() returns nothing, and a task never
+    drives itself from what it reported.
+
+    The report comes into being with its first ITEM. queue_clear() and queue_pop() on a
+    queue that has never held one record nothing, and the run has no queue report; once it
+    has held one, an emptied queue reads as an empty queue.
+
+    The queue calls are held and written at the rate described above like every other
+    report, in the order they were made - a slide of the window is one small DELETE and one
+    small INSERT however many items it covered. queue_remove() alone is written at once,
+    because which row it removes depends on what the queue holds.
 
     Stop check (cooperative - see LIFECYCLE CONTROL):
         $task->is_stop_requested()             reads the row (every call); held reports
@@ -184,8 +240,11 @@ DESIGNING A TASK'S REPORTING
                             retried call (stderr).
         progress indicator  ONE of progress() or progress_count() - see below.
         eta()               when the task can estimate its finish.
-        state() /           the task's working state worth inspecting - counters, the
-        state_list()        current batch, the queue still ahead.
+        state()             the task's working state worth inspecting - counters, the
+                            current batch.
+        the queue           what is still ahead, advanced per item (THE QUEUE above):
+                            the one report that shows whether a run is moving or stuck.
+                            Any task working through a list of nameable things has one.
         message()           events a watcher should notice (a milestone reached).
         summary()           what the run did, in a sentence, at the end.
 
@@ -260,7 +319,7 @@ THE RETURN CONTRACT
         anything else        failure, return code 1, with an error naming the contract
         a throw              failure, return code 1, the exception recorded as the error
 
-    A task reports DATA with summary(), state(), state_list() or (for a file its
+    A task reports DATA with summary(), state(), the queue or (for a file its
     initiator is waiting for) an attachment - never through its return value; returning an array is a failed run. Any Throwable counts as
     a throw: a TypeError settles exactly like an Exception.
 
@@ -583,9 +642,13 @@ READING A RUN (Task_Run_Model)
                                       was reported; null when neither
         progress_count()              ['done' => int, 'total' => int] or null
         eta_at()                      ISO moment or null
-        state(), state_list(), summary()
+        state(), summary()
+        queue(?int $limit = null)     the queue's items, oldest first - only the first
+                                      $limit when given (the head); null when the run's
+                                      queue has never held an item
+        queue_depth()                 how many items the queue holds
         available_reports()           the report names this run has actually set:
-                                      state_json, state_list, status_text, progress,
+                                      state_json, queue, status_text, progress,
                                       progress_count, eta, heartbeat, messages, summary,
                                       return_code
         output_after(?int $after_id, array $streams = ['stdout','stderr','operator'],
@@ -686,9 +749,9 @@ GATES AND THE BROWSER API
     JS: Rsx_Task.
         await Rsx_Task.get(id)                        {status, progress_percent, can, ...}
         await Rsx_Task.report(id, kind, limit)        {kind, value, total, status}
-                                                      limit (state_list only): the
-                                                      first, oldest N items; total =
-                                                      the list's length (null otherwise)
+                                                      limit (queue only): the first,
+                                                      oldest N items; total = the
+                                                      queue's depth (null otherwise)
         await Rsx_Task.output_after(id, after_id, streams)   {lines, last_id, more, is_live}
         await Rsx_Task.messages_after(id, after_id)   {messages, last_id, more}
         await Rsx_Task.find(filter)                   {tasks} (newest, at most 1000)
@@ -748,14 +811,16 @@ WIDGETS
                                                 progress_count, progress_text (whichever of
                                                 the two, one line - a grid cell), eta (a
                                                 live countdown), heartbeat, state_json (a
-                                                tree, every node open), state_list (one
-                                                single-line row per item, oldest first),
+                                                tree, every node open), queue (the HEAD
+                                                of the run's queue, one single-line row
+                                                per item, oldest first),
                                                 messages, summary, return_code.
                                                 $bar draws a fill behind progress text.
                                                 Fills its host box and scrolls inside it.
-                                                A state_list fetches only the rows its box
+                                                A queue fetches only the rows its box
                                                 holds (box height / 24px) and says "+N
-                                                more" in the last; it re-measures on
+                                                more" in the last - the rest of the queue
+                                                behind that window; it re-measures on
                                                 on_viewport_resize() and refetches when the
                                                 count changes. A box too short for one row
                                                 (unsized, hidden) fetches every item.
@@ -784,7 +849,8 @@ THE SAMPLE TASK
     system/app/RSpade/Sys/app/sys/tasks/_Sys_Oregon_Trail_Service.php is a complete task
     to read: a scripted, deterministic, three-minute game of the Oregon Trail. It uses
     every report - status(), progress(), progress_count(), eta(), heartbeat(), state()
-    (the wagon), state_list() (the landmarks ahead), message() (landmarks, deaths,
+    (the wagon), the queue (the landmarks ahead, pushed once and popped as each is
+    reached), message() (landmarks, deaths,
     encounters), stdout() (the narrative), stderr() (hazards), attach_bytes() (the
     journal and the epitaphs) and summary() - and it answers a graceful stop: it asks
     is_stop_requested() before every beat and twice a second while one plays, and on yes

@@ -31,9 +31,9 @@ only when the list itself changed).
     <div class="_Sys_Task_Reports_Pane__report">
         <Task_Report $task_id=this.args.task_id $kind=this.selected_kind() $bar=true />
     </div>
-    <% if (this.selected_kind() === 'state_json' && this.data.reports.includes('state_list')) { %>
+    <% if (this.selected_kind() === 'state_json' && this.data.reports.includes('queue')) { %>
         <div class="_Sys_Task_Reports_Pane__queue">
-            <Task_Report $task_id=this.args.task_id $kind="state_list" />
+            <Task_Report $task_id=this.args.task_id $kind="queue" />
         </div>
     <% } %>
 <% } %>

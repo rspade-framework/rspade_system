@@ -46,12 +46,12 @@ class Rsx_Task {
     static LIVE_UPDATE_DELAY = 250;
 
     /** The report kinds a run may carry, in the order a report browser offers them. */
-    static REPORT_KINDS = ['state_json', 'state_list', 'status_text', 'progress', 'progress_count', 'eta', 'heartbeat', 'messages', 'summary', 'return_code'];
+    static REPORT_KINDS = ['state_json', 'queue', 'status_text', 'progress', 'progress_count', 'eta', 'heartbeat', 'messages', 'summary', 'return_code'];
 
     /** A display label per report kind. */
     static REPORT_LABELS = {
         state_json: 'State',
-        state_list: 'Queue',
+        queue: 'Queue',
         status_text: 'Status',
         progress: 'Progress',
         progress_count: 'Progress (count)',
@@ -68,8 +68,8 @@ class Rsx_Task {
     }
 
     /**
-     * One report's value: {kind, value, total, status}. For state_list, `limit` asks for only
-     * the first (oldest) that many items; `total` is how many the list holds (null otherwise).
+     * One report's value: {kind, value, total, status}. For queue, `limit` asks for only
+     * the first (oldest) that many items; `total` is how many the queue holds (null otherwise).
      */
     static async report(task_id, kind, limit = null) {
         const params = { task_id: int(task_id), kind: kind };

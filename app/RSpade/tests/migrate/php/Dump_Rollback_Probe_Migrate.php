@@ -58,6 +58,18 @@ class Dump_Rollback_Probe_Migrate extends Maint_Migrate
         return (bool) ($this->options['framework-only'] ?? false);
     }
 
+    // The build always describes the database here: what migrate does about a build that
+    // does not is Migrate_Build_Sync_Test's subject.
+    protected function applied_migrations_hash(): string
+    {
+        return 'same';
+    }
+
+    protected function build_applied_migrations_hash(): ?string
+    {
+        return 'same';
+    }
+
     protected function probe_is_rspade_container(): bool
     {
         return true;

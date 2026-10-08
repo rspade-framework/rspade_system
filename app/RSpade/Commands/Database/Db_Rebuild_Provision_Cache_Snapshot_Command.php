@@ -389,7 +389,9 @@ class Db_Rebuild_Provision_Cache_Snapshot_Command extends Command
             }
         }
 
-        $exit_code = Rsx_Artisan::passthru('migrate', ['--force', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG]);
+        // --no-rebuild: this migrates a scratch database that is replaced by the live one
+        // again before the command ends, so the build has nothing to catch up with.
+        $exit_code = Rsx_Artisan::passthru('migrate', ['--force', '--no-rebuild', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG]);
         if ($exit_code !== 0) {
             throw new \RuntimeException('The migration run failed (exit ' . $exit_code . '). The cache was NOT written.');
         }

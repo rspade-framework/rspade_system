@@ -9,6 +9,9 @@ namespace App\RSpade\Core\Database;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Database\MigrationPaths;
+use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Support\Rsx_Fingerprint;
 
 /**
  * Database_Health_Checks - MySQL reachability and pending-migration status for rsx:health.
@@ -74,6 +77,35 @@ class Database_Health_Checks
             'status' => 'WARN',
             'detail' => $count . ' pending migration(s)',
             'remediation' => 'run php artisan migrate',
+        ];
+    }
+
+    /**
+     * The build describes THIS database: the applied migrations it recorded when it read
+     * every model's columns are the ones the database has now.
+     *
+     * `migrate` keeps the two together by rebuilding after a run that changed the schema,
+     * so a mismatch here is what is left when it was told not to (--no-rebuild), when the
+     * rebuild failed, or when the database moved without it (a restore, another box's
+     * build deployed here). Until the rebuild, models do not know the tables and columns
+     * the build never saw.
+     *
+     * @return array
+     */
+    #[Health_Check('Build Schema')]
+    public static function build_schema(): array
+    {
+        $rebuild = Rsx::is_production() ? 'php artisan rsx:build --force' : 'php artisan rsx:manifest:build --force';
+
+        if (Manifest::applied_migrations() === Rsx_Fingerprint::applied_migrations()) {
+            return ['status' => 'OK', 'detail' => 'the build was made against the migrations this database has applied'];
+        }
+
+        return [
+            'status' => 'FAIL',
+            'detail' => 'the build was made against a different set of applied migrations than this database has, '
+                . 'so models do not know the tables and columns migrated since',
+            'remediation' => 'run ' . $rebuild,
         ];
     }
 }

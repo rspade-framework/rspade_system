@@ -17,7 +17,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
 
 /**
- * Rsx_Task_Controller::report - one report's value. A state_list can be asked for only its
+ * Rsx_Task_Controller::report - one report's value. A queue can be asked for only its
  * first (oldest) N items, and always says how many it holds, so a queue viewer sized to N rows
  * fetches N. Acts as user 1, a developer, who passes every task gate.
  */
@@ -32,7 +32,7 @@ class Task_Report_Endpoint_Test extends Rsx_Test_Abstract
     {
         $id = Task_Runner::insert_row(Task_Exec_Fixture_Service::class, 'marker_a', [], Task_Run_Model::ORIGIN_DISPATCHED, Task_Runner::running_fields());
         $task = Task_Instance::find($id);
-        $task->state_list($items);
+        $task->queue_push_many($items);
         $task->summary('done');
         $task->flush();
 
@@ -48,15 +48,15 @@ class Task_Report_Endpoint_Test extends Rsx_Test_Abstract
     {
         $id = static::__run_with_queue(['one', 'two', 'three', 'four', 'five']);
 
-        $limited = static::__report(['task_id' => $id, 'kind' => 'state_list', 'limit' => 2]);
+        $limited = static::__report(['task_id' => $id, 'kind' => 'queue', 'limit' => 2]);
         static::__assert_equals(['one', 'two'], $limited['value'], 'the oldest two');
         static::__assert_equals(5, $limited['total']);
 
-        $whole = static::__report(['task_id' => $id, 'kind' => 'state_list']);
+        $whole = static::__report(['task_id' => $id, 'kind' => 'queue']);
         static::__assert_equals(['one', 'two', 'three', 'four', 'five'], $whole['value'], 'no limit: every item');
         static::__assert_equals(5, $whole['total']);
 
-        $roomy = static::__report(['task_id' => $id, 'kind' => 'state_list', 'limit' => 50]);
+        $roomy = static::__report(['task_id' => $id, 'kind' => 'queue', 'limit' => 50]);
         static::__assert_equals(5, count($roomy['value']), 'a limit above the length is every item');
     }
 
@@ -65,7 +65,7 @@ class Task_Report_Endpoint_Test extends Rsx_Test_Abstract
         $id = static::__run_with_queue(['one']);
 
         foreach ([0, -3, 'many'] as $bad) {
-            static::__assert_instance_of(Error_Response::class, static::__report(['task_id' => $id, 'kind' => 'state_list', 'limit' => $bad]), "limit {$bad}");
+            static::__assert_instance_of(Error_Response::class, static::__report(['task_id' => $id, 'kind' => 'queue', 'limit' => $bad]), "limit {$bad}");
         }
     }
 

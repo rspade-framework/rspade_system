@@ -317,22 +317,22 @@ class Docker_Dispatch_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * ceil(cores / 3), floored at 1 and capped by the class count. The input is this box's
+     * 2 * ceil(cores / 3), floored at 1 and capped by the class count. The input is this box's
      * real /proc/cpuinfo, counted here the same way, so what is asserted is the formula
      * itself - and never more containers than there are classes to put in them, which is
      * what makes a one-class run one container.
      */
-    public static function test_the_worker_count_is_a_third_of_the_cores()
+    public static function test_the_worker_count_is_two_per_three_cores()
     {
         $command = self::__make_command();
 
         $cores = max(1, (int) preg_match_all('/^processor\s*:/mi', (string) file_get_contents('/proc/cpuinfo')));
-        $expected = max(1, (int) ceil($cores / 3));
+        $expected = max(1, 2 * (int) ceil($cores / 3));
 
         static::__assert_equals(
             $expected,
             (int) self::__call_protected($command, 'worker_count', [1000]),
-            'ceil(' . $cores . ' cores / 3) containers for a large selection'
+            '2 * ceil(' . $cores . ' cores / 3) containers for a large selection'
         );
 
         static::__assert_equals(

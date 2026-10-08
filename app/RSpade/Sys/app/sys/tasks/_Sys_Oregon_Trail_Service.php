@@ -25,7 +25,8 @@ use App\RSpade\Core\Task\Task_Instance;
  *   eta()             seconds left in the script
  *   heartbeat()       every beat
  *   state()           the wagon: date, miles, weather, pace, rations, provisions, the party
- *   state_list()      the landmarks still ahead
+ *   queue_push_many() the landmarks ahead, pushed once at the start, and queue_pop() as
+ *   / queue_pop()     each is reached
  *   message()         a landmark reached, a death, each strange encounter
  *   stdout()          the narrative, text-adventure style ("> " marks a decision)
  *   stderr()          hazards, losses, illness and deaths
@@ -385,6 +386,11 @@ class _Sys_Oregon_Trail_Service extends Rsx_Service_Abstract
         $journal = [];
         $epitaphs = [];
         $landmarks_reached = 0;
+
+        // The queue is declared once - every landmark ahead - and its head is popped as each
+        // is reached.
+        $task->queue_clear();
+        $task->queue_push_many(self::LANDMARKS);
         $seconds_left = (int) ceil(array_sum(array_column(self::BEATS, 'seconds')) * $speed);
 
         foreach (self::BEATS as $beat) {
@@ -402,6 +408,7 @@ class _Sys_Oregon_Trail_Service extends Rsx_Service_Abstract
 
             if (isset($beat['landmark'])) {
                 $landmarks_reached++;
+                $task->queue_pop();
                 $task->message("Landmark reached: {$beat['landmark']} ({$beat['miles']} miles).");
             }
             if (isset($beat['message'])) {
@@ -409,7 +416,6 @@ class _Sys_Oregon_Trail_Service extends Rsx_Service_Abstract
             }
 
             $task->progress_count($landmarks_reached, count(self::LANDMARKS));
-            $task->state_list(array_slice(self::LANDMARKS, $landmarks_reached));
             $task->state($wagon);
             $task->heartbeat();
 

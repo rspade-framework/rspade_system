@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Core\Support;
 
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\RSpade\Core\Database\MigrationPaths;
 
 /**
@@ -14,11 +16,20 @@ use App\RSpade\Core\Database\MigrationPaths;
  *                      "did anything arrive here" (the environment-update gate, the test
  *                      runner's image fingerprint).
  *   migration_files()  the CONTENT of every migration file in the tree - the shape that
- *                      answers "could the database schema have moved", which is what the
- *                      model module keys its column introspection on.
+ *                      answers "which schema does this TREE define" (the test runner's
+ *                      baseline key).
  *
  * Both existed as private methods on Rsx_Test_Command and are now one implementation, so a
  * second consumer cannot disagree with the first about what "changed" means.
+ *
+ * A third shape is not about files at all:
+ *
+ *   applied_migrations()  the NAMES of the migrations the connected database has had
+ *                         applied - "which schema does this DATABASE have". A migration
+ *                         file that is present is not a migration that has run, so this,
+ *                         never migration_files(), is what a description of the live
+ *                         schema is keyed on (the model module's column map) and what a
+ *                         build records about the database it was built against.
  */
 class Rsx_Fingerprint
 {
@@ -76,5 +87,37 @@ class Rsx_Fingerprint
         sort($entries);
 
         return md5(implode("\n", $entries));
+    }
+
+    /**
+     * md5 over the sorted NAMES of every migration applied to the connected database.
+     *
+     * NAMES ONLY. Row ids, batch numbers and run times differ between two databases that
+     * have had exactly the same migrations applied, and those two databases have the same
+     * schema - so a build made against one describes the other, and their fingerprints must
+     * be equal for anything to be able to say so.
+     *
+     * A database with no migrations table is an unmigrated database, which is an ordinary
+     * state (a fresh install before its first migrate) and answers the fingerprint of the
+     * empty set.
+     */
+    public static function applied_migrations(): string
+    {
+        $table = config('database.migrations', 'migrations');
+
+        if (!Schema::hasTable($table)) {
+            return md5('');
+        }
+
+        // Raw SQL: this runs mid-build, before any model can be asked, and the migrations
+        // table has none.
+        $names = array_map(
+            fn ($row) => $row->migration,
+            DB::select("SELECT `migration` FROM `{$table}`")
+        );
+
+        sort($names, SORT_STRING);
+
+        return md5(implode("\n", $names));
     }
 }

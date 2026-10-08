@@ -75,7 +75,17 @@ class File_Blob_References
             $concrete = Manifest::model_for_table($table);
             $concrete_fqcn = $concrete !== null ? (Manifest::php_class_metadata($concrete)['fqcn'] ?? null) : null;
             if ($concrete_fqcn === null) {
-                shouldnt_happen("#[Blob_Reference] on {$row['class']}: no concrete model serves table {$table}");
+                // An ordinary state, not an impossible one: the build maps a model to its
+                // table only once the table exists, so this is a table that has not been
+                // migrated yet, or a build made before the migration that created it.
+                throw new \RuntimeException(
+                    "#[Blob_Reference] on {$row['class']}: this build has no model for table {$table}. "
+                    . "The class exists; the build has not seen its table. Either the table has not been "
+                    . "migrated (php artisan migrate), or the build predates the migration that created it "
+                    . "(rsx:health names this in its 'Build Schema' row) - rebuild with "
+                    . (\App\RSpade\Core\Rsx::is_production() ? 'php artisan rsx:build --force' : 'php artisan rsx:manifest:build --force')
+                    . '.'
+                );
             }
 
             foreach ($row['instances'] as $args) {

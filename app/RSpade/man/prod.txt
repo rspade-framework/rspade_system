@@ -243,10 +243,14 @@ THE RECOMMENDED DEPLOYMENT
 
         php artisan rsx:maintenance:enable --reason="deploying <version>"
         git pull                       # or however the code arrives
-        php artisan migrate --dump-rollback
+        php artisan migrate --dump-rollback --no-rebuild
         php artisan rsx:mode:set prod  # = rsx:prod:enable = build + seal
         php artisan rsx:prod:verify
         php artisan rsx:maintenance:disable
+
+    --no-rebuild because the next line builds: a migrate that changed the
+    schema otherwise rebuilds and reseals by itself (below), and the recipe
+    would build twice.
 
     --dump-rollback dumps the database first and restores it if a migration
     fails; the next deploy's migrate recovers whatever an interrupted one left,
@@ -258,12 +262,12 @@ THE RECOMMENDED DEPLOYMENT
     reseal: it rewrites RSX_MODE (a no-op) and runs rsx:build --force. There
     is no separate "refresh" command - the build is the refresh.
 
-    FIRST INSTALL on an empty database needs the build twice, because the
-    first one has no schema to compile against:
+    FIRST INSTALL on an empty database is a build and a migrate. The first
+    build has no schema to compile against; the migrate that creates one
+    rebuilds and reseals when it finishes:
 
         php artisan rsx:build --force
         php artisan migrate
-        php artisan rsx:build --force
 
   WHY MIGRATE COMES BEFORE THE BUILD
     The manifest bakes every model's column map in AT BUILD TIME. The
@@ -279,9 +283,28 @@ THE RECOMMENDED DEPLOYMENT
                               migration that itself writes through a model
                               fails inside it.
 
+    MIGRATE REPAIRS THE WRONG ORDER ITSELF. A build records the applied
+    migrations it was made against, and a migrate that changed the schema
+    under a build that no longer matches runs rsx:build --force when it
+    finishes, saying why:
+
+        Rebuilding: the schema changed, and the build describes the database
+        as it was before this run.
+           The sealed build is replaced. Requests are refused as unsealed
+           until it completes.
+
+    So an operator who only ever types `php artisan migrate` ends with a
+    build that matches the database. It never rebuilds when nothing was
+    migrated, and --no-rebuild turns it off - which the recipe above uses,
+    and which any box whose build must not be regenerated in place needs.
+    If the rebuild fails the migration stays applied: migrate says so, names
+    the command and exits non-zero. Full rules: rsx:man migrations, THE BUILD
+    FOLLOWS THE SCHEMA.
+
     After a migrate in a prod mode, rsx:migrate:check_consistency runs
     automatically and MIGRATE PROPAGATES ITS EXIT CODE. It compares the
-    sealed manifest against the live schema:
+    sealed manifest against the live schema, which matters after
+    --no-rebuild and after a run that migrated nothing:
 
         [ERROR] N column(s) the manifest declares are missing from the
         database.
@@ -296,7 +319,7 @@ THE RECOMMENDED DEPLOYMENT
               php artisan rsx:build --force
 
           Avoid it next time by migrating BEFORE the build - that is the
-          recommended deployment order:
+          recommended deployment order - or by leaving off --no-rebuild:
 
               php artisan migrate
               php artisan rsx:mode:set prod
@@ -379,6 +402,15 @@ BUILD ELSEWHERE
     migrate against its own database (with maintenance mode up), and
     check_consistency is what confirms the shipped build matches the schema
     that migrate left behind.
+
+    That migrate does NOT rebuild the artifact. A build records the applied
+    migrations it was made against by NAME, the scratch database had every
+    migration applied, and the host's database has the same set once its own
+    migrate finishes - so the two match and nothing is rebuilt (rsx:man
+    migrations, THE BUILD FOLLOWS THE SCHEMA). An artifact built against a
+    database that was NOT fully migrated would be rebuilt in place; pass
+    --no-rebuild to the host's migrate if that must never happen, and read
+    the "Build Schema" row of rsx:health.
 
   A CONTAINER IMAGE
     The same thing inside a build stage: migrate a scratch database, run

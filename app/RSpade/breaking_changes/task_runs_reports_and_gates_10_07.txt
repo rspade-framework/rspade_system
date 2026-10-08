@@ -21,7 +21,7 @@ WHAT YOU ALREADY HAVE
       run history in the old _tasks table are not carried over - apply it from
       a maintenance window, as every framework update is.
     - Task_Instance's reporting calls: heartbeat(), status(), progress(),
-      progress_count(), eta(), state(), state_list(), summary(), message(),
+      progress_count(), eta(), state(), the queue calls, summary(), message(),
       stdout(), stderr(), attach_file(), attach_bytes(), flush().
     - Task_Run_Model (readers, search_query() / find_first_1000() /
       find_page(), and the lifecycle operations request_stop(), force_stop(),
@@ -142,7 +142,7 @@ PORTING IT
             progress($percent) otherwise - and only when the task has measurable
             progress: a task that can only ever be 0% or 100% (one conversion,
             one remote call) reports none;
-          - eta(), state()/state_list(), message() and summary() where they apply;
+          - eta(), state(), the queue calls, message() and summary() where they apply;
           - in every loop over a queue, records or steps: $task->heartbeat() and
             an is_stop_requested() check per item, returning null (STOPPED) at a
             point where the data is coherent - without the check a graceful stop

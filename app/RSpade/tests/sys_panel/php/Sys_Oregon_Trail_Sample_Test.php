@@ -43,7 +43,7 @@ class Sys_Oregon_Trail_Sample_Test extends Rsx_Test_Abstract
         static::__assert_equals(100.0, $run->progress_percent());
         static::__assert_equals(['done' => 14, 'total' => 14], $run->progress_count());
         static::__assert_not_null($run->eta_at());
-        static::__assert_equals([], $run->state_list(), 'no landmark left ahead');
+        static::__assert_equals([], $run->queue(), 'no landmark left ahead');
 
         $state = $run->state();
         static::__assert_equals('dead', $state['party']['Cornelius']);

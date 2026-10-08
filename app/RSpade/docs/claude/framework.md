@@ -50,4 +50,5 @@ in this monorepo). Populated during Phase 2 of the knowledge restructure
 @framework/80-distribution-and-publishing.md
 @framework/81-git-and-conflicts.md
 @framework/82-documentation-obligations.md
+@framework/83-external-request-validation.md
 @framework/90-knowledge-routing.md

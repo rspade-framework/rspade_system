@@ -23,16 +23,26 @@ class Model_ManifestSupport extends ManifestSupport_Abstract
      *
      * THE FINGERPRINT IS THE WHOLE MECHANISM: the columns a model reports are a function of
      * its own file (the table name, the detail-table declaration) and of the SCHEMA, and the
-     * schema is defined by the migration files. So the key is
+     * schema the database HAS is identified by the migrations that have been APPLIED to it.
+     * So the key is
      *
-     *     <model file hash>__<hash of every migration file's content>
+     *     <model lineage hash>__<hash of the applied migrations' names>
      *
-     * and it is checked in two places, cheapest first: the row carried forward from the
-     * previous build (no round trip at all), then the persistent cache (Redis, survives a
-     * `rsx:clean`). Only a miss reaches MySQL - which is why two consecutive builds with no
-     * model change issue ZERO `SHOW COLUMNS`. The old code read the persistent cache and
-     * then fell through and re-queried anyway, ~110 round trips per rebuild with the answer
-     * already in hand.
+     * APPLIED, NOT PRESENT. The key used to hash the migration FILES, and a file that has
+     * arrived is not a migration that has run: a framework update lands its migrations,
+     * builds, and only then migrates, so the build read the old columns and filed them
+     * under a key the migrated database went on producing - a stale column map that every
+     * later build trusted. Keyed on what was applied, the map is discarded by exactly the
+     * event that makes it wrong.
+     *
+     * It is checked in two places, cheapest first: the row carried forward from the
+     * previous build (no round trip beyond the one that reads the applied names), then the
+     * persistent cache (Redis). Only a miss reaches MySQL - which is why two consecutive
+     * builds with no model change issue ZERO `SHOW COLUMNS`.
+     *
+     * The same hash is recorded on the index as `applied_migrations`: it is what `migrate`
+     * compares the database against afterwards to decide whether the build must be redone
+     * (Maint_Migrate::sync_build_with_schema()).
      *
      * A model whose table does not exist is a LOUD SKIP, never a silent one: an unmigrated
      * development database must not fail the build, but it must not disappear either -
@@ -51,8 +61,10 @@ class Model_ManifestSupport extends ManifestSupport_Abstract
         // database, where every fixture model legitimately has no table yet.
         $skipped = [];
 
-        // The schema identity every model row is keyed on, computed once per build.
-        $schema_fingerprint = Rsx_Fingerprint::migration_files();
+        // The schema identity every model row is keyed on, computed once per build - and
+        // recorded, so the build says which database state it describes.
+        $schema_fingerprint = Rsx_Fingerprint::applied_migrations();
+        $manifest_data['data']['applied_migrations'] = $schema_fingerprint;
 
         // All PHP files should already be loaded in Phase 3 of manifest processing
         // Get all classes extending Rsx_Model_Abstract
@@ -81,7 +93,7 @@ class Model_ManifestSupport extends ManifestSupport_Abstract
 
             // 2. The persistent cache. Keyed on explicit content hashes, so it is valid
             //    across builds and across a cache clear of the build-scoped family.
-            $cachekey = 'Model_ManifestSupport_v3_' . $model_entry['file'] . '__' . $fingerprint;
+            $cachekey = 'Model_ManifestSupport_v4_' . $model_entry['file'] . '__' . $fingerprint;
             $cache = RsxCache::get_persistent($cachekey);
 
             if (!empty($cache)) {

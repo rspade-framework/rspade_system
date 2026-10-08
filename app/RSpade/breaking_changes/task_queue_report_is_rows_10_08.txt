@@ -1,0 +1,134 @@
+THE TASK QUEUE REPORT IS PUSHED AND POPPED, NOT REPUBLISHED: state_list() IS REMOVED
+Date: 2026-10-08
+
+IF YOU DO NOTHING: every #[Task] of yours that calls $task->state_list() dies with "Call to undefined method"; code that reads $run->state_list() does the same; and a <Task_Report $kind="state_list"> or Rsx_Task.report(id, 'state_list') of yours throws / answers "Unknown task report".
+
+SUMMARY
+    Category 1: a call your tasks make is gone.
+
+    A task's queue report - the list of what it still has ahead - was a JSON
+    list rewritten whole on every change, so a task could not afford to advance
+    it per item. It is now one stored row per item, changed with calls that
+    append and remove single items:
+
+        REMOVED                         REPLACED BY
+        $task->state_list($items)       $task->queue_push($item)
+                                        $task->queue_push_many($items)
+                                        $task->queue_pop()
+                                        $task->queue_remove($item)
+                                        $task->queue_clear()
+                                        $task->queue_depth()
+        $run->state_list()              $run->queue(?int $limit = null)
+                                        $run->queue_depth()
+        report kind 'state_list'        report kind 'queue'
+
+    The stored lists of earlier runs are deleted by the migration; nothing else
+    about a run's history changes.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - The migration 2026_10_08_074356 (php artisan migrate): the _task_queue
+      table, _tasks.has_queue, and the deletion of every stored state_list
+      report. A finished run that had a queue no longer shows one.
+    - The calls above on Task_Instance and Task_Run_Model, the 'queue' kind in
+      Rsx_Task_Controller::report, Rsx_Task and <Task_Report>, and the
+      /_sys task screens.
+
+WHAT YOU MUST CHANGE
+    Find every use:
+
+        grep -rn "state_list" rsx/
+
+    1. A task that republished the remainder of a list it holds
+
+       This is the usual shape - the whole remaining list on every item:
+
+           foreach ($items as $index => $item) {
+               $task->state_list(array_slice($labels, $index));
+               // ... the work ...
+           }
+           $task->state_list([]);
+
+       Declare the queue once, then pop the head as each item finishes:
+
+           $task->queue_clear();
+           $task->queue_push_many($labels);
+
+           foreach ($items as $item) {
+               // ... the work ...
+               $task->queue_pop();
+           }
+
+       queue_clear() + queue_push_many() is the declarative call: whatever
+       the queue held, it now holds exactly those items. The trailing
+       state_list([]) has no replacement - the last queue_pop() empties it.
+
+    2. A task whose list is too large to push
+
+       If you were slicing a window out of a large list (or pushing tens of
+       thousands of labels), slide the window instead - two small rows per
+       item, and nothing re-sliced:
+
+           $task->queue_clear();
+           $task->queue_push_many(array_slice($labels, 0, 100));
+
+           foreach ($work as $i => $item) {
+               // ... the work ...
+               $task->queue_pop();
+               if (isset($labels[$i + 100])) {
+                   $task->queue_push($labels[$i + 100]);
+               }
+           }
+
+       The widget shows the head of the queue and "+N more" for what is
+       stored behind it, so a windowed queue's "more" is the rest of the
+       WINDOW; keep reporting the true total through progress_count() or
+       state() as you do today.
+
+    3. A task that batched the report to afford it
+
+       If you published the list only every Nth item because the write was
+       too large, delete the batching and advance the queue on EVERY item.
+       The framework already holds report writes to its own rate (0.25 s),
+       and a slide of the window costs one small DELETE and one small INSERT
+       however many items it covered.
+
+    4. Work finished out of order
+
+       queue_remove($item) removes ONE item equal to the value you pushed -
+       exact, case-sensitive, never a substring - the earliest when the queue
+       holds duplicates. Push values you can name again.
+
+    5. Code that READS a run's queue
+
+           $run->state_list()                      ->  $run->queue()
+           count($run->state_list())               ->  $run->queue_depth()
+           in_array('state_list', $run->available_reports())
+                                                   ->  in_array('queue', ...)
+           <Task_Report $kind="state_list" />      ->  <Task_Report $kind="queue" />
+           Rsx_Task.report(id, 'state_list', n)    ->  Rsx_Task.report(id, 'queue', n)
+
+       queue() answers null for a run whose queue never held an item, and
+       queue($limit) reads only the head.
+
+    Two rules that did not exist before:
+
+    - IT IS A REPORT, NOT A WORK QUEUE. queue_pop() returns nothing. The
+      task's work list stays its own array or query; never drive a task from
+      what it reported.
+    - An item is a string or an array (recorded as JSON). Anything else
+      throws.
+
+THE REFERENCE IMPLEMENTATION
+    system/app/RSpade/resource/reference_app/services/task_showcase_service.php
+        walk() - the whole list pushed once, one queue_pop() per item.
+
+VERIFICATION
+    grep -rn "state_list" rsx/ answers nothing. Run a task that reports a queue
+    and open it in /_sys/tasks: the Queue report shows the head of the list, the
+    head changes as items finish, and the last row counts what is behind it.
+
+SEE ALSO
+    rsx:man tasks - REPORTING (THE QUEUE), READING A RUN
+    skill rspade:background-tasks

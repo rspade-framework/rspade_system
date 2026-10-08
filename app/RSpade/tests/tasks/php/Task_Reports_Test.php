@@ -129,7 +129,7 @@ class Task_Reports_Test extends Rsx_Test_Abstract
         $task->progress_count(3, 257);
         $task->eta(60);
         $task->state((object) ['a' => 1, 'list' => [1, 2]]);
-        $task->state_list(['first', ['n' => 2]]);
+        $task->queue_push_many(['first', ['n' => 2]]);
         $task->summary('Did the work.');
         $task->message('one');
         $task->message('two');
@@ -143,7 +143,7 @@ class Task_Reports_Test extends Rsx_Test_Abstract
         $eta = strtotime($run->eta_at());
         static::__assert_true($eta >= $before + 60 && $eta <= time() + 60, 'the ETA is stored as the moment it names: ' . $run->eta_at());
         static::__assert_equals(['a' => 1, 'list' => [1, 2]], $run->state());
-        static::__assert_equals(['first', ['n' => 2]], $run->state_list());
+        static::__assert_equals(['first', ['n' => 2]], $run->queue());
         static::__assert_equals('Did the work.', $run->summary());
         static::__assert_equals(['one', 'two'], array_column($run->messages_after(), 'body'), 'messages kept, in order');
 
@@ -166,22 +166,6 @@ class Task_Reports_Test extends Rsx_Test_Abstract
         static::__assert_equals(2, DB::table('_task_reports')->where('task_id', $task->get_id())->count(), 'one row per kind');
     }
 
-    public static function test_a_queue_report_exists_once_it_held_an_item()
-    {
-        $task = static::__instance();
-        $task->state_list([]);
-        $task->flush();
-        static::__assert_false(in_array('state_list', static::__run($task)->available_reports(), true), 'an empty list before any item records nothing');
-
-        $task->state_list(['a']);
-        $task->flush();
-        $task->state_list([]);
-        $task->flush();
-        $run = static::__run($task);
-        static::__assert_true(in_array('state_list', $run->available_reports(), true), 'a queue that held an item stays reported');
-        static::__assert_equals([], $run->state_list(), 'the emptied queue is recorded as the empty list');
-    }
-
     public static function test_progress_is_clamped()
     {
         $task = static::__instance();
@@ -201,7 +185,8 @@ class Task_Reports_Test extends Rsx_Test_Abstract
 
         static::__assert_throws(\InvalidArgumentException::class, fn () => $task->progress_count(-1, 5), 'non-negative counts');
         static::__assert_throws(\InvalidArgumentException::class, fn () => $task->eta(-1), 'seconds from now');
-        static::__assert_throws(\InvalidArgumentException::class, fn () => $task->state_list(['a' => 1]), 'takes a list');
+        static::__assert_throws(\InvalidArgumentException::class, fn () => $task->queue_push_many(['a' => 1]), 'takes a list');
+        static::__assert_throws(\InvalidArgumentException::class, fn () => $task->queue_push_many([7]), 'string or an array');
         static::__assert_throws(\InvalidArgumentException::class, fn () => $task->state(['bad' => NAN]), 'cannot be encoded as JSON');
     }
 
@@ -268,12 +253,12 @@ class Task_Reports_Test extends Rsx_Test_Abstract
         $task->progress_count(1, 2);
         $task->progress(50);
         $task->status('t');
-        $task->state_list(['x']);
+        $task->queue_push('x');
         $task->state(['k' => 'v']);
         Task_Runner::settle($task, Task_Run_Outcome::from_return(null));
 
         static::__assert_equals(
-            ['state_json', 'state_list', 'status_text', 'progress', 'progress_count', 'eta', 'heartbeat', 'messages', 'summary', 'return_code'],
+            ['state_json', 'queue', 'status_text', 'progress', 'progress_count', 'eta', 'heartbeat', 'messages', 'summary', 'return_code'],
             static::__run($task)->available_reports()
         );
     }

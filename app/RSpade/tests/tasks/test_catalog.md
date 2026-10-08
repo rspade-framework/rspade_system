@@ -191,17 +191,16 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 | task-rep-02 | a report within the interval is held until flush | last write pinned to now | nothing on the row until flush() | implemented |
 | task-rep-03 | is_stop_requested() writes held reports at the write rate, not per call | held summary; check within the interval, then after it | not written; then written | implemented |
 | task-rep-04 | the settle writes held reports | held state; settle | state on the row | implemented |
-| task-rep-05 | each report persists | heartbeat, status, progress, count, eta, state, state_list, summary, messages | each reader; messages in order and by cursor | implemented |
+| task-rep-05 | each report persists | heartbeat, status, progress, count, eta, state, queue, summary, messages | each reader; messages in order and by cursor | implemented |
 | task-rep-06 | a report replaces the last; one row per kind | two states, two summaries | the latest; 2 report rows | implemented |
 | task-rep-07 | progress is clamped | 150, -5 | 100, 0 | implemented |
-| task-rep-08 | a report refuses what it cannot record | negative count / eta, keyed state_list, NAN | InvalidArgumentException | implemented |
+| task-rep-08 | a report refuses what it cannot record | negative count / eta, keyed or non-string/array queue items, NAN | InvalidArgumentException | implemented |
 | task-rep-09 | status() writes a stderr line only when it changes | a, a, b (with newline), a | three lines, newline folded | implemented |
 | task-rep-10 | a long status is cut to fit | 1500 chars | 1000 ending '...' | implemented |
 | task-rep-11 | progress_percent is derived from a count; a reported percentage wins | 1 of 4; 0 of 0; 10% + count | 25; null; 10 | implemented |
 | task-rep-12 | available_reports lists what was set, in a stable order | every report + settle | the ten names in order | implemented |
 | task-rep-13 | output_after reads by cursor, stream and page | stdout, stderr, operator | order, streams, cursor, limit; unknown stream throws | implemented |
 | task-rep-14 | to_status_array shape | running run with status + count | exact key list and values | implemented |
-| task-rep-15 | a queue report exists once it has held an item | state_list([]); then ['a'], then [] | not reported; then reported, holding [] | implemented |
 
 ## Task_Output_Test (php, default isolation) - output lines, console streams, echo capture
 
@@ -339,9 +338,23 @@ child pointed at the test database.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| task-rpt-01 | a state_list limit answers the first (oldest) items and the list's total | 5 items; limit 2, none, 50 | first 2 + total 5; all 5; all 5 | implemented |
+| task-rpt-01 | a queue limit answers the first (oldest) items and the queue's depth | 5 items; limit 2, none, 50 | first 2 + total 5; all 5; all 5 | implemented |
 | task-rpt-02 | a limit below 1 or not a whole number is refused | limit 0, -3, 'many' | Error_Response | implemented |
 | task-rpt-03 | total is null for every other kind; a limit does not touch it | summary with limit 1 | the summary; total null | implemented |
+
+## Task_Queue_Test (php, default isolation) - the queue report as rows
+
+| ID | Purpose (what it proves) | Input | Expected | Status |
+|----|--------------------------|-------|----------|--------|
+| task-queue-01 | pushes append in order and items keep their type | push, push_many (string + array) | queue() in order; depth 3; queue(2) is the head | implemented |
+| task-queue-02 | pop removes the head | 3 stored, pop | the last two | implemented |
+| task-queue-03 | held calls are applied in call order | pop, pop (empty), push x, push y, pop, push z | y, z; depth counts held calls | implemented |
+| task-queue-04 | sliding the window leaves the rows between untouched | 5 stored; pop + push | one DELETE and one INSERT; the four rows between keep their ids | implemented |
+| task-queue-05 | remove takes one exact match, the earliest | duplicates, a case variant, a superstring | one row gone, the earliest; no match removes nothing | implemented |
+| task-queue-06 | remove sees calls still held | push_many held, remove an array item | held pushes written first, then one removed | implemented |
+| task-queue-07 | clear then push_many declares the queue | stored items, pop, clear, push_many | exactly the new items | implemented |
+| task-queue-08 | the report exists once the queue has held an item | clear / pop / push_many([]) on a new run; then push, clear | no report, queue() null; then reported and empty | implemented |
+| task-queue-09 | unheld calls write as they are made | first call after a quiet spell | stored at once | implemented |
 
 ## Deferred / planned
 

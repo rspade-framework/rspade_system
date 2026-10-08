@@ -3,7 +3,7 @@
  * report's value) and repaints on every Task_Changed_Topic frame through refresh(), which
  * repaints only when the loaded data actually changed.
  *
- * A QUEUE IS SIZED TO ITS BOX. state_list rows are one fixed-height line each, so the widget
+ * A QUEUE IS SIZED TO ITS BOX. queue rows are one fixed-height line each, so the widget
  * knows how many it can show: its own height over LIST_ROW_HEIGHT. It asks the server for
  * only that many items - the first, oldest ones - and the list's total, and the last row says
  * how many more there are. on_viewport_resize() (the framework's own debounced window-resize
@@ -14,13 +14,13 @@
  */
 class Task_Report extends Component {
     /** Every kind the widget draws. */
-    static KINDS = ['status_text', 'progress', 'progress_count', 'progress_text', 'eta', 'heartbeat', 'state_json', 'state_list', 'messages', 'summary', 'return_code'];
+    static KINDS = ['status_text', 'progress', 'progress_count', 'progress_text', 'eta', 'heartbeat', 'state_json', 'queue', 'messages', 'summary', 'return_code'];
 
-    /** The height of one state_list row, in px - Task_Report.scss sets the same. */
+    /** The height of one queue row, in px - Task_Report.scss sets the same. */
     static LIST_ROW_HEIGHT = 24;
 
     /** The kinds whose value is stored apart from the run's status. */
-    static STORED_KINDS = ['state_json', 'state_list', 'messages', 'summary'];
+    static STORED_KINDS = ['state_json', 'queue', 'messages', 'summary'];
 
     /** The percentage a status reports, or derives from its count; null when neither. */
     static percent_of(status) {
@@ -48,7 +48,7 @@ class Task_Report extends Component {
     }
 
     /**
-     * How many state_list rows this widget's box holds, or null when it holds none (an unsized
+     * How many queue rows this widget's box holds, or null when it holds none (an unsized
      * or hidden box) - then every item is asked for.
      */
     list_capacity() {
@@ -59,7 +59,7 @@ class Task_Report extends Component {
 
     /** Measure the queue's box; refetch when the number of rows it holds changed. */
     on_viewport_resize() {
-        if (this.args.kind !== 'state_list') {
+        if (this.args.kind !== 'queue') {
             return;
         }
 
@@ -77,7 +77,7 @@ class Task_Report extends Component {
     async on_load() {
         try {
             if (Task_Report.STORED_KINDS.includes(this.args.kind)) {
-                const limit = this.args.kind === 'state_list' ? (this.args.list_limit ?? null) : null;
+                const limit = this.args.kind === 'queue' ? (this.args.list_limit ?? null) : null;
                 const response = await Rsx_Task.report(this.args.task_id, this.args.kind, limit);
                 this.data.status = response.status;
                 this.data.value = response.value;

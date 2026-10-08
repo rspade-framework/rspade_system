@@ -293,3 +293,19 @@ The --dump-rollback flow in `Maint_Migrate::handle()` through `Dump_Rollback_Pro
 | DRB-C-08 | abandon settles a refusal | php | --abandon-dump-rollback, then plain | exit 0; next run only the bare run | implemented | 2026-10-07 |
 | DRB-C-10 | an unusable client program is fatal before anything happens | php | binaries check fails | exit 1; no events; no files; the program named | implemented | 2026-10-07 |
 | DRB-C-09 | --framework-only is refused with the flag | php | both flags | exit 1; nothing | implemented | 2026-10-07 |
+
+## Migrate_Build_Sync_Test (php)
+
+`Maint_Migrate::sync_build_with_schema()` through `Build_Sync_Probe_Migrate` (the three
+fingerprints supplied, the rebuild recorded), plus the real fingerprint and the real record.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| SYNC-01 | a build that matches the database is left alone | php | build = now | exit 0; no rebuild; no output | implemented | 2026-10-08 |
+| SYNC-02 | a run that migrated rebuilds a stale build and says why | php | before != now != build | one development rebuild; output names the reason and --no-rebuild | implemented | 2026-10-08 |
+| SYNC-03 | a run that migrated nothing never rebuilds | php | before = now, build differs | no rebuild; mismatch reported with the command | implemented | 2026-10-08 |
+| SYNC-04 | --no-rebuild skips the rebuild and reports the stale build | php | suppressed | no rebuild; output names the flag and the command | implemented | 2026-10-08 |
+| SYNC-05 | a failed rebuild is the exit code and says the database moved | php | rebuild exits 3 | exit 3; "were applied and are committed" | implemented | 2026-10-08 |
+| SYNC-06 | an index with no record is a mismatch | php | build hash null | rebuilt | implemented | 2026-10-08 |
+| SYNC-07 | the fingerprint is the sorted applied names | php | the test database | md5 of the sorted names, whatever the row order | implemented | 2026-10-08 |
+| SYNC-08 | the build records the database it was made against | php | the running build | `Manifest::applied_migrations()` equals the live fingerprint | implemented | 2026-10-08 |

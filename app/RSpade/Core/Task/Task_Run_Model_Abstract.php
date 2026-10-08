@@ -28,8 +28,8 @@ use App\RSpade\Core\Time\Rsx_Time;
  * inline run (Task::internal(), rsx:task:run, a #[Command]). The row carries the lifecycle
  * (status, when it was scheduled, started and finished), who dispatched it and for which site,
  * the worker that ran it, and the task's small live reports (status text, progress, ETA,
- * heartbeat). The larger reports live beside it - _task_reports (state JSON, state list,
- * summary), _task_output (stdout / stderr / operator lines), _task_messages and
+ * heartbeat). The larger reports live beside it - _task_reports (state JSON, summary),
+ * _task_queue (the queue, a row per item), _task_output (stdout / stderr / operator lines), _task_messages and
  * _task_attachments - and are read through the methods below.
  *
  * A task WRITES all of this through its Task_Instance; nothing outside the task writes a
@@ -55,6 +55,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property int $dispatched_by_type
  * @property string $error
  * @property string $eta_at
+ * @property int $has_queue
  * @property int $id
  * @property string $last_heartbeat_at
  * @property string $last_report_at
@@ -127,8 +128,6 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
 
     /** _task_reports.kind_id: the state object a task reported with $task->state(). */
     const REPORT_STATE_JSON = 1;
-    /** _task_reports.kind_id: the list a task reported with $task->state_list(). */
-    const REPORT_STATE_LIST = 2;
     /** _task_reports.kind_id: the completion summary a task set with $task->summary(). */
     const REPORT_SUMMARY = 3;
 
@@ -189,7 +188,6 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
     /** Report kind id -> the name used everywhere outside the database. */
     const REPORT_KIND_NAMES = [
         self::REPORT_STATE_JSON => 'state_json',
-        self::REPORT_STATE_LIST => 'state_list',
         self::REPORT_SUMMARY => 'summary',
     ];
 
@@ -666,12 +664,36 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
         return $body === null ? null : json_decode($body, true);
     }
 
-    /** The list the task reported with state_list(), or null. */
-    public function state_list(): ?array
+    /**
+     * The run's queue, oldest item first - the items the task pushed (queue_push() and
+     * friends) and has not yet popped - or null when the run's queue has never held one.
+     * $limit asks for only the first that many: the head of the queue, which is the part a
+     * watcher reads; queue_depth() says how many there are in all.
+     *
+     * @return array<int, string|array>|null
+     */
+    public function queue(?int $limit = null): ?array
     {
-        $body = $this->__report_body(self::REPORT_STATE_LIST);
+        if (!$this->has_queue) {
+            return null;
+        }
 
-        return $body === null ? null : json_decode($body, true);
+        $query = DB::table('_task_queue')->where('task_id', $this->id)->orderBy('id');
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        return $query->pluck('body')->map(fn ($body) => json_decode((string) $body, true))->all();
+    }
+
+    /** How many items the run's queue holds. */
+    public function queue_depth(): int
+    {
+        if (!$this->has_queue) {
+            return 0;
+        }
+
+        return (int) DB::table('_task_queue')->where('task_id', $this->id)->count();
     }
 
     /** The completion summary the task set with summary(), or null. */
@@ -683,7 +705,7 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
     /**
      * The names of the reports this run has actually set, in a stable order: the kinds a
      * report viewer offers. Any of: status_text, progress, progress_count, eta, heartbeat,
-     * state_json, state_list, summary, messages, return_code.
+     * state_json, queue, summary, messages, return_code.
      *
      * @return string[]
      */
@@ -695,8 +717,8 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
         if (in_array(self::REPORT_STATE_JSON, $stored, true)) {
             $kinds[] = 'state_json';
         }
-        if (in_array(self::REPORT_STATE_LIST, $stored, true)) {
-            $kinds[] = 'state_list';
+        if ($this->has_queue) {
+            $kinds[] = 'queue';
         }
         if ($this->status_text !== null) {
             $kinds[] = 'status_text';

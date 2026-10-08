@@ -509,12 +509,12 @@ protects.
 
 ## Worker counts and measured numbers
 
-`ceil(cores / CORES_PER_WORKER=3)`, floor 1, and never more containers than classes.
+`WORKERS_PER_CORE_GROUP=2 * ceil(cores / CORES_PER_GROUP=3)`, floor 1, and never more containers than classes.
 `--workers=N` overrides the formula (an experiment knob; the floors still apply). Cores from
 `/proc/cpuinfo` - no shell. A container is a whole environment (mysqld on tmpfs + redis +
 rsx-lockd + php-fpm + nginx + the worker and what it spawns), so one per core oversubscribed
-the host into a load average in the hundreds; three cores per container keeps the box usable
-while the suite runs. **6 workers on this 16-core box.** `/proc/cpuinfo` counts the cores the
+the host into a load average in the hundreds; two containers per three cores keeps the box usable
+while the suite runs. **12 workers on this 16-core box.** `/proc/cpuinfo` counts the cores the
 kernel has, not a cgroup CPU quota (`cpu.max`) a container might be confined to; this box has
 none. The worker count is in no cache key - a verdict does not depend on how many containers
 produced it.

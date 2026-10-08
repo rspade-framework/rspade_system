@@ -26,7 +26,9 @@ use App\RSpade\Core\Task\Task_Run_Model;
  *   progress_count($done, $total)    "3 of 257"
  *   eta($seconds)                    seconds from now until done (stored as a moment)
  *   state($array_or_object)          a JSON state object, replacing the last
- *   state_list($items)               a list (a sync queue, a work list), replacing the last
+ *   queue_push() / queue_push_many() the QUEUE: the items the task has ahead of it, one row
+ *   queue_pop() / queue_remove()     per item, advanced as the work advances - the report
+ *   queue_clear() / queue_depth()    that shows whether a run is moving or stuck
  *   message($text)                   a message for whoever is watching (kept, in order)
  *   stdout($text) / stderr($text)    output lines; echo / print are captured as stdout too
  *   attach_file() / attach_bytes()   a named file for outside consumers to retrieve
@@ -87,8 +89,24 @@ class Task_Instance
     /** The status text last reported, so an unchanged status writes no stderr line. */
     private ?string $last_status_text = null;
 
-    /** Whether this run's queue report exists (held an item); null until first asked. */
-    private ?bool $state_list_reported = null;
+    /** _tasks.has_queue: the run's queue has held an item, so the queue report exists. */
+    private bool $has_queue = false;
+
+    /** Queue items waiting to be appended, JSON-encoded, in order. */
+    private array $pending_queue_pushes = [];
+
+    /** Stored queue rows waiting to be removed from the head. */
+    private int $pending_queue_pops = 0;
+
+    /** Every stored queue row is waiting to be removed, before the pops and pushes above. */
+    private bool $pending_queue_clear = false;
+
+    /**
+     * How many rows the stored queue holds, not counting what is waiting above; null until
+     * first needed. This instance is the queue's only writer, so it counts once and keeps
+     * the number itself.
+     */
+    private ?int $queue_stored = null;
 
     private function __construct(int $id, string $class, string $method, array $params)
     {
@@ -105,6 +123,7 @@ class Task_Instance
     {
         $instance = new self((int) $row->id, (string) $row->class, (string) $row->method, $row->params ?? []);
         $instance->last_status_text = $row->status_text;
+        $instance->has_queue = (bool) $row->has_queue;
 
         return $instance;
     }
@@ -217,33 +236,133 @@ class Task_Instance
         $this->__maybe_flush();
     }
 
+    // ------------------------------------------------------------------------------------
+    // The queue
+    // ------------------------------------------------------------------------------------
+    //
+    // WHAT THE QUEUE IS FOR. A percentage and a counter cannot tell a run that is stuck from
+    // one working through something large; the same items sitting at the head of the queue
+    // can. So the queue is advanced as the work advances - per item - and that is affordable
+    // because an item is a ROW: a push appends one, a pop removes one, and nothing else moves.
+    //
+    // IT IS A REPORT, NOT A WORK QUEUE. The task's real work list is its own array or query;
+    // these calls describe it to a watcher and return nothing a task may drive itself from.
+    //
+    // The report comes into being with its first ITEM. A queue that has never held one is not
+    // a report the run made - queue_clear() and queue_pop() on it record nothing - and one
+    // that has is an empty queue once emptied.
+
     /**
-     * Report the task's state as a list - a sync queue, a work list - replacing the last. Each
-     * item is a string or a JSON value.
-     *
-     * The report comes into being with its first ITEM: an empty list is not recorded until the
-     * run's queue has held something, so "the run has a queue report" means "its queue has or
-     * has had items" - and once it has, an emptied queue is recorded as the empty list.
+     * Append one item to the tail of the queue: a string, or an array recorded as JSON.
      */
-    public function state_list(array $items): void
+    public function queue_push(string|array $item): void
+    {
+        $this->pending_queue_pushes[] = static::__json($item, 'queue_push()');
+        $this->__maybe_flush();
+    }
+
+    /**
+     * Append several items to the tail of the queue, in order. queue_clear() followed by
+     * queue_push_many() DECLARES the queue: whatever it held, it now holds exactly these.
+     *
+     * @param array<int, string|array> $items A list (sequential keys)
+     */
+    public function queue_push_many(array $items): void
     {
         if (!array_is_list($items)) {
-            throw new \InvalidArgumentException('state_list() takes a list (sequential keys); for keyed state use state().');
+            throw new \InvalidArgumentException('queue_push_many() takes a list (sequential keys) of items.');
         }
 
-        if ($this->state_list_reported === null) {
-            $this->state_list_reported = DB::table('_task_reports')
-                ->where('task_id', $this->id)
-                ->where('kind_id', Task_Run_Model::REPORT_STATE_LIST)
-                ->exists();
+        foreach ($items as $item) {
+            if (!is_string($item) && !is_array($item)) {
+                throw new \InvalidArgumentException('A queue item is a string or an array, got ' . get_debug_type($item) . '.');
+            }
         }
-        if ($items === [] && !$this->state_list_reported) {
+
+        foreach ($items as $item) {
+            $this->pending_queue_pushes[] = static::__json($item, 'queue_push_many()');
+        }
+
+        if ($items !== []) {
+            $this->__maybe_flush();
+        }
+    }
+
+    /**
+     * Remove the head of the queue - the oldest item: "the head is done". Nothing happens on
+     * an empty queue, and nothing is returned.
+     */
+    public function queue_pop(): void
+    {
+        if ($this->__queue_stored_remaining() > 0) {
+            $this->pending_queue_pops++;
+        } elseif ($this->pending_queue_pushes !== []) {
+            array_shift($this->pending_queue_pushes);
+        } else {
             return;
         }
-        $this->state_list_reported = true;
 
-        $this->pending_reports[Task_Run_Model::REPORT_STATE_LIST] = static::__json($items, 'state_list()');
         $this->__maybe_flush();
+    }
+
+    /**
+     * Remove ONE item equal to $item - the earliest - for work finished out of order. The
+     * match is the exact value that was pushed (a queue may hold duplicates, and only one
+     * goes). Nothing happens when no item matches.
+     *
+     * Unlike the other queue calls this one is written at once: which row it removes depends
+     * on what the queue holds.
+     */
+    public function queue_remove(string|array $item): void
+    {
+        $body = static::__json($item, 'queue_remove()');
+
+        $this->flush();
+        if (!$this->has_queue) {
+            return;
+        }
+
+        $row = DB::selectOne(
+            'SELECT id FROM _task_queue WHERE task_id = ? AND BINARY body = ? ORDER BY id LIMIT 1',
+            [$this->id, $body]
+        );
+        if ($row === null) {
+            return;
+        }
+
+        DB::table('_task_queue')->where('id', $row->id)->delete();
+        if ($this->queue_stored !== null) {
+            $this->queue_stored--;
+        }
+
+        Task_Notify::changed($this->id, true, false);
+    }
+
+    /**
+     * Empty the queue.
+     */
+    public function queue_clear(): void
+    {
+        if (!$this->has_queue && $this->pending_queue_pushes === []) {
+            return;
+        }
+
+        $this->pending_queue_pushes = [];
+        $this->pending_queue_pops = 0;
+        if ($this->has_queue) {
+            $this->pending_queue_clear = true;
+            $this->queue_stored = 0;
+        }
+
+        $this->__maybe_flush();
+    }
+
+    /**
+     * How many items the queue holds.
+     */
+    public function queue_depth(): int
+    {
+        return $this->__queue_stored_remaining() + count($this->pending_queue_pushes);
     }
 
     /**
@@ -320,15 +439,20 @@ class Task_Instance
      */
     public function flush(): void
     {
-        if ($this->pending_row === [] && $this->pending_reports === [] && $this->pending_output === [] && $this->pending_messages === []) {
+        $queue_pending = $this->pending_queue_clear || $this->pending_queue_pops > 0 || $this->pending_queue_pushes !== [];
+
+        if ($this->pending_row === [] && $this->pending_reports === [] && $this->pending_output === [] && $this->pending_messages === [] && !$queue_pending) {
             return;
         }
 
         $now = static::__now();
-        $changed = $this->pending_row !== [] || $this->pending_reports !== [] || $this->pending_messages !== [];
+        $changed = $this->pending_row !== [] || $this->pending_reports !== [] || $this->pending_messages !== [] || $queue_pending;
         $output_written = $this->pending_output !== [];
 
         $row = $this->pending_row;
+        if ($this->pending_queue_pushes !== [] && !$this->has_queue) {
+            $row['has_queue'] = 1;
+        }
         $row['last_report_at'] = $now;
         $row['updated_at'] = $now;
         DB::table('_tasks')->where('id', $this->id)->update($row);
@@ -359,10 +483,39 @@ class Task_Instance
             DB::table('_task_messages')->insert($rows);
         }
 
+        // The queue, in the order the calls were made: a clear discards what was stored, pops
+        // take from the head of what remains, pushes append. One statement each - a slide of
+        // the window is one small DELETE and one small INSERT however many items it covered.
+        if ($this->pending_queue_clear) {
+            DB::table('_task_queue')->where('task_id', $this->id)->delete();
+        }
+        if ($this->pending_queue_pops > 0) {
+            DB::statement(
+                'DELETE FROM _task_queue WHERE task_id = ? ORDER BY id LIMIT ' . $this->pending_queue_pops,
+                [$this->id]
+            );
+        }
+        if ($this->pending_queue_pushes !== []) {
+            $rows = [];
+            foreach ($this->pending_queue_pushes as $body) {
+                $rows[] = ['task_id' => $this->id, 'body' => $body, 'created_at' => $now, 'updated_at' => $now];
+            }
+            foreach (array_chunk($rows, 500) as $chunk) {
+                DB::table('_task_queue')->insert($chunk);
+            }
+            $this->has_queue = true;
+        }
+        if ($this->queue_stored !== null) {
+            $this->queue_stored += count($this->pending_queue_pushes) - $this->pending_queue_pops;
+        }
+
         $this->pending_row = [];
         $this->pending_reports = [];
         $this->pending_output = [];
         $this->pending_messages = [];
+        $this->pending_queue_pushes = [];
+        $this->pending_queue_pops = 0;
+        $this->pending_queue_clear = false;
         $this->last_flush = microtime(true);
 
         Task_Notify::changed($this->id, $changed, $output_written);
@@ -497,6 +650,18 @@ class Task_Instance
             fwrite($sink, $line . "\n");
             fflush($sink);
         }
+    }
+
+    /** Stored queue rows not already waiting to be popped. */
+    private function __queue_stored_remaining(): int
+    {
+        if ($this->queue_stored === null) {
+            $this->queue_stored = $this->has_queue
+                ? (int) DB::table('_task_queue')->where('task_id', $this->id)->count()
+                : 0;
+        }
+
+        return $this->queue_stored - $this->pending_queue_pops;
     }
 
     private function __maybe_flush(): void

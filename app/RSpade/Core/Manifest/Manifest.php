@@ -1047,6 +1047,20 @@ class Manifest
     }
 
     /**
+    * The fingerprint of the applied migrations this build was made against
+    * (Rsx_Fingerprint::applied_migrations()), or null for an index that predates the record.
+    *
+    * A build describes ONE database state - its model column maps were read from it - and
+    * this says which. `migrate` compares it with the database afterwards.
+    */
+    public static function applied_migrations(): ?string
+    {
+        self::init();
+
+        return self::$data['data']['applied_migrations'] ?? null;
+    }
+
+    /**
     * Get all routes from the manifest
     *
     * Returns unified route structure: $routes[$pattern] => route_data

@@ -5,7 +5,7 @@ NAME
 
 SYNOPSIS
        php artisan make:migration:safe <name>
-       php artisan migrate [--dump-rollback]
+       php artisan migrate [--dump-rollback] [--no-rebuild]
        php artisan migrate --abandon-dump-rollback
        php artisan migrate:status
        php artisan rsx:db:rebuild_provision_cache_snapshot
@@ -423,7 +423,8 @@ MIGRATION WORKFLOW
        1. Creates a database snapshot before running migrations
        2. Runs all pending migrations with validation
        3. Runs schema quality checks
-       4. On success: commits changes, regenerates constants, recompiles bundles
+       4. On success: commits changes, rebuilds when the schema changed (THE BUILD
+          FOLLOWS THE SCHEMA, below), regenerates constants, recompiles bundles
        5. On failure: automatically rolls back to snapshot
 
        Failed migrations restore the database to its pre-migration state. Fix your
@@ -445,6 +446,8 @@ MIGRATION WORKFLOW
        - NO SOURCE FILE IS WRITTEN. Constants and bundles are not regenerated (they
          are source, committed from the development box that authored the migration),
          and a missing .migration_whitelist is skipped rather than created
+       - A run that changed the schema REBUILDS AND RESEALS (rsx:build --force)
+         unless --no-rebuild is given; see THE BUILD FOLLOWS THE SCHEMA below
        - rsx:migrate:check_consistency runs at the end and ITS EXIT CODE IS THE
          COMMAND'S (see MANIFEST CONSISTENCY below)
 
@@ -501,19 +504,58 @@ MIGRATION WORKFLOW
        completes normally (`rsx:man rsx_git`). Resolving it by hand as TEXT is the
        natural move and the wrong one - it produces a file that is not JSON.
 
+   The Build Follows the Schema
+       A build describes ONE database state: every model's table and column map is
+       read from the live schema when the build is made, and nothing in the source
+       tree changes when a migration runs. So the build RECORDS which state it read -
+       a fingerprint of the NAMES of the applied migrations - and migrate compares the
+       database against that record once it has finished:
+
+           the build matches the database    nothing happens
+           this run migrated nothing         never a rebuild; a mismatch is reported
+                                             with the command that repairs it
+           --no-rebuild                      the same report, no rebuild
+           otherwise                         the build is redone, and migrate says so
+
+       The rebuild is the mode's own: in development the manifest is rebuilt (a few
+       seconds; every model's columns are read again), in debug and production the
+       whole build runs and reseals (php artisan rsx:build --force), exactly as an
+       operator would have run it next. While a sealed build is being replaced,
+       requests are refused as unsealed.
+
+       The fingerprint is names only - not ids, batches or run times - so two
+       databases that have had the same migrations applied answer the same value, and
+       a build made against one describes the other.
+
+       --no-rebuild is for a run that is followed by a build anyway (the deployment
+       recipe in rsx:man prod), and for any box whose build must not be regenerated in
+       place. Without the rebuild a model does not know the tables and columns just
+       migrated: field_length() and the generated JS models lack the new columns, and
+       a model whose table was just created is not found by table at all.
+
+       THE DATABASE CANNOT MOVE BACK. A migration is committed before the rebuild
+       starts, so a rebuild that fails leaves a migrated database and an unusable
+       build; migrate says exactly that, names the command, and exits with the
+       build's exit code.
+
+       The "Build Schema" row of rsx:health asks the same question in every mode and
+       FAILs when the build and the database disagree.
+
    Manifest Consistency (production modes)
        A production build bakes every model's column map into the manifest at BUILD
-       time; the database moves at MIGRATE time. Those are separate deployment steps
-       an operator can run in either order, so after a production migrate
+       time; the database moves at MIGRATE time. A migrate that changed the schema
+       rebuilds, so the two stay together - but --no-rebuild, a run that migrated
+       nothing and a database changed some other way can all leave them apart, so
+       after a production migrate
 
            php artisan rsx:migrate:check_consistency
 
        compares the two and migrate PROPAGATES ITS EXIT CODE - a build that no longer
        matches its schema is a failed migrate, not a footnote to a successful one.
 
-       It refuses to run outside a production mode (a development box rebuilds its
-       manifest from the live schema on the next request, so the comparison is
-       "consistent" by construction) and refuses when there is no manifest at all.
+       It refuses to run outside a production mode (a development migrate has just
+       rebuilt the manifest from the live schema, and the "Build Schema" row of
+       rsx:health is the check there) and refuses when there is no manifest at all.
 
        The two findings are NOT symmetric:
 
@@ -527,8 +569,7 @@ MIGRATION WORKFLOW
        base model - whose manifest columns span its detail tables - is compared only
        against its own table, and each detail model is walked as its own row.
 
-       The repair is `php artisan rsx:build --force`. The ordering that avoids it is
-       migrate BEFORE the mode switch; see rsx:man prod.
+       The repair is `php artisan rsx:build --force`; see rsx:man prod.
 
        IT IS NOT THE SCHEMA CONTRACT CHECK, and the two are complementary. This one
        compares the MANIFEST with the DATABASE, in production modes only; the manifest's

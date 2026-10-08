@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: "Writing, running and watching RSpade background tasks - #[Task] service methods, the Task_Instance reporting API (status(), progress(), progress_count(), eta(), state(), state_list(), message(), stdout()/stderr(), attach_file()/attach_bytes(), summary(), heartbeat(), flush()), the return contract (null/true/0 = success, an integer = return code), Task::dispatch / Task::internal and the Task_Run_Model run row, #[Schedule] recurrence, #[Exclusive]/#[Debounce] identities, the on_demand/scheduled/kill worker pools, lifecycle control (request_stop, force_stop, force_kill, cancel, rerun, rsx:tasks:stop), the deny-by-default task gates (Task_Gates, task.view.authorize, task.view.scope, task.control.authorize), Rsx_Task in JS, and the widgets Task_Status_Badge, Task_Report, Task_Report_Browser and Task_Output. Use when adding a scheduled job, a queued background job, a cleanup/import/report task, making a long task stoppable (is_stop_requested), reporting progress, showing a user the progress or output of a task they started, letting users stop or rerun their runs, or debugging a task that 'returned an array' and failed, a widget that says Unavailable, or a run stuck Pending."
+description: "Writing, running and watching RSpade background tasks - #[Task] service methods, the Task_Instance reporting API (status(), progress(), progress_count(), eta(), state(), queue_push()/queue_pop()/queue_remove()/queue_clear()/queue_depth(), message(), stdout()/stderr(), attach_file()/attach_bytes(), summary(), heartbeat(), flush()), the return contract (null/true/0 = success, an integer = return code), Task::dispatch / Task::internal and the Task_Run_Model run row, #[Schedule] recurrence, #[Exclusive]/#[Debounce] identities, the on_demand/scheduled/kill worker pools, lifecycle control (request_stop, force_stop, force_kill, cancel, rerun, rsx:tasks:stop), the deny-by-default task gates (Task_Gates, task.view.authorize, task.view.scope, task.control.authorize), Rsx_Task in JS, and the widgets Task_Status_Badge, Task_Report, Task_Report_Browser and Task_Output. Use when adding a scheduled job, a queued background job, a cleanup/import/report task, making a long task stoppable (is_stop_requested), reporting progress, showing a user the progress or output of a task they started, letting users stop or rerun their runs, or debugging a task that 'returned an array' and failed, a widget that says Unavailable, or a run stuck Pending."
 ---
 
 # Background Tasks
@@ -60,7 +60,7 @@ The return value is the **return code**, compared with `===`:
 | anything else (an array, a string) | FAILED, return code 1 - **a task never returns data** |
 | a throw (any `Throwable`) | FAILED, return code 1, the exception recorded as the error |
 
-Data goes in `summary()`, `state()`, `state_list()` or an attachment. A failure is **never retried** - only work a dead worker ABANDONED is (below).
+Data goes in `summary()`, `state()`, the queue or an attachment. A failure is **never retried** - only work a dead worker ABANDONED is (below).
 
 ---
 
@@ -73,7 +73,8 @@ $task->progress(45.5);                      // 0-100, two decimals
 $task->progress_count(3, 257);              // "3 of 257" (percentage derived from it)
 $task->eta(120);                            // seconds from now; stored as a moment
 $task->state(['done' => 3, 'last' => 'x']); // a JSON state object, replacing the last
-$task->state_list(['item 4', 'item 5']);    // a LIST (sequential keys), replacing the last; exists once it has held an item
+$task->queue_push_many(['item 4', 'item 5']); // THE QUEUE: what is ahead, a row per item (below)
+$task->queue_pop();                         // the head is done
 $task->message('Halfway');                  // kept, in order, for watchers
 $task->stdout('line');  $task->stderr('line');   // output lines; echo/print are stdout too
 $task->attach_file('report', $path, 'report.csv');          // named file -> a temp file (rsx:man temp_files)
@@ -97,7 +98,21 @@ $task->get_id(); $task->get_class(); $task->get_method(); $task->get_params();
 - `status()` - what it is doing now; nearly every multi-step task has one (each change is also a stderr line, so the output reads as a narrative).
 - `stdout()` / `stderr()` - the narrative: what was done, and what went wrong without stopping the run (a skipped record, a retried call).
 - **ONE progress indicator, only if the task has measurable progress.** `progress_count($done, $total)` when it counts items, `progress($percent)` when its measure is not a count - never both. A task whose only honest values are 0% and 100% (one document converted, one remote call) reports NO progress: `status()` and the lifecycle already say working / done.
-- `eta()` when it can estimate; `state()` / `state_list()` for working state worth inspecting (counters, the queue ahead); `message()` for milestones; `summary()` at the end.
+- `eta()` when it can estimate; `state()` for working state worth inspecting (counters); **the queue** for what is still ahead (below); `message()` for milestones; `summary()` at the end.
+
+**The queue is the report that shows whether a run is MOVING.** A percentage and a counter cannot tell a stuck run from one working through something large; the same items sitting at the head of the queue can. So it is advanced on every item, and built for that - one stored row per item, a push appends one, a pop removes one, nothing between is rewritten:
+
+```php
+$task->queue_clear();                      // clear + push_many DECLARES the queue
+$task->queue_push_many($labels);           // a few hundred: push the whole list
+
+foreach ($work as $item) {
+    // ... the work ...
+    $task->queue_pop();                    // the head is done
+}
+```
+
+For a list too large to push, slide a window: `queue_push_many(array_slice($labels, 0, 100))`, then per item `queue_pop()` and `queue_push($labels[$i + 100])` when there is one. `queue_remove($item)` removes ONE item equal to the exact value pushed (the earliest - a queue may hold duplicates) for work finished out of order; `queue_depth()` counts it. **It is a report, not a work queue**: `queue_pop()` returns nothing and a task never drives itself from what it reported. The report exists once the queue has held an item. **Never batch your own reports** ("refresh the queue every 25th item") - the framework already holds writes to its rate, and batching only makes the watcher staler.
 
 **A task that loops - over a queue, records or steps - calls `is_stop_requested()` and `heartbeat()` on every item** (see the example above). Without the stop check a graceful stop is never answered and only a kill ends the run; check between items, where stopping leaves the data coherent, and return `null` so the run settles STOPPED. The heartbeat lets a watcher tell a slow item from a stuck one. Both are cheap (reports are written at a rate). A single long step with no loop needs neither, beyond a `flush()` before it goes quiet.
 
@@ -133,7 +148,7 @@ The row records `dispatched_by` (the signed-in identity, a type-ref pair) and `s
 ```php
 $run->status_id;  $run->status_id__label;  $run->is_live();  $run->is_terminal();
 $run->status_text();  $run->progress_percent();  $run->progress_count();  $run->eta_at();
-$run->state();  $run->state_list();  $run->summary();  $run->return_code;  $run->error;
+$run->state();  $run->queue($limit);  $run->queue_depth();  $run->summary();  $run->return_code;  $run->error;
 $run->output_after($after_id, ['stdout', 'stderr', 'operator']);   // cursor page
 $run->messages_after($after_id);
 $run->attachment('report')?->download_response();                  // or read_bytes()
@@ -222,7 +237,7 @@ The list frame carries `{class, method}` (the simple service name) and filters m
 <Task_Output $task_id=id />                            <%-- xterm.js console, stdout/stderr filter --%>
 ```
 
-`Task_Report` kinds: status_text, progress, progress_count, progress_text, eta, heartbeat, state_json, state_list, messages, summary, return_code. Size widgets with CSS on the host. A `state_list` report fetches only the rows its box holds (single-line 24px rows; `Rsx_Task.report(id, 'state_list', limit)` answers the first N plus `total`), shows "+N more" in the last row, and re-measures on `on_viewport_resize()` - so give it a sized box. Reference screen: `system/app/RSpade/resource/reference_app/app/frontend/system/tasks/`.
+`Task_Report` kinds: status_text, progress, progress_count, progress_text, eta, heartbeat, state_json, queue, messages, summary, return_code. Size widgets with CSS on the host. A `queue` report fetches only the rows its box holds (single-line 24px rows; `Rsx_Task.report(id, 'queue', limit)` answers the first N plus `total`), shows "+N more" in the last row, and re-measures on `on_viewport_resize()` - so give it a sized box. Reference screen: `system/app/RSpade/resource/reference_app/app/frontend/system/tasks/`.
 
 ---
 

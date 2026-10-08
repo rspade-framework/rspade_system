@@ -68,13 +68,15 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     const CACHE_VERSION = 3;
 
     /**
-     * Host cores per container. A container is a whole environment (mysqld on tmpfs + redis +
+     * The container count is WORKERS_PER_CORE_GROUP containers for every CORES_PER_GROUP host
+     * cores: 2 * ceil(cores / 3). A container is a whole environment (mysqld on tmpfs + redis +
      * rsx-lockd + php-fpm + nginx + the worker and whatever it spawns), so one container per
      * core oversubscribes the box several times over - a full run on a 16-core host measured a
-     * load average in the hundreds. ceil(cores / 3) leaves the host responsive while the suite
-     * runs (owner ruling, 2026-09-26).
+     * load average in the hundreds. One per three cores (owner ruling, 2026-09-26) left the
+     * host with room to spare, and was doubled (owner ruling, 2026-10-08).
      */
-    const CORES_PER_WORKER = 3;
+    const CORES_PER_GROUP = 3;
+    const WORKERS_PER_CORE_GROUP = 2;
 
     /**
      * The image the workers run, built by the orchestrator from Dockerfile.test.
@@ -918,8 +920,11 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // than relying on those keys being blank: whether the developer running the suite
         // happens to have configured credentials is not something the baseline may depend
         // on. (The `--_` convention: no InputOption, stripped pre-boot from argv.)
+        // --no-rebuild: the build on disk is the runner's to manage, and it belongs to the
+        // development database too - a child connected to the TEST database must not
+        // rebuild it because the two differ by a migration not yet applied to the other.
         $args = array_merge(
-            ['--force', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG],
+            ['--force', '--no-rebuild', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG],
             Rsx_Project_Paths::child_flags()
         );
 
@@ -1566,8 +1571,8 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     }
 
     /**
-     * How many containers to run: ceil(cores / CORES_PER_WORKER), floor 1, never more
-     * containers than classes. --workers=N overrides the formula (an experiment knob; the
+     * How many containers to run: WORKERS_PER_CORE_GROUP * ceil(cores / CORES_PER_GROUP),
+     * floor 1, never more containers than classes. --workers=N overrides the formula (an experiment knob; the
      * floors of 1 and the class count still apply).
      *
      * @param int $class_count
@@ -1580,7 +1585,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             return max(1, min((int) $override, max(1, $class_count)));
         }
 
-        $n = (int) ceil($this->__cpu_cores() / self::CORES_PER_WORKER);
+        $n = self::WORKERS_PER_CORE_GROUP * (int) ceil($this->__cpu_cores() / self::CORES_PER_GROUP);
 
         return max(1, min($n, max(1, $class_count)));
     }

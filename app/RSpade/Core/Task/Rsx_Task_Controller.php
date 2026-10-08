@@ -54,15 +54,16 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     }
 
     /**
-     * One report's value. kind: state_json, state_list, summary, messages (the first page),
+     * One report's value. kind: state_json, queue, summary, messages (the first page),
      * or any column report (status_text, progress, progress_count, eta, heartbeat, return_code)
      * - which to_status_array() carries too.
      *
-     * state_list takes an optional `limit` (a whole number >= 1): only the FIRST that many
-     * items - the oldest, the head of the queue - are sent, and `total` says how many the list
-     * holds, so a viewer sized to show N rows asks for N. `total` is null for every other kind.
+     * queue takes an optional `limit` (a whole number >= 1): only the FIRST that many items -
+     * the oldest, the head of the queue - are read and sent, and `total` says how many the
+     * queue holds, so a viewer sized to show N rows asks for N. `total` is null for every
+     * other kind.
      *
-     * @param array $params task_id, kind, limit (state_list only)
+     * @param array $params task_id, kind, limit (queue only)
      */
     #[Ajax_Endpoint]
     #[Portal_Impersonation_Readable]
@@ -85,7 +86,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
 
         $value = match ($kind) {
             'state_json' => $task->state(),
-            'state_list' => $task->state_list(),
+            'queue' => $task->queue($limit),
             'summary' => $task->summary(),
             'messages' => $task->messages_after(null, self::READ_PAGE),
             'status_text' => $task->status_text(),
@@ -97,17 +98,11 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
             default => null,
         };
 
-        if ($value === null && !in_array($kind, ['state_json', 'state_list', 'summary', 'messages', 'status_text', 'progress', 'progress_count', 'eta', 'heartbeat', 'return_code'], true)) {
+        if ($value === null && !in_array($kind, ['state_json', 'queue', 'summary', 'messages', 'status_text', 'progress', 'progress_count', 'eta', 'heartbeat', 'return_code'], true)) {
             return response_error(Ajax::ERROR_VALIDATION, "Unknown task report '{$kind}'");
         }
 
-        $total = null;
-        if ($kind === 'state_list' && is_array($value)) {
-            $total = count($value);
-            if ($limit !== null) {
-                $value = array_slice($value, 0, $limit);
-            }
-        }
+        $total = $kind === 'queue' && is_array($value) ? $task->queue_depth() : null;
 
         return ['kind' => $kind, 'value' => $value, 'total' => $total, 'status' => static::__present($task)];
     }

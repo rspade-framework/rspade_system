@@ -64,16 +64,17 @@ require_once __DIR__ . '/../../helpers.php';
  *   caller computes. The caller owns invalidation, and that is the point: the key states
  *   exactly which inputs the answer depends on. Two examples in the tree:
  *
- *     Model_ManifestSupport         '<model file hash>__<hash of every migration file>'
+ *     Model_ManifestSupport         '<model lineage hash>__<hash of the applied migrations>'
  *                                   - the column map, which is a function of the model file
  *                                     and of the schema, and of nothing else
  *     Manifest_Indexer      a stat fingerprint of the framework subtrees the
  *                                   manifest never indexes - their class names
  *
- *   A persistent entry has no expiry by default and is never flushed by clear(); an entry
- *   whose key can no longer be produced is simply never read again and is LRU-evicted. So a
- *   persistent key MUST carry its inputs: a fixed key with changing inputs is a stale answer
- *   forever.
+ *   A persistent entry has no expiry by default and outlives a BUILD, not a clear(): it
+ *   shares the (database, host) scope prefix, so clear() - a rollback, `migrate`, rsx:clean -
+ *   removes it with everything else in the scope. An entry whose key can no longer be
+ *   produced is simply never read again and is LRU-evicted. So a persistent key MUST carry
+ *   its inputs: a fixed key with changing inputs is a stale answer until the next clear().
  *
  * THE _RVC_ KEY CONVENTION is INTERNAL ONLY - it is a cache-key convention, not a second API.
  * A key beginning with _RVC_ is stored in database 2 under the ordinary build-key and
