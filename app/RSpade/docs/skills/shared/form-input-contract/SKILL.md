@@ -63,6 +63,24 @@ faithfully. `null` is a real value (most nullable columns), never a sentinel. Wh
 value is pending, `val()` as a getter returns it - so a form serialized before every
 input finished initializing still reports what was set.
 
+## Focus
+
+`input.focus()` puts the cursor in the input, and it is timing-indifferent in the same way:
+called before `_mark_ready()` it is remembered and honoured when the input becomes ready,
+AFTER any buffered value is applied, so the cursor lands in the input as the user will see
+it. **A host never reaches into an input's markup to focus it** (`.find('input').focus()`
+knows what the input is made of and bets on when it rendered) - it calls `focus()` on the
+component, from wherever is convenient.
+
+The default focuses the first visible, enabled focusable element in the input's markup,
+which is right for text, select, checkbox and date inputs with no code at all. **Override
+`_focus()`, never `focus()`** - the same split as `val()` / `_set_value()`, and for the same
+reason: buffering lives in the public method. A rich-text editor focuses its editing
+surface, a TomSelect-backed picker calls the library's own focus, a hidden input does
+nothing. An input that wants focus to land somewhere specific however it arrived (a click,
+Tab, or this call - the browser does not tell them apart) handles the `focus` EVENT on its
+own elements instead.
+
 ## `_mark_ready()`: as early as it will stick
 
 Initialize in `on_render()` whenever the input's DOM is self-contained; use `on_ready()`
@@ -198,6 +216,8 @@ and calls `_mark_ready()`.
 | Mistake | Consequence |
 |---|---|
 | Overriding `val()` | Buffering and events bypassed |
+| Overriding `focus()` | Buffering bypassed - override `_focus()` |
+| A host calling `.find('input').focus()` | Tied to the input's markup and to render timing - call `input.focus()` |
 | Forgetting `_mark_ready()` | A buffered value is never applied; the field stays blank |
 | `_mark_ready()` too early | The write lands before the widget can hold it |
 | Hand-triggering `'input'`+`'val'` | Half the listeners break, silently |

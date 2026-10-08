@@ -62,3 +62,24 @@ any endpoint.
 | forms-question-12 | answers accumulate | two questions, two different answers | the third call's body carries both | implemented |
 | forms-question-13 | a runaway loop is a defect, not a wait | an endpoint that always asks | `MAX_QUESTION_ROUNDS + 1` calls, then a rendered error naming the endpoint, resolving false | implemented |
 | forms-question-14 | a missing handler cannot hide | both handlers cleared | `submit()` THROWS, the message names `set_question_handler()`, and nothing is rendered in the form | implemented |
+
+## form_message_only_error.js (playwright) - a failure that names no field
+
+A validation error whose metadata is only `_message` used to render nothing: the renderer
+drew the top alert only when it had found a field error. The probe is a runtime-built
+`Rsx_Form` on `/_sys` with `Ajax.call` scripted to reject.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-message-01 | the message is all there is | `{_message}` | rendered once in `<Form_Errors />`, `submit()` false | implemented |
+| forms-message-02 | the working path gains no second copy | `{_message, code}` | the message once, nothing stale | implemented |
+| forms-message-03 | a hook that throws an Error | `before_submit` throws `Error` | its message rendered once | implemented |
+
+## form_input_focus.js (playwright) - `Form_Input_Abstract.focus()`
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-focus-01 | a ready input takes focus | `focus()` | its control is the active element | implemented |
+| forms-focus-02 | before ready nothing moves | `focus()` with the ready flag clear | the active element is unchanged | implemented |
+| forms-focus-03 | readiness honours the request after the value | `val('buffered')`, `focus()`, `_mark_ready()` | focused, and the control held the value when it took focus | implemented |
+| forms-focus-04 | readiness alone moves nothing | `_mark_ready()` with nothing pending | the active element is unchanged | implemented |

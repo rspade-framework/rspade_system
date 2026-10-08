@@ -12,7 +12,6 @@ class Ajax {
     static ERROR_NOT_FOUND = 'not_found';
     static ERROR_UNAUTHORIZED = 'unauthorized';
     static ERROR_AUTH_REQUIRED = 'auth_required';
-    static ERROR_REQUIREMENT_PENDING = 'requirement_pending'; // A login requirement is outstanding: metadata.destination
     static ERROR_FATAL = 'fatal';
     static ERROR_GENERIC = 'generic';
     static ERROR_QUESTION = 'question';             // Not a failure: a pending server-driven question
@@ -580,12 +579,6 @@ class Ajax {
 
         if (error_code === Ajax.ERROR_AUTH_REQUIRED) {
             console.error('User is no longer authenticated');
-        }
-
-        // Signed in, with a login requirement still to do: the server names the page that
-        // does it, and the whole application goes there. See rsx:man login_requirements.
-        if (error_code === Ajax.ERROR_REQUIREMENT_PENDING && error.metadata.destination) {
-            window.location = error.metadata.destination;
         }
         if (error_code === Ajax.ERROR_UNAUTHORIZED) {
             console.error('User is unauthorized to perform this action');

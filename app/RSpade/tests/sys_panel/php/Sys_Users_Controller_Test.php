@@ -167,7 +167,7 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
         $site_left = static::__site('Sys Users Detail Left');
 
         $id = static::__identity("sys-users-detail-{$tag}@example.com", ['last_login' => '2026-01-02 03:04:05', 'timezone' => 'America/Chicago']);
-        $on_a = static::__membership($id, $site_a->id, ['is_2fa_required' => 1, 'is_api_access_enabled' => 0]);
+        $on_a = static::__membership($id, $site_a->id, ['is_api_access_enabled' => 0]);
         $on_off = static::__membership($id, $site_off->id);
         $on_gone = static::__membership($id, $site_gone->id);
         $invited = static::__membership($id, $site_invite->id, ['invite_code' => 'sys-users-' . $tag, 'invite_accepted_at' => null, 'invite_expires_at' => '2020-01-01 00:00:00']);
@@ -190,7 +190,6 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
         static::__assert_equals('Sys Users Detail A', $rows[$on_a]['site_name'], 'the site name');
         static::__assert_equals(User_Model::role_id__enum()[static::most_privileged_role_id()]['label'], $rows[$on_a]['role_label'], 'the role label');
         static::__assert_true($rows[$on_a]['is_active'], 'enabled membership on an enabled site is active');
-        static::__assert_true($rows[$on_a]['is_2fa_required'], '2FA required');
         static::__assert_false($rows[$on_a]['is_api_access_enabled'], 'API access');
         static::__assert_null($rows[$on_a]['invite'], 'never an invitation');
         static::__assert_true($rows[$on_a]['has_site_screen'], 'a live tenant has a Sites screen');

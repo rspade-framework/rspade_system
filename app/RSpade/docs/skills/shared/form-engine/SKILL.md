@@ -129,8 +129,9 @@ a blank field arrives as `''` - something the user *did*, never an omission.
   success.
 
 `response_form_error($message, $fields)`: first argument is the summary, second is the
-field map. `response_error(Ajax::ERROR_VALIDATION, 'a string')` is the wrong shape - that
-argument is metadata, so the alert renders empty. Unmatched keys are legitimate and
+field map. `response_error(Ajax::ERROR_VALIDATION, 'a string')` carries the message and no
+field map: the top alert shows it and no field is marked, so name the input whenever the
+failure is about one. Unmatched keys are legitimate and
 render in the top alert, which **always** renders on a failed submit.
 
 `Form_Utils` (`Core/Js/Form_Utils.js`) is the one renderer: it pins each `{field:

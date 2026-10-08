@@ -208,6 +208,11 @@ class Two_Factor_Controller_Test extends Rsx_Test_Abstract
         static::__assert_instance_of(Error_Response::class, $response);
         static::__assert_equals(Ajax::ERROR_VALIDATION, $response->get_error_code());
         static::__assert_not_empty($response->get_reason(), 'the refusal carries a message for the user');
+        static::__assert_equals(
+            $response->get_reason(),
+            $response->get_metadata()['code'] ?? null,
+            'the message is pinned to the code input, so a form hosting this endpoint marks the field'
+        );
     }
 
     /**

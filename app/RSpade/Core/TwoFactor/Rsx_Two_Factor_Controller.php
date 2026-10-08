@@ -97,13 +97,15 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
         $code = isset($params['code']) ? trim((string) $params['code']) : '';
 
         if ($code === '') {
-            return response_error(Ajax::ERROR_VALIDATION, 'Enter the 6-digit code from your authenticator app.');
+            $message = 'Enter the 6-digit code from your authenticator app.';
+
+            return response_form_error($message, ['code' => $message]);
         }
 
         try {
             $codes = Rsx_Two_Factor::confirm_totp_enrollment($code);
         } catch (Two_Factor_Failed_Exception $e) {
-            return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+            return response_form_error($e->getMessage(), ['code' => $e->getMessage()]);
         }
 
         return ['recovery_codes' => $codes];

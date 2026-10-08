@@ -221,8 +221,10 @@ THE ENDPOINT CONTRACT
         ]);
 
         The first argument is the SUMMARY MESSAGE and the second is the field
-        map. response_error(Ajax::ERROR_VALIDATION, 'a string') is the wrong
-        shape - that second argument is METADATA, so the alert renders empty.
+        map. response_error(Ajax::ERROR_VALIDATION, 'a string') carries the
+        message and no field map: the top alert shows it and no field is
+        marked. When the failure is about one input, name it - the message is
+        then pinned where the user has to act.
 
         Each key is matched to the input whose $name it names, and the message is
         pinned under that field. An unmatched key is legitimate (a rule about no

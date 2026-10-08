@@ -64,13 +64,8 @@ The APPLICATION half of the flow, which the framework deliberately does not own:
 - `rsx/app/login/login_controller.php` - the two-stage login: `index()` verifies the
   password with recording and the last_login stamp suppressed and issues the challenge,
   `verify()` renders the challenge screen, `verify_2fa()` is the verification endpoint
-  `<Two_Factor_Challenge>` posts to, and `two_factor_setup()` is the forced-enrollment
-  screen
-- `rsx/app/login/login_verify.blade.php` / `login_two_factor_setup.blade.php` +
-  `login_two_factor_setup.js` - the two screens
-- `rsx/app/login/two_factor_enrollment_requirement.php` - a `users.is_2fa_required` identity
-  with no factor is a login requirement whose screen is `two_factor_setup()` (the mechanism is
-  the `login_requirements` concern)
+  `<Two_Factor_Challenge>` posts to
+- `rsx/app/login/login_verify.blade.php` - the challenge screen
 - `rsx/portal/auth/Portal_Login_Controller.php` - `challenge_accepts()` / `send_code()`: the
   opt-in emailed sign-in code built on `issue_code()` (`rsx.portal.emailed_sign_in_codes`)
 - `rsx/app/frontend/settings/password_security/` - the settings screen over

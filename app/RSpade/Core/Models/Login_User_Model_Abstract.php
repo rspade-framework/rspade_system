@@ -7,6 +7,7 @@ use Illuminate\Auth\Passwords\CanResetPassword;
 use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Notifications\Notifiable;
 use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
+use App\RSpade\Core\Models\Has_Preference_Variables;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
 /**
@@ -101,6 +102,7 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
     use Authorizable;
     use CanResetPassword;
     use Notifiable;
+    use Has_Preference_Variables;
 
     /**
      * Enum field definitions

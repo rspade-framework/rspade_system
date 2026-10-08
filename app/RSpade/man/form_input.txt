@@ -124,6 +124,30 @@ LIFECYCLE: EDITABLE AS SOON AS POSSIBLE
     system/app/RSpade/resource/reference_app/theme/components/inputs/tag_list/
     tag_list_input.js
 
+FOCUS
+
+    input.focus() puts the cursor in the input. Like val() it may be called at
+    any point in the component's life: before _mark_ready() the request is
+    remembered and honoured when the input becomes ready, after any buffered
+    value has been applied. A host never reaches into an input's markup to
+    focus it, and never waits for the input first.
+
+        this.sid('code').focus();            // from on_create(), on_ready(), a
+                                             // dialog's show handler - anywhere
+
+    The default, _focus(), focuses the first visible, enabled focusable element
+    in the input's markup (input, select, textarea, contenteditable, tabindex).
+    An input whose editable surface is something else overrides _focus() -
+    never focus(), which is where the buffering lives:
+
+        class Wysiwyg_Input extends Form_Input_Abstract {
+            _focus() { this.quill.focus(); }
+        }
+
+    A programmatic focus fires the same focus event a click or the Tab key
+    does. An input that wants focus to land somewhere specific handles that
+    event on its own elements, whatever caused it.
+
 EVENTS
 
     'input'   the USER changed the value through the UI
@@ -290,6 +314,13 @@ COMMON MISTAKES
     Overriding val()
         Implement _get_value()/_set_value(). The base class owns buffering and
         events.
+
+    Overriding focus()
+        Override _focus(). The base class owns the buffering.
+
+    Focusing an input from outside with .find('input').focus()
+        Call input.focus(). The host should not know what the input is made
+        of, or when it rendered.
 
     Forgetting _mark_ready()
         A buffered value is never applied, and the field silently stays empty.

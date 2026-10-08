@@ -31,7 +31,7 @@ RESPONSE FORMATS
     -----------------------------------------
     {
         "_success": false,
-        "error_code": "validation|not_found|unauthorized|auth_required|requirement_pending|question|generic",
+        "error_code": "validation|not_found|unauthorized|auth_required|question|generic",
         "reason": "User-friendly message",
         "metadata": { /* optional, e.g., field-specific validation errors */ },
         "console_debug": [ /* optional debug messages */ ]
@@ -46,12 +46,6 @@ RESPONSE FORMATS
     the envelope too, never an HTML page: 404 is "not_found", 403
     "unauthorized", 401 "auth_required", any other status "generic" with the
     abort's message.
-
-    "requirement_pending" is the framework's own: a signed-in identity with a
-    login requirement outstanding called an endpoint that requirement does not
-    list. metadata.destination is the requirement's screen, and the JS Ajax
-    layer NAVIGATES THERE by itself before the promise rejects - no handler is
-    needed (rsx:man login_requirements).
 
     Fatal PHP Errors (Uncaught Exceptions)
     ---------------------------------------
@@ -266,8 +260,7 @@ CLIENT-SIDE IMPLEMENTATION
     Rejected promises receive standard Error objects with additional properties:
 
         error.code       - 'validation'|'not_found'|'unauthorized'|
-                           'auth_required'|'requirement_pending'|'fatal'|
-                           'network'
+                           'auth_required'|'fatal'|'network'
         error.message    - User-displayable message
         error.metadata   - Additional error data from server
                            (for validation: field-specific errors)

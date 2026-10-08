@@ -1,0 +1,112 @@
+USER_PREFERENCE_VARIABLES(1)     RSpade Manual     USER_PREFERENCE_VARIABLES(1)
+
+NAME
+    user_preference_variables - a small key/value store on each user record
+
+SYNOPSIS
+    $user->get_variable(string $key, $default = null)   // the value, or $default
+    $user->set_variable(string $key, $value): void      // create or replace
+    $user->forget_variable(string $key): void           // absent key: no error
+    $user->has_variable(string $key): bool
+
+    on User_Model, Login_User_Model and Portal_User_Model.
+
+    Session::get_login_user()->set_variable('passkey_prompt', 'declined');
+    if (!Session::get_user()->has_variable('storage_step')) { ... }
+
+DESCRIPTION
+    An application wants to remember small per-person facts that are not worth
+    a column: "skipped the passkey prompt", "dismissed the storage step", "has
+    seen the welcome tour". A preference variable is that: a value stored
+    beside a user record under a key, read on demand.
+
+    WHICH RECORD is the application's decision, and it matters:
+
+        Login_User_Model    the IDENTITY - the same person on every site they
+                            belong to. "Declined a passkey" is a fact about
+                            the identity. Session::get_login_user().
+        User_Model          that person on ONE site. "Skipped connecting a
+                            storage account" is a fact about one site's user.
+                            Session::get_user().
+        Portal_User_Model   a client-portal user.
+                            Portal_Session::get_portal_user().
+
+    The three stores are separate: the same key on an identity and on one of
+    its memberships holds two values.
+
+    VALUES are JSON-encoded, so scalars, arrays and null round-trip unchanged.
+    NULL IS A VALUE: has_variable() is true for a key set to null, and
+    get_variable() answers null for it rather than the default. The default is
+    returned only for a key that was never set, or was forgotten.
+
+    WHAT THE STORE DELIBERATELY IS NOT
+
+        Never in the record's payload. A variable is not in toArray(), not in
+        fetch(), and not in the user object printed onto every page. That is
+        half the reason the store exists: a value read on one screen in a
+        person's lifetime must not travel on every request. There is no JS
+        API - an endpoint that needs to show one returns it.
+
+        No expiry. A recorded decision does not expire. "Ask again in 90
+        days" stores the date as the value and compares it.
+
+        No revision history, no realtime. These are not record fields.
+
+    LIFETIME. A soft-deleted record keeps its variables, because its row is
+    still there; removing the row removes them by cascade. A record that has
+    not been saved has no store, and reading or writing one throws.
+
+    Each key is read from the database once per model instance and remembered
+    for the rest of the request.
+
+WHEN TO USE A COLUMN INSTEAD
+    A preference that is expected to exist for the life of the account is a
+    COLUMN. Dark mode, timezone, default landing page, notification settings:
+    every user has a value, the application reads it constantly, it belongs in
+    the record's payload, and it deserves a type, a default and a migration.
+
+    A preference variable is for a one-time gate or a minor value - a step
+    completed or skipped, a prompt dismissed, a "do not show this again". Most
+    users will never have most keys; the value is read in one place.
+
+    If you find yourself querying a variable across users, sorting by it, or
+    reading it on every request, it has become a column - migrate it.
+
+WHEN TO USE A SESSION VALUE INSTEAD
+    Session::put_value() / get_value() / forget_value() (and the
+    Portal_Session twins) store against ONE BROWSER SESSION, and the value
+    vanishes with it: a wizard's progress, the sign-in steps still
+    outstanding. A preference variable is for something that should still be
+    true on another device next month.
+
+EXAMPLE
+    An optional step offered after sign-in, skippable for good:
+
+        // the login function, after RsxAuth::login($login_user)
+        if (!$login_user->has_variable('passkey_prompt')) {
+            Session::put_value('onboarding', ['passkey_prompt']);
+        }
+
+        // the step's "No thanks" endpoint
+        Session::get_login_user()->set_variable('passkey_prompt', 'declined');
+        Session::forget_value('onboarding');
+
+    The session value says "this sign-in still has a step to show"; the
+    variable says "this person answered, do not ask again".
+
+STORAGE
+    Three system tables, one per record, each with a real foreign key
+    (ON DELETE CASCADE) and UNIQUE(owner, variable_key):
+
+        _user_variables          user_id
+        _login_user_variables    login_user_id
+        _portal_user_variables   portal_user_id
+
+    An application reads and writes them only through the four methods.
+
+SEE ALSO
+    rsx:man session - put_value() / get_value(), the session-scoped store
+    rsx:man model - columns, $appends and the record payload
+    rsx:man two_factor - REQUIRING A SECOND FACTOR, a sign-in step of your own
+
+RSpade                              2026           USER_PREFERENCE_VARIABLES(1)

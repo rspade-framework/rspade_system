@@ -1,6 +1,6 @@
 ---
 name: two-factor
-description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge with $accepts / issue_code / pending_identity / verify_challenge / begin_passkey_login / verify_passkey_login, the ANSWER_* kinds) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::verify_credentials(record: false) then begin_challenge, Two_Factor_Failed_Exception::reason() and the two_factor.challenge.spent event, passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove / :unlock operator commands, the attempt caps (is_locked / clear_failures, rsx.two_factor.challenge_max_failures / identity_max_failures), emailed six-digit sign-in codes (issued codes, a SECURITY-category email, <Two_Factor_Challenge $send_controller $send_method>, sso.two_factor.accepts), and requiring a factor as a login requirement. Use when adding 2FA, TOTP, passkeys or an emailed code to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Too many incorrect codes. Please sign in again.', 'Too many incorrect codes have been entered for this account. Please try again later.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', 'does not accept an issued code', 'holds none of them - nobody could answer this challenge', 'This sign-in cannot be completed with a passkey.', 'That security key request has expired. Please try again.', a passkey that will not save after a QR scan (publicKey.timeout, passkey_enroll_abandoned), or a passkey refused after moving hosts."
+description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge with $accepts / issue_code / pending_identity / verify_challenge / begin_passkey_login / verify_passkey_login, the ANSWER_* kinds) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::verify_credentials(record: false) then begin_challenge, Two_Factor_Failed_Exception::reason() and the two_factor.challenge.spent event, passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove / :unlock operator commands, the attempt caps (is_locked / clear_failures, rsx.two_factor.challenge_max_failures / identity_max_failures), emailed six-digit sign-in codes (issued codes, a SECURITY-category email, <Two_Factor_Challenge $send_controller $send_method>, sso.two_factor.accepts), and requiring a factor as the application's own sign-in step. Use when adding 2FA, TOTP, passkeys or an emailed code to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor before a user may continue, recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Too many incorrect codes. Please sign in again.', 'Too many incorrect codes have been entered for this account. Please try again later.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', 'does not accept an issued code', 'holds none of them - nobody could answer this challenge', 'This sign-in cannot be completed with a passkey.', 'That security key request has expired. Please try again.', a passkey that will not save after a QR scan (publicKey.timeout, passkey_enroll_abandoned), or a passkey refused after moving hosts."
 ---
 
 # Two-factor authentication
@@ -210,28 +210,15 @@ $code = Rsx_Two_Factor::issue_code();     // six digits; only a keyed hash is ke
 
 ---
 
-## Requiring a factor - a login requirement
+## Requiring a factor - the application's own step
 
-The framework decides only whether an identity HAS a factor. Requiring one is a **login requirement** (`rsx:man login_requirements`, skill `rspade:login-requirements`): a `Login_Requirement_Abstract` class whose `is_satisfied()` is your predicate, whose `screen()` is the setup page, and whose `surfaces()` lists the enrollment endpoints. Until it is met the user is signed in but reads as signed OUT everywhere else - pages, Ajax, model fetch - so it cannot be stepped around.
+The framework decides only whether an identity HAS a factor. It reads no "required" setting and ships no screen that holds a signed-in user until they enroll; the reference application requires nobody to. An application that wants the rule writes it as its own sign-in step:
 
-The reference application's (`reference_app/app/login/two_factor_enrollment_requirement.php`), on `users.is_2fa_required` - a column IT added and sets from its edit-user modal:
+- the login function works out once, at sign-in, what this person still owes (your predicate and `!Rsx_Two_Factor::is_enabled($login_user)`) and parks it with `Session::put_value()`;
+- `Main::pre_dispatch()` redirects a page request to your enrollment screen while that value is set, leaving the login, enrollment and logout routes alone;
+- the screen hosts `<Totp_Enrollment />` / `<Passkey_Register />` and clears the value on `enrolled` / `registered`.
 
-```php
-public static function is_satisfied(Rsx_Model_Abstract $user): bool
-{
-    return !$user->is_2fa_required || Rsx_Two_Factor::is_enabled((int) $user->login_user_id);
-}
-
-public static function surfaces(): array
-{
-    return ['Rsx_Two_Factor_Controller::totp_begin', 'Rsx_Two_Factor_Controller::totp_confirm',
-            'Rsx_Two_Factor_Controller::passkey_register_begin', 'Rsx_Two_Factor_Controller::passkey_register_confirm'];
-}
-```
-
-- **Impersonation is exempt by default** (`applies_while_impersonating()`): the framework refuses enrollment while impersonating anyway.
-- Enrolling is the whole completion: the screen navigates to `/` on `enrolled`/`registered`, which re-evaluates and admits.
-- A flag changed mid-session reaches signed-in users on their next request after `Login_Requirements::recheck_user($user)`.
+A user past the password is signed in - what they may do is the gates' business as on any request; an outstanding step is not an access level. A rule switched on today reaches each person at their next sign-in. Enrollment is refused while impersonating, so skip the step there. A step skipped for good is a preference variable (`$login_user->set_variable()`, `rsx:man user_preference_variables`).
 
 ---
 
@@ -255,7 +242,6 @@ JS helpers: `Rsx_Two_Factor.is_supported()`, `controller()` (the page realm's co
 - **Do not double-count the throttle.** `Login_History::record_failure(..., STATUS_FAILED_2FA, ...)` already feeds `Login_Throttle`. Calling `Login_Throttle::record_failure()` beside it halves the real budget, and the halving is only ever discovered by a user locked out early.
 - **Two attempt caps sit beside the throttle, independent of IP.** Every wrong answer counts against the CHALLENGE (`challenge_max_failures`, 5: the answer that reaches it destroys the challenge, so the user signs in again) and against the IDENTITY (`identity_max_failures`, 10, inside the 60-minute `identity_failure_window_minutes` security window: once reached, `is_locked()` is true and verification is refused - a correct code included - until the window closes). A correct answer clears the count. Release a locked user with `rsx:users:2fa:unlock --user=` (staff) or `Rsx_Portal_Two_Factor::clear_failures($portal_user)`; both messages are user-safe `Two_Factor_Failed_Exception`s, rendered as-is.
 - **Park before you log out.** Anything the challenge must carry across (an invite code, a redirect) is written with `Session::put_value($key, $value, Rsx_Two_Factor::challenge_expires_at())` **BEFORE** `begin_challenge()`. `put_value()` establishes the session row; the logout clears the identity, not the row, and `_session_values` survive by FK. Written afterwards, it lands on a session the caller abandoned.
-- **A checkbox absent from a POST means OFF.** A policy flag of your own (the reference app's `is_2fa_required`) uses `!empty($params['is_2fa_required']) ? 1 : 0`, or it can never be turned back off.
 - **A dismissed browser prompt is not an error.** `NotAllowedError` is caught and answered as `null`; say nothing and leave the button available.
 - **The WebAuthn ceremony timeout is the framework's: 300 seconds** (`Passkeys::CEREMONY_TIMEOUT_SECONDS`, sent as `publicKey.timeout` = 300000 on registration, the second-factor assertion and passwordless sign-in, both realms) - a browser UI hint sized for the cross-device QR flow, which a 20-second prompt cannot hold. The browser may clamp it. The server's challenge window is derived from it (300 + 60 s margin, `Passkeys::challenge_window_seconds()`); `challenge_window_minutes` does not govern a WebAuthn challenge.
 - **"My passkey would not save" - read the identity's `_login_history`** (the /_sys panel's Sign-ins tab). Staff enrollments record `passkey_enroll_begun` / `passkey_enrolled` / `passkey_enroll_failed` / `passkey_enroll_abandoned`; the portal logs `Portal passkey enrollment` lines instead. Begun then abandoned with no failed row = no confirmation ever reached the server: the browser or the phone's credential provider declined (the usual cause of a generic browser error right after a QR scan - some authenticator apps are not general passkey providers for arbitrary sites). A failed row is the server refusing a response it received; its `failure_reason` says why. Abandonment is recorded by the next begin in that browser or by the hourly `Session_Values_Cleanup_Service` sweep.

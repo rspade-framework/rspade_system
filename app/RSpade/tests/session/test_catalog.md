@@ -396,3 +396,15 @@ refuses a cross-site save or delete.
 | sess-enabled-13 | request time: disabling the SITE ends the session | php | acting identity, then `sites.is_enabled = 0` | `enforce_enabled_membership()` false, logged out | implemented |
 | sess-enabled-14 | the Default site (id 0) refuses to be disabled | php | `Site_Model::find(0)`, `is_enabled = 0`, save | `RuntimeException` "cannot be disabled", row unchanged | implemented |
 | SESSION-USER-EXPORT-01 | User_Model::toArray() and its JSON encoding (window.rsxapp.user, model fetch, the API) omit invite_code, invite_accepted_at and invite_expires_at | php | user 1 with an invite code set in memory | none of the three keys present; the code never appears in the JSON | implemented |
+
+## User_Preference_Variables_Test (php) - get_variable / set_variable on the user records
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| pref-var-01 | a write is read back from the table | set, then a fresh instance | unset: default and not had; set: the value, had | implemented |
+| pref-var-02 | values round-trip; null is a value | false, 0, '', a list, a map, null; a second write | each returned unchanged; one row per key; null had and answered over the default | implemented |
+| pref-var-03 | forget | an absent key; a set key | no error; gone on the instance and in the table | implemented |
+| pref-var-04 | three records, three stores | the same key on an identity, a membership, a portal user | three values; another identity has none | implemented |
+| pref-var-05 | never in the payload | `toArray()` on the writer and on fresh instances | no trace of the key or the value | implemented |
+| pref-var-06 | soft delete keeps, row removal cascades | soft delete, then delete the row | value still read; then zero rows | implemented |
+| pref-var-07 | an unsaved record is refused | `set_variable()` on a new model | a RuntimeException saying to save first | implemented |

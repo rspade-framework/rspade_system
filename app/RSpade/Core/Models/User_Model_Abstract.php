@@ -6,13 +6,13 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
+use App\RSpade\Core\Models\Has_Preference_Variables;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Permission_Model;
 use App\RSpade\Core\Models\User_Profile_Model;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Rsx;
-
 /**
  * User_Model_Abstract - site-specific user profile with role-based access control
  *
@@ -55,7 +55,6 @@ use App\RSpade\Core\Rsx;
  * @property string $invite_accepted_at
  * @property string $invite_code
  * @property string $invite_expires_at
- * @property int $is_2fa_required
  * @property int $is_api_access_enabled
  * @property int $is_enabled
  * @property string $last_name
@@ -88,6 +87,8 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     const ROLE_MANAGER = 500;
     const ROLE_USER = 600;
     const ROLE_VIEWER = 700;
+
+    use Has_Preference_Variables;
 
     // =========================================================================
     // ROLE CONSTANTS (lower ID = higher privilege, 100-based for future expansion)

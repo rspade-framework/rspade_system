@@ -93,7 +93,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      *                status_options, impersonate_refusal},
      *                memberships: [{id, site_id, site_name, site_is_enabled, site_is_deleted,
      *                has_site_screen, first_name, last_name, role_id, role_label, is_enabled,
-     *                is_active, is_2fa_required, is_api_access_enabled, invite, created_at}]}
+     *                is_active, is_api_access_enabled, invite, created_at}]}
      *                invite is null (no invitation), 'pending', 'accepted' or 'expired'.
      */
     #[Ajax_Endpoint]
@@ -742,7 +742,6 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
                 'role_label' => $role_id === null ? null : ($roles[$role_id]['label'] ?? ('Role ' . $role_id)),
                 'is_enabled' => (bool) $membership->is_enabled,
                 'is_active' => $membership->is_active(),
-                'is_2fa_required' => (bool) $membership->is_2fa_required,
                 'is_api_access_enabled' => (bool) $membership->is_api_access_enabled,
                 'invite' => static::__invite_state($membership),
                 'created_at' => Rsx_Time::to_iso($membership->created_at),

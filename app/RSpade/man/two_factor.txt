@@ -100,9 +100,9 @@ DESCRIPTION
     is_enabled($identity) is the whole question. A framework-wide "2FA on"
     flag would have to decide what happens to every account that has not
     enrolled yet, which is a policy only an application can hold. THE
-    FRAMEWORK READS NO SUCH COLUMN. The reference application's example of
-    holding that policy is a users.is_2fa_required column of its own plus an
-    interstitial (see IMPLEMENTING 2FA IN AN APPLICATION); yours may differ.
+    FRAMEWORK READS NO SUCH COLUMN, and ships no screen that makes a
+    signed-in user enroll: requiring a factor is the application's own
+    policy and its own screen (see IMPLEMENTING 2FA IN AN APPLICATION).
 
     Laravel differences: there is no package to install, no service provider,
     no middleware and no fortify-style scaffolding. The tables ship in the
@@ -785,9 +785,8 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
 IMPLEMENTING 2FA IN AN APPLICATION
     Worked example, complete and release-current:
     system/app/RSpade/resource/reference_app/app/login/login_controller.php
-    (the challenge screen is login_verify.blade.php, the interstitial is
-    login_two_factor_setup.blade.php, and the settings enrollment screen is
-    app/frontend/settings/password_security/).
+    (the challenge screen is login_verify.blade.php and the settings
+    enrollment screen is app/frontend/settings/password_security/).
 
     1. REWORK THE LOGIN FUNCTION INTO TWO STAGES
         Check the password WITHOUT signing anybody in, then branch on
@@ -951,58 +950,34 @@ IMPLEMENTING 2FA IN AN APPLICATION
         credential_remove({id}), regeneration is recovery_regenerate() - both
         answer the fresh state.
 
-    4. FORCING A SECOND FACTOR (OPTIONAL, AND YOURS TO OWN)
-        The framework decides only whether an identity HAS a factor. A
-        REQUIREMENT is application policy, and the whole point of one is that
-        the app is unusable until it is met - so it belongs in
-        Main::pre_dispatch(), ahead of every screen, not on a page the user
-        can decline to visit.
+    4. REQUIRING A SECOND FACTOR (OPTIONAL, AND ENTIRELY YOURS)
+        The framework decides only whether an identity HAS a factor. It
+        does not decide who must have one, it reads no "required" setting,
+        and it ships no screen that holds a signed-in user until they
+        enroll. The reference application requires nobody to enroll.
 
-        WHAT FOLLOWS IS THE REFERENCE APPLICATION'S EXAMPLE, not a framework
-        contract: users.is_2fa_required is a column that application added in
-        its own migration (reference_app/resource/migrations/
-        2026_09_02_133139_add_is_2fa_required_to_users.php), sets from its
-        edit-user modal, and reads in its own Main::pre_dispatch() - the whole
-        of which is at system/app/RSpade/resource/reference_app/main.php. No
-        framework code reads the column. Any predicate your policy can answer
-        works the same way in the same place:
+        An application that wants the rule writes it as its own sign-in
+        step. A user who is past the password is signed in, and what they
+        may do is decided by the gates as on any other request; "you still
+        have to enroll" is a step the application walks them through, not
+        an access level:
 
-            if (str_starts_with($handler, 'Rsx\App\Frontend')) {
-                // ...
-                if (
-                    $user->is_2fa_required
-                    && !Rsx_Two_Factor::is_enabled((int) $login_user_id)
-                    && !Session::is_impersonating()
-                    && Session::get_session()->type_id !== Session::TYPE_PLAYWRIGHT
-                ) {
-                    return redirect(Rsx::Route('Login_Controller::two_factor_setup'));
-                }
-            }
+            - The login function works out, once, at sign-in, what this
+              person still owes (your predicate - a site setting, a role -
+              and !Rsx_Two_Factor::is_enabled($login_user)) and parks it
+              with Session::put_value().
+            - Main::pre_dispatch() redirects a page request to your
+              enrollment screen while that value is set, leaving the
+              login, enrollment and logout routes alone.
+            - The screen hosts <Totp_Enrollment /> and/or
+              <Passkey_Register /> and clears the value on their
+              enrolled / registered event.
 
-        THE HANDLER PREFIX MATTERS: the interstitial itself must be OUTSIDE
-        the intercepted set or the redirect loops.
-
-        TWO EXEMPTIONS, both deliberate:
-            IMPERSONATION      - the impersonator has already authenticated
-                                 as themselves, and the framework refuses
-                                 every enrollment path while impersonating,
-                                 so a bounce would be a dead end.
-            TYPE_PLAYWRIGHT    - rsx:debug's dev-auth declares an identity
-                                 with no password and no challenge, so a
-                                 harness run would bounce into the
-                                 interstitial and every page would become
-                                 untestable for a flagged user. A real
-                                 browser session is never this type.
-
-        The interstitial is an ordinary route that hosts the enrollment
-        components, carries a method-level #[Auth('is_logged_in')] (gates are
-        additive, so it narrows a public class), and redirects away when the
-        identity already has a factor.
-
-        pre_dispatch() runs on DOCUMENT requests, and an SPA does not make
-        them - so a policy flag flipped while a user is on screen needs a
-        realtime user refresh to take effect before their next full load. The
-        reference application pushes one on a confirmed change of its flag.
+        A rule switched on today therefore reaches each person at their
+        NEXT sign-in. Enrollment is refused while impersonating, so the
+        step is skipped for an impersonated session. A step the person
+        chose to skip for good is a preference variable
+        (rsx:man user_preference_variables), not a session value.
 
 ISSUED CODES
     A code the framework MINTS and the application DELIVERS - by email,
@@ -1268,8 +1243,8 @@ SEE ALSO
     turnstile   - human verification on the login form itself
     two_factor_codes - the emailed six-digit sign-in code, end to end, for
                   staff and the portal
-    login_requirements - what a signed-in user must still do (enroll a
-                  factor, accept terms) before the site is theirs
+    user_preference_variables - remembering that a person skipped or
+                  finished an optional sign-in step
     sso         - federated sign-in. A provider sign-in STILL FACES this
                   challenge by default (rsx.sso.skip_two_factor is the
                   opt-out), resolves sso.two_factor.verify_url to find the

@@ -269,8 +269,6 @@ SEE ALSO
                  component contract
     email - the SECURITY category, delivery modes, the dev-site gate
     sso - sso.two_factor.accepts
-    login_requirements - requiring a user to ENROLL a factor before the site
-                 is theirs
     session - the two-stage login, Login_History, the throttle
 
 RSpade                              2026                    TWO_FACTOR_CODES(1)

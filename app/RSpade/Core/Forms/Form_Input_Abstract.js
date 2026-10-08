@@ -33,6 +33,14 @@
  * While a value is pending, val() as a getter returns it, so a form serialized before
  * every input finished initializing still reports what was set.
  *
+ * ── Focus: the same indifference ─────────────────────────────────────────────────────
+ *
+ * focus() puts the cursor in the input and, like val(), may be called at any point: before
+ * _mark_ready() the request is remembered and honoured when the input becomes ready, after
+ * any buffered value has been applied. A host never reaches into an input's markup to focus
+ * it. NEVER override focus(); an input whose editable surface is not the first focusable
+ * element in its markup (a wrapped library, a rich-text editor) overrides _focus().
+ *
  * ── Lifecycle: editable as soon as possible ──────────────────────────────────────────
  *
  * Initialize in on_render() whenever the input's DOM is self-contained; use on_ready()
@@ -90,6 +98,7 @@ class Form_Input_Abstract extends Component {
         this._pending_value = undefined;
         this._has_pending = false;
         this._is_ready = false;
+        this._focus_pending = false;
 
         if (this.args.name) {
             this.$.attr('data-name', this.args.name);
@@ -121,6 +130,34 @@ class Form_Input_Abstract extends Component {
         } else {
             this._pending_value = value;
             this._has_pending = true;
+        }
+    }
+
+    /**
+     * Put the cursor in this input. Safe at any point in the component's life: before
+     * _mark_ready() the request is remembered and honoured when the input becomes ready.
+     */
+    focus() {
+        if (!this._is_ready) {
+            this._focus_pending = true;
+            return;
+        }
+
+        this._focus();
+    }
+
+    /**
+     * How THIS input takes focus. The default suits an input whose editable control is the
+     * first focusable element in its markup; an input that wraps a library overrides it.
+     */
+    _focus() {
+        const element = this.$
+            .find('input, select, textarea, [contenteditable="true"], [tabindex]')
+            .filter(':visible:not(:disabled)')
+            .get(0);
+
+        if (element) {
+            element.focus();
         }
     }
 
@@ -205,6 +242,12 @@ class Form_Input_Abstract extends Component {
             this.trigger('val', value);
         }
         // Nothing pending: no event. Readiness is not a value change.
+
+        // After the value, so the cursor lands in the input as the user will see it.
+        if (this._focus_pending) {
+            this._focus_pending = false;
+            this._focus();
+        }
     }
 
     /**

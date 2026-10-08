@@ -1,0 +1,111 @@
+LOGIN REQUIREMENTS ARE REMOVED, AND SO IS THE TEMPLATE'S FORCED 2FA ENROLLMENT
+Date: 2026-10-08
+
+IF YOU DO NOTHING: a class of yours that extends Login_Requirement_Abstract fails the manifest build ("Class ... not found"), any call you make to Login_Requirements::recheck_user() dies the same way, and - if you ported the template's two_factor_enrollment_requirement.php - a user your administrators flagged as "2FA required" is no longer made to enroll.
+
+SUMMARY
+    Category 1: a framework feature an application could build on is gone.
+
+    Login Requirements (released 2026-10-07) made a signed-in identity read
+    as NOT logged in on every surface except the ones a requirement listed,
+    until that requirement was satisfied. It is removed, whole:
+
+        Login_Requirement_Abstract, Login_Requirements
+        Ajax::ERROR_REQUIREMENT_PENDING ('requirement_pending') and
+            AjaxRequirementPendingException, in PHP and in the JS Ajax layer
+        the rsx:health "Login Requirements" row
+        _sessions.login_requirements (dropped by a framework migration)
+        rsx:man login_requirements, skill rspade:login-requirements
+
+    WHY. A user who is past the password (and past the challenge, when a
+    factor is enrolled) is authenticated, and what they may read and write
+    is decided by the endpoint gates as on any other request. A step they
+    still owe - enroll a factor, accept terms, an onboarding wizard - is
+    not an access level. Concealing their identity from the whole
+    application protected nothing a redirect did not: whoever holds the
+    password can complete the step. And it cost a list, per step, of every
+    endpoint the step's own screen touches, with a missed entry failing
+    from inside the step.
+
+    The replacement is an application pattern, not a framework service:
+
+        - the login function works out what this person still owes ONCE,
+          at sign-in, and parks it with Session::put_value();
+        - Main::pre_dispatch() redirects a page request to the step's
+          screen while that value is set, leaving the login routes, the
+          step's own routes and logout alone;
+        - the screen clears the value when the step is done or skipped.
+
+    A rule switched on today reaches each person at their next sign-in.
+
+    THE TEMPLATE'S FORCED 2FA WENT WITH IT. The reference application no
+    longer has an administrator-required second factor: the
+    users.is_2fa_required column, its checkbox in the edit-user form, its
+    badge on the user view, the /login/two_factor_setup screen and the
+    requirement class are all gone. The framework still provides every part
+    of enrollment (Rsx_Two_Factor, <Totp_Enrollment />, <Passkey_Register />,
+    the settings screen); it no longer provides a screen that holds a
+    signed-in user until they enroll, or a setting that turns one on.
+    Requiring a factor is yours to write, with the pattern above
+    (rsx:man two_factor, REQUIRING A SECOND FACTOR).
+
+    Emailed sign-in codes, which shipped in the same release, are untouched
+    (breaking_changes/emailed_sign_in_codes_10_07.txt).
+
+AFFECTED FILES
+    Yours, if any of these exist:
+
+    - a class extending Login_Requirement_Abstract (the template's was
+      rsx/app/login/two_factor_enrollment_requirement.php);
+    - calls to Login_Requirements::recheck_user() (the template's was in
+      save_user(), rsx/app/frontend/settings/user_management/
+      settings_user_management_controller.php);
+    - a screen that exists only as a requirement's screen() (the template's
+      was Login_Controller::two_factor_setup() with
+      login_two_factor_setup.blade.php and login_two_factor_setup.js);
+    - JS that branches on error.code === 'requirement_pending'.
+
+    An application that declared no requirement ("Login Requirements: none
+    declared" in rsx:health before this release) has nothing to change.
+
+CHANGES REQUIRED
+    1. Find what you have:
+
+           grep -rn "Login_Requirement\|requirement_pending" rsx/
+
+    2. Delete each requirement class and each recheck_user() call.
+
+    3. Decide what happens to the rule each requirement enforced.
+
+       To DROP it, delete its screen and route too. Then decide about
+       users.is_2fa_required, which is YOUR column (the template's
+       migration 2026_09_02_133139 added it): the reference application
+       drops it (reference_app/resource/migrations/
+       2026_10_08_225654_drop_is_2fa_required_from_users.php) and removes
+       the checkbox and the badge that showed it. Nothing in the framework
+       reads the column, so keeping it is harmless and enforces nothing.
+
+       To KEEP it, re-home it on the pattern in the SUMMARY: evaluate the
+       predicate in your login function after RsxAuth::login() (and in your
+       second-factor and SSO completion paths, which also sign in), park
+       the outstanding step in the session, and redirect from
+       Main::pre_dispatch(). Your existing screen can stay; remove the
+       assumption that the user reads as signed out elsewhere. Note what
+       changes: Ajax and model fetch answer normally while the step is
+       outstanding, and a rule turned on for a signed-in user applies from
+       their next sign-in.
+
+    4. A decision a person makes once and for good ("do not ask me again",
+       "skipped the passkey prompt") is a preference variable, not a
+       session value: $login_user->set_variable($key, $value)
+       (rsx:man user_preference_variables).
+
+VERIFICATION
+    The manifest builds. rsx:health has no "Login Requirements" row. If you
+    kept a forced step: sign in as a user who owes it and open any page -
+    it lands on the step's screen; complete it and every page loads.
+
+SEE ALSO
+    rsx:man two_factor - REQUIRING A SECOND FACTOR
+    rsx:man user_preference_variables
+    rsx:man session - put_value() / get_value()

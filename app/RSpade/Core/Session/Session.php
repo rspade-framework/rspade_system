@@ -7,7 +7,6 @@ use RuntimeException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
-use App\RSpade\Core\Login\Login_Requirements;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
@@ -134,7 +133,6 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property int $impersonator_user_id
  * @property string $ip_address
  * @property string $last_active
- * @property array $login_requirements
  * @property int $login_user_id
  * @property int $portal_site_id
  * @property int $portal_user_id
@@ -190,12 +188,6 @@ class Session extends Rsx_System_Model_Abstract
 
     // Static session management properties
     private static $_session = null;
-
-    /**
-     * The CLI process's outstanding login requirements - written only when a test enforces
-     * them in the CLI (Login_Requirements::$_enforce_in_cli_for_testing).
-     */
-    private static ?array $_cli_login_requirements = null;
 
     private static $_site = null;
 
@@ -284,7 +276,6 @@ class Session extends Rsx_System_Model_Abstract
         'portal_user_id' => 'integer',
         'portal_site_id' => 'integer',
         'impersonator_user_id' => 'integer',
-        'login_requirements' => 'array',
         'version' => 'integer',
         'last_active' => 'datetime',
     ];
@@ -1006,14 +997,8 @@ class Session extends Rsx_System_Model_Abstract
             return self::$_api_identity['login_user_id'];
         }
 
-        // CLI mode: return static property. Concealed like a browser's identity only when a
-        // test has asked for login requirements to be enforced in this process (the list is
-        // otherwise always empty in the CLI - see Login_Requirements).
+        // CLI mode: return static property
         if (self::__is_cli()) {
-            if (!empty(self::$_cli_login_user_id) && Login_Requirements::_conceals('staff')) {
-                return null;
-            }
-
             return self::$_cli_login_user_id;
         }
 
@@ -1023,84 +1008,7 @@ class Session extends Rsx_System_Model_Abstract
             return null;
         }
 
-        // A signed-in identity with login requirements outstanding reads as signed OUT
-        // everywhere but the surfaces those requirements list. See Login_Requirements.
-        if (!empty(self::$_session->login_user_id) && Login_Requirements::_conceals('staff')) {
-            return null;
-        }
-
         return self::$_session->login_user_id;
-    }
-
-    /**
-     * The staff identity on this browser's session, read PAST the login-requirements
-     * concealment - the sign-in machinery's own view.
-     *
-     * FRAMEWORK INTERNAL - for Login_Requirements only.
-     *
-     * @return int|null
-     */
-    public static function _get_login_user_id_unconcealed(): ?int
-    {
-        if (self::$_api_identity !== null) {
-            return self::$_api_identity['login_user_id'];
-        }
-
-        if (self::__is_cli()) {
-            return self::$_cli_login_user_id;
-        }
-
-        $row = self::__row_if_any();
-
-        return $row && $row->login_user_id ? (int) $row->login_user_id : null;
-    }
-
-    /**
-     * The outstanding login requirements on this browser's session: {realm: [class, ...]}.
-     *
-     * FRAMEWORK INTERNAL - for Login_Requirements only.
-     *
-     * @return array
-     */
-    public static function _get_login_requirements(): array
-    {
-        if (self::$_api_identity !== null) {
-            return [];
-        }
-
-        if (self::__is_cli()) {
-            return self::$_cli_login_requirements ?? [];
-        }
-
-        $row = self::__row_if_any();
-
-        return $row && is_array($row->login_requirements) ? $row->login_requirements : [];
-    }
-
-    /**
-     * Store the outstanding login requirements on this browser's session row, when one exists.
-     *
-     * FRAMEWORK INTERNAL - for Login_Requirements only.
-     *
-     * @param array|null $map {realm: [class, ...]}, or null for none.
-     * @return void
-     */
-    public static function _set_login_requirements(?array $map): void
-    {
-        if (self::__is_cli()) {
-            self::$_cli_login_requirements = $map;
-
-            return;
-        }
-
-        $row = self::__row_if_any();
-
-        if (!$row) {
-            return;
-        }
-
-        $row->login_requirements = $map;
-        $row->save();
     }
 
     /**
@@ -1416,8 +1324,6 @@ class Session extends Rsx_System_Model_Abstract
 
                 self::__cli_sync_session();
 
-                Login_Requirements::_clear('staff');
-
                 return;
             }
 
@@ -1434,8 +1340,6 @@ class Session extends Rsx_System_Model_Abstract
             self::$_login_user = null;
             self::$_user = null;
             self::$_site = null;
-
-            Login_Requirements::_clear('staff');
 
             // Push every live connection holding this session to reload (it just lost auth).
             if (!empty($old_login_user_id)) {
@@ -1456,9 +1360,6 @@ class Session extends Rsx_System_Model_Abstract
             self::$_site = null;
 
             self::__cli_sync_session();
-
-            // A no-op in the CLI unless a test enforces login requirements here.
-            Login_Requirements::_compute('staff');
 
             return;
         }
@@ -1488,10 +1389,6 @@ class Session extends Rsx_System_Model_Abstract
         self::$_user = null;
         self::$_site = null;
 
-        // A previous identity's outstanding requirements do not carry over; this identity's
-        // are computed below, once the sign-in is complete.
-        Login_Requirements::_clear('staff');
-
         // Identity changed to a confirmed-different value -> push a refresh to every live
         // connection on this session (re-setting the same login_user_id emits nothing).
         if ((int) $old_login_user_id !== (int) $login_user_id) {
@@ -1510,9 +1407,6 @@ class Session extends Rsx_System_Model_Abstract
                 $login_user_record->save();
             }
         }
-
-        // What must this identity still do before the site is theirs? See Login_Requirements.
-        Login_Requirements::_compute('staff');
     }
 
     /**
@@ -1593,9 +1487,6 @@ class Session extends Rsx_System_Model_Abstract
 
             self::__cli_sync_session();
 
-            // A no-op in the CLI unless a test enforces login requirements here.
-            Login_Requirements::_compute('staff');
-
             return;
         }
 
@@ -1621,9 +1512,6 @@ class Session extends Rsx_System_Model_Abstract
 
         // Clear cached site
         self::$_site = null;
-
-        // Staff requirements are per site membership: evaluate them for this one.
-        Login_Requirements::_compute('staff');
 
         // Tenant switched -> push a refresh to every live connection on this session.
         Realtime::push_session_refresh('staff', (int) self::$_session->id);

@@ -20,14 +20,12 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxFatalErrorException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFormErrorException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxNotFoundException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxQuestionException;
-use App\RSpade\Core\Ajax\Exceptions\AjaxRequirementPendingException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Dispatcher;
-use App\RSpade\Core\Login\Login_Requirements;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
@@ -71,7 +69,6 @@ class Ajax
     const ERROR_NOT_FOUND = 'not_found';
     const ERROR_UNAUTHORIZED = 'unauthorized';
     const ERROR_AUTH_REQUIRED = 'auth_required';
-    const ERROR_REQUIREMENT_PENDING = 'requirement_pending'; // Signed in, a login requirement outstanding: metadata.destination
     const ERROR_FATAL = 'fatal';
     const ERROR_GENERIC = 'generic';
     const ERROR_QUESTION = 'question';        // Not a failure: the endpoint is asking the user something
@@ -183,7 +180,6 @@ class Ajax
             self::ERROR_NOT_FOUND => 'The requested record was not found',
             self::ERROR_UNAUTHORIZED => 'You do not have permission to perform this action',
             self::ERROR_AUTH_REQUIRED => 'Please log in to continue',
-            self::ERROR_REQUIREMENT_PENDING => 'Please finish signing in to continue',
             self::ERROR_FATAL => 'A fatal error has occurred',
             self::ERROR_SERVER => 'A server error occurred. Please try again.',
             self::ERROR_NETWORK => 'Could not connect to server. Please check your connection.',
@@ -218,41 +214,7 @@ class Ajax
     {
         $controller_class = static::_resolve_endpoint_class($controller_name, $action_name);
 
-        // The surface this call serves, for the login-requirements concealment. A batch runs
-        // several calls in one request, so each binds its own and restores the caller's.
-        $previous_surface = Login_Requirements::_bind_surface($controller_name . '::' . $action_name);
-
-        try {
-            return static::__execute_bound($controller_name, $action_name, $controller_class, $params, $request);
-        } finally {
-            Login_Requirements::_bind_surface($previous_surface);
-        }
-    }
-
-    /**
-     * execute() past the surface binding.
-     *
-     * @param string $controller_name
-     * @param string $action_name
-     * @param string $controller_class
-     * @param array $params
-     * @param Request $request
-     * @return mixed
-     */
-    private static function __execute_bound(string $controller_name, string $action_name, string $controller_class, array $params, Request $request)
-    {
         if (!static::_endpoint_gates_pass($controller_name, $action_name)) {
-            // A signed-in identity with login requirements outstanding is sent to the
-            // requirement rather than told it is not signed in.
-            $requirement_destination = Login_Requirements::_steer_destination(Auth_Gates::active_realm());
-
-            if ($requirement_destination !== null) {
-                return response_error(self::ERROR_REQUIREMENT_PENDING, [
-                    '_message' => static::get_default_message(self::ERROR_REQUIREMENT_PENDING),
-                    'destination' => $requirement_destination,
-                ]);
-            }
-
             return response_unauthorized();
         }
 
@@ -499,9 +461,6 @@ class Ajax
 
         if ($e instanceof AjaxAuthRequiredException) {
             $code = self::ERROR_AUTH_REQUIRED;
-        } elseif ($e instanceof AjaxRequirementPendingException) {
-            $code = self::ERROR_REQUIREMENT_PENDING;
-            $metadata = ['destination' => $e->get_destination()];
         } elseif ($e instanceof AjaxUnauthorizedException) {
             $code = self::ERROR_UNAUTHORIZED;
         } elseif ($e instanceof AjaxNotFoundException) {
@@ -904,9 +863,6 @@ class Ajax
         switch ($type) {
             case self::ERROR_AUTH_REQUIRED:
                 throw new AjaxAuthRequiredException($reason);
-
-            case self::ERROR_REQUIREMENT_PENDING:
-                throw new AjaxRequirementPendingException($reason, (string) ($details['destination'] ?? ''));
 
             case self::ERROR_UNAUTHORIZED:
                 throw new AjaxUnauthorizedException($reason);

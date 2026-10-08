@@ -80,7 +80,17 @@ public static function index(Request $request, array $params = [])
 
 The second factor itself is `Rsx_Two_Factor` (TOTP, passkeys, recovery codes): `verify_credentials($credentials, record: false)` is the password stage, `begin_challenge()` parks the identity (nobody is signed in), and `verify_challenge()` is what logs in and records - it is throttle-first and writes `STATUS_FAILED_2FA` itself. Skill `rspade:two-factor`; `rsx:man two_factor`.
 
-**Signed in is not always admitted.** With a login requirement outstanding (`Login_Requirement_Abstract` - enroll a factor, accept terms), `is_logged_in()`, `get_user()` and the rest answer NOT LOGGED IN except on the surfaces that requirement lists, so a user who just signed in may read as anonymous on every other page. Skill `rspade:login-requirements`; `rsx:man login_requirements`.
+**A step a signed-in user still owes is the application's.** Enrolling a factor, accepting terms, an onboarding wizard: the login function works out what is outstanding once, at sign-in, and parks it with `Session::put_value()`; `Main::pre_dispatch()` redirects page requests to the step's screen while the value is set (leaving login, the step's own routes and logout alone). The user is signed in throughout - an outstanding step is not an access level, and the gates decide what they may do as on any request.
+
+### Preference variables - a small fact about a person
+
+`$user->get_variable($key, $default = null)` / `set_variable($key, $value)` / `forget_variable($key)` / `has_variable($key)` on `User_Model`, `Login_User_Model` and `Portal_User_Model`: a JSON key/value store beside the record, for a step completed or skipped, a prompt dismissed, "do not show this again". Reached for the current person as `Session::get_login_user()->set_variable(...)` (the IDENTITY, on every site - "declined a passkey") or `Session::get_user()->set_variable(...)` (this SITE's record - "skipped connecting a storage account").
+
+- **Never in the payload** - not `toArray()`, not `fetch()`, not the user object on every page; read on demand, one key at a time. No expiry, no revisions, no realtime. `null` is a value (`has_variable()` true). A soft delete keeps them.
+- **A preference expected to exist for the life of the account is a COLUMN** - dark mode, timezone, notification settings: every user has a value, it is read constantly, it deserves a type, a default and a migration. If you query a variable across users, sort by it, or read it on every request, it has become a column.
+- **`Session::put_value()` is for one browser session** and vanishes with it (a wizard's progress, the outstanding sign-in steps); a preference variable is for what should still be true on another device next month.
+
+`rsx:man user_preference_variables`.
 
 ### Login history APIs, and their window
 

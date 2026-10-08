@@ -1,0 +1,93 @@
+EMAILED SIGN-IN CODES - PORT THE REFERENCE IMPLEMENTATION
+Date: 2026-10-07
+
+IF YOU DO NOTHING: nothing breaks, and your application has no way to require an emailed sign-in code.
+
+SUMMARY
+    Category 3: a framework feature with a template implementation to port.
+
+    EMAILED SIGN-IN CODES. begin_challenge() takes the list of answers a
+    challenge accepts, and issue_code() mints a six-digit code the
+    application delivers. A new mail and SMS category, SECURITY, reaches an
+    address on the site block list. The template uses them for an opt-in
+    emailed code on every portal password sign-in.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - Rsx_Two_Factor / Rsx_Portal_Two_Factor: begin_challenge($identity,
+      ?array $accepts = null) with the ANSWER_* constants, issue_code(),
+      pending_identity(), challenge_pending() now carrying accepts,
+      has_issued_code and codes_issued. Omitting $accepts behaves as before.
+    - <Two_Factor_Challenge $send_controller $send_method>: "Send a new code",
+      and the first code sent automatically.
+    - The sso.two_factor.accepts / portal.sso.two_factor.accepts resolve hooks.
+    - Rsx_Email_Abstract::SECURITY, Rsx_Mail::SECURITY, Rsx_Sms::SECURITY.
+    - rsx.two_factor.challenge_window_minutes now defaults to 15 (was 10). An
+      application that set it keeps its own value.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    Emailed portal sign-in codes, if you want them.
+
+THE REFERENCE IMPLEMENTATION
+    Under system/app/RSpade/resource/reference_app/:
+
+    portal/auth/Portal_Login_Controller.php
+        challenge_accepts() (the emailed-code policy), index() (the password
+        stage), send_code() (issue and email, capped).
+    portal/auth/portal_login_verify.blade.php
+        <Two_Factor_Challenge> with the send endpoint.
+    emails/portal_sign_in_code_email.php (+ .blade.php)
+        The SECURITY email.
+    handlers/Portal_Sso_Handlers.php
+        two_factor_accepts() - the same policy for a federated sign-in.
+    resource/config/rsx.php
+        rsx.portal.emailed_sign_in_codes (false).
+
+PORTING IT
+    Port into your application's equivalent places; your own login flow,
+    navigation and permission model decide the details. Every step is
+    optional.
+
+       a. Add the switch to the 'portal' block of rsx/resource/config/rsx.php:
+              'emailed_sign_in_codes' => false,
+          (reference_app/resource/config/rsx.php carries the comment.)
+
+       b. Copy reference_app/emails/portal_sign_in_code_email.php and
+          portal_sign_in_code_email.blade.php into rsx/emails/
+          (CATEGORY = SECURITY).
+
+       c. In your portal login controller
+          (reference_app/portal/auth/Portal_Login_Controller.php):
+          - add MAX_CODES_PER_SIGN_IN, challenge_accepts() and send_code();
+          - in index(), replace the "elseif
+            (Rsx_Portal_Two_Factor::is_enabled($portal_user))" branch with
+            "elseif (($accepts = static::challenge_accepts($portal_user)) !==
+            false)" and pass $accepts to begin_challenge().
+
+       d. In the challenge page (reference_app/portal/auth/
+          portal_login_verify.blade.php) add
+              $send_controller="Portal_Login_Controller" $send_method="send_code"
+          to <Two_Factor_Challenge>.
+
+       e. If the portal offers federated sign-in, add two_factor_accepts()
+          from reference_app/handlers/Portal_Sso_Handlers.php.
+
+       f. Before turning it on anywhere a real person signs in, set
+          rsx.mail.delivery to 'live' and prove it with rsx:mail:test - in the
+          default 'suppressed' mode nobody receives a code and nobody can sign
+          in.
+
+       The staff login is the same code against Rsx_Two_Factor
+       (rsx:man two_factor_codes).
+
+VERIFICATION
+    With delivery 'live' and the switch on, sign in to the portal with a
+    password - the challenge screen appears and a SECURITY email with the
+    code arrives (the /_sys mail history shows the row); the code signs in;
+    "Send a new code" replaces it; a passkey sign-in skips it.
+
+SEE ALSO
+    rsx:man two_factor_codes
+    rsx:man two_factor
+    rsx:man email - the SECURITY category

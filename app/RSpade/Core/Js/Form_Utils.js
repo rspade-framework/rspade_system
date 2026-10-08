@@ -104,6 +104,9 @@ class Form_Utils {
                         const summary_animations = Form_Utils._apply_general_errors($parent, summary_msg);
                         animations.push(...summary_animations);
                     }
+                } else if (options.message) {
+                    // A validation failure that names no field: the message is all there is.
+                    animations = Form_Utils._apply_general_errors($parent, options.message);
                 }
             }
 

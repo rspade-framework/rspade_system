@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Models;
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
+use App\RSpade\Core\Models\Has_Preference_Variables;
 use App\RSpade\Core\Portal\Portal_Authorizable;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -120,6 +121,7 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     const STATUS_SUSPENDED = 3;
 
     use Portal_Authorizable;
+    use Has_Preference_Variables;
 
     protected $table = 'portal_users';
     protected $fillable = []; // No mass assignment - always explicit
