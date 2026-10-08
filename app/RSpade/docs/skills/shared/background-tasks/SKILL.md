@@ -291,7 +291,7 @@ A worker releases any lock a task left held at the task boundary - and names it 
 
 | Pool | Runs | Cap (`rsx.tasks.pools.<pool>.max_workers`) |
 |---|---|---|
-| `on_demand` | dispatched work | 3 (`RSX_TASK_MAX_WORKERS`) |
+| `on_demand` | dispatched work | 2 (`RSX_TASK_MAX_WORKERS`) |
 | `scheduled` | queued dispatched work FIRST, then due schedules | 1 |
 | `kill` | force stops and kills | 10 |
 

@@ -187,6 +187,7 @@ COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run
 COPY task-run.sh       /usr/local/bin/rspade-task-run
 COPY retry-run.sh      /usr/local/bin/rspade-retry-run
+COPY php-fpm-workers.sh /usr/local/bin/rspade-php-fpm-workers
 COPY claude-run.sh     /usr/local/bin/claude
 
 # git IS the RSpade git proxy in this container.
@@ -215,6 +216,7 @@ RUN chmod 755 /usr/local/bin/rspade-entrypoint \
               /usr/local/bin/rspade-realtime-run \
               /usr/local/bin/rspade-task-run \
               /usr/local/bin/rspade-retry-run \
+              /usr/local/bin/rspade-php-fpm-workers \
               /usr/local/bin/claude \
               /usr/local/bin/git \
               /usr/local/bin/npm
@@ -452,11 +454,17 @@ RUN sed -i "s/^target=.*/target=prod/" /.rspade_container
 # becomes visible within that window without a restart.
 COPY php/opcache-prod.ini /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 
+# Production PHP: 320 MB a request (development keeps php.ini's 256 MB).
+COPY php/php-prod.ini /etc/php/${PHP_VERSION}/fpm/conf.d/90-rspade-prod.ini
+
 # Production pools: www-data rather than root, and a dynamic worker pool rather
-# than ondemand. These REPLACE the development pools of the same names.
+# than ondemand. These REPLACE the development pools of the same names. The worker
+# counts in them are placeholders: the entrypoint sizes both pools to the machine at
+# every start (rspade-php-fpm-workers), before supervisor starts php-fpm.
 COPY php/www-prod.conf  /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
 COPY php/ajax-prod.conf /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
 RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini \
+              /etc/php/${PHP_VERSION}/fpm/conf.d/90-rspade-prod.ini \
               /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf \
               /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
 

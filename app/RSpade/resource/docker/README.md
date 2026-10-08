@@ -55,7 +55,8 @@ runs it as root before the application serves traffic.
 | Migrations at start | automatic | **never** — run them deliberately |
 | `migrate` snapshot/rollback | yes, against a local DB | **no** — nothing to snapshot |
 | OPcache | revalidate every request | revalidate every 10s |
-| PHP-FPM | root, `ondemand` | `www-data`, `dynamic` |
+| PHP-FPM | root, `ondemand`, 8 workers a pool | `www-data`, `dynamic`, pools **sized to the machine at start** (below) |
+| PHP memory limit | 256 MB | 320 MB |
 | Browser libraries | yes (`rsx:debug`) | no |
 | Blank credentials | generated + printed once | **refuses to start** |
 | LibreOffice, poppler | yes | yes — document preview is a runtime feature |
@@ -156,6 +157,44 @@ does). Get it wrong and the realtime socket dials the wrong port.
 |---|---|
 | `RSPADE_APP_URL` | written into `.env` as `APP_URL` at start |
 | `RSPADE_CONTAINER_TARGET` | `dev` or `prod`; set by the image, not by you |
+| `PHP_FPM_WORKER_COUNT` | prod only: the total php-fpm worker count, instead of the one calculated from the machine (below) |
+
+## PHP-FPM is sized to the machine (prod)
+
+At every start, before php-fpm runs, the production container works out how many
+workers the machine can carry and writes both pools (`rspade-php-fpm-workers`,
+`php-fpm-workers.sh` here - the formula and its reasoning are in that script):
+
+```
+total   = max(1, min(cores * 3,
+                     floor((memory_mb - 1000) * 0.9 / 320 + floor(min(swap_mb, 1000) / 450) - 4)))
+web     = max(2, floor(total / 4))         # page requests
+ajax    = max(1, ceil(total * 3 / 4))      # Ajax requests
+standby = max(1, min(4, floor(pool / 2)))  # idle workers each pool keeps
+```
+
+320 MB is one worker at its memory limit (`php/php-prod.ini`). The first 1000 MB and a
+tenth of the rest are left to the operating system; four workers' worth is held back
+for Redis, the other services and the background task workers; swap earns at most two
+more. A limit docker puts on the container (`--memory`, `--cpus`) is what is measured,
+not the host behind it.
+
+| Memory (no swap) | Total | Web | Ajax |
+|---|---|---|---|
+| 2 GB | 1 | 2 | 1 |
+| 4 GB | 4 | 2 | 3 |
+| 8 GB | 16 | 4 | 12 |
+| 16 GB | 39 | 9 | 30 |
+
+Set the total yourself with `-e PHP_FPM_WORKER_COUNT=24` (compose: `environment:`);
+the split and the standby counts are still derived from it. The start line says what
+was chosen and from what:
+
+```
+[rspade] php-fpm sized from 4 cores, 7950 MB memory, 0 MB swap: 12 worker(s) -> web 3 (1 standby), ajax 9 (4 standby).
+```
+
+The development image is not sized: it keeps 8 on-demand workers a pool.
 
 Everything else is ordinary `.env` configuration — see `.env.README` in the
 project root.

@@ -1440,7 +1440,7 @@ return [
     */
     'tasks' => [
         'pools' => [
-            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 3)],
+            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 2)],
             'scheduled' => ['max_workers' => 1],
             'kill' => ['max_workers' => 10],
         ],

@@ -445,7 +445,7 @@ THE WORKER POOLS
     Three pools, each capped on its own in rsx.tasks.pools (every cap at least 1, or boot
     throws):
 
-        on_demand  runs dispatched work                       default 3
+        on_demand  runs dispatched work                       default 2
                                                               (RSX_TASK_MAX_WORKERS)
         scheduled  runs #[Schedule] work - and claims queued  default 1
                    dispatched work FIRST
@@ -978,7 +978,7 @@ CONFIGURATION (config/rsx.php 'tasks')
 
     'tasks' => [
         'pools' => [
-            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 3)],
+            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 2)],
             'scheduled' => ['max_workers' => 1],
             'kill'      => ['max_workers' => 10],
         ],
