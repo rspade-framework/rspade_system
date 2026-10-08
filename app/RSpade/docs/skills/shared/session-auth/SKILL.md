@@ -1,6 +1,6 @@
 ---
 name: session-auth
-description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::attempt() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifecycle windows and the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
+description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::verify_credentials() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifecycle windows and the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
 ---
 
 # Sessions and Login
@@ -43,12 +43,15 @@ public static function index(Request $request, array $params = [])
     if ($request->is_post()) {
         Rsx_Turnstile::validate($request);       // FIRST statement of the POST branch
 
-        $login_user = RsxAuth::attempt([
+        // Checks the pair and signs NOBODY in. record: false - whether this is a
+        // SUCCESS is not known until the account question below is answered.
+        $login_user = RsxAuth::verify_credentials([
             'email'    => $params['email'] ?? '',
             'password' => $params['password'] ?? '',
-        ]);
+        ], record: false);
 
-        if (!$login_user) {
+        if ($login_user === null) {
+            Login_History::record_failure($params['email'] ?? '', Login_History::STATUS_FAILED_PASSWORD);
             Flash_Alert::error('Invalid credentials.');
             return redirect(Rsx::Route('Login_Controller', Login_Redirect::params()));
         }
@@ -69,13 +72,13 @@ public static function index(Request $request, array $params = [])
 }
 ```
 
-### `RsxAuth::attempt()` records the outcome itself
+### `RsxAuth::verify_credentials()` records the outcome itself
 
-`RsxAuth::attempt(array $credentials, bool $record = true, bool $touch_last_login = true)` classifies and records SUCCESS / FAILED_NOT_FOUND / FAILED_PASSWORD - **it is the only place that can tell those apart**. So **never call `Login_History::record_success()` beside it**; you would record twice. `record: false` is the opt-out for a fixture, a harness, or a two-factor pre-check that will record on the real completion.
+`RsxAuth::verify_credentials(array $credentials, bool $record = true): ?Login_User_Model` checks an email + password pair and answers the identity or null. **It signs nobody in and touches no session** - `RsxAuth::login($identity)` is the only way into a staff session, so anything a sign-in still owes (a second factor, your own account-state question) runs BETWEEN the two, with the visitor still signed out; there is never a session to undo on a refusal. It classifies and records SUCCESS / FAILED_NOT_FOUND / FAILED_PASSWORD / FAILED_DISABLED - **it is the only place that can tell those apart**. So **never call `Login_History::record_success()` beside it** with the default `record: true`; you would record twice. `record: false` is the opt-out for a check that is not yet a login - one that still owes a second step, a fixture, a harness - and then YOU record the outcome when it is known.
 
-`$touch_last_login = false` skips the `last_login` stamp - pass it whenever the login is not a real login (impersonation, a harness, an unfinished second factor). **In CLI the stamp never happens at all.**
+`RsxAuth::login($identity, $touch_last_login = true)`: `false` skips the `last_login` stamp - pass it whenever the login is not a real login (impersonation, a harness). **In CLI the stamp never happens at all.**
 
-The second factor itself is `Rsx_Two_Factor` (TOTP, passkeys, recovery codes): `attempt(record: false, touch_last_login: false)` is the password stage, `begin_challenge()` parks the identity and logs the session out, and `verify_challenge()` is what logs in and records - it is throttle-first and writes `STATUS_FAILED_2FA` itself. Skill `rspade:two-factor`; `rsx:man two_factor`.
+The second factor itself is `Rsx_Two_Factor` (TOTP, passkeys, recovery codes): `verify_credentials($credentials, record: false)` is the password stage, `begin_challenge()` parks the identity (nobody is signed in), and `verify_challenge()` is what logs in and records - it is throttle-first and writes `STATUS_FAILED_2FA` itself. Skill `rspade:two-factor`; `rsx:man two_factor`.
 
 **Signed in is not always admitted.** With a login requirement outstanding (`Login_Requirement_Abstract` - enroll a factor, accept terms), `is_logged_in()`, `get_user()` and the rest answer NOT LOGGED IN except on the surfaces that requirement lists, so a user who just signed in may read as anonymous on every other page. Skill `rspade:login-requirements`; `rsx:man login_requirements`.
 
@@ -92,11 +95,11 @@ Consequences you must design around: **a 30-day failed-attempt count is not answ
 
 ### Brute-force throttling is the framework's, and it is already on
 
-`Login_Throttle` counts FAILURES per CLIENT IP and locks the address out; `RsxAuth::attempt()` calls `require_not_throttled()` as its **first statement**, before the lookup, and `Login_History::record_failure()` feeds it - so every failure you record (a bad second factor, a disabled account) counts, and an app writes nothing to inherit the protection.
+`Login_Throttle` counts FAILURES per CLIENT IP and locks the address out; `RsxAuth::verify_credentials()` calls `require_not_throttled()` as its **first statement**, before the lookup, and `Login_History::record_failure()` feeds it - so every failure you record (a bad second factor, a disabled account) counts, and an app writes nothing to inherit the protection.
 
 ```php
 try {
-    $authenticated = RsxAuth::attempt($credentials);
+    $login_user = RsxAuth::verify_credentials($credentials);
 } catch (Auth_Throttled_Exception $e) {
     $error = $e->getMessage();     // "You're doing that too fast" - render it as the form error
 }
@@ -108,16 +111,20 @@ A login path that verifies its own password and does not record to `Login_Histor
 
 Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (10), `window_minutes` (15), `lockout_minutes` (15). **A caller with no client IP is never throttled** - CLI, tasks and tests have no remote party to throttle. The client IP is `Session::get_client_ip()` = `$request->ip()`: X-Forwarded-For counts only through a trusted proxy (loopback plus `rsx.http.trusted_proxies`, empty by default), so **a box behind a load balancer must list it** or every visitor shares one bucket. Never read a forwarding header yourself. **Fail closed**: a cache error propagates and the login fails loud; only maintenance mode (redis deliberately stopped) leaves the throttle inert.
 
+### Declaring a site without a session
+
+`Session::set_temporary_site_id($site_id)` declares the tenant for the rest of the script and **writes nothing**: no `_sessions` row, no cookie, no change to an existing row - a browser mid-session has its own tenant back after `clear_temporary_site_id()`. `get_site_id()` answers the declared value and `has_session()` answers true meanwhile; it outranks the stored session and is refused inside an external API request. Use it where code must run in a site's context and no session should come into being (a first-run request, a webhook that names its tenant); `set_site_id()` is the call that changes a signed-in user's tenant. Staff realm and site only - the portal declares its site with `Portal_Session::set_site_id()`.
+
 ### Account state is APPLICATION vocabulary; site membership is the FRAMEWORK's
 
-`attempt()` verifies a live identity, the password, and site membership - and **nothing else**. `login_users.status_id` / `is_activated` / `is_verified` mean whatever your app decides. Enforce your statuses in **two** places:
+`verify_credentials()` checks a live identity, the password, and site membership - and **nothing else**. `login_users.status_id` / `is_activated` / `is_verified` mean whatever your app decides. Enforce your statuses in **two** places:
 
-1. Your login function (above) - so a bad-state login never starts.
+1. Your login function (above), between `verify_credentials()` and `login()` - so a bad-state login never starts, and nobody has to be logged back out.
 2. `Main::pre_dispatch()` - return non-null to halt, which ejects a session whose account went bad AFTER sign-in. It runs for bearer-key calls too - `/api/vN` and the file-serving routes (a non-null return there is a 403 `account_refused`; branch on `Session::is_api_request()` before `Session::logout()`, which a headless API identity cannot call). **`init()` is a bootstrap hook and cannot eject anybody.**
 
 **`users.is_enabled` and `sites.is_enabled` are NOT yours - delete every check you wrote on them.** They are the framework's switches - one membership, one whole site - and a membership is usable (**active**) only when both are on: `User_Model::is_active()` for a row, the `->active()` scope for a query. The Default site (id 0) can never be disabled (the save throws). Enforced twice:
 
-- **At login.** No active membership on any site -> `attempt()` returns false, indistinguishable from a wrong password, with `Login_History::STATUS_FAILED_DISABLED` in the audit trail. `RsxAuth::has_enabled_membership($login_user)` is the public predicate. Every other door runs through `RsxAuth::login()`, which **returns false without touching the session** for the same reason - so the second factor, a federated sign-in and the `rsx:debug` dev-auth harness are all refused too.
+- **At login.** No active membership on any site -> `verify_credentials()` answers null, indistinguishable from a wrong password, with `Login_History::STATUS_FAILED_DISABLED` in the audit trail. `RsxAuth::has_enabled_membership($login_user)` is the public predicate. Every other door runs through `RsxAuth::login()`, which **returns false without touching the session** for the same reason - so the second factor, a federated sign-in and the `rsx:debug` dev-auth harness are all refused too.
 - **At every request.** `Session::enforce_enabled_membership()` runs ahead of the `#[Auth]` gates in the staff dispatcher and in the Ajax browser entry point: a missing or inactive `users` row for (login user, site) - its own switch off, or its SITE disabled or deleted - **logs the session out** and answers `response_auth_required()` - a login redirect for a page, the `auth_required` envelope for an Ajax call. The **effective** identity is checked, so disabling an account also ends an impersonation of it.
 
 A listing of "which sites may I use" therefore restates neither column: it filters with `->active()`, the same definition the framework enforces, so it never offers a site the framework would refuse, and `Site_Unauthorized`-style screens are reached only where the app itself declares the requested site.
@@ -277,11 +284,11 @@ Never write a one-off script or raw SQL for either: a hand-written `UPDATE login
 - **"A session was created where I only wanted to check for one."** Something called `get_session_id()`/`get_session()`/a setter. Use `has_session()` for the question.
 - **`SESSION-ID-01` build failure.** A null-ish or zero-ish test on `get_session_id()`. Delete the test - it is dead code (the method is `: int`, never null) and it already created the session it was guarding against. Using the value in arithmetic, a query or a comparison is never flagged.
 - **An admin "sign out" button that always reports success but changes nothing.** The classic refusal-vs-absence conflation: the call was throwing `AjaxUnauthorizedException` (or returning false for a genuinely absent row) and the endpoint treated both as "done". Let the throw propagate; treat false as "nothing matched".
-- **A user is still signed in after being disabled.** `attempt()` only guards the sign-in. Enforce account state in `Main::pre_dispatch()` too, and terminate their sessions when you disable them.
+- **A user is still signed in after being disabled.** `verify_credentials()` only guards the sign-in. Enforce account state in `Main::pre_dispatch()` too, and terminate their sessions when you disable them.
 - **Failed-attempt count reads zero for a user you know just failed.** The window (`login_throttle.window_minutes`, default 15) elapsed, or the cache was restarted. Both are expected - the counters are ephemeral, and they are a statistic rather than the enforcement.
 - **A login form reports "invalid email or password" for a correct password.** The attempt was throttled and the `Auth_Throttled_Exception` was swallowed into the same branch as a credential miss. Catch it separately and show `$e->getMessage()`.
 - **A test or command "cannot log in any more".** It cannot be the throttle: CLI has no client IP and is never throttled. Clear a real lockout with `Login_Throttle::reset($ip)`.
-- **A test signs in but `last_login` moves.** Pass `$touch_last_login = false` (or `record: false` on `attempt()`) for harness logins.
+- **A test signs in but `last_login` moves.** Pass `$touch_last_login = false` to `RsxAuth::login()` for harness logins.
 
 ---
 

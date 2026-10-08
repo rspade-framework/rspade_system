@@ -1196,7 +1196,10 @@ abstract class Rsx_Two_Factor_Abstract
      *                            Portal_User_Model for the portal).
      * @throws \App\RSpade\Core\Auth\Auth_Throttled_Exception When the client IP is locked out.
      * @throws Two_Factor_Failed_Exception When the window has closed, the answer is wrong, or the
-     *         realm will not admit the identity.
+     *         realm will not admit the identity. reason() says which: REASON_WINDOW_EXPIRED,
+     *         REASON_WRONG_ANSWER, REASON_CHALLENGE_SPENT (the wrong answer that was the
+     *         challenge's last - the realm's `challenge.spent` event fires with the identity
+     *         just before it is thrown) or REASON_IDENTITY_LOCKED.
      */
     public static function verify_challenge(array $input): Rsx_Model_Abstract
     {
@@ -1205,7 +1208,10 @@ abstract class Rsx_Two_Factor_Abstract
         $pending = static::__pending_challenge();
 
         if ($pending === null) {
-            throw new Two_Factor_Failed_Exception('Your verification window has expired. Please sign in again.');
+            throw new Two_Factor_Failed_Exception(
+                'Your verification window has expired. Please sign in again.',
+                Two_Factor_Failed_Exception::REASON_WINDOW_EXPIRED
+            );
         }
 
         $identity_id = $pending['identity_id'];
@@ -1218,14 +1224,18 @@ abstract class Rsx_Two_Factor_Abstract
             // to sign in to, and nothing the person at the keyboard can do about it.
             static::abandon_challenge();
 
-            throw new Two_Factor_Failed_Exception('Your verification window has expired. Please sign in again.');
+            throw new Two_Factor_Failed_Exception(
+                'Your verification window has expired. Please sign in again.',
+                Two_Factor_Failed_Exception::REASON_WINDOW_EXPIRED
+            );
         }
 
         if (static::is_locked($identity_id)) {
             static::abandon_challenge();
 
             throw new Two_Factor_Failed_Exception(
-                'Too many incorrect codes have been entered for this account. Please try again later.'
+                'Too many incorrect codes have been entered for this account. Please try again later.',
+                Two_Factor_Failed_Exception::REASON_IDENTITY_LOCKED
             );
         }
 
@@ -1255,10 +1265,23 @@ abstract class Rsx_Two_Factor_Abstract
             if ($challenge_failures >= static::challenge_max_failures()) {
                 static::abandon_challenge();
 
-                throw new Two_Factor_Failed_Exception('Too many incorrect codes. Please sign in again.');
+                // SOMEBODY WHO KNOWS THE PASSWORD FAILED THE SECOND FACTOR, REPEATEDLY. The
+                // caps make guessing slow; being noticed is what makes it hopeless, and this
+                // is the moment to notice. The identity travels with the event because the
+                // challenge that named it is already gone.
+                Rsx::trigger_action(static::__event('challenge.spent'), [
+                    'identity' => $identity,
+                    'email' => $email,
+                    'failures' => $challenge_failures,
+                ]);
+
+                throw new Two_Factor_Failed_Exception(
+                    'Too many incorrect codes. Please sign in again.',
+                    Two_Factor_Failed_Exception::REASON_CHALLENGE_SPENT
+                );
             }
 
-            throw new Two_Factor_Failed_Exception('That code is not valid.');
+            throw new Two_Factor_Failed_Exception('That code is not valid.', Two_Factor_Failed_Exception::REASON_WRONG_ANSWER);
         }
 
         static::abandon_challenge();
@@ -1843,6 +1866,13 @@ abstract class Rsx_Two_Factor_Abstract
      * @return void
      */
     abstract protected static function __sign_out(): void;
+
+    /**
+     * The realm's name for one of this engine's events: 'two_factor.<name>' for staff,
+     * 'portal.two_factor.<name>' for the portal, so a handler for one realm never hears the
+     * other's.
+     */
+    abstract protected static function __event(string $name): string;
 
     /**
      * Record a completed sign-in.

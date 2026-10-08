@@ -614,6 +614,27 @@ FRAMEWORK EVENT CATALOG
             Write the event name as a LITERAL in #[OnEvent] - never a class constant.
             See: php artisan rsx:man migrations (POST-NORMALIZATION APP STEPS)
 
+    Second-Factor Events (action)
+
+        two_factor.challenge.spent (action)           staff
+        portal.two_factor.challenge.spent (action)    the client portal
+            Fired from: Rsx_Two_Factor::verify_challenge() (and its portal twin)
+                        when a WRONG answer is the challenge's last: the parked
+                        challenge has just been destroyed
+                        (rsx.two_factor.challenge_max_failures) and the call is
+                        about to throw Two_Factor_Failed_Exception with
+                        REASON_CHALLENGE_SPENT.
+            Data: {identity: Login_User_Model|Portal_User_Model, email: string,
+                   failures: int}
+                  The identity is in the payload because the challenge that
+                  named it is already gone.
+            Return: ignored (it is an action).
+            Use for: telling the account owner. Reaching a challenge means the
+                     password was right, so this is somebody who knows it failing
+                     the second factor repeatedly. The framework notifies nobody
+                     itself; a handler queues the application's own SECURITY
+                     email. See rsx:man two_factor.
+
     Initial User Events (action)
 
         user.initial.created (action)

@@ -138,6 +138,11 @@ class Rsx_Two_Factor extends Rsx_Two_Factor_Abstract
         Session::logout();
     }
 
+    protected static function __event(string $name): string
+    {
+        return 'two_factor.' . $name;
+    }
+
     protected static function __record_success(Rsx_Model_Abstract $identity, string $email): void
     {
         Login_History::record_success((int) $identity->id, $email);

@@ -1,6 +1,6 @@
 ---
 name: two-factor
-description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge with $accepts / issue_code / pending_identity / verify_challenge / begin_passkey_login / verify_passkey_login, the ANSWER_* kinds) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::attempt(record: false, touch_last_login: false), passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove / :unlock operator commands, the attempt caps (is_locked / clear_failures, rsx.two_factor.challenge_max_failures / identity_max_failures), emailed six-digit sign-in codes (issued codes, a SECURITY-category email, <Two_Factor_Challenge $send_controller $send_method>, sso.two_factor.accepts), and requiring a factor as a login requirement. Use when adding 2FA, TOTP, passkeys or an emailed code to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Too many incorrect codes. Please sign in again.', 'Too many incorrect codes have been entered for this account. Please try again later.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', 'does not accept an issued code', 'holds none of them - nobody could answer this challenge', 'This sign-in cannot be completed with a passkey.', 'That security key request has expired. Please try again.', a passkey that will not save after a QR scan (publicKey.timeout, passkey_enroll_abandoned), or a passkey refused after moving hosts."
+description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge with $accepts / issue_code / pending_identity / verify_challenge / begin_passkey_login / verify_passkey_login, the ANSWER_* kinds) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::verify_credentials(record: false) then begin_challenge, Two_Factor_Failed_Exception::reason() and the two_factor.challenge.spent event, passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove / :unlock operator commands, the attempt caps (is_locked / clear_failures, rsx.two_factor.challenge_max_failures / identity_max_failures), emailed six-digit sign-in codes (issued codes, a SECURITY-category email, <Two_Factor_Challenge $send_controller $send_method>, sso.two_factor.accepts), and requiring a factor as a login requirement. Use when adding 2FA, TOTP, passkeys or an emailed code to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Too many incorrect codes. Please sign in again.', 'Too many incorrect codes have been entered for this account. Please try again later.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', 'does not accept an issued code', 'holds none of them - nobody could answer this challenge', 'This sign-in cannot be completed with a passkey.', 'That security key request has expired. Please try again.', a passkey that will not save after a QR scan (publicKey.timeout, passkey_enroll_abandoned), or a passkey refused after moving hosts."
 ---
 
 # Two-factor authentication
@@ -17,14 +17,16 @@ Three kinds: **TOTP** (RFC 6238, six digits), **PASSKEY** (WebAuthn), **RECOVERY
 
 ## The login-challenge recipe
 
-**Stage 1 - password only.** Suppress BOTH halves of "this was a login", so a recorded SUCCESS always means full authentication:
+**Stage 1 - password only, and NOBODY is signed in.** `verify_credentials()` answers the identity and touches no session; `RsxAuth::login()` and a passed challenge are the only things that sign anybody in. So the visitor is signed out for the whole challenge, and a request that dies part-way leaves them out. `record: false`, so a recorded SUCCESS always means full authentication:
 
 ```php
-try {
-    $authenticated = RsxAuth::attempt($credentials, record: false, touch_last_login: false);
+$login_user = null;
 
-    if (!$authenticated) {
-        // record: false means attempt() wrote NOTHING - you record it, and this is
+try {
+    $login_user = RsxAuth::verify_credentials($credentials, record: false);
+
+    if ($login_user === null) {
+        // record: false means NOTHING was written - you record it, and this is
         // what feeds Login_Throttle.
         Login_History::record_failure($email, Login_History::STATUS_FAILED_PASSWORD);
     }
@@ -32,11 +34,12 @@ try {
     $error = $e->getMessage();          // never report a lockout as a wrong password
 }
 
-if ($authenticated) {
-    $login_user = Session::get_login_user();
+if ($login_user !== null) {
+    // Your own account-state questions go HERE: nobody is signed in, so a refusal
+    // is just an error on the form - there is no logout() to remember.
 
     if (Rsx_Two_Factor::is_enabled($login_user)) {
-        Rsx_Two_Factor::begin_challenge($login_user);   // parks + LOGS THE SESSION OUT
+        Rsx_Two_Factor::begin_challenge($login_user);   // parks the pending identity
         return redirect(Rsx::Route('Login_Controller::verify'));
     }
 
@@ -84,6 +87,20 @@ public static function verify_2fa(Request $request, array $params = [])
 ```
 
 `verify_challenge()` signs the identity in, stamps `last_login`, writes the success row, and records `STATUS_FAILED_2FA` on a wrong answer. **You record nothing.** Hand `$params` through untouched.
+
+**Never show how many attempts remain** - "That code is not valid" and the form again, every time. A count tells an attacker how much budget is left and when to stop before the identity locks. Which failure it was is `$e->reason()`, for code only: `REASON_WINDOW_EXPIRED`, `REASON_WRONG_ANSWER`, `REASON_CHALLENGE_SPENT` (the wrong answer that destroyed the challenge), `REASON_IDENTITY_LOCKED`, `REASON_REFUSED`.
+
+**Tell the account owner when a challenge is exhausted.** Reaching a challenge means the password was right; the caps make guessing slow and only being noticed makes it hopeless. The framework fires an action - `two_factor.challenge.spent` (staff), `portal.two_factor.challenge.spent` (portal), payload `{identity, email, failures}` - and the application decides what to send:
+
+```php
+#[OnEvent('two_factor.challenge.spent', priority: 10)]
+public static function notify($data): void
+{
+    (new Two_Factor_Challenge_Spent_Email($data['email']))->to($data['email'])->send();   // CATEGORY = SECURITY
+}
+```
+
+Worked example: `reference_app/handlers/Two_Factor_Notice_Handlers.php`.
 
 **One destination function, two callers** - the password path redirects to it, the endpoint returns it as a string. A destination computed twice drifts.
 

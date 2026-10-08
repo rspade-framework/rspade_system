@@ -183,11 +183,11 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     protected $signature = 'rsx:test
                             {test?* : Test class(es) to run - substring match, repeat for a set}
                             {--filter=* : Run only tests whose class or method name matches - repeat for a set}
-                            {--group=* : Run only the named test group(s) (the concern directory under tests/, e.g. locks)}
+                            {--group=* : Run only the named test group(s) (the concern directory under tests/, e.g. locks) - repeat for several in ONE run}
                             {--framework : Run framework tests (under app/RSpade) instead of application tests}
                             {--fresh : Drop and recreate the test database, then run all migrations}
                             {--sequential : Force the single-process runner even when the docker gate would pass}
-                            {--workers= : Override the container count for a docker run (default: ceil(cores / 3))}';
+                            {--workers= : Override the container count for a docker run (default: 2 * ceil(cores / 3))}';
 
     /**
      * The console command description.

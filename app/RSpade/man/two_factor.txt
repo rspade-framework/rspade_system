@@ -7,15 +7,15 @@ NAME
 SYNOPSIS
     use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
 
-    # The login function, password stage - nothing is recorded, nothing stamped
-    if (!RsxAuth::attempt($credentials, record: false, touch_last_login: false)) {
+    # The login function, password stage - nobody is signed in, nothing recorded
+    $login_user = RsxAuth::verify_credentials($credentials, record: false);
+
+    if ($login_user === null) {
         Login_History::record_failure($email, Login_History::STATUS_FAILED_PASSWORD);
     }
 
-    $login_user = Session::get_login_user();
-
     if (Rsx_Two_Factor::is_enabled($login_user)) {
-        Rsx_Two_Factor::begin_challenge($login_user);   // parks + LOGS OUT
+        Rsx_Two_Factor::begin_challenge($login_user);   // parks the identity
         return redirect(Rsx::Route('Login_Controller::verify'));
     }
 
@@ -411,12 +411,15 @@ HOW IT WORKS
         (verify_passkey_login()) is outside the caps - it has no pending
         identity to count against and is throttled per IP.
 
-        A RECORDED SUCCESS MEANS FULL AUTHENTICATION. That is why the login
-        function suppresses recording and the last_login stamp at the
-        password stage (attempt(record: false, touch_last_login: false)) and
-        why verify_challenge() - not the password stage - calls
-        RsxAuth::login() and Login_History::record_success(). Nothing in
-        _login_history is ever a half-authenticated event.
+        A RECORDED SUCCESS MEANS FULL AUTHENTICATION, AND A SESSION IS SIGNED
+        IN ONLY AFTER THE FACTOR. That is why the password stage is
+        RsxAuth::verify_credentials($credentials, record: false) - which
+        checks the pair, records nothing and signs nobody in - and why
+        verify_challenge(), not the password stage, calls RsxAuth::login()
+        and Login_History::record_success(). Nothing in _login_history is
+        ever a half-authenticated event, and no session is ever authenticated
+        before its factor is passed: a request that dies between the password
+        and the challenge leaves the visitor signed out.
 
     ENROLLMENT REFUSES WHILE IMPERSONATING
         Every enrollment path throws when Session::is_impersonating(), and
@@ -787,17 +790,17 @@ IMPLEMENTING 2FA IN AN APPLICATION
     app/frontend/settings/password_security/).
 
     1. REWORK THE LOGIN FUNCTION INTO TWO STAGES
-        Verify the password with BOTH halves of "this was a login"
-        suppressed, then branch on is_enabled():
+        Check the password WITHOUT signing anybody in, then branch on
+        is_enabled():
 
             Rsx_Turnstile::validate($request);   // if you use it - first
 
-            try {
-                $authenticated = RsxAuth::attempt(
-                    $credentials, record: false, touch_last_login: false
-                );
+            $login_user = null;
 
-                if (!$authenticated) {
+            try {
+                $login_user = RsxAuth::verify_credentials($credentials, record: false);
+
+                if ($login_user === null) {
                     Login_History::record_failure(
                         $email, Login_History::STATUS_FAILED_PASSWORD
                     );
@@ -806,8 +809,9 @@ IMPLEMENTING 2FA IN AN APPLICATION
                 $error = $e->getMessage();   // never "wrong password"
             }
 
-            if ($authenticated) {
-                $login_user = Session::get_login_user();
+            if ($login_user !== null) {
+                // Your own account-state questions go HERE. Nobody is signed
+                // in, so a refusal is just an error on the form.
 
                 if (Rsx_Two_Factor::is_enabled($login_user)) {
                     Rsx_Two_Factor::begin_challenge($login_user);
@@ -819,15 +823,23 @@ IMPLEMENTING 2FA IN AN APPLICATION
                 return redirect($this->post_login_destination(...));
             }
 
-        With record: false, attempt() writes NOTHING - so the password
-        failure above is recorded by YOU, and it is what feeds the throttle.
+        verify_credentials() answers the IDENTITY and touches no session;
+        RsxAuth::login() and a passed challenge are the only things that sign
+        anybody in. So the order above is the security property: everything
+        between the password and the sign-in runs for a visitor who is still
+        signed out, and there is nothing to undo on a refusal - no logout()
+        to remember.
+
+        With record: false, verify_credentials() writes NOTHING - so the
+        password failure above is recorded by YOU, and it is what feeds the
+        throttle.
 
         ANYTHING THE CHALLENGE HAS TO CARRY ACROSS RIDES THE SESSION.
         <Two_Factor_Challenge> posts exactly {code} or {assertion}: there is
         no query string and no place to thread a form field. Park it with
         Session::put_value(..., Rsx_Two_Factor::challenge_expires_at()) BEFORE
-        begin_challenge() (put_value() establishes the session row; the
-        logout that follows clears the identity, not the row) and consume it
+        begin_challenge() (put_value() establishes the session row the value
+        and the pending identity both hang off) and consume it
         once in the verification endpoint. The template does this with the
         invite code the login form carried.
 
@@ -868,6 +880,53 @@ IMPLEMENTING 2FA IN AN APPLICATION
 
         Hand $params straight through - it is already {code} or {assertion}.
         Both catches carry a user-safe message; nothing else is caught.
+
+        NEVER SHOW HOW MANY ATTEMPTS REMAIN. "That code is not valid" and the
+        form again, every time. A remaining-attempts count tells an attacker
+        exactly how much budget is left and when to stop before the identity
+        locks - it turns a blind cap into a metered allowance.
+        challenge_pending() reports no failure count for the same reason; do
+        not add one to your screen.
+
+        WHICH FAILURE IT WAS is $e->reason(), for code - never for display:
+
+            Two_Factor_Failed_Exception::REASON_WINDOW_EXPIRED   nothing is pending
+            Two_Factor_Failed_Exception::REASON_WRONG_ANSWER     wrong; try again
+            Two_Factor_Failed_Exception::REASON_CHALLENGE_SPENT  wrong, and the last:
+                                                                 the challenge is gone
+            Two_Factor_Failed_Exception::REASON_IDENTITY_LOCKED  the identity is locked
+            Two_Factor_Failed_Exception::REASON_REFUSED          anything else
+
+    2b. TELL THE ACCOUNT OWNER WHEN A CHALLENGE IS EXHAUSTED
+        Reaching a challenge means the PASSWORD was right. The caps make
+        guessing the second factor slow - six digits against three valid codes
+        is 1 in 333,333 a guess, and at ten failures an hour that is roughly 2%
+        a month for somebody who never stops - and only being NOTICED makes it
+        hopeless. The framework announces the moment and does nothing else
+        about it:
+
+            two_factor.challenge.spent           (action) staff
+            portal.two_factor.challenge.spent    (action) the client portal
+
+            payload: {identity, email, failures}
+
+        fired when a wrong answer destroys the challenge, just before
+        verify_challenge() throws REASON_CHALLENGE_SPENT. The identity travels
+        in the payload because the challenge that named it is already gone.
+        One handler queues one notice:
+
+            #[OnEvent('two_factor.challenge.spent', priority: 10)]
+            public static function notify($data): void
+            {
+                (new Two_Factor_Challenge_Spent_Email($data['email']))
+                    ->to($data['email'])->send();
+            }
+
+        The email is the application's (CATEGORY = SECURITY: a required notice
+        about the recipient's own account). The identity lock bounds how many
+        one account can receive in a window. Worked example:
+        system/app/RSpade/resource/reference_app/handlers/Two_Factor_Notice_Handlers.php
+        and emails/two_factor_challenge_spent_email.php.
 
         ONE DESTINATION FUNCTION, TWO CALLERS. The password-only path
         redirects to it and the challenge endpoint returns it as a string; a

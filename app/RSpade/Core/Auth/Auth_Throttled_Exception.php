@@ -12,7 +12,7 @@ use RuntimeException;
 /**
  * The authentication surface refused this client: too many recent failures from its IP.
  *
- * THROWN, NOT RETURNED. RsxAuth::attempt() already answers false for "those credentials are
+ * THROWN, NOT RETURNED. RsxAuth::verify_credentials() already answers false for "those credentials are
  * wrong", and a throttled request is not that - nothing was checked at all. A second false
  * would make the two indistinguishable, and a login function would report "invalid email or
  * password" to a user whose password may be perfectly correct.

@@ -145,7 +145,7 @@ class Sso_Ceremony_Test extends Rsx_Test_Abstract
         $login_user->save();
 
         // AN ENABLED SITE MEMBERSHIP IS PART OF BEING ABLE TO SIGN IN. users.is_enabled is the
-        // framework's switch: RsxAuth::attempt() and RsxAuth::login() both refuse an identity
+        // framework's switch: RsxAuth::verify_credentials() and RsxAuth::login() both refuse an identity
         // that holds none, so a credential row on its own is not a usable fixture. Which site
         // it lands on does not matter here - the predicate reads across all of them - and the
         // site-scope trait sets the column from the session anyway.

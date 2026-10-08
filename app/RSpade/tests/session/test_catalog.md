@@ -272,21 +272,22 @@ MANAGER (peer), USER(600) under MANAGER.
 | sess-termfu-20 | `developer_terminate_sessions()` ABSENCE is 0, never a throw | php | unknown id, another identity's row, the current session id | 0 each; rows untouched | implemented |
 | sess-termfu-21 | `developer_terminate_sessions()` REFUSES a non-developer | php | an administering role; nobody signed in | AjaxUnauthorizedException for the one and the bulk form; row intact | implemented |
 
-## Rsx_Auth_Attempt_Test (php, default isolation) - attempt() classification + recording
+## Rsx_Auth_Verify_Credentials_Test (php, default isolation) - verify_credentials() classification + recording, and no sign-in
 
-attempt() is the only place that can tell the three outcomes apart, so it is the place that
+verify_credentials() is the only place that can tell the three outcomes apart, so it is the place that
 records them. Failure counters are redis keys outside the per-test transaction: unique emails per
 test, per-IP counter read as a delta ('CLI'), keys deleted in teardown.
 
 | ID | Purpose | Type | Input | Expected | Status |
 |----|---------|------|-------|----------|--------|
-| sess-auth-01 | an unknown address is classified NOT_FOUND | php | fresh email + any password | false, no row, email counter 1, log line carries the email + failed_not_found | implemented |
-| sess-auth-02 | a wrong password against a real identity is classified FAILED_PASSWORD | php | real user, bad password | false, no row, counter 1, no identity, last_login untouched, log line carries failed_password | implemented |
-| sess-auth-03 | a soft-deleted identity is NOT_FOUND (SoftDeletes global scope), even with the right password | php | deleted user, correct password | false, no row, counter 1, no identity, failed_not_found logged | implemented |
-| sess-auth-04 | success records exactly ONE row and establishes the identity | php | real user, correct password | true, 1 SUCCESS row w/ login_user_id, get_login_user_id matches, failure counter 0 | implemented |
-| sess-auth-05 | $record = false records no failure | php | real user, bad password, record: false | false, no row, no counter increment | implemented |
-| sess-auth-06 | $record = false success authenticates without recording or stamping (the 2FA pre-check shape) | php | correct password, record: false, touch_last_login: false | true, no row, last_login null, identity set | implemented |
-| sess-auth-07 | malformed input is not an attempt | php | {}, email only, password only, empty password | false x4, no row, no email counter, no IP counter | implemented |
+| sess-auth-01 | an unknown address is classified NOT_FOUND | php | fresh email + any password | null, no row, email counter 1, log line carries the email + failed_not_found | implemented |
+| sess-auth-02 | a wrong password against a real identity is classified FAILED_PASSWORD | php | real user, bad password | null, no row, counter 1, no identity, last_login untouched, log line carries failed_password | implemented |
+| sess-auth-03 | a soft-deleted identity is NOT_FOUND (SoftDeletes global scope), even with the right password | php | deleted user, correct password | null, no row, counter 1, no identity, failed_not_found logged | implemented |
+| sess-auth-04 | success answers the identity, records exactly ONE row and signs NOBODY in | php | real user, correct password | the identity, 1 SUCCESS row w/ login_user_id, get_login_user_id null, failure counter 0; login() then signs in | implemented |
+| sess-auth-09 | a check leaves an existing session as it was | php | signed in as A; verify B's pair (right, then wrong) | still signed in as A both times | implemented |
+| sess-auth-05 | $record = false records no failure | php | real user, bad password, record: false | null, no row, no counter increment | implemented |
+| sess-auth-06 | $record = false success answers the identity and writes nothing (the 2FA pre-check shape) | php | correct password, record: false | the identity, no row, last_login null, nobody signed in | implemented |
+| sess-auth-07 | malformed input is not an attempt | php | {}, email only, password only, empty password | null x4, no row, no email counter, no IP counter | implemented |
 | sess-auth-08 | $touch_last_login: a real login stamps last_login and a dev-auth harness login does not | http | POST /login vs rsx:debug --user=N | last_login bumped / unchanged | deferred (no CLI observability: Session::set_login_user_id() returns from its CLI branch before the stamp; verified live during B2) |
 
 ## Login_Throttle_Test (php, default isolation) - brute-force throttle
@@ -309,9 +310,9 @@ around the class. Time is never waited on: the lockout stores its expiry instant
 | sess-thr-07 | disabled counts nothing and enforces nothing | php | enabled false, three failures, then re-enable | free throughout; re-enabling reveals no hidden lockout | implemented |
 | sess-thr-08 | the switch releases an existing lockout | php | lock, then disable | retry_after_seconds 0 | implemented |
 | sess-thr-09 | a caller with no client IP is never throttled | php | CLI, attempts 1, two failures | nothing counted, nothing enforced | implemented |
-| sess-thr-10 | attempt() therefore still works in CLI | php | CLI, failure recorded, then attempt() | answers the credential question rather than refusing | implemented |
+| sess-thr-10 | verify_credentials() therefore still works in CLI | php | CLI, failure recorded, then verify_credentials() | answers the credential question rather than refusing | implemented |
 | sess-thr-11 | Login_History::record_failure() reaches the throttle | php | record_failure() in CLI | the call is made and stays harmless (no address) | implemented |
-| sess-thr-12 | attempt() THROWS for a locked-out web client, correct password included | http | 10 wrong passwords then the correct one from one X-Forwarded-For address | the 11th answers "You're doing that too fast"; another address is unaffected | deferred (no CLI observability: Session::get_client_ip() is null in CLI by design, so the ambient-IP throw cannot be driven from php; verified live over HTTP against /login and /_portal/login on 2026-08-30) |
+| sess-thr-12 | verify_credentials() THROWS for a locked-out web client, correct password included | http | 10 wrong passwords then the correct one from one X-Forwarded-For address | the 11th answers "You're doing that too fast"; another address is unaffected | deferred (no CLI observability: Session::get_client_ip() is null in CLI by design, so the ambient-IP throw cannot be driven from php; verified live over HTTP against /login and /_portal/login on 2026-08-30) |
 
 Session::set_temporary_site_id() - a DECLARED tenant that writes nothing, via
 `Session_Temporary_Site_Test`.
@@ -371,7 +372,7 @@ every user-scoped endpoint while the actor stamp was correct.
 ## Enabled_Membership_Test (php, default isolation) - `users.is_enabled` and `sites.is_enabled` are the framework's
 
 The framework's own site-membership switch, enforced in two places: at sign-in
-(`RsxAuth::attempt()` / `RsxAuth::login()` / `has_enabled_membership()`) and at request time
+(`RsxAuth::verify_credentials()` / `RsxAuth::login()` / `has_enabled_membership()`) and at request time
 (`Session::enforce_enabled_membership()`, which the dispatcher and the Ajax browser entry point
 call ahead of the `#[Auth]` gates). Failures are redis counters outside the per-test
 transaction, so every test uses a fresh email and deletes its keys in teardown. Memberships are
@@ -380,17 +381,17 @@ refuses a cross-site save or delete.
 
 | ID | Purpose | Type | Input | Expected | Status |
 |----|---------|------|-------|----------|--------|
-| sess-enabled-01 | the only membership is disabled: refused like a wrong password, classified FAILED_DISABLED | php | identity + one `is_enabled = 0` membership, correct password | `attempt()` false, no identity, no success row, counter 1, `failed_disabled` logged | implemented |
-| sess-enabled-02 | no membership at all is the same answer | php | credential row only, correct password | `attempt()` false, no identity | implemented |
-| sess-enabled-03 | one enabled membership out of two authenticates | php | disabled on site 1, enabled on a second site | `attempt()` true, identity set, one SUCCESS row | implemented |
+| sess-enabled-01 | the only membership is disabled: refused like a wrong password, classified FAILED_DISABLED | php | identity + one `is_enabled = 0` membership, correct password | `verify_credentials()` null, no identity, no success row, counter 1, `failed_disabled` logged | implemented |
+| sess-enabled-02 | no membership at all is the same answer | php | credential row only, correct password | `verify_credentials()` null, no identity | implemented |
+| sess-enabled-03 | one enabled membership out of two authenticates | php | disabled on site 1, enabled on a second site | `verify_credentials()` answers the identity, identity set, one SUCCESS row | implemented |
 | sess-enabled-04 | `has_enabled_membership()` reads across every site | php | none -> disabled -> enabled | false, false, true | implemented |
 | sess-enabled-05 | `login()` refuses without touching the session or recording | php | disabled identity | false, session identity unchanged, no history row | implemented |
 | sess-enabled-06 | request time: disabling a membership ends the session | php | acting identity, then `is_enabled = 0` | `enforce_enabled_membership()` false, `get_login_user_id()` null | implemented |
 | sess-enabled-07 | request time: a DELETED membership ends it too | php | acting identity, then soft-delete the row | false, logged out | implemented |
 | sess-enabled-08 | anonymous is permitted and asking creates nothing | php | no identity | true, `has_session()` false | implemented |
 | sess-enabled-09 | end to end: a disabled membership mid-session redirects a page to login and answers an Ajax call `auth_required` | http | live session, disable the row, request a page / call an endpoint | 302 to login / `auth_required` envelope | deferred (the http harness runs against the development database; disabling a live account's membership there is not a fixture the suite may create - verified by hand with `rsx:debug` during W2) |
-| sess-enabled-10 | an enabled membership on a DISABLED site is refused like a wrong password | php | one enabled membership, its site `is_enabled = 0` | `attempt()` false, no identity, no success row, counter 1, `failed_disabled` logged; `login()` false | implemented |
-| sess-enabled-11 | a disabled site locks out only its own memberships | php | enabled memberships on a disabled and an enabled site | `attempt()` true, identity set | implemented |
+| sess-enabled-10 | an enabled membership on a DISABLED site is refused like a wrong password | php | one enabled membership, its site `is_enabled = 0` | `verify_credentials()` null, no identity, no success row, counter 1, `failed_disabled` logged; `login()` false | implemented |
+| sess-enabled-11 | a disabled site locks out only its own memberships | php | enabled memberships on a disabled and an enabled site | `verify_credentials()` answers the identity, identity set | implemented |
 | sess-enabled-12 | `->active()` / `is_active()` - the one definition a site picker lists and accepts from - drop a disabled or deleted site | php | memberships on an enabled, a disabled and a soft-deleted site | scope lists only the enabled site; `is_active()` true / false / false | implemented |
 | sess-enabled-13 | request time: disabling the SITE ends the session | php | acting identity, then `sites.is_enabled = 0` | `enforce_enabled_membership()` false, logged out | implemented |
 | sess-enabled-14 | the Default site (id 0) refuses to be disabled | php | `Site_Model::find(0)`, `is_enabled = 0`, save | `RuntimeException` "cannot be disabled", row unchanged | implemented |

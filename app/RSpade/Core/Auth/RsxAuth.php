@@ -17,39 +17,54 @@ use App\RSpade\Core\Session\Session;
 /**
  * RSX Authentication service
  *
- * Provides authentication logic for login/logout.
+ * Provides authentication logic for login/logout: verify_credentials() checks a credential
+ * pair, login() signs an identity in, logout() signs out.
  * Authenticates against login_users table (authentication identity).
  * All session management is handled by the Session class directly.
  */
 class RsxAuth
 {
     /**
-     * Attempt to authenticate a user with an email + password pair.
+     * Check an email + password pair. Answers the identity, or null - and signs nobody in.
      *
-     * RECORDING. attempt() is the only place that can see WHICH of the three outcomes happened -
-     * unknown address, wrong password, or success - so it is the place that records them
-     * (Login_History::record_failure() with STATUS_FAILED_NOT_FOUND / STATUS_FAILED_PASSWORD, or
-     * record_success()). A caller never has to repeat the lookup to classify what it just got
-     * back: a false return means "recorded, and the classification is already written down".
-     * Failures are ephemeral (counters + one log line) and successes are a `_login_history` row -
-     * see Login_History.
+     * VALIDATION AND SIGN-IN ARE TWO CALLS, ON PURPOSE. This one touches no session state at
+     * all: no row is created or written, no cookie is set. login() is the only way into a
+     * session. A login that has a second step - a second factor, an account-state question of
+     * the application's own - runs it BETWEEN the two, so there is no moment at which the
+     * visitor's session is authenticated before the step has been passed, and a request that
+     * dies part-way leaves them signed out:
      *
-     *   $record = false is the OPT-OUT for callers whose logins are not real logins - a test
-     *   harness, a fixture, a challenge pre-check - so they cannot pollute a real audit trail
-     *   with attempts nobody made.
+     *     $identity = RsxAuth::verify_credentials($credentials);
+     *     if ($identity === null) { ... the error ... }
+     *     // ... anything the sign-in still owes ...
+     *     RsxAuth::login($identity);
+     *
+     * RECORDING. This is the only place that can see WHICH of the outcomes happened - unknown
+     * address, wrong password, no usable membership, or success - so it is the place that
+     * records them (Login_History::record_failure() with STATUS_FAILED_NOT_FOUND /
+     * STATUS_FAILED_PASSWORD / STATUS_FAILED_DISABLED, or record_success()). A caller never
+     * has to repeat the lookup to classify what it just got back: null means "recorded, and
+     * the classification is already written down". Failures are ephemeral (counters + one log
+     * line) and successes are a `_login_history` row - see Login_History.
+     *
+     *   $record = false is the OPT-OUT for callers whose check is not yet a login - a sign-in
+     *   that still owes a second factor, a test harness, a fixture - so a recorded SUCCESS
+     *   always means FULL authentication. Such a caller records the outcome itself when it is
+     *   known (Rsx_Two_Factor::verify_challenge() does; see rsx:man two_factor).
      *
      * IDENTITY STATE IS THE APPLICATION'S; SITE MEMBERSHIP IS THE FRAMEWORK'S. login_users.status_id,
      * is_activated and is_verified are APPLICATION vocabulary: they are meant to be overridden and
      * they mean whatever the application says they mean, so the framework refuses to guess. The app
-     * enforces them in its own login function and in Main::pre_dispatch() (owner ruling 2026-08-12,
-     * and pre_dispatch is the hook that can HALT a request - init() is bootstrap).
+     * enforces them in its own login function - between this call and login() - and in
+     * Main::pre_dispatch() (owner ruling 2026-08-12, and pre_dispatch is the hook that can HALT
+     * a request - init() is bootstrap).
      *
      * users.is_enabled and sites.is_enabled are NOT application vocabulary. They are the
      * framework's own switches for "may this identity use this site", written by the framework's
      * management surfaces and read by the framework everywhere an identity is established, so the
      * framework enforces them BOTH here and at request time (Session::enforce_enabled_membership()).
      * A membership is usable only when both are on (User_Model::is_active()). An identity with no
-     * usable membership is refused exactly the way a wrong password is refused - false, with
+     * usable membership is refused exactly the way a wrong password is refused - null, with
      * STATUS_FAILED_DISABLED written to the audit trail - so a caller cannot tell the two apart and
      * an application never writes the check itself.
      *
@@ -62,22 +77,12 @@ class RsxAuth
      * classified NOT_FOUND - the same answer a stranger's address gets, which is also the right
      * answer to give a stranger.
      *
-     * TWO-FACTOR (or any other second step) is built on top, not inside:
-     *
-     *     if (!RsxAuth::attempt($credentials, record: false, touch_last_login: false)) { ... }
-     *     // ... run the challenge; on completion:
-     *     RsxAuth::login($login_user);
-     *     Login_History::record_success($login_user->id, $email);
-     *
-     * The pre-check neither records nor stamps, so a recorded SUCCESS always means FULL
-     * authentication and last_login is stamped only when the user is actually all the way in.
-     *
      * THROTTLED BEFORE ANYTHING ELSE. The first statement is
      * Login_Throttle::require_not_throttled(), which THROWS Auth_Throttled_Exception when the
      * client IP has spent its failure budget (rsx.sessions.login_throttle). It runs before the
      * lookup so a locked-out address cannot even probe which addresses exist, and it throws
-     * rather than returning false because "we did not check" is not the same answer as "those
-     * credentials are wrong" - a false there would report an invalid password to a user whose
+     * rather than returning null because "we did not check" is not the same answer as "those
+     * credentials are wrong" - a null there would report an invalid password to a user whose
      * password may be perfectly correct.
      *
      * The exception is part of this method's contract: a login function CATCHES it and renders
@@ -88,11 +93,10 @@ class RsxAuth
      *
      * @param array $credentials Requires 'email' and 'password'
      * @param bool $record Whether to record the outcome to Login_History (default true)
-     * @param bool $touch_last_login Whether a successful login bumps last_login (default true)
-     * @return bool
+     * @return Login_User_Model|null The identity the credentials prove, or null
      * @throws Auth_Throttled_Exception when this client IP is locked out
      */
-    public static function attempt(array $credentials, bool $record = true, bool $touch_last_login = true)
+    public static function verify_credentials(array $credentials, bool $record = true): ?Login_User_Model
     {
         // Before the lookup, before the classification, before anything a caller could learn
         // something from.
@@ -104,7 +108,7 @@ class RsxAuth
         // Malformed input is not an attempt: nobody offered a credential pair to check, so
         // there is nothing to classify and nothing to record.
         if (!$email || !$password) {
-            return false;
+            return null;
         }
 
         // Authenticate against login_users table (authentication identity). SoftDeletes' global
@@ -116,7 +120,7 @@ class RsxAuth
                 Login_History::record_failure($email, Login_History::STATUS_FAILED_NOT_FOUND);
             }
 
-            return false;
+            return null;
         }
 
         if (!Hash::check($password, $login_user->password)) {
@@ -129,7 +133,7 @@ class RsxAuth
                 );
             }
 
-            return false;
+            return null;
         }
 
         // The framework's own switch, checked here so that "your account is switched off"
@@ -145,14 +149,14 @@ class RsxAuth
                 );
             }
 
-            return false;
+            return null;
         }
 
         if ($record) {
             Login_History::record_success($login_user->id, $email);
         }
 
-        return self::login($login_user, $touch_last_login);
+        return $login_user;
     }
 
     /**
@@ -166,7 +170,7 @@ class RsxAuth
      * tenant the current process happens to be serving, and a login has not chosen a site yet.
      * Trashed memberships are excluded for free by User_Model's own soft-delete scope.
      *
-     * An application never writes this query: attempt() and login() ask it at sign-in, and
+     * An application never writes this query: verify_credentials() and login() ask it at sign-in, and
      * Session::enforce_enabled_membership() asks the per-site form of it on every request.
      *
      * @param Login_User_Model $login_user
@@ -184,7 +188,10 @@ class RsxAuth
     }
 
     /**
-     * Log in a user and create session
+     * Sign an identity in: the ONLY way into a staff session.
+     *
+     * verify_credentials() proves who somebody is and touches no session; this establishes
+     * the session, and writes it at once. Call it last - after every step the sign-in owes.
      *
      * $touch_last_login is threaded straight through to Session::set_login_user_id(): true (the
      * default) stamps login_users.last_login, false leaves it alone. Pass false whenever the login
@@ -196,7 +203,7 @@ class RsxAuth
      *
      * RETURNS FALSE, TOUCHING NOTHING, when the identity holds no active site membership. Every
      * path into a session runs through here, so this is where the framework's is_enabled switches
-     * catch the sign-ins that never saw attempt() - a second factor, a federated sign-in, the
+     * catch the sign-ins that never saw verify_credentials() - a second factor, a federated sign-in, the
      * development harness. A false return means no session was established and nothing was
      * recorded: the caller records the outcome in whatever vocabulary its own flow uses (the
      * framework's callers record STATUS_FAILED_DISABLED and then fail exactly as they fail on a

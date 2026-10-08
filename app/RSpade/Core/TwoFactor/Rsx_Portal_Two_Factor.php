@@ -183,6 +183,11 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
         Portal_Session::logout();
     }
 
+    protected static function __event(string $name): string
+    {
+        return 'portal.two_factor.' . $name;
+    }
+
     /**
      * Nothing to record: the portal has no login history. See the class docblock.
      */

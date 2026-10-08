@@ -128,8 +128,8 @@ class Schema_Contract
                 'migration' => '2025_11_04_051746_create_login_users_table',
                 'columns' => [
                     'id' => ['where' => 'Session, RsxAuth, Rsx_Two_Factor, Rsx_Sso; FK target of _sso_identities and _two_factor_credentials'],
-                    'email' => ['where' => 'Login_User_Model::find_by_email(), RsxAuth::attempt() - sign-in resolves on it'],
-                    'password' => ['where' => 'RsxAuth::attempt() Hash::check'],
+                    'email' => ['where' => 'Login_User_Model::find_by_email(), RsxAuth::verify_credentials() - sign-in resolves on it'],
+                    'password' => ['where' => 'RsxAuth::verify_credentials() Hash::check'],
                     'is_activated' => ['where' => 'Login_User_Model::is_active()'],
                     'is_verified' => ['where' => 'Login_User_Model::is_active()'],
                     'status_id' => ['where' => 'Login_User_Model::is_active(), Rsx_Initial_User::create()'],
@@ -160,7 +160,7 @@ class Schema_Contract
                     [
                         'columns' => ['email'],
                         'name' => 'uk_login_users_email',
-                        'why' => 'find_by_email() and RsxAuth::attempt() first() on it, so losing uniqueness'
+                        'why' => 'find_by_email() and RsxAuth::verify_credentials() first() on it, so losing uniqueness'
                             . ' makes WHICH identity signs in non-deterministic - silent and security-relevant',
                     ],
                 ],

@@ -23,7 +23,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * means (rsx:man session, ACCOUNT STATE / SITE MEMBERSHIP):
  *
  * AT LOGIN - an identity holding no ENABLED site membership fails exactly the way a wrong
- * password fails. attempt() returns false, no session is established, and the audit trail
+ * password fails. verify_credentials() answers null, no session is established, and the audit trail
  * carries the classification the caller is deliberately not given: STATUS_FAILED_DISABLED.
  * One enabled membership out of several is enough, because the question is about the
  * IDENTITY and a login has not chosen a site yet. RsxAuth::login() - the door every other
@@ -39,7 +39,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * usable, at sign-in or at request time, while the identity's memberships on other sites are
  * unaffected. The Default site (id 0) can never be switched off.
  *
- * ISOLATION, as in Rsx_Auth_Attempt_Test: the rows are rolled back with the per-test
+ * ISOLATION, as in Rsx_Auth_Verify_Credentials_Test: the rows are rolled back with the per-test
  * transaction, while the failure counters are redis keys outside both the transaction and
  * the process - so every test uses a fresh email and deletes the keys it created.
  */
@@ -194,11 +194,11 @@ class Enabled_Membership_Test extends Rsx_Test_Abstract
     // -------------------------------------------------------------------------
 
     /**
-     * The only membership is disabled: attempt() is false, nothing is signed in, and the
+     * The only membership is disabled: verify_credentials() answers null, nothing is signed in, and the
      * outcome is classified STATUS_FAILED_DISABLED - which is the whole difference between
      * this and a wrong password, and it lives in the audit trail rather than in the answer.
      */
-    public static function test_attempt_refuses_an_identity_whose_only_membership_is_disabled()
+    public static function test_verify_credentials_refuses_an_identity_whose_only_membership_is_disabled()
     {
         static::__start_anonymous();
         $email = static::__fresh_email('only_disabled');
@@ -207,8 +207,8 @@ class Enabled_Membership_Test extends Rsx_Test_Abstract
 
         $rows_before = DB::table('_login_history')->count();
 
-        static::__assert_false(
-            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
+        static::__assert_null(
+            RsxAuth::verify_credentials(['email' => $email, 'password' => self::PASSWORD]),
             'a disabled membership cannot authenticate, even with the right password'
         );
 
@@ -236,8 +236,8 @@ class Enabled_Membership_Test extends Rsx_Test_Abstract
         $email = static::__fresh_email('no_membership');
         static::__make_login_user($email);
 
-        static::__assert_false(
-            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
+        static::__assert_null(
+            RsxAuth::verify_credentials(['email' => $email, 'password' => self::PASSWORD]),
             'a credential with no membership behind it cannot authenticate'
         );
 
@@ -259,10 +259,9 @@ class Enabled_Membership_Test extends Rsx_Test_Abstract
         static::__give_membership($login_user, 1, false);
         static::__give_membership($login_user, (int) $other_site->id, true);
 
-        static::__assert_true(
-            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
-            'one enabled membership authenticates'
-        );
+        $identity = RsxAuth::verify_credentials(['email' => $email, 'password' => self::PASSWORD]);
+        static::__assert_not_null($identity, 'one enabled membership authenticates');
+        static::__assert_true(RsxAuth::login($identity), 'and signs in');
 
         static::__assert_equals(
             (int) $login_user->id,
@@ -305,7 +304,7 @@ class Enabled_Membership_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * login() is the door every sign-in that never saw attempt() goes through - a second
+     * login() is the door every sign-in goes through, including those that never saw verify_credentials() - a second
      * factor, a federated sign-in, the development harness. It refuses the same identity, and
      * it refuses it WITHOUT touching the session: whoever was signed in before stays signed
      * in, and nothing is recorded (the caller owns the recording).
@@ -409,11 +408,11 @@ class Enabled_Membership_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * An enabled membership on a DISABLED site is not usable: attempt() refuses it exactly as
-     * it refuses a disabled membership - false, nothing signed in, FAILED_DISABLED recorded -
+     * An enabled membership on a DISABLED site is not usable: verify_credentials() refuses it exactly as
+     * it refuses a disabled membership - null, nothing signed in, FAILED_DISABLED recorded -
      * and login(), the door for every other sign-in, refuses it without touching the session.
      */
-    public static function test_attempt_refuses_an_identity_whose_only_site_is_disabled()
+    public static function test_verify_credentials_refuses_an_identity_whose_only_site_is_disabled()
     {
         static::__start_anonymous();
         $email = static::__fresh_email('site_disabled');
@@ -424,8 +423,8 @@ class Enabled_Membership_Test extends Rsx_Test_Abstract
 
         $rows_before = DB::table('_login_history')->count();
 
-        static::__assert_false(
-            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
+        static::__assert_null(
+            RsxAuth::verify_credentials(['email' => $email, 'password' => self::PASSWORD]),
             'a membership on a disabled site cannot authenticate'
         );
         static::__assert_null(Session::get_login_user_id(), 'no identity is established');
@@ -459,10 +458,9 @@ class Enabled_Membership_Test extends Rsx_Test_Abstract
         static::__give_membership($login_user, (int) $enabled_site->id, true);
         static::__disable_site($disabled_site);
 
-        static::__assert_true(
-            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
-            'the membership on the enabled site authenticates'
-        );
+        $identity = RsxAuth::verify_credentials(['email' => $email, 'password' => self::PASSWORD]);
+        static::__assert_not_null($identity, 'the membership on the enabled site authenticates');
+        static::__assert_true(RsxAuth::login($identity), 'and signs in');
         static::__assert_equals((int) $login_user->id, (int) Session::get_login_user_id());
     }
 

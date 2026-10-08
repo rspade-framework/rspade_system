@@ -65,7 +65,7 @@ class Rsx_Api_Bearer
      * unless that user is BOTH active (User_Model::is_active(): the membership and its site both
      * enabled) and permitted to use the API (users.is_api_access_enabled - the same column
      * Session::has_api_access() reads), and unless its login identity is live: a soft-deleted
-     * login_users row is an account RsxAuth::attempt() already treats as not found, so its keys
+     * login_users row is an account RsxAuth::verify_credentials() already treats as not found, so its keys
      * die with it. The refusal happens BEFORE
      * _set_api_identity(), so a refused user never gets an identity established, and it reuses
      * the one uniform message every other key failure returns. On success, sets the API identity

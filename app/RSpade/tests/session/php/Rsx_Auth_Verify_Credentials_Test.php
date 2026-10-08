@@ -18,15 +18,20 @@ use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * RsxAuth::attempt() is the one place that can classify a login outcome - unknown address, wrong
+ * RsxAuth::verify_credentials() is the one place that can classify a login outcome - unknown address, wrong
  * password, or success - so it is the place that records it. These tests pin that contract:
  *
- * - unknown address           -> false, a FAILED_NOT_FOUND record (counter + log line), no row
+ * - unknown address           -> null, a FAILED_NOT_FOUND record (counter + log line), no row
  * - soft-deleted identity     -> the same, via the SoftDeletes global scope
- * - wrong password            -> false, a FAILED_PASSWORD record, no row
- * - correct credentials       -> true, exactly ONE `_login_history` SUCCESS row, session identity set
+ * - wrong password            -> null, a FAILED_PASSWORD record, no row
+ * - correct credentials       -> the identity, exactly ONE `_login_history` SUCCESS row
  * - $record = false           -> nothing recorded on either path
- * - missing email or password -> false and NOTHING recorded (malformed input is not an attempt)
+ * - missing email or password -> null and NOTHING recorded (malformed input is not an attempt)
+ *
+ * AND IT SIGNS NOBODY IN. Checking a credential pair and establishing a session are two calls:
+ * a sign-in that owes a second step runs it between them, so there is no moment at which the
+ * visitor's session is authenticated before the step is passed. On every path here, success
+ * included, the session is left exactly as it was - RsxAuth::login() is what signs in.
  *
  * TWO STORES, so two isolation strategies (same as Login_History_Test): the SUCCESS rows are
  * database writes rolled back with the per-test transaction, while the failure counters are redis
@@ -34,12 +39,12 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * unique email, reads the shared per-IP counter as a delta (in CLI the client IP is the literal
  * 'CLI'), and deletes the keys it created in teardown.
  *
- * NOT COVERED HERE: the $touch_last_login flag. Session::set_login_user_id() returns from its CLI
+ * NOT COVERED HERE: login()'s $touch_last_login flag. Session::set_login_user_id() returns from its CLI
  * branch before the last_login stamp, so NO login stamps last_login in a CLI process and the flag
  * is unobservable from a PHP test. It is verified live over HTTP instead (a real login stamps, and
  * a dev-auth harness login does not) - see tests/session/test_catalog.md.
  */
-class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
+class Rsx_Auth_Verify_Credentials_Test extends Rsx_Test_Abstract
 {
     private const PASSWORD = 'correct-horse-battery-staple';
 
@@ -95,7 +100,7 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
         $login_user->save();
 
         // AN ENABLED SITE MEMBERSHIP IS PART OF BEING ABLE TO SIGN IN. users.is_enabled is the
-        // framework's switch: RsxAuth::attempt() and RsxAuth::login() both refuse an identity
+        // framework's switch: RsxAuth::verify_credentials() and RsxAuth::login() both refuse an identity
         // that holds none, so a credential row on its own is not a usable fixture. Which site
         // it lands on does not matter here - the predicate reads across all of them - and the
         // site-scope trait sets the column from the session anyway.
@@ -126,7 +131,7 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Start every test from a known anonymous state - attempt() logs identities in.
+     * Start every test from a known anonymous state, so "nobody was signed in" is a real claim.
      */
     private static function __start_anonymous(): void
     {
@@ -168,8 +173,8 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
         $email = static::__fresh_email('unknown');
         $rows_before = DB::table('_login_history')->count();
 
-        static::__assert_false(
-            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
+        static::__assert_null(
+            RsxAuth::verify_credentials(['email' => $email, 'password' => self::PASSWORD]),
             'an unknown address cannot authenticate'
         );
 
@@ -198,8 +203,8 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
         $login_user = static::__make_login_user($email);
         $rows_before = DB::table('_login_history')->count();
 
-        static::__assert_false(
-            RsxAuth::attempt(['email' => $email, 'password' => 'not-the-password']),
+        static::__assert_null(
+            RsxAuth::verify_credentials(['email' => $email, 'password' => 'not-the-password']),
             'a wrong password cannot authenticate'
         );
 
@@ -236,8 +241,8 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
 
         $rows_before = DB::table('_login_history')->count();
 
-        static::__assert_false(
-            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
+        static::__assert_null(
+            RsxAuth::verify_credentials(['email' => $email, 'password' => self::PASSWORD]),
             'a deleted identity cannot authenticate even with the right password'
         );
 
@@ -256,18 +261,19 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The success path: exactly ONE history row, and the caller is logged in.
+     * The success path: the identity is answered, exactly ONE history row is written - and
+     * the session is untouched. Signing in is login()'s act, and only login()'s.
      */
-    public static function test_successful_attempt_records_one_success_row_and_logs_in()
+    public static function test_correct_credentials_answer_the_identity_and_sign_nobody_in()
     {
         static::__start_anonymous();
         $email = static::__fresh_email('success');
         $login_user = static::__make_login_user($email);
 
-        static::__assert_true(
-            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
-            'correct credentials authenticate'
-        );
+        $identity = RsxAuth::verify_credentials(['email' => $email, 'password' => self::PASSWORD]);
+
+        static::__assert_not_null($identity, 'correct credentials are verified');
+        static::__assert_equals((int) $login_user->id, (int) $identity->id, 'the identity they prove is answered');
 
         static::__assert_equals(1, static::__history_rows_for($email), 'exactly one row, never two');
 
@@ -275,16 +281,34 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
         static::__assert_equals(Login_History::STATUS_SUCCESS, $row->status);
         static::__assert_equals((int) $login_user->id, (int) $row->login_user_id);
 
-        static::__assert_equals(
-            (int) $login_user->id,
-            (int) Session::get_login_user_id(),
-            'the session carries the authenticated identity'
-        );
+        static::__assert_null(Session::get_login_user_id(), 'verifying a credential pair signs nobody in');
         static::__assert_equals(
             0,
             Login_History::get_failed_attempts_count($email),
             'a success is never a failure count'
         );
+
+        static::__assert_true(RsxAuth::login($identity), 'login() is the sign-in');
+        static::__assert_equals((int) $login_user->id, (int) Session::get_login_user_id(), 'and now the session carries the identity');
+    }
+
+    /**
+     * A session that is already signed in as somebody is not disturbed by a check, right or wrong.
+     */
+    public static function test_a_check_leaves_an_existing_session_as_it_was()
+    {
+        static::__start_anonymous();
+        $signed_in = static::__make_login_user(static::__fresh_email('existing'));
+        static::__assert_true(RsxAuth::login($signed_in));
+
+        $other_email = static::__fresh_email('other');
+        static::__make_login_user($other_email);
+
+        RsxAuth::verify_credentials(['email' => $other_email, 'password' => self::PASSWORD], record: false);
+        static::__assert_equals((int) $signed_in->id, (int) Session::get_login_user_id(), 'a verified pair for another identity changes nothing');
+
+        RsxAuth::verify_credentials(['email' => $other_email, 'password' => 'not-the-password'], record: false);
+        static::__assert_equals((int) $signed_in->id, (int) Session::get_login_user_id(), 'nor does a refused one');
     }
 
     // -------------------------------------------------------------------------
@@ -302,8 +326,8 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
         static::__make_login_user($email);
         $rows_before = DB::table('_login_history')->count();
 
-        static::__assert_false(
-            RsxAuth::attempt(['email' => $email, 'password' => 'not-the-password'], record: false)
+        static::__assert_null(
+            RsxAuth::verify_credentials(['email' => $email, 'password' => 'not-the-password'], record: false)
         );
 
         static::__assert_equals($rows_before, DB::table('_login_history')->count(), 'no row');
@@ -311,31 +335,24 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The 2FA pre-check shape: verify the pair, record nothing, stamp nothing - but the identity
-     * IS established, so the caller decides what happens next.
+     * The second-factor pre-check shape: the pair is verified and the identity answered, with
+     * nothing recorded, nothing stamped and nobody signed in - the challenge decides the rest.
      */
-    public static function test_record_false_success_logs_in_without_recording()
+    public static function test_record_false_success_answers_the_identity_and_writes_nothing()
     {
         static::__start_anonymous();
         $email = static::__fresh_email('norecord_ok');
         $login_user = static::__make_login_user($email);
 
-        static::__assert_true(RsxAuth::attempt(
-            ['email' => $email, 'password' => self::PASSWORD],
-            record: false,
-            touch_last_login: false
-        ));
+        $identity = RsxAuth::verify_credentials(['email' => $email, 'password' => self::PASSWORD], record: false);
 
+        static::__assert_equals((int) $login_user->id, (int) $identity->id);
         static::__assert_equals(0, static::__history_rows_for($email), 'nothing recorded');
         static::__assert_null(
             static::__persisted_last_login((int) $login_user->id),
             'nothing stamped'
         );
-        static::__assert_equals(
-            (int) $login_user->id,
-            (int) Session::get_login_user_id(),
-            'the caller is still authenticated'
-        );
+        static::__assert_null(Session::get_login_user_id(), 'nobody is signed in');
     }
 
     // -------------------------------------------------------------------------
@@ -354,10 +371,10 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
         $ip_before = Login_History::get_failed_attempts_count_by_ip('CLI');
         static::$counter_keys_used[] = 'login_failures:ip:CLI';
 
-        static::__assert_false(RsxAuth::attempt([]), 'no credentials at all');
-        static::__assert_false(RsxAuth::attempt(['email' => $email]), 'email without a password');
-        static::__assert_false(RsxAuth::attempt(['password' => self::PASSWORD]), 'password without an email');
-        static::__assert_false(RsxAuth::attempt(['email' => $email, 'password' => '']), 'an empty password');
+        static::__assert_null(RsxAuth::verify_credentials([]), 'no credentials at all');
+        static::__assert_null(RsxAuth::verify_credentials(['email' => $email]), 'email without a password');
+        static::__assert_null(RsxAuth::verify_credentials(['password' => self::PASSWORD]), 'password without an email');
+        static::__assert_null(RsxAuth::verify_credentials(['email' => $email, 'password' => '']), 'an empty password');
 
         static::__assert_equals($rows_before, DB::table('_login_history')->count(), 'no row');
         static::__assert_equals(0, Login_History::get_failed_attempts_count($email), 'no email counter');

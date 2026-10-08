@@ -149,38 +149,54 @@ OPERATOR COMMANDS
 AUTHENTICATION
     RsxAuth facade (App\RSpade\Core\Auth\RsxAuth):
         A thin credential-check wrapper. It authenticates against login_users
-        and delegates all session state to the Session class. Exactly three
-        methods exist:
+        and delegates all session state to the Session class. Three methods
+        are the whole of it:
 
-        RsxAuth::attempt(array $credentials, bool $record = true,
-                         bool $touch_last_login = true): bool
-            Look up login_users by $credentials['email'], verify
-            $credentials['password'] with Hash::check(), and on success call
-            self::login(). Returns false on missing fields or bad credentials.
+        RsxAuth::verify_credentials(array $credentials,
+                                    bool $record = true): ?Login_User_Model
+            Look up login_users by $credentials['email'] and verify
+            $credentials['password'] with Hash::check(). Answers the identity
+            the pair proves, or null on missing fields or bad credentials.
+
+            IT SIGNS NOBODY IN. No session row is created or written and no
+            cookie is set: checking a credential pair and establishing a session
+            are two calls, on purpose. A sign-in that owes anything more - a
+            second factor, an account-state question of the application's own -
+            runs it BETWEEN this call and login(), so the visitor's session is
+            never authenticated before the step is passed, and a request that
+            dies part-way leaves them signed out. The one-step login is:
+
+                $identity = RsxAuth::verify_credentials($credentials);
+                if ($identity === null) { ... the error ... }
+                RsxAuth::login($identity);
 
             IT RECORDS THE OUTCOME ITSELF - it is the only place that can tell
-            the three apart before collapsing them into a bool: SUCCESS,
-            FAILED_NOT_FOUND (unknown address, soft-deleted identities included),
-            FAILED_PASSWORD (with the login_user_id). Do NOT also call
-            Login_History::record_success() beside it or you record twice.
-            Malformed input records nothing - nobody offered a credential pair.
+            the outcomes apart before collapsing them: SUCCESS, FAILED_NOT_FOUND
+            (unknown address, soft-deleted identities included), FAILED_PASSWORD
+            (with the login_user_id), FAILED_DISABLED (no active membership). Do
+            NOT also call Login_History::record_success() beside it or you
+            record twice. Malformed input records nothing - nobody offered a
+            credential pair.
 
-            $record = false is the opt-out for logins that are not real logins
-            (fixtures, harnesses, a challenge pre-check). $touch_last_login =
-            false suppresses the login_users.last_login stamp. Both together are
-            the two-factor pre-check shape - see rsx:man session (LOGIN HISTORY).
+            $record = false is the opt-out for a check that is not yet a login
+            (a sign-in that still owes a second factor, a fixture, a harness),
+            so a recorded SUCCESS always means full authentication - see
+            rsx:man session (LOGIN HISTORY) and rsx:man two_factor.
 
             ACCOUNT STATE IS NOT CHECKED HERE. login_users.status_id,
             is_activated and is_verified are application vocabulary; the
-            framework checks a live identity + the password and nothing else.
-            See ACCOUNT STATE in rsx:man session for where to enforce yours.
+            framework checks a live identity, the password and site membership
+            and nothing else. See ACCOUNT STATE in rsx:man session for where to
+            enforce yours.
 
         RsxAuth::login(Login_User_Model $login_user,
                        bool $touch_last_login = true): bool
-            Log the identity in via Session::set_login_user_id($login_user->id).
-            Records nothing - a caller that logs a user in directly (a
-            second-factor completion, an invitation acceptance) records its own
-            SUCCESS. Returns true.
+            Sign the identity in via Session::set_login_user_id($login_user->id)
+            - the ONLY way into a staff session, written at once. Call it last.
+            Records nothing - a caller that signs a user in directly (an
+            invitation acceptance) records its own SUCCESS. Returns false,
+            touching nothing, for an identity with no active membership.
+            $touch_last_login = false leaves login_users.last_login alone.
 
         RsxAuth::logout(): void
             Delegates to Session::logout().
@@ -188,14 +204,15 @@ AUTHENTICATION
         NOTE: RsxAuth has NO check()/user()/id()/session() methods. Use the
         Session accessors for "logged in?" and "who?" - see rsx:man session.
 
-    The template login flow (rsx/app/login/login_controller.php) does not
-    require RsxAuth - it verifies the password and calls
-    Session::set_login_user_id() directly, then runs site selection (below).
-    Both paths converge on Session::set_login_user_id().
+    The template login flow (rsx/app/login/login_controller.php) is exactly
+    that shape: verify_credentials(), the application's own account question,
+    the second factor when one is owed, and login() last - then site selection
+    (below).
 
     Login history / rate limiting:
         SUCCESSFUL logins are audited as `_login_history` rows, written by
-        attempt() itself and pruned on rsx.sessions.login_history_retention_days.
+        verify_credentials() itself and pruned on
+        rsx.sessions.login_history_retention_days.
         FAILURES are NOT database rows: record_failure() increments a per-email
         and a per-IP counter that expire on
         rsx.sessions.login_throttle.window_minutes and logs one warning line, so
@@ -203,7 +220,7 @@ AUTHENTICATION
         consequence to plan around: get_failed_attempts_count*() answers are
         BOUNDED BY THAT WINDOW - a 30-day failed-attempt stat is not answerable.
         Those counts are a STATISTIC; ENFORCEMENT is Login_Throttle's, per client
-        IP, and it is on by default: attempt() refuses a locked-out address
+        IP, and it is on by default: verify_credentials() refuses a locked-out address
         before the lookup by throwing Auth_Throttled_Exception ("You're doing
         that too fast"), so a login function CATCHES it and renders the message.
         Full treatment (including the portal and custom-status recipes):
@@ -220,8 +237,9 @@ AUTHENTICATION
         treatment: rsx:man two_factor.
 
     Account state (status_id / is_activated / is_verified):
-        APPLICATION vocabulary, enforced by the application - attempt() checks a
-        live identity, the password, and site membership, so a non-activated
+        APPLICATION vocabulary, enforced by the application -
+        verify_credentials() checks a live identity, the password, and site
+        membership, so a non-activated
         login user authenticates unless YOUR login function refuses it. Where to
         put the checks (login function + Main::pre_dispatch(), with the ejection
         recipe): rsx:man session, ACCOUNT STATE.
@@ -230,7 +248,7 @@ AUTHENTICATION
         THE FRAMEWORK'S, not the application's, and enforced twice. A membership
         is ACTIVE when it and its site are both enabled (User_Model::is_active(),
         the ->active() scope). An identity with no active membership on any site
-        fails attempt() exactly as a wrong password does (recorded
+        fails verify_credentials() exactly as a wrong password does (recorded
         STATUS_FAILED_DISABLED), and RsxAuth::login() refuses it too - so the
         second-factor, federated and dev-auth doors are closed by the same rule.
         At request time Session::enforce_enabled_membership() ends a session whose

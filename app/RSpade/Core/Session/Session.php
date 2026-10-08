@@ -1179,7 +1179,7 @@ class Session extends Rsx_System_Model_Abstract
     /**
      * Is the signed-in identity still an ACTIVE member of the site this request serves?
      *
-     * THE REQUEST-TIME HALF OF THE FRAMEWORK'S is_enabled CONTRACT. RsxAuth::attempt() and
+     * THE REQUEST-TIME HALF OF THE FRAMEWORK'S is_enabled CONTRACT. RsxAuth::verify_credentials() and
      * RsxAuth::login() refuse an identity with no active membership at sign-in; this is what
      * keeps a session that was legitimate five minutes ago from outliving the membership behind
      * it. When the users row for (login_user_id, site_id) is MISSING or is not active

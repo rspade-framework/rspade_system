@@ -40,7 +40,7 @@ use App\RSpade\Core\Session\User_Agent;
  *   is the horizon. Anything longer must come from the log.
  *
  * ENFORCEMENT LIVES IN Login_Throttle, not here: record_failure() hands every failure to it
- * (per client IP), and RsxAuth::attempt() refuses a locked-out address before any lookup. The
+ * (per client IP), and RsxAuth::verify_credentials() refuses a locked-out address before any lookup. The
  * counters below remain the readable per-email/per-IP statistic they always were, and nothing
  * enforces the per-email one.
  *
@@ -55,7 +55,7 @@ class Login_History
     /**
      * Status vocabulary.
      *
-     * Framework producers: RsxAuth::attempt() writes SUCCESS, FAILED_PASSWORD and
+     * Framework producers: RsxAuth::verify_credentials() writes SUCCESS, FAILED_PASSWORD and
      * FAILED_NOT_FOUND; Rsx_Two_Factor::verify_challenge() writes FAILED_2FA on a wrong
      * second-factor answer (and the SUCCESS row when the challenge passes);
      * Rsx_Sso::handle_callback() writes FAILED_SSO when a federated sign-in does not
@@ -66,7 +66,7 @@ class Login_History
      *
      * FAILED_DISABLED is written by the framework wherever a sign-in is refused because the
      * identity holds no ACTIVE site membership (users.is_enabled + sites.is_enabled,
-     * User_Model::is_active()): RsxAuth::attempt(),
+     * User_Model::is_active()): RsxAuth::verify_credentials(),
      * Rsx_Two_Factor::verify_challenge() and verify_passkey_login(), and Rsx_Sso when
      * RsxAuth::login() refuses. Site
      * membership is the framework's switch, so the framework records its own refusals.

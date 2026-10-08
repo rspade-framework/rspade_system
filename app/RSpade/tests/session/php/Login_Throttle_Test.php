@@ -27,12 +27,12 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * with the lockout configured down to one minute. A test that slept for the window would
  * buy nothing the arithmetic does not already prove.
  *
- * NOT COVERED HERE - RsxAuth::attempt() THROWING. attempt() throttles on
+ * NOT COVERED HERE - RsxAuth::verify_credentials() THROWING. It throttles on
  * Session::get_client_ip(), which is null in CLI by design (no remote party, nothing to
  * throttle), so a PHP test can only prove the CLI half of that contract - which it does,
  * below. The throw itself is verified live over HTTP against /login and /_portal/login;
  * see tests/session/test_catalog.md. Same split, and the same reason, as $touch_last_login
- * in Rsx_Auth_Attempt_Test.
+ * in Rsx_Auth_Verify_Credentials_Test.
  */
 class Login_Throttle_Test extends Rsx_Test_Abstract
 {
@@ -295,19 +295,19 @@ class Login_Throttle_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The consequence at the seam that matters: attempt() throttles first, but in CLI there is
+     * The consequence at the seam that matters: verify_credentials() throttles first, but in CLI there is
      * no address, so the framework's own commands and tests still authenticate however many
      * times they need to.
      */
-    public static function test_attempt_is_not_throttled_in_cli()
+    public static function test_verify_credentials_is_not_throttled_in_cli()
     {
         static::__configure(attempts: 1);
 
         Login_Throttle::record_failure();
 
-        static::__assert_false(
-            RsxAuth::attempt(['email' => 'nobody_' . uniqid() . '@example.com', 'password' => 'wrong']),
-            'attempt() still answers the credential question rather than refusing'
+        static::__assert_null(
+            RsxAuth::verify_credentials(['email' => 'nobody_' . uniqid() . '@example.com', 'password' => 'wrong']),
+            'verify_credentials() still answers the credential question rather than refusing'
         );
     }
 

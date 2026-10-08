@@ -23,6 +23,7 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
 use App\RSpade\Core\TwoFactor\Totp;
 use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
 use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
+use App\RSpade\Tests\TwoFactor\Php\Two_Factor_Events_Fixture_Handler;
 use App\RSpade\Tests\TwoFactor\Php\Webauthn_Authenticator_Fixture;
 
 /**
@@ -109,7 +110,7 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
         $login_user->save();
 
         // AN ENABLED SITE MEMBERSHIP IS PART OF BEING ABLE TO SIGN IN. users.is_enabled is the
-        // framework's switch: RsxAuth::attempt() and RsxAuth::login() both refuse an identity
+        // framework's switch: RsxAuth::verify_credentials() and RsxAuth::login() both refuse an identity
         // that holds none, so a credential row on its own is not a usable fixture. Which site
         // it lands on does not matter here - the predicate reads across all of them - and the
         // site-scope trait sets the column from the session anyway.
@@ -541,6 +542,93 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
 
         static::__assert_equals((int) $fixture['login_user']->id, (int) Session::get_login_user_id(), 'a new challenge signs in');
         static::__assert_false(Rsx_Two_Factor::is_locked($fixture['login_user']), 'a correct answer clears the count');
+    }
+
+    /**
+     * A FAILURE SAYS WHICH FAILURE IT WAS, for code: reason() is a constant, so a login
+     * function can act on an exhausted challenge without matching the sentence it shows.
+     */
+    public static function test_each_failure_carries_its_reason()
+    {
+        $fixture = static::__enrolled_identity('reasons');
+        $max = Rsx_Two_Factor::challenge_max_failures();
+        $reason_of = function (callable $fn): string {
+            try {
+                $fn();
+            } catch (Two_Factor_Failed_Exception $e) {
+                return $e->reason();
+            }
+
+            return 'no exception';
+        };
+        $wrong = fn () => Rsx_Two_Factor::verify_challenge(['code' => '000000']);
+
+        static::__assert_equals(Two_Factor_Failed_Exception::REASON_WINDOW_EXPIRED, $reason_of($wrong), 'nothing pending');
+
+        Rsx_Two_Factor::begin_challenge($fixture['login_user']);
+
+        for ($i = 1; $i < $max; $i++) {
+            static::__assert_equals(Two_Factor_Failed_Exception::REASON_WRONG_ANSWER, $reason_of($wrong), "wrong answer {$i}");
+        }
+
+        static::__assert_equals(Two_Factor_Failed_Exception::REASON_CHALLENGE_SPENT, $reason_of($wrong), 'the wrong answer that was the last');
+        static::__assert_equals(Two_Factor_Failed_Exception::REASON_WINDOW_EXPIRED, $reason_of($wrong), 'and after it nothing is pending');
+    }
+
+    public static function test_a_locked_identity_carries_the_locked_reason()
+    {
+        static::__with_two_factor_config(['challenge_max_failures' => 2, 'identity_max_failures' => 2], function () {
+            $fixture = static::__enrolled_identity('locked_reason');
+
+            Rsx_Two_Factor::begin_challenge($fixture['login_user']);
+            static::__wrong_answer();
+            static::__wrong_answer();
+
+            Rsx_Two_Factor::begin_challenge($fixture['login_user']);
+
+            try {
+                Rsx_Two_Factor::verify_challenge(['code' => static::__unspent_code($fixture['secret'])]);
+                static::__assert_true(false, 'a locked identity is refused');
+            } catch (Two_Factor_Failed_Exception $e) {
+                static::__assert_equals(Two_Factor_Failed_Exception::REASON_IDENTITY_LOCKED, $e->reason());
+            }
+        });
+    }
+
+    /**
+     * THE EXHAUSTED CHALLENGE IS ANNOUNCED, ONCE, WITH THE IDENTITY. Reaching a challenge
+     * means the password was right, so a challenge destroyed by wrong answers is somebody who
+     * knows it guessing the second factor - the moment an application tells the account owner.
+     * The challenge that named the identity is already gone, so the event carries it.
+     */
+    public static function test_an_exhausted_challenge_fires_the_realms_event_with_the_identity()
+    {
+        $fixture = static::__enrolled_identity('spent_event');
+        $max = Rsx_Two_Factor::challenge_max_failures();
+
+        Two_Factor_Events_Fixture_Handler::$recorded = [];
+        Two_Factor_Events_Fixture_Handler::$recording = true;
+
+        try {
+            Rsx_Two_Factor::begin_challenge($fixture['login_user']);
+
+            for ($i = 1; $i < $max; $i++) {
+                static::__wrong_answer();
+            }
+            static::__assert_equals([], Two_Factor_Events_Fixture_Handler::$recorded, 'wrong answers below the cap announce nothing');
+
+            static::__wrong_answer();
+        } finally {
+            Two_Factor_Events_Fixture_Handler::$recording = false;
+        }
+
+        static::__assert_count(1, Two_Factor_Events_Fixture_Handler::$recorded, 'one event for one exhausted challenge');
+
+        $event = Two_Factor_Events_Fixture_Handler::$recorded[0];
+        static::__assert_equals('two_factor.challenge.spent', $event['event'], "the staff realm's event, never the portal's");
+        static::__assert_equals((int) $fixture['login_user']->id, (int) $event['data']['identity']->id);
+        static::__assert_equals($fixture['login_user']->email, $event['data']['email']);
+        static::__assert_equals($max, $event['data']['failures']);
     }
 
     /**

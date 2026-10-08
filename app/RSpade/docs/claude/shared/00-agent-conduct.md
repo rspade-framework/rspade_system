@@ -28,6 +28,8 @@
 
 **The suite runs at exactly three moments**: (1) the test you JUST WROTE or JUST CHANGED, run by itself (the class name, or `--filter=`), without asking; (2) the end of a major phase or epic, ONCE, the full suite or the affected groups, and read the output then; (3) when the user asks. A patch handed to you to apply is verified by the smoke test and by the tests it touched - nothing more. **You are still to write a test for every feature you write** - the restriction targets RUNNING, never writing.
 
+**SEVERAL GROUPS OR CLASSES ARE ONE COMMAND, NEVER A LOOP.** `--group` and the class argument both repeat - `rsx:test --group=session --group=two_factor --group=mail`, `rsx:test Foo_Test Bar_Test` - and one invocation hands the whole selection to the parallel runner, which spreads it across every worker. A shell `for` loop (or one command after another) over groups runs them one at a time, each paying its own startup, and throws the parallelism away. The two SUITES are the one thing a single command cannot mix: application tests and `--framework` tests are separate invocations.
+
 **A test run is one FOREGROUND command, awaited to the end and read.** Never start `rsx:test` in the background and move on to other work, never start a second run beside one in flight, and **never re-run a test because it was slow** - slowness is load, not failure, and a second copy doubles the load that made the first one slow. A framework run occupies several full-stack containers (mysql, php-fpm, nginx and the rest in each), so a run abandoned or duplicated is paid for by everything else on the host.
 
 ### Trust the code quality rules

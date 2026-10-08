@@ -843,7 +843,7 @@ ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and t
         them: grep for RsxAuth::attempt, check_password, Hash::check and password_verify
         across rsx/, staff and portal alike, and add every second-factor, backup-code,
         invitation-code and password-reset-token verification you find. For each one,
-        confirm it is covered - either it goes through RsxAuth::attempt() (which
+        confirm it is covered - either it goes through RsxAuth::verify_credentials() (which
         refuses a locked-out address before the lookup), or it calls
         Login_Throttle::require_not_throttled() itself before the check and feeds a
         failure afterwards (Login_Throttle::record_failure(), or a
@@ -867,14 +867,15 @@ ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and t
         already.
 
         The mirror image is just as quiet: a credential path that neither goes
-        through attempt() nor calls the throttle itself is an unlimited guessing
+        through RsxAuth::verify_credentials() nor calls the throttle itself is an
+        unlimited guessing
         oracle sitting beside a protected one. A 6-digit second factor is a million
         guesses inside a 30-second window; an attacker who has the password only
         needs the unthrottled door.
 
     Guidelines
         1. Enumerate the credential paths as above. One audit item each.
-        2. For a path that does NOT use RsxAuth::attempt(), verify the ORDER:
+        2. For a path that does NOT use RsxAuth::verify_credentials(), verify the ORDER:
            require_not_throttled() runs BEFORE any lookup, comparison or account-state
            check, so a locked-out address learns nothing at all.
         3. Verify the failure is counted exactly ONCE. Login_History::record_failure()
@@ -896,7 +897,7 @@ ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and t
            FRONT of the app is doing the same job.
 
     Dos and don'ts
-        DO route a new login flow through RsxAuth::attempt() when you can - coverage
+        DO route a new login flow through RsxAuth::verify_credentials() when you can - coverage
              is then automatic and cannot drift.
         DON'T report a throttled attempt as "invalid email or password". It is not a
              wrong password, and the user whose password is correct will keep retrying.

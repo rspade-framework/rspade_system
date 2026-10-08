@@ -17,7 +17,7 @@ Adjacent pieces covered here: `RsxAuth` (the credential check that classifies an
 records every login outcome), `Login_History` (successful-login audit rows plus the
 ephemeral per-email/per-IP failure counters, a readable statistic), `Login_Throttle`
 (the framework's brute-force ENFORCEMENT - failures counted per client IP, a lockout,
-and the thrown `Auth_Throttled_Exception` that `RsxAuth::attempt()` raises before any
+and the thrown `Auth_Throttled_Exception` that `RsxAuth::verify_credentials()` raises before any
 lookup) and `User_Agent` (device/browser parsing used by session listings).
 
 ## Source files
@@ -28,7 +28,7 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   the fixture endpoint `Ajax_Debug_Identity_Fixture_Controller` beside it)
 - `app/RSpade/Core/Session/User_Agent.php` - user-agent parsing
 - `app/RSpade/Core/Session/Login_History.php` (and `_login_history` table)
-- `app/RSpade/Core/Auth/RsxAuth.php` - attempt() / login() / logout() / has_enabled_membership()
+- `app/RSpade/Core/Auth/RsxAuth.php` - verify_credentials() / login() / logout() / has_enabled_membership()
 - `app/RSpade/Core/Auth/Login_Throttle.php`, `Auth_Throttled_Exception.php` - the
   per-IP brute-force throttle (config `rsx.sessions.login_throttle`)
 - `app/RSpade/Core/Models/Login_User_Model.php`, `User_Model.php`, `Site_Model.php`
@@ -54,15 +54,15 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 - Login throttle: the failure budget and the lockout it triggers, per-IP isolation,
   the enable switch, reset(), the exact refusal message and its retry_after_seconds,
   and the ruling that a caller with NO client IP is never throttled. The ambient-IP
-  throw out of `RsxAuth::attempt()` cannot be driven from CLI (there is no client IP
+  throw out of `RsxAuth::verify_credentials()` cannot be driven from CLI (there is no client IP
   there, by design), so that half is verified live over HTTP. (php + http)
-- Credential attempts: the outcomes RsxAuth::attempt() classifies and records
+- Credential attempts: the outcomes RsxAuth::verify_credentials() classifies and records
   (not-found incl. soft-deleted, wrong password, disabled membership, success), the
   `$record` opt-out, and malformed input recording nothing. The `$touch_last_login` flag is
   web-only - the CLI branch of `Session::set_login_user_id()` returns before the stamp - so
   it is verified live over HTTP rather than in php. (php + http)
 - Site membership (`users.is_enabled` + `sites.is_enabled`), the framework's own switches, in both places it is
-  enforced: at sign-in (`has_enabled_membership()`, `attempt()` failing exactly like a wrong
+  enforced: at sign-in (`has_enabled_membership()`, `verify_credentials()` failing exactly like a wrong
   password with `STATUS_FAILED_DISABLED` recorded, and `login()` returning false without
   touching the session - which is what closes the second-factor, federated and dev-auth
   doors) and at request time (`Session::enforce_enabled_membership()` logging out a session

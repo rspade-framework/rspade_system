@@ -389,6 +389,26 @@ API REFERENCE
             identity override (and updates the process's session row if one
             has already been minted). Does NOT create a session on its own.
 
+        Session::set_temporary_site_id(int $site_id): void
+        Session::clear_temporary_site_id(): void
+        Session::has_temporary_site_id(): bool
+            DECLARE the tenant for the rest of this script, writing nothing
+            anywhere. For code that must run in a site's context when there is
+            no session and none should be created - a first-run request
+            creating the initial user, a webhook that names its tenant, a
+            script. Unlike set_site_id() it:
+              - never creates a _sessions row and never emits a cookie;
+              - never writes to an existing row: a browser mid-session keeps
+                the tenant it had, and has it back when this is cleared;
+              - behaves identically in CLI and web (it is static state).
+            Until clear_temporary_site_id() or the end of the script,
+            get_site_id() answers this value and has_session() answers true
+            (site-scoped code guards on has_session() before trusting the site).
+            It OUTRANKS the stored session and every override. Refused inside
+            an external API request, whose identity is immutable.
+            Staff realm, site only: there is no temporary USER declaration, and
+            the portal declares its site with Portal_Session::set_site_id().
+
     Session Access Methods:
         Session::get_session_id(): int
             Returns session record ID. CREATES the session if none exists,
@@ -531,7 +551,7 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     authenticates AND enforces SITE MEMBERSHIP; the APPLICATION decides what an
     account's IDENTITY state means.
 
-    RsxAuth::attempt() checks exactly three things: the address resolves to a live
+    RsxAuth::verify_credentials() checks exactly three things: the address resolves to a live
     login identity, the password matches, and the identity holds at least one
     ACTIVE site membership (enabled, on an enabled site). It does NOT read login_users.status_id, is_activated
     or is_verified, and it never will. Those three columns are APPLICATION
@@ -600,8 +620,8 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     anonymous caller.
 
     A soft-deleted identity is refused for free and needs no code: Login_User_Model
-    uses SoftDeletes, so the global scope hides trashed rows from attempt()'s
-    lookup and a deleted account is classified NOT_FOUND - the same answer a
+    uses SoftDeletes, so the global scope hides trashed rows from
+    verify_credentials()'s lookup and a deleted account is classified NOT_FOUND - the same answer a
     stranger's address gets, which is the right answer to give a stranger. Its
     API keys die with it: a bearer key whose login identity is soft-deleted is
     refused like an unknown key (rsx:man external_api).
@@ -620,8 +640,8 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     Two rules, and an application writes neither of them.
 
     AT LOGIN. An identity holding no active membership on ANY site fails exactly
-    the way a wrong password fails: attempt() returns false and the caller cannot
-    tell the two apart. The audit trail keeps the distinction the caller is denied
+    the way a wrong password fails: verify_credentials() answers null and the
+    caller cannot tell the two apart. The audit trail keeps the distinction the caller is denied
     - Login_History::record_failure() with STATUS_FAILED_DISABLED. The predicate is
     public, for the rare caller that has to ask it directly:
 
@@ -669,15 +689,21 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     Enforce your own IDENTITY statuses in TWO places, and understand why both
     (site membership needs neither - the framework does it):
 
-    1. AT THE LOGIN GATE - your own login function, right after attempt()
-       returns true. This stops a bad-state account from getting a session at
-       all. Record the outcome yourself, in the shared vocabulary:
+    1. AT THE LOGIN GATE - your own login function, BETWEEN
+       RsxAuth::verify_credentials() and RsxAuth::login(). The password has been
+       checked and nobody is signed in yet, so a refusal is just an error: there
+       is no session to undo. Record the outcome yourself, in the shared
+       vocabulary:
 
-           if (!RsxAuth::attempt($credentials)) {
+           // record: false - whether this is a SUCCESS is not known until your
+           // own question has been answered.
+           $login_user = RsxAuth::verify_credentials($credentials, record: false);
+
+           if ($login_user === null) {
+               Login_History::record_failure($params['email'], Login_History::STATUS_FAILED_PASSWORD);
+
                return response_form_error('Invalid credentials');
            }
-
-           $login_user = Session::get_login_user();
 
            if ($login_user->status_id !== Login_User_Model::STATUS_ACTIVE) {
                // STATUS_FAILED_LOCKED is the app-owned outcome; the framework
@@ -688,10 +714,12 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
                    'status_id = ' . $login_user->status_id,
                    $login_user->id
                );
-               Session::logout();
 
                return response_form_error('This account is not active.');
            }
+
+           RsxAuth::login($login_user);
+           Login_History::record_success((int) $login_user->id, $params['email']);
 
     2. MID-SESSION - because the gate only runs at login, and a session lives
        for months. An account suspended at 10am must not keep working until its
@@ -1608,7 +1636,7 @@ LOGIN HISTORY
     follows from it.
 
     RECORDING IS AUTOMATIC:
-        RsxAuth::attempt() records every outcome it classifies. You do not call
+        RsxAuth::verify_credentials() records every outcome it classifies. You do not call
         Login_History from an ordinary login flow, and if you do you will
         double-record:
 
@@ -1617,16 +1645,17 @@ LOGIN HISTORY
                                  included - see ACCOUNT STATE)
             FAILED_PASSWORD      hash mismatch, with the login_user_id
 
-        attempt() is the only place that can tell those apart before collapsing
-        them into a bool, which is why it is the place that records them - a
+        verify_credentials() is the only place that can tell those apart before
+        collapsing them, which is why it is the place that records them - a
         caller never has to repeat the lookup to find out what just happened.
         Malformed input (missing email or password) records nothing: nobody
         offered a credential pair, so there was no attempt to classify.
 
-        Opt out with attempt($credentials, record: false) when the login is not a
-        real login - a fixture, a harness, a challenge pre-check. The dev-auth
-        harness never reaches attempt() at all, so rsx:debug logins are already
-        excluded.
+        Opt out with verify_credentials($credentials, record: false) when the
+        check is not yet a login - a sign-in that still owes a second factor or
+        an account question of your own, a fixture, a harness. The dev-auth
+        harness never reaches verify_credentials() at all, so rsx:debug logins
+        are already excluded.
 
     SUCCESSES ARE ROWS:
         record_success() and record_passkey_enrollment() are the only things
@@ -1675,9 +1704,9 @@ LOGIN HISTORY
         read it, display it, alert on it - do not build a second throttle on it.
 
     STATUS CONSTANTS:
-        Login_History::STATUS_SUCCESS          - produced by attempt()
-        Login_History::STATUS_FAILED_PASSWORD  - produced by attempt()
-        Login_History::STATUS_FAILED_NOT_FOUND - produced by attempt()
+        Login_History::STATUS_SUCCESS          - produced by verify_credentials()
+        Login_History::STATUS_FAILED_PASSWORD  - produced by verify_credentials()
+        Login_History::STATUS_FAILED_NOT_FOUND - produced by verify_credentials()
         Login_History::STATUS_FAILED_2FA       - produced by
                                                  Rsx_Two_Factor::verify_challenge()
         Login_History::STATUS_FAILED_SSO       - produced by
@@ -1731,20 +1760,22 @@ LOGIN HISTORY
         recovery codes; full treatment in rsx:man two_factor). What an app owns
         is the login function around it, and the shape below is the whole of it.
 
-        Suppress BOTH the recording and the last_login stamp at the password
-        stage, so a recorded SUCCESS always means FULL authentication and
-        last_login is stamped only when the user is actually all the way in:
+        CHECK THE PASSWORD, THEN RUN THE SECOND STEP, THEN SIGN IN - in that
+        order, as three separate acts. verify_credentials() signs nobody in, so
+        the visitor stays signed out for the whole of the second step, and a
+        request that dies part-way leaves them out. Do not record at the password
+        stage either, so a recorded SUCCESS always means FULL authentication:
 
-            if (!RsxAuth::attempt($credentials, record: false, touch_last_login: false)) {
+            $login_user = RsxAuth::verify_credentials($credentials, record: false);
+
+            if ($login_user === null) {
                 Login_History::record_failure($email, Login_History::STATUS_FAILED_PASSWORD);
                 return response_form_error('Invalid credentials');
             }
 
-            $login_user = Session::get_login_user();
-
             if (Rsx_Two_Factor::is_enabled($login_user)) {
-                // Parks the pending identity and LOGS THE SESSION BACK OUT: a
-                // half-authenticated browser is represented as not authenticated.
+                // Parks the pending identity on the session. Nobody is signed in,
+                // and nobody will be until the factor passes.
                 Rsx_Two_Factor::begin_challenge($login_user);
 
                 return redirect(Rsx::Route('Login_Controller::verify'));
@@ -1789,10 +1820,10 @@ LOGIN THROTTLE (BRUTE FORCE)
 
         require_not_throttled(?string $ip = null): void
             Throws Auth_Throttled_Exception when this client IP is locked out.
-            RsxAuth::attempt() calls it as its FIRST statement, before the
+            RsxAuth::verify_credentials() calls it as its FIRST statement, before the
             lookup - a locked-out address cannot even probe which addresses
             exist. Call it yourself only on a login path that does not go
-            through attempt().
+            through verify_credentials().
 
         record_failure(?string $ip = null): void
             Counts one failure against the IP and locks the address out when the
@@ -1885,12 +1916,12 @@ LOGIN THROTTLE (BRUTE FORCE)
         retry_after_seconds is for YOUR logs and headers, not for the attacker.
 
     APP RECIPE - A LOGIN FUNCTION:
-        Catch it around the attempt and render the message as the form error
+        Catch it around the check and render the message as the form error
         (the template app's rsx/app/login/login_controller.php does exactly this;
         an Ajax login answers response_form_error($e->getMessage())):
 
             try {
-                $authenticated = RsxAuth::attempt($credentials);
+                $login_user = RsxAuth::verify_credentials($credentials);
             } catch (Auth_Throttled_Exception $e) {
                 $error = $e->getMessage();
             }
@@ -1924,7 +1955,7 @@ LOGIN THROTTLE (BRUTE FORCE)
         Login_Throttle::record_failure() or the failure counts twice.
 
     APP RECIPE - A LOGIN PATH THAT VERIFIES ITS OWN PASSWORD:
-        A flow that does not go through RsxAuth::attempt() and does not record to
+        A flow that does not go through RsxAuth::verify_credentials() and does not record to
         Login_History does BOTH halves itself. The framework's own portal login
         (rsx/portal/auth/Portal_Login_Controller.php) is the worked example:
 

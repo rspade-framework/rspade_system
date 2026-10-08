@@ -25,7 +25,7 @@ use App\RSpade\Core\Session\Session;
  * FROM is the one thing the attacker has to keep using. The per-email counter Login_History
  * keeps is still there, still readable, and still not enforced by the framework.
  *
- * WHERE IT IS ENFORCED: RsxAuth::attempt() calls require_not_throttled() as its first
+ * WHERE IT IS ENFORCED: RsxAuth::verify_credentials() calls require_not_throttled() as its first
  * statement, before any lookup - so a locked-out address cannot even probe which addresses
  * exist. Login_History::record_failure() calls record_failure() here, which is what makes
  * every recorded failure feed the throttle: password misses, unknown addresses, and the

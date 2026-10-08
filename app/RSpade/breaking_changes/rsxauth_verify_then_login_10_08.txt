@@ -1,0 +1,154 @@
+RsxAuth::attempt() IS REMOVED: CHECK THE PASSWORD, THEN SIGN IN, AS TWO CALLS
+Date: 2026-10-08
+
+IF YOU DO NOTHING: your login function dies with "Call to undefined method App\RSpade\Core\Auth\RsxAuth::attempt()", and so does any test, command or harness of yours that calls it.
+
+SUMMARY
+    Category 1: a call every application's login function makes is gone.
+
+    RsxAuth::attempt() checked an email + password pair AND signed the
+    identity in, in one call. The session row was written at once. A sign-in
+    that owed anything more - a second factor, an account-state question of
+    the application's own - therefore ran with the visitor ALREADY SIGNED IN,
+    and relied on a later statement to sign them back out
+    (Rsx_Two_Factor::begin_challenge(), or a logout() the application wrote).
+    A request that died in between - a database error, a fatal, a killed
+    worker - left the session authenticated with the second step never taken.
+
+    That is a fail-open, and it is why this is not a rename. The two halves
+    are now two calls:
+
+        RsxAuth::verify_credentials(array $credentials, bool $record = true): ?Login_User_Model
+            Checks the pair. Answers the identity, or null. Touches no
+            session: no row, no write, no cookie.
+
+        RsxAuth::login(Login_User_Model $identity, bool $touch_last_login = true): bool
+            Signs the identity in. Unchanged, and now the ONLY way into a
+            staff session.
+
+    Everything a sign-in owes runs BETWEEN them, for a visitor who is still
+    signed out.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - RsxAuth::verify_credentials(). It keeps everything attempt() did before
+      the sign-in: the per-IP throttle thrown first (Auth_Throttled_Exception),
+      the same answer for an unknown address, a wrong password and an identity
+      with no active membership, and the $record classification into
+      Login_History.
+    - Two_Factor_Failed_Exception::reason(): REASON_WINDOW_EXPIRED,
+      REASON_WRONG_ANSWER, REASON_CHALLENGE_SPENT, REASON_IDENTITY_LOCKED,
+      REASON_REFUSED. The message is unchanged.
+    - The actions two_factor.challenge.spent and
+      portal.two_factor.challenge.spent, fired with {identity, email, failures}
+      when wrong answers destroy a challenge. Nothing listens until you
+      register a handler.
+
+WHAT YOU MUST CHANGE
+    Find every use:
+
+        grep -rn "RsxAuth::attempt" rsx/
+
+    1. A one-step login
+
+           if (!RsxAuth::attempt($credentials)) {
+               ... the error ...
+           }
+
+       becomes
+
+           $login_user = RsxAuth::verify_credentials($credentials);
+           if ($login_user === null) {
+               ... the error ...
+           }
+           RsxAuth::login($login_user);
+
+       verify_credentials() recorded the outcome (as attempt() did), and
+       login() stamps last_login. If you then read the identity back with
+       Session::get_login_user(), use the value verify_credentials() returned.
+
+    2. A login with a second factor
+
+           if (!RsxAuth::attempt($credentials, record: false, touch_last_login: false)) { ... }
+           $login_user = Session::get_login_user();
+           if (Rsx_Two_Factor::is_enabled($login_user)) {
+               Rsx_Two_Factor::begin_challenge($login_user);
+               ...
+
+       becomes
+
+           $login_user = RsxAuth::verify_credentials($credentials, record: false);
+           if ($login_user === null) { ... record the failure, show the error ... }
+           if (Rsx_Two_Factor::is_enabled($login_user)) {
+               Rsx_Two_Factor::begin_challenge($login_user);
+               ...
+           }
+           RsxAuth::login($login_user);
+           Login_History::record_success((int) $login_user->id, $email);
+
+       - $record survives, for the audit trail: record: false still means
+         "this is not a login yet; I will record the outcome myself".
+       - touch_last_login has NO counterpart on verify_credentials(). It never
+         signs in, so there is nothing to stamp; the flag lives on login().
+       - Session::get_login_user() after the check answers NULL now - nobody
+         is signed in. Use the returned identity.
+
+    3. DELETE the logout() calls on your refusal branches
+
+       If your login function asks a question of its own after the password
+       (an account status, an agreement) and refuses, it had to call
+       RsxAuth::logout() or Session::logout() first, because attempt() had
+       already signed the visitor in:
+
+           if ($login_user->status_id !== Login_User_Model::STATUS_ACTIVE) {
+               Session::logout();                 // <- delete
+               return response_form_error('This account is not active.');
+           }
+
+       With verify_credentials() there is no session to log out of. A
+       logout() left there is dead code that reads as load-bearing - remove
+       it, and make sure the question sits BEFORE RsxAuth::login().
+
+    4. Tests and harnesses
+
+       assert_true(RsxAuth::attempt(...)) becomes an identity check
+       (assert_not_null(RsxAuth::verify_credentials(...))) followed by
+       RsxAuth::login() where the test needs a signed-in session.
+
+    5. The portal
+
+       Nothing. The portal never had an attempt(): its login function checks
+       the password and calls Portal_Session::set_portal_user_id() as two
+       acts already.
+
+RECOMMENDED, NOT REQUIRED
+    - TELL THE ACCOUNT OWNER WHEN A CHALLENGE IS EXHAUSTED. Reaching a
+      challenge means the password was right; the attempt caps make guessing
+      the second factor slow, and only being noticed makes it hopeless. Copy
+      reference_app/handlers/Two_Factor_Notice_Handlers.php and
+      reference_app/emails/two_factor_challenge_spent_email.php (+ .blade.php).
+    - NEVER SHOW HOW MANY ATTEMPTS REMAIN on a challenge screen. A count tells
+      an attacker how much budget is left and when to stop before the identity
+      locks. If your screen shows one, remove it.
+
+THE REFERENCE IMPLEMENTATION
+    system/app/RSpade/resource/reference_app/app/login/login_controller.php
+        index() - verify_credentials(), the application's own account
+        question (__account_refusal(), which admits everybody as shipped),
+        the challenge when a factor is owed, and login() last.
+        verify_2fa() - the challenge endpoint.
+
+VERIFICATION
+    grep -rn "RsxAuth::attempt" rsx/ answers nothing, and so does a search for
+    a logout() between your password check and your sign-in. Sign in with a
+    password alone, and with a second factor: both land where they did before.
+    Enter a wrong password: the form shows your error and Session::is_logged_in()
+    is false.
+
+SEE ALSO
+    rsx:man auth
+    rsx:man session - ACCOUNT STATE, LOGIN HISTORY
+    rsx:man two_factor - IMPLEMENTING 2FA IN AN APPLICATION
+    skill rspade:session-auth
+    skill rspade:two-factor

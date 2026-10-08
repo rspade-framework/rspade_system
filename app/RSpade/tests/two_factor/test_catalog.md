@@ -327,3 +327,11 @@ globals, never window properties, so the lookup is `Manifest.get_class_by_name()
 | TFA-RES-01 | `<Two_Factor_Challenge>` reaches its endpoint | a probe method on the `Spa_Session_Controller` stub that throws "probe reached" | the component reports "probe reached" | implemented |
 | TFA-RES-02 | `<Passkey_Sign_In>` gets past resolution | the same probe | `_sign_in()` does not throw "could not resolve" (the headless ceremony then fails on screen) | implemented |
 | TFA-RES-03 | an unknown controller is still reported by name | `No_Such_Controller::x` | "could not resolve the endpoint No_Such_Controller::x" | implemented |
+
+## Failure reasons and the exhausted-challenge event (Two_Factor_Challenge_Test)
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| TFA-RSN-01 | each failure carries its reason | nothing pending; wrong answers up to the cap; one more | WINDOW_EXPIRED; WRONG_ANSWER each time; CHALLENGE_SPENT on the last; WINDOW_EXPIRED after | implemented |
+| TFA-RSN-02 | a locked identity carries the locked reason | identity cap reached, a correct code on a new challenge | IDENTITY_LOCKED | implemented |
+| TFA-EVT-01 | an exhausted challenge fires the realm's event once, with the identity | wrong answers to the cap, a recording handler on both realms' events | nothing below the cap; one `two_factor.challenge.spent` with the identity, email and failure count; never the portal's | implemented |
