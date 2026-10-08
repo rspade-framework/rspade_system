@@ -1,0 +1,70 @@
+users.is_2fa_required IS NO LONGER A PROVIDED COLUMN ON THE USER RECORD
+Date: 2026-10-08
+
+IF YOU DO NOTHING: code of yours that reads or writes $user->is_2fa_required fails with "Unknown column 'is_2fa_required'" on any database that does not carry the column, and on a database that still carries it the flag is stored and enforces nothing.
+
+SUMMARY
+    Category 1: a column an application could rely on finding on the users
+    table is no longer provided.
+
+    users.is_2fa_required was the "an administrator requires a second factor
+    on this account" flag. It is dropped from the schema RSpade provides:
+
+        - the reference application's migrations drop it
+          (reference_app/resource/migrations/
+          2026_10_08_225654_drop_is_2fa_required_from_users.php);
+        - User_Model no longer declares the property;
+        - nothing in the framework or the reference application reads or
+          writes it: the edit-user checkbox, the "Required" badge, the
+          forced-enrollment screen and the /_sys Users column are gone
+          (breaking_changes/login_requirements_removed_10_08.txt).
+
+    The column is not coming back as something RSpade provides. An
+    application that uses it now OWNS it, like any other column it adds to
+    the users table.
+
+WHICH DATABASES HAVE THE COLUMN
+    The column was added by a migration that lives in rsx/resource/migrations
+    (2026_09_02_133139_add_is_2fa_required_to_users.php), so a framework
+    update does not remove it from an existing database by itself. Check:
+
+        php artisan db:query "SHOW COLUMNS FROM users LIKE 'is_2fa_required'"
+
+    The column is ABSENT when the application was started from a release
+    after this one, when its rsx/resource/migrations never held the adding
+    migration, or once the dropping migration above has been copied in and
+    run.
+
+CHANGES REQUIRED
+    1. Find your uses:
+
+           grep -rn "is_2fa_required" rsx/
+
+       No match: nothing to do. You may copy the reference application's
+       dropping migration into rsx/resource/migrations to remove the dead
+       column, or leave it.
+
+    2. If your application uses the column and the check above shows it
+       ABSENT, add it back with a migration of your own:
+
+           php artisan make:migration:safe add_is_2fa_required_to_users
+
+           DB::statement("ALTER TABLE users ADD COLUMN is_2fa_required TINYINT(1) NOT NULL DEFAULT 0");
+
+       then php artisan migrate. If the column is PRESENT, write no
+       migration - and do not copy the reference application's dropping
+       migration.
+
+    3. The column is now only storage. Whatever it is meant to enforce is
+       your code: the screen that sets it, and the sign-in step that acts on
+       it (rsx:man two_factor, REQUIRING A SECOND FACTOR).
+
+VERIFICATION
+    SHOW COLUMNS answers a row exactly when grep found uses, and the screens
+    that read or write the flag load and save without an unknown-column
+    error.
+
+SEE ALSO
+    breaking_changes/login_requirements_removed_10_08.txt
+    rsx:man two_factor - REQUIRING A SECOND FACTOR
+    rsx:man migrations
