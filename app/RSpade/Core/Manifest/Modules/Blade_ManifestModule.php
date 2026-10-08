@@ -174,6 +174,14 @@ class Blade_ManifestModule extends ManifestModule_Abstract
             $metadata['rsx_extends'] = $rsx_extends;
         }
 
+        // The bundles this file PRINTS: `Some_Bundle::render()`. A layout prints its module's
+        // bundle and the pages extending it inherit it - Manifest_Indexer resolves that chain
+        // into the `blade_bundles` index, which is what tells a bundle build which Blade
+        // files are its own (Bundle_Component_Shaker).
+        if (preg_match_all('/(?<![A-Za-z0-9_\\\\])(_?[A-Z][A-Za-z0-9_]*)::render\s*\(/', $content, $matches)) {
+            $metadata['bundles'] = array_values(array_unique($matches[1]));
+        }
+
         // Extract standard extends directive
         if (preg_match('/@extends\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)/', $content, $matches)) {
             $metadata['extends'] = $matches[1];

@@ -528,6 +528,20 @@ class Manifest
     }
 
     /**
+    * Blade view id -> the bundles its pages are served with: the ones it prints, inherits
+    * from the layout it extends, or receives from a view that includes it. A view served
+    * with none is absent (Manifest_Indexer::__build_blade_bundle_index()).
+    *
+    * @return array<string, array<int, string>>
+    */
+    public static function blade_bundles(): array
+    {
+        self::init();
+
+        return self::$data['data']['blade_bundles'] ?? [];
+    }
+
+    /**
     * The path of a Blade view, by its @rsx_id.
     *
     * One lookup in `blade_views`. It used to scan every indexed file for a matching `id`, on

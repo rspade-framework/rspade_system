@@ -551,6 +551,89 @@ COMPILATION PROCESS
     7. Compile vendor and app separately
     8. In production: concatenate into single files
 
+    In a sealed build (debug, production) one more step runs between 1 and 2: the
+    COMPONENT SHAKE, below.
+
+THE COMPONENT SHAKE (sealed builds)
+    A bundle includes directories, and a directory brings everything in it. A login
+    bundle that includes the theme for its variables and form inputs also receives
+    every other component the theme holds, none of which a login page can render. In
+    a sealed build that is weight a visitor downloads for nothing, and a list of the
+    application's component names handed to somebody who has not signed in.
+
+    So a sealed build removes from each bundle every jqhtml COMPONENT that nothing
+    the bundle serves names. Development never does: there every included file is
+    in the bundle, as always.
+
+    ONLY COMPONENTS ARE EVER REMOVED. A component is a name the bundle's files define
+    as one - a .jqhtml template, or a JS class descended from Component - together
+    with the files carrying that name: the template, the class, and the stylesheet
+    whose single wrapper class is that name. The three are kept or removed together.
+    Every other file is always kept: plain JS classes and functions, model and
+    controller stubs, stylesheets that are not one component's own.
+
+    A component is KEPT when its name appears, as a whole word, in:
+
+        - the bundle's own 'keep' list (below);
+        - a Blade file served with this bundle - one that prints it, extends a layout
+          that prints it, or is included by one that does - or a Blade file served
+          with no bundle at all (a partial that could be included anywhere);
+        - a JS file in the bundle that is not a component;
+        - a quoted string in PHP or config (a component the server chooses: a viewer
+          registry, a config value);
+        - the template or class of another kept component, and so on to the end.
+
+    and also when its class defines a STATIC METHOD (it may be reached by a sweep
+    over every class, with nothing naming it) or carries a @route (an SPA action is
+    reached by URL).
+
+    A mention in a comment or a string counts: keeping too much is the safe direction.
+    One shape does not count - the name directly after a single period that does not
+    itself follow a word character, as in $('.My_Component') or ".My_Component", which
+    is a CSS class selector and not a use of the component.
+
+    WHAT IT CANNOT SEE: a name assembled at run time.
+
+        const name = 'Select_' + kind + '_Input';     // named nowhere
+        $el.component(name);
+
+    Declare those in the bundle - the one escape hatch:
+
+        return [
+            'include' => [...],
+            'keep' => ['Select_Country_Input', 'Select_State_Input'],
+        ];
+
+    A 'keep' entry that names no component in the bundle is refused at build time.
+
+    A WRONG REMOVAL SHOWS ONLY IN A SEALED BUILD, so reproduce it in debug mode
+    (php artisan rsx:mode:set debug). A debug build carries the names it removed and
+    registers each as a component that fails on creation with:
+
+        Component X is not in My_Bundle: the sealed build removed it, because nothing
+        the bundle serves names it. If it is built from a name assembled at run time,
+        list it in My_Bundle::define() under 'keep' and rebuild ...
+
+    A PRODUCTION build carries no such list - the names are what is being withheld -
+    so there a removed component renders as an empty element, with the runtime's
+    "no template or class defined" console warning and nothing else.
+
+    Reading the decision, in any mode, without building:
+
+        php artisan rsx:bundle:shake:report                 every bundle: counts, sizes,
+                                                            the dropped names
+        php artisan rsx:bundle:shake:report My_Bundle --kept    each kept component and
+                                                            the reason it was kept
+        php artisan rsx:bundle:shake:report My_Bundle --why=Some_Component
+                                                            its reason, traced back to
+                                                            the file that started it
+        php artisan rsx:bundle:shake:report --json
+
+    A sealed build also writes each bundle's decision to build/bundle_shake/<Bundle>.json.
+
+    The decision is a function of the bundle's file list and the manifest, so two boxes
+    building the same tree remove the same components.
+
 NODE WORK RUNS IN ONE DAEMON, NOT ON COMMAND LINES
     Every node step of a compile runs over ONE persistent RPC service on ONE
     unix socket - babel, jqhtml, minification, SCSS compilation and
@@ -832,6 +915,11 @@ CIRCULAR DEPENDENCIES
     - Shows clear error with dependency chain
 
 TROUBLESHOOTING
+    A component renders as an empty element in debug or production only:
+        The component shake removed it (THE COMPONENT SHAKE above). Switch to debug
+        mode, where creating it names the cause; add it to the bundle's 'keep'.
+        php artisan rsx:bundle:shake:report My_Bundle --why=The_Component
+
     Bundle not updating:
         php artisan rsx:bundle:compile My_Bundle --clean
 
@@ -851,5 +939,6 @@ SEE ALSO
     rsx:man external_resources
     rsx:man csp
     rsx:man app_mode
+    rsx:man prod
 
 RSX Framework                     2025-12-09                      BUNDLE_API(3)

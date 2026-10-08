@@ -336,6 +336,84 @@ class Manifest_Indexer
 
         ksort($views);
         Manifest::$data['data']['blade_views'] = $views;
+
+        static::__build_blade_bundle_index($views);
+    }
+
+    /**
+     * Blade view id -> the bundles its pages are served with.
+     *
+     * A view's bundles are the ones it prints itself (`Some_Bundle::render()`), the ones the
+     * layout it extends is served with - followed up the @rsx_extends chain to its root -
+     * and, for a partial, the ones of every view that @rsx_includes it. A view that reaches
+     * no bundle by any of those routes is ABSENT from the index: it is rendered by something
+     * that names its bundle elsewhere (the SPA shell, which a controller hands its bundle),
+     * or by nothing a browser runs (an email).
+     *
+     * Read by Bundle_Component_Shaker, which needs to know which Blade files can put a
+     * component on a page of the bundle it is building.
+     *
+     * @param array<string,string> $views view id -> path
+     */
+    private static function __build_blade_bundle_index(array $views): void
+    {
+        $files = Manifest::$data['data']['files'];
+        $bundles = [];
+
+        // Up the extends chain. A chain is short (a page, its layout); the visited set is
+        // there so a cycle - which is a separate build error - cannot hang this pass.
+        foreach ($views as $id => $path) {
+            $found = [];
+            $visited = [];
+            $current = $id;
+
+            while ($current !== null && isset($views[$current]) && !isset($visited[$current])) {
+                $visited[$current] = true;
+                $metadata = $files[$views[$current]] ?? [];
+
+                foreach ($metadata['bundles'] ?? [] as $bundle) {
+                    $found[$bundle] = true;
+                }
+
+                $current = $metadata['rsx_extends'] ?? null;
+            }
+
+            $bundles[$id] = $found;
+        }
+
+        // Down the includes: a partial is served with every bundle of whatever includes it,
+        // repeated until nothing new arrives (a partial may include a partial).
+        do {
+            $changed = false;
+
+            foreach ($views as $id => $path) {
+                foreach ($files[$path]['rsx_includes'] ?? [] as $included) {
+                    if (!isset($bundles[$included])) {
+                        continue;
+                    }
+
+                    foreach ($bundles[$id] as $bundle => $_) {
+                        if (!isset($bundles[$included][$bundle])) {
+                            $bundles[$included][$bundle] = true;
+                            $changed = true;
+                        }
+                    }
+                }
+            }
+        } while ($changed);
+
+        $index = [];
+
+        foreach ($bundles as $id => $found) {
+            if ($found !== []) {
+                $names = array_keys($found);
+                sort($names, SORT_STRING);
+                $index[$id] = $names;
+            }
+        }
+
+        ksort($index);
+        Manifest::$data['data']['blade_bundles'] = $index;
     }
 
     /**

@@ -1654,7 +1654,47 @@ ENTRY 17: KEEP-FOREVER FILE RETENTION (bytes that never leave the disk)
         3. Under 0, an erasure obligation that must reach the disk is a manual
            step after force_destroy(): write it into the procedure.
 
+--------------------------------------------------------------------------------
+
+ENTRY 18: COMPONENTS THE SEALED BUILD REMOVES (names assembled at run time)
+
+    What to audit
+        Whether any component your application renders is reached ONLY by a name
+        built at run time. A sealed build (debug, production) removes from each
+        bundle every jqhtml component nothing the bundle serves names
+        (rsx:man bundle_api, THE COMPONENT SHAKE). A name written out anywhere is
+        seen; a name assembled from parts is not:
+
+            $el.component('Select_' + kind + '_Input');
+            const viewer = type + '_Viewer';
+
+        Find the candidates:
+
+            grep -rnE "\.component\(\s*[^'\")]" rsx --include='*.js'
+            grep -rnE "['\"`]_?[A-Z][A-Za-z0-9]*_['\"`]? *\+|\+ *['\"`]_[A-Za-z]" rsx --include='*.js'
+
+        and read, per bundle, what a sealed build drops:
+
+            php artisan rsx:bundle:shake:report
+
+    Why it matters
+        Development keeps everything, so the page works on every developer's box.
+        In production a removed component renders as an EMPTY ELEMENT with one
+        console warning - no error, no failed request - on whichever screen uses
+        it, and nothing else reports it.
+
+    Guidelines
+        1. For every dropped name in the report, be able to say why nothing needs
+           it. A dropped component you recognise as used is the finding.
+        2. List each component reached by an assembled name in its bundle's 'keep'.
+        3. Before launch, build in debug mode (php artisan rsx:mode:set debug) and
+           walk the screens that pick a component by data: there a removed
+           component fails naming this cause.
+
+--------------------------------------------------------------------------------
+
 SEE ALSO
+    rsx:man bundle_api
     rsx:man login_redirect
     rsx:man session
     rsx:man csrf

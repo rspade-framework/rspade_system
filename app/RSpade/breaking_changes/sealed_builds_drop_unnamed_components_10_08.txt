@@ -1,0 +1,70 @@
+SEALED BUILDS DROP THE COMPONENTS A BUNDLE NEVER NAMES
+Date: 2026-10-08
+
+IF YOU DO NOTHING: a jqhtml component your application renders ONLY by a name assembled at run time ($el.component('Select_' + kind + '_Input'), a name built from data) is missing from debug and production builds - it renders as an empty element in production - while every development box keeps working.
+
+SUMMARY
+    Category 1, narrow: it reaches only an application that builds a component
+    name out of parts.
+
+    In debug and production mode each bundle now loses every jqhtml component
+    that nothing the bundle serves names: the template, the class and the
+    component's own stylesheet. Development is unchanged. A component named
+    anywhere as a whole word - a Blade file, a script, another component's
+    template, a quoted string in PHP or config - is kept, as is one whose class
+    has a static method or a @route. Sealed bundles are smaller, and a login
+    page no longer ships the names of components only a signed-in user sees.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - The shake itself, in every sealed build (php artisan rsx:build --force,
+      rsx:mode:set debug|prod).
+    - 'keep' in a bundle's define(): component names the bundle keeps whatever
+      the build concludes.
+    - php artisan rsx:bundle:shake:report [Bundle] [--kept] [--why=Component]
+      [--json]: the decision, in any mode, without building.
+    - In DEBUG mode, a removed component fails on creation with "Component X is
+      not in My_Bundle: the sealed build removed it ...". In production it
+      renders as an empty element with the runtime's console warning.
+
+WHAT YOU MUST CHANGE
+    Nothing, unless a component is reached by a name your code assembles.
+
+    1. Find the candidates:
+
+           grep -rnE "\.component\(\s*[^'\")]" rsx --include='*.js'
+
+       Each hit passes a VARIABLE as the component name. Follow it back: a
+       variable that is always handed a name written out somewhere
+       (Modal.form({component: 'Edit_Contact_Form'})) is fine - the written
+       name is what keeps the component. A name CONCATENATED or computed from
+       data is the case to fix.
+
+    2. Read what a sealed build would drop:
+
+           php artisan rsx:bundle:shake:report
+
+       A dropped name you recognise as used is a finding.
+
+    3. List each such component in its bundle:
+
+           public static function define(): array
+           {
+               return [
+                   'include' => [...],
+                   'keep' => ['Select_Country_Input', 'Select_State_Input'],
+               ];
+           }
+
+       A 'keep' entry naming no component in the bundle fails the build.
+
+VERIFICATION
+    php artisan rsx:mode:set debug, then walk the screens that choose a
+    component from data. A wrongly removed component fails there with the
+    message above, naming the bundle. php artisan rsx:mode:set dev returns.
+
+SEE ALSO
+    rsx:man bundle_api - THE COMPONENT SHAKE
+    rsx:man prelaunch_checklist - ENTRY 18
+    skill rspade:bundles

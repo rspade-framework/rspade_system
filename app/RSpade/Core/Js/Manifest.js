@@ -6,6 +6,12 @@
  * for working with class hierarchies and calling initialization methods.
  */
 class Manifest {
+    /** The components a sealed build removed from this bundle (named in debug builds only). */
+    static _shaken_components = [];
+
+    /** The error raised when one of them is asked for; {component} stands for its name. */
+    static _shaken_component_message = '';
+
     /**
      * Define classes in the manifest (framework internal)
      * @param {Array} items - Array of class definitions [[Class, "ClassName", ParentClass, decorators], ...]
@@ -82,6 +88,24 @@ class Manifest {
      */
     static _define_published_subclass_index(index) {
         Manifest._published_subclass_index = index || {};
+    }
+
+    /**
+     * Framework internal: the components a sealed build removed from this bundle, and the
+     * error to raise when one is asked for.
+     *
+     * A sealed build drops every component nothing in the bundle names (the component
+     * shake, Bundle_Component_Shaker). Only a DEBUG build says which: there the list is
+     * filled and each name is registered as a component that throws the message
+     * (Jqhtml_Integration). Development shakes nothing, and production withholds the
+     * names, so both pass an empty list and an empty message.
+     *
+     * @param {string[]} names - the removed component names
+     * @param {string} message - the error text, with {component} standing for the name
+     */
+    static _define_shaken_components(names, message) {
+        Manifest._shaken_components = names;
+        Manifest._shaken_component_message = message;
     }
 
     /**

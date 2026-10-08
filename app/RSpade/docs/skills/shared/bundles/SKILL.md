@@ -1,6 +1,6 @@
 ---
 name: bundles
-description: "RSX module bundles - defining a Rsx_Bundle_Abstract with its include list, the SCSS include-ordering rule, rendering the bundle into a Blade head, JIT compilation, output filenames, npm packages, auto-discovered Asset Bundles, and the 'watch' cache-invalidation key. Use when creating a new module and its bundle, adding a directory or npm package to a bundle's includes, declaring a 'watch' target for a compiled source tree, wondering why a component's JS or SCSS is not reaching the browser, when editing an SCSS partial does not change the compiled output, or when a build fails with \"Bundle 'watch' target does not exist\"."
+description: "RSX module bundles - defining a Rsx_Bundle_Abstract with its include list, the SCSS include-ordering rule, rendering the bundle into a Blade head, JIT compilation, output filenames, npm packages, auto-discovered Asset Bundles, and the 'watch' cache-invalidation key. Use when creating a new module and its bundle, adding a directory or npm package to a bundle's includes, declaring a 'watch' target for a compiled source tree, wondering why a component's JS or SCSS is not reaching the browser, when editing an SCSS partial does not change the compiled output, when a build fails with \"Bundle 'watch' target does not exist\", or when a component is missing or renders empty only in debug or production mode ('the sealed build removed it', the bundle 'keep' list, rsx:bundle:shake:report)."
 ---
 
 # Bundle System
@@ -122,3 +122,18 @@ The same localization applies to compiled CSS: a `@import url(https://fonts.goog
 Decision rule: **needed on every page in the head -> `cdn_assets`; needed when a feature is used -> the registry.** Skill `rspade:external-resources`.
 
 Details: `php artisan rsx:man bundle_api`.
+
+## Sealed builds drop the components a bundle never names
+
+In `debug` and `production` (never development) each bundle loses every jqhtml **component** nothing it serves names - the template, the class and the component's own stylesheet together. Everything that is not a component is always kept. A component stays when its name appears as a whole word in a Blade file served with the bundle (or with none), in a non-component JS file of the bundle, as a quoted string in PHP or config, or in the template or class of another kept component; and when its class has a static method or a `@route`. `$('.My_Component')` is a CSS selector and does not count.
+
+**A name assembled at run time is invisible** (`'Select_' + kind + '_Input'`). List those in the bundle:
+
+```php
+return [
+    'include' => [...],
+    'keep' => ['Select_Country_Input', 'Select_State_Input'],
+];
+```
+
+**A wrong removal shows only when sealed.** Reproduce it in debug mode, where creating the component fails saying "the sealed build removed it"; production carries no list of removed names and renders an empty element. `php artisan rsx:bundle:shake:report [Bundle] [--kept] [--why=Component]` shows the decision in any mode without building. Details: `rsx:man bundle_api`, THE COMPONENT SHAKE.

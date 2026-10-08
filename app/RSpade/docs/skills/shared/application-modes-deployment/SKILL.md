@@ -95,7 +95,7 @@ Building elsewhere (a CI artifact, a container image) works because of determini
 
 ## Strict production vs `--debug`
 
-**Debug is a sealed, production-like LOCAL test build.** Unminified, inline sourcemaps survive, `console_debug()` still works. Its whole reason to exist is reproducing a prod-specific issue with readable code.
+**Debug is a sealed, production-like LOCAL test build.** Unminified, inline sourcemaps survive, `console_debug()` still works. **Both sealed modes run the component shake** - each bundle loses the jqhtml components nothing it serves names (`rsx:man bundle_api`) - and debug alone carries the removed names, so a component removed by mistake fails there saying so. Its whole reason to exist is reproducing a prod-specific issue with readable code.
 
 **Strict production** adds, relative to debug:
 

@@ -47,8 +47,10 @@ DESCRIPTION
         that development mode runs on a production environment and still
         behaves reliably and securely. The only major differences in a
         sealed build are that it skips the environment checks and dynamic
-        source rebuilds (slightly faster), minifies JS, and suppresses
-        diagnostic dumps on errors. Every other feature - CSP enforcement
+        source rebuilds (slightly faster), minifies JS, drops from each
+        bundle the jqhtml components nothing it serves names (the component
+        shake, rsx:man bundle_api), and suppresses diagnostic dumps on
+        errors. Every other feature - CSP enforcement
         included - works identically in every mode. A feature that "only
         breaks in dev" is a broken feature, not a dev-mode allowance.
 
@@ -79,6 +81,8 @@ MODE COMPARISON
     Auto manifest rebuild       Yes          No           No
     Auto bundle JIT compile     Yes          No           No
     Minified output             No           No           Yes
+    Unnamed components dropped  No           Yes          Yes
+      (the component shake; removed names carried only in debug)
     Inline sourcemaps survive   Yes          Yes          No
     console_debug() in browser  Yes          Yes          No (stripped)
     Debug block in window.rsxapp Yes         Yes          No

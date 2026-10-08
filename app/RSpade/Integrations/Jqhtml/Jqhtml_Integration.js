@@ -60,6 +60,21 @@ class Jqhtml_Integration {
         }
 
         // ─────────────────────────────────────────────────────────────────────
+        // Stand-ins for Components the Sealed Build Removed (debug builds)
+        //
+        // A sealed build drops the components nothing in the bundle names. One
+        // dropped by mistake would otherwise render as an empty element; a debug
+        // build carries the dropped names, and each is registered here as a
+        // component that throws on creation, saying what removed it and how to
+        // keep it. The list is empty in development and in production.
+        // ─────────────────────────────────────────────────────────────────────
+        for (const name of Manifest._shaken_components) {
+            const stand_in = { [name]: class extends Rsx_Shaken_Component {} }[name];
+            stand_in.shaken_name = name;
+            jqhtml.register_component(name, stand_in);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
         // Tag Static Methods with Cache IDs
         //
         // jqhtml caches component renders based on a hash of their args.

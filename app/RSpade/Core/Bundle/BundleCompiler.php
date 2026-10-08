@@ -8,6 +8,7 @@ use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use RuntimeException;
 use App\RSpade\Core\Auth\Auth_BundleIntegration;
+use App\RSpade\Core\Bundle\Bundle_Component_Shaker;
 use App\RSpade\Core\Bundle\Cdn_Cache;
 use App\RSpade\Core\Bundle\Concatenator;
 use App\RSpade\Core\Bundle\Minifier;
@@ -78,6 +79,18 @@ class BundleCompiler
     * watch target of the OTHER, and both facts must survive.
     */
     protected array $included_file_buckets = [];
+
+    /**
+    * Component names the bundles being resolved declare they keep (define()['keep']):
+    * the escape hatch of the sealed-build component shake. See Bundle_Component_Shaker.
+    */
+    protected array $shake_keep = [];
+
+    /**
+    * What the component shake decided for this compile, or null when it did not run (it
+    * runs in sealed builds only). Bundle_Component_Shaker::plan()'s return value.
+    */
+    protected ?array $shake_plan = null;
 
     /**
     * Stack of bundle classes currently being resolved (innermost last)
@@ -232,6 +245,13 @@ class BundleCompiler
 
         // Step 4: Resolve all bundle includes to get flat file list
         $this->_resolve_bundle($bundle_class);
+
+        // Step 4b: In a sealed build, drop the components nothing in this bundle can render.
+        // Here and nowhere later: everything generated below - the class registration, the
+        // subclass index, the cache keys - is derived from the file list this leaves.
+        if ($this->is_production) {
+            $this->_shake_components();
+        }
 
         // Step 5: Always split into vendor/app
         $this->_split_vendor_app();
@@ -688,6 +708,11 @@ class BundleCompiler
             $this->npm_includes = array_merge($this->npm_includes, $definition['npm']);
         }
 
+        // Components this bundle keeps whatever the shake concludes
+        if (!empty($definition['keep'])) {
+            $this->shake_keep = array_values(array_unique(array_merge($this->shake_keep, $definition['keep'])));
+        }
+
         // Store config
         if (!empty($definition['config'])) {
             $this->config = array_merge($this->config, $definition['config']);
@@ -703,6 +728,97 @@ class BundleCompiler
                 }
             }
         }
+    }
+
+    /**
+    * The bundle's resolved file list and declared keep list, without compiling anything:
+    * what Bundle_Component_Shaker::plan() takes. For the report command, which shows what a
+    * sealed build WOULD drop from a development box.
+    *
+    * @return array{files: array<int,string>, keep: array<int,string>}
+    */
+    public function resolve_for_shake(string $bundle_class): array
+    {
+        $this->bundle_name = $this->_get_bundle_name($bundle_class);
+        $this->resolved_includes[$bundle_class] = true;
+        $this->root_bundle_class = $bundle_class;
+
+        $this->_process_required_bundles();
+        $this->_resolve_bundle($bundle_class);
+
+        return ['files' => $this->bundle_files['all'] ?? [], 'keep' => $this->shake_keep];
+    }
+
+    /**
+    * Apply the component shake to the resolved file list (sealed builds only) and record
+    * what it decided beside the build, for rsx:bundle:shake:report.
+    */
+    protected function _shake_components(): void
+    {
+        $this->shake_plan = Bundle_Component_Shaker::plan(
+            $this->bundle_name,
+            $this->bundle_files['all'] ?? [],
+            $this->shake_keep
+        );
+
+        $this->bundle_files['all'] = $this->shake_plan['files'];
+
+        $report_dir = Rsx_Project_Paths::build_path('bundle_shake');
+        if (!is_dir($report_dir)) {
+            Rsx_Project_Paths::assert_build_writable($report_dir, 'bundle shake report directory');
+            mkdir($report_dir, 0755, true);
+        }
+
+        file_put_contents_safe(
+            $report_dir . '/' . $this->bundle_name . '.json',
+            json_encode([
+                'bundle' => $this->bundle_name,
+                'kept' => $this->shake_plan['kept'],
+                'dropped' => $this->shake_plan['dropped'],
+                'dropped_files' => array_map(
+                    static fn ($file) => str_replace(base_path() . '/', '', $file),
+                    $this->shake_plan['dropped_files']
+                ),
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+        );
+
+        console_debug(
+            'BUNDLE',
+            'Component shake: kept ' . count($this->shake_plan['kept']) . ', dropped ' . count($this->shake_plan['dropped'])
+        );
+    }
+
+    /**
+    * The names the shake dropped, as a generated block every app bundle carries:
+    *
+    *     Manifest._define_shaken_components([names], "message");
+    *
+    * FILLED IN A DEBUG BUILD ONLY. There the names are registered as components that throw
+    * the message when one is created, so a component the shake dropped by mistake fails
+    * saying so, on a box where it can be read. In development nothing is shaken, and in
+    * production the names - and the message, which nothing could use - are withheld: a
+    * visitor to the login page is not handed the application's component list. Both get an
+    * empty list and an empty string, so the call is the same shape in every mode.
+    */
+    protected function _create_javascript_shaken_components(): string
+    {
+        $names = [];
+        $message = '';
+
+        if (Rsx::is_debug() && $this->shake_plan !== null && $this->shake_plan['dropped'] !== []) {
+            $names = $this->shake_plan['dropped'];
+            $message = 'Component {component} is not in ' . $this->bundle_name . ': the sealed build removed it, because '
+                . 'nothing the bundle serves names it. If it is built from a name assembled at run time, list it in '
+                . $this->bundle_name . "::define() under 'keep' and rebuild (php artisan rsx:build --force). "
+                . 'php artisan rsx:bundle:shake:report ' . $this->bundle_name . ' shows what is kept and why.';
+        }
+
+        $js_code = "// Components the sealed build removed (names are carried in debug builds only)\n";
+        $js_code .= 'Manifest._define_shaken_components('
+            . json_encode($names, JSON_UNESCAPED_SLASHES) . ', '
+            . json_encode($message, JSON_UNESCAPED_SLASHES) . ");\n";
+
+        return $this->_write_temp_file($js_code, 'js');
     }
 
     /**
@@ -1253,6 +1369,12 @@ class BundleCompiler
             if ($type === 'vendor') {
                 $hashes[] = md5(serialize($this->_get_package_lock_hashes()));
             }
+        }
+
+        // The component shake's dropped names are embedded in the app output of a debug
+        // build (_create_javascript_shaken_components()), and they are not files either.
+        if ($type === 'app' && $this->shake_plan !== null) {
+            $hashes[] = md5('shake:' . (Rsx::is_debug() ? 'named:' : '') . implode(',', $this->shake_plan['dropped']));
         }
 
         // Generated auth check mirrors are embedded in every app bundle but belong to
@@ -2415,6 +2537,9 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                 if ($manifest_file) {
                     $files['js'][] = $manifest_file;
                 }
+
+                // What the component shake removed (debug builds name it; see the method)
+                $files['js'][] = $this->_create_javascript_shaken_components();
 
                 // Generate route definitions for JavaScript
                 $route_file = $this->_create_javascript_routes();
