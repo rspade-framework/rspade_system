@@ -43,9 +43,9 @@ class File_Thumbnail_Service extends Rsx_Service_Abstract
         [$deleted_count, $freed_bytes] = static::clean_directory('preset');
 
         $freed_mb = round($freed_bytes / 1024 / 1024, 2);
-        if ($deleted_count > 0) {
-            $task->stdout("Preset thumbnail cleanup: {$deleted_count} files deleted, {$freed_mb} MB freed");
-        }
+        $task->stdout($deleted_count > 0
+            ? "The preset thumbnail cache was over its quota: deleted the {$deleted_count} oldest file(s), freeing {$freed_mb} MB."
+            : 'The preset thumbnail cache is within its quota; nothing deleted.');
 
         $task->state(['deleted' => $deleted_count, 'freed_bytes' => $freed_bytes]);
         $task->summary("Deleted {$deleted_count} preset thumbnails, freeing {$freed_mb} MB.");

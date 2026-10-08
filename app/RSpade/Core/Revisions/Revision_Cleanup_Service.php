@@ -69,10 +69,14 @@ class Revision_Cleanup_Service extends Rsx_Service_Abstract
 
         // created_at is indexed, so the backlog is cheap to count up front.
         $backlog = DB::table('_transactions')->where('created_at', '<', $cutoff)->count();
+        if ($backlog > 0) {
+            $task->status("Deleting {$backlog} revision transaction(s) older than {$retention_days} days");
+        }
 
         $total = 0;
         while (true) {
             if ($task->is_stop_requested()) {
+                $task->stdout("Stop requested - stopped after deleting {$total} of {$backlog} revision transaction(s).");
                 $task->summary("Stopped after deleting {$total} of {$backlog} revision transactions.");
 
                 return null;
@@ -92,9 +96,9 @@ class Revision_Cleanup_Service extends Rsx_Service_Abstract
             $task->heartbeat();
         }
 
-        if ($total > 0) {
-            $task->stdout("Deleted {$total} revision transactions older than {$retention_days} days");
-        }
+        $task->stdout($total > 0
+            ? "Deleted {$total} revision transaction(s) older than {$retention_days} days."
+            : "No revision transactions are older than {$retention_days} days; nothing deleted.");
 
         $task->state([
             'deleted' => $total,

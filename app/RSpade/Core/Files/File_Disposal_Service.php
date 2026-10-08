@@ -257,6 +257,10 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             // (a) DESTROY PASS. 0 = keep forever: nothing is ever past retention.
             $destroyed = 0;
             $held = 0;
+            $printed = 0;
+            if ($retention_days <= 0) {
+                $task->stdout('Deleted attachments are kept forever (rsx.files.deleted_retention_days = 0): nothing is destroyed and no blob is released.');
+            }
             if ($retention_days > 0) {
                 $task->status('Destroying attachments past their retention window');
                 $destroy_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $retention_days * 86400);
@@ -270,13 +274,18 @@ class File_Disposal_Service extends Rsx_Service_Abstract
 
                 foreach ($past_retention as $attachment) {
                     if ($task->is_stop_requested()) {
+                        $task->stdout("Stop requested - stopped with {$destroyed} attachment(s) destroyed, {$held} held.");
+
                         return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => 0, 'stopped' => true];
                     }
 
+                    $label = self::__attachment_label($attachment) . ", deleted {$attachment->deleted_at}";
                     if (self::__destroy_attachment($attachment, $task)) {
                         $destroyed++;
+                        self::__item_line($task, $printed, "Destroyed attachment {$label}");
                     } else {
                         $held++;
+                        self::__item_line($task, $printed, "Held attachment {$label}: a file.attachment.destroy.hold handler kept it, or its destroyed listener failed");
                     }
                     $task->heartbeat();
                 }
@@ -306,6 +315,8 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 }
                 foreach ($storage_ids as $sid) {
                     if ($task->is_stop_requested()) {
+                        $task->stdout("Stop requested - stopped with {$destroyed} attachment(s) destroyed, {$held} held, {$released} blob(s) released.");
+
                         return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => $released, 'stopped' => true];
                     }
                     $task->heartbeat();
@@ -313,13 +324,14 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                     $last_sid = (int) $sid;
                     if (self::release_blob_if_orphaned((int) $sid)) {
                         $released++;
+                        self::__item_line($task, $printed, "Released blob #{$sid}: no attachment references it any more");
                     }
                 }
             }
 
-            if ($destroyed || $held || $released) {
-                $task->stdout("Destroyed {$destroyed} attachment(s), {$held} held; released {$released} blob(s).");
-            }
+            $task->stdout($destroyed || $held || $released
+                ? "Done: destroyed {$destroyed} attachment(s), {$held} held; released {$released} blob(s)."
+                : "No deleted attachment is past its {$retention_days}-day retention window, and no blob needed releasing.");
 
             return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => $released, 'stopped' => false];
         });
@@ -388,6 +400,8 @@ class File_Disposal_Service extends Rsx_Service_Abstract
         // A stop ends the current pass between items and comes back as 'stopped'.
         $result = File_Attachment_Model::without_site_scope(function () use ($task, $params) {
             if (empty($params['force']) && (int) date('j') > 7) {
+                $task->stdout('Skipped: the deep sweep runs on the first Sunday of the month, and today is not it.');
+
                 return ['skipped' => 'not the first Sunday of the month'];
             }
 
@@ -400,7 +414,10 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             $released = 0;
             $disk_deleted = 0;
             $uploads_swept = 0;
-            $stopped = function () use (&$released, &$disk_deleted, &$uploads_swept) {
+            $printed = 0;
+            $stopped = function () use ($task, &$released, &$disk_deleted, &$uploads_swept) {
+                $task->stdout("Stop requested - stopped with {$released} orphaned blob(s) released, {$disk_deleted} orphaned disk file(s) removed, {$uploads_swept} stale upload(s) swept.");
+
                 return ['blobs_released' => $released, 'disk_files_removed' => $disk_deleted, 'uploads_swept' => $uploads_swept, 'stopped' => true];
             };
             $last_sid = 0;
@@ -425,6 +442,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                     $last_sid = (int) $sid;
                     if (self::release_blob_if_orphaned((int) $sid)) {
                         $released++;
+                        self::__item_line($task, $printed, "Released blob #{$sid}: nothing references it");
                     }
                 }
             }
@@ -435,6 +453,9 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 [$disk_deleted, $disk_stopped] = self::__sweep_disk_orphans($task, $min_age_days, $chunk);
                 if ($disk_stopped) {
                     return $stopped();
+                }
+                if ($disk_deleted > 0) {
+                    $task->stdout("Removed {$disk_deleted} file(s) from the blob store that no record names (each older than {$min_age_days} days).");
                 }
             } else {
                 $task->stdout('Blob release is off (rsx.files.deleted_retention_days = 0): no blob released, no disk file removed.');
@@ -455,13 +476,14 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 }
                 $task->heartbeat();
 
+                self::__item_line($task, $printed, 'Swept stale unattached upload ' . self::__attachment_label($attachment) . ", uploaded {$attachment->created_at}");
                 $attachment->delete();   // soft-delete -> enters the retention window
                 $uploads_swept++;
             }
 
-            if ($released || $disk_deleted || $uploads_swept) {
-                $task->stdout("Released {$released} orphaned blob(s); removed {$disk_deleted} orphaned disk file(s); swept {$uploads_swept} stale unassigned upload(s).");
-            }
+            $task->stdout($released || $disk_deleted || $uploads_swept
+                ? "Done: released {$released} orphaned blob(s), removed {$disk_deleted} orphaned disk file(s), swept {$uploads_swept} stale unattached upload(s)."
+                : 'Nothing to reconcile: no orphaned blob, no orphaned disk file and no stale unattached upload.');
 
             return ['blobs_released' => $released, 'disk_files_removed' => $disk_deleted, 'uploads_swept' => $uploads_swept, 'stopped' => false];
         });
@@ -506,6 +528,8 @@ class File_Disposal_Service extends Rsx_Service_Abstract
         $result = File_Attachment_Model::without_site_scope(function () use ($task, $params) {
             $window_hours = (int) config('rsx.attachments.unattached_claim_window_hours', 24);
             if ($window_hours <= 0) {
+                $task->stdout('The claim-window sweep is disabled (rsx.attachments.unattached_claim_window_hours); nothing swept.');
+
                 return ['skipped' => 'claim-window sweep disabled', 'swept' => 0];
             }
 
@@ -521,21 +545,25 @@ class File_Disposal_Service extends Rsx_Service_Abstract
 
             $total = $unclaimed_query()->count();
             $swept = 0;
+            $printed = 0;
 
             foreach ($unclaimed_query()->result_set(1000) as $attachment) {
                 if ($task->is_stop_requested()) {
+                    $task->stdout("Stop requested - stopped after sweeping {$swept} of {$total} unattached upload(s).");
+
                     return ['swept' => $swept, 'window_hours' => $window_hours, 'stopped' => true];
                 }
                 $task->heartbeat();
 
+                self::__item_line($task, $printed, 'Swept unattached upload ' . self::__attachment_label($attachment) . ", uploaded {$attachment->created_at} and never claimed");
                 $attachment->delete();   // soft-delete -> enters the retention window
                 $swept++;
                 $task->progress_count($swept, max($total, $swept));
             }
 
-            if ($swept) {
-                $task->stdout("Swept {$swept} unattached upload(s) past the {$window_hours}h claim window.");
-            }
+            $task->stdout($swept
+                ? "Done: swept {$swept} unattached upload(s) past the {$window_hours}h claim window."
+                : "No unattached upload is past the {$window_hours}h claim window; nothing swept.");
 
             return ['swept' => $swept, 'window_hours' => $window_hours, 'stopped' => false];
         });
@@ -550,6 +578,31 @@ class File_Disposal_Service extends Rsx_Service_Abstract
         }
 
         return null;
+    }
+
+    /** Per-item output lines one run prints before it counts items instead of listing them. */
+    const ITEM_LINE_LIMIT = 200;
+
+    /**
+     * Print one line about one item, up to ITEM_LINE_LIMIT a run. A disposal run says WHAT it
+     * destroyed, released or swept - a file removed for good is worth a line naming it - but
+     * a backlog of thousands must not bury the run's own outcome, so past the limit items are
+     * only counted, and the totals at the end still cover every one.
+     */
+    private static function __item_line(Task_Instance $task, int &$printed, string $line): void
+    {
+        if ($printed < self::ITEM_LINE_LIMIT) {
+            $task->stdout($line);
+        } elseif ($printed === self::ITEM_LINE_LIMIT) {
+            $task->stdout('(more than ' . self::ITEM_LINE_LIMIT . ' items - the rest are counted below, not listed)');
+        }
+        $printed++;
+    }
+
+    /** "#12 "report.pdf" (1.4 MB)" - how a line names an attachment. */
+    private static function __attachment_label(File_Attachment_Model $attachment): string
+    {
+        return "#{$attachment->id} \"{$attachment->file_name}\" (" . bytes_to_human((int) $attachment->file_size) . ')';
     }
 
     /**

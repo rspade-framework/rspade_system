@@ -149,6 +149,11 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
 
             $task->status('Sending queued mail');
             $total = Email_Queue_Model::due_count();
+
+            // WHAT A LINE NAMES. Every message this run touches gets one line: its id, who it
+            // is for, its subject and what happened to it - so the output of a drain reads as
+            // the list of mail that left, and the list of mail that did not and why.
+            $label = fn ($row) => "#{$row->id} to {$row->to_address} \"" . mb_strimwidth((string) $row->subject, 0, 80, '...') . '"';
             $outcome = function () use (&$counts) {
                 return "{$counts['sent']} sent, {$counts['suppressed']} suppressed, {$counts['blocked']} blocked, "
                     . "{$counts['server_errors']} server error(s), {$counts['failed']} failed, {$counts['stale']} refused as stale";
@@ -161,6 +166,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                 // Between messages: no row is claimed here, so stopping leaves nothing SENDING.
                 if ($task->is_stop_requested()) {
                     $summary = 'Stopped with ' . $outcome() . '.';
+                    $task->stdout('Stop requested - ' . $summary);
 
                     return $counts;
                 }
@@ -177,7 +183,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                 // and the rest of the message goes on. Before the suppressed branch too: a
                 // listed address is Blocked in every mode, not merely not-delivered.
                 if (Rsx_Mail::_recheck_block_list($row)) {
-                    $task->stdout("Blocked #{$row->id} to {$row->to_address}: {$row->last_error}");
+                    $task->stdout('Blocked ' . $label($row) . ": {$row->last_error}");
                     $counts['blocked']++;
                     continue;
                 }
@@ -191,7 +197,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                             // a suppressed send is still reviewable.
                             Rsx_Mail_Builder::build($row);
                             $row->mark_suppressed('delivery mode is suppressed');
-                            $task->stdout("Suppressed #{$row->id} to {$row->to_address}: delivery mode is suppressed");
+                            $task->stdout('Suppressed ' . $label($row) . ': recorded, not delivered (delivery mode is suppressed)');
                             $counts['suppressed']++;
                             break;
                         }
@@ -212,7 +218,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
 
                         static::_recipient($row)->increment_sent();
 
-                        $task->stdout("Sent #{$row->id} to {$row->to_address} ({$message_id})");
+                        $task->stdout('Sent ' . $label($row) . " ({$message_id})");
                         $counts['sent']++;
                         break;
                     } catch (UnexpectedResponseException $e) {
@@ -221,7 +227,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                         static::_recipient($row)->increment_failed();
 
                         $attempts = (int) config('rsx.mail.retry.attempts', 3);
-                        $task->stderr("Server error #{$row->id} attempt {$row->attempt_count}/{$attempts}: {$reply}");
+                        $task->stderr('Server error ' . $label($row) . " attempt {$row->attempt_count}/{$attempts}: {$reply}");
                         $counts['server_errors']++;
                         break;
                     } catch (TransportExceptionInterface $e) {
@@ -241,7 +247,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
 
                         $reconnected = true;
                         $task->stderr(
-                            "Mail transport failure on #{$row->id} (" . $e->getMessage()
+                            'Mail transport failure on ' . $label($row) . ' (' . $e->getMessage()
                             . ") - reconnecting to " . Rsx_Mail_Transport::describe() . " and retrying this message."
                         );
 
@@ -256,7 +262,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                         continue;
                     } catch (\Throwable $e) {
                         $row->mark_failed($e->getMessage());
-                        $task->stderr("Failed to build #{$row->id}: " . $e->getMessage());
+                        $task->stderr('Failed to build ' . $label($row) . ': ' . $e->getMessage());
                         $counts['failed']++;
                         break;
                     }
@@ -264,6 +270,13 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
             }
 
             $summary = ucfirst($outcome()) . '.';
+
+            // The closing line. An idle drain says so: it runs every minute, and a run with
+            // no output is indistinguishable from one that never looked.
+            $handled = $counts['sent'] + $counts['suppressed'] + $counts['blocked'] + $counts['server_errors'] + $counts['failed'];
+            $task->stdout($handled === 0 && $counts['stale'] === 0 && $counts['reclaimed'] === 0
+                ? 'No mail was due.'
+                : 'Done: ' . $outcome() . '.');
 
             return $counts;
         }));
@@ -285,7 +298,9 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
 
         // Every site's rows age out on the same clock: retention is install policy.
         $deleted = Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::cleanup_old($days));
-        $task->stdout("Deleted {$deleted} email records older than {$days} days");
+        $task->stdout($deleted > 0
+            ? "Deleted {$deleted} email record(s) older than {$days} days."
+            : "No email records are older than {$days} days; nothing deleted.");
 
         $pruned = static::_prune_catcher_maildir((int) $days);
 

@@ -72,6 +72,7 @@ class Flash_Alert_Cleanup_Service extends Rsx_Service_Abstract
 
         while (true) {
             if ($task->is_stop_requested()) {
+                $task->stdout("Stop requested - stopped after deleting {$total} abandoned flash alert(s).");
                 $task->summary("Stopped after deleting {$total} abandoned flash alerts.");
 
                 return null;
@@ -90,9 +91,9 @@ class Flash_Alert_Cleanup_Service extends Rsx_Service_Abstract
             $task->heartbeat();
         }
 
-        if ($total > 0) {
-            $task->stdout("Deleted {$total} flash alerts older than " . self::RETENTION_MINUTES . ' minutes');
-        }
+        $task->stdout($total > 0
+            ? "Deleted {$total} flash alert(s) older than " . self::RETENTION_MINUTES . ' minutes.'
+            : 'No flash alerts are older than ' . self::RETENTION_MINUTES . ' minutes; nothing deleted.');
 
         $task->state([
             'deleted' => $total,

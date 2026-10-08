@@ -41,7 +41,7 @@ export class InkEditor extends DrawingEditor {
     }): void;
     _drawingOptions: any;
     /** @inheritdoc */
-    serialize(isForCopying?: boolean): Object | null;
+    serialize(isForCopying?: boolean): object | null;
     #private;
 }
 import { DrawingOptions } from "./draw.js";

@@ -38,7 +38,7 @@ DESCRIPTION
     - Templates compile to JavaScript (not JSX, not runtime parsing)
     - Components ARE jQuery objects (this.$ is genuine jQuery)
     - Undefined components work immediately (incremental scaffolding)
-    - Six-stage deterministic lifecycle (on_create -> render -> on_render -> on_load -> on_loaded -> on_ready), plus on_stop for teardown
+    - Six-stage deterministic lifecycle (on_create -> render -> on_render -> on_load -> on_loaded -> on_ready), plus on_stop for teardown and on_attach / on_detach for entering and leaving the document
     - Double-render pattern for loading states
     - No build configuration required (auto-discovered)
 
@@ -945,7 +945,8 @@ COMMENTS IN TEMPLATES
         content('name', data), see CONTENT AND SLOTS).
 
 COMPONENT LIFECYCLE
-    Six-stage deterministic lifecycle (plus on_stop for teardown):
+    Six-stage deterministic lifecycle (plus on_stop for teardown, and on_attach /
+    on_detach - see IN AND OUT OF THE DOCUMENT below):
 
     on_create -> render -> on_render -> on_load -> on_loaded -> on_ready
 
@@ -1014,7 +1015,8 @@ COMPONENT LIFECYCLE
     - Never modify DOM in on_load() - only update this.data
     - on_load() runs in parallel for siblings (DOM unpredictable)
     - Data changes during load trigger automatic re-render
-    - on_create(), on_render(), on_stop() must be synchronous
+    - on_create(), on_render(), on_stop(), on_attach(), on_detach() must be
+      synchronous
     - on_load(), on_loaded(), and on_ready() can be async
 
     One auxiliary hook lives OUTSIDE these six stages: on_viewport_resize()
@@ -1264,6 +1266,66 @@ HOOK DECISION MATRIX
     Measure/react to viewport width imperatively        on_viewport_    Fired post-render/post-ready + debounced window
       (canvas sizing, virtualized rows)                   resize        resize; CSS media queries first, this hook last
     Teardown (sockets, observers, timers)               on_stop         Symmetric with on_ready setup
+    Something that should PAUSE while the component     on_attach /     Fire every time the root enters / leaves
+      is out of the document, and resume when it          on_detach       the document; on_attach always sees a
+      returns (a poll, a window listener)                                 ready component
+
+IN AND OUT OF THE DOCUMENT (on_attach, on_detach, is_attached)
+    A component can be alive and not in the document: built on an element that
+    has not been inserted yet, or removed from the page without being stopped.
+    Three members track that.
+
+        on_attach()      the root is in the document AND the component is
+                         ready. First runs after on_ready() and the 'ready'
+                         handlers; runs again every time the root returns to
+                         the document. Synchronous.
+        on_detach()      the root left the document, or the component is being
+                         stopped while attached (it runs first, before
+                         on_stop()). Synchronous.
+        is_attached()    is the root in the document right now, and the
+                         component not stopped? A live answer, correct at any
+                         point - in on_create() too.
+
+    The events 'attach' and 'detach' are the same two moments for outside code
+    (component.on('attach', ...)). They strictly alternate and fire once each
+    per transition. Moving a component in one step (appendTo elsewhere) is not
+    a transition. Like every lifecycle event they replay: a listener registered
+    while the component is attached is called at once.
+
+    WHERE CLEANUP GOES. on_stop() is the default and covers almost everything:
+    timers, observers, handlers the component bound, anything it registered
+    elsewhere. Use on_attach() / on_detach() for the narrower case of work that
+    should PAUSE while the component is out of the document and RESUME when it
+    comes back - a polling timer, a window listener, a registration in some
+    page-wide list:
+
+        class Clock_Widget extends Component {
+            on_attach() {
+                this.state.timer = setInterval(() => this.redraw(), 1000);
+            }
+
+            on_detach() {
+                clearInterval(this.state.timer);
+            }
+        }
+
+    Realtime needs none of this: this.subscribe() in on_create() is the whole
+    of it. A subscription is open only while the component is in the document
+    and is released when it stops, with nothing for the component to write
+    (rsx:man realtime).
+
+    Two things to keep straight:
+
+        - on_attach() CAN RUN MANY TIMES in one component's life. One-time
+          setup stays in on_create() / on_ready().
+        - 'attach' IS NOT 'ready'. To wait for a component to finish
+          initializing use ready(); 'attach' also requires it to be in the
+          document, which a component built off-page is not.
+
+    is_attached() and the events can differ for a moment: is_attached() is
+    the state now, and the events are notifications that it changed. It is
+    true in on_create() for a component created in the document, before the
+    first 'attach' has fired.
 
 LIFECYCLE SKIP FLAGS
     Two flags truncate the component lifecycle. Both cascade to children
@@ -1690,6 +1752,11 @@ LIFECYCLE EVENT CALLBACKS
         'load'   - Fires after load phase completes (data available)
         'loaded' - Fires after on_loaded() completes (this.data set and frozen)
         'ready'  - Fires after ready phase completes (fully initialized)
+        'attach' - Fires when the root is in the document: first after 'ready',
+                   then every time it returns
+        'detach' - Fires when the root leaves the document, and first thing
+                   inside stop() for an attached component
+        'stop'   - Fires when the component is stopped
 
     Methods:
         .on(event, callback)   - Register callback, fires on every occurrence
@@ -2172,7 +2239,9 @@ LIFECYCLE MANIPULATION METHODS
             }
 
         Behavior:
+            - Fires 'detach' (and on_detach()) first, if the component is attached
             - Calls on_stop() hook if defined
+            - Fires 'stop'
             - Recursively stops all child components
             - Removes DOM element completely
             - Adds _Component_Stopped class before removal
@@ -2187,6 +2256,18 @@ LIFECYCLE MANIPULATION METHODS
                     console.log('Chat widget stopped');
                 }
             }
+
+        WHEN A COMPONENT IS STOPPED WITHOUT ANYBODY CALLING stop(). Every jQuery
+        removal stops the components it removes, descendants included:
+        .remove(), .empty(), .html(x), .text(x), .replaceWith(), .replaceAll().
+        A parent's re-render stops its children the same way. So on_stop() runs
+        for every component removed through jQuery or the framework.
+
+        It does NOT run for NATIVE DOM removal (element.remove(),
+        innerHTML = '', replaceChildren()), and jQuery's .detach() never stops
+        anything by design. Application code uses the jQuery and component APIs,
+        where this cannot happen; a third-party library handed a container may
+        do it. A component removed that way still fires 'detach'.
 
     ready()
         Wait for component to complete full lifecycle including all children.
@@ -2231,16 +2312,18 @@ RESERVED NAMES (METHODS AND EVENTS)
     adds to it):
         Lifecycle hooks:
             on_create, on_render, on_load, on_loaded, on_ready, on_stop,
-            on_viewport_resize
+            on_attach, on_detach, on_viewport_resize
         Lifecycle methods:
             reload, refresh, render, redraw, stop, ready, rendered,
-            gate_load
+            gate_load, is_attached
         Access / traversal / events:
             sid, $sid, closest, find, instantiator, on, once, trigger
         Added by RSpade (not part of jqhtml itself):
             subscribe - patched onto Component.prototype at boot by
-            Rsx_Realtime (see rsx:man realtime); on_stop is wrapped by the
-            same patch to release subscriptions
+            Rsx_Realtime (see rsx:man realtime). A component's subscriptions
+            are closed and reopened by its 'attach' / 'detach' / 'stop'
+            events, never by on_stop(), so a component may define on_stop()
+            freely
         Properties:
             $, data, args, state, _cid (and every _-prefixed internal)
 
@@ -2254,7 +2337,7 @@ RESERVED NAMES (METHODS AND EVENTS)
         reload(false) semantics from that name.
 
     Reserved EVENT names:
-        create, load, loaded, ready, render, stop
+        create, load, loaded, ready, render, stop, attach, detach
 
         These are the lifecycle events the framework fires internally
         (with no payload) - a custom event with the same name collides
@@ -2270,6 +2353,8 @@ SYNCHRONOUS REQUIREMENTS
     on_create()            YES                     NO
     on_render()            YES                     NO
     on_stop()              YES                     NO
+    on_attach()            YES                     NO
+    on_detach()            YES                     NO
     on_viewport_resize()   YES                     NO
     on_load()              NO (async allowed)      YES
     on_loaded()            NO (async allowed)      YES

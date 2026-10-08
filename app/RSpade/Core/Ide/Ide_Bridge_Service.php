@@ -58,15 +58,15 @@ class Ide_Bridge_Service extends Rsx_Service_Abstract
     {
         $result = Ide_Bridge_Token::rotate();
 
-        // Silent on the ordinary path. A rotation is routine and happens 96 times a day;
-        // logging each one would bury the runs that actually said something.
-        if ($result['mode'] === 'purged' && $result['removed'] > 0) {
-            $task->stdout(sprintf(
-                'Purged %d IDE bridge grant(s): the bridge is development-only and this box is %s.',
-                $result['removed'],
-                Rsx::get_mode()
-            ));
-        }
+        // One line saying which of the three things this run did. Each run is its own
+        // record, so a routine rotation is one line in its own output, not noise in a log.
+        $task->stdout(match ($result['mode']) {
+            'rotated' => "Minted a new IDE bridge grant and retired {$result['removed']} surplus grant(s).",
+            'purged' => $result['removed'] > 0
+                ? sprintf('Purged %d IDE bridge grant(s): the bridge is development-only and this box is %s.', $result['removed'], Rsx::get_mode())
+                : 'The IDE bridge is development-only and this box is ' . Rsx::get_mode() . '; no grants exist, nothing to purge.',
+            default => 'The IDE bridge is disabled; no grant was minted.',
+        });
 
         $task->state($result);
         $task->summary(match ($result['mode']) {

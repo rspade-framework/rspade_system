@@ -333,7 +333,17 @@ SUBSCRIBING (JavaScript)
     subscription per (topic, filter) per component instance - a repeat call
     with the identical topic+filter returns the existing handle and adds
     nothing - and every subscription a component starts is stopped
-    automatically when the component is destroyed. (A component that genuinely
+    automatically when the component is destroyed, whether or not the
+    component defines an on_stop() of its own.
+
+    OPEN ONLY WHILE THE COMPONENT IS IN THE DOCUMENT. A subscription is closed
+    when the component's element leaves the document - by any route, including
+    DOM removal that never stops the component - and opened again if it comes
+    back; the resync that every opening fires is the refetch for what was
+    missed. A component built before it is inserted (an element not yet in the
+    document when on_create() runs) opens nothing until it is inserted: it
+    loads once unsubscribed and refetches once on the resync, where a
+    component created in the document gets the single gated load. (A component that genuinely
     wants a second callback on the same topic+filter uses Rsx_Realtime.watch()
     directly.)
 

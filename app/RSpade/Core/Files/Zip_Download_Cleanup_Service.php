@@ -45,6 +45,7 @@ class Zip_Download_Cleanup_Service extends Rsx_Service_Abstract
         $total = 0;
         while (true) {
             if ($task->is_stop_requested()) {
+                $task->stdout("Stop requested - stopped after deleting {$total} expired zip download request(s).");
                 $task->summary("Stopped after deleting {$total} expired zip download requests.");
 
                 return null;
@@ -63,9 +64,9 @@ class Zip_Download_Cleanup_Service extends Rsx_Service_Abstract
             $task->heartbeat();
         }
 
-        if ($total > 0) {
-            $task->stdout("Deleted {$total} zip download requests older than {$retention_hours} hours");
-        }
+        $task->stdout($total > 0
+            ? "Deleted {$total} zip download request(s) older than {$retention_hours} hours."
+            : "No zip download requests are older than {$retention_hours} hours; nothing deleted.");
 
         $task->state([
             'deleted' => $total,

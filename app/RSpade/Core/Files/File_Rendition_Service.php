@@ -44,6 +44,7 @@ class File_Rendition_Service extends Rsx_Service_Abstract
 
         if (!is_dir($dir)) {
             // Directory doesn't exist yet - no cleanup needed.
+            $task->stdout('The rendition cache directory does not exist yet; nothing to clean.');
             $task->state(['deleted' => 0, 'freed_bytes' => 0]);
             $task->summary('The rendition cache directory does not exist yet; nothing to clean.');
 
@@ -63,6 +64,10 @@ class File_Rendition_Service extends Rsx_Service_Abstract
 
         // Not over quota? Nothing to do.
         if ($total_size <= $max_bytes) {
+            $task->stdout(
+                'The rendition cache holds ' . count($files) . ' file(s), ' . bytes_to_human($total_size)
+                . ' of a ' . bytes_to_human((int) $max_bytes) . ' quota; nothing deleted.'
+            );
             $task->state(['deleted' => 0, 'freed_bytes' => 0]);
             $task->summary('The rendition cache is within its quota; nothing was deleted.');
 
@@ -87,7 +92,10 @@ class File_Rendition_Service extends Rsx_Service_Abstract
         }
 
         $freed_mb = round($freed_bytes / 1024 / 1024, 2);
-        $task->stdout("Rendition cleanup: {$deleted_count} files deleted, {$freed_mb} MB freed");
+        $task->stdout(
+            "The rendition cache was over its " . bytes_to_human((int) $max_bytes) . " quota: deleted the {$deleted_count} "
+            . "oldest file(s), freeing {$freed_mb} MB."
+        );
 
         $task->state(['deleted' => $deleted_count, 'freed_bytes' => $freed_bytes]);
         $task->summary("Deleted {$deleted_count} cached renditions, freeing {$freed_mb} MB.");

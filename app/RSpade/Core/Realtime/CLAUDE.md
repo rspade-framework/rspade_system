@@ -231,8 +231,16 @@ HEADLESS (no session — everything from `$site_id`/`$filter`).
   a single connection can hold multiple watches on the same topic with different filters,
   and the server's `{type:'message'}` frame carries no `sub_id` to disambiguate.
 - `Component.prototype.subscribe` (patched at boot, always — safe no-op when
-  `!window.rsxapp?.realtime_url`) wraps `watch()` and pushes the handle into
-  `this._realtime_subs`; the existing `on_stop` patch calls `.stop()` on each.
+  `!window.rsxapp?.realtime_url`) records what the component asked for on the component
+  (`this._realtime_specs`) and keeps it OPEN ONLY WHILE THE COMPONENT IS IN THE DOCUMENT:
+  opened at `subscribe()` when the root `isConnected` (so an `on_create()` subscription still
+  gates the first load), otherwise on the runtime's `attach` event; closed on `detach` (native
+  DOM removal included) and reopened on the next `attach`; closed at `ready` if the root left the
+  document before it; closed for good on `stop`. `Rsx_Realtime._adopt_component()` holds the
+  reasoning. NOT a wrapper around `on_stop()`: a component that defines its own `on_stop()` -
+  written, like every lifecycle hook, without `super` - shadowed it and kept its subscriptions.
+  `isConnected`, not `is_attached()`: the latter reports the `attach` event, which first fires
+  after `ready`.
 - `on_state_change(callback)` — `connecting | connected | disconnected | reconnecting`.
   The names are a public contract. `disconnected` is DELAYED by
   `OFFLINE_ANNOUNCE_GRACE_MS` (5s) on an unintentional close (`reconnecting` is announced

@@ -77,7 +77,7 @@ export class HighlightEditor extends DrawingEditor {
     }): void;
     _drawingOptions: any;
     /** @inheritdoc */
-    serialize(isForCopying?: boolean): Object | null;
+    serialize(isForCopying?: boolean): object | null;
     #private;
 }
 import { DrawingEditor } from "./draw.js";

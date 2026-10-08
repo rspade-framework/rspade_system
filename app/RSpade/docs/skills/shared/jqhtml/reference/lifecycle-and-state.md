@@ -9,7 +9,7 @@
 5. **`on_loaded()`** - runs on the real component (not a detached proxy)
 6. **`on_ready()`** - all children guaranteed ready (bottom-up, async)
 
-Plus **`on_stop()`** - teardown when the component is destroyed (sync).
+Plus **`on_stop()`** - teardown when the component is destroyed (sync) - and **`on_attach()`** / **`on_detach()`** - the root entered / left the document (sync; see "In and out of the document").
 
 **Double-render**: if `on_load()` modifies `this.data`, the component renders twice (defaults -> populated). `on_ready()` fires once, after the final render.
 
@@ -348,7 +348,25 @@ your component, never the component the markup is rendered inside. Write `this.m
 - **`load()`** - re-runs `on_load()` only: no render, no `on_ready()`. Returns `true`/`false` for whether `this.data` changed, so you decide what to redraw next.
 - **`render()` / `redraw()`** - re-execute the template -> wait for children -> `on_ready()`. Does NOT re-run `on_load()`. UI-only updates.
 - **`render('sid')`** - re-render ONLY the element carrying that `$sid`, which must be marked `$redrawable` in the template. Child DOM elsewhere is untouched - use for counters, badges and live fragments instead of a full `render()`.
-- **`stop()`** - destroy the component and all children; calls `on_stop()` if defined. `on_stop()` is NOT guaranteed to run when a node is removed outside the framework.
+- **`stop()`** - destroy the component and all children: fires `detach` (and `on_detach()`) first when attached, then `on_stop()`, then `stop`. You rarely call it - **every jQuery removal stops the components it removes** (`.remove()`, `.empty()`, `.html(x)`, `.text(x)`, `.replaceWith()`, `.replaceAll()`), as does a parent's re-render. NATIVE DOM removal (`element.remove()`, `innerHTML = ''`) and jQuery `.detach()` do NOT stop anything; a natively removed component still fires `detach`.
+
+### In and out of the document
+
+A component can be alive and not in the document - built on an element not yet inserted, or removed without being stopped.
+
+- **`on_attach()`** - the root is in the document AND the component is ready. First runs after `on_ready()` and the `ready` handlers, then every time the root returns. Sync. **Can run many times** - one-time setup stays in `on_create()` / `on_ready()`.
+- **`on_detach()`** - the root left the document, or the component is being stopped while attached (it runs before `on_stop()`). Sync.
+- **`is_attached()`** - in the document right now and not stopped. A live answer, correct in `on_create()` too - so it can be true before the first `attach` has fired.
+- Events **`attach`** / **`detach`** are the same moments for outside code; they strictly alternate, and a one-step move (`appendTo` elsewhere) is not a transition.
+
+**Where cleanup goes**: `on_stop()` by default. `on_attach()` / `on_detach()` only for work that should PAUSE while out of the document and resume on return (a poll, a window listener):
+
+```javascript
+on_attach() { this.state.timer = setInterval(() => this.redraw(), 1000); }
+on_detach() { clearInterval(this.state.timer); }
+```
+
+Realtime needs none of it: `this.subscribe()` in `on_create()` is open only while the component is in the document and is released when it stops. **`attach` is not `ready`** - wait for a component with `ready()`.
 
 `render()` and `reload()` invalidate the sticky `ready` state first, so a `.ready()`/`.on('ready')` registered mid-cycle waits for the NEW render instead of resolving against the old one.
 

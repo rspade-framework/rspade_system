@@ -55,13 +55,13 @@ A subscription that means "the USER changed this" rides **`input`**, never **`va
 
 ### Reserved event names
 
-**NEVER** name a custom event `create` / `load` / `loaded` / `ready` / `render` / `rendered` / `stop`. These are jqhtml lifecycle events fired internally (with no payload), so a same-named custom event collides and your handler receives the framework's payload-less firings. Pick a distinct name - `preview_loaded`, not `loaded`.
+**NEVER** name a custom event `create` / `load` / `loaded` / `ready` / `render` / `rendered` / `stop` / `attach` / `detach`. These are jqhtml lifecycle events fired internally (with no payload), so a same-named custom event collides and your handler receives the framework's payload-less firings. Pick a distinct name - `preview_loaded`, not `loaded`.
 
 ### Reserved method names
 
 Custom component methods always get unique names. **Never shadow the `Jqhtml_Component` surface:**
 
-`reload` · `refresh` · `render` · `redraw` · `stop` · `ready` · `rendered` · `gate_load` · `sid` · `$sid` · `closest` · `find` · `instantiator` · `on` · `once` · `trigger` · `invalidate` · plus every lifecycle hook (`on_create`, `on_render`, `on_load`, `on_loaded`, `on_ready`, `on_stop`). Also reserved, but RSpade's rather than jqhtml's: `subscribe`, patched onto `Component.prototype` at boot by `Rsx_Realtime` (which also wraps `on_stop` to release subscriptions).
+`reload` · `refresh` · `render` · `redraw` · `stop` · `ready` · `rendered` · `gate_load` · `is_attached` · `sid` · `$sid` · `closest` · `find` · `instantiator` · `on` · `once` · `trigger` · `invalidate` · plus every lifecycle hook (`on_create`, `on_render`, `on_load`, `on_loaded`, `on_ready`, `on_stop`, `on_attach`, `on_detach`). Also reserved, but RSpade's rather than jqhtml's: `subscribe`, patched onto `Component.prototype` at boot by `Rsx_Realtime` (its subscriptions are released through the component's `attach` / `detach` / `stop` events, never through `on_stop()`, so defining `on_stop()` is always safe).
 
 Overriding one of these is a deliberate OOP override for unusual edge cases only, never a naming convenience. **`render()` is the exception with no exceptions** - never override or shadow it, instance or static (`JQHTML-RENDER-01`/`JQHTML-IMPL-01` reject it). The full list is in `php artisan rsx:man jqhtml` (RESERVED NAMES).
 

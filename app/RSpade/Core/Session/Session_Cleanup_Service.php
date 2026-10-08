@@ -115,6 +115,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         );
 
         if ($task->is_stop_requested()) {
+            $task->stdout('Stop requested - stopped after deleting ' . array_sum($deleted) . ' idle session(s).');
             $task->summary('Stopped after deleting ' . array_sum($deleted) . ' idle sessions.');
 
             return null;
@@ -134,6 +135,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         );
 
         if ($task->is_stop_requested()) {
+            $task->stdout('Stop requested - stopped after deleting ' . array_sum($deleted) . ' idle session(s).');
             $task->summary('Stopped after deleting ' . array_sum($deleted) . ' idle sessions.');
 
             return null;
@@ -154,7 +156,8 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
             );
 
             if ($task->is_stop_requested()) {
-                $task->summary('Stopped after deleting ' . array_sum($deleted) . ' idle sessions.');
+                $task->stdout('Stop requested - stopped after deleting ' . array_sum($deleted) . ' idle session(s).');
+            $task->summary('Stopped after deleting ' . array_sum($deleted) . ' idle sessions.');
 
                 return null;
             }
@@ -162,14 +165,16 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
 
         $total = array_sum($deleted);
 
-        if ($total > 0) {
-            foreach ($deleted as $name => $count) {
-                if ($count > 0) {
-                    $task->stdout("Deleted {$count} {$name} sessions");
-                }
+        // One line per kind that had something to expire, then the outcome - including when
+        // every kind was within its window, so an idle sweep is visibly an idle sweep.
+        foreach ($deleted as $name => $count) {
+            if ($count > 0) {
+                $task->stdout("Deleted {$count} idle {$name} session(s).");
             }
-            $task->stdout("Total sessions deleted: {$total}");
         }
+        $task->stdout($total > 0
+            ? "Deleted {$total} idle session(s) in all."
+            : 'No sessions are past their idle window; nothing deleted.');
 
         $deleted['total_deleted'] = $total;
 
@@ -186,7 +191,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      * are ephemeral counters and never become rows (see Login_History) - so it grows with real
      * use rather than with attack volume. It still grows without bound over years, which is what this sweep answers.
      *
-     * Chunked like the session sweep, and silent when there is nothing to delete.
+     * Chunked like the session sweep.
      * rsx.sessions.login_history_retention_days at 0 or null disables the prune entirely.
      *
      * @param Task_Instance $task Task instance for logging
@@ -201,6 +206,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         $retention_days = (int) config('rsx.sessions.login_history_retention_days');
 
         if ($retention_days <= 0) {
+            $task->stdout('Login history is kept forever (rsx.sessions.login_history_retention_days is 0); nothing deleted.');
             $task->state(['total_deleted' => 0]);
             $task->summary('Login history retention is disabled; nothing was deleted.');
 
@@ -217,14 +223,15 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         );
 
         if ($task->is_stop_requested()) {
+            $task->stdout("Stop requested - stopped after deleting {$deleted} login history row(s).");
             $task->summary("Stopped after deleting {$deleted} login history rows.");
 
             return null;
         }
 
-        if ($deleted > 0) {
-            $task->stdout("Deleted {$deleted} login history rows older than {$retention_days} days");
-        }
+        $task->stdout($deleted > 0
+            ? "Deleted {$deleted} login history row(s) older than {$retention_days} days."
+            : "No login history rows are older than {$retention_days} days; nothing deleted.");
 
         $task->state(['total_deleted' => $deleted]);
         $task->summary("Deleted {$deleted} login history rows older than {$retention_days} days.");
@@ -259,14 +266,15 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         );
 
         if ($task->is_stop_requested()) {
+            $task->stdout("Stop requested - stopped after deleting {$deleted} expired session link(s).");
             $task->summary("Stopped after deleting {$deleted} expired session links.");
 
             return null;
         }
 
-        if ($deleted > 0) {
-            $task->stdout("Deleted {$deleted} expired session links");
-        }
+        $task->stdout($deleted > 0
+            ? "Deleted {$deleted} expired session link(s)."
+            : 'No session links have expired; nothing deleted.');
 
         $task->state(['total_deleted' => $deleted]);
         $task->summary("Deleted {$deleted} expired session links.");

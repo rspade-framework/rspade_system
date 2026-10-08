@@ -1297,16 +1297,43 @@ class Rsx_Realtime {
         Component.prototype.subscribe = function (topic, filter, callback) {
             const [r_topic, r_filter, r_callback] = Rsx_Realtime._resolve_subscribe_args(topic, filter, callback);
 
-            if (!this._realtime_subs) this._realtime_subs = [];
-            if (!this._realtime_sub_keys) this._realtime_sub_keys = new Map();
+            if (!this._realtime_specs) {
+                Rsx_Realtime._adopt_component(this);
+            }
 
             // Idempotent per (topic, filter) for this component instance. A repeat call
-            // returns the cached handle/promise WITHOUT registering another gate or
-            // callback. Registered synchronously (in-flight marker) so even concurrent
-            // identical calls collapse to one subscription.
+            // returns the same promise WITHOUT registering another gate or callback.
             const key = Rsx_Realtime._canonical_key(r_topic, r_filter);
-            if (this._realtime_sub_keys.has(key)) {
-                return this._realtime_sub_keys.get(key);
+            const existing = this._realtime_specs.get(key);
+            if (existing) {
+                return existing.promise;
+            }
+
+            // What the component asked for, kept ON the component: it is what lets a
+            // subscription be closed while the component is out of the document and opened
+            // again when it returns, and it is the only place the request lives - nothing
+            // outside the component refers to it while it is closed.
+            const spec = { topic: r_topic, filter: r_filter, callback: r_callback, handle: null, token: null, resolve: null };
+            spec.promise = new Promise((resolve) => { spec.resolve = resolve; });
+            this._realtime_specs.set(key, spec);
+
+            if (this._realtime_stopped) {
+                spec.resolve(Rsx_Realtime._inert_handle());
+
+                return spec.promise;
+            }
+
+            // A SUBSCRIPTION IS OPEN ONLY WHILE THE COMPONENT IS IN THE DOCUMENT. Asked of
+            // the element itself, not of is_attached(): that reports the 'attach' event,
+            // which first fires after 'ready', and the question here is asked in on_create().
+            //
+            // In the document (the ordinary case): open now, and - below - hold the first
+            // load until the subscription is live. Not in the document (a component built
+            // before it is inserted): nothing is opened; the 'attach' listener opens it,
+            // and the resync that every opening fires refetches, so such a component loads
+            // once before it is subscribed and once after.
+            if (!this.$[0].isConnected) {
+                return spec.promise;
             }
 
             // A subscription registered BEFORE this component's first load (i.e. in
@@ -1317,7 +1344,7 @@ class Rsx_Realtime {
             const realtime_active = !!window.rsxapp?.realtime_url;
             const pre_load = realtime_active && this.__first_load_started !== true;
 
-            let final_callback = r_callback;
+            let first_callback = r_callback;
             let resolve_established_gate = null;
 
             if (pre_load) {
@@ -1345,7 +1372,7 @@ class Rsx_Realtime {
                 // through as the race healer for whatever the timeout window missed; live
                 // messages (resync !== true) and reconnect resyncs always pass through.
                 let swallowed = false;
-                final_callback = (data, meta) => {
+                first_callback = (data, meta) => {
                     // meta is always constructed by _fire_callbacks - fail loud if not.
                     if (!swallowed && !timed_out && meta.resync === true) {
                         swallowed = true;
@@ -1355,52 +1382,144 @@ class Rsx_Realtime {
                 };
             }
 
-            const handle_promise = Rsx_Realtime.watch(r_topic, r_filter, final_callback);
+            Rsx_Realtime._open_spec(this, spec, first_callback, resolve_established_gate);
 
-            const tracked = handle_promise.then((handle) => {
-                // Wire establishment -> resolve the gate (settle on BOTH fulfil and reject:
-                // a rejected established must still resolve the gate so it never dangles —
-                // gate_load treats the gate resolving as "proceed").
-                if (pre_load && resolve_established_gate) {
-                    handle.established.then(resolve_established_gate, resolve_established_gate);
-                }
-
-                // The component may have been destroyed WHILE this subscribe was in flight
-                // (a child recreated on the parent's double-render, stopped before its token
-                // round-trip resolved). on_stop only stops already-resolved handles, so
-                // without this check the just-resolved handle would leak a dead callback
-                // firing on a destroyed component on every live message. Release it.
-                if (this._realtime_stopped) {
-                    handle.stop();
-                    return handle;
-                }
-
-                this._realtime_subs.push(handle);
-                this._realtime_sub_keys.set(key, handle);
-                return handle;
-            });
-
-            this._realtime_sub_keys.set(key, tracked);
-
-            return tracked;
+            return spec.promise;
         };
+    }
 
-        const _original_on_stop = Component.prototype.on_stop;
-        Component.prototype.on_stop = function () {
-            // Flags any subscribe() still awaiting its token to self-release on resolve.
-            this._realtime_stopped = true;
+    /**
+     * A component's first subscribe(): give it somewhere to keep its subscriptions and
+     * tie them to its life in the document.
+     *
+     *   'detach'  the root left the document - by any route, native DOM removal included,
+     *             and first thing inside stop(). Every subscription is closed. Nothing
+     *             outside the component refers to it after that, so a component that is
+     *             removed and never stopped is not kept alive by its subscriptions.
+     *   'attach'  the root is in the document. Whatever is closed is opened: a
+     *             subscription made while the component was being built off-document, or
+     *             one closed by an earlier 'detach'. The resync every opening fires is the
+     *             refetch for whatever was missed meanwhile.
+     *   'ready'   one check for the case no event covers: a component that was in the
+     *             document when it subscribed and left it before it was ready has never
+     *             fired 'attach', so it will never fire 'detach' either.
+     *   'stop'    the end. Close whatever is open, and open nothing again.
+     *
+     * NEVER on_stop(): it is the hook a component author overrides, without calling super
+     * (no lifecycle hook is written with super), so cleanup hung on it was silently dropped
+     * by every component that had an on_stop() of its own.
+     *
+     * Every listener is safe to fire at once - the runtime replays an event that has
+     * already happened to a new listener - because each acts only on what it finds.
+     *
+     * @param {Component} component
+     */
+    static _adopt_component(component) {
+        component._realtime_specs = new Map();
+        component._realtime_stopped = false;
 
-            if (this._realtime_subs) {
-                for (const handle of this._realtime_subs) {
-                    handle.stop();
+        component.on('detach', () => Rsx_Realtime._close_component(component));
+
+        component.on('attach', () => {
+            if (component._realtime_stopped) return;
+
+            for (const spec of component._realtime_specs.values()) {
+                if (spec.token === null) {
+                    Rsx_Realtime._open_spec(component, spec, spec.callback, null);
                 }
-                this._realtime_subs = null;
             }
-            this._realtime_sub_keys = null;
+        });
 
-            if (_original_on_stop) {
-                _original_on_stop.call(this);
+        component.once('ready', () => {
+            if (!component.$[0].isConnected) {
+                Rsx_Realtime._close_component(component);
             }
-        };
+        });
+
+        component.once('stop', () => {
+            component._realtime_stopped = true;
+            Rsx_Realtime._close_component(component);
+
+            // A subscription that never opened still owes its caller an answer.
+            for (const spec of component._realtime_specs.values()) {
+                spec.resolve(Rsx_Realtime._inert_handle());
+            }
+        });
+    }
+
+    /**
+     * Open one of a component's subscriptions.
+     *
+     * The token identifies THIS opening. The watch is established asynchronously, so by the
+     * time its handle arrives the component may have left the document or stopped; a handle
+     * whose token is no longer the spec's is released at once instead of being kept.
+     *
+     * @param {Component} component
+     * @param {Object} spec - the component's record of the subscription
+     * @param {Function} callback - what to call: the component's own callback, or the
+     *                              first-load wrapper around it
+     * @param {Function|null} on_established - resolves the first-load gate, when there is one
+     */
+    static _open_spec(component, spec, callback, on_established) {
+        const token = {};
+        spec.token = token;
+
+        Rsx_Realtime.watch(spec.topic, spec.filter, callback).then((handle) => {
+            // Wire establishment -> resolve the gate (settle on BOTH fulfil and reject:
+            // a rejected established must still resolve the gate so it never dangles —
+            // gate_load treats the gate resolving as "proceed").
+            if (on_established) {
+                handle.established.then(on_established, on_established);
+            }
+
+            if (spec.token !== token) {
+                handle.stop();
+
+                return;
+            }
+
+            spec.handle = handle;
+            spec.resolve(handle);
+        });
+    }
+
+    /**
+     * Close every subscription a component has open. What it asked for stays recorded on
+     * the component, so 'attach' can open it again.
+     *
+     * @param {Component} component
+     */
+    static _close_component(component) {
+        for (const spec of component._realtime_specs.values()) {
+            // Disowns an opening still in flight: its handle is released when it arrives.
+            spec.token = null;
+
+            if (spec.handle) {
+                spec.handle.stop();
+                spec.handle = null;
+            }
+        }
+    }
+
+    /**
+     * Whether a component has a subscription open (or opening) right now. False for a
+     * component that never subscribed.
+     *
+     * @param {Component} component
+     * @returns {boolean}
+     */
+    static _component_is_open(component) {
+        if (!component._realtime_specs) return false;
+
+        for (const spec of component._realtime_specs.values()) {
+            if (spec.token !== null) return true;
+        }
+
+        return false;
+    }
+
+    /** What subscribe() answers for a subscription that will never open: the component stopped first. */
+    static _inert_handle() {
+        return { stop() {}, established: Promise.resolve() };
     }
 }

@@ -33,7 +33,7 @@ export namespace FindState {
 export function getOriginalIndex(diffs: any, pos: any, len: any): any[];
 export function normalize(text: any, options?: {}): any[];
 /**
- * @typedef {Object} PDFFindControllerOptions
+ * @typedef {object} PDFFindControllerOptions
  * @property {PDFLinkService} linkService - The navigation/linking service.
  * @property {EventBus} eventBus - The application event bus.
  * @property {number} [delay] - The number of milliseconds to delay execution of
@@ -56,7 +56,7 @@ export class PDFFindController {
     _eventBus: import("./event_utils").EventBus;
     /**
      * Callback used to check if a `pageNumber` is currently visible.
-     * @type {function}
+     * @type {Function}
      */
     onIsPageVisible: Function;
     get highlightMatches(): boolean | undefined;
@@ -70,7 +70,6 @@ export class PDFFindController {
     /**
      * Set a reference to the PDF document in order to search it.
      * Note that searching is not possible if this method is not called.
-     *
      * @param {PDFDocumentProxy} pdfDocument - The PDF document to search.
      */
     setDocument(pdfDocument: PDFDocumentProxy): void;
@@ -79,14 +78,14 @@ export class PDFFindController {
     _findTimeout: any;
     _highlightMatches: boolean | undefined;
     /**
-     * @typedef {Object} PDFFindControllerScrollMatchIntoViewParams
+     * @typedef {object} PDFFindControllerScrollMatchIntoViewParams
      * @property {HTMLElement} element
      * @property {number} pageIndex
      * @property {number} matchIndex
      */
     /**
      * Scroll the current match into view.
-     * @param {PDFFindControllerScrollMatchIntoViewParams}
+     * @param {PDFFindControllerScrollMatchIntoViewParams} params
      */
     scrollMatchIntoView({ element, pageIndex, matchIndex }: {
         element: HTMLElement;
@@ -116,7 +115,7 @@ export class PDFFindController {
     _firstPageCapability: any;
     _rawQuery: any;
     /**
-     * @typedef {Object} FindMatch
+     * @typedef {object} FindMatch
      * @property {number} index - The start of the matched text in the page's
      *   string contents.
      * @property {number} length - The length of the matched text.

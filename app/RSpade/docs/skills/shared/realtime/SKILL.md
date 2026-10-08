@@ -51,7 +51,7 @@ const w = await Rsx_Realtime.watch(topic, filter, cb);// returns {stop(), establ
 Rsx_Realtime.on_state_change(s => ...);               // connecting|connected|disconnected|reconnecting
 ```
 
-Component subscriptions are **ref-counted** (N components on the same topic+filter share ONE server-side subscription), **auto-stop on destroy**, and are **idempotent per (topic, filter)** for a component instance - a repeat call returns the cached handle rather than registering a second callback. Subscribing to a model that is not `$realtime` **throws** (fails loud).
+Component subscriptions are **ref-counted** (N components on the same topic+filter share ONE server-side subscription), **auto-stop on destroy** (with or without an `on_stop()` of the component's own) and are **open only while the component is in the document** - closed when its element leaves it, DOM removal included, and reopened with a resync if it returns; a component built before it is inserted subscribes on insertion, so it loads once and refetches once, and are **idempotent per (topic, filter)** for a component instance - a repeat call returns the cached handle rather than registering a second callback. Subscribing to a model that is not `$realtime` **throws** (fails loud).
 
 ---
 

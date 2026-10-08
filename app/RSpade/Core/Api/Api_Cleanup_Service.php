@@ -42,10 +42,14 @@ class Api_Cleanup_Service extends Rsx_Service_Abstract
 
         // created_at is indexed, so the backlog is cheap to count up front.
         $backlog = DB::table('_api_request_log')->where('created_at', '<', $cutoff)->count();
+        if ($backlog > 0) {
+            $task->status("Deleting {$backlog} API request log row(s) older than {$retention_days} days");
+        }
 
         $total = 0;
         while (true) {
             if ($task->is_stop_requested()) {
+                $task->stdout("Stop requested - stopped after deleting {$total} of {$backlog} API request log row(s).");
                 $task->summary("Stopped after deleting {$total} of {$backlog} API request log rows.");
 
                 return null;
@@ -65,9 +69,9 @@ class Api_Cleanup_Service extends Rsx_Service_Abstract
             $task->heartbeat();
         }
 
-        if ($total > 0) {
-            $task->stdout("Deleted {$total} API request log rows older than {$retention_days} days");
-        }
+        $task->stdout($total > 0
+            ? "Deleted {$total} API request log row(s) older than {$retention_days} days."
+            : "No API request log rows are older than {$retention_days} days; nothing deleted.");
 
         $task->state([
             'deleted' => $total,

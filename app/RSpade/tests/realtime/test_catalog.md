@@ -180,3 +180,20 @@ KNOWN FAILURE, pre-existing and unrelated to the page: `HARNESS-01` asserts the 
 socket URL is literally `ws://localhost/ws`, while `rsx:debug` browses the host `APP_URL`
 names. On a box whose `APP_URL` is not `localhost` the row fails on the hostname, not on the
 derivation it is about.
+
+## subscription_released_on_stop.js (playwright) - a component's subscriptions follow its life in the document
+
+Runtime-registered probe components on `/_sys`, subscribed to `Task_Changed_Topic` for a real
+run. Run with `node realtime/playwright/subscription_released_on_stop.js`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RT-STOP-01 | a component that defines its own `on_stop()` (no super) releases its subscription when it stops | playwright | subscribe in `on_create()`, then `stop()` | its `on_stop()` ran once; closed, stopped | implemented (fails against the `on_stop`-wrapping cleanup it replaced) | 2026-10-08 |
+| RT-STOP-02 | a component with no `on_stop()` releases the same way | playwright | the same, no `on_stop()` | closed | implemented | 2026-10-08 |
+| RT-STOP-03 | two components on one topic and filter share one watch, removed when the last stops | playwright | both probes mounted, stopped one at a time | watch count +1, still +1 with one alive, back to the start | implemented | 2026-10-08 |
+| RT-STOP-04 | the base `on_stop()` is not replaced | playwright | `Component.prototype.on_stop` vs the runtime base's | identical | implemented | 2026-10-08 |
+| RT-DOC-01 | a child mounted inside its parent's render is in the document at `on_create()` and subscribes there | playwright | a parent that mounts a child in `on_render()` | child element connected and open at create; released with the parent | implemented | 2026-10-08 |
+| RT-DOC-02 | a component built off-document opens nothing until inserted, then opens and resyncs | playwright | mount on a detached element, then append | closed and no watch; open and a resync callback after insertion | implemented | 2026-10-08 |
+| RT-DOC-03 | native DOM removal, which never stops the component, closes its subscription | playwright | `element.remove()` | closed, watch gone, component not stopped | implemented | 2026-10-08 |
+| RT-DOC-04 | put back in the document it reopens and resyncs; stop releases for good | playwright | `appendChild` the same element, then `stop()` | open + resync; watch count back to the start | implemented | 2026-10-08 |
+| RT-DOC-05 | a component that leaves the document before `ready` is closed at `ready` | playwright | subscribe in the document, remove the element before ready | open at create, closed after ready | implemented | 2026-10-08 |

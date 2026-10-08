@@ -73,6 +73,7 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
                 // Between messages: no row is claimed here, so stopping leaves nothing SENDING.
                 if ($task->is_stop_requested()) {
                     $summary = "Stopped after recording {$counts['suppressed']} SMS message(s) suppressed.";
+                    $task->stdout('Stop requested - ' . $summary);
 
                     return $counts;
                 }
@@ -84,12 +85,20 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
                 }
 
                 $queued->mark_suppressed('no SMS provider configured');
-                $task->stdout("Suppressed SMS #{$queued->id} to {$queued->to_number}: no SMS provider configured");
+                $task->stdout(
+                    "Suppressed SMS #{$queued->id} to {$queued->to_number} \""
+                    . mb_strimwidth(str_replace(["\r", "\n"], ' ', (string) $queued->body), 0, 60, '...')
+                    . '": recorded, not delivered (no SMS provider configured)'
+                );
 
                 $counts['suppressed']++;
             }
 
             $summary = "Recorded {$counts['suppressed']} SMS message(s) suppressed: no SMS provider is configured.";
+
+            $task->stdout($counts['suppressed'] === 0 && $counts['reclaimed'] === 0
+                ? 'No SMS was due.'
+                : "Done: {$counts['suppressed']} SMS message(s) recorded as suppressed.");
 
             return $counts;
         }));
@@ -110,7 +119,9 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
 
         // Every site's rows age out on the same clock: retention is install policy.
         $deleted = Sms_Queue_Model::without_site_scope(fn () => Sms_Queue_Model::cleanup_old($days));
-        $task->stdout("Deleted {$deleted} SMS records older than {$days} days");
+        $task->stdout($deleted > 0
+            ? "Deleted {$deleted} SMS record(s) older than {$days} days."
+            : "No SMS records are older than {$days} days; nothing deleted.");
 
         $task->state(['deleted' => $deleted]);
         $task->summary("Deleted {$deleted} SMS records older than {$days} days.");

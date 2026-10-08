@@ -53,25 +53,46 @@ class Task_Retention_Service extends Rsx_Service_Abstract
         $task->status('Truncating finished runs');
         $truncated = static::truncate_finished_runs($truncate_minutes, $keep_lines, $task);
         if ($task->is_stop_requested()) {
+            $task->stdout('Stop requested - ' . lcfirst($stopped()));
             $task->summary($stopped());
 
             return null;
+        }
+
+        if ($truncated > 0) {
+            $task->stdout(
+                "Truncated the output of {$truncated} finished run(s) to its last {$keep_lines} line(s) and deleted their attached files "
+                . '(finished more than ' . duration_to_human($truncate_minutes * 60) . ' ago).'
+            );
         }
 
         $task->status('Purging finished runs');
         $purged = static::purge_finished_runs($purge_minutes, $task);
         if ($task->is_stop_requested()) {
+            $task->stdout('Stop requested - ' . lcfirst($stopped()));
             $task->summary($stopped());
 
             return null;
         }
 
+        if ($purged > 0) {
+            $task->stdout("Purged {$purged} finished run(s) and everything they recorded (finished more than " . duration_to_human($purge_minutes * 60) . ' ago).');
+        }
+
         $task->status('Removing orphaned temp directories');
         $temp_dirs = static::remove_orphaned_temp_directories($task);
         if ($task->is_stop_requested()) {
+            $task->stdout('Stop requested - ' . lcfirst($stopped()));
             $task->summary($stopped());
 
             return null;
+        }
+
+        if ($temp_dirs > 0) {
+            $task->stdout("Removed {$temp_dirs} task temp director(ies) whose run had finished or no longer exists.");
+        }
+        if ($truncated === 0 && $purged === 0 && $temp_dirs === 0) {
+            $task->stdout('No finished run is old enough to truncate or purge, and no temp directory is orphaned.');
         }
 
         $task->summary("Truncated {$truncated} run(s), purged {$purged} run(s), removed {$temp_dirs} temp director(ies).");

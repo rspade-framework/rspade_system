@@ -15,14 +15,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  * @licend The above is the entire license notice for the
  * JavaScript code in this page
  */
 
 /**
- * pdfjsVersion = 6.3.289
- * pdfjsBuild = 1c8020a7d
+ * pdfjsVersion = 6.4.299
+ * pdfjsBuild = d0991a0d5
  */
 
 ;// ./src/shared/util.js
@@ -653,10 +652,7 @@ class Util {
     }
     const yLow = Math.max(Math.min(rect1[1], rect1[3]), Math.min(rect2[1], rect2[3]));
     const yHigh = Math.min(Math.max(rect1[1], rect1[3]), Math.max(rect2[1], rect2[3]));
-    if (yLow > yHigh) {
-      return null;
-    }
-    return [xLow, yLow, xHigh, yHigh];
+    return yLow > yHigh ? null : [xLow, yLow, xHigh, yHigh];
   }
   static pointBoundingBox(x, y, minMax) {
     minMax[0] = Math.min(minMax[0], x);
@@ -802,11 +798,10 @@ if (typeof Iterator.prototype.join !== "function") {
 
 ;// ./external/jbig2/jbig2.js
 async function JBig2(moduleArg = {}) {
-  var moduleRtn;
   var Module = moduleArg;
   var ENVIRONMENT_IS_WEB = true;
   var ENVIRONMENT_IS_WORKER = false;
-  var arguments_ = [];
+  var programArgs = [];
   var thisProgram = "./this.program";
   var quit_ = (status, toThrow) => {
     throw toThrow;
@@ -833,29 +828,23 @@ async function JBig2(moduleArg = {}) {
   var wasmBinary;
   var ABORT = false;
   var EXITSTATUS;
-  var readyPromiseResolve, readyPromiseReject;
-  var HEAP8, HEAPU8, HEAP16, HEAPU16, HEAP32, HEAPU32, HEAPF32, HEAPF64;
-  var HEAP64, HEAPU64;
+  class EmscriptenEH {}
+  class EmscriptenSjLj extends EmscriptenEH {}
   var runtimeInitialized = false;
+  function getMemoryBuffer() {
+    return wasmMemory.buffer;
+  }
   function updateMemoryViews() {
-    var b = wasmMemory.buffer;
+    if (HEAP8?.buffer?.resizable) return;
+    var b = getMemoryBuffer();
     HEAP8 = new Int8Array(b);
-    HEAP16 = new Int16Array(b);
     HEAPU8 = new Uint8Array(b);
-    HEAPU16 = new Uint16Array(b);
-    HEAP32 = new Int32Array(b);
-    HEAPU32 = new Uint32Array(b);
-    HEAPF32 = new Float32Array(b);
-    HEAPF64 = new Float64Array(b);
-    HEAP64 = new BigInt64Array(b);
-    HEAPU64 = new BigUint64Array(b);
   }
   function preRun() {
-    if (Module["preRun"]) {
-      if (typeof Module["preRun"] == "function") Module["preRun"] = [Module["preRun"]];
-      while (Module["preRun"].length) {
-        addOnPreRun(Module["preRun"].shift());
-      }
+    var preRun = Module["preRun"];
+    if (preRun) {
+      if (typeof preRun == "function") preRun = [preRun];
+      onPreRuns.push(...preRun);
     }
     callRuntimeCallbacks(onPreRuns);
   }
@@ -864,22 +853,20 @@ async function JBig2(moduleArg = {}) {
     wasmExports["j"]();
   }
   function postRun() {
-    if (Module["postRun"]) {
-      if (typeof Module["postRun"] == "function") Module["postRun"] = [Module["postRun"]];
-      while (Module["postRun"].length) {
-        addOnPostRun(Module["postRun"].shift());
-      }
+    var postRun = Module["postRun"];
+    if (postRun) {
+      if (typeof postRun == "function") postRun = [postRun];
+      onPostRuns.push(...postRun);
     }
     callRuntimeCallbacks(onPostRuns);
   }
   function abort(what) {
     Module["onAbort"]?.(what);
-    what = "Aborted(" + what + ")";
+    what = `Aborted(${what})`;
     err(what);
     ABORT = true;
     what += ". Build with -sASSERTIONS for more info.";
     var e = new WebAssembly.RuntimeError(what);
-    readyPromiseReject?.(e);
     throw e;
   }
   var wasmBinaryFile;
@@ -890,17 +877,16 @@ async function JBig2(moduleArg = {}) {
     return imports;
   }
   async function createWasm() {
-    function receiveInstance(instance, module) {
+    function receiveInstance(instance) {
       wasmExports = instance.exports;
       assignWasmExports(wasmExports);
       updateMemoryViews();
       return wasmExports;
     }
     var info = getWasmImports();
-    return new Promise((resolve, reject) => {
-      Module["instantiateWasm"](info, (inst, mod) => {
-        resolve(receiveInstance(inst, mod));
-      });
+    var instantiateWasm = Module["instantiateWasm"];
+    return new Promise(resolve => {
+      instantiateWasm(info, inst => resolve(receiveInstance(inst)));
     });
   }
   class ExitStatus {
@@ -910,15 +896,14 @@ async function JBig2(moduleArg = {}) {
       this.status = status;
     }
   }
+  var HEAP8;
   var callRuntimeCallbacks = callbacks => {
     while (callbacks.length > 0) {
       callbacks.shift()(Module);
     }
   };
   var onPostRuns = [];
-  var addOnPostRun = cb => onPostRuns.push(cb);
   var onPreRuns = [];
-  var addOnPreRun = cb => onPreRuns.push(cb);
   var noExitRuntime = true;
   var __abort_js = () => abort("");
   var runtimeKeepaliveCounter = 0;
@@ -999,6 +984,7 @@ async function JBig2(moduleArg = {}) {
       return 1;
     } catch (e) {}
   };
+  var HEAPU8;
   var _emscripten_resize_heap = requestedSize => {
     var oldSize = HEAPU8.length;
     requestedSize >>>= 0;
@@ -1037,13 +1023,13 @@ async function JBig2(moduleArg = {}) {
   if (Module["noExitRuntime"]) noExitRuntime = Module["noExitRuntime"];
   if (Module["print"]) out = Module["print"];
   if (Module["printErr"]) err = Module["printErr"];
-  if (Module["wasmBinary"]) wasmBinary = Module["wasmBinary"];
-  if (Module["arguments"]) arguments_ = Module["arguments"];
+  if (Module["arguments"]) programArgs = Module["arguments"];
   if (Module["thisProgram"]) thisProgram = Module["thisProgram"];
-  if (Module["preInit"]) {
-    if (typeof Module["preInit"] == "function") Module["preInit"] = [Module["preInit"]];
-    while (Module["preInit"].length > 0) {
-      Module["preInit"].shift()();
+  var preInit = Module["preInit"];
+  if (preInit) {
+    if (typeof preInit == "function") Module["preInit"] = preInit = [preInit];
+    while (preInit.length > 0) {
+      preInit.shift()();
     }
   }
   Module["writeArrayToMemory"] = writeArrayToMemory;
@@ -1059,66 +1045,56 @@ async function JBig2(moduleArg = {}) {
   }
   var wasmImports = {
     e: __abort_js,
-    b: __emscripten_runtime_keepalive_clear,
-    c: __setitimer_js,
+    d: __emscripten_runtime_keepalive_clear,
+    a: __setitimer_js,
     g: _createImageData,
-    d: _emscripten_resize_heap,
-    a: _proc_exit,
+    b: _emscripten_resize_heap,
+    c: _proc_exit,
     h: _setImageData,
     f: _setLineData
   };
-  function run() {
+  async function run() {
     preRun();
-    function doRun() {
-      Module["calledRun"] = true;
-      if (ABORT) return;
-      initRuntime();
-      readyPromiseResolve?.(Module);
-      Module["onRuntimeInitialized"]?.();
-      postRun();
+    var setStatus = Module["setStatus"];
+    if (setStatus) {
+      setStatus("Running...");
+      await new Promise(resolve => setTimeout(resolve, 1));
+      setTimeout(setStatus, 1, "");
     }
-    if (Module["setStatus"]) {
-      Module["setStatus"]("Running...");
-      setTimeout(() => {
-        setTimeout(() => Module["setStatus"](""), 1);
-        doRun();
-      }, 1);
-    } else {
-      doRun();
-    }
+    if (ABORT) return;
+    initRuntime();
+    Module["onRuntimeInitialized"]?.();
+    postRun();
   }
   var wasmExports;
   wasmExports = await createWasm();
-  run();
-  if (runtimeInitialized) {
-    moduleRtn = Module;
-  } else {
-    moduleRtn = new Promise((resolve, reject) => {
-      readyPromiseResolve = resolve;
-      readyPromiseReject = reject;
-    });
-  }
-  return moduleRtn;
+  await run();
+  return Module;
 }
 /* harmony default export */ const jbig2 = (JBig2);
 ;// ./src/core/primitives.js
 
 const CIRCULAR_REF = Symbol("CIRCULAR_REF");
 const EOF = Symbol("EOF");
-let CmdCache = Object.create(null);
-let NameCache = Object.create(null);
-let RefCache = Object.create(null);
+const CmdCache = new Map();
+const NameCache = new Map();
+const RefCache = new Map();
 function clearPrimitiveCaches() {
-  CmdCache = Object.create(null);
-  NameCache = Object.create(null);
-  RefCache = Object.create(null);
+  CmdCache.clear();
+  NameCache.clear();
+  RefCache.clear();
 }
 class Name {
   constructor(name) {
     this.name = name;
   }
   static get(name) {
-    return NameCache[name] ||= new Name(name);
+    let n = NameCache.get(name);
+    if (!n) {
+      n = new Name(name);
+      NameCache.set(name, n);
+    }
+    return n;
   }
 }
 class Cmd {
@@ -1126,7 +1102,12 @@ class Cmd {
     this.cmd = cmd;
   }
   static get(cmd) {
-    return CmdCache[cmd] ||= new Cmd(cmd);
+    let c = CmdCache.get(cmd);
+    if (!c) {
+      c = new Cmd(cmd);
+      CmdCache.set(cmd, c);
+    }
+    return c;
   }
 }
 const nonSerializable = () => nonSerializable;
@@ -1294,21 +1275,26 @@ class Ref {
     return this.#str;
   }
   static fromString(str) {
-    const ref = RefCache[str];
+    let ref = RefCache.get(str);
     if (ref) {
       return ref;
     }
-    const m = /^(\d+)R(\d*)$/.exec(str);
-    if (!m || m[1] === "0") {
+    const m = /^([1-9]\d*)R([1-9]\d*)?$/.exec(str);
+    if (!m) {
       return null;
     }
-    const num = parseInt(m[1], 10),
-      gen = !m[2] ? 0 : parseInt(m[2], 10);
-    return RefCache[str] = new Ref(str, num, gen);
+    ref = new Ref(str, parseInt(m[1], 10), !m[2] ? 0 : parseInt(m[2], 10));
+    RefCache.set(str, ref);
+    return ref;
   }
   static get(num, gen) {
     const str = gen === 0 ? `${num}R` : `${num}R${gen}`;
-    return RefCache[str] ||= new Ref(str, num, gen);
+    let ref = RefCache.get(str);
+    if (!ref) {
+      ref = new Ref(str, num, gen);
+      RefCache.set(str, ref);
+    }
+    return ref;
   }
 }
 class RefSet {
@@ -1448,10 +1434,7 @@ class BaseStream {
   getUint16() {
     const b0 = this.getByte();
     const b1 = this.getByte();
-    if (b0 === -1 || b1 === -1) {
-      return -1;
-    }
-    return (b0 << 8) + b1;
+    return b0 === -1 || b1 === -1 ? -1 : (b0 << 8) + b1;
   }
   getInt32() {
     const b0 = this.getByte();
@@ -1544,10 +1527,7 @@ function stringToPDFString(str, keepEscapeSequence = false) {
         });
         const buffer = string_utils_stringToBytes(str);
         const decoded = decoder.decode(buffer);
-        if (keepEscapeSequence || !decoded.includes("\x1b")) {
-          return decoded;
-        }
-        return decoded.replaceAll(/\x1b[^\x1b]*(?:\x1b|$)/g, "");
+        return keepEscapeSequence || !decoded.includes("\x1b") ? decoded : decoded.replaceAll(/\x1b[^\x1b]*(?:\x1b|$)/g, "");
       } catch (ex) {
         string_utils_warn(`stringToPDFString: "${ex}".`);
       }
@@ -1765,13 +1745,10 @@ function parseXFAPath(path) {
   const positionPattern = /^(.+)\[(\d+)\]$/;
   return path.split(".").map(component => {
     const m = component.match(positionPattern);
-    if (m) {
-      return {
-        name: m[1],
-        pos: parseInt(m[2], 10)
-      };
-    }
-    return {
+    return m ? {
+      name: m[1],
+      pos: parseInt(m[2], 10)
+    } : {
       name: component,
       pos: 0
     };
@@ -1845,6 +1822,13 @@ function _collectJS(entry, xref, list, parents) {
     parents.remove(parent);
   }
 }
+function _collectAction(dict, name, xref, actions) {
+  const list = [];
+  _collectJS(dict, xref, list, new core_utils_RefSet());
+  if (list.length) {
+    actions.set(name, list);
+  }
+}
 function collectActions(xref, dict, eventType) {
   const actions = new Map();
   const additionalActionsDicts = getInheritableProperty({
@@ -1860,26 +1844,14 @@ function collectActions(xref, dict, eventType) {
       }
       for (const [key, rawActionDict] of additionalActions.getRawEntries()) {
         const action = eventType[key];
-        if (!action) {
-          continue;
-        }
-        const parents = new core_utils_RefSet();
-        const list = [];
-        _collectJS(rawActionDict, xref, list, parents);
-        if (list.length > 0) {
-          actions.set(action, list);
+        if (action) {
+          _collectAction(rawActionDict, action, xref, actions);
         }
       }
     }
   }
   if (dict.has("A")) {
-    const actionDict = dict.get("A");
-    const parents = new core_utils_RefSet();
-    const list = [];
-    _collectJS(actionDict, xref, list, parents);
-    if (list.length > 0) {
-      actions.set("Action", list);
-    }
+    _collectAction(dict.get("A"), "Action", xref, actions);
   }
   return actions.size ? actions : null;
 }
@@ -2001,10 +1973,7 @@ function numberToString(value) {
   if (roundedValue % 100 === 0) {
     return (roundedValue / 100).toString();
   }
-  if (roundedValue % 10 === 0) {
-    return value.toFixed(1);
-  }
-  return value.toFixed(2);
+  return roundedValue % 10 === 0 ? value.toFixed(1) : value.toFixed(2);
 }
 function getNewAnnotationsMap(annotationStorage) {
   if (!annotationStorage) {
@@ -2700,19 +2669,13 @@ class CalRGBCS extends ColorSpace {
     if (color <= 0.0031308) {
       return MathClamp(12.92 * color, 0, 1);
     }
-    if (color >= 0.99554525) {
-      return 1;
-    }
-    return MathClamp((1 + 0.055) * color ** (1 / 2.4) - 0.055, 0, 1);
+    return color >= 0.99554525 ? 1 : MathClamp((1 + 0.055) * color ** (1 / 2.4) - 0.055, 0, 1);
   }
   #decodeL(L) {
     if (L < 0) {
       return -this.#decodeL(-L);
     }
-    if (L > 8.0) {
-      return ((L + 16) / 116) ** 3;
-    }
-    return L * CalRGBCS.#DECODE_L_CONSTANT;
+    return L > 8.0 ? ((L + 16) / 116) ** 3 : L * CalRGBCS.#DECODE_L_CONSTANT;
   }
   #compensateBlackPoint(sourceBlackPoint, XYZ_Flat, result) {
     if (sourceBlackPoint[0] === 0 && sourceBlackPoint[1] === 0 && sourceBlackPoint[2] === 0) {
@@ -3583,7 +3546,7 @@ function convertRGBToRGBA({
       dest[destPos + 2] = s2 >>> 16 | s3 << 16 | alphaMask;
       dest[destPos + 3] = s3 >>> 8 | alphaMask;
     }
-    for (let j = i * 4, jj = srcPos + len; j < jj; j += 3) {
+    for (let j = srcPos + i * 4, jj = srcPos + len; j < jj; j += 3) {
       dest[destPos++] = src[j] | src[j + 1] << 8 | src[j + 2] << 16 | alphaMask;
     }
   } else {
@@ -3596,7 +3559,7 @@ function convertRGBToRGBA({
       dest[destPos + 2] = s2 << 16 | s3 >>> 16 | alphaMask;
       dest[destPos + 3] = s3 << 8 | alphaMask;
     }
-    for (let j = i * 4, jj = srcPos + len; j < jj; j += 3) {
+    for (let j = srcPos + i * 4, jj = srcPos + len; j < jj; j += 3) {
       dest[destPos++] = src[j] << 24 | src[j + 1] << 16 | src[j + 2] << 8 | alphaMask;
     }
   }
@@ -3757,10 +3720,7 @@ function decodeScan(data, view, offset, frame, components, resetInterval, spectr
       return readBit() === 1 ? 1 : -1;
     }
     const n = receive(length);
-    if (n >= 1 << length - 1) {
-      return n;
-    }
-    return n + (-1 << length) + 1;
+    return n >= 1 << length - 1 ? n : n + (-1 << length) + 1;
   }
   function decodeBaseline(component, blockOffset) {
     const t = decodeHuffman(component.huffmanTableDC);
@@ -4241,10 +4201,7 @@ function skipData(data, view, offset) {
   offset += 2;
   const endOffset = offset + length - 2;
   const fileMarker = findNextFileMarker(data, view, endOffset, offset);
-  if (fileMarker?.invalid) {
-    return fileMarker.offset;
-  }
-  return endOffset;
+  return fileMarker?.invalid ? fileMarker.offset : endOffset;
 }
 class JpegImage {
   constructor(options) {
@@ -4570,9 +4527,7 @@ class JpegImage {
       scaleY = this.height / height;
     let component, componentScaleX, componentScaleY, blocksPerScanline;
     let x, y, i, j, k;
-    let index;
     let offset = 0;
-    let output;
     const numComponents = this.components.length;
     const dataLength = width * height * numComponents;
     const data = new Uint8ClampedArray(dataLength);
@@ -4584,7 +4539,7 @@ class JpegImage {
       componentScaleX = component.scaleX * scaleX;
       componentScaleY = component.scaleY * scaleY;
       offset = i;
-      output = component.output;
+      const output = component.output;
       blocksPerScanline = component.blocksPerLine + 1 << 3;
       if (componentScaleX !== lastComponentScaleX) {
         for (x = 0; x < width; x++) {
@@ -4595,7 +4550,7 @@ class JpegImage {
       }
       for (y = 0; y < height; y++) {
         j = 0 | y * componentScaleY;
-        index = blocksPerScanline * (j & mask3LSB) | (j & 7) << 3;
+        const index = blocksPerScanline * (j & mask3LSB) | (j & 7) << 3;
         for (x = 0; x < width; x++) {
           data[offset] = output[index + xScaleBlockOffset[x]];
           offset += numComponents;
@@ -4704,10 +4659,10 @@ class JpegImage {
     if (this.numComponents === 1 && (forceRGBA || forceRGB)) {
       const len = data.length * (forceRGBA ? 4 : 3);
       const rgbaData = new Uint8ClampedArray(len);
-      let offset = 0;
       if (forceRGBA) {
         grayToRGBA(data, new Uint32Array(rgbaData.buffer));
       } else {
+        let offset = 0;
         for (const grayColor of data) {
           rgbaData[offset++] = grayColor;
           rgbaData[offset++] = grayColor;
@@ -4726,10 +4681,7 @@ class JpegImage {
         if (forceRGBA) {
           return this._convertYcckToRgba(data);
         }
-        if (forceRGB) {
-          return this._convertYcckToRgb(data);
-        }
-        return this._convertYcckToCmyk(data);
+        return forceRGB ? this._convertYcckToRgb(data) : this._convertYcckToCmyk(data);
       } else if (forceRGBA) {
         return this._convertCmykToRgba(data);
       } else if (forceRGB) {
@@ -4742,11 +4694,10 @@ class JpegImage {
 
 ;// ./external/openjpeg/openjpeg.js
 async function OpenJPEG(moduleArg = {}) {
-  var moduleRtn;
   var Module = moduleArg;
   var ENVIRONMENT_IS_WEB = true;
   var ENVIRONMENT_IS_WORKER = false;
-  var arguments_ = [];
+  var programArgs = [];
   var thisProgram = "./this.program";
   var quit_ = (status, toThrow) => {
     throw toThrow;
@@ -4775,27 +4726,23 @@ async function OpenJPEG(moduleArg = {}) {
   var EXITSTATUS;
   class EmscriptenEH {}
   class EmscriptenSjLj extends EmscriptenEH {}
-  var readyPromiseResolve, readyPromiseReject;
   var runtimeInitialized = false;
+  function getMemoryBuffer() {
+    return wasmMemory.buffer;
+  }
   function updateMemoryViews() {
-    var b = wasmMemory.buffer;
+    if (HEAP8?.buffer?.resizable) return;
+    var b = getMemoryBuffer();
     HEAP8 = new Int8Array(b);
-    HEAP16 = new Int16Array(b);
     HEAPU8 = new Uint8Array(b);
-    HEAPU16 = new Uint16Array(b);
     HEAP32 = new Int32Array(b);
     HEAPU32 = new Uint32Array(b);
-    HEAPF32 = new Float32Array(b);
-    HEAPF64 = new Float64Array(b);
-    HEAP64 = new BigInt64Array(b);
-    HEAPU64 = new BigUint64Array(b);
   }
   function preRun() {
-    if (Module["preRun"]) {
-      if (typeof Module["preRun"] == "function") Module["preRun"] = [Module["preRun"]];
-      while (Module["preRun"].length) {
-        addOnPreRun(Module["preRun"].shift());
-      }
+    var preRun = Module["preRun"];
+    if (preRun) {
+      if (typeof preRun == "function") preRun = [preRun];
+      onPreRuns.push(...preRun);
     }
     callRuntimeCallbacks(onPreRuns);
   }
@@ -4804,11 +4751,10 @@ async function OpenJPEG(moduleArg = {}) {
     wasmExports["s"]();
   }
   function postRun() {
-    if (Module["postRun"]) {
-      if (typeof Module["postRun"] == "function") Module["postRun"] = [Module["postRun"]];
-      while (Module["postRun"].length) {
-        addOnPostRun(Module["postRun"].shift());
-      }
+    var postRun = Module["postRun"];
+    if (postRun) {
+      if (typeof postRun == "function") postRun = [postRun];
+      onPostRuns.push(...postRun);
     }
     callRuntimeCallbacks(onPostRuns);
   }
@@ -4819,7 +4765,6 @@ async function OpenJPEG(moduleArg = {}) {
     ABORT = true;
     what += ". Build with -sASSERTIONS for more info.";
     var e = new WebAssembly.RuntimeError(what);
-    readyPromiseReject?.(e);
     throw e;
   }
   var wasmBinaryFile;
@@ -4830,17 +4775,16 @@ async function OpenJPEG(moduleArg = {}) {
     return imports;
   }
   async function createWasm() {
-    function receiveInstance(instance, module) {
+    function receiveInstance(instance) {
       wasmExports = instance.exports;
       assignWasmExports(wasmExports);
       updateMemoryViews();
       return wasmExports;
     }
     var info = getWasmImports();
-    return new Promise((resolve, reject) => {
-      Module["instantiateWasm"](info, (inst, mod) => {
-        resolve(receiveInstance(inst, mod));
-      });
+    var instantiateWasm = Module["instantiateWasm"];
+    return new Promise(resolve => {
+      instantiateWasm(info, inst => resolve(receiveInstance(inst)));
     });
   }
   class ExitStatus {
@@ -4850,25 +4794,14 @@ async function OpenJPEG(moduleArg = {}) {
       this.status = status;
     }
   }
-  var HEAP16;
-  var HEAP32;
-  var HEAP64;
   var HEAP8;
-  var HEAPF32;
-  var HEAPF64;
-  var HEAPU16;
-  var HEAPU32;
-  var HEAPU64;
-  var HEAPU8;
   var callRuntimeCallbacks = callbacks => {
     while (callbacks.length > 0) {
       callbacks.shift()(Module);
     }
   };
   var onPostRuns = [];
-  var addOnPostRun = cb => onPostRuns.push(cb);
   var onPreRuns = [];
-  var addOnPreRun = cb => onPreRuns.push(cb);
   var noExitRuntime = true;
   var __abort_js = () => abort("");
   var runtimeKeepaliveCounter = 0;
@@ -4935,6 +4868,7 @@ async function OpenJPEG(moduleArg = {}) {
     };
     return 0;
   };
+  var HEAP32;
   function _copy_pixels_1(compG_ptr, nb_pixels) {
     compG_ptr >>= 2;
     const imageData = Module.imageData = new Uint8ClampedArray(nb_pixels);
@@ -4983,6 +4917,7 @@ async function OpenJPEG(moduleArg = {}) {
       return 1;
     } catch (e) {}
   };
+  var HEAPU8;
   var _emscripten_resize_heap = requestedSize => {
     var oldSize = HEAPU8.length;
     requestedSize >>>= 0;
@@ -5002,7 +4937,7 @@ async function OpenJPEG(moduleArg = {}) {
     return false;
   };
   var ENV = {};
-  var getExecutableName = () => thisProgram || "./this.program";
+  var getExecutableName = () => thisProgram;
   var getEnvStrings = () => {
     if (!getEnvStrings.strings) {
       var lang = (globalThis.navigator?.language ?? "C").replace("-", "_") + ".UTF-8";
@@ -5057,6 +4992,7 @@ async function OpenJPEG(moduleArg = {}) {
     return outIdx - startIdx;
   };
   var stringToUTF8 = (str, outPtr, maxBytesToWrite) => stringToUTF8Array(str, HEAPU8, outPtr, maxBytesToWrite);
+  var HEAPU32;
   var _environ_get = (__environ, environ_buf) => {
     var bufSize = 0;
     var envp = 0;
@@ -5144,7 +5080,7 @@ async function OpenJPEG(moduleArg = {}) {
   };
   var printChar = (stream, curr) => {
     var buffer = printCharBuffers[stream];
-    if (curr === 0 || curr === 10) {
+    if (!curr || curr === 10) {
       (stream === 1 ? out : err)(UTF8ArrayToString(buffer));
       buffer.length = 0;
     } else {
@@ -5219,13 +5155,13 @@ async function OpenJPEG(moduleArg = {}) {
   if (Module["noExitRuntime"]) noExitRuntime = Module["noExitRuntime"];
   if (Module["print"]) out = Module["print"];
   if (Module["printErr"]) err = Module["printErr"];
-  if (Module["wasmBinary"]) wasmBinary = Module["wasmBinary"];
-  if (Module["arguments"]) arguments_ = Module["arguments"];
+  if (Module["arguments"]) programArgs = Module["arguments"];
   if (Module["thisProgram"]) thisProgram = Module["thisProgram"];
-  if (Module["preInit"]) {
-    if (typeof Module["preInit"] == "function") Module["preInit"] = [Module["preInit"]];
-    while (Module["preInit"].length > 0) {
-      Module["preInit"].shift()();
+  var preInit = Module["preInit"];
+  if (preInit) {
+    if (typeof preInit == "function") Module["preInit"] = preInit = [preInit];
+    while (preInit.length > 0) {
+      preInit.shift()();
     }
   }
   Module["writeArrayToMemory"] = writeArrayToMemory;
@@ -5257,38 +5193,23 @@ async function OpenJPEG(moduleArg = {}) {
     g: _rgb_to_rgba,
     a: _storeErrorMessage
   };
-  function run() {
+  async function run() {
     preRun();
-    function doRun() {
-      Module["calledRun"] = true;
-      if (ABORT) return;
-      initRuntime();
-      readyPromiseResolve?.(Module);
-      Module["onRuntimeInitialized"]?.();
-      postRun();
+    var setStatus = Module["setStatus"];
+    if (setStatus) {
+      setStatus("Running...");
+      await new Promise(resolve => setTimeout(resolve, 1));
+      setTimeout(setStatus, 1, "");
     }
-    if (Module["setStatus"]) {
-      Module["setStatus"]("Running...");
-      setTimeout(() => {
-        setTimeout(() => Module["setStatus"](""), 1);
-        doRun();
-      }, 1);
-    } else {
-      doRun();
-    }
+    if (ABORT) return;
+    initRuntime();
+    Module["onRuntimeInitialized"]?.();
+    postRun();
   }
   var wasmExports;
   wasmExports = await createWasm();
-  run();
-  if (runtimeInitialized) {
-    moduleRtn = Module;
-  } else {
-    moduleRtn = new Promise((resolve, reject) => {
-      readyPromiseResolve = resolve;
-      readyPromiseReject = reject;
-    });
-  }
-  return moduleRtn;
+  await run();
+  return Module;
 }
 /* harmony default export */ const openjpeg = (OpenJPEG);
 ;// ./src/core/stream.js

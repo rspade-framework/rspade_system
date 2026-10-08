@@ -14,7 +14,7 @@ RSX's component system. A component is up to three co-located files sharing one 
 
 **Three state buckets, never mixed**: `this.args` (arguments in; read-only inside `on_load()`), `this.data` (Ajax-loaded and the source of truth for display; writable ONLY in `on_create()`/`on_load()`, frozen otherwise), `this.state` (arbitrary UI/editor state, writable anywhere).
 
-**Lifecycle hooks** in order: `on_create()` (sync defaults) -> `on_render()` (own markup; may fire repeatedly) -> `on_load()` (async fetch; DOM, `this.state` and `this.args` writes THROW here) -> `on_loaded()` -> `on_ready()` (children ready) -> `on_stop()`.
+**Lifecycle hooks** in order: `on_create()` (sync defaults) -> `on_render()` (own markup; may fire repeatedly) -> `on_load()` (async fetch; DOM, `this.state` and `this.args` writes THROW here) -> `on_loaded()` -> `on_ready()` (children ready) -> `on_stop()`. Outside that order, `on_attach()` / `on_detach()` fire each time the root enters / leaves the document (`on_attach` first after `on_ready`, and possibly many times): for work that should PAUSE while off-page - **cleanup otherwise goes in `on_stop()`, which runs for every jQuery or framework removal**.
 
 **Access**: `this.$` (element), `this.$sid('x')` (child element tagged `$sid=` in the template — template-only, never set from JS), `this.sid('x')` (child component instance), `$(sel).component()`. Events: `this.trigger(name, data)` / `child.on(name, cb)`.
 

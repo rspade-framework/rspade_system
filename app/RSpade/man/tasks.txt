@@ -237,7 +237,7 @@ DESIGNING A TASK'S REPORTING
                             reads as a narrative.
         stdout() / stderr() the narrative itself: what was done (stdout), and what
                             went wrong but did not stop the run - a skipped record, a
-                            retried call (stderr).
+                            retried call (stderr). See SAY WHAT THE RUN DID below.
         progress indicator  ONE of progress() or progress_count() - see below.
         eta()               when the task can estimate its finish.
         state()             the task's working state worth inspecting - counters, the
@@ -247,6 +247,36 @@ DESIGNING A TASK'S REPORTING
                             Any task working through a list of nameable things has one.
         message()           events a watcher should notice (a milestone reached).
         summary()           what the run did, in a sentence, at the end.
+
+    SAY WHAT THE RUN DID - AND SAY SO WHEN IT DID NOTHING. A run's output is shown live
+    and kept with the run, so it is read by somebody asking "what did this do?" Write it
+    to answer that:
+
+      - NAME EACH THING THE RUN ACTS ON, as it acts, with the outcome on the same line -
+        the id, what a person would call it, and what happened:
+
+            Sent #4812 to dana@example.com "Your invoice for March" (<message-id>)
+            Server error #4813 to lee@example.com "Welcome" attempt 2/3: 451 try later
+            Destroyed attachment #77 "contract.pdf" (1.4 MB), deleted 2026-09-01
+
+        A line that only counts ("Sent 2 messages") cannot answer "was mine one of them?"
+
+      - AN IDLE RUN SAYS IT WAS IDLE. "No mail was due." "No sessions are past their idle
+        window; nothing deleted." A scheduled run with no output is indistinguishable from
+        one that never looked, and every run is its own record, so the line costs nothing.
+
+      - A RUN THAT SKIPS SAYS WHY ("Log rotation is disabled ...; nothing was done."), and
+        a run that was STOPPED says how far it got.
+
+      - END WITH THE OUTCOME in one line - the totals, after the items.
+
+      - DO NOT FLOOD. Name items when there are few enough to read, or when each one
+        matters (a message sent, a file destroyed). For bulk housekeeping - ten thousand
+        expired rows - one line with the count is the whole story. A task that might list
+        thousands of items lists the first couple of hundred and counts the rest.
+
+    The summary() is not a substitute: it is the one sentence a reader is shown ABOUT the
+    run, and a task normally writes the closing line and the summary both.
 
     ONE PROGRESS INDICATOR, AND ONLY WHERE PROGRESS IS A THING THE TASK HAS. A task that
     works through a measurable amount of work reports it with exactly one indicator:

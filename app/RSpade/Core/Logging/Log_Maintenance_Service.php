@@ -39,8 +39,7 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
     public static function rotate(Task_Instance $task, array $params = [])
     {
         if (!config('rsx.logging.rotation.enabled')) {
-            // Unix silent success: the operator turned it off and does not need
-            // to be told again every night.
+            $task->stdout('Log rotation is disabled (rsx.logging.rotation.enabled); nothing was done.');
             $task->state(['skipped' => 'disabled']);
             $task->summary('Log rotation is disabled; nothing was done.');
 
@@ -60,9 +59,21 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
         $deleted = 0;
         $renumbered = 0;
 
-        foreach ($report as $entry) {
+        // One line per log file that had something done to it, naming what.
+        foreach ($report as $log_name => $entry) {
+            $did = [];
             if ($entry['rotated']) {
                 $rotated++;
+                $did[] = 'rotated';
+            }
+            if ($entry['compressed'] !== []) {
+                $did[] = 'compressed ' . implode(', ', $entry['compressed']);
+            }
+            if ($entry['deleted'] !== []) {
+                $did[] = 'deleted ' . implode(', ', $entry['deleted']);
+            }
+            if ($did !== []) {
+                $task->stdout("{$log_name}: " . implode('; ', $did));
             }
 
             $compressed += count($entry['compressed']);
@@ -70,9 +81,9 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
             $renumbered += count($entry['renumbered']);
         }
 
-        if ($rotated > 0 || $compressed > 0 || $deleted > 0) {
-            $task->stdout("Rotated {$rotated} log(s); compressed {$compressed}, deleted {$deleted}");
-        }
+        $task->stdout($rotated > 0 || $compressed > 0 || $deleted > 0
+            ? "Rotated {$rotated} log(s), compressed {$compressed} generation(s), deleted {$deleted} past retention."
+            : 'No log needed rotating, compressing or deleting.');
 
         // A repair is worth a line of its own: it means the numbering on disk had
         // gaps or a shared slot, which is a thing an operator may want to know

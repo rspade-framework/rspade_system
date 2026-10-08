@@ -199,8 +199,14 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
     {
         $result = self::run_emitters_engine($task);
 
-        if ($result['published'] > 0) {
-            $task->stdout("Realtime emitters: ran {$result['ran']}, published {$result['published']}.");
+        if ($task->is_stop_requested()) {
+            $task->stdout("Stop requested - stopped after running {$result['ran']} emitter(s) and publishing {$result['published']} change(s).");
+        } elseif ($result['ran'] === 0) {
+            $task->stdout('No emitter has a live subscriber; nothing to recompute.');
+        } else {
+            $task->stdout($result['published'] > 0
+                ? "Done: recomputed {$result['ran']} emitter value(s), {$result['published']} changed and were published."
+                : "Recomputed {$result['ran']} emitter value(s); none changed, nothing published.");
         }
 
         $task->state($result);
@@ -275,6 +281,11 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
         $ran = 0;
         $published = 0;
 
+        // Publishes are named one by one, up to a point: a burst over many subscribed filters
+        // must not bury the run's own outcome line.
+        $listed = 0;
+        $list_limit = 50;
+
         foreach ($work as $item) {
             if ($task?->is_stop_requested()) {
                 break;
@@ -321,6 +332,14 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
                 // changed data.
                 Realtime::publish($item['topic'], $item['filter'], $item['site_id']);
                 $published++;
+
+                if ($task !== null && $listed <= $list_limit) {
+                    $task->stdout($listed < $list_limit
+                        ? "Published {$item['topic']} {$item['canonical']} (site {$item['site_id']}): {$emitter['class']}::{$emitter['method']}() "
+                            . ($previous === null ? 'had no stored value' : 'changed')
+                        : "(more than {$list_limit} publishes - the rest are counted, not listed)");
+                    $listed++;
+                }
             }
         }
 
@@ -342,8 +361,12 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
 
         $result = self::seed_subscriptions_engine($entries, $task);
 
-        if ($result['seeded'] > 0) {
-            $task->stdout("Realtime emitter seed: entries {$result['entries']}, seeded {$result['seeded']}.");
+        if ($task->is_stop_requested()) {
+            $task->stdout("Stop requested - stopped after seeding {$result['seeded']} baseline(s).");
+        } else {
+            $task->stdout($result['seeded'] > 0
+                ? "Seeded {$result['seeded']} emitter baseline(s) for {$result['entries']} newly subscribed entr(ies)."
+                : 'None of the ' . count($entries) . ' newly subscribed entr(ies) is served by an emitter; nothing to seed.');
         }
 
         $task->state($result);

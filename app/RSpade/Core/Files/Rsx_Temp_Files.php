@@ -109,6 +109,7 @@ class Rsx_Temp_Files
             }
             $task?->heartbeat();
 
+            $task?->stdout("Deleted temp file #{$file->id} \"{$file->file_name}\" (" . bytes_to_human((int) $file->size) . ", expired {$file->expires_at})");
             static::delete($file);
             $deleted++;
         }

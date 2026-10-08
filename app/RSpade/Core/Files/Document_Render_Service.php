@@ -18,6 +18,7 @@ use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Libreoffice;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Spreadsheet_Rendition;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Search\Search_Index_Service;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
@@ -75,6 +76,17 @@ class Document_Render_Service extends Rsx_Service_Abstract
             return;
         }
 
+        // NEVER FROM INSIDE A MIGRATION. A data migration that stores a file reaches here
+        // while the schema is still part-way through its history, and a dispatch reads and
+        // writes the task tables as they are TODAY: replayed from an empty database, the
+        // sample-document import runs long before the task tables take their current shape,
+        // and the dispatch died on a column that did not exist yet. Nothing is lost by
+        // staying quiet - the blob's row already says what it owes, and the sweep (every 10
+        // minutes) renders it.
+        if (Manifest::_is_migration_context()) {
+            return;
+        }
+
         Task::dispatch('Document_Render_Service', 'render_pending');
     }
 
@@ -117,6 +129,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
 
         while (true) {
             if ($task->is_stop_requested()) {
+                $task->stdout("Stop requested - stopped after processing {$processed} document(s), {$failed} failed.");
                 $task->summary("Stopped after processing {$processed} blob(s), {$failed} failed.");
 
                 return null;
@@ -131,7 +144,15 @@ class Document_Render_Service extends Rsx_Service_Abstract
 
             $was_failed = (int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_FAILED;
 
-            $task->status("Rendering storage #{$storage->id}");
+            // What the line names: the blob, one of the file names it was uploaded under, and
+            // what it owed - so the output reads as a list of documents, not of storage ids.
+            $owed = array_filter([
+                (int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_PENDING ? 'preview' : null,
+                (int) $storage->is_indexed === 0 ? 'text extraction' : null,
+            ]);
+            $label = "#{$storage->id} \"" . static::__representative_file_name($storage) . '" (' . bytes_to_human((int) $storage->size) . ')';
+
+            $task->status("Processing {$label}");
             $task->flush();
 
             static::render_storage($storage);
@@ -140,16 +161,37 @@ class Document_Render_Service extends Rsx_Service_Abstract
 
             if (!$was_failed && (int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_FAILED) {
                 $failed++;
-                $task->stderr("Storage #{$storage->id} failed: {$storage->render_error}");
+                $task->stderr("Failed {$label}: {$storage->render_error}");
             } else {
-                $task->stdout("Rendered storage #{$storage->id} [{$storage->render_status_id__label}]");
+                $task->stdout("Processed {$label}: " . ($owed !== [] ? implode(' + ', $owed) : 'nothing owed') . " -> {$storage->render_status_id__label}");
             }
         }
+
+        $task->stdout($processed > 0
+            ? "Done: {$processed} document(s) processed, {$failed} failed."
+            : 'No documents were waiting to be rendered or indexed.');
 
         $task->state(['processed' => $processed]);
         $task->summary("Processed {$processed} blob(s), {$failed} failed.");
 
         return null;
+    }
+
+    /**
+     * A file name this blob was uploaded under, for a line of output: the earliest
+     * attachment's, deleted ones included, or '(no attachment)' for a blob nothing names.
+     */
+    private static function __representative_file_name(File_Storage_Model $storage): string
+    {
+        // Cross-site blob, no site context in a task: see notify_attachments().
+        $name = File_Attachment_Model::without_site_scope(
+            fn () => File_Attachment_Model::withTrashed()
+                ->where('file_storage_id', $storage->id)
+                ->orderBy('id')
+                ->value('file_name')
+        );
+
+        return $name !== null && $name !== '' ? (string) $name : '(no attachment)';
     }
 
     /**
