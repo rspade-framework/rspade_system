@@ -144,7 +144,7 @@ class Sys_Sms_Controller_Test extends Rsx_Test_Abstract
         $sites = array_column(static::__endpoint('site_options'), 'label', 'value');
         static::__assert_equals('#' . $site_id . ' Sys Sms Second Site', $sites[$site_id] ?? null, 'site_options lists the second site');
         static::__assert_equals(
-            ['transactional', 'notification', 'marketing'],
+            ['transactional', 'notification', 'marketing', 'security'],
             array_column(static::__endpoint('category_options'), 'value'),
             'category_options are the words'
         );

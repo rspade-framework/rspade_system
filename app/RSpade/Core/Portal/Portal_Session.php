@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Portal;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
+use App\RSpade\Core\Login\Login_Requirements;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -293,7 +294,36 @@ class Portal_Session
      */
     public static function get_portal_user_id()
     {
-        // CLI mode: return static property
+        // CLI mode: return static property, concealed only when a test enforces login
+        // requirements in the CLI (see Session::get_login_user_id()).
+        if (self::__is_cli()) {
+            if (!empty(self::$_cli_portal_user_id) && Login_Requirements::_conceals('portal')) {
+                return null;
+            }
+
+            return self::$_cli_portal_user_id;
+        }
+
+        $portal_user_id = Session::_get_portal_user_id();
+
+        // A signed-in portal user with login requirements outstanding reads as signed OUT
+        // everywhere but the surfaces those requirements list. See Login_Requirements.
+        if (!empty($portal_user_id) && Login_Requirements::_conceals('portal')) {
+            return null;
+        }
+
+        return $portal_user_id;
+    }
+
+    /**
+     * The portal identity on this session, read PAST the login-requirements concealment.
+     *
+     * FRAMEWORK INTERNAL - for Login_Requirements only.
+     *
+     * @return int|null
+     */
+    public static function _get_portal_user_id_unconcealed(): ?int
+    {
         if (self::__is_cli()) {
             return self::$_cli_portal_user_id;
         }
@@ -502,6 +532,8 @@ class Portal_Session
                 self::$_portal_user = null;
                 self::$_site = null;
 
+                Login_Requirements::_clear('portal');
+
                 return;
             }
 
@@ -514,6 +546,7 @@ class Portal_Session
                 $session_id = Session::get_session_id();
 
                 Session::_clear_portal_properties();
+                Login_Requirements::_clear('portal');
 
                 if (!empty($old_portal_user_id)) {
                     Realtime::push_session_refresh('portal', $session_id);
@@ -531,6 +564,9 @@ class Portal_Session
             self::$_cli_portal_user_id = $portal_user_id;
             self::$_portal_user = null;
             self::$_site = null;
+
+            // A no-op in the CLI unless a test enforces login requirements here.
+            Login_Requirements::_compute('portal');
 
             return;
         }
@@ -553,6 +589,10 @@ class Portal_Session
         self::$_portal_user = null;
         self::$_site = null;
 
+        // A previous identity's outstanding requirements do not carry over; this one's are
+        // computed below, once the sign-in is complete.
+        Login_Requirements::_clear('portal');
+
         // Identity changed to a confirmed-different value -> push a refresh to every live
         // PORTAL-stamped connection on this session (re-setting the same value emits
         // nothing). Staff tabs on the same session are untouched: the realm stamp on a
@@ -571,6 +611,10 @@ class Portal_Session
             $portal_user->last_login = now();
             $portal_user->save();
         }
+
+        // What must this portal user still do before the portal is theirs? See
+        // Login_Requirements.
+        Login_Requirements::_compute('portal');
     }
 
     /**

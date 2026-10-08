@@ -1,0 +1,276 @@
+TWO_FACTOR_CODES(1)              RSpade Manual              TWO_FACTOR_CODES(1)
+
+NAME
+    two_factor_codes - emailed six-digit sign-in codes: the recipe, for staff
+    and the client portal
+
+SYNOPSIS
+    # 1. The login function: the password passed, and this sign-in owes a code
+    Rsx_Two_Factor::begin_challenge($login_user, [
+        Rsx_Two_Factor::ANSWER_ISSUED_CODE,     // an emailed code
+        Rsx_Two_Factor::ANSWER_PASSKEY,         // or any factor the user holds
+        Rsx_Two_Factor::ANSWER_TOTP,
+        Rsx_Two_Factor::ANSWER_RECOVERY_CODE,
+    ]);
+    return redirect(Rsx::Route('Login_Controller::verify'));
+
+    # 2. The send endpoint - mint a code, deliver it
+    #[Ajax_Endpoint]
+    public static function send_code(Request $request, array $params = [])
+    {
+        $code = Rsx_Two_Factor::issue_code();
+        (new Sign_In_Code_Email($code))->to(Rsx_Two_Factor::pending_identity()->email)->send();
+        return null;
+    }
+
+    # 3. The email - SECURITY reaches a block-listed address, ignores opt-out
+    class Sign_In_Code_Email extends Rsx_Email_Abstract { const CATEGORY = self::SECURITY; ... }
+
+    # 4. The screen
+    <Two_Factor_Challenge $controller="Login_Controller" $method="verify_2fa"
+                          $send_controller="Login_Controller" $send_method="send_code" />
+
+    # 5. The verification endpoint - unchanged from any other challenge
+    $login_user = Rsx_Two_Factor::verify_challenge($params);
+
+DESCRIPTION
+    An emailed sign-in code is a second step that needs nothing enrolled:
+    the user typed their password, the site emails six digits to the
+    account's address, and typing them completes the sign-in. It is how a
+    site requires a second step of EVERYBODY - every client on a portal, say
+    - without asking each of them to install an authenticator app first.
+
+    It is not a framework feature that an application switches on. It is a
+    policy the application writes, from primitives the framework owns:
+
+        THE FRAMEWORK (Rsx_Two_Factor / Rsx_Portal_Two_Factor)
+            mints the code (random_int), keeps only a keyed hash of it in the
+            pending challenge, replaces it when another is issued, verifies
+            it under the login throttle and the two attempt caps, records the
+            outcome, and signs the identity in. It enforces which kinds of
+            answer a challenge accepts.
+
+        THE APPLICATION
+            decides which sign-ins owe a code, which other answers it will
+            take instead, delivers the code (its own email class, an SMS,
+            anything), words it, and caps how many it will send.
+
+    Nothing in the framework asks whether a site uses emailed codes, so
+    nothing can make a site use them, and every variation - codes for the
+    portal only, codes only for users without an authenticator, a
+    remember-this-device cookie - is a change to the application's own login
+    function and nothing else.
+
+    WHO IT SUITS. An emailed code proves the person at the keyboard can read
+    the account's mailbox. That is weaker than an authenticator app or a
+    passkey - the mailbox is also where a password reset goes - and much
+    stronger than a password alone. Offer a passkey beside it and a user who
+    registers one never waits for an email again (PASSKEYS SKIP IT).
+
+THE FLOW
+    1. The login function verifies the password, exactly as for any second
+       factor (rsx:man two_factor, THE SECOND-FACTOR LOGIN FLOW): nothing
+       recorded, nothing stamped.
+    2. It decides the sign-in owes a code and calls
+       begin_challenge($identity, $accepts) with ANSWER_ISSUED_CODE in the
+       list. The identity is parked; the session is SIGNED OUT.
+    3. It redirects to the challenge page, which renders
+       <Two_Factor_Challenge> with a send endpoint.
+    4. The component sees the challenge accepts an issued code and none has
+       been issued, and calls the send endpoint itself. The endpoint calls
+       issue_code() and emails the digits to pending_identity().
+    5. The user types the code. The component posts it to the verification
+       endpoint, which calls verify_challenge() - the same call as for a TOTP
+       code - and answers {redirect}.
+    6. "Send a new code" calls the send endpoint again. The new code replaces
+       the old; only the latest works.
+
+WHAT A CHALLENGE ACCEPTS
+    begin_challenge()'s $accepts is the policy, enforced:
+
+        ANSWER_ISSUED_CODE     the code issue_code() minted for this challenge
+        ANSWER_TOTP            an authenticator app code
+        ANSWER_PASSKEY         one of the identity's passkeys
+        ANSWER_RECOVERY_CODE   an unspent recovery code
+
+    verify_challenge() tries only the accepted kinds, and an answer of
+    another kind is a WRONG answer even when it is correct. Listing a factor
+    the identity does not hold is harmless (it is simply not offered); a list
+    the identity cannot answer at all throws before the sign-out, and an
+    issued code is always answerable.
+
+    Common shapes:
+
+        everybody gets a code, and may use a factor they hold instead
+            [ISSUED_CODE, TOTP, PASSKEY, RECOVERY_CODE]
+
+        a code only for identities with no factor of their own
+            Rsx_Two_Factor::is_enabled($identity)
+                ? null                                  // their factors
+                : [Rsx_Two_Factor::ANSWER_ISSUED_CODE]  // an emailed code
+
+        a code and nothing else
+            [ISSUED_CODE]
+
+THE SEND ENDPOINT
+    The application's. Public (#[Auth('public')]), because the session is
+    deliberately signed out between the password and the code. It acts only
+    on the challenge parked on the caller's own session, and the address is
+    the pending identity's own, read server-side - nothing the browser sends
+    chooses where a code goes.
+
+        #[Ajax_Endpoint]
+        public static function send_code(Request $request, array $params = [])
+        {
+            $pending = Rsx_Portal_Two_Factor::challenge_pending();
+            $portal_user = Rsx_Portal_Two_Factor::pending_identity();
+
+            if ($pending === null || $portal_user === null) {
+                return response_error(Ajax::ERROR_VALIDATION, 'Your verification window has expired. Please sign in again.');
+            }
+
+            if ($pending['codes_issued'] >= 5) {
+                return response_error(Ajax::ERROR_VALIDATION, 'Too many codes have been sent. Please sign in again.');
+            }
+
+            $code = Rsx_Portal_Two_Factor::issue_code();
+            (new Portal_Sign_In_Code_Email($portal_user, $code))->to($portal_user->email)->send();
+
+            return null;
+        }
+
+    THE RESEND CAP IS THE APPLICATION'S. Guessing is bounded by the
+    framework's attempt caps (rsx.two_factor.challenge_max_failures wrong
+    answers per challenge, identity_max_failures per identity) whatever the
+    resend count; a resend cap only keeps one sign-in from mailing an inbox
+    without limit. challenge_pending()['codes_issued'] is the count.
+
+    A user-safe rejection renders inline on the challenge screen.
+
+THE EMAIL
+    One class in rsx/emails/, like any email (rsx:man email), declared
+    CATEGORY = SECURITY:
+
+        class Portal_Sign_In_Code_Email extends Rsx_Email_Abstract
+        {
+            const CATEGORY = self::SECURITY;
+
+            public function __construct(public Portal_User_Model $portal_user, public string $code) {}
+
+            public function subject(): string { return 'Your sign-in code: ' . $this->code; }
+
+            public function data(): array
+            {
+                return [
+                    'code' => $this->code,
+                    'expiry_minutes' => (int) config('rsx.two_factor.challenge_window_minutes'),
+                ];
+            }
+
+            public static function sample(): static { ... }
+        }
+
+    WHY SECURITY. The site block list stops correspondence the SITE starts;
+    the recipient opt-out records what a recipient no longer wants. Neither
+    describes a code the recipient asked for a second ago, without which
+    they cannot reach their own account - so a SECURITY email passes both,
+    and carries no unsubscribe link. The dev-site recipient gate and
+    rsx.mail.delivery still apply.
+
+    THE CODE IS IN THE QUEUE ROW. data() is frozen into _email_queue for as
+    long as the row is retained. That is acceptable for a code that dies with
+    its challenge; never put a long-lived secret in an email's data().
+
+DELIVERY MUST BE LIVE
+    rsx.mail.delivery defaults to 'suppressed': every message is rendered and
+    recorded, Status Suppressed, and NOTHING LEAVES. That is what a fresh
+    install needs - and it means a site requiring emailed codes with delivery
+    suppressed is a site nobody can sign in to. Before switching emailed codes
+    on anywhere a real person signs in, set delivery to 'live' and prove it
+    with rsx:mail:test. During development the code can be read from the
+    /_sys mail history, or from the dev catcher with delivery 'aiosmtpd'.
+
+    That is why the reference application ships the feature switched OFF.
+
+PASSKEYS SKIP IT
+    A passwordless passkey sign-in (verify_passkey_login(), rsx:man
+    two_factor, PASSWORDLESS SIGN-IN) owes nothing further - the passkey is
+    two factors on its own. So a site that requires emailed codes and also
+    offers <Passkey_Sign_In> and <Passkey_Register> lets any user trade the
+    email for a passkey, by their own choice, with no application code
+    deciding it.
+
+FEDERATED SIGN-IN
+    A Google or Microsoft sign-in reaches the same challenge only if the
+    application says so: the framework drives that ceremony, so it asks the
+    sso.two_factor.accepts resolve hook (portal.sso.two_factor.accepts on the
+    portal). Return the same $accepts the password login computes - from the
+    same function, so the two doors cannot drift - or null for the default
+    (rsx:man sso).
+
+THE CLIENT PORTAL
+    Identical, on Rsx_Portal_Two_Factor and Portal_Session, with a portal
+    route for the challenge page. The two realms' challenges are separate
+    session values: a staff challenge and a portal challenge pending in one
+    browser never see each other.
+
+THE REFERENCE IMPLEMENTATION
+    The reference application implements this for the portal, behind
+    rsx.portal.emailed_sign_in_codes in rsx/resource/config/rsx.php (OFF):
+
+        rsx/portal/auth/Portal_Login_Controller.php
+            challenge_accepts() - the policy, in one place; index() - the
+            password stage; send_code() - issue and email, capped at
+            MAX_CODES_PER_SIGN_IN
+        rsx/portal/auth/portal_login_verify.blade.php
+            <Two_Factor_Challenge> with the send endpoint
+        rsx/emails/portal_sign_in_code_email.php (+ .blade.php)
+            the SECURITY email
+        rsx/handlers/Portal_Sso_Handlers.php
+            portal.sso.two_factor.accepts, asking challenge_accepts()
+
+    Downstream these are at system/app/RSpade/resource/reference_app/. The
+    staff login is the same code against Rsx_Two_Factor.
+
+LIFETIME
+    A code lives exactly as long as its challenge:
+    rsx.two_factor.challenge_window_minutes (15). The window is a SECURITY
+    window, not a timeout - it bounds how long a proven password stays
+    redeemable, and expiry is a working outcome ("Your verification window
+    has expired. Please sign in again.").
+
+RSX VS LARAVEL
+    Laravel: Fortify ships TOTP only; an emailed code is a hand-written
+    notification, a code column or cache key, a verify route, and a
+    throttle the author must remember to add - each app re-solving storage,
+    expiry and brute-force protection.
+    RSX: the code, its hashed storage, its expiry, its attempt caps and the
+    sign-in belong to the challenge every second factor already uses; the
+    application writes only its policy (begin_challenge's $accepts), one send
+    endpoint and one email class.
+
+TROUBLESHOOTING
+    "...does not accept an issued code"
+        issue_code() was called for a challenge begun without
+        ANSWER_ISSUED_CODE in $accepts - the login function and the send
+        endpoint disagree about the policy. Compute $accepts in one function.
+
+    No email arrives
+        rsx.mail.delivery is not 'live' (DELIVERY MUST BE LIVE), or the
+        recipient is outside the .dev. whitelist on a development host. The
+        queue row in /_sys says which.
+
+    "That code is not valid." for a code just received
+        A newer code was sent since (only the latest works), or the window
+        closed and a new sign-in began.
+
+SEE ALSO
+    two_factor - the challenge, the facade, $accepts, issue_code(), the
+                 component contract
+    email - the SECURITY category, delivery modes, the dev-site gate
+    sso - sso.two_factor.accepts
+    login_requirements - requiring a user to ENROLL a factor before the site
+                 is theirs
+    session - the two-stage login, Login_History, the throttle
+
+RSpade                              2026                    TWO_FACTOR_CODES(1)

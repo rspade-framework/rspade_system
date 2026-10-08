@@ -60,6 +60,16 @@ abstract class Rsx_Email_Abstract
     /** Delivered unless the recipient unsubscribed from marketing. */
     const MARKETING = 3;
 
+    /**
+     * A required notice the RECIPIENT set in motion - a sign-in code, a password reset, an
+     * address verification. Ignores the recipient opt-out AND the site block list, and
+     * carries no unsubscribe link. The block list stops correspondence the site initiates; a
+     * person signing in who cannot receive their code is locked out of their own account.
+     * The .dev. recipient rules and rsx.mail.delivery still apply - they are delivery
+     * configuration, not a block list.
+     */
+    const SECURITY = 4;
+
     /** Attachment dispositions, mirroring Email_Attachment_Model::DISPOSITION_*. */
     const DISPOSITION_ATTACHMENT = 1;
     const DISPOSITION_INLINE = 2;

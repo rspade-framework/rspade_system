@@ -301,3 +301,5 @@ The SITE's ruling that no email reaches an address, in every category; checked a
 | BLK-09 | an address listed after enqueue is Blocked by the drain, no attempt counted | php | send_at tomorrow, list, age the row, drain | Blocked cause 2, attempts 0, counts.blocked 1, nothing sent | implemented | 2026-10-06 |
 | BLK-10 | resend of a list-blocked row: refused while listed with and without force; requeued without force once unlisted | php | resend, resend force, unblock, resend | ADDRESS_BLOCKED x2, then QUEUED with cause cleared | implemented | 2026-10-06 |
 | BLK-11 | resend of an opted-out row still needs force | php | block_all row | BLOCKED, then QUEUED with force | implemented | 2026-10-06 |
+| BLK-12 | a SECURITY email reaches a listed address, at enqueue and at the drain | php | listed `to`, a SECURITY fixture email, drain | Pending (no cause), then Sent | implemented | 2026-10-07 |
+| BLK-13 | SECURITY ignores the opt-out, resends to a listed address without force, carries no unsubscribe link | php | block_all + listed, send, mark Sent, resend, render | Pending; RESEND_QUEUED; no /unsubscribe in the HTML | implemented | 2026-10-07 |

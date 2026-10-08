@@ -16,13 +16,14 @@ use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Mail\Php\Mail_Marketing_Fixture_Email;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
+use App\RSpade\Tests\Mail\Php\Mail_Security_Fixture_Email;
 use App\RSpade\Tests\Mail\Php\Mail_Transport_Stub;
 
 /**
  * Email_Site_Block_List_Test - the SITE's list of addresses no email may reach.
  *
- * The list is not the recipient opt-out: it holds in EVERY category, transactional
- * included; it is checked at enqueue on the original addresses (before the dev-site
+ * The list is not the recipient opt-out: it holds in every category but SECURITY,
+ * transactional included; it is checked at enqueue on the original addresses (before the dev-site
  * gate), again when the drain claims a row, and at resend, where no force overrides it.
  * A listed `to` records the whole message Blocked with cause 2 and the entry's reason; a
  * listed cc/bcc entry is removed, recorded on the row, and the message still goes.
@@ -368,6 +369,55 @@ class Email_Site_Block_List_Test extends Rsx_Test_Abstract
         $stored = static::__reload($row);
         static::__assert_equals(Email_Queue_Model::STATUS_PENDING, (int) $stored->status_id);
         static::__assert_null($stored->block_cause_id, 'the cause is cleared with the status');
+    }
+
+    // =========================================================================
+    // THE SECURITY EXEMPTION
+    // =========================================================================
+
+    /**
+     * blk-12 - a SECURITY email (a sign-in code the recipient set in motion) reaches a listed
+     * address: queued, not Blocked, and delivered by the drain - and the drain's re-check of
+     * a row listed after enqueue passes it too.
+     */
+    public static function test_a_security_email_reaches_a_listed_address()
+    {
+        $email = static::__address('security');
+        Rsx_Mail::block_address($email, 'Do not contact');
+
+        $row = (new Mail_Security_Fixture_Email('Sign-in code probe'))->to($email)->send();
+
+        static::__assert_equals(Email_Queue_Model::STATUS_PENDING, (int) $row->status_id, 'queued, not Blocked');
+        static::__assert_null($row->block_cause_id);
+
+        $stub = new Mail_Transport_Stub();
+        static::__drain($stub);
+
+        static::__assert_equals(Email_Queue_Model::STATUS_SENT, (int) static::__reload($row)->status_id, 'the drain sends it');
+        static::__assert_true(in_array('Sign-in code probe', $stub->sent_subjects, true));
+    }
+
+    /**
+     * blk-13 - SECURITY ignores the recipient opt-out, resends to a listed address without
+     * force, and carries no unsubscribe link.
+     */
+    public static function test_a_security_email_ignores_the_opt_out_and_resends_to_a_listed_address()
+    {
+        $email = static::__address('security_opt_out');
+        Rsx_Mail::block_all($email);
+        Rsx_Mail::block_address($email, 'Do not contact');
+
+        $row = (new Mail_Security_Fixture_Email())->to($email)->send();
+
+        static::__assert_equals(Email_Queue_Model::STATUS_PENDING, (int) $row->status_id, 'the opt-out does not apply');
+
+        Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::where('id', $row->id)->update(['status_id' => Email_Queue_Model::STATUS_SENT]));
+
+        static::__assert_equals(Rsx_Mail::RESEND_QUEUED, Rsx_Mail::resend(static::__reload($row)), 'resend is not refused by the list');
+        static::__assert_false(
+            str_contains(\App\RSpade\Core\Mail\Rsx_Mail_Builder::render_html(static::__reload($row)), '/unsubscribe'),
+            'no unsubscribe link'
+        );
     }
 
     /**

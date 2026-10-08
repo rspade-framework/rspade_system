@@ -142,6 +142,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     const CATEGORY_TRANSACTIONAL = 1;
     const CATEGORY_NOTIFICATION = 2;
     const CATEGORY_MARKETING = 3;
+    const CATEGORY_SECURITY = 4;
     const BLOCK_CAUSE_OPTED_OUT = 1;
     const BLOCK_CAUSE_SITE_BLOCK_LIST = 2;
 
@@ -214,6 +215,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
             1 => ['constant' => 'CATEGORY_TRANSACTIONAL', 'label' => 'Transactional', 'badge' => 'bg-primary'],
             2 => ['constant' => 'CATEGORY_NOTIFICATION', 'label' => 'Notification', 'badge' => 'bg-info'],
             3 => ['constant' => 'CATEGORY_MARKETING', 'label' => 'Marketing', 'badge' => 'bg-secondary'],
+            4 => ['constant' => 'CATEGORY_SECURITY', 'label' => 'Security', 'badge' => 'bg-dark'],
         ],
         // WHY a Blocked row was blocked - one status, two standing rules. NULL on every
         // row that is not Blocked. last_error carries the sentence a reader is shown.

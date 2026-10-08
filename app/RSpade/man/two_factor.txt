@@ -29,6 +29,10 @@ SYNOPSIS
     <%-- The challenge screen, pointed at that endpoint --%>
     <Two_Factor_Challenge $controller="Login_Controller" $method="verify_2fa" />
 
+    # An emailed code: the challenge accepts one, the application delivers it
+    Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+    $code = Rsx_Two_Factor::issue_code();      // six digits - send them yourself
+
     <%-- Enrollment, anywhere a signed-in user can reach --%>
     <Totp_Enrollment />
     <Passkey_Register />
@@ -347,7 +351,7 @@ HOW IT WORKS
         That is the invariant the whole design exists to hold.
 
     THE SECURITY WINDOW (NOT A TIMEOUT)
-        rsx.two_factor.challenge_window_minutes (10) bounds how long a
+        rsx.two_factor.challenge_window_minutes (15) bounds how long a
         passed-password state stays redeemable, and the same window bounds a
         parked TOTP enrollment seed (a WebAuthn ceremony's challenge has its
         own derived window - see PASSKEYS: THE CEREMONY TIMEOUT). It
@@ -499,9 +503,37 @@ THE FACADE
             The administrative unlock, and what an account deletion runs.
 
     THE CHALLENGE
-        begin_challenge($identity): void
+        begin_challenge($identity, ?array $accepts = null): void
+            Parks the identity and SIGNS THE REALM OUT. $accepts names the
+            kinds of answer THIS challenge takes - ANSWER_ISSUED_CODE,
+            ANSWER_TOTP, ANSWER_PASSKEY, ANSWER_RECOVERY_CODE - and
+            verify_challenge() refuses every other kind, a correct one
+            included. Null accepts what the identity holds. An explicit list
+            is validated BEFORE the sign-out: an unknown kind, an empty list,
+            or a list the identity cannot answer (no ANSWER_ISSUED_CODE and
+            none of the factors it names) throws InvalidArgumentException.
+            Which sign-ins owe a challenge, and which answers satisfy it, is
+            the application's policy; the list is how that policy reaches the
+            one place it is enforced (ISSUED CODES).
         challenge_pending(): ?array
+            {email, email_masked, accepts, has_totp, has_passkey,
+            has_recovery_codes, has_issued_code, codes_issued}, or null. accepts
+            is what the challenge takes AND the identity can give; the has_*
+            flags are the same answer per kind - what the screen may ask for.
+            codes_issued counts issue_code() calls.
+        issue_code(): string
+            Six random digits for the pending challenge, for the APPLICATION
+            to deliver. Only a keyed hash is kept; a later code replaces an
+            earlier one. Throws Two_Factor_Failed_Exception when nothing is
+            pending, RuntimeException when the challenge does not accept
+            ANSWER_ISSUED_CODE. See ISSUED CODES.
+        pending_identity(): ?identity
+            Whom the pending challenge is for - the address a code is sent
+            to. SERVER-SIDE ONLY; the browser reads challenge_pending(),
+            which masks it.
         challenge_passkey_options(): array
+            Refused (Two_Factor_Failed_Exception) when the login function's
+            explicit $accepts leaves passkeys out.
         verify_challenge(array $input): identity
             $input is {code: '123456'} or {assertion: {...}}. On success the
             caller is SIGNED IN, last_login is stamped and the success is
@@ -511,11 +543,12 @@ THE FACADE
                 2. the pending identity, or the window has closed
                 2b. a LOCKED identity (is_locked()) is refused and its
                    challenge discarded, before anything is tried
-                3. a passkey assertion when one was offered; otherwise the
-                   typed string against every confirmed TOTP credential, and
-                   THEN against the recovery codes - recovery LAST, so a
-                   string that is a live TOTP code never burns a recovery
-                   code
+                3. only the kinds the challenge ACCEPTS: a passkey assertion
+                   when one was offered; otherwise the typed string against
+                   the issued code, then every confirmed TOTP credential,
+                   and THEN the recovery codes - recovery LAST, so a string
+                   that is a live TOTP code never burns a recovery code. An
+                   answer of a kind not accepted is a wrong answer
                 4. on failure: record the failure ONCE through the realm
                    (staff: Login_History STATUS_FAILED_2FA; portal: the
                    throttle directly), count it once against the challenge
@@ -621,9 +654,10 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
             recovery_regenerate     -> {recovery_codes}
 
         #[Auth('public')]           - the half-authenticated population
-            challenge_state         -> {email, email_masked, has_totp,
-                                        has_passkey, has_recovery_codes} or
-                                        NULL, which is not an error
+            challenge_state         -> challenge_pending(): {email,
+                                        email_masked, accepts, has_*,
+                                        codes_issued} or NULL, which is not
+                                        an error
             challenge_abandon       -> null; forgets this session's pending
                                         challenge (Cancel)
             challenge_passkey_options
@@ -667,7 +701,8 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         A browser without WebAuthn gets a plain notice instead of a button
         that cannot work; the host page is expected to still offer TOTP.
 
-    <Two_Factor_Challenge $controller $method [$cancel_url] [$placeholder] />
+    <Two_Factor_Challenge $controller $method [$cancel_url] [$placeholder]
+                          [$send_controller $send_method] />
         The login challenge screen.
         Args:   $controller, $method (both REQUIRED) - the application's
                 verification endpoint, named the way <Rsx_Form> names one.
@@ -676,22 +711,31 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
                 in a row of their own beneath the box, centred, Cancel
                 first. Absent: no Cancel, Verify beside the box.
                 $placeholder - replaces the derived placeholder (below).
+                $send_controller, $send_method - the application endpoint that
+                issues and delivers a code (ISSUED CODES). With them, and a
+                challenge accepting an issued code, the screen offers "Send a
+                new code" and sends the FIRST code itself when none has been
+                issued. Absent: no send link; the host issues the code.
         Posts:  {code: '...'} from the typed answer, or {assertion: {...}}
-                from a passkey.
+                from a passkey. To the send endpoint: {}.
         Expects: {redirect: '/somewhere'}, followed with window.location.
-                 A response with no redirect throws.
+                 A response with no redirect throws. The send endpoint may
+                 answer anything, or reject with a user-safe message.
         Events: no_challenge - nothing is pending (expired window, direct
                 visit). The host page sends the visitor back to /login.
 
-        ONE INPUT FOR TWO KINDS OF ANSWER: an authenticator code and a
-        recovery code go in the same box, because the server tries both and
-        the user should not have to know which kind of string they hold.
-        The box asks only for what the identity can answer with:
+        ONE INPUT FOR EVERY TYPED ANSWER: an issued code, an authenticator
+        code and a recovery code go in the same box, because the server
+        tries each accepted kind and the user should not have to know which
+        kind of string they hold. The box asks only for what the challenge
+        accepts and the identity can answer with:
 
+            has_issued_code + has_recovery_codes   "6-digit or recovery code"
+            has_issued_code                        "6-digit code"
             has_totp + has_recovery_codes   "Authenticator or recovery code"
             has_totp only                   "6-digit code"
             has_recovery_codes only         "Recovery code"
-            neither (a passkey only)        no box, no Verify - the passkey
+            none of them (a passkey only)   no box, no Verify - the passkey
                                             button is the answer (a browser
                                             without WebAuthn gets a notice)
 
@@ -901,6 +945,39 @@ IMPLEMENTING 2FA IN AN APPLICATION
         realtime user refresh to take effect before their next full load. The
         reference application pushes one on a confirmed change of its flag.
 
+ISSUED CODES
+    A code the framework MINTS and the application DELIVERS - by email,
+    SMS, a phone call - for the pending challenge. It is how an application
+    asks for an emailed six-digit code at sign-in, for every identity or
+    for some. The full recipe, staff and portal side by side, is
+    rsx:man two_factor_codes.
+
+    THE SPLIT. Generating, storing, verifying and rate-limiting a code are
+    security work, so the framework does them: random_int digits, only a
+    keyed hash kept in the pending challenge (a copy of the session store
+    does not reveal them), a later code replacing an earlier one, and the
+    same throttle, attempt caps and recording as a TOTP code. Delivering it,
+    wording it, capping resends and deciding who owes one are application
+    work, so the framework does none of them.
+
+        $accepts = [Rsx_Two_Factor::ANSWER_ISSUED_CODE, Rsx_Two_Factor::ANSWER_PASSKEY];
+        Rsx_Two_Factor::begin_challenge($login_user, $accepts);
+
+        # the application's send endpoint (the challenge screen calls it)
+        $code = Rsx_Two_Factor::issue_code();
+        (new Sign_In_Code_Email($code))->to(Rsx_Two_Factor::pending_identity())->send();
+
+    THE EMAIL is the application's class, declared CATEGORY = SECURITY: it
+    reaches an address on the site block list and ignores the recipient
+    opt-out, because a person who cannot receive the code cannot reach
+    their own account (rsx:man email). The .dev. recipient rules and
+    rsx.mail.delivery still apply - in the default 'suppressed' mode the
+    code is recorded and never leaves.
+
+    LIFETIME. The code lives exactly as long as its challenge
+    (rsx.two_factor.challenge_window_minutes, 15). codes_issued in
+    challenge_pending() lets the application cap "Send a new code".
+
 PASSWORDLESS SIGN-IN
     A passkey as the FIRST and only credential: the visitor presses "Sign in
     with a passkey", the authenticator offers the discoverable credential it
@@ -1058,7 +1135,7 @@ CONFIGURATION
             to get here and is recognisable in a list of twenty accounts in a
             way a product name may not be. A colon is stripped.
 
-        'challenge_window_minutes' => 10
+        'challenge_window_minutes' => 15
             The SECURITY WINDOW above (the password-passed state and a parked
             TOTP seed; not a WebAuthn challenge). Must be at least 1;
             challenge_expires_at() calls shouldnt_happen() on anything lower
@@ -1130,10 +1207,15 @@ SEE ALSO
                   status vocabulary, Login_Throttle, impersonation
     auth        - identity model (login_users + users), RsxAuth
     turnstile   - human verification on the login form itself
+    two_factor_codes - the emailed six-digit sign-in code, end to end, for
+                  staff and the portal
+    login_requirements - what a signed-in user must still do (enroll a
+                  factor, accept terms) before the site is theirs
     sso         - federated sign-in. A provider sign-in STILL FACES this
                   challenge by default (rsx.sso.skip_two_factor is the
-                  opt-out), and resolves sso.two_factor.verify_url to find
-                  the page it is answered on
+                  opt-out), resolves sso.two_factor.verify_url to find the
+                  page it is answered on, and asks sso.two_factor.accepts
+                  for the application's challenge policy
     auth_gates  - #[Auth] on every surface, and why the challenge pair is
                   'public'
     portal      - the client portal realm: Portal_Session, the declared site,

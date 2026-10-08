@@ -1831,10 +1831,14 @@ return [
         // during this window is a HALF-AUTHENTICATED identity: a password that
         // has already been proven correct, waiting on a screen that may be
         // unattended. The window is how long someone who walks up to that browser
-        // can finish the sign-in by supplying only the second factor. Ten minutes
-        // is long enough to fetch the phone that IS the second factor from another
-        // room; it is not long enough to leave a proven password redeemable for
-        // the rest of the afternoon.
+        // can finish the sign-in by supplying only the second factor. Fifteen
+        // minutes is long enough to fetch the phone that IS the second factor from
+        // another room, or to wait out a slow mail relay for an emailed code; it is
+        // not long enough to leave a proven password redeemable for the rest of the
+        // afternoon.
+        //
+        // An ISSUED code (Rsx_Two_Factor::issue_code() - the six digits an
+        // application emails or texts) lives exactly as long as its challenge.
         //
         // The same window bounds a parked TOTP enrollment seed. An in-flight
         // WebAuthn ceremony's challenge is NOT bounded here: its window is derived
@@ -1845,7 +1849,7 @@ return [
         // Must be at least 1. Rsx_Two_Factor::challenge_expires_at() calls
         // shouldnt_happen() on anything lower rather than minting a window that is
         // already closed.
-        'challenge_window_minutes' => 10,
+        'challenge_window_minutes' => 15,
 
         // Whether the login challenge screen shows the FULL address being signed in
         // to. false (the default) sends only a masked form (c***e@example.com): the

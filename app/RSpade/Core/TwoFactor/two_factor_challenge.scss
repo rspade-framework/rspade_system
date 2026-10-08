@@ -53,6 +53,16 @@
         width: 100%;
     }
 
+    // "Send a new code": a quiet link, centred under the controls.
+    &__send {
+        text-align: center;
+    }
+
+    &__notice-inline {
+        color: var(--bs-secondary-color);
+        text-align: center;
+    }
+
     &__error {
         color: var(--bs-danger);
         text-align: center;

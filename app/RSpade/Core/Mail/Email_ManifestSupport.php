@@ -61,6 +61,7 @@ class Email_ManifestSupport extends Full_ManifestSupport_Abstract
         1 => 'TRANSACTIONAL',
         2 => 'NOTIFICATION',
         3 => 'MARKETING',
+        4 => 'SECURITY',
     ];
 
     public static function get_name(): string

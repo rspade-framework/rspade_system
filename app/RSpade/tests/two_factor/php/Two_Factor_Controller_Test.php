@@ -459,13 +459,15 @@ class Two_Factor_Controller_Test extends Rsx_Test_Abstract
         $state = Rsx_Two_Factor_Controller::challenge_state(static::__ajax_request());
 
         static::__assert_equals(
-            ['email', 'email_masked', 'has_totp', 'has_passkey', 'has_recovery_codes'],
+            ['email', 'email_masked', 'accepts', 'has_totp', 'has_passkey', 'has_recovery_codes', 'has_issued_code', 'codes_issued'],
             array_keys($state),
             'only what the screen renders'
         );
 
+        static::__assert_equals(['totp', 'recovery_code'], $state['accepts'], 'what the identity holds');
         static::__assert_true($state['has_totp']);
         static::__assert_false($state['has_passkey']);
+        static::__assert_false($state['has_issued_code'], 'no issued code unless the login function accepts one');
         static::__assert_true($state['has_recovery_codes'], 'the enrollment minted a sheet');
         static::__assert_null($state['email'], 'no full address unless the application opted in');
 

@@ -37,6 +37,9 @@ class Two_Factor_Challenge extends Component {
             passkeys_supported: Rsx_Two_Factor.is_supported(),
 
             error: null,
+
+            // A user-facing note that is not an error - "A new code has been sent."
+            notice: null,
         };
     }
 
@@ -50,6 +53,21 @@ class Two_Factor_Challenge extends Component {
         // no race between mounting the component and listening for the redirect it asks for.
         if (this.data.challenge === null) {
             this.trigger('no_challenge');
+        }
+    }
+
+    async on_ready() {
+        // The first code is sent for the user when the host named a send endpoint and none
+        // has been issued yet. A host that issues the first code itself, server-side, before
+        // the page loads, never reaches this branch (codes_issued is already 1).
+        // null is a state, not a missing value: nothing is pending (see on_loaded).
+        const challenge = this.data.challenge;
+        if (challenge === null) {
+            return;
+        }
+
+        if (challenge.has_issued_code && challenge.codes_issued === 0 && this._can_send()) {
+            await this._send_code(false);
         }
     }
 
@@ -85,6 +103,20 @@ class Two_Factor_Challenge extends Component {
                 await that._verify_passkey();
             });
         }
+
+        const $send = this.$sid('send');
+        if ($send.exists()) {
+            $send.click_async(async function () {
+                await that._send_code(true);
+            });
+        }
+    }
+
+    /**
+     * Whether the host named an endpoint that issues and delivers a code.
+     */
+    _can_send() {
+        return !!(this.args.send_controller && this.args.send_method);
     }
 
     /**
@@ -97,11 +129,54 @@ class Two_Factor_Challenge extends Component {
         }
 
         const challenge = this.data.challenge;
+        if (challenge.has_issued_code) {
+            return challenge.has_recovery_codes ? '6-digit or recovery code' : '6-digit code';
+        }
+
         if (challenge.has_totp && challenge.has_recovery_codes) {
             return 'Authenticator or recovery code';
         }
 
         return challenge.has_totp ? '6-digit code' : 'Recovery code';
+    }
+
+    /**
+     * Ask the host's send endpoint to issue and deliver a code, then re-read the challenge.
+     *
+     * @param {boolean} announce Say "A new code has been sent." afterwards (a resend the
+     *                           user asked for; the automatic first send says nothing).
+     */
+    async _send_code(announce) {
+        const controller = this._resolve(this.args.send_controller, this.args.send_method);
+
+        this.state.error = null;
+        this.state.notice = null;
+
+        try {
+            await controller[this.args.send_method]({});
+        } catch (e) {
+            this._show_error(e);
+            return;
+        }
+
+        if (announce) {
+            this.state.notice = 'A new code has been sent.';
+        }
+
+        await this.reload();
+    }
+
+    /**
+     * An application controller's endpoint, through the manifest - see the class docblock.
+     */
+    _resolve(controller_name, method) {
+        const controller = Manifest.get_class_by_name(controller_name);
+
+        if (!controller || typeof controller[method] !== 'function') {
+            throw new Error('Two_Factor_Challenge could not resolve the endpoint ' + controller_name + '::' + method);
+        }
+
+        return controller;
     }
 
     /**
@@ -153,16 +228,10 @@ class Two_Factor_Challenge extends Component {
      * Hand one answer to the application's verification endpoint and follow where it points.
      */
     async _submit(payload) {
-        const controller = Manifest.get_class_by_name(this.args.controller);
-
-        if (!controller || typeof controller[this.args.method] !== 'function') {
-            throw new Error(
-                'Two_Factor_Challenge could not resolve the endpoint ' +
-                    this.args.controller + '::' + this.args.method
-            );
-        }
+        const controller = this._resolve(this.args.controller, this.args.method);
 
         this.state.error = null;
+        this.state.notice = null;
 
         let result;
 

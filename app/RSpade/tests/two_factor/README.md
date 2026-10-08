@@ -65,17 +65,22 @@ The APPLICATION half of the flow, which the framework deliberately does not own:
   password with recording and the last_login stamp suppressed and issues the challenge,
   `verify()` renders the challenge screen, `verify_2fa()` is the verification endpoint
   `<Two_Factor_Challenge>` posts to, and `two_factor_setup()` is the forced-enrollment
-  interstitial
+  screen
 - `rsx/app/login/login_verify.blade.php` / `login_two_factor_setup.blade.php` +
   `login_two_factor_setup.js` - the two screens
-- `rsx/main.php` - `pre_dispatch()` bounces a `users.is_2fa_required` identity with no
-  factor to the interstitial (exempting impersonation and `Session::TYPE_PLAYWRIGHT`)
+- `rsx/app/login/two_factor_enrollment_requirement.php` - a `users.is_2fa_required` identity
+  with no factor is a login requirement whose screen is `two_factor_setup()` (the mechanism is
+  the `login_requirements` concern)
+- `rsx/portal/auth/Portal_Login_Controller.php` - `challenge_accepts()` / `send_code()`: the
+  opt-in emailed sign-in code built on `issue_code()` (`rsx.portal.emailed_sign_in_codes`)
 - `rsx/app/frontend/settings/password_security/` - the settings screen over
   `credentials_list` / `credential_remove` / `recovery_regenerate`
 
 ## Man page(s)
 
 - `man/two_factor.txt`
+- `man/two_factor_codes.txt` - the emailed-code recipe; `Two_Factor_Issued_Code_Test` pins the
+  engine half (`$accepts`, `issue_code()`, `pending_identity()`)
 
 ## Testable surface
 

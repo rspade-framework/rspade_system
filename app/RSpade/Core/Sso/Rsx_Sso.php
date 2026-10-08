@@ -31,7 +31,7 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
  *
  *   URLs     /_sso/<provider>/begin and /_sso/<provider>/callback (Rsx_Sso_Controller)
  *   hooks    sso.identity.unlinked, sso.login.authorize, sso.two_factor.verify_url,
- *            sso.login.destination, sso.link.destination - each payload carrying
+ *            sso.two_factor.accepts, sso.login.destination, sso.link.destination - each payload carrying
  *            'login_user'
  *   sign-in  RsxAuth::login(), which refuses an identity holding no enabled site membership
  *   records  Login_History (STATUS_FAILED_SSO, STATUS_FAILED_DISABLED, SUCCESS), which

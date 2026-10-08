@@ -757,6 +757,21 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     users.is_enabled needs none of that - enforce_enabled_membership() ends such a
     session on its very next request.
 
+LOGIN REQUIREMENTS (SIGNED IN, NOT YET ADMITTED)
+    An application may declare things a signed-in user must do before the
+    site is theirs - enroll a second factor, accept terms, upload a picture -
+    as Login_Requirement_Abstract classes. While one is unmet the identity is
+    ON the session row, and every reader here - is_logged_in(), get_user(),
+    get_login_user(), get_login_user_id() and the Portal_Session twins -
+    answers NOT LOGGED IN, except while the request is dispatched to a
+    surface that requirement lists. Pages, Ajax, model fetch, realtime and
+    file reads all see an anonymous caller; the requirement's own screen and
+    endpoints see the user. The list is computed by set_login_user_id(),
+    set_site_id() and Portal_Session::set_portal_user_id(), cleared by
+    logout(), and carried on _sessions.login_requirements. A bearer-key API
+    call and the CLI are never subject. With no requirement classes declared,
+    none of this exists. rsx:man login_requirements.
+
 SECURITY
     Automatic Security Features:
         - Session tokens: 64-character cryptographically secure random
@@ -2002,6 +2017,8 @@ SEE ALSO
                                 the challenge state machine, rsx:users:2fa:*
     rsx:man sso               - federated sign-in: the ceremony, the policy
                                 hooks, STATUS_FAILED_SSO, rsx:users:sso:*
+    rsx:man login_requirements - signed in, not yet admitted: what the readers
+                                answer while a requirement is unmet
     rsx:man auth_gates        - #[Auth] gates on every surface, #[Auth_Check]
                                 vocabulary, can_access, the error screens
     rsx:man event_hooks       - #[OnEvent] handlers, incl. session.terminated

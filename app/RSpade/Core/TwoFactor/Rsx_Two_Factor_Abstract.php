@@ -68,6 +68,22 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * second factor was optional. Signing out leaves nothing to forget: the pending state is
  * inert data that only verify_challenge() knows how to redeem.
  *
+ * WHAT A CHALLENGE ACCEPTS IS THE LOGIN FUNCTION'S DECISION. begin_challenge($identity,
+ * $accepts) names the kinds of answer this one challenge takes - ANSWER_TOTP,
+ * ANSWER_PASSKEY, ANSWER_RECOVERY_CODE, ANSWER_ISSUED_CODE - and verify_challenge() refuses
+ * every other kind. The framework never decides it: whether a sign-in owes a second step at
+ * all, and which steps satisfy it, is application policy, and the list is how the policy
+ * reaches the one place it has to be enforced. Omitted, a challenge accepts what the
+ * identity holds (its confirmed factors and any unspent recovery code).
+ *
+ * AN ISSUED CODE is a one-time code the FRAMEWORK generates and the APPLICATION delivers:
+ * issue_code() mints six random digits, keeps only a keyed hash of them in the pending
+ * challenge (a later code replaces an earlier one) and returns the digits to the caller,
+ * who sends them however the application chooses - an email of the SECURITY category, an
+ * SMS, a phone call. Verification is the same verify_challenge(), under the same throttle,
+ * the same two attempt caps and the same recording as a TOTP code. The code lives exactly
+ * as long as its challenge.
+ *
  * THE PASSWORDLESS FLOW is begin_passkey_login() + verify_passkey_login(): a passkey as the
  * FIRST and only credential, with no password stage and nothing pending beforehand. The
  * authenticator offers a discoverable credential, the assertion identifies the identity (the
@@ -139,6 +155,29 @@ abstract class Rsx_Two_Factor_Abstract
      * vector and the host element scales it.
      */
     private const QR_SIZE = 240;
+
+    /** A challenge answer kind: a code from a confirmed authenticator app. */
+    public const ANSWER_TOTP = 'totp';
+
+    /** A challenge answer kind: an assertion from one of the identity's passkeys. */
+    public const ANSWER_PASSKEY = 'passkey';
+
+    /** A challenge answer kind: one of the identity's unspent recovery codes. */
+    public const ANSWER_RECOVERY_CODE = 'recovery_code';
+
+    /** A challenge answer kind: the code issue_code() minted for this challenge. */
+    public const ANSWER_ISSUED_CODE = 'issued_code';
+
+    /** Every answer kind, in the order the challenge screen offers them. */
+    public const ANSWERS = [
+        self::ANSWER_ISSUED_CODE,
+        self::ANSWER_TOTP,
+        self::ANSWER_PASSKEY,
+        self::ANSWER_RECOVERY_CODE,
+    ];
+
+    /** Digits in an issued code. */
+    private const ISSUED_CODE_DIGITS = 6;
 
     // -------------------------------------------------------------------------
     // Configuration
@@ -943,24 +982,92 @@ abstract class Rsx_Two_Factor_Abstract
      * outcome against the address that was ATTEMPTED, which is a question about this attempt
      * rather than about the identity's current state.
      *
+     * $accepts names the kinds of answer this challenge takes (the ANSWER_* constants) and is
+     * enforced by verify_challenge(). Null accepts what the identity holds, evaluated when
+     * the challenge is answered. An explicit list must hold at least one kind this identity
+     * can actually answer with - an issued code always can - or the call throws: a challenge
+     * nobody can answer is a login function bug, and it is caught here, before the sign-out,
+     * rather than on a screen with no way forward.
+     *
      * @param Rsx_Model_Abstract $identity The identity whose password just verified.
+     * @param array|null $accepts The ANSWER_* kinds this challenge accepts; null = what the
+     *                            identity holds.
      * @return void
+     * @throws \InvalidArgumentException On an unknown kind, an empty list, or a list the
+     *         identity cannot answer.
      */
-    public static function begin_challenge(Rsx_Model_Abstract $identity): void
+    public static function begin_challenge(Rsx_Model_Abstract $identity, ?array $accepts = null): void
     {
+        $identity_id = static::__resolve_id($identity);
+
+        if ($accepts !== null) {
+            $accepts = static::__validate_accepts($accepts, $identity_id);
+        }
+
+        $expires_at = static::challenge_expires_at();
+
         Session::put_value(
             static::CHALLENGE_KEY,
             [
-                'identity_id' => static::__resolve_id($identity),
+                'identity_id' => $identity_id,
                 'email' => (string) $identity->email,
                 // Names this challenge's own failure counter, so a fresh challenge (a fresh
                 // password entry) starts its count at zero.
                 'challenge_id' => random_hash(32),
+                'accepts' => $accepts,
+                // issue_code() rewrites the value and must keep the window it was given.
+                'expires_at' => $expires_at,
+                'code_hash' => null,
+                'codes_issued' => 0,
             ],
-            static::challenge_expires_at()
+            $expires_at
         );
 
         static::__sign_out();
+    }
+
+    /**
+     * Mint a one-time code for the pending challenge and return it, for the application to
+     * deliver.
+     *
+     * Six random digits. Only a keyed hash is kept, in the pending challenge, and a later
+     * code REPLACES an earlier one - so "send me another code" leaves exactly one live
+     * answer. The code lives as long as the challenge does (rsx.two_factor.
+     * challenge_window_minutes). Every code issued is counted (challenge_pending()'s
+     * codes_issued), so the application can cap resends however it likes; the attempt caps
+     * on WRONG answers are the framework's and apply here exactly as they do to TOTP.
+     *
+     * Delivery is the caller's: an email declared CATEGORY = SECURITY (which reaches an
+     * address on the site block list and ignores the recipient opt-out), an SMS, anything.
+     *
+     * @return string The six digits, zero-padded.
+     * @throws Two_Factor_Failed_Exception When nothing is pending (the window has closed).
+     * @throws \RuntimeException When the pending challenge does not accept ANSWER_ISSUED_CODE.
+     */
+    public static function issue_code(): string
+    {
+        $pending = static::__pending_challenge();
+
+        if ($pending === null) {
+            throw new Two_Factor_Failed_Exception('Your verification window has expired. Please sign in again.');
+        }
+
+        if (!in_array(self::ANSWER_ISSUED_CODE, $pending['accepts'] ?? [], true)) {
+            throw new RuntimeException(
+                static::class . '::issue_code() was called for a challenge that does not accept an issued code. '
+                . 'Pass ' . static::class . '::ANSWER_ISSUED_CODE in begin_challenge()\'s $accepts.'
+            );
+        }
+
+        $code = str_pad((string) random_int(0, (10 ** self::ISSUED_CODE_DIGITS) - 1), self::ISSUED_CODE_DIGITS, '0', STR_PAD_LEFT);
+
+        $raw = Session::get_value(static::CHALLENGE_KEY);
+        $raw['code_hash'] = static::__issued_code_hash($pending['challenge_id'], $code);
+        $raw['codes_issued'] = $pending['codes_issued'] + 1;
+
+        Session::put_value(static::CHALLENGE_KEY, $raw, $pending['expires_at']);
+
+        return $code;
     }
 
     /**
@@ -976,10 +1083,13 @@ abstract class Rsx_Two_Factor_Abstract
      * the page is reachable by anyone holding the session cookie and the full address is not
      * necessarily theirs to read; `email` is null unless the application opted in.
      *
-     * has_totp, has_passkey and has_recovery_codes are what the screen may ASK for: an
-     * authenticator code, a passkey, a recovery code (one still unspent).
+     * accepts is the list of answer kinds this challenge takes AND this identity can give
+     * (an issued code always can). has_totp, has_passkey and has_recovery_codes are the same
+     * answer per kind - what the screen may ASK for. codes_issued counts issue_code() calls,
+     * for an application that caps resends.
      *
-     * @return array|null {email, email_masked, has_totp, has_passkey, has_recovery_codes}
+     * @return array|null {email, email_masked, accepts, has_totp, has_passkey,
+     *                    has_recovery_codes, has_issued_code, codes_issued}
      */
     public static function challenge_pending(): ?array
     {
@@ -989,16 +1099,36 @@ abstract class Rsx_Two_Factor_Abstract
             return null;
         }
 
-        $model = static::_credential_model();
-        $identity_id = $pending['identity_id'];
+        $accepts = static::__answerable($pending);
 
         return [
             'email' => config('rsx.two_factor.challenge_shows_full_email') ? $pending['email'] : null,
             'email_masked' => static::__mask_email($pending['email']),
-            'has_totp' => static::__has_confirmed($identity_id, $model::TYPE_TOTP),
-            'has_passkey' => static::__has_confirmed($identity_id, $model::TYPE_PASSKEY),
-            'has_recovery_codes' => Recovery_Codes::remaining(static::class, $identity_id) > 0,
+            'accepts' => $accepts,
+            'has_totp' => in_array(self::ANSWER_TOTP, $accepts, true),
+            'has_passkey' => in_array(self::ANSWER_PASSKEY, $accepts, true),
+            'has_recovery_codes' => in_array(self::ANSWER_RECOVERY_CODE, $accepts, true),
+            'has_issued_code' => in_array(self::ANSWER_ISSUED_CODE, $accepts, true),
+            'codes_issued' => $pending['codes_issued'],
         ];
+    }
+
+    /**
+     * The identity the pending challenge is for, or null when nothing is pending.
+     *
+     * SERVER-SIDE ONLY, for the application code that delivers an issued code: the resend
+     * endpoint has to know whose address to send to, and the session is signed out. It is
+     * never handed to the browser - the challenge screen reads challenge_pending(), which
+     * masks the address. Holding this identity proves nothing about the person asking;
+     * only verify_challenge() signs it in.
+     *
+     * @return Rsx_Model_Abstract|null
+     */
+    public static function pending_identity(): ?Rsx_Model_Abstract
+    {
+        $pending = static::__pending_challenge();
+
+        return $pending === null ? null : static::__find_identity($pending['identity_id']);
     }
 
     /**
@@ -1013,6 +1143,13 @@ abstract class Rsx_Two_Factor_Abstract
 
         if ($pending === null) {
             throw new Two_Factor_Failed_Exception('Your verification window has expired. Please sign in again.');
+        }
+
+        // The application's explicit policy is enforced here as at verification. With no
+        // list, the options are issued as before; verify_challenge() refuses an assertion
+        // from a credential the identity does not hold.
+        if ($pending['accepts'] !== null && !in_array(self::ANSWER_PASSKEY, $pending['accepts'], true)) {
+            throw new Two_Factor_Failed_Exception('This sign-in cannot be completed with a passkey.');
         }
 
         return Passkeys::assertion_options(static::class, $pending['identity_id']);
@@ -1033,10 +1170,11 @@ abstract class Rsx_Two_Factor_Abstract
      *  2b. An identity that has spent its failure budget (is_locked()) is refused before
      *     anything is tried, and its challenge is discarded - a correct answer would
      *     otherwise make the lock an oracle.
-     *  3. A passkey assertion is tried when one was offered; otherwise a typed code is
-     *     tried against every confirmed TOTP credential and then against the recovery
-     *     codes. Recovery LAST, so a string that is a live TOTP code never burns a
-     *     recovery code.
+     *  3. Only the kinds the challenge ACCEPTS are tried. A passkey assertion is tried when
+     *     one was offered; otherwise a typed code is tried against the issued code, then
+     *     every confirmed TOTP credential, then the recovery codes. Recovery LAST, so a
+     *     string that is a live TOTP code never burns a recovery code. An answer of a kind
+     *     the challenge does not accept is a wrong answer.
      *  4. A failure is recorded ONCE, through the realm (Login_History::record_failure()
      *     with STATUS_FAILED_2FA for staff, which already feeds Login_Throttle; the throttle
      *     directly for the portal, whose outcomes have no history store). Never both: one
@@ -1093,10 +1231,13 @@ abstract class Rsx_Two_Factor_Abstract
 
         $verified = false;
 
+        $accepts = static::__answerable($pending);
+
         if (isset($input['assertion']) && is_array($input['assertion'])) {
-            $verified = static::__try_assertion($input['assertion'], $identity_id);
+            $verified = in_array(self::ANSWER_PASSKEY, $accepts, true)
+                && static::__try_assertion($input['assertion'], $identity_id);
         } elseif (isset($input['code']) && is_string($input['code'])) {
-            $verified = static::__try_code($input['code'], $identity_id);
+            $verified = static::__try_code($input['code'], $pending, $accepts);
         }
 
         if (!$verified) {
@@ -1278,7 +1419,37 @@ abstract class Rsx_Two_Factor_Abstract
      * @param int $identity_id
      * @return bool
      */
-    protected static function __try_code(string $code, int $identity_id): bool
+    protected static function __try_code(string $code, array $pending, array $accepts): bool
+    {
+        $identity_id = $pending['identity_id'];
+        $code = trim($code);
+
+        if (in_array(self::ANSWER_ISSUED_CODE, $accepts, true)
+            && $pending['code_hash'] !== null
+            && hash_equals($pending['code_hash'], static::__issued_code_hash($pending['challenge_id'], $code))
+        ) {
+            return true;
+        }
+
+        if (in_array(self::ANSWER_TOTP, $accepts, true) && static::__try_totp($code, $identity_id)) {
+            return true;
+        }
+
+        if (in_array(self::ANSWER_RECOVERY_CODE, $accepts, true)) {
+            return Recovery_Codes::consume(static::class, $identity_id, $code);
+        }
+
+        return false;
+    }
+
+    /**
+     * Try a typed code against every confirmed TOTP credential, advancing the one it matches.
+     *
+     * @param string $code
+     * @param int $identity_id
+     * @return bool
+     */
+    protected static function __try_totp(string $code, int $identity_id): bool
     {
         $model = static::_credential_model();
 
@@ -1305,19 +1476,20 @@ abstract class Rsx_Two_Factor_Abstract
             return true;
         }
 
-        return Recovery_Codes::consume(static::class, $identity_id, $code);
+        return false;
     }
 
     /**
      * The pending challenge, validated into shape, or null.
      *
-     * @return array|null {identity_id, email, challenge_id}
+     * @return array|null {identity_id, email, challenge_id, accepts (array|null), expires_at,
+     *                    code_hash (string|null), codes_issued}
      */
     protected static function __pending_challenge(): ?array
     {
         $pending = Session::get_value(static::CHALLENGE_KEY);
 
-        if (!is_array($pending) || !isset($pending['identity_id'], $pending['email'], $pending['challenge_id'])) {
+        if (!is_array($pending) || !isset($pending['identity_id'], $pending['email'], $pending['challenge_id'], $pending['expires_at'])) {
             return null;
         }
 
@@ -1325,7 +1497,88 @@ abstract class Rsx_Two_Factor_Abstract
             'identity_id' => (int) $pending['identity_id'],
             'email' => (string) $pending['email'],
             'challenge_id' => (string) $pending['challenge_id'],
+            'accepts' => is_array($pending['accepts'] ?? null) ? array_values($pending['accepts']) : null,
+            'expires_at' => (string) $pending['expires_at'],
+            'code_hash' => is_string($pending['code_hash'] ?? null) ? $pending['code_hash'] : null,
+            'codes_issued' => (int) ($pending['codes_issued'] ?? 0),
         ];
+    }
+
+    /**
+     * The answer kinds the pending challenge accepts AND the identity can give, in ANSWERS
+     * order. A null accepts list means everything the identity holds; an issued code is
+     * answerable whenever it is accepted.
+     *
+     * @param array $pending From __pending_challenge().
+     * @return array
+     */
+    protected static function __answerable(array $pending): array
+    {
+        $identity_id = $pending['identity_id'];
+        $model = static::_credential_model();
+        $holds = [
+            self::ANSWER_ISSUED_CODE => true,
+            self::ANSWER_TOTP => static::__has_confirmed($identity_id, $model::TYPE_TOTP),
+            self::ANSWER_PASSKEY => static::__has_confirmed($identity_id, $model::TYPE_PASSKEY),
+            self::ANSWER_RECOVERY_CODE => Recovery_Codes::remaining(static::class, $identity_id) > 0,
+        ];
+
+        $accepts = $pending['accepts'] ?? array_values(array_diff(self::ANSWERS, [self::ANSWER_ISSUED_CODE]));
+
+        return array_values(array_filter(
+            self::ANSWERS,
+            fn (string $kind) => in_array($kind, $accepts, true) && $holds[$kind]
+        ));
+    }
+
+    /**
+     * Validate begin_challenge()'s $accepts: known kinds, at least one, and at least one
+     * this identity can answer with.
+     *
+     * @param array $accepts
+     * @param int $identity_id
+     * @return array The list, de-duplicated.
+     */
+    protected static function __validate_accepts(array $accepts, int $identity_id): array
+    {
+        $accepts = array_values(array_unique($accepts));
+
+        if ($accepts === []) {
+            throw new \InvalidArgumentException('begin_challenge() was given an empty $accepts list - a challenge must accept at least one kind of answer.');
+        }
+
+        foreach ($accepts as $kind) {
+            if (!in_array($kind, self::ANSWERS, true)) {
+                throw new \InvalidArgumentException(
+                    'begin_challenge() was given an unknown answer kind ' . var_export($kind, true)
+                    . '. Use the ' . static::class . '::ANSWER_* constants.'
+                );
+            }
+        }
+
+        $answerable = static::__answerable(['identity_id' => $identity_id, 'accepts' => $accepts]);
+
+        if ($answerable === []) {
+            throw new \InvalidArgumentException(
+                'begin_challenge() was given $accepts [' . implode(', ', $accepts) . '], and identity '
+                . $identity_id . ' holds none of them - nobody could answer this challenge.'
+            );
+        }
+
+        return $accepts;
+    }
+
+    /**
+     * The keyed hash an issued code is kept as. Keyed by the application key and salted by
+     * the challenge, so a copy of the session store alone does not reveal the six digits.
+     *
+     * @param string $challenge_id
+     * @param string $code
+     * @return string
+     */
+    protected static function __issued_code_hash(string $challenge_id, string $code): string
+    {
+        return hash_hmac('sha256', $challenge_id . ':' . $code, (string) config('app.key'));
     }
 
     /**

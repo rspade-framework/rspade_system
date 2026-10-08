@@ -63,7 +63,7 @@ SENDING
 
         $to           destination number (E.164 recommended, e.g. +15555550123)
         $body         message text
-        $category     TRANSACTIONAL | NOTIFICATION | MARKETING
+        $category     TRANSACTIONAL | NOTIFICATION | MARKETING | SECURITY
         $related_*    optional polymorphic reference to what triggered the SMS
 
     send() resolves the site from the EXPERIENCE being served - the site the app
@@ -80,10 +80,12 @@ SENDING
 
 CATEGORIES
     TRANSACTIONAL (1)  Always delivers. Ignores opt-out (codes, alerts).
+    SECURITY      (4)  A sign-in code the recipient set in motion. Ignores
+                       opt-out, like TRANSACTIONAL (rsx:man two_factor_codes).
     NOTIFICATION  (2)  Respects opt-out. Default.
     MARKETING     (3)  Respects opt-out.
 
-    Constants: Rsx_Sms::TRANSACTIONAL / NOTIFICATION / MARKETING, matching
+    Constants: Rsx_Sms::TRANSACTIONAL / NOTIFICATION / MARKETING / SECURITY, matching
     Sms_Queue_Model::CATEGORY_*.
 
 BLOCKLIST / OPT-OUT (STOP)

@@ -43,7 +43,8 @@ use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
  *            request (Portal_Session::set_site_id), which is why the ceremony runs entirely
  *            inside portal dispatch.
  *   HOOKS    portal.sso.identity.unlinked, portal.sso.login.authorize,
- *            portal.sso.two_factor.verify_url, portal.sso.login.destination,
+ *            portal.sso.two_factor.verify_url, portal.sso.two_factor.accepts,
+ *            portal.sso.login.destination,
  *            portal.sso.link.destination - each payload carrying 'portal_user'. DISTINCT
  *            NAMES from the staff hooks, on purpose: an application's staff policy (which may
  *            match a verified address against login_users) must never run for a client.

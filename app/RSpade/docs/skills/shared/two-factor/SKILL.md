@@ -1,6 +1,6 @@
 ---
 name: two-factor
-description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge / verify_challenge / begin_passkey_login / verify_passkey_login) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::attempt(record: false, touch_last_login: false), passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove / :unlock operator commands, the attempt caps (is_locked / clear_failures, rsx.two_factor.challenge_max_failures / identity_max_failures), and a forced-enrollment interstitial driven from pre_dispatch. Use when adding 2FA, TOTP or passkeys to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Too many incorrect codes. Please sign in again.', 'Too many incorrect codes have been entered for this account. Please try again later.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', 'That security key request has expired. Please try again.', a passkey that will not save after a QR scan (publicKey.timeout, passkey_enroll_abandoned), or a passkey refused after moving hosts."
+description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge with $accepts / issue_code / pending_identity / verify_challenge / begin_passkey_login / verify_passkey_login, the ANSWER_* kinds) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::attempt(record: false, touch_last_login: false), passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove / :unlock operator commands, the attempt caps (is_locked / clear_failures, rsx.two_factor.challenge_max_failures / identity_max_failures), emailed six-digit sign-in codes (issued codes, a SECURITY-category email, <Two_Factor_Challenge $send_controller $send_method>, sso.two_factor.accepts), and requiring a factor as a login requirement. Use when adding 2FA, TOTP, passkeys or an emailed code to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Too many incorrect codes. Please sign in again.', 'Too many incorrect codes have been entered for this account. Please try again later.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', 'does not accept an issued code', 'holds none of them - nobody could answer this challenge', 'This sign-in cannot be completed with a passkey.', 'That security key request has expired. Please try again.', a passkey that will not save after a QR scan (publicKey.timeout, passkey_enroll_abandoned), or a passkey refused after moving hosts."
 ---
 
 # Two-factor authentication
@@ -168,30 +168,53 @@ Removal is `Rsx_Two_Factor_Controller.credential_remove({ id })`; a new code she
 
 ---
 
-## The forced-2FA recipe (application policy)
+## Emailed codes - the issued-code recipe
 
-The framework decides only whether an identity HAS a factor, and reads no requirement column of any kind. A requirement belongs in `Main::pre_dispatch()`, ahead of every screen - not on a page the user can decline to visit.
-
-Below is **the reference application's example**: `users.is_2fa_required` is a column IT added (`rsx/resource/migrations/2026_09_02_133139_add_is_2fa_required_to_users.php`), sets from its edit-user modal, and reads in its own `pre_dispatch()` - shipped in full at `system/app/RSpade/resource/reference_app/main.php`. Any predicate your policy can answer goes in the same place:
+A six-digit code the framework MINTS and the application DELIVERS, for a site that wants a second step from people who enrolled nothing (every portal client, say). Full recipe: `rsx:man two_factor_codes`; worked example behind `rsx.portal.emailed_sign_in_codes` (off): `reference_app/portal/auth/Portal_Login_Controller.php` (`challenge_accepts()`, `send_code()`).
 
 ```php
-if (str_starts_with($handler, 'Rsx\App\Frontend')) {
-    // ...
-    if (
-        $user->is_2fa_required
-        && !Rsx_Two_Factor::is_enabled((int) $login_user_id)
-        && !Session::is_impersonating()
-        && Session::get_session()->type_id !== Session::TYPE_PLAYWRIGHT
-    ) {
-        return redirect(Rsx::Route('Login_Controller::two_factor_setup'));
-    }
+// The login function: this sign-in owes a code - or any factor the user holds
+Rsx_Two_Factor::begin_challenge($login_user, [
+    Rsx_Two_Factor::ANSWER_ISSUED_CODE, Rsx_Two_Factor::ANSWER_TOTP,
+    Rsx_Two_Factor::ANSWER_PASSKEY, Rsx_Two_Factor::ANSWER_RECOVERY_CODE,
+]);
+
+// The send endpoint (#[Auth('public')] - the session is signed out)
+$code = Rsx_Two_Factor::issue_code();     // six digits; only a keyed hash is kept
+(new Sign_In_Code_Email($code))->to(Rsx_Two_Factor::pending_identity()->email)->send();
+```
+
+- **`$accepts` is ENFORCED.** `verify_challenge()` tries only the listed kinds; a correct answer of an unlisted kind is a wrong answer. A list the identity cannot answer throws before the sign-out. Null = what the identity holds (today's behaviour).
+- **Everything about the code is the framework's; everything about the policy is yours** - who owes one, what else is accepted, the email, the resend cap (`challenge_pending()['codes_issued']`), remember-this-device. A later code replaces an earlier one; it lives as long as the challenge (`rsx.two_factor.challenge_window_minutes`, 15); wrong codes spend the same attempt caps as TOTP.
+- **The email is `CATEGORY = SECURITY`** - it reaches a block-listed address and ignores the opt-out. **Delivery must be `live`**: in the default `suppressed` mode nobody can sign in.
+- `<Two_Factor_Challenge ... $send_controller $send_method>` sends the first code itself and offers "Send a new code".
+- **SSO**: the framework drives that ceremony, so it asks `sso.two_factor.accepts` / `portal.sso.two_factor.accepts` - answer from the same function the password login uses.
+- A passwordless passkey sign-in owes nothing, so a user who registers a passkey skips the email.
+
+---
+
+## Requiring a factor - a login requirement
+
+The framework decides only whether an identity HAS a factor. Requiring one is a **login requirement** (`rsx:man login_requirements`, skill `rspade:login-requirements`): a `Login_Requirement_Abstract` class whose `is_satisfied()` is your predicate, whose `screen()` is the setup page, and whose `surfaces()` lists the enrollment endpoints. Until it is met the user is signed in but reads as signed OUT everywhere else - pages, Ajax, model fetch - so it cannot be stepped around.
+
+The reference application's (`reference_app/app/login/two_factor_enrollment_requirement.php`), on `users.is_2fa_required` - a column IT added and sets from its edit-user modal:
+
+```php
+public static function is_satisfied(Rsx_Model_Abstract $user): bool
+{
+    return !$user->is_2fa_required || Rsx_Two_Factor::is_enabled((int) $user->login_user_id);
+}
+
+public static function surfaces(): array
+{
+    return ['Rsx_Two_Factor_Controller::totp_begin', 'Rsx_Two_Factor_Controller::totp_confirm',
+            'Rsx_Two_Factor_Controller::passkey_register_begin', 'Rsx_Two_Factor_Controller::passkey_register_confirm'];
 }
 ```
 
-- **The interstitial route must sit OUTSIDE the intercepted handler prefix**, or the redirect loops.
-- **Impersonation is exempt**: the impersonator authenticated as themselves, and cannot enroll for their victim anyway.
-- **`Session::TYPE_PLAYWRIGHT` is exempt**: `rsx:debug` dev-auth logs in with no password and no challenge, so a harness run would bounce and every page would become untestable for a flagged user.
-- `pre_dispatch()` runs on DOCUMENT requests and an SPA makes none - push a realtime user refresh when the flag changes, or it takes effect only at the next full load.
+- **Impersonation is exempt by default** (`applies_while_impersonating()`): the framework refuses enrollment while impersonating anyway.
+- Enrolling is the whole completion: the screen navigates to `/` on `enrolled`/`registered`, which re-evaluates and admits.
+- A flag changed mid-session reaches signed-in users on their next request after `Login_Requirements::recheck_user($user)`.
 
 ---
 
@@ -201,10 +224,10 @@ if (str_starts_with($handler, 'Rsx\App\Frontend')) {
 |---|---|---|
 | `<Totp_Enrollment />` | none | fires `enrolled` when the user acknowledges the code sheet (the factor is already live) |
 | `<Passkey_Register />` | none | fires `registered`; renders a plain notice instead of a button when WebAuthn is absent |
-| `<Two_Factor_Challenge $controller $method [$cancel_url] [$placeholder] />` | `$controller`/`$method` REQUIRED | posts `{code}` or `{assertion}`; expects `{redirect}` and follows it with `window.location`; fires `no_challenge` when nothing is pending. `$cancel_url` adds Cancel (`challenge_abandon`, then navigate; Cancel + Verify become a centred row beneath the box). The box's placeholder is derived from `has_totp` / `has_recovery_codes` (no box at all for a passkey-only identity); `$placeholder` replaces it. Full address instead of the masked one: `rsx.two_factor.challenge_shows_full_email` |
+| `<Two_Factor_Challenge $controller $method [$cancel_url] [$placeholder] [$send_controller $send_method] />` | `$controller`/`$method` REQUIRED | posts `{code}` or `{assertion}`; expects `{redirect}` and follows it with `window.location`; fires `no_challenge` when nothing is pending. `$cancel_url` adds Cancel (`challenge_abandon`, then navigate; Cancel + Verify become a centred row beneath the box). The box's placeholder is derived from `has_issued_code` / `has_totp` / `has_recovery_codes` (no box at all for a passkey-only challenge); `$placeholder` replaces it. `$send_controller`/`$send_method`: the app's issue-and-deliver endpoint (posts `{}`) - sends the first code itself, offers "Send a new code". Full address instead of the masked one: `rsx.two_factor.challenge_shows_full_email` |
 | `<Passkey_Sign_In $controller $method [$label] />` | endpoint REQUIRED | runs the passwordless ceremony, posts `{assertion}`, expects `{redirect}`; fires `signed_in`; renders nothing without WebAuthn |
 
-All four are **layout-neutral by contract** - no card, no heading, no width. The host page owns the box. One input takes both an authenticator code and a recovery code; the server tries both. All four pick the realm from the page.
+All four are **layout-neutral by contract** - no card, no heading, no width. The host page owns the box. One input takes every typed answer - an issued code, an authenticator code, a recovery code; the server tries each accepted kind. All four pick the realm from the page.
 
 JS helpers: `Rsx_Two_Factor.is_supported()`, `controller()` (the page realm's controller), `register_passkey(label)`, `authenticate_passkey()` and `sign_in_with_passkey()` (each returns the assertion; neither posts it).
 

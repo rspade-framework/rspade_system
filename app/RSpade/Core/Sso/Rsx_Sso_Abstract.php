@@ -644,7 +644,8 @@ abstract class Rsx_Sso_Abstract
      *     realm's admission rule in step 3. A handler denies by returning anything but true,
      *     and a returned STRING is shown to the user.
      *  2. The realm's LOCAL SECOND FACTOR still runs unless rsx.sso.skip_two_factor says
-     *     otherwise. The verify URL is resolved BEFORE begin_challenge() is called, because
+     *     otherwise - or, when the application's two_factor.accepts resolve hook answers an
+     *     array, runs with exactly those accepted answers. The verify URL is resolved BEFORE begin_challenge() is called, because
      *     begin_challenge() signs the realm out - resolving afterwards and failing would
      *     leave a browser signed out, holding a pending challenge, with nowhere to answer it.
      *  3. Otherwise the realm signs the identity in, the success is recorded, and the link is
@@ -686,7 +687,23 @@ abstract class Rsx_Sso_Abstract
 
         $two_factor = static::__two_factor();
 
-        if ($two_factor::is_enabled($identity) && !config('rsx.sso.skip_two_factor')) {
+        // THE APPLICATION'S CHALLENGE POLICY. A login function the application writes decides
+        // for itself whether a sign-in owes a challenge and what answers it accepts; this
+        // ceremony is the one sign-in path the framework drives, so the decision is asked
+        // for here. An array is the $accepts list for begin_challenge() - a challenge begins
+        // with it whatever the identity holds and whatever rsx.sso.skip_two_factor says,
+        // because the application asked for it by name. null declines, and the default
+        // follows: a challenge for an identity holding a factor, unless skipped.
+        $accepts = Rsx::trigger_resolve(static::__hook('two_factor.accepts'), [$payload_key => $identity]);
+
+        if ($accepts !== null && !is_array($accepts)) {
+            shouldnt_happen(
+                'A ' . static::__hook('two_factor.accepts') . ' handler returned ' . get_debug_type($accepts)
+                . ' - it must return an array of answer kinds or null.'
+            );
+        }
+
+        if ($accepts !== null || ($two_factor::is_enabled($identity) && !config('rsx.sso.skip_two_factor'))) {
             $verify_url = Rsx::trigger_resolve(static::__hook('two_factor.verify_url'), [$payload_key => $identity]);
 
             if (!is_string($verify_url) || $verify_url === '') {
@@ -699,7 +716,7 @@ abstract class Rsx_Sso_Abstract
                 );
             }
 
-            $two_factor::begin_challenge($identity);
+            $two_factor::begin_challenge($identity, $accepts);
 
             return $verify_url;
         }

@@ -1,7 +1,7 @@
 # Test catalog: two_factor
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues) | `planned`.
-Type: php / cli / asset / http / playwright. Last updated: 2026-10-05.
+Type: php / cli / asset / http / playwright. Last updated: 2026-10-07.
 
 ## Totp_Test (php, no transactions - pure logic) - RFC 6238 correctness and the rules verify() adds
 
@@ -99,6 +99,21 @@ it created.
 | tfa-chal-20 | THE PER-CHALLENGE CAP: the wrong answer that reaches challenge_max_failures destroys the challenge | max wrong codes, then a correct one; then a fresh challenge | below the cap 'That code is not valid.' and pending survives; at the cap 'Please sign in again.', pending null, the correct code then 'expired'; a fresh challenge signs in and the identity count is cleared | implemented |
 | tfa-chal-21 | THE PER-IDENTITY CAP spans challenges, counts every answer kind, refuses a correct code, and clear_failures() lifts it | identity_max 4 / challenge_max 2: a TOTP-shaped, a recovery-shaped, an empty assertion and another wrong code over two challenges, then a live code | is_locked after 4; the live code refused with the account message, nobody signed in, pending discarded; after clear_failures the live code signs in | implemented |
 | tfa-chal-22 | a cap or window below one fails loud | each key set to 0 | the accessor throws | implemented |
+
+## Two_Factor_Issued_Code_Test (php, default isolation) - what a challenge accepts, and the issued code
+
+`begin_challenge($identity, $accepts)` names the answer kinds a challenge takes and `verify_challenge()` enforces it;
+`issue_code()` mints six digits the application delivers (an emailed sign-in code - `rsx:man two_factor_codes`).
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| TFA-ISS-01 | `$accepts` is validated before the sign-out | `[]`, `['sms']`, `[TOTP]` for an identity with none; then `[ISSUED_CODE, TOTP]` | three InvalidArgumentExceptions, nothing parked; then accepts `[issued_code]`, has_issued_code, codes_issued 0 | implemented |
+| TFA-ISS-02 | an answer of a kind not accepted is refused, even a correct one | identity with TOTP, challenge `[ISSUED_CODE]`, a live TOTP code | "not valid", not signed in, has_totp false | implemented |
+| TFA-ISS-03 | an issued code signs in, and only its hash is stored | `[ISSUED_CODE]`, issue_code(), verify | six digits, codes_issued 1, pending_identity() is the identity, the digits absent from the session value, signed in, challenge spent | implemented |
+| TFA-ISS-04 | a later code replaces an earlier one | two issue_code() calls | the first is "not valid", the second signs in | implemented |
+| TFA-ISS-05 | issue_code() refuses without an accepting challenge | nothing pending; then a default challenge | Two_Factor_Failed_Exception "expired"; RuntimeException "does not accept an issued code" | implemented |
+| TFA-ISS-06 | wrong issued codes spend the challenge's attempt cap | challenge_max_failures wrong codes | "not valid" until the last, then "sign in again" and the challenge is gone | implemented |
+| TFA-ISS-07 | the portal facade issues and verifies on its own realm | portal user, `[ISSUED_CODE]` | the staff realm sees no challenge; the code signs the portal user in | implemented |
 
 ## Passkeys_Test (php, default isolation) - WebAuthn against a simulated authenticator
 

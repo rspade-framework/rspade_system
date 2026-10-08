@@ -26,6 +26,8 @@ class Rsx_Sms
     const TRANSACTIONAL = 1;
     const NOTIFICATION = 2;
     const MARKETING = 3;
+    /** A required notice the recipient set in motion (a sign-in code): ignores the opt-out. */
+    const SECURITY = 4;
 
     /** Every claimed row is recorded SUPPRESSED - there is nothing to hand it to. */
     const MODE_SUPPRESSED = 'suppressed';
@@ -68,7 +70,7 @@ class Rsx_Sms
      *
      * @param string $to Destination phone number (E.164 recommended)
      * @param string $body Message text
-     * @param int $category One of self::TRANSACTIONAL, NOTIFICATION, MARKETING
+     * @param int $category One of self::TRANSACTIONAL, NOTIFICATION, MARKETING, SECURITY
      * @param int|null $related_type Polymorphic type ref for what triggered this SMS
      * @param int|null $related_id Polymorphic ID
      * @return Sms_Queue_Model The queued record
@@ -83,9 +85,9 @@ class Rsx_Sms
         $site_id = static::__current_site_id();
         $to = trim($to);
 
-        // Blocklist: transactional SMS always delivers; other categories are skipped
-        // (recorded BLOCKED) for opted-out numbers.
-        if ($category !== self::TRANSACTIONAL) {
+        // Blocklist: transactional and security SMS always deliver; other categories are
+        // skipped (recorded BLOCKED) for opted-out numbers.
+        if ($category !== self::TRANSACTIONAL && $category !== self::SECURITY) {
             if (Sms_Recipient_Model::is_blocked($site_id, $to, $category)) {
                 return Sms_Queue_Model::enqueue_blocked($site_id, $to, $body, $category);
             }

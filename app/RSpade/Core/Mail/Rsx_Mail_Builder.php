@@ -93,7 +93,7 @@ class Rsx_Mail_Builder
      *
      * On top of the frozen template_data every email gets three things it did not have
      * to ask for: its own subject, the unsubscribe URL (only when the category permits
-     * unsubscribing - a transactional email gets null and its footer prints no link),
+     * unsubscribing - a transactional or security email gets null and its footer prints no link),
      * and the branding block, so a template never reaches into config for chrome.
      *
      * The unsubscribe link is minted for the ORIGINAL recipient. On a dev host the
@@ -116,7 +116,9 @@ class Rsx_Mail_Builder
      */
     private static function _unsubscribe_url(Email_Queue_Model $row): ?string
     {
-        if ((int) $row->category_id === Email_Queue_Model::CATEGORY_TRANSACTIONAL) {
+        $category_id = (int) $row->category_id;
+
+        if ($category_id === Email_Queue_Model::CATEGORY_TRANSACTIONAL || $category_id === Email_Queue_Model::CATEGORY_SECURITY) {
             return null;
         }
 

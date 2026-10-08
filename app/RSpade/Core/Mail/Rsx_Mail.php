@@ -37,6 +37,7 @@ class Rsx_Mail
     const TRANSACTIONAL = 1;
     const NOTIFICATION = 2;
     const MARKETING = 3;
+    const SECURITY = 4;
 
     /**
      * Queue an email built by an Rsx_Email_Abstract subclass.
@@ -46,13 +47,13 @@ class Rsx_Mail
      *   1. Resolve the tenant (the realm being served, not the identity logged in).
      *   2. Dedupe: an already-used key returns the EXISTING row, whatever its status, and
      *      enqueues nothing.
-     *   3. Site block list (EVERY category, transactional included): a listed `to` records
+     *   3. Site block list (every category but SECURITY, transactional included): a listed `to` records
      *      the whole message BLOCKED; a listed cc/bcc entry is removed and recorded on the
      *      row, and the message still goes to everybody else. Checked BEFORE the opt-out,
      *      because it is the stronger rule and its reason is the one worth recording, and
      *      before the dev-site gate, on the ORIGINAL addresses - after it, a dev host would
      *      look up its own catchall and the list would only ever be exercised in production.
-     *   4. Recipient opt-out: a non-transactional email to an address that unsubscribed is
+     *   4. Recipient opt-out: a notification or marketing email to an address that unsubscribed is
      *      RECORDED as BLOCKED, never sent - the audit row is the point.
      *   5. Dev-site gate (a second, independent safety layer keyed on hostname), on `to`
      *      AND on every cc/bcc entry.
@@ -111,8 +112,12 @@ class Rsx_Mail
 
         $to = $descriptor['to_address'];
 
-        // THE SITE BLOCK LIST. One query for every address on the envelope.
-        $listed = Email_Blocked_Address_Model::listed_among($site_id, static::__envelope_addresses($descriptor));
+        // THE SITE BLOCK LIST. One query for every address on the envelope. A SECURITY email
+        // is exempt: the list stops correspondence the site initiates, and a sign-in code the
+        // recipient asked for is not that.
+        $listed = $category === self::SECURITY
+            ? []
+            : Email_Blocked_Address_Model::listed_among($site_id, static::__envelope_addresses($descriptor));
         $to_reason = $listed[Email_Blocked_Address_Model::normalize($to)] ?? null;
 
         if ($to_reason !== null) {
@@ -131,9 +136,11 @@ class Rsx_Mail
                 : null
         );
 
-        // THE RECIPIENT OPT-OUT. Transactional email ignores it; the site block list above
-        // is the rule no category escapes.
-        if ($category !== self::TRANSACTIONAL && Email_Recipient_Model::is_blocked($site_id, $to, $category)) {
+        // THE RECIPIENT OPT-OUT. Transactional and security email ignore it.
+        if ($category !== self::TRANSACTIONAL
+            && $category !== self::SECURITY
+            && Email_Recipient_Model::is_blocked($site_id, $to, $category)
+        ) {
             return static::__record_blocked(
                 $descriptor,
                 $envelope['attachments'],
@@ -272,6 +279,11 @@ class Rsx_Mail
      */
     public static function _recheck_block_list(Email_Queue_Model $row): bool
     {
+        // SECURITY email is exempt from the site block list - see enqueue().
+        if ((int) $row->category_id === Email_Queue_Model::CATEGORY_SECURITY) {
+            return false;
+        }
+
         $envelope = [
             'to_address' => $row->to_address,
             'dev_original_to' => $row->dev_original_to,
@@ -634,10 +646,13 @@ class Rsx_Mail
             return self::RESEND_ALREADY_QUEUED;
         }
 
-        $listed_reason = Email_Blocked_Address_Model::reason_for(
-            (int) $record->site_id,
-            $record->dev_original_to ?: $record->to_address
-        );
+        // SECURITY email is exempt from the site block list - see enqueue().
+        $listed_reason = (int) $record->category_id === Email_Queue_Model::CATEGORY_SECURITY
+            ? null
+            : Email_Blocked_Address_Model::reason_for(
+                (int) $record->site_id,
+                $record->dev_original_to ?: $record->to_address
+            );
 
         if ($listed_reason !== null) {
             return self::RESEND_ADDRESS_BLOCKED;
@@ -657,14 +672,14 @@ class Rsx_Mail
     }
 
     // =========================================================================
-    // SITE BLOCK LIST API - the SITE's rule, every category
+    // SITE BLOCK LIST API - the SITE's rule, every category but SECURITY
     // =========================================================================
 
     /**
      * Every entry on the current site's block list: email, reason, created_at.
      *
-     * The list is the SITE's rule that no email of any category - transactional included -
-     * may reach an address. It is not the recipient opt-out (is_blocked() / block() below):
+     * The list is the SITE's rule that no email it initiates - transactional included - may
+     * reach an address. SECURITY email (a notice the recipient set in motion) is exempt. It is not the recipient opt-out (is_blocked() / block() below):
      * nothing a recipient can reach writes it, and the framework never writes it on its own,
      * so an application may treat the whole list for a site as its own and reconcile it.
      *

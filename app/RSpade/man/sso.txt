@@ -425,6 +425,19 @@ THE POLICY HOOKS
         beginning one logs the session out and a browser left logged out with
         nowhere to answer is not a state to hand a user.
 
+    sso.two_factor.accepts          (resolve)
+        The application's challenge policy for a federated sign-in - the
+        same policy its password login applies. Receives {login_user};
+        returns an $accepts array for begin_challenge() (rsx:man two_factor,
+        THE CHALLENGE), or null to decline. An array begins a challenge
+        accepting exactly those answers WHATEVER the identity holds and
+        whatever rsx.sso.skip_two_factor says - the application asked for it
+        by name; this is how a Google sign-in is made to owe an emailed code
+        (rsx:man two_factor_codes). null leaves the default: a challenge for
+        an identity holding a factor, unless skipped. Anything else is a
+        shouldnt_happen(). Have the handler call the SAME function the
+        password login asks, so the two doors cannot drift.
+
     sso.login.destination           (resolve)
         Where a completed federated sign-in lands. Receives {login_user};
         default '/'. Return the SAME function your password login returns - a
@@ -622,9 +635,9 @@ TWO-FACTOR INTERPLAY
     into this account", and a user who deliberately enrolled a factor here did
     not consent to it being skippable by signing in another way.
 
-    So when Rsx_Two_Factor::is_enabled($login_user) (Rsx_Portal_Two_Factor on
-    the portal) and
-    rsx.sso.skip_two_factor is false, _complete_login() resolves
+    So when sso.two_factor.accepts answers an array, or when
+    Rsx_Two_Factor::is_enabled($login_user) (Rsx_Portal_Two_Factor on the
+    portal) and rsx.sso.skip_two_factor is false, _complete_login() resolves
     sso.two_factor.verify_url, begins the challenge - which LOGS THE SESSION
     OUT - and redirects there. Nothing is signed in until the factor passes,
     exactly as in the password flow, and the same verification endpoint and
@@ -866,6 +879,7 @@ THE CLIENT PORTAL REALM
         portal.sso.login.authorize        (gate)
         portal.sso.two_factor.verify_url  (resolve) - REQUIRED once any portal
                                           user holds a factor
+        portal.sso.two_factor.accepts     (resolve) - the challenge policy
         portal.sso.login.destination      (resolve)
         portal.sso.link.destination       (resolve)
 

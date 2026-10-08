@@ -136,7 +136,7 @@ WRITING AN EMAIL
     THE THREE MANDATORY MEMBERS. Each is a manifest-build FATAL when absent, with a
     per-class worklist (Email_ManifestSupport):
 
-        const CATEGORY      TRANSACTIONAL | NOTIFICATION | MARKETING. There is no default
+        const CATEGORY      TRANSACTIONAL | NOTIFICATION | MARKETING | SECURITY. There is no default
                             because there is no safe one: TRANSACTIONAL over-delivers to
                             people who opted out, NOTIFICATION silently drops mail somebody
                             needed. It is a per-email editorial decision.
@@ -188,10 +188,10 @@ SENDING
            portal request, the staff Session site otherwise. The site stamps the row AND
            drives both block lookups, so getting it wrong mails somebody who must not be.
         2. Dedupe - the existing row is returned whatever its status, Blocked included.
-        3. The SITE BLOCK LIST, every category (below), on the ORIGINAL addresses: a listed
+        3. The SITE BLOCK LIST, every category but SECURITY (below), on the ORIGINAL addresses: a listed
            `to` records the whole message as a BLOCKED row; a listed cc/bcc entry is
            removed, recorded in withheld_recipients, and the message still goes.
-        4. The recipient opt-out (non-transactional only) - an opted-out address is
+        4. The recipient opt-out (notification and marketing only) - an opted-out address is
            RECORDED as a BLOCKED row, never sent. The audit row is the point.
         5. The dev-site recipient gate (below), on `to` and on every cc/bcc entry.
         6. Freeze subject() and data() into the row.
@@ -205,19 +205,29 @@ SENDING
 
 RECIPIENTS AND BLOCKLIST
 
-    Categories (Rsx_Email_Abstract:: and Rsx_Mail:: spell the same three):
+    Categories (Rsx_Email_Abstract:: and Rsx_Mail:: spell the same four):
 
         TRANSACTIONAL (1)   Ignores the recipient opt-out. Password resets,
-                            invitations, receipts, security notices. The site block
-                            list still applies.
+                            invitations, receipts. The site block list still applies.
         NOTIFICATION  (2)   Respects the opt-out.
         MARKETING     (3)   Respects the opt-out.
+        SECURITY      (4)   A required notice the RECIPIENT set in motion - the
+                            six-digit code that completes their sign-in
+                            (rsx:man two_factor_codes). Ignores the recipient opt-out
+                            AND the site block list, and carries no unsubscribe link:
+                            the block list stops correspondence the SITE initiates, and
+                            a person who cannot receive their code is locked out of
+                            their own account. The dev-site recipient gate and
+                            rsx.mail.delivery still apply.
 
-    Pick by what the message IS, not by how much you want it delivered.
+    Pick by what the message IS, not by how much you want it delivered. SECURITY is for
+    a message the recipient is waiting for in order to get in, sent because of something
+    they just did - never for a notice the site decides to send.
 
     TWO BLOCK RULES, TWO TABLES. The recipient OPT-OUT is the recipient's choice, set by an
-    unsubscribe link, per category, and never applies to transactional mail. The SITE BLOCK
-    LIST is the site's ruling that no email of any category may reach an address. They have
+    unsubscribe link, per category, and never applies to transactional or security mail.
+    The SITE BLOCK LIST is the site's ruling that no email it initiates may reach an
+    address - every category but SECURITY. They have
     different authors and different override rules, so they are separate tables and
     separate method families.
 
@@ -243,7 +253,7 @@ RECIPIENTS AND BLOCKLIST
     unblocking an absent one is not an error. Addresses are matched trimmed and
     lowercased. A blank reason throws - it is what the Blocked row says.
 
-    The list is checked three times:
+    The list is checked three times (never for a SECURITY email):
 
         at enqueue      `to` listed -> the whole message is written BLOCKED, block_cause_id
                         2, last_error "Address is on this site's block list: <reason>",
@@ -716,7 +726,7 @@ UNSUBSCRIBE
         POST    with body List-Unsubscribe=One-Click (a provider, no browser, no token) is
                 scope category and answers 200 text/plain "Unsubscribed." with no redirect.
 
-    Anything missing, malformed, tampered with, or naming TRANSACTIONAL gets ONE
+    Anything missing, malformed, tampered with, or naming TRANSACTIONAL or SECURITY gets ONE
     indistinguishable 404. The path is CSRF-exempt (a provider posts without a token; the
     HMAC is the auth) and creates no session.
 
@@ -948,11 +958,13 @@ EXISTING TEMPLATES
     Framework
         Rsx_Mail_Test_Email             the rsx:mail:test probe. Dependency-free.
 
-    Reference app (rsx/emails/, all TRANSACTIONAL)
+    Reference app (rsx/emails/, TRANSACTIONAL unless noted)
         User_Invitation_Email           staff invitation carrying the single-use invite link
         Welcome_Email                   after account creation
         Portal_Invitation_Email         portal invitation with the registration link
         Portal_Password_Reset_Email     portal password reset link
+        Portal_Sign_In_Code_Email       SECURITY - the emailed sign-in code
+                                        (rsx.portal.emailed_sign_in_codes)
         Portal_Request_Reply_Email      a reply landed on a portal request thread
         Portal_Shared_Content_Email     content shared with a portal user
 
@@ -964,5 +976,6 @@ SEE ALSO
     rsx:man file_upload File_Attachment_Model, the blob store
     rsx:man time        the datetime formatters an email must use
     rsx:man portal      the experience fork the tenant resolution follows
+    rsx:man two_factor_codes  the SECURITY category's reason for existing: emailed sign-in codes
 
 RSpade 1.0                          August 2026                                    EMAIL(7)

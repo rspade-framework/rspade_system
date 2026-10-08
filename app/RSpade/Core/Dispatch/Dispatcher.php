@@ -29,6 +29,7 @@ use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Errors\Error_Screens;
+use App\RSpade\Core\Login\Login_Requirements;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
@@ -332,6 +333,11 @@ class Dispatcher
         $params['_handler'] = $handler_class;
 
         Debugger::console_debug('DISPATCH', 'Matched route to ' . $handler_class . '::' . $handler_method . ' params: ' . json_encode($params));
+
+        // The surface this request serves, for the login-requirements concealment: a
+        // signed-in identity with requirements outstanding is visible only to the surfaces
+        // they list. Bound before anything below asks who is signed in.
+        Login_Requirements::_bind_surface($route_match['surface'] ?? ($handler_class . '::' . $handler_method));
 
         // --- FPC detection (staff) ---
         // #[FPC] is baked onto the route row by the manifest. Active only for an anonymous
@@ -1232,6 +1238,10 @@ class Dispatcher
         $details = $response->get_details();
         $request = request();
 
+        if ($type === Ajax::ERROR_REQUIREMENT_PENDING) {
+            return redirect((string) ($details['destination'] ?? '/'));
+        }
+
         if ($type === Ajax::ERROR_FATAL) {
             $message = $reason;
             if (!empty($details)) {
@@ -1247,6 +1257,14 @@ class Dispatcher
         // -> a themed 403. The reason is flashed here because the flash is only ever read by
         // the login page the unidentified caller is about to land on.
         if ($type === Ajax::ERROR_AUTH_REQUIRED || $type === Ajax::ERROR_UNAUTHORIZED) {
+            // A signed-in identity with login requirements outstanding, refused a surface
+            // they do not list: it goes to the requirement, never to the login page.
+            $requirement_destination = Login_Requirements::_steer_destination($realm['realm']);
+
+            if ($requirement_destination !== null) {
+                return redirect($requirement_destination);
+            }
+
             $is_logged_in = $realm['realm'] === Auth_Gates::REALM_PORTAL
                 ? Portal_Session::is_logged_in()
                 : Session::is_logged_in();

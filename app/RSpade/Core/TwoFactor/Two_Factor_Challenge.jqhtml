@@ -12,21 +12,35 @@ interstitial the app requires), so the APPLICATION owns the verification endpoin
 component posts to it. It is the <Rsx_Form> naming convention ($controller + $method) applied
 to a control that is not a form over model fields.
 
-THE ENDPOINT'S CONTRACT, both directions:
+THE VERIFICATION ENDPOINT'S CONTRACT, both directions:
   it receives  {code: '123456'}  from the typed answer, or
                {assertion: {id, clientDataJSON, authenticatorData, signature}} from a passkey
   it calls     Rsx_Two_Factor::verify_challenge($params)
   it returns   {redirect: '/somewhere'} - followed with window.location
   it rejects   with a user-safe message, rendered inline here
 
-ONE INPUT FOR TWO KINDS OF ANSWER. A 6-digit authenticator code and a recovery code both go
-in the same box, because the server tries both and the user should not have to know which
-kind of string they are holding. The box asks only for what this identity can answer with
-(has_totp, has_recovery_codes from the challenge state):
-    authenticator + recovery codes   "Authenticator or recovery code"
-    authenticator only               "6-digit code"
-    recovery codes only              "Recovery code"
-    neither (a passkey only)         no box and no Verify - the passkey button is the answer
+ONE INPUT FOR EVERY TYPED ANSWER. An issued code (emailed or texted by the application), a
+6-digit authenticator code and a recovery code all go in the same box, because the server
+tries each kind the challenge accepts and the user should not have to know which kind of
+string they are holding. The box asks only for what this challenge accepts and this identity
+can answer with (has_issued_code, has_totp, has_recovery_codes from the challenge state):
+    issued code (+ authenticator) + recovery codes   "6-digit or recovery code"
+    issued code (+ authenticator)                    "6-digit code"
+    authenticator + recovery codes                   "Authenticator or recovery code"
+    authenticator only                               "6-digit code"
+    recovery codes only                              "Recovery code"
+    none of them (a passkey only)                    no box and no Verify - the passkey button
+                                                     is the answer
+
+ISSUED CODES. When the challenge accepts one and the host names a send endpoint
+($send_controller + $send_method), the screen offers "Send a new code", and sends the FIRST
+code itself when none has been issued yet. The send endpoint's contract:
+  it receives  {}
+  it calls     Rsx_Two_Factor::issue_code() and delivers the digits (an email declared
+               CATEGORY = SECURITY, an SMS, ...) to pending_identity()
+  it returns   anything; the screen re-reads the challenge and says "A new code has been sent."
+  it rejects   with a user-safe message (a resend cap the application keeps), rendered inline
+Without a send endpoint the host issues and delivers the code itself, before the page loads.
 $placeholder replaces the derived text (the box still appears only when there is a code to
 type).
 
@@ -54,6 +68,8 @@ Args:
   $method      (required) - the endpoint's method name.
   $cancel_url  - where Cancel leads (normally the login page). Absent: no Cancel.
   $placeholder - the code box's placeholder, replacing the derived one (e.g. '------').
+  $send_controller, $send_method - the application endpoint that issues and delivers a code.
+                 Absent: no "Send a new code".
 
 Events:
   no_challenge - nothing is pending: an expired window, or a direct visit. The host page
@@ -71,7 +87,9 @@ See: php artisan rsx:man two_factor
     <% } else { %>
         <%
             const _c = this.data.challenge;
-            const _code_answer = _c.has_totp || _c.has_recovery_codes;
+            const _code_answer = _c.has_issued_code || _c.has_totp || _c.has_recovery_codes;
+            const _numeric = !_c.has_recovery_codes;
+            const _send = _c.has_issued_code && !!this.args.send_controller && !!this.args.send_method;
             const _passkey = _c.has_passkey && this.state.passkeys_supported;
             const _cancel = !!this.args.cancel_url;
         %>
@@ -82,12 +100,12 @@ See: php artisan rsx:man two_factor
 
             <% if (_code_answer && _cancel) { %>
                 <input type="text" class="form-control Two_Factor_Challenge__code-input" $sid="code"
-                       inputmode="<%= _c.has_recovery_codes ? 'text' : 'numeric' %>" autocomplete="one-time-code" autofocus
+                       inputmode="<%= _numeric ? 'numeric' : 'text' %>" autocomplete="one-time-code" autofocus
                        placeholder="<%= this.placeholder() %>" aria-label="Verification code" />
             <% } else if (_code_answer) { %>
                 <div class="Two_Factor_Challenge__answer">
                     <input type="text" class="form-control Two_Factor_Challenge__code-input" $sid="code"
-                           inputmode="<%= _c.has_recovery_codes ? 'text' : 'numeric' %>" autocomplete="one-time-code" autofocus
+                           inputmode="<%= _numeric ? 'numeric' : 'text' %>" autocomplete="one-time-code" autofocus
                            placeholder="<%= this.placeholder() %>" aria-label="Verification code" />
                     <button type="button" class="btn btn-primary" $sid="verify">Verify</button>
                 </div>
@@ -108,6 +126,16 @@ See: php artisan rsx:man two_factor
                 <button type="button" class="btn btn-outline-secondary Two_Factor_Challenge__passkey" $sid="passkey">
                     Use passkey
                 </button>
+            <% } %>
+
+            <% if (_send) { %>
+                <div class="Two_Factor_Challenge__send">
+                    <button type="button" class="btn btn-link" $sid="send">Send a new code</button>
+                </div>
+            <% } %>
+
+            <% if (this.state.notice) { %>
+                <div class="Two_Factor_Challenge__notice-inline"><%= this.state.notice %></div>
             <% } %>
 
             <% if (this.state.error) { %>

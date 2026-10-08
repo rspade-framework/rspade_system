@@ -103,6 +103,7 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     const CATEGORY_TRANSACTIONAL = 1;
     const CATEGORY_NOTIFICATION = 2;
     const CATEGORY_MARKETING = 3;
+    const CATEGORY_SECURITY = 4;
 
     /**
      * What last_error says on a row reclaim_stranded() rescued. The mail twin.
@@ -151,6 +152,7 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
             1 => ['constant' => 'CATEGORY_TRANSACTIONAL', 'label' => 'Transactional', 'badge' => 'bg-primary'],
             2 => ['constant' => 'CATEGORY_NOTIFICATION', 'label' => 'Notification', 'badge' => 'bg-info'],
             3 => ['constant' => 'CATEGORY_MARKETING', 'label' => 'Marketing', 'badge' => 'bg-secondary'],
+            4 => ['constant' => 'CATEGORY_SECURITY', 'label' => 'Security', 'badge' => 'bg-dark'],
         ],
     ];
 

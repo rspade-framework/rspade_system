@@ -295,7 +295,7 @@ TURNSTILE
 TWO-FACTOR AUTHENTICATION
     'two_factor' => [
         'issuer' => null,
-        'challenge_window_minutes' => 10,
+        'challenge_window_minutes' => 15,
         'challenge_shows_full_email' => false,
         'challenge_max_failures' => 5,
         'identity_max_failures' => 10,

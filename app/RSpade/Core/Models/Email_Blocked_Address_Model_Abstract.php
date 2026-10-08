@@ -8,14 +8,16 @@ use App\RSpade\Core\Database\Rsx_Result_Set;
 /**
  * Email_Blocked_Address_Model_Abstract - the SITE's email block list (framework core).
  *
- * One row per address a site has ruled that no email of ANY category may reach -
- * transactional included. Rsx_Mail consults it at enqueue, again when the drain claims
+ * One row per address a site has ruled that no email it initiates may reach -
+ * transactional included. The one exemption is SECURITY: a notice the recipient set in
+ * motion (a sign-in code, a password reset) is not the site's correspondence, and blocking
+ * it locks a person out of their own account. Rsx_Mail consults it at enqueue, again when the drain claims
  * a row, and at resend; Rsx_Mail::block_address() / unblock_address() /
  * is_address_blocked() / blocked_addresses() are the application's API to it.
  *
  * NOT THE OPT-OUT. _email_recipients.is_blocked_* is the RECIPIENT's choice, set by an
  * unsubscribe link, and a recipient cannot opt out of a password reset. This table is
- * the SITE's choice: a different author, a different lifetime, and a rule no category
+ * the SITE's choice: a different author, a different lifetime, and a rule only SECURITY
  * escapes. Nothing a recipient can reach writes here, and the framework never writes
  * here on its own - no automatic entry on a bounce, no panel button. The rows are the
  * application's, so an application that keeps the list in sync with its own data may

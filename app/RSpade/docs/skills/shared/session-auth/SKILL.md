@@ -77,6 +77,8 @@ public static function index(Request $request, array $params = [])
 
 The second factor itself is `Rsx_Two_Factor` (TOTP, passkeys, recovery codes): `attempt(record: false, touch_last_login: false)` is the password stage, `begin_challenge()` parks the identity and logs the session out, and `verify_challenge()` is what logs in and records - it is throttle-first and writes `STATUS_FAILED_2FA` itself. Skill `rspade:two-factor`; `rsx:man two_factor`.
 
+**Signed in is not always admitted.** With a login requirement outstanding (`Login_Requirement_Abstract` - enroll a factor, accept terms), `is_logged_in()`, `get_user()` and the rest answer NOT LOGGED IN except on the surfaces that requirement lists, so a user who just signed in may read as anonymous on every other page. Skill `rspade:login-requirements`; `rsx:man login_requirements`.
+
 ### Login history APIs, and their window
 
 ```php
