@@ -299,6 +299,7 @@ TWO-FACTOR AUTHENTICATION
         'issuer' => null,
         'challenge_window_minutes' => 15,
         'challenge_shows_full_email' => false,
+        'recovery_codes' => true,
         'challenge_max_failures' => 5,
         'identity_max_failures' => 10,
         'identity_failure_window_minutes' => 60,
@@ -329,6 +330,11 @@ TWO-FACTOR AUTHENTICATION
     challenge_shows_full_email (false) lets the login challenge screen
     print the full address being signed in to instead of the masked one
     (rsx:man two_factor).
+
+    recovery_codes (true) is whether the deployment issues recovery codes.
+    false mints none on any path, in both realms; it deletes nothing an
+    identity already holds and does not change what the challenge accepts
+    (rsx:man two_factor, A DEPLOYMENT WITH NO RECOVERY CODES).
 
     challenge_max_failures and identity_max_failures are ATTEMPT CAPS
     (counts): wrong answers one parked challenge survives (the answer that

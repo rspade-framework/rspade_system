@@ -216,6 +216,38 @@ COMPOSER PACKAGES
     which answers an inline SVG with its recommended screen and print size.
     rsx:man qr_codes.
 
+SYSTEM PROGRAMS
+    Programs the RSpade container images install, in the development and the
+    production target alike. They are present on a box that runs one of those
+    images; a host built another way installs them itself.
+
+    weasyprint      HTML to PDF, for a document the application prints - an
+                    invoice, a statement, a report:
+
+                        weasyprint page.html page.pdf
+
+                    A renderer, not a browser. It runs no JavaScript, so the
+                    input is finished HTML with its stylesheets inlined or
+                    reachable as files. It lays out paged-media CSS (@page
+                    size and margins, page breaks, running headers and
+                    footers, page counters) and writes every <a href> as a
+                    link in the PDF. It is NOT a browser's layout engine: a
+                    sheet for it is written as a document - blocks, tables,
+                    simple flex rows - and checked in its output, never
+                    assumed from how the page looks on screen. Box shadows
+                    and filters are not drawn. Reach for it when the server
+                    must produce the PDF itself; never install a headless
+                    browser or a PDF library for that.
+
+                    A PDF is set in the SERVER's fonts, and both images carry
+                    the same ones: sans-serif is Noto Sans, serif is Noto
+                    Serif, monospace is DejaVu Sans Mono (fontconfig,
+                    fonts-noto-core, fonts-dejavu-core).
+
+                    Spawn it with an argv array (Symfony Process), never a
+                    shell string, and hand it only HTML the application
+                    generated.
+
 THE TWO RULES THAT MAKE THIS A LIBRARY
     Exposure is a standing commitment
         A package on this list is expected to remain available indefinitely at a

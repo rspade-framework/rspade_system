@@ -9,6 +9,8 @@ Drop it wherever the enrollment belongs and listen for 'enrolled'. It fetches it
 seed on load, shows the QR code and the manual-entry secret, takes the 6-digit proof (one
 digit per box - <Code_Input>, with the cursor already in it), and
 then reveals the recovery codes ONCE - which is the only time those codes exist anywhere.
+On a deployment that issues no recovery codes (rsx.two_factor.recovery_codes false) there
+is no reveal: 'enrolled' fires the moment the proof is accepted.
 
 LAYOUT-NEUTRAL BY CONTRACT. It draws no card, no border and no page heading: the host page
 owns the box around it. That is what lets the same component sit in a settings panel, in a
@@ -25,8 +27,9 @@ other spelling, deliberately (Rsx_Two_Factor_Abstract::__enrolling_identity). On
 page it enrolls the signed-in PORTAL user, through the portal realm's controller.
 
 Events:
-  enrolled  - fired when the user acknowledges the recovery codes. The factor is already
-              live at that point; this says the user is finished looking at the sheet.
+  enrolled  - fired when the user acknowledges the recovery codes, or as soon as the
+              proof is accepted when no sheet was minted. The factor is already live at
+              that point; this says the ceremony has nothing more to show.
 
 See: php artisan rsx:man two_factor
 --%>

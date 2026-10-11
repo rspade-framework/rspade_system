@@ -34,7 +34,7 @@ DESCRIPTION
        WHAT IT DOES NOT DO. No command is dispatched: Symfony's console is bootstrapped
        but never handed an input, so there is no command name, no Task_Instance, no
        task run and no progress report. A script prints its own output and chooses
-       its own exit code. The script's arguments are the SCRIPT'S - the framework reads
+       its own exit status (EXIT STATUS below). The script's arguments are the SCRIPT'S - the framework reads
        no command name out of argv, and `php my_tool.php help` boots exactly as
        `php my_tool.php` does.
 
@@ -122,6 +122,38 @@ TASK DISPATCH: A WRITE MAY START A WORKER
        Not the answer: `supervisorctl stop tasks` (that program only runs the cron
        tick; the script itself is the spawner) and rsx:maintenance:enable (it stops
        rsx-lockd and Redis, which the script needs). Full contract: rsx:man tasks, SPAWNING OFF.
+
+EXIT STATUS
+       Whatever runs a script - a shell && chain, `set -e`, cron, a CI step, a
+       parent's passthru() - reads its exit status and nothing else:
+
+           0      the script ran to its end
+           N      the script called exit(N); the framework never rewrites it
+           1      the script died of an uncaught exception or Error. The application's
+                  exception handler reports and prints it first, exactly as under
+                  artisan, so the output is unchanged; only the status says "failed"
+           255    PHP itself gave up (memory exhausted, a compile error)
+           75     refused by the maintenance gate, before anything booted
+
+       REPORTING A FAILURE IS THE SCRIPT'S OBLIGATION. The framework can only see a
+       script DIE. A script that detects its own failure and carries on to its last
+       line - a row it could not import, a file it did not produce, an exception it
+       caught and logged - has exited 0, and its caller reads success. Such a script
+       ends with exit(N), N non-zero:
+
+           $failed = 0;
+           foreach ($rows as $row) {
+               try {
+                   import_row($row);
+               } catch (Import_Row_Exception $e) {
+                   fwrite(STDERR, "row {$row['id']}: {$e->getMessage()}\n");
+                   $failed++;
+               }
+           }
+           exit($failed > 0 ? 1 : 0);
+
+       A script with nothing to recover from needs no try/catch at all: letting the
+       exception escape is the correct report.
 
 MAINTENANCE MODE
        While the maintenance flag is up, an external script is REFUSED:
@@ -233,4 +265,4 @@ SEE ALSO
 AUTHORS
        RSX Framework Team
 
-RSX Framework                   September 2026                   SCRIPTING(7)
+RSX Framework                    October 2026                    SCRIPTING(7)

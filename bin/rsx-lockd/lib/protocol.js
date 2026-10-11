@@ -36,6 +36,7 @@ const OPS = [
     'dump',
     'force_clear',
     'ping',
+    'log',
     // Worker pool accounting (lib/pool.js).
     'pool.lock',
     'pool.unlock',

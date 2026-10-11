@@ -60,6 +60,7 @@ runs it as root before the application serves traffic.
 | Browser libraries | yes (`rsx:debug`) | no |
 | Blank credentials | generated + printed once | **refuses to start** |
 | LibreOffice, poppler | yes | yes — document preview is a runtime feature |
+| WeasyPrint (HTML to PDF), Noto + DejaVu fonts | yes | yes — the same renderer and the same fonts, so a PDF made in either is the same PDF |
 | ImageMagick policy (`imagemagick/policy.xml`) | raster coders only | raster coders only |
 
 ## Services

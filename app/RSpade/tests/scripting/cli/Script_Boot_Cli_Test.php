@@ -269,6 +269,80 @@ class Script_Boot_Cli_Test extends Rsx_Test_Abstract
         }
     }
 
+    /** A script that boots through the entry point and then runs $body. */
+    protected static function __exit_script(string $name, string $body): string
+    {
+        return static::__write_script(
+            $name,
+            '<?php' . "\n"
+            . '$app = require ' . var_export(base_path('script.php'), true) . ';' . "\n"
+            . $body . "\n"
+        );
+    }
+
+    /**
+     * SCRIPT-08: a script that dies of an uncaught exception ends with status 1, and the
+     * exception is still printed. The status is the only thing a shell chain, cron or a
+     * parent process reads.
+     */
+    public static function test_an_uncaught_exception_exits_1_and_is_still_printed()
+    {
+        $script = static::__exit_script(
+            'probe_exit_throw.php',
+            'echo "before\n";' . "\n"
+            . 'throw new \RuntimeException("rsxtest-script-died");' . "\n"
+            . 'echo "after\n";'
+        );
+
+        [$rc, $output] = static::__run($script);
+
+        static::__assert_equals(1, $rc, 'an uncaught exception must exit 1: ' . $output);
+        static::__assert_contains('before', $output, 'output written before the throw survives');
+        static::__assert_contains('rsxtest-script-died', $output, 'the exception is still reported');
+        static::__assert_true(!str_contains($output, 'after'), 'nothing runs after the throw');
+    }
+
+    /** SCRIPT-09: an uncaught Error (a TypeError here) is the same case. */
+    public static function test_an_uncaught_error_exits_1()
+    {
+        $script = static::__exit_script(
+            'probe_exit_error.php',
+            '$nothing = null;' . "\n" . 'echo $nothing->nope();'
+        );
+
+        [$rc, $output] = static::__run($script);
+
+        static::__assert_equals(1, $rc, 'an uncaught Error must exit 1: ' . $output);
+        static::__assert_contains('nope', $output, 'the error is still reported');
+    }
+
+    /** SCRIPT-10: a script's own exit(N) means what it says, 0 included. */
+    public static function test_an_explicit_exit_status_is_preserved()
+    {
+        foreach ([0, 3, 42] as $status) {
+            $script = static::__exit_script('probe_exit_explicit.php', 'echo "done\n"; exit(' . $status . ');');
+
+            [$rc, $output] = static::__run($script);
+
+            static::__assert_equals($status, $rc, "exit({$status}) must be the process status: " . $output);
+            static::__assert_contains('done', $output);
+        }
+    }
+
+    /** SCRIPT-11: a script that runs to its end exits 0, a caught exception included. */
+    public static function test_a_script_that_runs_to_its_end_exits_0()
+    {
+        $script = static::__exit_script(
+            'probe_exit_normal.php',
+            'try { throw new \RuntimeException("handled"); } catch (\RuntimeException $e) { echo "caught\n"; }'
+        );
+
+        [$rc, $output] = static::__run($script);
+
+        static::__assert_equals(0, $rc, 'a script that ends normally must exit 0: ' . $output);
+        static::__assert_contains('caught', $output);
+    }
+
     /** php <artisan> <args>, returning [rc, output]. */
     protected static function __artisan(string $args): array
     {
@@ -286,7 +360,7 @@ class Script_Boot_Cli_Test extends Rsx_Test_Abstract
 
         $dir = Rsx_Project_Paths::tmp_path('scripting-test');
         if (is_dir($dir)) {
-            foreach (['probe_bare.php', 'probe_args.php', 'probe_autoload.php', 'probe_maint.php', 'probe_maint_forced.php'] as $file) {
+            foreach (['probe_bare.php', 'probe_args.php', 'probe_autoload.php', 'probe_maint.php', 'probe_maint_forced.php', 'probe_exit_throw.php', 'probe_exit_error.php', 'probe_exit_explicit.php', 'probe_exit_normal.php'] as $file) {
                 @unlink($dir . '/' . $file);
             }
             @unlink($dir . '/src/Widget.php');

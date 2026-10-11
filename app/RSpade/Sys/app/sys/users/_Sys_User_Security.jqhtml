@@ -46,7 +46,7 @@ instead.
                         <span class="_Sys_User_Security__dim"><%= _tf.is_enabled ? 'a password or provider sign-in is challenged' : 'a password alone signs in' %></span>
                     </_Sys_Detail_Item>
                     <_Sys_Detail_Item $label="Passkey" $value=(_tf.has_passkey ? 'Yes - may also sign in without a password' : 'No') />
-                    <_Sys_Detail_Item $label="Recovery codes" $value=(_tf.recovery_codes_remaining + ' unspent') />
+                    <_Sys_Detail_Item $label="Recovery codes" $value=(_tf.recovery_codes_remaining + ' unspent' + (_tf.issues_recovery_codes ? '' : ' - this deployment issues none')) />
                 </_Sys_Detail_List>
             </div>
             <% if (_tf.credentials.length) { %>

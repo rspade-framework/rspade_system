@@ -429,14 +429,16 @@ abstract class Rsx_Two_Factor_Abstract
      *
      * The seed AND the recovery codes are returned in plaintext, and this is the only moment
      * either exists in that form: the seed is encrypted on the row and the codes are bcrypt
-     * hashed. The recovery set REPLACES whatever the identity held.
+     * hashed. The recovery set REPLACES whatever the identity held. recovery_codes is null
+     * when the deployment issues none (issues_recovery_codes()), and whatever the identity
+     * held is then left as it was.
      *
      * The caller decides whether stacking a second seed is acceptable - has_confirmed_totp()
      * is the question, and this method refuses rather than silently enrolling a second one.
      *
      * @param Rsx_Model_Abstract $identity The identity to arm.
      * @param string|null $label What the credential is called in the user's settings.
-     * @return array {secret, otpauth_uri, recovery_codes}
+     * @return array {secret, otpauth_uri, recovery_codes: array|null}
      * @throws RuntimeException When the identity already holds a confirmed TOTP credential.
      */
     public static function cli_setup_totp(Rsx_Model_Abstract $identity, ?string $label = null): array
@@ -464,13 +466,10 @@ abstract class Rsx_Two_Factor_Abstract
         $row->confirmed_at = Rsx_Time::now_iso();
         $row->save();
 
-        $codes = Recovery_Codes::generate();
-        Recovery_Codes::store_for(static::class, $identity_id, $codes);
-
         return [
             'secret' => $secret,
             'otpauth_uri' => $uri,
-            'recovery_codes' => $codes,
+            'recovery_codes' => static::__mint_recovery_codes($identity_id),
         ];
     }
 
@@ -633,14 +632,16 @@ abstract class Rsx_Two_Factor_Abstract
      * The timestep this confirmation consumes is persisted into counter, so the code the
      * user just typed cannot immediately be replayed against the login challenge.
      *
-     * The returned plaintext codes are the ONLY time they exist. See Recovery_Codes.
+     * The returned plaintext codes are the ONLY time they exist. See Recovery_Codes. NULL
+     * means the factor is live and there is no sheet to show: the deployment issues no
+     * recovery codes (issues_recovery_codes()).
      *
      * @param string $code The code from the authenticator app.
-     * @return array The plaintext recovery codes.
+     * @return array|null The plaintext recovery codes, or null when none are issued.
      * @throws RuntimeException When nobody is signed in, or while impersonating.
      * @throws Two_Factor_Failed_Exception When the enrollment expired or the code is wrong.
      */
-    public static function confirm_totp_enrollment(string $code): array
+    public static function confirm_totp_enrollment(string $code): ?array
     {
         $identity = static::__enrolling_identity();
 
@@ -673,10 +674,7 @@ abstract class Rsx_Two_Factor_Abstract
 
         Session::forget_value(static::TOTP_PENDING_KEY);
 
-        $codes = Recovery_Codes::generate();
-        Recovery_Codes::store_for(static::class, (int) $identity->id, $codes);
-
-        return $codes;
+        return static::__mint_recovery_codes((int) $identity->id);
     }
 
     // -------------------------------------------------------------------------
@@ -742,11 +740,12 @@ abstract class Rsx_Two_Factor_Abstract
      * authenticator app, and a user adding a second passkey must not have the codes they
      * already wrote down silently invalidated. That is why this returns array|null rather
      * than always an array: null means "nothing new to show", and the UI reveals the code
-     * sheet only when there is one.
+     * sheet only when there is one. A deployment that issues no recovery codes
+     * (issues_recovery_codes()) always answers null.
      *
      * @param array $attestation The browser's attestation response.
      * @param string|null $label What the user calls this key, shown in their settings.
-     * @return array|null Freshly minted recovery codes, or null if the identity had some.
+     * @return array|null Freshly minted recovery codes, or null if the identity had some or none are issued.
      * @throws RuntimeException When nobody is signed in, or while impersonating.
      * @throws Two_Factor_Failed_Exception When the ceremony is stale or malformed.
      */
@@ -809,10 +808,7 @@ abstract class Rsx_Two_Factor_Abstract
             return null;
         }
 
-        $codes = Recovery_Codes::generate();
-        Recovery_Codes::store_for(static::class, $identity_id, $codes);
-
-        return $codes;
+        return static::__mint_recovery_codes($identity_id);
     }
 
     /**
@@ -938,13 +934,73 @@ abstract class Rsx_Two_Factor_Abstract
     // -------------------------------------------------------------------------
 
     /**
+     * Whether this deployment issues recovery codes at all: config
+     * rsx.two_factor.recovery_codes, true unless an application turned it off.
+     *
+     * ONE KEY, BOTH REALMS. Whether a sheet of bearer codes is an acceptable way back in is
+     * a decision about the deployment's recovery policy, not about which login page somebody
+     * arrived through, so staff and portal identities read the same answer.
+     *
+     * IT GOVERNS MINTING AND NOTHING ELSE. With it false no enrollment, no operator setup
+     * and no regeneration writes a recovery code. What an identity ALREADY holds is not
+     * touched and is still accepted by verify_challenge() - a code somebody wrote down while
+     * the deployment issued them is theirs until it is spent or removed
+     * (remove_recovery_codes()). Turned back on, the next enrollment mints a sheet as
+     * usual; an identity enrolled while it was off holds none until it regenerates.
+     *
+     * A settings screen reads this to decide whether to offer regeneration; whether to show
+     * a remaining COUNT is recovery_codes_remaining(), and whether the challenge offers the
+     * recovery-code answer is challenge_pending()'s has_recovery_codes - both derived from
+     * what the identity holds, never from this switch.
+     *
+     * @return bool
+     * @throws RuntimeException When the config value is not a boolean.
+     */
+    public static function issues_recovery_codes(): bool
+    {
+        $issued = config('rsx.two_factor.recovery_codes');
+
+        if (!is_bool($issued)) {
+            throw new RuntimeException(
+                'rsx.two_factor.recovery_codes must be true or false, got ' . var_export($issued, true) . '.'
+            );
+        }
+
+        return $issued;
+    }
+
+    /**
+     * Mint and store a fresh sheet for an identity, or answer null when the deployment
+     * issues none. The one place a first enrollment and the operator setup mint from.
+     *
+     * @param int $identity_id
+     * @return array|null The plaintext codes, or null when recovery codes are not issued.
+     */
+    protected static function __mint_recovery_codes(int $identity_id): ?array
+    {
+        if (!static::issues_recovery_codes()) {
+            return null;
+        }
+
+        $codes = Recovery_Codes::generate();
+        Recovery_Codes::store_for(static::class, $identity_id, $codes);
+
+        return $codes;
+    }
+
+    /**
      * Replace this identity's recovery codes and return the new plaintext set.
      *
      * The previous set stops working the moment this returns - that is the point of it,
      * and it is what a user who thinks their codes were seen is asking for.
      *
+     * On a deployment that issues no recovery codes this THROWS and changes nothing: a
+     * regeneration is a request for a new sheet, and there is none to give. A settings
+     * screen offers the action only when issues_recovery_codes() is true.
+     *
      * @return array The plaintext codes.
-     * @throws RuntimeException When nobody is signed in, or while impersonating.
+     * @throws RuntimeException When nobody is signed in, while impersonating, or when the
+     *                          deployment issues no recovery codes.
      */
     public static function regenerate_recovery_codes(): array
     {
@@ -954,6 +1010,31 @@ abstract class Rsx_Two_Factor_Abstract
         Recovery_Codes::store_for(static::class, (int) $identity->id, $codes);
 
         return $codes;
+    }
+
+    /**
+     * Remove every recovery code an identity holds, leaving its factors in place.
+     *
+     * For the operator of a deployment that stopped issuing recovery codes
+     * (issues_recovery_codes() false) and wants the sheets written before that to stop
+     * working: turning the switch off mints nothing new and deletes nothing. Takes a NAMED
+     * identity like remove_all(), so it is an administrative act, not a settings action.
+     *
+     * @param int|Rsx_Model_Abstract $identity
+     * @return int How many codes were removed.
+     */
+    public static function remove_recovery_codes(int|Rsx_Model_Abstract $identity): int
+    {
+        $identity_id = static::__resolve_id($identity);
+        $removed = Recovery_Codes::remaining(static::class, $identity_id);
+
+        $model = static::_credential_model();
+
+        $model::where(static::_owner_column(), $identity_id)
+            ->where('type_id', $model::TYPE_RECOVERY_CODE)
+            ->delete();
+
+        return $removed;
     }
 
     // -------------------------------------------------------------------------

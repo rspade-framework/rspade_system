@@ -88,6 +88,17 @@ class Two_Factor_Setup_Command extends Command
         $this->line('  PROVISIONING URI (encode as a QR code to scan it instead):');
         $this->line('  ' . $result['otpauth_uri']);
 
+        // A deployment that issues no recovery codes (rsx.two_factor.recovery_codes) mints
+        // none here either, and says so rather than printing an empty list.
+        if ($result['recovery_codes'] === null) {
+            $this->newLine();
+            $this->line('  RECOVERY CODES: none - this deployment issues no recovery codes.');
+            $this->warn('  Shown once. The secret above is the only way into this factor.');
+            $this->newLine();
+
+            return 0;
+        }
+
         $this->newLine();
         $this->line('  RECOVERY CODES (' . count($result['recovery_codes']) . ', each usable once):');
 

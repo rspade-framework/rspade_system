@@ -1104,7 +1104,45 @@ EXAMPLE;
      * ==========================================
      * All forms of eager loading are explicitly disabled in RSpade.
      * Use explicit queries for each relationship instead.
+     *
+     * load(), loadMissing() and loadCount() refuse a RELATION; handed an empty list they
+     * return $this, because a request to load nothing loads nothing.
      */
+
+    /**
+     * Re-read this record from the database, in place.
+     *
+     * The row's attributes are replaced with what the database holds now (unsaved changes
+     * are discarded) and every relation and detail row the instance had read is DROPPED
+     * rather than reloaded: the next read of one queries again, so it is as current as the
+     * row. Eloquent's own refresh() reloads the held relations through load(), which this
+     * framework refuses - and it would do so after the attributes were already replaced.
+     *
+     * A pivot the record was loaded through is kept, as Eloquent keeps it.
+     *
+     * @return $this
+     */
+    public function refresh()
+    {
+        if (!$this->exists) {
+            return $this;
+        }
+
+        foreach ($this->relations as $name => $relation) {
+            $is_pivot = $relation instanceof \Illuminate\Database\Eloquent\Relations\Pivot
+                || (is_object($relation) && isset(class_uses_recursive($relation)[\Illuminate\Database\Eloquent\Relations\Concerns\AsPivot::class]));
+
+            if (!$is_pivot) {
+                unset($this->relations[$name]);
+            }
+        }
+
+        $this->_active_detail_loaded = false;
+        $this->_active_detail = null;
+        $this->_vivified_detail = null;
+
+        return parent::refresh();
+    }
 
     /**
      * Override the with() method to prevent eager loading
@@ -1123,14 +1161,19 @@ EXAMPLE;
     }
 
     /**
-     * Override the load() method to prevent lazy eager loading
+     * Refuse lazy eager loading. An empty relation list is not a load and returns $this.
      *
-     * @param array|string $relations
+     * @param array|string|null $relations
      * @return $this
-     * @throws RuntimeException
+     * @throws RuntimeException when a relation is named
      */
     public function load($relations)
     {
+        // Nothing to load is not eager loading. refresh() ends in exactly this call.
+        if ($relations === [] || $relations === null) {
+            return $this;
+        }
+
         throw new RuntimeException(
             'Lazy eager loading is not allowed in the RSpade framework. ' .
             'Use explicit queries for each relationship instead. ' .
@@ -1139,7 +1182,7 @@ EXAMPLE;
     }
 
     /**
-     * Override the loadMissing() method to prevent conditional eager loading
+     * Refuse conditional eager loading. An empty relation list is not a load and returns $this.
      *
      * @param array|string $relations
      * @return $this
@@ -1147,6 +1190,11 @@ EXAMPLE;
      */
     public function loadMissing($relations)
     {
+        // Nothing to load is not eager loading. refresh() ends in exactly this call.
+        if ($relations === [] || $relations === null) {
+            return $this;
+        }
+
         throw new RuntimeException(
             'Conditional eager loading is not allowed in the RSpade framework. ' .
             'Use explicit queries for each relationship instead. ' .
@@ -1155,7 +1203,7 @@ EXAMPLE;
     }
 
     /**
-     * Override the loadCount() method to prevent eager loading counts
+     * Refuse eager loading counts. An empty relation list is not a load and returns $this.
      *
      * @param array|string $relations
      * @return $this
@@ -1163,6 +1211,11 @@ EXAMPLE;
      */
     public function loadCount($relations)
     {
+        // Nothing to load is not eager loading. refresh() ends in exactly this call.
+        if ($relations === [] || $relations === null) {
+            return $this;
+        }
+
         throw new RuntimeException(
             'Eager loading counts is not allowed in the RSpade framework. ' .
             'Use explicit count queries instead. ' .

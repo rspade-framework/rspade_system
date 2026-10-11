@@ -23,6 +23,12 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
  * facade's cascade, which exists because a set of recovery codes with no factor left to
  * recover is just bearer tokens that log somebody in with no second step at all.
  *
+ * --recovery-codes REMOVES THE RECOVERY CODES AND NOTHING ELSE: every factor stays, and the
+ * identity is challenged exactly as before. It is how the operator of a deployment that
+ * stopped issuing recovery codes (rsx.two_factor.recovery_codes false) retires the sheets
+ * written before that - the switch stops minting and deletes nothing. It cannot be combined
+ * with --id.
+ *
  * --id IS CHECKED FOR OWNERSHIP HERE, BEFORE THE FACADE. Rsx_Two_Factor::remove_credential()
  * treats a credential that is not this identity's as a NO-OP, which is right for the
  * settings screen (a stale page naming a row that has already gone is a race, not an attack)
@@ -39,10 +45,11 @@ class Two_Factor_Remove_Command extends Command
     protected $signature = 'rsx:users:2fa:remove
                             {--user= : Login identity id or email address (required)}
                             {--id= : Remove only this credential id (see rsx:users:2fa:dump). Omit to remove every factor}
+                            {--recovery-codes : Remove only the recovery codes; every factor stays}
                             {--force : Skip the confirmation prompt}
                             {--json : Output as JSON (requires --force)}';
 
-    protected $description = 'Remove a login identity\'s second factors (all of them, or one named by --id)';
+    protected $description = 'Remove a login identity\'s second factors (all of them, one named by --id, or only its recovery codes)';
 
     public function handle()
     {
@@ -64,6 +71,23 @@ class Two_Factor_Remove_Command extends Command
                 'confirmation_required',
                 '--json cannot prompt for confirmation. Add --force to state the intent explicitly.'
             );
+        }
+
+        if ($this->option('recovery-codes')) {
+            if ($credential_id !== null) {
+                $message = '--recovery-codes and --id cannot be combined: one removes the recovery codes and keeps '
+                    . 'every factor, the other removes one factor.';
+
+                if ($as_json) {
+                    return Two_Factor_Cli_Support::json_error($this, 'options_conflict', $message);
+                }
+
+                $this->error('[ERROR] ' . $message);
+
+                return 1;
+            }
+
+            return $this->__remove_recovery_codes($login_user, $as_json, $forced);
         }
 
         $credentials = Rsx_Two_Factor::cli_dump_credentials($login_user);
@@ -158,6 +182,50 @@ class Two_Factor_Remove_Command extends Command
             $this->line('  This identity now signs in with a password alone.');
         }
 
+        $this->newLine();
+
+        return 0;
+    }
+
+    /**
+     * --recovery-codes: remove the identity's recovery codes and leave its factors alone.
+     */
+    private function __remove_recovery_codes($login_user, bool $as_json, bool $forced): int
+    {
+        $remaining = Rsx_Two_Factor::recovery_codes_remaining($login_user);
+
+        if (!$as_json) {
+            $this->newLine();
+            Two_Factor_Cli_Support::print_identity($this, $login_user);
+        }
+
+        if ($remaining > 0 && !$forced) {
+            $this->line('  Remove:  ' . $remaining . ' recovery code' . ($remaining === 1 ? '' : 's'));
+            $this->newLine();
+
+            if (!$this->confirm('Remove this identity\'s recovery codes? Its factors are kept.', false)) {
+                $this->line('  Cancelled.');
+                $this->newLine();
+
+                return 0;
+            }
+        }
+
+        $removed = Rsx_Two_Factor::remove_recovery_codes($login_user);
+
+        if ($as_json) {
+            return Two_Factor_Cli_Support::json_ok($this, [
+                'action' => $removed > 0 ? 'removed_recovery_codes' : 'none',
+                'user' => Two_Factor_Cli_Support::login_user_data($login_user),
+                'removed' => [],
+                'recovery_codes_removed' => $removed,
+                'is_enabled' => Rsx_Two_Factor::is_enabled($login_user),
+            ]);
+        }
+
+        $this->info($removed > 0
+            ? '[OK] Removed ' . $removed . ' recovery code' . ($removed === 1 ? '' : 's') . '; every factor is kept'
+            : '[OK] No recovery codes; nothing to do');
         $this->newLine();
 
         return 0;

@@ -218,7 +218,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      * The identity's second factors and connected sign-in providers, as metadata only.
      *
      * @param array $params id (login_users.id)
-     * @return array {refusal, two_factor: {is_enabled, has_passkey, recovery_codes_remaining,
+     * @return array {refusal, two_factor: {is_enabled, has_passkey, recovery_codes_remaining, issues_recovery_codes,
      *                credentials: [{id, type_id, type_id__label, label, confirmed_at,
      *                last_used_at}]},
      *                sso: {is_enabled, identities: [{id, provider_key, provider_label, email,
@@ -256,6 +256,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
                 'is_enabled' => Rsx_Two_Factor::is_enabled($id),
                 'has_passkey' => Rsx_Two_Factor::has_passkey($id),
                 'recovery_codes_remaining' => Rsx_Two_Factor::recovery_codes_remaining($id),
+                'issues_recovery_codes' => Rsx_Two_Factor::issues_recovery_codes(),
                 'credentials' => $credentials,
             ],
             'sso' => [

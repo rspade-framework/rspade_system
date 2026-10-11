@@ -62,7 +62,8 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
   release frees for reacquire, reentrancy, `release_lock()`'s boolean answer (including the
   "the daemon no longer attributes this lock to us" case), system locks being flock-backed and
   write-only, wait-forever defaults, semaphore quotas, and the deadlock refusal (which needs a
-  second process, spawned as a background helper).
+  second process, spawned as a background helper). `Lock_Logging_Test` is the PHP half of
+  event logging: `set_lock_logging()` / `lock_logging_status()` against the running daemon.
 - **http** (shell, against a SCRATCH daemon) - everything that only exists between processes:
   cross-process mutual exclusion, release-on-`kill -9`, FIFO grant order, deadlock cycles, and
   the wait-forever regression. Plus the wire protocol through the daemon's export seam and
@@ -74,6 +75,10 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
   members_alive, name isolation and not-holder errors over the wire (`lockd_pool_protocol.sh`),
   and membership/lock release on `kill -9`, disconnect and `release_all`
   (`lockd_pool_death.sh`, using the `resource/lockd_pool_member.js` helper process).
+  Event logging (`lockd_logging.sh`): the table's injected log on a fake clock (what each
+  line says, TIMEOUT naming the holder, DROP and FORCE_CLEAR before the grants they cause),
+  the logger (level gating, nothing a destination does can throw into the daemon), and the
+  live `log` op (refused before hello, on/off without a restart, every key validated).
 - **cli** (shell) - `lockd exec`: exit-code contract (child code, 124 timeout), `--quiet`,
   release-on-child-exit, and two concurrent execs serializing.
 

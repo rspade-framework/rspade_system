@@ -42,6 +42,27 @@ verifier would be an attack surface, so the tests bend instead.
 | tfa-rec-09 | garbage is refused and spends nothing | '', '   ', '-', 'ZZZZ-ZZZZ', prose | false x5, remaining unchanged | implemented |
 | tfa-rec-10 | an identity with no set has none remaining | fresh identity | 0, and consume() is false not an error | implemented |
 
+## Recovery_Codes_Switch_Test (php, default isolation) - rsx.two_factor.recovery_codes
+
+Off means nothing mints, on any path; it changes nothing about what an identity already holds.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| tfa-rcs-01 | the default issues codes, and both realms read the one key | default config, then false | true/true, then false/false | implemented |
+| tfa-rcs-02 | a non-boolean value fails loud | 'false', 0, null | RuntimeException naming the key | implemented |
+| tfa-rcs-03 | off: a TOTP enrollment confirms the factor and mints nothing | confirm_totp_enrollment() | null, factor live, zero code rows | implemented |
+| tfa-rcs-04 | off: the totp_confirm endpoint answers recovery_codes null | the Ajax endpoint | {recovery_codes: null} | implemented |
+| tfa-rcs-05 | off: a first passkey mints nothing | confirm_passkey_registration() | null, passkey live, zero code rows | implemented |
+| tfa-rcs-06 | off: the operator setup mints nothing, in both output forms | rsx:users:2fa:setup, --json and human | recovery_codes null / a line saying none are issued | implemented |
+| tfa-rcs-07 | off: regeneration throws and leaves an existing sheet intact | regenerate_recovery_codes() | RuntimeException, ten codes still held | implemented |
+| tfa-rcs-08 | off: the one storage writer refuses in both realms | Recovery_Codes::store_for() | RuntimeException, zero rows | implemented |
+| tfa-rcs-09 | off: a held code is still reported and still accepted | a code issued while on, answered while off | has_recovery_codes true, signed in, one code spent | implemented |
+| tfa-rcs-10 | off: an identity with no codes is not offered the answer | enrolled while off | has_recovery_codes false | implemented |
+| tfa-rcs-11 | credentials_list reports the switch beside the held count | on, then off | issues_recovery_codes true/false, count 10 both times | implemented |
+| tfa-rcs-12 | recovery codes can be removed without touching a factor | remove_recovery_codes(), rsx:users:2fa:remove --recovery-codes | codes gone, factor kept, action removed_recovery_codes | implemented |
+| tfa-rcs-13 | --recovery-codes with --id is refused | both options | exit 1, options_conflict, nothing removed | implemented |
+| tfa-rcs-14 | turned back on: no backfill, the next enrollment mints | enroll off, switch on, regenerate, enroll another | 0 held, then a sheet on request, then ten at enrollment | implemented |
+
 ## Two_Factor_Enrollment_Test (php, default isolation) - enrollment through the facade
 
 Identity is declared through `Session::set_login_user_id()`, which in CLI sets a static and creates

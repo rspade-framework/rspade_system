@@ -2,7 +2,8 @@
  * Totp_Enrollment
  *
  * See Totp_Enrollment.jqhtml for the contract. This file owns three things: fetching the
- * seed, submitting the proof, and the one-way move into the recovery-code reveal.
+ * seed, submitting the proof, and the one-way move into the recovery-code reveal - or
+ * straight to 'enrolled' when the server minted no sheet.
  *
  * WHY THE CODES LIVE IN this.state AND NOT this.data. this.data is the Ajax-loaded picture
  * of the world and is writable only in on_create/on_load; the recovery codes arrive from a
@@ -81,7 +82,8 @@ class Totp_Enrollment extends Component {
     }
 
     /**
-     * Prove a live code and, on success, move to the reveal.
+     * Prove a live code and, on success, move to the reveal (or finish, when there is no
+     * sheet to reveal).
      */
     async _confirm() {
         const code = this.sid('code').val();
@@ -103,6 +105,13 @@ class Totp_Enrollment extends Component {
             this.state.error = e.message ? e.message : 'That code is not valid.';
             // The render rebuilds the boxes empty and puts the cursor back in them.
             this.render();
+            return;
+        }
+
+        // No sheet to show: the deployment issues no recovery codes. The factor is live,
+        // so the ceremony is over.
+        if (!result.recovery_codes) {
+            this.trigger('enrolled');
             return;
         }
 

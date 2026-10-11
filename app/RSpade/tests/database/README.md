@@ -40,6 +40,7 @@ Nothing in this concern is application-facing except through the model surface.
 | `mergeCasts()` stays per instance; two classes on different tables keep separate cast maps | php | implemented (`Model_Attribute_Read_Test`) |
 | Enum magic reads (`field__label`/`__constant`/custom, `isset()`, the instance and static lookup forms) | php | implemented (`Model_Attribute_Read_Test`) |
 | A `_`-prefixed system column reads back through the slow path and stays out of `toArray()` | php | implemented (`Model_Attribute_Read_Test`, own fixture table) |
+| `refresh()` re-reads a row in place and drops the relations it had read; an empty relation list is not a load, a named relation is still refused | php | implemented (`Model_Refresh_Test`) |
 
 ## Fixture models
 

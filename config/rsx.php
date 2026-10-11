@@ -1962,6 +1962,21 @@ return [
         // both realms.
         'challenge_shows_full_email' => false,
 
+        // Whether this deployment issues RECOVERY CODES. true (the default) mints a
+        // sheet of ten alongside an identity's first factor and lets the identity
+        // regenerate it. false mints NOTHING, on any path - enrollment, the
+        // rsx:users:2fa:setup operator path, regeneration (which then throws) - for
+        // a deployment whose way back in is an administrator rather than a sheet of
+        // paper. Applies to both realms.
+        //
+        // It governs MINTING only. A code an identity already holds is not deleted
+        // by turning this off and is still accepted at the challenge until it is
+        // spent or an operator runs rsx:users:2fa:remove --recovery-codes. Turned
+        // on again, the next enrollment mints a sheet; nothing is backfilled for
+        // identities enrolled in between. Read it as
+        // Rsx_Two_Factor::issues_recovery_codes().
+        'recovery_codes' => true,
+
         // ATTEMPT CAPS. These are counts, not timeouts. A six-digit code with a
         // +/-1 step tolerance has three live answers in a million, so an uncapped
         // challenge is a guessing oracle for anyone who already holds the password.

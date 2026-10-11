@@ -42,6 +42,13 @@ const SCHEMA = {
     },
     pidfile: 'string',
     logfile: 'string_or_null',
+    // Event logging, off by default and switchable at RUNTIME through the `log` op (see
+    // README, LOGGING). These say WHETHER events are recorded; `logfile` says WHERE. A
+    // daemon started with log_events false can be turned on without a restart, which is
+    // the whole point - restarting the daemon to diagnose a lock problem drops every
+    // holder on the box and destroys the state being diagnosed.
+    log_events: 'boolean',
+    log_verbose: 'boolean',
 };
 
 const DEFAULT_CONFIG = {
@@ -50,6 +57,8 @@ const DEFAULT_CONFIG = {
     auth: { hmac_key_env: 'APP_KEY' },
     pidfile: '/var/run/rsx-lockd.pid',
     logfile: null,
+    log_events: false,
+    log_verbose: false,
 };
 
 /**
@@ -182,6 +191,11 @@ function validate_config(input) {
     }
     if (!out.auth.hmac_key_env) {
         problems.push("'auth.hmac_key_env' must name the environment variable holding the shared key");
+    }
+    // log_verbose without log_events is a setting that does nothing, which is exactly the
+    // silent no-op this validator exists to refuse.
+    if (out.log_verbose && !out.log_events) {
+        problems.push("'log_verbose' is true but 'log_events' is false - verbose logging needs event logging on");
     }
 
     if (problems.length > 0) {

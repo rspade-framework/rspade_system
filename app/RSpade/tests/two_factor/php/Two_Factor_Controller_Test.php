@@ -281,10 +281,12 @@ class Two_Factor_Controller_Test extends Rsx_Test_Abstract
         $payload = Rsx_Two_Factor_Controller::credentials_list(static::__ajax_request());
 
         static::__assert_equals(
-            ['credentials', 'recovery_codes_remaining', 'is_enabled'],
+            ['credentials', 'recovery_codes_remaining', 'issues_recovery_codes', 'is_enabled'],
             array_keys($payload),
-            'one call, three answers'
+            'one call, the whole settings screen'
         );
+
+        static::__assert_true($payload['issues_recovery_codes'], 'the shipped default issues recovery codes');
 
         static::__assert_true($payload['is_enabled']);
         static::__assert_equals(10, $payload['recovery_codes_remaining']);

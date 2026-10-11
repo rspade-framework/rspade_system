@@ -50,7 +50,8 @@ const EXIT_DEADLOCK = 125;
 
 // The .env reader every node helper in system/bin shares. Only fills keys that are not
 // already in the real environment, so an explicit export always wins.
-const { load_env_file } = require(require('path').join(__dirname, '..', 'lib', 'rsx_paths.js'));
+const rsx_paths = require(path.join(__dirname, '..', 'lib', 'rsx_paths.js'));
+const { load_env_file } = rsx_paths;
 
 // ---------------------------------------------------------------------------
 // Argument parsing
@@ -106,17 +107,170 @@ function flag_int(flags, name) {
 // Output
 // ---------------------------------------------------------------------------
 
-function make_logger(logfile) {
-    if (!logfile) {
-        return function (message) {
-            console.log('[lockd] ' + message);
-        };
+/**
+ * The daemon's log sink, SWITCHABLE AT RUNTIME.
+ *
+ * Two independent questions:
+ *
+ *   WHERE output goes   - a file (`config.logfile`, or the one the `log` op named or
+ *                         chose), or stdout when there is none. Lifecycle lines (starting,
+ *                         ready, shutdown, internal errors) always go there and are never
+ *                         gated: they are the record that the daemon ran at all.
+ *   WHETHER events are recorded - `config.log_events` / `log_verbose`, both off by default
+ *                         and both toggled through the `log` op without a restart.
+ *
+ * It is a mutable object because the switch has to be live: the connection IS the lock,
+ * so restarting the daemon to change its logging would release every lock on the box.
+ *
+ * NOTHING IN HERE MAY TAKE THE DAEMON DOWN. This process holds every lock; a log
+ * destination that cannot be opened, fills up or disappears is counted (`write_errors`),
+ * remembered (`last_error`) and reported through status(), and output falls back to
+ * stdout. That is why event() and the stream's 'error' listener swallow failures onto the
+ * counter - the one place in this daemon where a failure is deliberately not propagated,
+ * because the caller is a timer or a socket-close handler with nobody to hand it to.
+ */
+class Lockd_Logger {
+    constructor(options) {
+        options = options || {};
+        this.default_path = options.default_path || null;
+        this.path = null;
+        this.events = options.log_events === true;
+        this.verbose = options.log_verbose === true;
+        this.stream = null;
+        this.write_errors = 0;
+        this.last_error = null;
+
+        if (options.logfile) this._open(options.logfile);
     }
 
-    const stream = fs.createWriteStream(logfile, { flags: 'a' });
-    return function (message) {
-        stream.write('[' + new Date().toISOString() + '] [lockd] ' + message + '\n');
-    };
+    /**
+     * Point the sink at a file. Returns whether it opened; never throws.
+     *
+     * The file is opened SYNCHRONOUSLY, so "cannot write there" (a missing directory, a
+     * permission) is known before the caller is answered instead of surfacing later as a
+     * stream error. The destination in use is replaced only once the new one is open: a
+     * bad path leaves the log where it was.
+     */
+    _open(file_path) {
+        let fd;
+        try {
+            fd = fs.openSync(file_path, 'a');
+        } catch (err) {
+            this._failed(err);
+            return false;
+        }
+
+        const stream = fs.createWriteStream(file_path, { fd: fd });
+
+        // A failure after the open (disk full, the file's filesystem gone) arrives here,
+        // asynchronously. An 'error' with no listener is fatal to the process, so it is
+        // counted instead - and only the stream that failed is dropped, never a
+        // replacement opened since.
+        stream.on('error', (err) => {
+            this._failed(err);
+            if (this.stream === stream) this.stream = null;
+        });
+
+        const previous = this.stream;
+        this.stream = stream;
+        this.path = file_path;
+        if (previous) previous.end();
+
+        return true;
+    }
+
+    _failed(err) {
+        this.write_errors++;
+        this.last_error = err && err.message ? err.message : String(err);
+    }
+
+    /**
+     * Lifecycle output - ALWAYS emitted, never gated on the event switches. With no file,
+     * or a file that has failed, it goes to stdout (the supervisor's capture, or the
+     * terminal of a foreground run).
+     */
+    write(message) {
+        if (this.stream) {
+            this.stream.write('[' + new Date().toISOString() + '] [lockd] ' + message + '\n');
+            return;
+        }
+        console.log('[lockd] ' + message);
+    }
+
+    /**
+     * An EVENT from the lock table. `build` returns the line and is called only when the
+     * line will be written, synchronously, so it describes the table as it is right now.
+     * `level` is 'verbose' for per-operation events and absent for contention events.
+     *
+     * Gated, and silent when off. A failure to build or write the line is counted and
+     * swallowed - see the class comment for why this one is not allowed to propagate.
+     */
+    event(build, level) {
+        if (!this.events) return;
+        if (level === 'verbose' && !this.verbose) return;
+        try {
+            this.write(build());
+        } catch (err) {
+            this._failed(err);
+        }
+    }
+
+    /**
+     * Start recording events. `options.path` names the destination; without one the
+     * current destination is kept, and a logger with no file at all opens `default_path`
+     * (a daemon started by a supervisor may have nobody reading its stdout).
+     *
+     * Returns false, changing nothing, when the destination cannot be opened.
+     */
+    enable(options) {
+        options = options || {};
+        const wanted = options.path || this.path || this.default_path;
+
+        if (wanted && (wanted !== this.path || !this.stream)) {
+            if (!this._open(wanted)) return false;
+        }
+
+        this.events = true;
+        this.verbose = options.verbose === true;
+        return true;
+    }
+
+    /** Change verbosity of a log that is already recording. */
+    set_verbose(verbose) {
+        this.verbose = verbose === true;
+    }
+
+    disable() {
+        this.events = false;
+        this.verbose = false;
+    }
+
+    status() {
+        return {
+            events: this.events,
+            verbose: this.verbose,
+            path: this.stream ? this.path : null,
+            writable: this.stream !== null,
+            write_errors: this.write_errors,
+            last_error: this.last_error,
+        };
+    }
+}
+
+/**
+ * Where `log on` writes when nothing else named a destination: rsx-lockd.log in the
+ * application's log directory, resolved the way every node helper resolves the storage
+ * root (RSX_STORAGE_PATH honoured). Outside an RSpade project there is no such directory
+ * and the system temp directory is used, so the daemon stays diagnosable on its own.
+ */
+function default_log_path() {
+    const logs_dir = path.join(rsx_paths.storage_root(), 'logs');
+
+    if (fs.existsSync(logs_dir) && fs.statSync(logs_dir).isDirectory()) {
+        return path.join(logs_dir, 'rsx-lockd.log');
+    }
+
+    return path.join(os.tmpdir(), 'rsx-lockd.log');
 }
 
 function fail(message) {
@@ -196,7 +350,13 @@ async function command_run(flags) {
     const resolved = resolve_config(flags);
     const config = resolved.config;
     const hmac_key = resolve_hmac_key(config);
-    const log = make_logger(config.logfile);
+    const logger = new Lockd_Logger({
+        logfile: config.logfile,
+        log_events: config.log_events,
+        log_verbose: config.log_verbose,
+        default_path: default_log_path(),
+    });
+    const log = (message) => logger.write(message);
 
     const existing = read_pidfile(config.pidfile);
     if (existing && is_alive(existing) && existing !== process.pid) {
@@ -208,7 +368,9 @@ async function command_run(flags) {
 
     log('rsx-lockd ' + VERSION + ' starting (config ' + resolved.path + ', source ' + resolved.source + ')');
 
-    const server = new Lockd_Server({ config: config, hmac_key: hmac_key, log: log });
+    // The server gets the LOGGER, not just a write function: the `log` op toggles the
+    // switches on this one object, and the lock table's event calls read them live.
+    const server = new Lockd_Server({ config: config, hmac_key: hmac_key, logger: logger });
 
     try {
         await server.start();
@@ -219,6 +381,8 @@ async function command_run(flags) {
 
     write_pidfile(config.pidfile, process.pid);
     log('[OK] Ready (pid ' + process.pid + ')');
+    log('Event logging is ' + (logger.events ? ('ON' + (logger.verbose ? ' (verbose)' : '')) : 'OFF')
+        + ' - toggle it without a restart: lockd.js log on|off');
 
     let shutting_down = false;
     const shutdown = async (signal) => {
@@ -370,6 +534,89 @@ async function command_dump(flags) {
             console.log(JSON.stringify(response, null, 2));
         } else {
             print_dump(response, client.conn_id);
+        }
+        return EXIT_OK;
+    } finally {
+        client.close();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Command: log
+// ---------------------------------------------------------------------------
+
+/**
+ * Switch event logging on or off in the RUNNING daemon, or report it.
+ *
+ * `restart` is not the alternative: the connection is the lock, so restarting rsx-lockd
+ * releases every lock on the box and erases the state you were about to diagnose. This
+ * talks to the live process.
+ */
+async function command_log(flags, rest) {
+    const resolved = resolve_config(flags);
+    const config = resolved.config;
+    const hmac_key = resolve_hmac_key(config);
+
+    const word = (rest[0] || '').toLowerCase();
+    if (word !== '' && word !== 'on' && word !== 'off') {
+        console.error("[lockd] [ERROR] Unknown: log " + word + " (expected 'on', 'off' or nothing)");
+        return EXIT_FAILURE;
+    }
+    if (typeof flags.path === 'string' && word !== 'on') {
+        console.error('[lockd] [ERROR] --path names where `log on` writes; it means nothing without `on`');
+        return EXIT_FAILURE;
+    }
+    if (flags.verbose === true && word === 'off') {
+        console.error('[lockd] [ERROR] --verbose and `log off` contradict each other');
+        return EXIT_FAILURE;
+    }
+
+    const frame = { op: 'log' };
+    if (word === 'on') {
+        frame.enabled = true;
+        frame.verbose = flags.verbose === true;
+        if (typeof flags.path === 'string') frame.path = flags.path;
+    } else if (word === 'off') {
+        frame.enabled = false;
+    } else if (flags.verbose === true) {
+        // `log --verbose` with no on/off adjusts verbosity of a log already running.
+        frame.verbose = true;
+    }
+
+    let client;
+    try {
+        client = await client_lib.connect(config, {
+            hmac_key: hmac_key,
+            host: typeof flags.host === 'string' ? flags.host : null,
+            port: flag_int(flags, 'port'),
+        });
+    } catch (err) {
+        console.error('[lockd] [ERROR] ' + err.message);
+        return EXIT_FAILURE;
+    }
+
+    try {
+        const response = await client.request(frame);
+        if (response.status !== protocol.STATUS_OK) {
+            console.error('[lockd] [ERROR] ' + (response.message || 'log failed'));
+            return EXIT_FAILURE;
+        }
+
+        if (flags.json) {
+            console.log(JSON.stringify(response.logging, null, 2));
+            return EXIT_OK;
+        }
+
+        const state = response.logging;
+        console.log('rsx-lockd event logging: ' + (state.events ? 'ON' : 'OFF')
+            + (state.events && state.verbose ? ' (verbose - every acquire and release)' : ''));
+        console.log('  destination: ' + (state.path || "the daemon's stdout"));
+        if (state.write_errors > 0) {
+            console.log('  [WARNING] ' + state.write_errors + ' log failure(s) since the daemon started; the last: '
+                + state.last_error);
+        }
+        if (!state.events) {
+            console.log('  turn it on: node lockd.js log on [--verbose] [--path=<file>]');
         }
         return EXIT_OK;
     } finally {
@@ -629,6 +876,7 @@ const HELP = {
         '  stop                      SIGTERM the daemon named by the pidfile',
         '  restart                   stop then start',
         '  dump [--json]             Show every lock held and every waiter, per connection',
+        '  log [on|off] [--verbose]  Switch event logging in the RUNNING daemon (no restart)',
         '  exec --name=X -- <cmd>    Hold a lock for exactly as long as <cmd> runs',
         '',
         'Global options:',
@@ -636,12 +884,37 @@ const HELP = {
         '                            then the lockd.conf shipped beside this script)',
         '  --help                    This text, or per-command help after a command',
         '',
-        'Client options (dump, exec):',
+        'Client options (dump, log, exec):',
         '  --host=<host>             Target a remote daemon instead of the configured one',
         '  --port=<port>             Target port (default: tcp.port from the config)',
         '',
         'Exit codes (exec): the child process code, 124 on acquire timeout,',
         '125 on deadlock, 1 on connect or protocol failure.',
+    ],
+    log: [
+        'Usage: node lockd.js log [on|off] [--verbose] [--path=<file>] [--json]',
+        '',
+        'Switches EVENT LOGGING in the running daemon. With no on/off it only reports.',
+        'Takes effect immediately and survives until changed or the daemon restarts;',
+        'the config keys log_events / log_verbose set the state it STARTS in.',
+        '',
+        'There is no restart-to-enable option, by design: the connection is the lock, so',
+        'restarting rsx-lockd releases every lock on the box and destroys the state you',
+        'were about to look at.',
+        '',
+        'Two levels:',
+        '  (default)   CONTENTION ONLY - WAIT, GRANT-after-waiting, TIMEOUT, DEADLOCK and',
+        '              a DROP that released something. Rare on a healthy box, so this is',
+        '              cheap to leave on permanently. A TIMEOUT line NAMES THE HOLDER,',
+        '              which is the one fact a client-side exception cannot report.',
+        '  --verbose   Adds every ACQUIRE and RELEASE. Thousands of lines an hour on a',
+        '              busy box - trace one sequence with it, do not leave it running.',
+        '',
+        'Destination: --path=<file>, else the config logfile, else <project>/storage/logs/',
+        'rsx-lockd.log. A daemonized instance has stdout on /dev/null, so a file is used',
+        'even when none was configured - the command prints the path it chose.',
+        '',
+        'The PHP twin is RsxLocks::set_lock_logging() / ::lock_logging_status().',
     ],
     run: [
         'Usage: node lockd.js run [--config=<path>]',
@@ -744,6 +1017,8 @@ async function main(argv) {
             return await command_restart(parsed.flags);
         case 'dump':
             return await command_dump(parsed.flags);
+        case 'log':
+            return await command_log(parsed.flags, parsed.rest);
         case 'exec':
             return await command_exec(parsed.flags, parsed.rest);
         default:
@@ -764,6 +1039,8 @@ module.exports = {
     EXIT_DEADLOCK,
     parse_argv,
     load_env_file,
+    Lockd_Logger,
+    default_log_path,
     main,
 };
 

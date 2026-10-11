@@ -33,7 +33,12 @@ class Lockd_Server {
     constructor(options) {
         this.config = options.config;
         this.hmac_key = options.hmac_key || '';
-        this.log = options.log || function () {};
+
+        // The logger object (lockd.js, Lockd_Logger) when there is one, so the `log` op can
+        // flip its switches at runtime. `options.log` stays supported for a caller that only
+        // has a write function - every test constructs the server that way.
+        this.logger = options.logger || null;
+        this.log = options.log || (this.logger ? (m) => this.logger.write(m) : function () {});
 
         this.conn_seq = 0;
         this.connections = new Map();   // conn_id -> { id, socket, authenticated, reader, hello_timer }
@@ -44,6 +49,12 @@ class Lockd_Server {
             deliver: (conn_id, frame) => {
                 this._send_to(conn_id, frame);
             },
+            // INJECTED, because locktable.js is pure and must stay that way: it describes
+            // the event, this decides whether anything is written. A no-op when no logger
+            // was given, which is what keeps the table's unit tests side-effect free.
+            log: this.logger
+                ? (build, level) => this.logger.event(build, level)
+                : function () {},
         });
     }
 
@@ -310,6 +321,7 @@ class Lockd_Server {
             case 'stats':        return this.table.stats(frame);
             case 'dump':         return this.table.dump(frame);
             case 'force_clear':  return this.table.force_clear(frame);
+            case 'log':          return this._handle_log(frame);
             case 'pool.lock':              return this.table.pool.lock(conn.id, frame);
             case 'pool.unlock':            return this.table.pool.unlock(conn.id, frame);
             case 'pool.join':              return this.table.pool.join(conn.id, frame);
@@ -325,6 +337,76 @@ class Lockd_Server {
                     message: 'Unknown op: ' + op + ' (known: ' + protocol.OPS.join(', ') + ')',
                 };
         }
+    }
+
+    /**
+     * Turn event logging on or off in this running daemon, or report it.
+     *
+     * Frame: { op:'log', enabled?:bool, verbose?:bool, path?:string }.
+     *   no keys                 a pure query - nothing changes
+     *   enabled:true            start recording; verbose (default false) and path apply
+     *   enabled:false           stop recording
+     *   verbose alone           change the verbosity of a log that is already recording
+     *
+     * AUTHENTICATED ONLY - dispatched from _handle_authenticated(), never pre-hello like
+     * `ping`: it names a file this process will write to. The HMAC key is the trust
+     * boundary for the whole protocol, so a peer that can say hello may name a path.
+     *
+     * EVERY KEY IS VALIDATED AND NOTHING IS IGNORED. A combination that would do nothing
+     * (a path without enabled:true, verbosity for a log that is off) is an error frame,
+     * and so is a destination that cannot be opened - in which case nothing changed.
+     */
+    _handle_log(frame) {
+        const refuse = (message) => ({ id: frame.id, status: protocol.STATUS_ERROR, message: message });
+        const given = (key) => frame[key] !== undefined && frame[key] !== null;
+
+        if (!this.logger) {
+            return refuse('This daemon was started without a logger - event logging cannot be switched');
+        }
+        if (given('enabled') && typeof frame.enabled !== 'boolean') {
+            return refuse('log enabled must be true or false');
+        }
+        if (given('verbose') && typeof frame.verbose !== 'boolean') {
+            return refuse('log verbose must be true or false');
+        }
+        if (given('path')) {
+            // Absolute, because a relative path would resolve against THIS process's
+            // working directory, which the caller cannot know.
+            if (typeof frame.path !== 'string' || !path.isAbsolute(frame.path)) {
+                return refuse("log path must be an absolute path on the daemon's host");
+            }
+            if (frame.enabled !== true) {
+                return refuse('log path is only accepted together with enabled:true');
+            }
+        }
+
+        if (frame.enabled === true) {
+            const opened = this.logger.enable({
+                path: given('path') ? frame.path : null,
+                verbose: frame.verbose === true,
+            });
+            if (!opened) {
+                return refuse('Cannot open the log destination: ' + this.logger.last_error);
+            }
+            // write(), not event(): a reader of the file needs to see when recording began.
+            this.logger.write('[OK] Event logging ON' + (this.logger.verbose ? ' (verbose)' : '')
+                + ' - switched at runtime');
+        } else if (frame.enabled === false) {
+            if (frame.verbose === true) {
+                return refuse('log verbose:true contradicts enabled:false');
+            }
+            if (this.logger.events) {
+                this.logger.write('[OK] Event logging OFF - switched at runtime');
+            }
+            this.logger.disable();
+        } else if (given('verbose')) {
+            if (!this.logger.events) {
+                return refuse('Event logging is off - send enabled:true to start it');
+            }
+            this.logger.set_verbose(frame.verbose);
+        }
+
+        return { id: frame.id, status: protocol.STATUS_OK, logging: this.logger.status() };
     }
 
     _handle_hello(conn, frame) {

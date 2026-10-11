@@ -85,6 +85,7 @@ The APPLICATION half of the flow, which the framework deliberately does not own:
   REPLAY FLOOR that refuses a spent timestep, and code-shape rejection before the HMAC
   runs. (php - pure, no DB)
 - Recovery codes: the unambiguous alphabet, bcrypt storage, replace-not-append, consume-once
+- The deployment switch `rsx.two_factor.recovery_codes`: off mints nothing on any path, and changes nothing an identity already holds (`Recovery_Codes_Switch_Test`)
   by deletion, per-identity scoping, and formatting tolerance on redemption. (php)
 - TOTP enrollment through the facade: a parked seed writes no row, a live code confirms and
   encrypts the seed with `Crypt`, a wrong code leaves NO confirmed row, and the QR code is

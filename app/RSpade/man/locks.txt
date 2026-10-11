@@ -31,6 +31,9 @@ SYNOPSIS
     $stats = RsxLocks::get_lock_stats($domain, $name);
     RsxLocks::force_clear_lock($domain, $name);
 
+    $state = RsxLocks::set_lock_logging(true);     // daemon event log, live
+    $state = RsxLocks::lock_logging_status();
+
 DESCRIPTION
     A lock is held from the moment it is granted until it is released or until
     the holder dies. There is NO lease, NO TTL, NO renewal and NO heartbeat
@@ -537,6 +540,17 @@ THE RSX LOCKD CLI
     already released; if dump still shows it, the connection really is open - a
     hung process holding a socket.
 
+    dump shows the state NOW. It cannot say who held a lock five minutes ago,
+    which is what the log is for:
+
+        node lockd.js log                               report only
+        node lockd.js log on [--verbose] [--path=<f>]   start recording
+        node lockd.js log off                           stop recording
+        node lockd.js log --verbose                     make a running log verbose
+
+    See EVENT LOGGING below. The PHP equivalents are
+    RsxLocks::set_lock_logging() and RsxLocks::lock_logging_status().
+
     dump also prints the pool generation and lists every worker pool (its lock
     holder, queue and members with their wids), and each connection's pool
     state prints as `HELD POOL <pool>`, `WAITING POOL <pool>` or
@@ -578,6 +592,98 @@ RSX VS LARAVEL
     RSpade uses it, and a critical section guarded by both is guarded by
     neither.
 
+EVENT LOGGING
+    The daemon can record what happens to locks, and the switch is LIVE: it is
+    turned on and off in the running daemon. Restarting rsx-lockd to change its
+    logging is not an option - the connection is the lock, so a restart releases
+    every lock on the box, and the state being diagnosed with them.
+
+    From PHP:
+
+        use App\RSpade\Core\Locks\RsxLocks;
+
+        RsxLocks::set_lock_logging(true);               // contention only
+        RsxLocks::set_lock_logging(true, null, true);   // + every acquire
+        RsxLocks::set_lock_logging(false);
+        RsxLocks::lock_logging_status();                // pure query
+
+    or from the daemon's CLI:
+
+        node lockd.js log on
+        node lockd.js log on --verbose --path=/var/log/lockd-trace.log
+        node lockd.js log off
+        node lockd.js log
+
+    PHP answers
+
+        ['available' => true, 'events' => true, 'verbose' => false,
+         'path' => '<storage>/logs/rsx-lockd.log',
+         'writable' => true, 'write_errors' => 0, 'last_error' => null]
+
+    While the fleet is quiesced for maintenance there is no daemon to ask and
+    both calls answer ['available' => false, 'reason' => ...] instead of
+    throwing. lock_logging_status() answers the same way for a daemon that
+    refuses the query (one still running from before it knew the op);
+    set_lock_logging() THROWS on a refusal - a destination the daemon cannot
+    open, a relative path - and nothing has changed when it does. SYSTEM
+    (flock) locks never reach the daemon and are not logged.
+
+  Two Levels
+    The default level records CONTENTION ONLY:
+
+        WAIT         a request parked behind a holder (who, how long held)
+        GRANT        a parked request was granted, with how long it waited
+        TIMEOUT      a wait gave up, naming who still held the lock
+        DEADLOCK     a request refused because it would close a cycle
+        DROP         a connection died or closed while holding or waiting
+        FORCE_CLEAR  a lock was broken by somebody other than its holder
+
+    A healthy box produces almost none of these, so this level is meant to be
+    left on: a quiet log then means a quiet box, and the record already exists
+    when a lock problem appears.
+
+    Verbose adds ACQUIRE and RELEASE for every operation - thousands of lines an
+    hour. Use it to trace one sequence; do not leave it running.
+
+  Reading It
+    "Failed to acquire WRITE lock for X after N seconds" tells the caller only
+    that its wait failed. The daemon's lines say why:
+
+        WAIT WRITE cluster:<scope>__nightly_export
+          by c9 [web-1:29178] - held by c8 [web-1:29063] WRITE for 5.1s,
+          queue depth 1, timeout 2s
+        TIMEOUT WRITE cluster:<scope>__nightly_export
+          for c9 [web-1:29178] after 2s (waited 2.0s)
+          - still held by c8 [web-1:29063] WRITE for 7.1s
+
+    Each connection is named with its host and pid, so the next step is `ps`
+    on that host. Three shapes to recognise:
+
+        A WAIT with no later GRANT or TIMEOUT for that connection
+            It is still waiting. The WAIT line names who holds the lock.
+
+        A TIMEOUT saying "still held by nobody"
+            The holder let go inside the window and the waiter was not granted.
+            That is not contention; it is a different fault.
+
+        No WAIT and no TIMEOUT at all for the lock in question
+            The lock was never contended. Whatever reported contention was not
+            reporting a lock.
+
+  Where It Writes
+    --path / $path when given (an ABSOLUTE path on the DAEMON'S host), else the
+    destination the daemon already has (the config `logfile`), else
+    rsx-lockd.log in the application's log directory. Every surface reports the
+    path in use; once a file is in use the daemon's lifecycle lines go there
+    too.
+
+    A log destination can never take the daemon down. One that cannot be opened
+    is refused when it is named; one that fails later is counted
+    (write_errors, last_error) and output falls back to the daemon's stdout.
+
+    The config keys log_events and log_verbose set the state the daemon STARTS
+    in; both default to false.
+
 TROUBLESHOOTING
     "Cannot reach rsx-lockd at 127.0.0.1:6210 after 3 attempts"
         The daemon is not running, or PHP and the daemon disagree about the
@@ -600,6 +706,12 @@ TROUBLESHOOTING
         That is wait-forever behaving as designed. `node lockd.js dump` shows
         the queue and the holder. The deadlock detector refuses CYCLES only; a
         long queue behind one slow holder is not a cycle.
+
+    "Failed to acquire ... after N seconds" but nothing should have held it
+        The exception cannot say who held the lock. Turn on event logging
+        (EVENT LOGGING above), reproduce, and read the TIMEOUT line: it names
+        the holder with its host and pid, or says "still held by nobody". No
+        WAIT line at all means the lock was never contended.
 
     "System locks are exclusive only"
         Something asked for RsxLocks::READ_LOCK on the SYSTEM domain. Readers-

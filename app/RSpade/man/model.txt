@@ -114,6 +114,23 @@ All forms of eager loading throw exceptions. Use explicit queries:
 Rationale: Prevents recursive loading chains that accidentally cascade across
 the entire database. Future optimization will use caching strategies instead.
 
+load(), loadMissing() and loadCount() refuse a RELATION. An empty relation list is
+not a load: each returns $this for it.
+
+REFRESHING A RECORD
+
+    $invoice->refresh();
+
+re-reads the row in place and returns the same instance: the attributes become what
+the database holds now, and unsaved changes on the instance are discarded. It is the
+call for an instance left stale by a write that did not go through it - raw SQL,
+DB::table(), ->raw_bulk(), a service that saved its own copy of the row.
+
+Every relation the instance had read, and its detail row (rsx:man detail_tables), is
+DROPPED rather than reloaded: the next read of one queries again, so nothing the
+instance answers afterwards predates the refresh. A reference the caller took to a
+related record before the refresh is that caller's own, and is as stale as it was.
+
 See: php artisan rsx:man rspade (DATABASE PHILOSOPHY section)
 
 AJAX ORM (Model Fetch System)

@@ -313,6 +313,44 @@ HOW IT WORKS
         it - with no factor left they are not a recovery path, they are ten
         bearer tokens that log somebody in with no second step at all.
 
+    A DEPLOYMENT WITH NO RECOVERY CODES
+        config rsx.two_factor.recovery_codes (default true) is whether the
+        deployment issues recovery codes at all, read as
+        Rsx_Two_Factor::issues_recovery_codes(). One key, BOTH realms: it is
+        a decision about the deployment's way back in (a sheet of paper, or
+        an administrator), not about which login page somebody used.
+
+        false means NOTHING MINTS, on any path:
+
+            confirm_totp_enrollment()        returns null - the factor is
+                                             live, there is no sheet
+            confirm_passkey_registration()   returns null
+            cli_setup_totp() / :2fa:setup    recovery_codes is null
+            regenerate_recovery_codes()      THROWS and changes nothing
+
+        Recovery_Codes::store_for() is the one writer and refuses, so no
+        other path can leave a code behind. <Totp_Enrollment> and
+        <Passkey_Register> skip the reveal and fire their event as soon as
+        the factor is live; credentials_list answers issues_recovery_codes
+        so a settings screen knows not to offer regeneration.
+
+        IT GOVERNS MINTING AND NOTHING ELSE.
+          - Turning it off DELETES NOTHING. An identity that already holds
+            codes keeps them, verify_challenge() still accepts them, and
+            challenge_pending()'s has_recovery_codes is still true for that
+            identity - every one of those is derived from what the identity
+            holds, never from the switch. An operator who wants the existing
+            sheets gone removes them per identity:
+                php artisan rsx:users:2fa:remove --user=<id|email> --recovery-codes
+            (Rsx_Two_Factor::remove_recovery_codes($identity); the portal
+            realm has the facade method and no command).
+          - Turning it on again issues codes at the NEXT enrollment, or when
+            an identity regenerates. Nothing is backfilled: an identity
+            enrolled while it was off holds none.
+          - An identity with no codes that loses its factor is recovered by
+            an operator (rsx:users:2fa:remove) or by whatever administrative
+            removal the application built on remove_all().
+
     THE CHALLENGE STATE MACHINE
         begin_challenge($identity)
             Writes {identity_id, email} to the realm's CHALLENGE_KEY session
@@ -468,6 +506,9 @@ THE FACADE
             has any business there.
 
         recovery_codes_remaining($identity): int
+        issues_recovery_codes(): bool
+            config('rsx.two_factor.recovery_codes'). Whether the deployment
+            mints recovery codes - not whether an identity holds any.
         has_confirmed_totp($identity): bool
         issuer(): string
             config('rsx.two_factor.issuer'), or the hostname when null. A
@@ -483,9 +524,10 @@ THE FACADE
             {secret, otpauth_uri, qr_svg}. The seed is parked in a session
             value, not written to a row - an abandoned enrollment leaves
             nothing behind.
-        confirm_totp_enrollment(string $code): array
+        confirm_totp_enrollment(string $code): ?array
             Proves a live code, writes the confirmed row, returns the
-            plaintext recovery codes (the only time they exist). A wrong code
+            plaintext recovery codes (the only time they exist), or NULL when
+            the deployment issues none. A wrong code
             throws Two_Factor_Failed_Exception and the parked seed SURVIVES,
             so the retry is the same enrollment.
         begin_passkey_registration(): array
@@ -496,7 +538,8 @@ THE FACADE
         confirm_passkey_registration(array $attestation, ?string $label): ?array
             Freshly minted recovery codes, or NULL when the identity already
             had a sheet - a user adding a second passkey must not have the
-            codes they wrote down silently invalidated. Records
+            codes they wrote down silently invalidated - or the deployment
+            issues none. Records
             passkey_enrolled, or passkey_enroll_failed / _abandoned before
             the exception propagates unchanged.
         record_expired_passkey_enrollments(): int
@@ -504,12 +547,17 @@ THE FACADE
             record expired, never-confirmed enrollments as abandoned.
         regenerate_recovery_codes(): array
             Replaces the set. The previous sheet stops working immediately.
+            Throws, changing nothing, when the deployment issues none.
 
     REMOVAL
         remove_credential($identity, int $credential_id): void
             Removes one factor, and the recovery codes with it if it was the
             last. Naming a row that is not this identity's is a NO-OP, not an
             error: a stale settings screen is a race, not an attack.
+        remove_recovery_codes($identity): int
+            Removes every recovery code the identity holds and leaves its
+            factors in place; returns how many went. An administrative act
+            on a NAMED identity (see A DEPLOYMENT WITH NO RECOVERY CODES).
         remove_all($identity): void
             The administrative unlock, and what an account deletion runs.
 
@@ -623,11 +671,13 @@ THE FACADE
 
     THE OPERATOR PATH (a shell, not a request - never call from a request)
         cli_setup_totp($identity, ?string $label): array
-            {secret, otpauth_uri, recovery_codes}. Writes the row CONFIRMED
+            {secret, otpauth_uri, recovery_codes: array|null}. Writes the row CONFIRMED
             immediately: there is no browser to type a live code into, and
             the operator is already a higher privilege than any identity in
             the application. Refuses when a confirmed TOTP credential exists.
-            The recovery set REPLACES whatever the identity held.
+            The recovery set REPLACES whatever the identity held; on a
+            deployment that issues none, recovery_codes is null and what the
+            identity held is left alone.
         cli_dump_credentials($identity): array
             Every factor WITH the TOTP seeds decrypted, unconfirmed rows
             included. The deliberate opposite of list_credentials(): this
@@ -657,12 +707,14 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
             passkey_register_begin, passkey_register_confirm
                                      {attestation, label}
             credentials_list        -> {credentials, recovery_codes_remaining,
-                                        is_enabled} - ONE call, so a settings
+                                        issues_recovery_codes, is_enabled}
+                                        - ONE call, so a settings
                                         screen never paints three states that
                                         disagree while they land
             credential_remove {id}  -> the refreshed state; refuses while
                                         impersonating
-            recovery_regenerate     -> {recovery_codes}
+            recovery_regenerate     -> {recovery_codes}; offer it only
+                                        when issues_recovery_codes is true
 
         #[Auth('public')]           - the half-authenticated population
             challenge_state         -> challenge_pending(): {email,
@@ -699,7 +751,8 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
     <Totp_Enrollment />
         The whole authenticator ceremony: QR code, manual-entry secret, the
         6-digit proof (typed one digit per box, <Code_Input>, the cursor
-        already in it), and the ONE-TIME recovery-code reveal.
+        already in it), and the ONE-TIME recovery-code reveal (skipped when
+        the server minted no sheet).
         Args:   none - it always enrolls the signed-in identity.
         Events: enrolled - the user acknowledged the code sheet (the factor
                 is already live at that point).
@@ -960,7 +1013,9 @@ IMPLEMENTING 2FA IN AN APPLICATION
         then open <Totp_Enrollment /> or <Passkey_Register /> in a modal, and
         reload() the screen on its enrolled / registered event. Removal is
         credential_remove({id}), regeneration is recovery_regenerate() - both
-        answer the fresh state.
+        answer the fresh state. Show the recovery-code COUNT when the identity
+        holds any, and the regenerate action only when issues_recovery_codes
+        is true.
 
     4. REQUIRING A SECOND FACTOR (OPTIONAL, AND ENTIRELY YOURS)
         The framework decides only whether an identity HAS a factor. It
@@ -1151,7 +1206,8 @@ CLI COMMANDS
     rsx:users:2fa:setup --user=<id|email> [--json]
         Mints a TOTP seed, writes the credential CONFIRMED, replaces the
         recovery codes, and prints the seed, the otpauth:// URI and the ten
-        codes ONCE. A second seed is REFUSED - remove the existing one first,
+        codes ONCE (no codes, and "recovery_codes": null under --json, on a
+        deployment that issues none). A second seed is REFUSED - remove the existing one first,
         or add a second factor from the settings screen.
 
     rsx:users:2fa:dump --user=<id|email> [--json]
@@ -1159,11 +1215,13 @@ CLI COMMANDS
         rebuilt, unconfirmed rows included. Recovery codes are a COUNT and
         never a list: they are bcrypt hashed and there is nothing to print.
 
-    rsx:users:2fa:remove --user=<id|email> [--id=<credential>] [--force] [--json]
+    rsx:users:2fa:remove --user=<id|email> [--id=<credential>]
+                         [--recovery-codes] [--force] [--json]
         Removes every factor, or the one named by --id (resolved against
         THIS identity's credentials - a miss is an error, because an operator
         who believes an account is unlocked when it is not is the dangerous
-        outcome). Prompts before destroying anything; --force is how a script
+        outcome), or - with --recovery-codes - only the recovery codes, every
+        factor kept (not combinable with --id). Prompts before destroying anything; --force is how a script
         says the intent. --json cannot prompt, so it REQUIRES --force.
 
     rsx:users:2fa:unlock --user=<id|email> [--json]

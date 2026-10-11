@@ -17,6 +17,7 @@ exit codes). This file is the map of the implementation.
 | `lib/pool.js` | Worker pool accounting (`pool.*` ops): per-pool FIFO mutex + member set, worker ids (wid) + the daemon generation, per-connection cleanup. Bespoke - shares no code with locks/semaphores | **None.** Delivery, the generation and the first wid are injected. |
 | `lib/server.js` | `net.Server` over unix and/or tcp, per-connection state, hello gate, frame dispatch | Binds sockets |
 | `lib/config.js` | Config search order, JSON parse, total validation | Reads the file it is told to read |
+| `lockd.js` -> `Lockd_Logger` | The log sink: where output goes, whether events are recorded, runtime switching | Opens/appends the logfile |
 | `lockd-run.sh` | Supervisor entry: wait for `lockd.js`, then `exec node` | Invoke as `bash lockd-run.sh` - never rely on the exec bit |
 | `lockd.conf` | Shipped defaults | Never edit downstream; the project-root copy wins |
 
@@ -114,6 +115,61 @@ table.drop_connection('a');                 // -> deliver(b, granted)
     the daemon too, which is why the generation exists: a wid from another generation is
     answered `known: false`, never `alive: false` - this daemon cannot know about a previous
     daemon's workers, and a caller that read `false` as "dead" would reap live work.
+
+## Logging (and why it is injected)
+
+`Lockd_Logger` lives in `lockd.js` and is the ONLY thing that touches a log file. The lock
+table does not: it is pure, and `log(build, level)` is injected into it exactly as
+`deliver`/`now`/`set_timeout` are, defaulting to a no-op. **Keep it that way** - a unit
+test drives the whole state machine with a collector and no filesystem.
+
+The table DESCRIBES an event; the logger decides whether anything is written. So a new
+event is a `this.log(() => '...')` call in the table plus nothing else.
+
+- **`build` is a function, not a string.** `_grant_lock()` runs on every acquire, and an
+  event nobody is recording must cost a closure, not a line of string work. The sink
+  calls `build()` synchronously inside `log()`, or never - so the line describes the table
+  at that instant, and a build must not be kept and called later.
+- **The sink never throws back into the table.** `_fire_timeout()` runs from a timer and
+  `drop_connection()` from a socket-close handler; an exception there has no request to
+  be turned into an error frame for and would end the process that holds every lock.
+  `Lockd_Logger.event()` therefore catches whatever `build()` or the write raises and
+  counts it (`write_errors`, `last_error`). It is the one deliberate swallow in the daemon.
+
+Two switches, both off by default, both live-settable through the `log` op (and `lockd.js
+log` / `RsxLocks::set_lock_logging()`):
+
+- **events** - contention only: `WAIT`, `GRANT` after a wait, `TIMEOUT`, refused
+  `DEADLOCK`, `FORCE_CLEAR`, and a `DROP` that released a hold or cancelled a wait. Rare
+  by construction, so it is safe to leave on forever. **Adding a per-operation event to
+  this level is the mistake to avoid**; the whole value is that a quiet log means a quiet
+  box.
+- **verbose** - adds `ACQUIRE`/`RELEASE`/`RELEASE_ALL`, which fire on every operation.
+
+Locks and semaphores log the same events; a line says `semaphore <name>` where a lock line
+says `WRITE <name>`.
+
+**A restart is not an alternative to live switching.** The connection is the lock, so
+restarting releases every lock on the box and erases the state being diagnosed. That is
+why `log` is an op rather than a config-only key.
+
+**The `log` op is authenticated and total.** It is dispatched from
+`_handle_authenticated()`, never beside `ping`, because it names a file this process
+writes. Every key is type-checked, a path must be absolute, and a frame that would do
+nothing (a path without `enabled:true`, verbosity for a log that is off) is an error
+frame rather than an `ok`.
+
+Ordering rules the events follow, worth preserving:
+
+- The `TIMEOUT` line is emitted BEFORE `_remove_waiter`, while the holders are still in
+  place, so it names who held the lock while the waiter waited.
+- The `DROP` and `FORCE_CLEAR` lines are emitted BEFORE the grant pass they trigger, so the
+  file reads in causal order: the release, then the `GRANT` lines it produced.
+  `FORCE_CLEAR` is also emitted before the holders are cleared, so it can still name them.
+
+Lifecycle lines go through `logger.write()` and are never gated - they are the record that
+the daemon ran. Only events go through `logger.event()`. With no file, or a file that has
+failed, both go to stdout.
 
 ## Lock groups (subprocess inheritance)
 

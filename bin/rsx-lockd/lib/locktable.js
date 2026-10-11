@@ -41,6 +41,18 @@ class Lock_Table {
         this.set_timeout = options.set_timeout || function (fn, ms) { return setTimeout(fn, ms); };
         this.clear_timeout = options.clear_timeout || function (handle) { return clearTimeout(handle); };
 
+        // Event logging, INJECTED so this module stays pure (CLAUDE.md: no side effects -
+        // delivery and timers are injected, and so is this). A no-op by default, which is
+        // what lets a unit test drive the whole state machine with no sink at all.
+        //
+        // Signature: log(build, level). `build` is a FUNCTION returning the line, so an
+        // event nobody is recording costs one closure and no string work - this runs on
+        // every acquire. A sink calls build() synchronously, inside the log() call, or not
+        // at all: the line describes the table as it is at that instant. `level` is
+        // 'verbose' for per-operation events and absent for the contention events worth
+        // leaving on permanently.
+        this.log = options.log || function () {};
+
         // name -> { name, holders: Map<conn_id, {mode, token, since}>, queue: [entry] }
         this.locks = new Map();
 
@@ -179,6 +191,20 @@ class Lock_Table {
             }
         }
 
+        // A DISCONNECT THAT RELEASED SOMETHING. "The connection is the lock", so this is
+        // how a crashed or killed holder lets go - and from the outside it is
+        // indistinguishable from an orderly release, which is exactly why it is worth a
+        // line. Silent when the connection held and wanted nothing, which is almost every
+        // disconnect.
+        //
+        // Logged BEFORE the grants below run, so the file reads in causal order: the drop
+        // is the cause and the GRANT lines it produces are the effect. Written the other
+        // way round the log claims a lock was granted before the holder let go of it.
+        if (released > 0 || cancelled > 0) {
+            this.log(() => 'DROP ' + this._describe_conn(conn_id, conn)
+                + ' released ' + released + ' hold(s), cancelled ' + cancelled + ' wait(s)');
+        }
+
         this.connections.delete(conn_id);
         this.counters.dropped_connections++;
         this.counters.released += released;
@@ -275,6 +301,7 @@ class Lock_Table {
         const cycle = this._detect_deadlock(conn_id, { kind: 'lock', name: name, mode: mode });
         if (cycle) {
             this.counters.deadlocked++;
+            this._log_deadlock(conn_id, conn, 'acquiring ' + mode.toUpperCase() + ' ' + name, cycle);
             return {
                 id: req.id,
                 status: protocol.STATUS_DEADLOCK,
@@ -377,6 +404,11 @@ class Lock_Table {
         }
         conn.tokens.clear();
         this.counters.released += released;
+
+        if (released > 0) {
+            this.log(() => 'RELEASE_ALL by ' + this._describe_conn(conn_id, conn)
+                + ' released ' + released + ' hold(s)', 'verbose');
+        }
 
         // A connection that is waiting cannot also be sending release_all in the PHP
         // client (it is synchronous), but the protocol permits it. Answer the parked
@@ -496,6 +528,7 @@ class Lock_Table {
             // refused upgrade does not silently downgrade it to holding nothing.
             this._restore_hold(lock, conn, holder);
             this.counters.deadlocked++;
+            this._log_deadlock(conn_id, conn, 'upgrading ' + name + ' to WRITE', cycle);
             return {
                 id: req.id,
                 status: protocol.STATUS_DEADLOCK,
@@ -573,6 +606,7 @@ class Lock_Table {
         const cycle = this._detect_deadlock(conn_id, { kind: 'sem', name: name });
         if (cycle) {
             this.counters.deadlocked++;
+            this._log_deadlock(conn_id, conn, 'acquiring semaphore ' + name, cycle);
             return {
                 id: req.id,
                 status: protocol.STATUS_DEADLOCK,
@@ -614,6 +648,8 @@ class Lock_Table {
         if (semaphore && semaphore.holders.delete(req.token)) {
             held = true;
             this.counters.released++;
+            this.log(() => 'RELEASE semaphore ' + record.name + ' slot ' + record.slot
+                + ' by ' + this._describe_conn(conn_id, conn), 'verbose');
         }
         this.tokens.delete(req.token);
         conn.tokens.delete(req.token);
@@ -810,6 +846,17 @@ class Lock_Table {
         let slots_cleared = 0;
 
         const lock = this.locks.get(name);
+        const semaphore = this.semaphores.get(name);
+
+        // Somebody other than the holder let go of it. Logged before anything is cleared,
+        // so the line can still name who held it, and before the grants the clear triggers.
+        if ((lock && lock.holders.size > 0) || (semaphore && semaphore.holders.size > 0)) {
+            this.log(() => 'FORCE_CLEAR ' + name + ' - was held by '
+                + (lock && lock.holders.size > 0
+                    ? this._describe_holders(lock)
+                    : this._describe_slots(semaphore)));
+        }
+
         if (lock) {
             for (const [conn_id, holder] of Array.from(lock.holders)) {
                 const conn = this.connections.get(conn_id);
@@ -822,7 +869,6 @@ class Lock_Table {
             this._gc_locks([lock]);
         }
 
-        const semaphore = this.semaphores.get(name);
         if (semaphore) {
             for (const [token, holder] of Array.from(semaphore.holders)) {
                 const conn = this.connections.get(holder.conn_id);
@@ -913,6 +959,12 @@ class Lock_Table {
         conn.tokens.add(token);
         this.counters.granted++;
 
+        // VERBOSE ONLY. This fires on every granted acquire - thousands an hour on a busy
+        // box - which is why it is behind the second switch and the contention events above
+        // are not. Turn it on to trace one sequence, not to leave running.
+        this.log(() => 'ACQUIRE ' + mode.toUpperCase() + ' ' + lock.name
+            + ' by ' + this._describe_conn(conn.conn_id, conn), 'verbose');
+
         return {
             id: req.id,
             status: protocol.STATUS_GRANTED,
@@ -927,6 +979,10 @@ class Lock_Table {
         this.tokens.delete(holder.token);
         conn.tokens.delete(holder.token);
         this.counters.released++;
+
+        this.log(() => 'RELEASE ' + holder.mode.toUpperCase() + ' ' + lock.name
+            + ' by ' + this._describe_conn(conn.conn_id, conn)
+            + ' after ' + this._seconds_since(holder.since), 'verbose');
     }
 
     /** Put back a hold removed speculatively (the refused-upgrade path). */
@@ -953,6 +1009,9 @@ class Lock_Table {
         this.tokens.set(token, { kind: 'sem', conn_id: conn.conn_id, name: semaphore.name, slot: slot });
         conn.tokens.add(token);
         this.counters.granted++;
+
+        this.log(() => 'ACQUIRE semaphore ' + semaphore.name + ' slot ' + slot
+            + ' by ' + this._describe_conn(conn.conn_id, conn), 'verbose');
 
         return {
             id: req.id,
@@ -986,6 +1045,17 @@ class Lock_Table {
         target.queue.push(entry);
         conn.waits.push(entry);
 
+        // CONTENTION. Rare by construction - the overwhelming majority of acquires are
+        // granted outright and never reach here - so this is cheap to leave on and is the
+        // first half of the only report that answers "who is holding up whom".
+        this.log(() => 'WAIT ' + this._describe_want(entry)
+            + ' by ' + this._describe_conn(conn.conn_id, conn)
+            + ' - held by ' + (entry.kind === 'lock'
+                ? this._describe_holders(target)
+                : this._describe_slots(target))
+            + ', queue depth ' + target.queue.length
+            + (entry.timeout === null ? ', waiting forever' : ', timeout ' + entry.timeout + 's'));
+
         if (entry.timeout !== null) {
             entry.timer = this.set_timeout(() => {
                 this._fire_timeout(entry);
@@ -999,6 +1069,18 @@ class Lock_Table {
         const target = entry.kind === 'lock'
             ? this.locks.get(entry.name)
             : this.semaphores.get(entry.name);
+
+        // Named BEFORE the waiter is removed and while the holders are still in place, so
+        // the line reports the state that actually caused the timeout. A client is told
+        // only that its wait failed; this line names who held the lock while it waited,
+        // or says that nobody did.
+        this.log(() => 'TIMEOUT ' + this._describe_want(entry)
+            + ' for ' + this._describe_conn(entry.conn_id, this.connections.get(entry.conn_id))
+            + ' after ' + entry.timeout + 's'
+            + ' (waited ' + this._seconds_since(entry.since) + ')'
+            + ' - still held by ' + (entry.kind === 'lock'
+                ? this._describe_holders(target)
+                : this._describe_slots(target)));
 
         this._remove_waiter(entry, true);
         this.counters.timed_out++;
@@ -1074,6 +1156,13 @@ class Lock_Table {
 
             const frame = this._grant_lock(lock, conn, entry.mode, entry.req);
             if (entry.upgraded) frame.upgraded = true;
+
+            // The other half of the WAIT line: how long the queue actually cost. A WAIT
+            // with no matching GRANT is the shape that means somebody is still stuck.
+            this.log(() => 'GRANT ' + this._describe_want(entry)
+                + ' to ' + this._describe_conn(entry.conn_id, conn)
+                + ' after waiting ' + this._seconds_since(entry.since));
+
             this.deliver(entry.conn_id, frame);
         }
     }
@@ -1085,7 +1174,13 @@ class Lock_Table {
             this._remove_waiter(entry, false);
             if (!conn) continue;
 
-            this.deliver(entry.conn_id, this._grant_semaphore(semaphore, conn, entry.req));
+            const frame = this._grant_semaphore(semaphore, conn, entry.req);
+
+            this.log(() => 'GRANT ' + this._describe_want(entry)
+                + ' to ' + this._describe_conn(entry.conn_id, conn)
+                + ' after waiting ' + this._seconds_since(entry.since));
+
+            this.deliver(entry.conn_id, frame);
         }
     }
 
@@ -1200,6 +1295,55 @@ class Lock_Table {
             ? (hop.want.mode || MODE_WRITE).toUpperCase() + ' lock ' + hop.want.name
             : 'semaphore ' + hop.want.name;
         return who + ' waits for ' + what + ' -> blocked by ' + blocked_by;
+    }
+
+    /** A refused request that would have closed a wait-for cycle. */
+    _log_deadlock(conn_id, conn, doing, cycle) {
+        this.log(() => 'DEADLOCK refused: ' + this._describe_conn(conn_id, conn)
+            + ' ' + doing + ' would close a cycle -- ' + cycle.join(' | '));
+    }
+
+    /** What a queue entry is waiting for: "WRITE <name>" or "semaphore <name>". */
+    _describe_want(entry) {
+        return entry.kind === 'lock'
+            ? entry.mode.toUpperCase() + ' ' + entry.name
+            : 'semaphore ' + entry.name;
+    }
+
+    _seconds_since(since) {
+        return ((this.now() - since) / 1000).toFixed(1) + 's';
+    }
+
+    /**
+     * WHO HOLDS THIS LOCK RIGHT NOW, for a log line. This is the fact a contention report
+     * is written for: "it timed out" names a symptom, "it timed out and c7 [web-1:3140] has
+     * held it WRITE for 62s" names the thing to go and look at.
+     */
+    _describe_holders(lock) {
+        if (!lock || lock.holders.size === 0) return 'nobody';
+        const parts = [];
+        for (const [holder_conn_id, holder] of lock.holders) {
+            parts.push(
+                this._describe_conn(holder_conn_id, this.connections.get(holder_conn_id))
+                + ' ' + holder.mode.toUpperCase()
+                + ' for ' + this._seconds_since(holder.since)
+            );
+        }
+        return parts.join(', ');
+    }
+
+    /** The semaphore twin of _describe_holders(): how full it is, and who holds each slot. */
+    _describe_slots(semaphore) {
+        if (!semaphore || semaphore.holders.size === 0) return 'nobody';
+        const parts = [];
+        for (const holder of semaphore.holders.values()) {
+            parts.push(
+                this._describe_conn(holder.conn_id, this.connections.get(holder.conn_id))
+                + ' slot ' + holder.slot
+                + ' for ' + this._seconds_since(holder.since)
+            );
+        }
+        return semaphore.holders.size + '/' + semaphore.max_slots + ' slots: ' + parts.join(', ');
     }
 
     _describe_conn(conn_id, conn) {

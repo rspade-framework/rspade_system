@@ -765,6 +765,121 @@ class RsxLocks
     }
 
     /**
+     * Switch the lock daemon's EVENT LOGGING on or off, in the running daemon.
+     *
+     * The switch is live because a restart is not available as a diagnostic step: the
+     * connection is the lock, so restarting rsx-lockd releases every lock on the box and
+     * with them the state being looked at.
+     *
+     * Two levels:
+     *
+     *  - DEFAULT (`$verbose = false`): contention only. A WAIT when a request parks, the
+     *    GRANT that ends the wait with its duration, a TIMEOUT, a refused DEADLOCK, a
+     *    FORCE_CLEAR, and a disconnect (DROP) that released a hold. A healthy box produces
+     *    almost none of these, so this level can stay on permanently - and a quiet log then
+     *    means a quiet box.
+     *  - VERBOSE: adds every ACQUIRE and RELEASE - thousands of lines an hour. For tracing
+     *    one sequence, never a standing setting.
+     *
+     * THE TIMEOUT LINE NAMES THE HOLDER. A lock that times out throws "Failed to
+     * acquire ..." here, which says only that the wait failed; the daemon's line says which
+     * connection (host and pid) held the lock, in which mode and for how long - or
+     * "still held by nobody", which is a different fault from contention.
+     *
+     * `$path` is a file ON THE DAEMON'S HOST and must be absolute. Without one the daemon
+     * keeps the destination it has; a daemon with no log file opens rsx-lockd.log in the
+     * application's log directory. The returned array names the path in use.
+     *
+     * A destination the daemon cannot open THROWS and changes nothing. Where there is no
+     * daemon to ask - a fleet quiesced for maintenance - the answer is
+     * `['available' => false, 'reason' => ...]`, never an exception. System (flock) locks
+     * never reach the daemon and are not logged.
+     *
+     * CLI twin: `node system/bin/rsx-lockd/lockd.js log on|off [--verbose] [--path=<file>]`.
+     *
+     * @param  bool        $enabled Record events, or stop recording them.
+     * @param  string|null $path    Absolute destination on the daemon's host; null keeps
+     *                              the daemon's own. Only meaningful when enabling.
+     * @param  bool        $verbose Also log every acquire and release. Only meaningful when
+     *                              enabling.
+     * @return array ['available' => true, 'events', 'verbose', 'path', 'writable',
+     *                'write_errors', 'last_error'], or ['available' => false, 'reason']
+     * @throws RuntimeException When the daemon refuses the request.
+     */
+    public static function set_lock_logging(bool $enabled, ?string $path = null, bool $verbose = false): array
+    {
+        $frame = ['op' => 'log', 'enabled' => $enabled];
+
+        if ($enabled) {
+            $frame['verbose'] = $verbose;
+
+            if ($path !== null) {
+                $frame['path'] = $path;
+            }
+        } elseif ($path !== null || $verbose) {
+            throw new RuntimeException('set_lock_logging(false) takes no path and no verbosity - they apply to enabling.');
+        }
+
+        return self::__logging_frame($frame, true);
+    }
+
+    /**
+     * What the lock daemon's event logging is doing right now. A pure query: it changes
+     * nothing, and it never throws over a daemon that will not answer it - a daemon still
+     * running from before it knew the `log` op reads as unavailable, with the daemon's own
+     * message as the reason. See set_lock_logging() for the levels and the answer's shape.
+     *
+     * @return array ['available' => true, 'events', 'verbose', 'path', 'writable',
+     *                'write_errors', 'last_error'], or ['available' => false, 'reason']
+     */
+    public static function lock_logging_status(): array
+    {
+        return self::__logging_frame(['op' => 'log'], false);
+    }
+
+    /**
+     * Send one `log` frame and shape the answer. A refusal throws for a change request and
+     * reads as unavailable for a query.
+     */
+    private static function __logging_frame(array $frame, bool $throw_on_refusal): array
+    {
+        // A quiesced fleet has no daemon to ask, and a diagnostic call is not what breaks
+        // a maintenance window.
+        if (self::__maintenance_degraded()) {
+            return ['available' => false, 'reason' => 'The fleet is quiesced for maintenance; no lock daemon is running.'];
+        }
+
+        $response = self::__lockd($frame);
+
+        // Maintenance came up mid-flight.
+        if ($response === null) {
+            return ['available' => false, 'reason' => 'The fleet is quiesced for maintenance; no lock daemon is running.'];
+        }
+
+        if (($response['status'] ?? 'error') !== 'ok') {
+            $message = 'rsx-lockd refused the log request: ' . ($response['message'] ?? 'unknown error');
+
+            if ($throw_on_refusal) {
+                throw new RuntimeException($message);
+            }
+
+            return ['available' => false, 'reason' => $message];
+        }
+
+        $logging = $response['logging'];
+
+        return [
+            'available' => true,
+            'events' => (bool) $logging['events'],
+            'verbose' => (bool) $logging['verbose'],
+            'path' => $logging['path'],
+            'writable' => (bool) $logging['writable'],
+            'write_errors' => (int) $logging['write_errors'],
+            'last_error' => $logging['last_error'],
+        ];
+    }
+
+    /**
      * Lock statistics for monitoring.
      *
      * @param string $domain Lock domain

@@ -20,6 +20,17 @@ Type: php / cli / asset / http / playwright.
 | db-rs-12 | query() returns a usable builder escape hatch | - | builder counts 7 | implemented |
 | db-rs-13 | a non-positive chunk size fails loud | chunk 0 | throws | implemented |
 
+## Model_Refresh_Test (php, default isolation) - refresh() and the eager-loading refusal
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| db-rf-01 | refresh() re-reads a row changed out of band, in place | DB::table() update behind a loaded User_Model | same instance, new values, not dirty | implemented |
+| db-rf-02 | refresh() discards unsaved changes | an assigned, unsaved attribute | the stored value, not dirty | implemented |
+| db-rf-03 | a relation the record had read is dropped, not reloaded, and the next read is current | login_user read, then both rows changed out of band | no throw, relation not loaded, next read returns the new value | implemented |
+| db-rf-04 | refresh() on an unsaved record is a no-op | new model | same instance, attributes untouched | implemented |
+| db-rf-05 | an empty relation list is not a load | load([]), loadMissing([]), loadCount([]) | each returns $this | implemented |
+| db-rf-06 | loading a relation is still refused | load / loadMissing / loadCount / with() naming a relation | RuntimeException naming the refusal | implemented |
+
 ## Result_Set_Tripwire_Test (php, default isolation) - dev row-count warning
 
 | ID | Purpose | Input | Expected | Status |

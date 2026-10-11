@@ -6,8 +6,8 @@ The passkey enrollment ceremony as one drop-in control:
     <Passkey_Register />
 
 An optional name for the key, a button that raises the browser's passkey prompt, and - when
-this identity had no recovery codes yet - the one-time reveal of the sheet the server minted
-alongside it. Listen for 'registered'.
+this identity had no recovery codes yet and the deployment issues them - the one-time reveal
+of the sheet the server minted alongside it. Listen for 'registered'.
 
 LAYOUT-NEUTRAL BY CONTRACT, exactly like <Totp_Enrollment>: no card, no heading, no width.
 

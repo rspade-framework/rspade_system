@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\TwoFactor;
 
 use Illuminate\Support\Facades\Hash;
+use RuntimeException;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
@@ -40,6 +41,10 @@ use App\RSpade\Core\Time\Rsx_Time;
  * somebody who has just lost their phone and is not at their best. Ambiguous glyphs there
  * cost real logins for no entropy worth having: 32 symbols across 8 characters is 40 bits
  * per code, against a bcrypt hash, which is not the weak link in anything.
+ *
+ * A DEPLOYMENT MAY ISSUE NONE. rsx.two_factor.recovery_codes (default true) is read as
+ * Rsx_Two_Factor::issues_recovery_codes(); false means store_for() refuses, so nothing
+ * mints. consume() and remaining() do not read it: a code that exists is a code that works.
  *
  * Every method is static. Read and write them through Rsx_Two_Factor.
  *
@@ -123,9 +128,20 @@ class Recovery_Codes
      * @param int $identity_id The owning identity, in that realm.
      * @param array $codes Plaintext codes, as returned by generate().
      * @return void
+     * @throws RuntimeException When the deployment issues no recovery codes.
      */
     public static function store_for(string $realm, int $identity_id, array $codes): void
     {
+        // THE ONE WRITER, so the one place the deployment's switch is enforced: with
+        // rsx.two_factor.recovery_codes off, no path - enrollment, the operator setup,
+        // regeneration - can leave a recovery code behind. Checked before the old set is
+        // removed, so a refusal changes nothing.
+        if (!$realm::issues_recovery_codes()) {
+            throw new RuntimeException(
+                'This deployment issues no recovery codes (rsx.two_factor.recovery_codes is false).'
+            );
+        }
+
         $model = $realm::_credential_model();
         $owner = $realm::_owner_column();
 

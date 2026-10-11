@@ -56,6 +56,15 @@ RUN apt-get update && apt-get install -y \
         imagemagick ghostscript optipng \
     # document preview and text extraction - RUNTIME features, both targets
         libreoffice poppler-utils fonts-liberation fonts-dejavu-core \
+    # HTML to PDF for an application's own printable documents (an invoice, a
+    # statement): `weasyprint in.html out.pdf`. A renderer, not a browser - it runs
+    # no JavaScript, lays out paged-media CSS (@page, page breaks, running headers)
+    # and keeps every <a href> as a link in the PDF. Both targets, so a document
+    # made in development is the document made in production; fontconfig and the
+    # Noto families are here for the same reason - the generic sans-serif and serif
+    # families resolve to the same faces in both images, DejaVu Sans Mono (above)
+    # is monospace, and a PDF is set in the SERVER's fonts.
+        weasyprint fontconfig fonts-noto-core \
     # the framework shells out to these. openssh-client is git's transport for an
     # ssh:// or git@host: remote - git only RECOMMENDS it, so it is named here
     # rather than left to be pulled in by something else.

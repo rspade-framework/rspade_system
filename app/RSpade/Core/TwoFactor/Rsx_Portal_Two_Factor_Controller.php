@@ -68,7 +68,8 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
     /**
      * Finish an authenticator-app enrollment by proving a live code.
      *
-     * @return array {recovery_codes} - the ONLY time the plaintext codes exist.
+     * @return array {recovery_codes: array|null} - the ONLY time the plaintext codes exist;
+     *               null when the deployment issues none.
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
@@ -111,8 +112,9 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
     /**
      * Finish registering a passkey.
      *
-     * recovery_codes is null when the identity already had a sheet - the UI reveals the
-     * one-time code list only when there is genuinely something new to show.
+     * recovery_codes is null when the identity already had a sheet, or the deployment
+     * issues none - the UI reveals the one-time code list only when there is genuinely
+     * something new to show.
      *
      * @return array {recovery_codes: array|null}
      */
@@ -143,13 +145,14 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
 
     /**
      * Everything a second-factor settings screen renders: the factors as metadata, the
-     * unspent recovery-code count, and whether a factor exists at all.
+     * unspent recovery-code count, whether the deployment issues recovery codes (so
+     * whether to offer regeneration), and whether a factor exists at all.
      *
      * ONE call, not three. A settings screen that asked for the list, the count and the
      * enabled flag separately would paint three states that disagree with each other while
      * they land.
      *
-     * @return array {credentials, recovery_codes_remaining, is_enabled}
+     * @return array {credentials, recovery_codes_remaining, issues_recovery_codes, is_enabled}
      */
     #[Ajax_Endpoint]
     #[Portal_Impersonation_Readable]
@@ -161,6 +164,7 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
         return [
             'credentials' => Rsx_Portal_Two_Factor::list_credentials($login_user),
             'recovery_codes_remaining' => Rsx_Portal_Two_Factor::recovery_codes_remaining($login_user),
+            'issues_recovery_codes' => Rsx_Portal_Two_Factor::issues_recovery_codes(),
             'is_enabled' => Rsx_Portal_Two_Factor::is_enabled($login_user),
         ];
     }
@@ -172,7 +176,7 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
      * is the refreshed state either way - a settings screen naming a row that has already
      * gone is a race, not an attack.
      *
-     * @return array {credentials, recovery_codes_remaining, is_enabled}
+     * @return array {credentials, recovery_codes_remaining, issues_recovery_codes, is_enabled}
      */
     #[Ajax_Endpoint]
     #[Auth('is_logged_in')]
@@ -196,6 +200,10 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
      *
      * The previous sheet stops working the moment this returns, which is what a user who
      * thinks their codes were seen is asking for.
+     *
+     * Offered only where credentials_list answers issues_recovery_codes true: on a
+     * deployment that issues none the facade throws, which is the loud answer to a screen
+     * that offered an action it should not have.
      *
      * @return array {recovery_codes}
      */

@@ -74,7 +74,9 @@ The shipped defaults:
   "tcp":    { "enabled": true,  "port": 6210, "bind": "0.0.0.0" },
   "auth":   { "hmac_key_env": "APP_KEY" },
   "pidfile": "/var/run/rsx-lockd.pid",
-  "logfile": null
+  "logfile": null,
+  "log_events": false,
+  "log_verbose": false
 }
 ```
 
@@ -88,7 +90,9 @@ The shipped defaults:
 | `tcp.bind` | string | Bind address. `0.0.0.0` binds everywhere; the CLI dials `127.0.0.1` in that case. |
 | `auth.hmac_key_env` | string | Name of the environment variable holding the shared HMAC key. |
 | `pidfile` | string | Written after a successful bind, removed on clean shutdown. |
-| `logfile` | string or null | Append log lines here. `null` means stdout, which is what a supervisor captures. |
+| `logfile` | string or null | WHERE output goes. `null` means stdout, which is what a supervisor captures. |
+| `log_events` | boolean | WHETHER contention events are recorded (see LOGGING). Off by default; switchable at runtime, so this only sets the state the daemon STARTS in. |
+| `log_verbose` | boolean | Also record every acquire and release. Requires `log_events`; `true` with `log_events: false` is a startup error, because it is a setting that would do nothing. |
 
 Both listeners disabled, an unknown key, or a wrong type is a **startup error with a
 message naming the key** - never a silent default. Whole-line `//` comments are tolerated
@@ -378,6 +382,104 @@ answering without holding the key.
 <-- {"id":"r10","status":"ok","pong":true}
 ```
 
+### log
+
+Switch event logging on or off in the running daemon, or report it. **Authenticated** -
+not open pre-`hello` like `ping`, because it names a file the daemon will write to. (The
+HMAC key is the trust boundary for the whole protocol, so a peer that can say hello may
+name a path.)
+
+```json
+--> {"op":"log","id":"r11"}
+<-- {"id":"r11","status":"ok","logging":{"events":false,"verbose":false,"path":null,
+     "writable":false,"write_errors":0,"last_error":null}}
+
+--> {"op":"log","id":"r12","enabled":true,"verbose":false,"path":"/var/log/lockd-trace.log"}
+<-- {"id":"r12","status":"ok","logging":{"events":true,"verbose":false,
+     "path":"/var/log/lockd-trace.log","writable":true,"write_errors":0,"last_error":null}}
+
+--> {"op":"log","id":"r13","enabled":false}
+<-- {"id":"r13","status":"ok","logging":{"events":false,"verbose":false, ...}}
+```
+
+| Field | Meaning |
+|---|---|
+| `enabled` | `true` starts recording, `false` stops. Absent = nothing is switched. |
+| `verbose` | With `enabled:true`: also record every acquire and release (default `false`). On its own: change the verbosity of a log that is already recording. |
+| `path` | Destination, an ABSOLUTE path on the daemon's host. Only with `enabled:true`; absent keeps the destination the daemon has. |
+
+With no keys it is a pure query. Nothing is silently ignored - each of these is an `error`
+frame and changes nothing:
+
+- `enabled` or `verbose` that is not a boolean
+- a `path` that is not an absolute path, or one sent without `enabled:true`
+- `verbose` on its own while event logging is off, or `verbose:true` with `enabled:false`
+- a destination that cannot be opened (the message carries the OS error)
+
+In the answer, `path` is the file in use (`null` = the daemon's stdout), `writable` is
+whether a file is open, and `write_errors` / `last_error` count and name every log failure
+since the daemon started.
+
+
+## Logging
+
+Two independent questions:
+
+- **Where** output goes: `logfile`, or stdout when there is none. **Lifecycle** lines
+  (starting, ready, shutdown, internal errors) always go there and are never gated.
+- **Whether** events are recorded: `log_events` / `log_verbose`, both off by default and
+  both switchable in the running daemon.
+
+**Logging is switched live, never by a restart.** The connection is the lock, so
+restarting rsx-lockd releases every lock on the box - and the state being diagnosed with
+them. The switch is the `log` op, reached through the `lockd.js log` command or
+`RsxLocks::set_lock_logging()` on the PHP side.
+
+### Two levels
+
+| Level | Records | Volume |
+|---|---|---|
+| default | `WAIT`, `GRANT` (after a wait, with its duration), `TIMEOUT`, a refused `DEADLOCK`, `FORCE_CLEAR`, and a `DROP` that released a hold or cancelled a wait | Contention only - almost nothing on a healthy box, so it is meant to be left on |
+| `--verbose` | adds every `ACQUIRE`, `RELEASE` and `RELEASE_ALL` | A line or two per operation - trace one sequence, do not leave it running |
+
+Locks and semaphores produce the same events.
+
+**A `TIMEOUT` line names the holder.** A client's acquire timeout reports only that the
+wait failed. The daemon's line says who held the lock, in which mode and for how long:
+
+```
+WAIT WRITE cluster:<scope>__nightly_export by c9 [web-1:29178]
+  - held by c8 [web-1:29063] WRITE for 5.1s, queue depth 1, timeout 2s
+TIMEOUT WRITE cluster:<scope>__nightly_export for c9 [web-1:29178]
+  after 2s (waited 2.0s) - still held by c8 [web-1:29063] WRITE for 7.1s
+```
+
+(Each event is one line in the file; they are wrapped here.) A `WAIT` with no later
+`GRANT` or `TIMEOUT` for that connection means it is still waiting. A `TIMEOUT` reporting
+`still held by nobody` means the holder let go inside the window and the waiter was not
+granted - not contention, a different fault. No `WAIT` at all means the lock was never
+contended.
+
+A `DROP` or `FORCE_CLEAR` line always precedes the `GRANT` lines it caused.
+
+### Destination
+
+`--path=<file>` when given, else the destination the daemon already has (`logfile`), else
+`rsx-lockd.log` in the application's log directory - the storage root every node helper
+resolves, `RSX_STORAGE_PATH` honoured - or the system temp directory outside an RSpade
+project. A file is chosen when none is configured because a supervised daemon's stdout
+may have nobody reading it. Every surface reports the path in use, and once a file is in
+use the lifecycle lines go there too.
+
+**A log destination can never take the daemon down.** One that cannot be opened is refused
+when it is named and the log stays where it was. One that fails later (disk full, the
+filesystem gone) is counted in `write_errors`, named in `last_error`, and output falls
+back to stdout.
+
+`dump` shows the state NOW - it cannot say who held a lock five minutes ago. That is what
+`log` is for.
+
+
 ## Behaviors
 
 **The connection is the lock.** On socket close or error - clean exit, crash, `kill -9`,
@@ -494,6 +596,45 @@ pools
 
 A connection's pool state prints as `HELD     POOL  <pool>`, `WAITING  POOL  <pool>` and
 `MEMBER   POOL  <pool>   as wid <wid>`.
+
+`dump` shows the state NOW - it cannot say who held a lock five minutes ago. That is what
+`log` is for.
+
+### log
+
+```
+node lockd.js log                                  report only
+node lockd.js log on  [--verbose] [--path=<file>]   start recording
+node lockd.js log off                               stop recording
+node lockd.js log --verbose                         make a running log verbose
+node lockd.js log --json                            the raw logging state
+```
+
+Switches event logging **in the running daemon**, taking effect immediately. See the
+Logging chapter for the two levels and the destination rules. `--path` must be absolute
+(it is opened by the daemon, on the daemon's host) and is accepted only with `on`.
+
+```
+rsx-lockd event logging: ON
+  destination: /var/www/html/storage/logs/rsx-lockd.log
+```
+
+Exit 1, with the daemon's message, when the request is refused - a destination that
+cannot be opened, `--verbose` for a log that is off.
+
+The PHP twin, for a script or a diagnostic endpoint:
+
+```php
+use App\RSpade\Core\Locks\RsxLocks;
+
+RsxLocks::set_lock_logging(true);                  // contention only
+RsxLocks::set_lock_logging(true, null, true);      // + every acquire/release
+RsxLocks::set_lock_logging(false);
+RsxLocks::lock_logging_status();                   // pure query
+```
+
+While the fleet is quiesced for maintenance there is no daemon to ask, and the PHP side
+answers `['available' => false, 'reason' => ...]` rather than throwing.
 
 ### exec
 

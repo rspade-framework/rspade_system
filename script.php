@@ -33,6 +33,9 @@
  * the point: a long write run must not land in the middle of what the window was
  * raised for.
  *
+ * EXIT STATUS. 0 when the script runs to its end, whatever it passes to exit() when it
+ * calls it, 1 when it dies of an uncaught exception or error, 255 on a PHP fatal.
+ *
  * WORKING DIRECTORY. Left at the framework tree (system/), as under artisan. A script
  * that needs its own directory saves getcwd() before the include.
  *
@@ -76,5 +79,25 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 // script performing many units (an import) declares each one itself with
 // Revision::begin_unit_of_work() or Revision::unit_of_work() - rsx:man scripting.
 \App\RSpade\Core\Revisions\Revision::_reset_request_state('cli', basename((string) ($_SERVER['argv'][0] ?? 'script')));
+
+// EXIT STATUS. PHP ends a script with status 0 once a registered exception handler has
+// returned, and the application's handler is one: it reports and prints an uncaught
+// exception, then returns. Everything that runs a script - a shell && chain, cron, a CI
+// step, a parent's passthru() - reads the status and nothing else, so an uncaught
+// Throwable is handed to the application's handler as before and the process then ends
+// with status 1. A fatal PHP cannot hand to a handler (memory exhausted) already ends 255,
+// and a script's own exit(N) means what it says.
+(static function (): void {
+    $application_handler = null;
+    $application_handler = set_exception_handler(static function (\Throwable $e) use (&$application_handler): void {
+        if ($application_handler !== null) {
+            $application_handler($e);
+        } else {
+            fwrite(STDERR, (string) $e . "\n");
+        }
+
+        exit(1);
+    });
+})();
 
 return $app;

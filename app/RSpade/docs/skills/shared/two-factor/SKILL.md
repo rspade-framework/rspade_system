@@ -7,7 +7,7 @@ description: "Wiring RSpade's second factor and passkey sign-in into an applicat
 
 Two front doors, one engine: **`Rsx_Two_Factor`** for staff (credentials of the login identity, `login_users`, like the password) and **`Rsx_Portal_Two_Factor`** for the client portal (credentials of a `Portal_User_Model`) - the identical API over separate tables. `Totp`, `Passkeys`, `Recovery_Codes` and the credential models are implementation - never touch them from application code.
 
-Three kinds: **TOTP** (RFC 6238, six digits), **PASSKEY** (WebAuthn), **RECOVERY_CODE** (ten single-use codes, minted automatically alongside the first real factor). A passkey is also a **first factor**: passwordless sign-in (below).
+Three kinds: **TOTP** (RFC 6238, six digits), **PASSKEY** (WebAuthn), **RECOVERY_CODE** (ten single-use codes, minted automatically alongside the first real factor - unless the deployment issues none, below). A passkey is also a **first factor**: passwordless sign-in (below).
 
 **No global enable switch.** 2FA is per identity: `is_enabled($identity)`. A requirement policy is the application's (see the forced-2FA recipe).
 
@@ -181,6 +181,8 @@ await Modal.show({ title: 'Set Up Authenticator App', component: 'Totp_Enrollmen
 
 Removal is `Rsx_Two_Factor_Controller.credential_remove({ id })`; a new code sheet is `recovery_regenerate()`. Both answer the refreshed state.
 
+**A deployment may issue NO recovery codes**: `'two_factor' => ['recovery_codes' => false]` in the app's `rsx.php` (default true, both realms; `Rsx_Two_Factor::issues_recovery_codes()`). Nothing then mints on any path - `confirm_totp_enrollment()` / `confirm_passkey_registration()` answer `null`, the shipped enrollment components skip the reveal, `regenerate_recovery_codes()` throws. **It governs minting only**: codes an identity already holds are not deleted and are still accepted at the challenge (`has_recovery_codes` stays derived from what the identity holds) until an operator runs `rsx:users:2fa:remove --user=... --recovery-codes` (`remove_recovery_codes($identity)`); turned on again, codes appear at the next enrollment with no backfill. A settings screen shows the remaining COUNT when the identity holds any and the regenerate button only when `credentials_list`'s `issues_recovery_codes` is true - never a model hook or a query that deletes the rows.
+
 **Enrollment always acts on the signed-in identity** - there is no spelling that names another account, and every path throws while impersonating.
 
 ---
@@ -263,6 +265,7 @@ JS helpers: `Rsx_Two_Factor.is_supported()`, `controller()` (the page realm's co
 php artisan rsx:users:2fa:setup  --user=alice@example.com    # bootstrap/recovery: prints seed + codes ONCE, refuses a second seed
 php artisan rsx:users:2fa:dump   --user=1                    # factors WITH decrypted TOTP seeds (codes are a count - they are hashed)
 php artisan rsx:users:2fa:remove --user=1 [--id=7] [--force] # prompts; --json requires --force
+php artisan rsx:users:2fa:remove --user=1 --recovery-codes  # only the recovery codes; every factor stays
 php artisan rsx:users:2fa:unlock --user=1                    # clears the failure count (lifts an attempt-cap lock); factors untouched
 ```
 
