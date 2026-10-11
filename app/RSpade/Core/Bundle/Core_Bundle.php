@@ -26,6 +26,7 @@ class Core_Bundle extends Rsx_Bundle_Abstract
                 'app/RSpade/Core/Data',
                 'app/RSpade/Core/Database',
                 'app/RSpade/Core/Time',  // Timezone preference endpoints (Rsx_Timezone_Controller proxy)
+                'app/RSpade/Core/Session/Rsx_Session_Controller.php',  // The page-view report endpoint (Rsx_Session.js); the rest of Core/Session is server-only
                 'app/RSpade/Core/Theme',  // Theme preference endpoints (Rsx_Dark_Mode_Controller proxy)
                 'app/RSpade/Core/Models',  // Framework models (User_Model, Site_Model, etc.)
                 'app/RSpade/Core/Forms',  // The form contract: Rsx_Form + Form_Input_Abstract (one engine, every bundle)

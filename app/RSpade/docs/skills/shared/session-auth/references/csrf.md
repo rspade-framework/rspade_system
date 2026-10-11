@@ -11,7 +11,7 @@ Two complementary layers, at the dispatch seam, **POST only** (GET never mutates
 
 ## The token
 
-A 32-byte random token, minted ONCE when the session is created and stored on `_sessions.csrf_token`. **Stable for the life of the session** - not rotated on login, identity change, or impersonation (RSpade's session-token immutability). It reaches JavaScript only as `window.rsxapp.csrf`, which is populated on page render **only when a session already exists** (an anonymous first-visit page has `null` - no session is created merely to emit a token). It never lives in a page-readable cookie.
+A 32-byte random token, minted with the session row and stored on `_sessions.csrf_token`. **It belongs to the row**: a site switch, a logout and an impersonation leave it alone, and a SIGN-IN changes it, because a sign-in moves the browser to a new row (`rsx:man session`, Sign-In Rotation). A sign-in made by an Ajax call is handed the new token in that call's envelope, so the page keeps working without a reload. It reaches JavaScript only as `window.rsxapp.csrf`, which is populated on page render **only when a session already exists** (an anonymous first-visit page has `null` - no session is created merely to emit a token). It never lives in a page-readable cookie.
 
 ## Transport (handled for you)
 

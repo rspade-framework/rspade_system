@@ -58,6 +58,7 @@ use App\RSpade\Core\Rsx;
  * @property int $is_api_access_enabled
  * @property int $is_enabled
  * @property string $last_name
+ * @property string $last_seen
  * @property int $login_user_id
  * @property string $phone
  * @property int $role_id

@@ -332,17 +332,18 @@ API REFERENCE
         Session::set_login_user_id(int|null $login_user_id,
                                    bool $touch_last_login = true): void
             Log in or out by cross-site login identity ID. Pass null to logout.
-            CREATES session in web mode if none exists (the sole token-minting
-            site). On an EXISTING session it is a pure record update: the
-            session_token and csrf are NOT regenerated (they are immutable for the
-            life of the session - see SECURITY); only the same-value sliding-expiry
-            cookie refresh occurs.
+            CREATES session in web mode if none exists. A REAL SIGN-IN
+            ($touch_last_login true) moves the browser to a NEW session row with a
+            new token and CSRF token, and supersedes the row it arrived with - see
+            SECURITY, Sign-In Rotation. It also starts the session's clocks
+            (SESSION LIFETIME). A swap that is not a sign-in ($touch_last_login
+            false) is a pure record update on the live row.
 
-            $touch_last_login stamps login_users.last_login. True (the default) is
-            a real login; pass FALSE whenever the login is not one - an
-            impersonation identity swap, the rsx:debug dev-auth harness, the
-            password stage of a two-step flow that has not completed yet. The
-            stamp is the only thing the flag controls.
+            $touch_last_login says whether this IS a sign-in. True (the default)
+            stamps login_users.last_login, rotates the session row and starts
+            its clocks; pass FALSE whenever the identity change is not somebody
+            signing in - an impersonation identity swap, the rsx:debug dev-auth
+            harness.
 
             IN CLI THIS NEVER STAMPS. The CLI branch declares the identity
             override and returns before reaching the stamp, whatever the flag
@@ -364,10 +365,10 @@ API REFERENCE
 
         Logout semantics (owner ruling 2026-08-05):
             logout() does NOT invalidate the session row, by design. The row
-            stays active and keeps the SAME session_token (tokens are minted
-            once per session - see SECURITY, Token Immutability); the browser
-            simply carries on as a now-ANONYMOUS session, preserving anonymous
-            session continuity across a login/logout cycle.
+            stays active and keeps the SAME session_token; the browser simply
+            carries on as a now-ANONYMOUS session. Signing in again moves it to
+            a new row (SECURITY, Sign-In Rotation), so the token it held while
+            signed out never becomes a signed-in one.
 
             Session::reset() is the invalidation primitive (active=false, cookie
             expired), and logout() deliberately does not route through it. An
@@ -788,13 +789,15 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
 SECURITY
     Automatic Security Features:
         - Session tokens: 64-character cryptographically secure random
-        - Tokens are IMMUTABLE for the life of the session (minted once, never
-          rotated) - see Token Immutability below
+        - A token STRING never changes on a row; every SIGN-IN moves the browser
+          to a new row with a new token - see Sign-In Rotation below
         - Constant-time token comparison prevents timing attacks
         - Secure cookie flags: httponly, secure, samesite=Lax
-        - CSRF tokens generated automatically (also minted once, never rotated)
-        - Row expiry by inactivity per session type; last_active tracked
-          server-side for GC (SESSION TYPES / GARBAGE COLLECTION)
+        - CSRF tokens generated automatically, one per row (so a sign-in
+          changes it along with the session token)
+        - A sign-in has a maximum length and a maximum idle time, enforced
+          when a request arrives (SESSION LIFETIME)
+        - Unused rows are collected per session type (GARBAGE COLLECTION)
 
     Cookie Settings:
         - Name: `__Host-rsx` whenever the cookie is Secure - every request in
@@ -819,35 +822,64 @@ SECURITY
           the server-side row is what actually expires (GARBAGE COLLECTION),
           and last_active is what it expires against.
 
-    Token Immutability (owner ruling 2026-07-24):
-        A session_token (and its csrf_token) STRING is minted EXACTLY ONCE - when a
-        new _sessions row is created because the presented cookie matches no row
-        (or there is no cookie). Nothing else ever regenerates it: "reissue" means
-        given a NEW string, and that never happens to a live session. Re-emitting
-        the SAME value each response (the sliding-expiry refresh above) is fine -
-        an identical value can never desync the browser from the row.
+    Sign-In Rotation:
+        A _sessions row is the browser's credential for ONE sign-in. Every real
+        sign-in - Session::set_login_user_id() with a user, a portal sign-in,
+        and so RsxAuth::login(), a passed second factor, a passkey or SSO
+        sign-in - does this:
 
-        Changing the logged-in user, the site, or the impersonation state is a PURE
-        UPDATE of the existing row (login_user_id / site_id / impersonation columns,
-        version++, save) - the token and csrf stay byte-identical.
+            1. a NEW row is minted, with a new session token and a new CSRF
+               token, and the response replaces the session cookie with it;
+            2. everything the old row held rides across: the tenant, the other
+               experience's identity and its clocks, session values
+               (Session::put_value()) and pending flash alerts;
+            3. the row the browser arrived with is SUPERSEDED: stripped of every
+               identity and pointed at its successor (superseded_by_id). It
+               stays active as an anonymous session and is never sent a cookie
+               again.
 
-        Why no rotation-at-login: rotating on an in-place identity swap introduced a
-        post-rotation cookie-desync race (the new cookie racing concurrent in-flight
-        requests still carrying the old token). Removing rotation eliminates that
-        race by construction.
+        WHY: the row the browser presents at sign-in may be held by somebody
+        else too - a copied cookie, or a token planted before the visitor
+        signed in. Writing the identity onto that row would authenticate every
+        holder at once, and a forced re-login (SESSION LIFETIME) would hand a
+        stolen cookie straight back. After a rotation the old token is an
+        anonymous session and nothing more, permanently.
+
+        WHAT DOES NOT ROTATE. No token STRING on a row ever changes; the
+        browser moves to a different row. logout(), a site switch and an
+        impersonation begin/stop are pure record updates on the live row -
+        nobody re-authenticated, so there is nothing to re-key. A sign-in in
+        the same request that minted the row (a first visit that signs in)
+        writes onto it in place: that token has not left the server yet.
+
+        THE RACE THIS DESIGN AVOIDS. A request still in flight with the old
+        token when the sign-in lands finds its row (now anonymous) rather than
+        no row, so it mints nothing and is sent no cookie - it cannot overwrite
+        the cookie the sign-in just set. A page that signed in through an Ajax
+        call is handed the new CSRF token in that call's envelope.
+
+        DEVICES. The rows one browser goes through are tied together by
+        _sessions.device_id, a _session_devices record created at the browser's
+        first sign-in and inherited by every later row. It is what lets a
+        "where you're signed in" screen show one browser as one entry with a
+        first-seen date, however many times it has signed in (SESSION
+        MANAGEMENT). A browser whose cookies were cleared starts a new device.
+
+        A portal on its own host that is being viewed through "View as Client"
+        shares the staff browser's row; a new staff sign-in moves the staff
+        host to a new row and ends that view.
 
     Session Fixation:
-        Server-minting alone does NOT exclude fixation: an attacker can mint a
-        genuine token for themselves and plant it in the victim's browser, and
-        because the token is never rotated at login, the victim's sign-in would
-        then land on the attacker's row. The defence is the cookie NAME. A
-        browser accepts a `__Host-` cookie only when it is Secure, has Path=/,
-        carries NO Domain attribute and arrives from a secure origin - so a
-        sibling subdomain (Domain=example.com), a narrower path (Path=/login,
-        which the browser would send first) and a plain-http response all
-        cannot set or shadow it. Do not serve a session-bearing page over plain
-        http outside development, and never relax the cookie's attributes in a
-        class override of Rsx_Session_Cookie - each one is load-bearing.
+        Planting a token in a victim's browser gains nothing: the victim's
+        sign-in lands on a new row, and the planted token stays anonymous. The
+        cookie NAME is the second line. A browser accepts a `__Host-` cookie
+        only when it is Secure, has Path=/, carries NO Domain attribute and
+        arrives from a secure origin - so a sibling subdomain
+        (Domain=example.com), a narrower path (Path=/login, which the browser
+        would send first) and a plain-http response all cannot set or shadow
+        it. Do not serve a session-bearing page over plain http outside
+        development, and never relax the cookie's attributes in a class
+        override of Rsx_Session_Cookie - each one is load-bearing.
 
         Renaming the cookie signs every browser out once: a cookie under the
         previous name is never read.
@@ -891,8 +923,8 @@ IMPERSONATION
         Session::begin_impersonation(int $target_login_user_id): void
             Begin impersonating the target from the CURRENT session. Records the
             current login_user_id as the impersonator and swaps login_user_id to the
-            target in place - a PURE RECORD UPDATE. The session_token + csrf are
-            stable (never rotated - only the routine same-value cookie refresh occurs). Keeps site_id.
+            target in place - a PURE RECORD UPDATE on the live row (an
+            impersonation is not a sign-in, so nothing rotates). Keeps site_id.
             Does NOT bump the target's last_login (impersonation is not a real login).
             Throws if there is no active logged-in session, if already
             impersonating (non-recursive - one level only), or if the target
@@ -901,8 +933,7 @@ IMPERSONATION
         Session::stop_impersonation(): bool
             End the current impersonation, restoring the real principal's
             login_user_id. Clears both impersonation columns and swaps login_user_id
-            back - a PURE RECORD UPDATE. The session_token + csrf are stable (never
-            rotated) and the cookie is not re-emitted. Does NOT bump last_login on
+            back - a PURE RECORD UPDATE on the live row. Does NOT bump last_login on
             restore. Returns true if an impersonation was ended, false (no-op) when
             the session was not impersonating.
 
@@ -930,8 +961,9 @@ IMPERSONATION
           the graceful "return to admin"; logout() is the hard exit.
         - Non-recursive: begin_impersonation() throws while already impersonating.
         - Throws on self-impersonation (target == current login_user_id).
-        - NO token rotation on begin or stop - the session_token + csrf are immutable
-          for the life of the session (see SECURITY). Both are pure record updates.
+        - NO rotation on begin or stop - both are pure record updates on the live
+          row, and the session clocks keep running from the impersonator's own
+          sign-in (SESSION LIFETIME).
         - last_login is untouched on both begin and stop.
         - site_id is untouched. get_user() continues to resolve the site-specific
           user from (site_id, effective login_user_id). If the target login user
@@ -1196,8 +1228,8 @@ TROUBLESHOOTING
         Problem: User is logged out without calling logout()
 
         Solutions:
-        - Check the retention window for the session's type (rsx.sessions.*;
-          3 months web, 14 days if it never authenticated)
+        - Check the sign-in limits (rsx.sessions.staff / .portal - SESSION
+          LIFETIME): 30 days from sign-in and 30 days idle by default
         - Verify session.active = true in database
         - Check for code calling Session::reset() or Session::logout()
         - Verify session token hasn't changed
@@ -1208,8 +1240,9 @@ TROUBLESHOOTING
         Solutions:
         - Ensure token is being submitted in POST data
         - Check session exists (get_csrf_token returns null if no session)
-        - The csrf token is immutable for the session's life (never regenerated),
-          so a mismatch means the wrong/absent token was submitted, not rotation
+        - The csrf token belongs to the session row, and a sign-in moves the
+          browser to a new row: a page that held a token from before the
+          sign-in must reload (an Ajax sign-in is handed the new one)
 
     CLI Commands Not Working:
         Problem: Session methods return null/0 in artisan commands
@@ -1343,6 +1376,112 @@ CONCURRENT SESSION CAP
     Impersonation inherits it (it delegates to the same setter); logout does not
     (there is no new session to make room for).
 
+SESSION LIFETIME
+    A sign-in does not last forever. Each experience has two limits, in
+    config('rsx.sessions'):
+
+        'staff'  => ['max_length_minutes' => 43200, 'max_idle_minutes' => 43200],
+        'portal' => ['max_length_minutes' => 43200, 'max_idle_minutes' => 43200],
+        'ajax_grace_minutes' => 120,
+
+    max_length_minutes   measured from the SIGN-IN. The hard ceiling: the
+                         sign-in ends this long after it began however active
+                         it is, and the person signs in again - facing their
+                         second factor again, if they have one.
+    max_idle_minutes     measured from the last PAGE VIEW.
+    0                    no limit.
+
+    The defaults are 30 days each. Both are overridden in
+    rsx/resource/config/rsx.php.
+
+    What a page view is:
+        A page rendering its bundle (any server-rendered page, and the first
+        load of an SPA), and each completed SPA navigation - which the browser
+        reports itself, since it reaches no page route. Nothing else: an Ajax
+        call, a file download, a thumbnail and an external API request are not
+        somebody looking at a page, so a tab left open that polls or refetches
+        does not keep a sign-in alive.
+
+        A page view is written at most once a minute per session. The same
+        write stamps last_seen on the account: users.last_seen and
+        login_users.last_seen for staff, portal_users.last_seen for the portal
+        (not while impersonating - the account's owner was not there).
+
+    What happens at a limit:
+        Limits are enforced when a request arrives, ahead of the #[Auth] gates.
+        No sweeper is involved, so they hold on a box with no cron tick.
+
+        A PAGE NAVIGATION past a limit signs the browser out (a logout() - the
+        row survives as an anonymous session), redirects to the sign-in screen
+        with the intended URL captured, and flashes why: "Your session has
+        expired. Please sign in again." or "You were signed out after a period
+        of inactivity. Please sign in again."
+
+        ANY OTHER REQUEST - an Ajax call, a thumbnail, a download, an iframe's
+        document - keeps working for ajax_grace_minutes past the limit. The
+        page that sends it was open before the limit passed, and should still
+        be able to finish what it was doing, such as saving the form on screen.
+        The first such request after the grace signs out; an Ajax call then
+        answers the session_expired envelope.
+
+        AN SPA NAVIGATION gets no grace: the browser's page-view report is
+        judged like a page, so somebody who only ever moves around inside the
+        SPA meets the limit at their next navigation.
+
+        The two experiences are independent. One browser session can carry a
+        staff and a portal identity; each is judged by its own limits, on its
+        own requests, and ending one leaves the other signed in.
+
+    The browser's side:
+        When the server reports that a page's sign-in is gone - the
+        session_expired envelope, or auth_required on a page that was rendered
+        signed in (the session was ended from another device or by an
+        administrator) - the framework announces it ONCE per page to the
+        handler the application registered:
+
+            // from a static on_app_modules_define()
+            Rsx.set_session_expired_handler(function (info) {
+                // info.message is the server's sentence
+            });
+
+        The page behind it is a signed-in page nobody is signed in to, so the
+        usual handler opens a dialog that cannot be dismissed, with one button
+        that reloads the page; the server then redirects to the sign-in screen
+        and returns the user to this URL afterwards. With NO handler registered
+        the framework reloads at once. Worked example:
+        system/app/RSpade/resource/reference_app/lib/modal/modal.js
+        (_on_session_expired).
+
+    Choosing the limits:
+        max_idle_minutes ends a session nobody is using. It does NOT bound
+        somebody who has taken over a session - they are never idle.
+        max_length_minutes is the limit that does: with it set to 8 hours, a
+        copied cookie is useful for at most 8 hours from the real person's
+        sign-in, ends sooner if they sign in again on that browser (Sign-In
+        Rotation retires the row the copy names), and never comes back. An
+        application that holds sensitive records sets both to hours and turns
+        on a second factor, so every re-entry is a full re-authentication:
+
+            'sessions' => [
+                'staff' => ['max_length_minutes' => 480, 'max_idle_minutes' => 60],
+            ],
+
+        Never implement "Remember Me": the cookie is always long-lived, and
+        these limits are what end a sign-in.
+
+    API:
+        Session::enforce_timeouts(bool $strict): ?string
+        Portal_Session::enforce_timeouts(bool $strict): ?string
+            Called by the dispatcher and the Ajax entry point; an application
+            does not call them. Answer 'length' or 'idle' when the sign-in was
+            just ended.
+
+        Session::touch_page_view(): void
+        Portal_Session::touch_page_view(): void
+            Record a page view. Called by the bundle render and by
+            Rsx_Session_Controller::page_view (the SPA's report). An application
+            whose page deliberately renders no bundle may call it.
+
 GARBAGE COLLECTION
     Automatic Session Cleanup:
         Sessions are expired by ONE hourly task,
@@ -1352,26 +1491,34 @@ GARBAGE COLLECTION
         sessions indefinitely, which is precisely the failure this design
         exists to bound.
 
-        A session expires by INACTIVITY (last_active). A BROWSER session
-        (TYPE_WEB) is judged on whether it carries an IDENTITY - login_user_id
-        OR portal_user_id, since one row serves both experiences - and the
-        machine types keep their own short backstops whatever they carry. All
-        five windows are config, in rsx.sessions:
+        This task only COLLECTS rows nobody has come back to. Whether a sign-in
+        is still valid is decided when a request arrives (SESSION LIFETIME), not
+        here. A row is judged on last_active; a BROWSER session (TYPE_WEB) on
+        whether it carries an IDENTITY - login_user_id OR portal_user_id, since
+        one row serves both experiences - and the machine types keep their own
+        short backstops whatever they carry:
 
-            web_timeout_minutes        131400   (3 months)  TYPE_WEB with an
-                                                            identity in EITHER
-                                                            column
-            anonymous_timeout_minutes   43200   (30 days)   TYPE_WEB with
-                                                            neither
-            api_timeout_minutes         10080   (7 days)    TYPE_API
-            playwright_timeout_minutes   1440   (1 day)     TYPE_PLAYWRIGHT
-            cli_timeout_minutes          1440   (1 day)     TYPE_CLI
+            TYPE_WEB with an identity   the LONGER of
+              in EITHER column          rsx.sessions.staff.max_idle_minutes and
+                                        .portal.max_idle_minutes, plus
+                                        ajax_grace_minutes - once it is past
+                                        that, no sign-in on it could still be
+                                        used. Never collected for age when
+                                        either idle limit is 0 (unlimited).
+            anonymous_timeout_minutes    43200   (30 days)   TYPE_WEB with
+                                                             neither (a
+                                                             superseded row
+                                                             is one of these)
+            api_timeout_minutes          10080   (7 days)    TYPE_API
+            playwright_timeout_minutes    1440   (1 day)     TYPE_PLAYWRIGHT
+            cli_timeout_minutes           1440   (1 day)     TYPE_CLI
 
         The identity test spans BOTH columns because the row does: a browser
         signed into the client portal and never into the staff app is a real,
         in-use session, and a rule that only looked at login_user_id would
-        collect it at the anonymous window. There is no portal window and no
-        portal_timeout_minutes - there is no portal row to give one to.
+        collect it at the anonymous window.
+
+        A _session_devices record is deleted once no session row names it.
 
         Identity-less rows are minted for any visitor issued a CSRF token,
         crawlers included, which is why they go first.
@@ -1417,6 +1564,14 @@ SESSION MANAGEMENT
         // For a specific user (admin use)
         $sessions = Session::get_sessions_for_user($login_user_id);
 
+        Each entry: id, device_id, ip_address, user_agent, user_agent_parsed,
+        device_summary, location, last_active, created_at, signed_in_at,
+        first_seen, is_current. `id` is the session to pass to the terminate
+        functions. One browser is one entry however often it has signed in:
+        a sign-in moves it to a new row (SECURITY, Sign-In Rotation), and
+        device_id and first_seen - when that browser FIRST signed in - stay
+        the same across them, while signed_in_at is the current sign-in.
+
         Returns only ACTIVE sessions, and deliberately returns the WHOLE set of
         them - it backs a "where you're signed in" security screen, and a user
         cannot terminate a session they were not shown. Deactivated rows are
@@ -1427,7 +1582,8 @@ SESSION MANAGEMENT
           - rsx.sessions.max_web_sessions_per_user (default 25) signs out the
             user's oldest web sessions on every sign-in, so the live count per
             user has a ceiling (CONCURRENT SESSION CAP above);
-          - retention expires idle rows by type (GARBAGE COLLECTION above).
+          - a sign-in ends at its limits (SESSION LIFETIME) and idle rows are
+            collected by type (GARBAGE COLLECTION above).
 
         The 62,617-row incident that prompted this review was harness sessions
         nothing ever expired - now TYPE_PLAYWRIGHT, deleted as each run ends - a

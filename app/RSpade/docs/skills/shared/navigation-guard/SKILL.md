@@ -50,7 +50,9 @@ Link clicks, Back/Forward, `Spa.dispatch()` and `Spa.redirect()` all reach
 `Spa.dispatch()`, the single navigation choke point, so ONE registration covers all four.
 The callback receives the target URL. A programmatic navigation that must not be asked
 about passes `{ skip_navigation_guard: true }`; popstate never does, because Back/Forward
-is always subject to the guard.
+is always subject to the guard. **A refused Back/Forward leaves the history stack as it
+was**: the browser had already moved, so the framework steps it back to the entry it left -
+nothing is pushed, and Back and Forward afterwards reach the same pages as before.
 
 A blocked navigation logs:
 

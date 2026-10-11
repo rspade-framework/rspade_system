@@ -12,6 +12,7 @@ class Ajax {
     static ERROR_NOT_FOUND = 'not_found';
     static ERROR_UNAUTHORIZED = 'unauthorized';
     static ERROR_AUTH_REQUIRED = 'auth_required';
+    static ERROR_SESSION_EXPIRED = 'session_expired';   // The sign-in outlived its limits and was just ended
     static ERROR_FATAL = 'fatal';
     static ERROR_GENERIC = 'generic';
     static ERROR_QUESTION = 'question';             // Not a failure: a pending server-driven question
@@ -532,6 +533,12 @@ class Ajax {
             });
         }
 
+        // The call signed somebody in, which moved the browser to a new session: every
+        // later request from this page must carry the new session's CSRF token.
+        if (envelope._csrf) {
+            window.rsxapp.csrf = envelope._csrf;
+        }
+
         if (envelope.flash_alerts && Array.isArray(envelope.flash_alerts)) {
             Server_Side_Flash.process(envelope.flash_alerts);
         }
@@ -577,8 +584,11 @@ class Ajax {
             });
         }
 
-        if (error_code === Ajax.ERROR_AUTH_REQUIRED) {
+        // The sign-in this page was rendered for is gone: it expired, or it was ended
+        // somewhere else. Announced once per page (Rsx_Session), whichever call noticed.
+        if (error_code === Ajax.ERROR_SESSION_EXPIRED || error_code === Ajax.ERROR_AUTH_REQUIRED) {
             console.error('User is no longer authenticated');
+            Rsx_Session._announce_expired(error.message);
         }
         if (error_code === Ajax.ERROR_UNAUTHORIZED) {
             console.error('User is unauthorized to perform this action');

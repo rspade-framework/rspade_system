@@ -372,10 +372,11 @@ PORTAL SESSIONS
       session for the table itself.
 
     Lifecycle
-      init()          reads the cookie and resumes the row; creates nothing. The
-                      session token string is minted once, at creation, and never
-                      rotates - a login is a record UPDATE, not a new session (see
-                      rsx:man session SECURITY).
+      init()          reads the cookie and resumes the row; creates nothing. A
+                      portal sign-in moves the browser to a new row with a new
+                      token, carrying any staff login across (rsx:man session
+                      SECURITY, Sign-In Rotation), and lasts as long as
+                      rsx.sessions.portal allows (SESSION LIFETIME).
       activation      THE ONE activation path. The first call that NEEDS a row
                       (get_session_id(), get_session(), a login) mints the
                       browser's session exactly as a staff page view would - same

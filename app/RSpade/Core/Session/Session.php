@@ -91,12 +91,14 @@ use App\RSpade\Core\Time\Rsx_Time;
  * script), $_request_site_id_override (subdomain enforcement), the CLI statics,
  * then the row itself.
  *
- * The session represents a unique browser session with persistent authentication.
- * There is no "remember me" option: the cookie is always long-lived and the ROW is
- * what expires. Every session is stamped with a type_id at creation and is deleted
- * once it has gone unused for that type's window (rsx.sessions.*_timeout_minutes,
- * swept hourly by Session_Cleanup_Service) - so an in-use session lives forever and
- * an abandoned one does not accumulate.
+ * A ROW IS THE BROWSER'S CREDENTIAL FOR ONE SIGN-IN. Every real sign-in moves the
+ * browser to a new row with a new token and supersedes the one it arrived with
+ * (__rotate_for_sign_in()); the rows a browser goes through are tied together by
+ * device_id (_session_devices). A sign-in lasts as long as rsx.sessions.staff /
+ * rsx.sessions.portal allow - a maximum length from the sign-in and a maximum idle
+ * time from the last page view - enforced when a request arrives (enforce_timeouts()).
+ * There is no "remember me" option: the cookie is always long-lived. Rows nobody
+ * comes back to are collected by type, hourly, by Session_Cleanup_Service.
  *
  * @FILE-SUBCLASS-01-EXCEPTION Class intentionally named Session instead of Session_Model
  * to maintain compatibility with static method calls like Session::init().  The developer will
@@ -127,17 +129,23 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property int $created_by_id
  * @property int $created_by_type
  * @property string $csrf_token
+ * @property int $device_id
  * @property int $id
  * @property string $impersonation_started_at
  * @property int $impersonator_login_user_id
  * @property int $impersonator_user_id
  * @property string $ip_address
  * @property string $last_active
+ * @property string $last_page_view_at
+ * @property string $login_at
  * @property int $login_user_id
+ * @property string $portal_last_page_view_at
+ * @property string $portal_login_at
  * @property int $portal_site_id
  * @property int $portal_user_id
  * @property string $session_token
  * @property int $site_id
+ * @property int $superseded_by_id
  * @property int $type_id
  * @property string $updated_at
  * @property int $updated_by_id
@@ -186,6 +194,32 @@ class Session extends Rsx_System_Model_Abstract
      */
     private const STALE_PLAYWRIGHT_GRACE_SECONDS = 300;
 
+    /**
+     * Everything on a row that says WHO is signed in on it, in either experience, and
+     * since when. A sign-in carries all of it to the browser's new row and strips it
+     * from the superseded one (__rotate_for_sign_in()).
+     */
+    private const IDENTITY_COLUMNS = [
+        'site_id',
+        'login_user_id',
+        'login_at',
+        'last_page_view_at',
+        'impersonator_login_user_id',
+        'portal_user_id',
+        'portal_site_id',
+        'portal_login_at',
+        'portal_last_page_view_at',
+        'impersonator_user_id',
+        'impersonation_started_at',
+    ];
+
+    /**
+     * A page view is stamped at most this often per session: the stamp exists to
+     * measure idleness against windows of hours or more, so one write a minute is all
+     * the precision it can use. A write rate, not a timeout - nothing expires on it.
+     */
+    private const PAGE_VIEW_STAMP_INTERVAL_SECONDS = 60;
+
     // Static session management properties
     private static $_session = null;
 
@@ -202,6 +236,16 @@ class Session extends Rsx_System_Model_Abstract
     private static $_has_activate = false;
 
     private static $_has_set_cookie = false;
+
+    // True once THIS request has minted the browser's current row (a first visit, or a
+    // sign-in that already rotated). Its token has never left the server before this
+    // response, so a sign-in later in the same request writes onto it in place.
+    private static bool $_minted_this_request = false;
+
+    // The CSRF token of the row a sign-in moved the browser onto in THIS request, or
+    // null when no sign-in rotated. The page that made the request still holds the old
+    // row's token; an Ajax response hands it this one (_rotated_csrf_token()).
+    private static ?string $_rotated_csrf_token = null;
 
     // Request-scoped overrides
     private static $_request_site_id_override = null;
@@ -278,6 +322,8 @@ class Session extends Rsx_System_Model_Abstract
         'impersonator_user_id' => 'integer',
         'version' => 'integer',
         'last_active' => 'datetime',
+        'device_id' => 'integer',
+        'superseded_by_id' => 'integer',
     ];
 
     /**
@@ -351,6 +397,8 @@ class Session extends Rsx_System_Model_Abstract
         self::$_is_api_request = false;
         self::$_has_init = false;
         self::$_has_set_cookie = false;
+        self::$_minted_this_request = false;
+        self::$_rotated_csrf_token = null;
         self::$_session = null;
         self::$_login_user = null;
         self::$_user = null;
@@ -490,12 +538,21 @@ class Session extends Rsx_System_Model_Abstract
         self::$_session = $session;
 
         // Re-emit the SAME token cookie on every response (sliding 365-day expiry).
-        // The token STRING is immutable for the life of the session (owner ruling
-        // 2026-07-24: "reissued" means given a NEW string - only __activate()'s
-        // create-new-session branch ever mints one); re-sending the identical value
-        // merely refreshes the browser-side expiry and can never desync from the row.
+        // A row's token STRING never changes (a new one is only ever minted WITH a new
+        // row - a first visit, or a sign-in), so re-sending the identical value merely
+        // refreshes the browser-side expiry and can never desync from the row.
+        //
+        // A SUPERSEDED row is the exception: a sign-in replaced it and the browser was
+        // given the new row's token in that response. A request still carrying this
+        // one was in flight when that happened (or comes from somebody who copied the
+        // cookie), and re-emitting the old value would overwrite the cookie the
+        // sign-in just set. The row stays usable as an anonymous session, so nothing
+        // has to be minted for such a request either.
         self::$_session_token = $session_token;
-        self::_set_cookie();
+
+        if (empty($session->superseded_by_id)) {
+            self::_set_cookie();
+        }
     }
 
     /**
@@ -550,8 +607,143 @@ class Session extends Rsx_System_Model_Abstract
             $session->save();
 
             self::$_session = $session;
+            self::$_minted_this_request = true;
             self::_set_cookie();
         }
+    }
+
+    /**
+     * Give the browser a NEW session row for a sign-in, and supersede the one it
+     * arrived with.
+     *
+     * A sign-in is the one moment the browser's credential changes. The row it presented
+     * may have been held by somebody else too - a copied cookie, a token planted before
+     * the visitor signed in - and writing the identity onto it would authenticate every
+     * holder at once. So the identity goes onto a row whose token nobody has seen:
+     *
+     *   - a new row is minted (new session token, new CSRF token) carrying everything the
+     *     old one held - the tenant, the other experience's identity and its clocks, the
+     *     device - and the cookie is replaced in this response;
+     *   - session values and pending flash alerts move with it, so a parked second-factor
+     *     challenge or a redirect's message survives the sign-in it belongs to;
+     *   - the old row is stripped of every identity and marked superseded_by_id. It stays
+     *     ACTIVE as an anonymous session and is never re-cookied (init()), so a request
+     *     that was in flight with the old token finds a row, mints nothing and cannot
+     *     overwrite the new cookie. Its token never authenticates anybody again.
+     *
+     * No token STRING on a live row ever changes; the browser moves to a different row.
+     *
+     * Skipped when this request minted the current row: that token has not left the
+     * server yet, so there is nothing to supersede. Never called in CLI (no cookie).
+     *
+     * @return int|null The superseded row's id, or null when nothing was rotated
+     */
+    private static function __rotate_for_sign_in(): ?int
+    {
+        self::__activate();
+
+        if (self::$_minted_this_request) {
+            return null;
+        }
+
+        $old = self::$_session;
+
+        // The device is the long-lived record of this browser; a row gains one at its
+        // first sign-in and every later row of the same browser inherits it.
+        $device_id = $old->device_id;
+
+        if (empty($device_id)) {
+            $device_id = DB::table('_session_devices')->insertGetId([
+                'user_agent' => substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
+            ]);
+        }
+
+        $new = new static();
+        $new->session_token = bin2hex(random_bytes(32));
+        $new->csrf_token = bin2hex(random_bytes(32));
+        $new->ip_address = self::__get_client_ip();
+        $new->user_agent = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
+        $new->last_active = now();
+        $new->active = true;
+        $new->version = 1;
+        $new->type_id = $old->type_id;
+        $new->device_id = $device_id;
+
+        foreach (self::IDENTITY_COLUMNS as $column) {
+            $new->$column = $old->$column;
+        }
+
+        $new->save();
+
+        DB::table('_session_values')->where('session_id', $old->id)->update(['session_id' => $new->id]);
+        DB::table('_flash_alerts')->where('session_id', $old->id)->update(['session_id' => $new->id]);
+
+        $cleared = ['superseded_by_id' => $new->id, 'device_id' => $device_id];
+
+        foreach (self::IDENTITY_COLUMNS as $column) {
+            $cleared[$column] = $column === 'site_id' ? 0 : null;
+        }
+
+        static::where('id', $old->id)->raw_bulk()->update($cleared);
+
+        self::$_session = $new;
+        self::$_session_token = $new->session_token;
+        self::$_rotated_csrf_token = $new->csrf_token;
+        self::$_minted_this_request = true;
+        self::$_site = null;
+        self::$_login_user = null;
+        self::$_user = null;
+
+        self::__replace_cookie();
+
+        return (int) $old->id;
+    }
+
+    /**
+     * The CSRF token the page must use from now on, when a sign-in in this request moved
+     * the browser to a new session row - else null.
+     *
+     * A sign-in made by an Ajax call leaves its page holding the superseded row's token,
+     * and the next call from that page would fail the CSRF check. The Ajax envelope
+     * carries this value so the client replaces window.rsxapp.csrf at once.
+     *
+     * FRAMEWORK INTERNAL - the Ajax envelope.
+     *
+     * @return string|null
+     */
+    public static function _rotated_csrf_token(): ?string
+    {
+        return self::$_rotated_csrf_token;
+    }
+
+    /**
+     * Send the current session token as THE session cookie of this response, withdrawing
+     * a session Set-Cookie the request already queued (init() re-emits the token it was
+     * presented with). Every other header is kept exactly as it was.
+     *
+     * @return void
+     */
+    private static function __replace_cookie(): void
+    {
+        if (self::$_has_set_cookie) {
+            $session_cookie_prefix = '/^Set-Cookie:\s*' . preg_quote(Rsx_Session_Cookie::name(), '/') . '=/i';
+            $kept = [];
+            foreach (headers_list() as $header) {
+                if (stripos($header, 'Set-Cookie:') === 0 && !preg_match($session_cookie_prefix, $header)) {
+                    $kept[] = $header;
+                }
+            }
+
+            header_remove('Set-Cookie');
+
+            foreach ($kept as $header) {
+                header($header, false);
+            }
+
+            self::$_has_set_cookie = false;
+        }
+
+        self::_set_cookie();
     }
 
     /**
@@ -754,8 +946,7 @@ class Session extends Rsx_System_Model_Abstract
      * longer holds it, so nothing could ever resume it - leaving it active would only list a
      * device nobody is on. (A row that is the target itself is simply kept.)
      *
-     * The session token is still minted only by __activate(): this re-emits a token that
-     * already exists, which the token-immutability rule permits (see init()).
+     * No token is minted here: this re-emits one that already exists (see init()).
      *
      * FRAMEWORK INTERNAL - for Session_Link only. Refused in CLI, where there is no
      * browser and no response to carry a cookie.
@@ -793,27 +984,7 @@ class Session extends Rsx_System_Model_Abstract
         self::$_has_init = true;
         self::$_has_activate = true;
 
-        // Withdraw a session Set-Cookie this request already queued (init() re-emits the
-        // previous token), keeping every other header exactly as it was.
-        if (self::$_has_set_cookie) {
-            $session_cookie_prefix = '/^Set-Cookie:\s*' . preg_quote(Rsx_Session_Cookie::name(), '/') . '=/i';
-            $kept = [];
-            foreach (headers_list() as $header) {
-                if (stripos($header, 'Set-Cookie:') === 0 && !preg_match($session_cookie_prefix, $header)) {
-                    $kept[] = $header;
-                }
-            }
-
-            header_remove('Set-Cookie');
-
-            foreach ($kept as $header) {
-                header($header, false);
-            }
-
-            self::$_has_set_cookie = false;
-        }
-
-        self::_set_cookie();
+        self::__replace_cookie();
 
         return true;
     }
@@ -899,6 +1070,8 @@ class Session extends Rsx_System_Model_Abstract
         self::$_has_init = false;
         self::$_has_activate = false;
         self::$_has_set_cookie = false;
+        self::$_minted_this_request = false;
+        self::$_rotated_csrf_token = null;
 
         // Clear cookie
         setcookie(Rsx_Session_Cookie::name(), '', Rsx_Session_Cookie::options(time() - 3600));
@@ -1137,6 +1310,228 @@ class Session extends Rsx_System_Model_Abstract
         return false;
     }
 
+    // =========================================================================
+    // SESSION LIFETIME (rsx.sessions.staff / rsx.sessions.portal)
+    // =========================================================================
+
+    /**
+     * When the identity one experience holds on this browser's session stops being
+     * valid, and why - or null when it holds none, or no limit applies.
+     *
+     * Two clocks per experience, both on the session row:
+     *
+     *   max_length_minutes   from the SIGN-IN (login_at / portal_login_at). The hard
+     *                        ceiling: it is what bounds a session however busy it is.
+     *   max_idle_minutes     from the last PAGE VIEW (last_page_view_at /
+     *                        portal_last_page_view_at) - a rendered page or an SPA
+     *                        navigation. An Ajax call is not a page view, so an open tab
+     *                        that polls does not keep a session alive.
+     *
+     * A limit of 0 means "no limit". The earlier of the two is the answer.
+     *
+     * FRAMEWORK INTERNAL - Session and Portal_Session enforce through it.
+     *
+     * @param string $realm 'staff' or 'portal'
+     * @return array{at: \Carbon\Carbon, reason: string}|null reason is 'length' or 'idle'
+     */
+    public static function _timeout_expiry(string $realm): ?array
+    {
+        $row = self::__row_if_any();
+
+        if (!$row) {
+            return null;
+        }
+
+        $portal = $realm === 'portal';
+
+        if (empty($portal ? $row->portal_user_id : $row->login_user_id)) {
+            return null;
+        }
+
+        $limits = [
+            'length' => [$portal ? $row->portal_login_at : $row->login_at, 'max_length_minutes'],
+            'idle' => [$portal ? $row->portal_last_page_view_at : $row->last_page_view_at, 'max_idle_minutes'],
+        ];
+
+        $expiry = null;
+
+        foreach ($limits as $reason => [$since, $config_key]) {
+            $minutes = (int) config('rsx.sessions.' . $realm . '.' . $config_key);
+
+            if ($minutes <= 0 || empty($since)) {
+                continue;
+            }
+
+            $at = \Carbon\Carbon::parse($since)->addMinutes($minutes);
+
+            if ($expiry === null || $at->lt($expiry['at'])) {
+                $expiry = ['at' => $at, 'reason' => $reason];
+            }
+        }
+
+        return $expiry;
+    }
+
+    /**
+     * Whether an experience's identity is past its lifetime for THIS kind of request.
+     *
+     * A PAGE ($strict) is judged at the limit itself. Everything else - an Ajax call, a
+     * thumbnail, a download - is allowed rsx.sessions.ajax_grace_minutes beyond it, so a
+     * page that was already open when the limit passed can still finish what it was
+     * doing (save the form on screen) even though it can no longer navigate.
+     *
+     * Answers the reason ('length' or 'idle') or null. Ends nothing - see
+     * enforce_timeouts().
+     *
+     * FRAMEWORK INTERNAL.
+     *
+     * @param string $realm 'staff' or 'portal'
+     * @param bool $strict
+     * @return string|null
+     */
+    public static function _timeout_reason(string $realm, bool $strict): ?string
+    {
+        if (self::$_api_identity !== null || self::__is_cli()) {
+            return null;
+        }
+
+        $expiry = self::_timeout_expiry($realm);
+
+        if ($expiry === null) {
+            return null;
+        }
+
+        $deadline = $expiry['at'];
+
+        if (!$strict) {
+            $deadline = $deadline->copy()->addMinutes((int) config('rsx.sessions.ajax_grace_minutes'));
+        }
+
+        return now()->gte($deadline) ? $expiry['reason'] : null;
+    }
+
+    /**
+     * End the staff sign-in on this browser's session when it has outlived
+     * rsx.sessions.staff, and say why.
+     *
+     * Invoked ONCE per request by the dispatcher (a page: $strict) and by the Ajax entry
+     * point (not strict - the grace applies), ahead of the #[Auth] gates, so the request
+     * continues as a signed-out one and its ordinary channel answers: the login redirect
+     * for a page, the session_expired envelope for an Ajax call. CREATES NOTHING.
+     *
+     * The sign-out is a logout(): the row survives as the browser's anonymous session,
+     * and signing in again moves the browser to a new row.
+     *
+     * @param bool $strict True for a page; false gives the Ajax grace
+     * @return string|null 'length' or 'idle' when the sign-in was just ended, else null
+     */
+    public static function enforce_timeouts(bool $strict): ?string
+    {
+        $reason = self::_timeout_reason('staff', $strict);
+
+        if ($reason !== null) {
+            self::logout();
+        }
+
+        return $reason;
+    }
+
+    /**
+     * The sentence shown to somebody whose sign-in was ended by a session limit.
+     *
+     * @param string $reason 'length' or 'idle'
+     * @return string
+     */
+    public static function timeout_message(string $reason): string
+    {
+        return $reason === 'idle'
+            ? 'You were signed out after a period of inactivity. Please sign in again.'
+            : 'Your session has expired. Please sign in again.';
+    }
+
+    /**
+     * Record a PAGE VIEW for the staff identity on this browser's session: the stamp
+     * max_idle_minutes is measured from, and last_seen on the account.
+     *
+     * Called when a page renders its bundle and when the browser reports an SPA
+     * navigation (Rsx_Session_Controller). Never for an Ajax or API call - those are not
+     * somebody looking at a page.
+     *
+     * Written at most once a minute per session; the account's last_seen rides the same
+     * write. While impersonating, the session is stamped (it is in use) and the account
+     * is not (its owner was not here). CREATES NOTHING: no identity, no write.
+     *
+     * @return void
+     */
+    public static function touch_page_view(): void
+    {
+        if (!self::_page_view_is_due('staff')) {
+            return;
+        }
+
+        if (self::is_impersonating()) {
+            return;
+        }
+
+        // Written with a bare statement on purpose: last_seen is bookkeeping, and a model
+        // save() here would bump updated_at, record a revision and push a realtime
+        // refresh to the account's own pages on every page view.
+        $now = now()->format('Y-m-d H:i:s.v');
+
+        DB::statement('UPDATE login_users SET last_seen = ? WHERE id = ?', [$now, self::$_session->login_user_id]);
+
+        $user_id = self::get_user_id();
+
+        if (!empty($user_id)) {
+            DB::statement('UPDATE users SET last_seen = ? WHERE id = ?', [$now, $user_id]);
+        }
+    }
+
+    /**
+     * Stamp one experience's page view on the session row if a minute has passed since
+     * the last stamp, and say whether it was stamped. The UPDATE carries the interval
+     * test, so concurrent requests cannot both win.
+     *
+     * FRAMEWORK INTERNAL - touch_page_view() and Portal_Session::touch_page_view().
+     *
+     * @param string $realm 'staff' or 'portal'
+     * @return bool
+     */
+    public static function _page_view_is_due(string $realm): bool
+    {
+        if (self::$_api_identity !== null || self::__is_cli()) {
+            return false;
+        }
+
+        $row = self::__row_if_any();
+        $identity_column = $realm === 'portal' ? 'portal_user_id' : 'login_user_id';
+        $stamp_column = $realm === 'portal' ? 'portal_last_page_view_at' : 'last_page_view_at';
+
+        if (!$row || empty($row->$identity_column)) {
+            return false;
+        }
+
+        $now = now();
+        $stale_before = $now->copy()->subSeconds(self::PAGE_VIEW_STAMP_INTERVAL_SECONDS);
+
+        $stamped = DB::table('_sessions')
+            ->where('id', $row->id)
+            ->whereNotNull($identity_column)
+            ->where(function ($query) use ($stamp_column, $stale_before) {
+                $query->whereNull($stamp_column)->orWhere($stamp_column, '<', $stale_before);
+            })
+            ->update([$stamp_column => $now]);
+
+        if ($stamped === 0) {
+            return false;
+        }
+
+        $row->$stamp_column = $now;
+        $row->syncOriginalAttribute($stamp_column);
+
+        return true;
+    }
+
     /**
      * Whether the current identity is permitted to use the external API.
      *
@@ -1332,6 +1727,8 @@ class Session extends Rsx_System_Model_Abstract
             // pushes a refresh (an already-anonymous session emits nothing).
             $old_login_user_id = self::$_session->login_user_id;
             self::$_session->login_user_id = null;
+            self::$_session->login_at = null;
+            self::$_session->last_page_view_at = null;
             // Logout is a hard exit - impersonation cannot span it
             self::$_session->impersonator_login_user_id = null;
             self::$_session->impersonation_started_at = null;
@@ -1369,18 +1766,28 @@ class Session extends Rsx_System_Model_Abstract
         // Confirmed-different gating for the refresh push (impersonation begin/stop delegate
         // here and inherit it): capture the prior identity before overwriting.
         $old_login_user_id = self::$_session->login_user_id;
+        $push_session_id = (int) self::$_session->id;
 
-        // A login / identity change is a PURE RECORD UPDATE. The session_token and
-        // csrf_token were minted exactly once, at session creation (__activate),
-        // and are IMMUTABLE for the life of the session - they are NEVER
-        // regenerated here, and the cookie is NOT re-emitted. Token rotation at
-        // login was deliberately removed (owner ruling 2026-07-24): rotating on an
-        // in-place identity swap caused a cookie-desync race. Server-minting alone
-        // does NOT exclude fixation - an attacker can mint a genuine token for
-        // themselves and plant it in the victim's browser - so the defence is the
-        // cookie NAME: `__Host-rsx` (Rsx_Session_Cookie) cannot be set by a sibling
-        // subdomain, shadowed by a narrower path, or planted over plain http. See
-        // rsx:man session (SECURITY). self::$_session_token is NOT touched.
+        // A REAL SIGN-IN MOVES THE BROWSER TO A NEW ROW (__rotate_for_sign_in()): the
+        // identity is written onto a row whose token nobody has seen, and the row the
+        // browser arrived with can never authenticate again. The session clocks start
+        // here - login_at is what max_length_minutes is measured from, last_page_view_at
+        // what max_idle_minutes is.
+        //
+        // An impersonation swap ($touch_last_login false) is NOT a sign-in: nobody
+        // re-authenticated, so it stays a pure record update on the live row and the
+        // clocks keep running from the impersonator's own sign-in.
+        if ($touch_last_login) {
+            $superseded_id = self::__rotate_for_sign_in();
+
+            if ($superseded_id !== null) {
+                $push_session_id = $superseded_id;
+            }
+
+            self::$_session->login_at = now();
+            self::$_session->last_page_view_at = now();
+        }
+
         self::$_session->login_user_id = $login_user_id;
         self::$_session->save();
 
@@ -1391,8 +1798,9 @@ class Session extends Rsx_System_Model_Abstract
 
         // Identity changed to a confirmed-different value -> push a refresh to every live
         // connection on this session (re-setting the same login_user_id emits nothing).
+        // The connections to tell are the ones opened on the row the browser ARRIVED with.
         if ((int) $old_login_user_id !== (int) $login_user_id) {
-            Realtime::push_session_refresh('staff', (int) self::$_session->id);
+            Realtime::push_session_refresh('staff', $push_session_id);
         }
 
         // Sign-in is the moment this user's session count grows, so it is where the
@@ -1816,10 +2224,10 @@ class Session extends Rsx_System_Model_Abstract
     /**
      * Begin impersonating the given login user from the CURRENT session.
      * Records the current login_user_id as the impersonator and swaps login_user_id
-     * to $target_login_user_id in place - a PURE RECORD UPDATE. The session_token +
-     * csrf are stable for the life of the session (minted once at creation, never
-     * rotated) and the cookie is not re-emitted. Keeps site_id. Does NOT bump the
-     * target's last_login.
+     * to $target_login_user_id in place - a PURE RECORD UPDATE on the live row: an
+     * impersonation is not a sign-in, so the browser stays on its row and the session
+     * clocks keep running from the impersonator's own sign-in. Keeps site_id. Does NOT
+     * bump the target's last_login.
      *
      * Non-recursive: throws if already impersonating. Throws if there is no active
      * session to impersonate from, or if target === the current login_user_id.
@@ -2066,15 +2474,20 @@ class Session extends Rsx_System_Model_Abstract
 
         $current_session_id = self::has_session() ? self::$_session?->id : null;
 
-        return static::where('login_user_id', $login_user_id)
+        $sessions = static::where('login_user_id', $login_user_id)
             ->where('active', true)
             ->orderBy('last_active', 'desc')
-            ->get()
-            ->map(function ($session) use ($current_session_id) {
+            ->get();
+
+        $first_seen = self::_device_first_seen($sessions->pluck('device_id')->all());
+
+        return $sessions
+            ->map(function ($session) use ($current_session_id, $first_seen) {
                 $parsed_ua = User_Agent::parse($session->user_agent);
 
                 return [
                     'id' => $session->id,
+                    'device_id' => $session->device_id,
                     'ip_address' => $session->ip_address,
                     'user_agent' => $session->user_agent,
                     'user_agent_parsed' => $parsed_ua,
@@ -2082,10 +2495,38 @@ class Session extends Rsx_System_Model_Abstract
                     'location' => self::_format_session_location($session),
                     'last_active' => $session->last_active,
                     'created_at' => $session->created_at,
+                    'signed_in_at' => $session->login_at,
+                    'first_seen' => $first_seen[$session->device_id] ?? $session->created_at,
                     'is_current' => $session->id === $current_session_id,
                 ];
             })
             ->toArray();
+    }
+
+    /**
+     * When each of the given devices was FIRST seen - the creation of its
+     * _session_devices record, which outlives every sign-in the browser makes.
+     *
+     * FRAMEWORK INTERNAL - the two get_sessions_for_user() listings.
+     *
+     * @param array $device_ids May contain nulls (a row that never signed in has none)
+     * @return array<int, string> device id => ISO datetime
+     */
+    public static function _device_first_seen(array $device_ids): array
+    {
+        $device_ids = array_values(array_unique(array_filter($device_ids)));
+
+        if (empty($device_ids)) {
+            return [];
+        }
+
+        $first_seen = [];
+
+        foreach (DB::table('_session_devices')->whereIn('id', $device_ids)->get(['id', 'created_at']) as $device) {
+            $first_seen[(int) $device->id] = Rsx_Time::parse($device->created_at)->toIso8601String();
+        }
+
+        return $first_seen;
     }
 
     /**
@@ -2506,9 +2947,12 @@ class Session extends Rsx_System_Model_Abstract
             'user_agent' => self::$_session->user_agent,
             'user_agent_parsed' => $parsed_ua,
             'device_summary' => $parsed_ua['summary'],
+            'device_id' => self::$_session->device_id,
             'location' => self::_format_session_location(self::$_session),
             'last_active' => self::$_session->last_active,
             'created_at' => self::$_session->created_at,
+            'signed_in_at' => self::$_session->login_at,
+            'first_seen' => self::_device_first_seen([self::$_session->device_id])[self::$_session->device_id] ?? self::$_session->created_at,
             'is_current' => true,
         ];
     }
@@ -2624,15 +3068,29 @@ class Session extends Rsx_System_Model_Abstract
      *
      * @param int $portal_user_id
      * @param int $portal_site_id
-     * @return void
+     * @return int|null The id of the row this sign-in superseded, or null when the
+     *                  browser stayed on its row
      */
-    public static function _set_portal_identity(int $portal_user_id, int $portal_site_id): void
+    public static function _set_portal_identity(int $portal_user_id, int $portal_site_id): ?int
     {
         self::__activate();
+
+        // A portal sign-in moves the browser to a new row exactly as a staff one does;
+        // any staff login on the old row rides across with it. Re-stating the identity
+        // the row already carries is not a sign-in.
+        $superseded_id = null;
+
+        if ((int) self::$_session->portal_user_id !== $portal_user_id) {
+            $superseded_id = self::__rotate_for_sign_in();
+            self::$_session->portal_login_at = now();
+            self::$_session->portal_last_page_view_at = now();
+        }
 
         self::$_session->portal_user_id = $portal_user_id;
         self::$_session->portal_site_id = $portal_site_id;
         self::$_session->save();
+
+        return $superseded_id;
     }
 
     /**
@@ -2691,6 +3149,8 @@ class Session extends Rsx_System_Model_Abstract
         $row->portal_site_id = $portal_site_id;
         $row->impersonator_user_id = $impersonator_user_id;
         $row->impersonation_started_at = now();
+        $row->portal_login_at = now();
+        $row->portal_last_page_view_at = now();
         $row->save();
 
         if (!empty(self::$_session) && (int) self::$_session->id === $session_id) {
@@ -2721,6 +3181,8 @@ class Session extends Rsx_System_Model_Abstract
 
         $row->portal_user_id = null;
         $row->portal_site_id = null;
+        $row->portal_login_at = null;
+        $row->portal_last_page_view_at = null;
         $row->impersonator_user_id = null;
         $row->impersonation_started_at = null;
         $row->save();
@@ -2749,6 +3211,8 @@ class Session extends Rsx_System_Model_Abstract
             ->update([
                 'portal_user_id' => null,
                 'portal_site_id' => null,
+                'portal_login_at' => null,
+                'portal_last_page_view_at' => null,
                 'impersonator_user_id' => null,
                 'impersonation_started_at' => null,
             ]);

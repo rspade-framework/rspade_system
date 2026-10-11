@@ -626,6 +626,15 @@ abstract class Rsx_Bundle_Abstract
             $rsxapp_data['is_developer'] = true;
         }
 
+        // A page that renders its bundle is a PAGE VIEW: the stamp the session's idle
+        // limit is measured from, and last_seen on the account (at most one write a
+        // minute; nothing at all for a page nobody is signed in on).
+        if ($is_portal) {
+            Portal_Session::touch_page_view();
+        } else {
+            Session::touch_page_view();
+        }
+
         // Theme, ALWAYS present: it is everything autotheme.js (emitted directly below
         // this block) needs to put the theme on <html> before first paint. 'mode' is the
         // preference (light/dark/auto); 'is_dark' is the server's resolved answer, or

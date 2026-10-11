@@ -83,6 +83,10 @@ class Schema_Contract
                         'migration' => '2025_11_04_051828 (site_users refactor)',
                     ],
                     'site_id' => ['where' => 'Site_Scoped global scope - injected into every query'],
+                    'last_seen' => [
+                        'where' => 'Session::touch_page_view() on a page view',
+                        'migration' => '2026_10_11_042800_add_session_devices_and_timeouts',
+                    ],
                     'first_name' => ['where' => 'User_Model::get_full_name(), REALTIME_REFRESH_FIELDS'],
                     'last_name' => ['where' => 'User_Model::get_full_name(), REALTIME_REFRESH_FIELDS'],
                     'role_id' => [
@@ -147,6 +151,10 @@ class Schema_Contract
                     ],
                     'remember_token' => ['where' => "Laravel's Authenticatable trait"],
                     'last_login' => ['where' => 'Session::set_login_user_id() on every successful sign-in'],
+                    'last_seen' => [
+                        'where' => 'Session::touch_page_view() on a page view',
+                        'migration' => '2026_10_11_042800_add_session_devices_and_timeouts',
+                    ],
                     'is_developer' => [
                         'where' => 'Session::is_developer(), rsxapp.is_developer',
                         'migration' => '2026_09_17_160704_add_is_developer_to_login_users',
@@ -199,6 +207,10 @@ class Schema_Contract
                     'status_id' => ['where' => 'Portal_User_Model::is_active()'],
                     'metadata' => ['where' => 'Portal_User_Model JSON attribute'],
                     'last_login' => ['where' => 'Portal_Session on every portal sign-in'],
+                    'last_seen' => [
+                        'where' => 'Portal_Session::touch_page_view() on a page view',
+                        'migration' => '2026_10_11_042800_add_session_devices_and_timeouts',
+                    ],
                     'deleted_at' => [
                         'where' => 'SoftDeletes - every query the model issues; ACTOR-01 requires it',
                         'migration' => '2026_08_09_112232 (deleted_at on the actor tables)',

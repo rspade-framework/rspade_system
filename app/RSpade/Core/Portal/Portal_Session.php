@@ -476,6 +476,52 @@ class Portal_Session
     }
 
     /**
+     * End the portal sign-in on this browser's session when it has outlived
+     * rsx.sessions.portal, and say why. The portal twin of Session::enforce_timeouts():
+     * same two clocks (portal_login_at, portal_last_page_view_at), same Ajax grace, and
+     * the sign-out clears the portal properties only - a staff login on the row is judged
+     * by its own limits, on staff requests.
+     *
+     * @param bool $strict True for a page; false gives the Ajax grace
+     * @return string|null 'length' or 'idle' when the sign-in was just ended, else null
+     */
+    public static function enforce_timeouts(bool $strict): ?string
+    {
+        $reason = Session::_timeout_reason('portal', $strict);
+
+        if ($reason !== null) {
+            self::logout();
+        }
+
+        return $reason;
+    }
+
+    /**
+     * Record a PAGE VIEW for the portal identity on this browser's session, and
+     * last_seen on the portal account. See Session::touch_page_view(). Under View as
+     * Client the session is stamped and the account is not.
+     *
+     * @return void
+     */
+    public static function touch_page_view(): void
+    {
+        if (!Session::_page_view_is_due('portal')) {
+            return;
+        }
+
+        if (self::is_impersonating()) {
+            return;
+        }
+
+        // A bare statement, as in Session::touch_page_view(): bookkeeping must not bump
+        // updated_at or run the model's save surface on every page view.
+        \Illuminate\Support\Facades\DB::statement(
+            'UPDATE portal_users SET last_seen = ? WHERE id = ?',
+            [now()->format('Y-m-d H:i:s.v'), Session::_get_portal_user_id()]
+        );
+    }
+
+    /**
      * Set portal user ID for current session (login/logout)
      * In CLI mode: sets static CLI property only, no database
      *
@@ -542,12 +588,17 @@ class Portal_Session
         // Confirmed-different gating for the refresh push: capture prior identity first.
         $old_portal_user_id = Session::_get_portal_user_id();
 
-        // A login / identity change is a PURE RECORD UPDATE. The session_token and
-        // csrf_token were minted exactly once, when the browser's session was created,
-        // and are IMMUTABLE for its life - they are NEVER regenerated here, and the
-        // cookie is NOT re-emitted (owner ruling 2026-07-24; see rsx:man session
-        // SECURITY).
-        Session::_set_portal_identity($portal_user_id, $site_id);
+        $push_session_id = Session::has_session() ? Session::get_session_id() : null;
+
+        // A SIGN-IN MOVES THE BROWSER TO A NEW ROW (Session::__rotate_for_sign_in()): the
+        // identity is written onto a row whose token nobody has seen, any staff login
+        // rides across with it, and the row the browser arrived with can never
+        // authenticate again. See rsx:man session (SIGN-IN ROTATION).
+        $superseded_id = Session::_set_portal_identity($portal_user_id, $site_id);
+
+        if ($superseded_id !== null) {
+            $push_session_id = $superseded_id;
+        }
 
         // Clear cached portal_user/site
         self::$_portal_user = null;
@@ -557,8 +608,9 @@ class Portal_Session
         // PORTAL-stamped connection on this session (re-setting the same value emits
         // nothing). Staff tabs on the same session are untouched: the realm stamp on a
         // connection records which EXPERIENCE its page was minted on.
+        // The connections to tell are the ones opened on the row the browser ARRIVED with.
         if ((int) $old_portal_user_id !== (int) $portal_user_id) {
-            Realtime::push_session_refresh('portal', Session::get_session_id());
+            Realtime::push_session_refresh('portal', $push_session_id ?? Session::get_session_id());
         }
 
         // Sign-in is the moment this user's session count grows, so it is where the
@@ -714,20 +766,27 @@ class Portal_Session
 
         $current_session_id = self::has_session() && !self::__is_cli() ? Session::get_session_id() : null;
 
-        return self::__device_session_query((int) $portal_user_id)
+        $sessions = self::__device_session_query((int) $portal_user_id)
             ->orderBy('last_active', 'desc')
-            ->get()
-            ->map(function ($session) use ($current_session_id) {
+            ->get();
+
+        $first_seen = Session::_device_first_seen($sessions->pluck('device_id')->all());
+
+        return $sessions
+            ->map(function ($session) use ($current_session_id, $first_seen) {
                 $parsed_ua = User_Agent::parse($session->user_agent);
 
                 return [
                     'id' => $session->id,
+                    'device_id' => $session->device_id,
                     'ip_address' => $session->ip_address,
                     'user_agent' => $session->user_agent,
                     'user_agent_parsed' => $parsed_ua,
                     'device_summary' => $parsed_ua['summary'],
                     'last_active' => $session->last_active,
                     'created_at' => $session->created_at,
+                    'signed_in_at' => $session->portal_login_at,
+                    'first_seen' => $first_seen[$session->device_id] ?? $session->created_at,
                     'is_current' => $session->id === $current_session_id,
                 ];
             })

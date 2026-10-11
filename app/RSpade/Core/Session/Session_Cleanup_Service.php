@@ -121,15 +121,42 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
             return null;
         }
 
-        // Browser sessions that DID carry an identity, staff or portal.
-        $deleted['web'] = self::_delete_chunked(
+        // Browser sessions that DO carry an identity, staff or portal. Whether such a
+        // sign-in is still VALID is decided at request time (Session::enforce_timeouts());
+        // this only collects rows nobody has come back to. A row is collected once it
+        // has been untouched for longer than any sign-in on it could still be usable:
+        // the longer of the two idle limits, plus the Ajax grace. An unlimited idle
+        // window on either side means such rows are never collected for age.
+        $identity_cutoff = self::_identity_cutoff();
+
+        $deleted['web'] = $identity_cutoff === null ? 0 : self::_delete_chunked(
             fn () => DB::table('_sessions')
                 ->where('type_id', Session::TYPE_WEB)
                 ->where(function ($query) {
                     $query->whereNotNull('login_user_id')
                           ->orWhereNotNull('portal_user_id');
                 })
-                ->where('last_active', '<', self::_cutoff('web_timeout_minutes')),
+                ->where('last_active', '<', $identity_cutoff),
+            $task,
+            $chunk_size
+        );
+
+        if ($task->is_stop_requested()) {
+            $task->stdout('Stop requested - stopped after deleting ' . array_sum($deleted) . ' idle session(s).');
+            $task->summary('Stopped after deleting ' . array_sum($deleted) . ' idle sessions.');
+
+            return null;
+        }
+
+        // Device records no session row points at any more: every row of that browser
+        // has been collected, so there is nothing left to tie together.
+        $deleted['devices'] = self::_delete_chunked(
+            fn () => DB::table('_session_devices')
+                ->whereNotExists(function ($query) {
+                    $query->select(DB::raw(1))
+                          ->from('_sessions')
+                          ->whereColumn('_sessions.device_id', '_session_devices.id');
+                }),
             $task,
             $chunk_size
         );
@@ -280,6 +307,24 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         $task->summary("Deleted {$deleted} expired session links.");
 
         return null;
+    }
+
+    /**
+     * The last_active cutoff before which a signed-in browser session is collected, or
+     * null when either experience's idle window is unlimited.
+     *
+     * @return \Carbon\Carbon|null
+     */
+    private static function _identity_cutoff()
+    {
+        $staff = (int) config('rsx.sessions.staff.max_idle_minutes');
+        $portal = (int) config('rsx.sessions.portal.max_idle_minutes');
+
+        if ($staff <= 0 || $portal <= 0) {
+            return null;
+        }
+
+        return now()->subMinutes(max($staff, $portal) + (int) config('rsx.sessions.ajax_grace_minutes'));
     }
 
     /**

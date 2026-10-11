@@ -47,10 +47,39 @@ class Spa {
     static NAVIGATION_GRACE_PERIOD_MS = 10000;
 
     // URL of the page currently showing, captured once a navigation actually
-    // completes. Used to restore the address bar if a Back/Forward navigation is
-    // vetoed (the browser has already changed window.location by the time popstate
-    // fires, so cancelling requires explicitly pushing the prior URL back).
+    // completes. It is what a fragment-only Back/Forward is compared against, and the
+    // URL a vetoed Back/Forward falls back to pushing when the browser cannot simply
+    // be stepped back (_undo_vetoed_move()).
     static _last_committed_url = null;
+
+    // WHERE THE PAGE ON SCREEN SITS IN THE HISTORY STACK. Every entry the SPA writes or
+    // arrives at carries {spa_run, spa_index} in its state: the index counts up along
+    // the stack, and the run id says which entries were numbered together (an entry
+    // the SPA did not write starts a new run when it is first arrived at). Two entries
+    // of the same run are therefore exactly (index difference) steps apart, which is
+    // what lets a vetoed Back/Forward step the browser back to where it was. Null
+    // until the first entry is stamped.
+    static _history_run = null;
+    static _history_index = null;
+
+    // True between a vetoed Back/Forward and the popstate its undoing history.go()
+    // fires, which must not be read as a navigation.
+    static _undoing_vetoed_move = false;
+
+    // True for a dispatch that is restoring a recorded scroll position (Back/Forward),
+    // so that the page is not sent to the top once the restoration has been applied.
+    static _restoring_scroll = false;
+
+    // The exact scroll position each entry was LEFT at, by `${run}:${index}`, for
+    // entries left by Back/Forward in this page's lifetime. The entry's own state is
+    // kept current by a rate-limited writer (see _SCROLL_SAVE_DELAY_MS), so it can be a
+    // fraction of a second behind; this is not.
+    static _left_scroll = {};
+
+    // History entries are rewritten with the live scroll position at most this often.
+    // Deliberately not the usual 250 ms: Safari refuses more than 100 history writes
+    // in 30 seconds, and continuous scrolling at 4 writes a second would exceed it.
+    static _SCROLL_SAVE_DELAY_MS = 500;
 
     /**
      * Get the current action component instance
@@ -143,6 +172,10 @@ class Spa {
         if (!window.rsxapp || !window.rsxapp.is_spa) {
             return;
         }
+
+        // The entry this page loaded on is the first one the SPA knows about. A reload
+        // or a return from another document finds its stamp still there.
+        Spa._adopt_current_entry();
 
         const initial_url = window.location.pathname + window.location.search + window.location.hash;
         console_debug('Spa', 'Dispatching to initial URL: ' + initial_url);
@@ -400,6 +433,23 @@ class Spa {
     static setup_browser_integration() {
         console_debug('Spa', 'Setting up browser integration (History API mode)');
 
+        // Keep the current entry's recorded scroll position current while the page is on
+        // screen, so it is there whichever way the page is left - a link, Back/Forward,
+        // or a full page load. Capturing, because a scroll inside a container does not
+        // bubble to the document. Skipped mid-dispatch: the entry and the page on
+        // screen do not belong to each other until the new action has mounted.
+        const save_scroll = debounce(() => {
+            if (!Spa.is_dispatching) {
+                Spa._save_scroll_to_current_entry();
+            }
+        }, Spa._SCROLL_SAVE_DELAY_MS);
+
+        document.addEventListener('scroll', () => {
+            if (!Spa.is_dispatching) {
+                save_scroll();
+            }
+        }, { capture: true, passive: true });
+
         // Handle browser back/forward buttons
         window.addEventListener('popstate', (e) => {
             console_debug('Spa', 'popstate event fired (back/forward navigation)');
@@ -407,6 +457,13 @@ class Spa {
                 url: window.location.pathname + window.location.search + window.location.hash,
                 state: e.state
             });
+
+            // The second half of a vetoed move: the guard refused, the browser was
+            // stepped back to the entry it left, and this is that step arriving.
+            if (Spa._undoing_vetoed_move) {
+                Spa._undoing_vetoed_move = false;
+                return;
+            }
 
             // Get target URL (browser has already updated location)
             const url = window.location.pathname + window.location.search + window.location.hash;
@@ -420,13 +477,24 @@ class Spa {
             if (Spa._last_committed_url !== null && Spa._is_fragment_only_move(Spa._last_committed_url, url)) {
                 console_debug('Spa', 'Fragment-only popstate, firing spa_hash_change: ' + url);
                 Spa._last_committed_url = url;
+                Spa._adopt_current_entry();
                 Spa._scroll_to_hash_anchor();
                 Rsx.trigger('spa_hash_change', { url: url, hash: window.location.hash });
                 return;
             }
 
-            // Retrieve scroll position from history state
-            const scroll = e.state?.scroll || null;
+            // The page still on screen is the one being LEFT, and the browser has
+            // already moved off its entry, so its position cannot be written there
+            // any more. Remember it exactly, for when this entry is returned to.
+            if (Spa._history_index !== null) {
+                Spa._left_scroll[Spa._history_run + ':' + Spa._history_index] = Spa._read_scroll();
+            }
+
+            // Where the page being RETURNED TO was scrolled when it was left: the exact
+            // value if it was left by Back/Forward in this page's lifetime, else what
+            // its own entry recorded.
+            const target_key = e.state?.spa_run ? e.state.spa_run + ':' + e.state.spa_index : null;
+            const scroll = (target_key && Spa._left_scroll[target_key]) || e.state?.scroll || null;
 
             // TODO: Form Data Restoration
             // Retrieve form data from history state and restore after action renders
@@ -581,15 +649,18 @@ class Spa {
         if (Rsx.has_navigation_guard() && !options.skip_navigation_guard) {
             if (!await Rsx.navigation_guard_allows(url)) {
                 console.warn('[Rsx] Navigation to ' + url + ' was prevented by the navigation guard.');
-                if (options._is_popstate && Spa._last_committed_url) {
-                    // Browser already changed window.location by the time popstate
-                    // fires; restore the address bar without re-triggering another
-                    // popstate (pushState does not fire it).
-                    history.pushState(history.state, '', Spa._last_committed_url);
+                if (options._is_popstate) {
+                    Spa._undo_vetoed_move();
                 }
                 return;
             }
             Rsx.clear_navigation_guard();
+        }
+
+        // A Back/Forward that is going ahead: the browser is already on the target
+        // entry, so that entry is now where the page sits in the stack.
+        if (options._is_popstate) {
+            Spa._adopt_current_entry();
         }
 
         // Check if SPA is disabled - do full page load
@@ -745,29 +816,24 @@ class Spa {
                 return;
             }
 
-            // Update browser history with scroll position storage
+            // Update browser history. An entry's state says where it sits in the stack
+            // (spa_run, spa_index) and where ITS OWN page is scrolled - so a push first
+            // records the departing page's position on the entry being left, and the
+            // new entry starts with none.
             if (opts.history !== 'none') {
-                // Store current scroll position before navigation
-                const current_scroll = {
-                    x: window.scrollX || window.pageXOffset,
-                    y: window.scrollY || window.pageYOffset
-                };
-
-                // Build history state object
-                const state = {
-                    scroll: current_scroll,
-                    form_data: {}  // Reserved for future form state restoration
-                };
-
                 // Construct full URL with hash (hash is preserved in browser URL bar)
                 const new_url = parsed.path + parsed.search + (parsed.hash || '');
 
                 if (opts.history === 'push' || (opts.history === 'auto' && !is_same_url)) {
                     console_debug('Spa', 'Pushing history state');
-                    history.pushState(state, '', new_url);
+                    Spa._save_scroll_to_current_entry();
+                    Spa._history_index = Spa._history_index + 1;
+                    history.pushState(Spa._entry_state(null), '', new_url);
                 } else if (opts.history === 'replace' || (opts.history === 'auto' && is_same_url)) {
+                    // The entry is overwritten in place: same position in the stack,
+                    // and the page it described is gone, so there is nothing to save.
                     console_debug('Spa', 'Replacing history state');
-                    history.replaceState(state, '', new_url);
+                    history.replaceState(Spa._entry_state(null), '', new_url);
                 }
             }
 
@@ -829,11 +895,20 @@ class Spa {
                 history_mode: opts.history
             });
 
-            // Scroll handling: snap to position BEFORE layout chain resolves
-            // so the scroll happens on first render of the new action
+            // Scroll handling. A position to RESTORE (Back/Forward) is queued rather
+            // than applied: the page that can hold it does not exist yet. It is tried
+            // once the action has rendered and settled when the action is ready
+            // (Rsx.try_restore_scroll()), on whichever element actually scrolls.
+            Spa._restoring_scroll = !!opts.scroll;
+
             if (opts.scroll) {
-                console_debug('Spa', 'Restoring scroll position: ' + opts.scroll.x + ', ' + opts.scroll.y);
-                window.scrollTo({ left: opts.scroll.x, top: opts.scroll.y, behavior: 'instant' });
+                console_debug('Spa', 'Queueing scroll restoration: ' + opts.scroll.x + ', ' + opts.scroll.y);
+                Rsx._pending_scroll = {
+                    x: opts.scroll.x,
+                    y: opts.scroll.y,
+                    scroller: Spa._page_scroller,
+                    from_history: true,
+                };
             } else if (opts.scroll === undefined) {
                 // Default: scroll to top for new navigation (only if scroll not explicitly set)
                 // BUT skip on page reload - let Rsx._restore_scroll_on_refresh handle it
@@ -851,18 +926,10 @@ class Spa {
             // Resolve layout chain - find divergence point and reuse matching layouts
             await Spa._resolve_layout_chain(target_layouts, action_name, action_args, url);
 
-            // TODO: Scroll Restoration #2 - After action on_ready() completes
-            // This requires an action lifecycle event system to detect when on_ready() finishes.
-            // Implementation notes:
-            // - Listen for action on_ready completion event
-            // - Only retry scroll if restoration #1 failed (page wasn't tall enough)
-            // - Check if page height has increased since first attempt
-            // - Avoid infinite retry loops (track attempts)
-            // - This ensures scroll restoration works even when content loads asynchronously
-            //
-            // Additional context: The action may load data in on_load() that increases page height,
-            // making the target scroll position accessible. The first restoration happens before
-            // this content renders, so we need a second attempt after the page is fully ready.
+            // First restoration attempt: the action has rendered, and one that painted
+            // from cached data may already be tall enough. If not, the position stays
+            // queued and is settled when the action is ready.
+            Rsx.try_restore_scroll();
 
             console_debug('Spa', `Rendered ${action_name} with ${target_layouts.length} layout(s)`);
 
@@ -1068,8 +1135,10 @@ class Spa {
                         loading_layout._action_is_loading = false;
                     }
 
-                    // Retry scroll restoration - handles cases where on_load fetches data that increases page height
-                    Rsx.try_restore_scroll();
+                    // The action has loaded everything it is going to. A Back/Forward
+                    // restoration is settled here - scrolled as far as the content
+                    // allows - and a refresh restoration gets another attempt.
+                    Rsx.try_restore_scroll(!!(Rsx._pending_scroll && Rsx._pending_scroll.from_history));
 
                     // Anchor deep-link / scroll-to-top. Deliberately here and not at
                     // dispatch time: dispatch does not await the action (see the
@@ -1197,7 +1266,7 @@ class Spa {
     /**
      * Decide where the page sits after a dispatch.
      *
-     * Precedence: explicit anchor > pending back/forward restoration > top.
+     * Precedence: explicit anchor > back/forward or refresh restoration > top.
      * An anchor is an explicit request from the URL, so it outranks restoration.
      */
     static _apply_scroll_position() {
@@ -1216,8 +1285,9 @@ class Spa {
             return;
         }
 
-        // A pending back/forward restoration owns the scroll position; leave it.
-        if (Rsx._pending_scroll) {
+        // A back/forward or refresh restoration owns the scroll position, whether it is
+        // still waiting for the content or has already been applied; leave it.
+        if (Spa._restoring_scroll || Rsx._pending_scroll) {
             return;
         }
 
@@ -1252,20 +1322,119 @@ class Spa {
      * scrolling box, and an ancestor-only walk would skip straight past it.
      */
     static _scroll_action_container_to_top() {
-        const action = Spa.action();
-        if (!action || !action.$ || !action.$.length) {
+        if (!Spa.action()) {
             return;
+        }
+
+        Spa._page_scroller().scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }
+
+    /**
+     * The element the current page scrolls in: the action's own root when that is the
+     * scrolling box, else its nearest scrollable ancestor, else the document. ONE
+     * resolution for scrolling to the top, for recording a position and for restoring
+     * one, so an application whose layout scrolls inside a container is measured and
+     * restored on that container.
+     */
+    static _page_scroller() {
+        const action = Spa.action();
+
+        if (!action || !action.$ || !action.$.length) {
+            return document.scrollingElement || document.documentElement;
         }
 
         const $self = action.$;
         const overflow_y = $self.css('overflow-y');
 
         if ((overflow_y === 'auto' || overflow_y === 'scroll') && $self[0].scrollHeight > $self[0].clientHeight) {
-            $self[0].scrollTo({ top: 0, left: 0, behavior: 'instant' });
+            return $self[0];
+        }
+
+        return nearest_scrollable_ancestor($self)[0];
+    }
+
+    /**
+     * Where the page on screen is scrolled right now.
+     */
+    static _read_scroll() {
+        const scroller = Spa._page_scroller();
+
+        return { x: scroller.scrollLeft, y: scroller.scrollTop };
+    }
+
+    /**
+     * The state object for the entry the page now sits on.
+     */
+    static _entry_state(scroll) {
+        return {
+            spa_run: Spa._history_run,
+            spa_index: Spa._history_index,
+            scroll: scroll,
+            form_data: {},  // Reserved for future form state restoration
+        };
+    }
+
+    /**
+     * Make the entry the browser is on the SPA's current position in the stack. An
+     * entry that already carries a stamp is read; one that does not (the entry a
+     * document loaded on, or one created by an in-page fragment link) is stamped as
+     * the start of a new run.
+     */
+    static _adopt_current_entry() {
+        const state = history.state;
+
+        // history.state is null on an entry nothing has written to.
+        if (state?.spa_run) {
+            Spa._history_run = state.spa_run;
+            Spa._history_index = state.spa_index;
             return;
         }
 
-        nearest_scrollable_ancestor($self)[0].scrollTo({ top: 0, left: 0, behavior: 'instant' });
+        Spa._history_run = Spa._new_run_id();
+        Spa._history_index = 0;
+        history.replaceState({ ...(state || {}), spa_run: Spa._history_run, spa_index: 0 }, '');
+    }
+
+    /**
+     * Record where the page on screen is scrolled on ITS OWN history entry.
+     */
+    static _save_scroll_to_current_entry() {
+        if (Spa._history_index === null) {
+            return;
+        }
+
+        history.replaceState({ ...(history.state || {}), scroll: Spa._read_scroll() }, '');
+    }
+
+    /**
+     * The navigation guard refused a Back/Forward. The browser has already moved to
+     * the target entry, so put it back on the one it left.
+     *
+     * When both entries belong to the same numbered run, the distance between them is
+     * known and history.go() steps back across it: the stack is untouched, and the
+     * popstate that step fires is swallowed (_undoing_vetoed_move). Otherwise the
+     * distance is not knowable, and the previous URL is pushed - which restores the
+     * address bar at the cost of discarding the entries ahead.
+     */
+    static _undo_vetoed_move() {
+        const state = history.state;
+
+        if (state?.spa_run === Spa._history_run && state.spa_index !== Spa._history_index) {
+            Spa._undoing_vetoed_move = true;
+            history.go(Spa._history_index - state.spa_index);
+            return;
+        }
+
+        // The pushed copy is not a known distance from anything, so it starts a run.
+        if (Spa._last_committed_url) {
+            Spa._history_run = Spa._new_run_id();
+            Spa._history_index = 0;
+            history.pushState(Spa._entry_state(null), '', Spa._last_committed_url);
+        }
+    }
+
+    static _new_run_id() {
+        return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
     }
 
     /**

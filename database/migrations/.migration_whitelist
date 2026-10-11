@@ -676,6 +676,11 @@
             "created_at": "2026-10-08T22:56:54+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe create_user_preference_variables"
+        },
+        "2026_10_11_042800_add_session_devices_and_timeouts.php": {
+            "created_at": "2026-10-11T04:28:00+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_session_devices_and_timeouts"
         }
     }
 }

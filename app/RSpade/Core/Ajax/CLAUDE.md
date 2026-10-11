@@ -61,6 +61,17 @@ than `config('rsx.ajax.batch_max_calls')` calls (default 100; the client flushes
 when any call is malformed: every call needs a non-negative integer `call_id` unique in the
 batch, a `controller`, an `action`, and `params` that are an object when present.
 
+## Session lifetime
+
+Once per Ajax request, ahead of the membership check, for the request's own experience:
+`Session::enforce_timeouts(false)` / `Portal_Session::enforce_timeouts(false)`. Not strict -
+an Ajax call gets `rsx.sessions.ajax_grace_minutes` past the limit. When the sign-in is
+ended, every call in the request answers `session_expired`. `Rsx_Session_Controller::
+page_view` (the SPA's page-view report) enforces strictly in its own body.
+
+A request that signed somebody in carries `_csrf` in its envelope: the sign-in moved the
+browser to a new session row, and the client swaps `window.rsxapp.csrf` for it.
+
 ## Site membership
 
 Staff realm only, once per Ajax request: `Session::enforce_enabled_membership()` ends a

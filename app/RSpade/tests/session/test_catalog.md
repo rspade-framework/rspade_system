@@ -146,7 +146,7 @@ and delete their keys in teardown.
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | sess-gc-01..03 | find_by_token: null for unknown, finds active, ignores inactive | committed sessions | correct row/null | implemented |
-| sess-gc-08 | cleanup_sessions applies the identity-aware windows (identified web 3mo vs identity-less 30d) | aged rows of each kind | each expires on its own window | implemented |
+| sess-gc-08 | cleanup_sessions applies the identity-aware windows (identified web at the idle limit, 90d here, vs identity-less 30d) | aged rows of each kind | each expires on its own window | implemented |
 | sess-gc-09 | cleanup_sessions expires TYPE_PLAYWRIGHT on its own window, leaving a same-age web row | 2-day-old harness + web rows | harness gone, web kept - proves the sweep reads type, not age | implemented |
 | sess-gc-09b | cleanup_sessions expires TYPE_CLI on its own window, leaving a same-age web row | 2-day-old CLI + web rows | CLI gone, web kept - the backstop for a killed process | implemented |
 | sess-gc-10 | cleanup_sessions chunked delete clears a backlog | 12 rows, chunk_size 5 | all deleted across 3 statements | implemented |
@@ -157,7 +157,10 @@ and delete their keys in teardown.
 | sess-gc-11 | purge_playwright_sessions takes only this run's harness rows | harness + web in window, harness from a live concurrent run | own harness gone; web and concurrent run untouched | implemented |
 | sess-gc-12 | purge_playwright_sessions collects stale harness rows from earlier runs | 3h-idle harness row | deleted without waiting out the playwright window | implemented |
 | sess-gc-13 | a PORTAL identity is not read as anonymous | 40-day-idle rows with/without portal_user_id | portal-only kept, identity-less collected | implemented |
-| sess-gc-14 | a portal identity expires on the identified-web window | 200-day vs 40-day portal rows | stale gone, fresh kept | implemented |
+| sess-gc-14 | a portal identity expires on the idle limit | 200-day vs 40-day portal rows, 90-day limits | stale gone, fresh kept | implemented |
+| sess-gc-20 | identified rows follow the longer idle limit plus the Ajax grace | 29-day and 31-day signed-in rows, 30-day limits | kept / collected | implemented |
+| sess-gc-21 | an unlimited idle window collects no identified row | portal idle limit 0, 900-day row | web count 0, row kept | implemented |
+| sess-gc-22 | a device no session row names is collected | an orphan device, one in use | orphan gone, in-use kept | implemented |
 | sess-gc-15 | the playwright backstop ignores which identity a row carries | 2-day portal harness + portal web | harness gone, web kept | implemented |
 | sess-gc-17 | purge_playwright_sessions collects harness rows whatever they carry | staff + portal harness + portal web | both harness rows gone, web kept | implemented |
 
@@ -183,11 +186,44 @@ and delete their keys in teardown.
 (Migrated from the prior bash suite; see the script for exact assertions.) Needs a
 framework-development box: the `/ssr-test` probes are gated `is_framework_developer`.
 
-## http/session_token_immutability.sh (http - live server)
+## http/session_sign_in_rotation.sh (http - live server)
+
+Self-seeding (its own account, via tinker). Needs a framework-development box for the
+`/ssr-test` probe.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| sess-http-06 | token minted once at creation; login is a pure record update (no rotation, no cookie re-emission); same token then authenticates | anon session -> POST /login -> GET /dashboard | step1 Set-Cookie rsx; step2 NO Set-Cookie rsx + token unchanged; step3 200 | implemented |
+| sess-rotate-01 | a sign-in moves the browser to a new token, in exactly one session cookie | anon session -> POST /login | token differs; one `Set-Cookie: rsx=` | implemented |
+| sess-rotate-02 | the new token authenticates; the token the browser arrived with does not, and is never re-cookied | GET /dashboard on each | 200 / 302 with no Set-Cookie | implemented |
+| sess-rotate-03 | the superseded row is identity-free and points at its successor; the new row carries the identity and its clocks | the two rows | as stated | implemented |
+| sess-rotate-04 | the rows share one device; a later sign-in on the browser lands on the same device | row state; sign out, sign in | same device_id, third token | implemented |
+
+## http/session_lifetime.sh (http - live server)
+
+Self-seeding. Moves a real session's clocks back against the shipped defaults (30 days each,
+2 hours of grace).
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-life-01 | inside the grace window an Ajax call and a page sub-request still answer | login_at 30d+1h ago | `_success` true; 200 for `Sec-Fetch-Dest: image`; still signed in | implemented |
+| sess-life-02 | a page navigation past the limit signs out, redirects to sign-in and says why | same row, `Sec-Fetch-Dest: document` | 302 to /login; identity cleared; the message on the sign-in page | implemented |
+| sess-life-03 | past the grace an Ajax call signs out and answers session_expired | last_page_view_at 30d+3h ago | `error_code` session_expired, cause idle; identity cleared | implemented |
+| sess-life-04 | the page-view report gets no grace | login_at 30d+1h ago, POST page_view | session_expired; identity cleared | implemented |
+| sess-life-05 | the page-view report stamps the session and last_seen on the account | stamp 5 minutes old | stamp advanced; login_users.last_seen set | implemented |
+| sess-life-06 | an Ajax call is not a page view | stamp 5 minutes old, any Ajax call | stamp unchanged | implemented |
+| sess-life-07 | rendering a page is a page view | GET /dashboard | stamp advanced | implemented |
+
+## playwright/session_expired.js (playwright)
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| SESSION-EXPIRED-01 | a session_expired envelope calls the registered handler with the server message | envelope fed to Ajax | one call, the message | implemented |
+| SESSION-EXPIRED-02 | later refusals on the same page do not call it again | session_expired, then auth_required | still one call | implemented |
+| SESSION-EXPIRED-03 | auth_required on a signed-in page is the same event | auth_required alone | one call | implemented |
+| SESSION-EXPIRED-04 | a page rendered for nobody announces nothing | is_auth false | no call | implemented |
+| SESSION-EXPIRED-05 | with no handler registered the page reloads | session_expired | a load event | implemented |
+| SESSION-PAGEVIEW-01 | a completed SPA dispatch reports a page view at most once a minute; the boot load already counted | spa_dispatch_ready x3 | 0, then 1, then still 1 | implemented |
+| SESSION-PAGEVIEW-02 | nothing is reported once the sign-in is known to be gone | dispatch after the announcement | 0 | implemented |
 
 ## Session_Cookie_Flags_Test (php, no DB) - the session cookie's name and attributes
 
@@ -223,7 +259,6 @@ application's can_impersonate denies its most privileged role). Self-seeding via
 | ID | Purpose | Type | Reason | Status |
 |----|---------|------|--------|--------|
 | sess-http-01 | web-mode session creation + cookie set on first activate | http | needs live HTTP context | deferred |
-| sess-http-02 | session token + CSRF STABILITY across login (no rotation - owner ruling 2026-07-24) | http | superseded by sess-http-06 (session_token_immutability.sh) | implemented |
 | sess-http-03 | CSRF verify against a real stored token | http | needs persisted web session | deferred |
 | sess-http-04 | Session::reset() clears cookie in web mode | http | calls setcookie() | deferred |
 | sess-http-05 | multi-device: get_sessions_for_user / terminate_* / terminate_all_other | http | thin wrappers; need real session rows over HTTP | deferred |

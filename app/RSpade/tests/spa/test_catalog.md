@@ -34,6 +34,15 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-REJ-03 | After it, `Spa.dispatch()` still navigates client-side | playwright | `/_sys` -> `/_sys/tasks` | landed on the target; a window marker survives | implemented | 2026-10-05 |
 | SPA-REJ-04 | Extension-origin rejections are ignored outright: an Error whose stack names a `chrome-extension://` script, and Chrome's extension-messaging failure | playwright | two dispatched rejections | no `unhandled_exception`; SPA enabled | implemented | 2026-10-05 |
 | SPA-REJ-05 | A rejection whose Error stack names this origin's compiled bundle is still an exception that disables the SPA | playwright | an Error with a `/_compiled/` frame | one `unhandled_exception`, `implicated === true`, SPA disabled | implemented | 2026-10-05 |
+| SPA-HISTORY-01 | A new page opens at the top, one entry further along the stack | playwright | scroll A, dispatch B | B at 0, `spa_index` 1 | implemented | 2026-10-11 |
+| SPA-HISTORY-02 | Back returns a page to where it was scrolled (left by a push) | playwright | A at 700 -> B -> Back | A at 700 | implemented | 2026-10-11 |
+| SPA-HISTORY-03 | Forward returns a page to where it was scrolled (left by Back) | playwright | B at 300 -> Back -> Forward | B at 300 | implemented | 2026-10-11 |
+| SPA-HISTORY-04 | The entry's own state follows the page while it is on screen | playwright | scroll to 450 | `history.state.scroll.y` 450 | implemented | 2026-10-11 |
+| SPA-HISTORY-05 | `Rsx.url_hash_set()` keeps the entry state | playwright | set and clear a hash key | run, index and scroll intact | implemented | 2026-10-11 |
+| SPA-HISTORY-06 | A layout that scrolls inside a container is measured and restored on the container | playwright | action root as the scrolling box, at 600 -> B -> Back | container at 600, window at 0 | implemented | 2026-10-11 |
+| SPA-HISTORY-07 | A vetoed Forward leaves the address, the stack length and the entry index as they were | playwright | `[A, B*, C]`, refusing guard, Forward | on B, length and index unchanged | implemented | 2026-10-11 |
+| SPA-HISTORY-08 | The popstate fired by undoing a veto is not a navigation | playwright | same | guard asked once, no dispatch | implemented | 2026-10-11 |
+| SPA-HISTORY-09 | A vetoed Back does the same, and both neighbours are still reachable afterwards | playwright | refusing guard, Back; then clear, Forward, Back, Back | on B; C then A reached, nothing added | implemented | 2026-10-11 |
 
 ## Notes
 

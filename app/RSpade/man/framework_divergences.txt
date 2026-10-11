@@ -314,10 +314,11 @@ SESSIONS
                         window gives a better experience than repeated
                         surprise logouts, while still expiring abandoned
                         sessions and keeping the table bounded.
-        Current values  sessions.web_timeout_minutes = 131400 (about 91 days
-                        idle) for a session carrying an identity;
+        Current values  sessions.staff / sessions.portal: max_length_minutes
+                        = 43200 and max_idle_minutes = 43200 (30 days from
+                        sign-in, 30 days idle), enforced at request time;
                         sessions.anonymous_timeout_minutes = 43200 (30 days)
-                        for one carrying none;
+                        for a session carrying no identity;
                         sessions.max_web_sessions_per_user = 25, which signs
                         out a user's oldest WEB sessions at each sign-in.
         Implementation  Session_Cleanup_Service (hourly, chunked) deletes idle

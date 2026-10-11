@@ -89,6 +89,8 @@ Spa.action()                     // current action instance
 
 `Spa.dispatch()` routes client-side when the path belongs to the current SPA, and falls back to a full page load when it does not. **`Spa.redirect()` is the one to use for a programmatic redirect inside `on_load()`** - replacing the history entry means the browser Back button does not bounce the user straight back into the redirecting action.
 
+**Scroll position is the framework's.** A new navigation opens at the top; Back/Forward returns a page to where it was scrolled, restored once the action is ready, on whichever element the page scrolls in (the window or a layout's scrolling container). An action never calls `scrollTop()` for either. `history.state` on an SPA entry belongs to the framework - a hand-written `history.replaceState()` passes `history.state` back, never `null`.
+
 **Back/Forward over a `#fragment` does not re-dispatch.** A history move that keeps the path and query leaves the action mounted and fires `Rsx.on('spa_hash_change', ({url, hash}) => ...)` instead - so fragment-addressed UI (a dialog, a tab) can `history.pushState()` its fragment on open and close itself there, at the cost of a DOM change rather than a page rebuild. A path or query change always re-dispatches; `pushState`/`replaceState` fire nothing (browser rule), and the navigation guard is not consulted for a fragment move. `rsx:man spa`, SPA EVENTS.
 
 **Link interception**: the SPA only intercepts clicks on links whose href matches a known SPA route. Links to server-side controllers, unknown paths, or external URLs pass through as normal full-page navigations. **No special attributes are needed to bypass SPA routing** - do not invent a `data-no-spa`.

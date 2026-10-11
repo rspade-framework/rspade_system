@@ -136,12 +136,27 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
     // Session_Cleanup_Service::cleanup_sessions() (the scheduled task)
     // -------------------------------------------------------------------------
 
+    /**
+     * A signed-in row is collected once it has been untouched for longer than the longer
+     * of the two idle limits plus the Ajax grace. The cases below set both limits to 90
+     * days, so a 40-day-old row separates "identified" from "anonymous" (30 days).
+     */
+    private static function __ninety_day_idle_limits(): void
+    {
+        config([
+            'rsx.sessions.staff.max_idle_minutes' => 129600,
+            'rsx.sessions.portal.max_idle_minutes' => 129600,
+        ]);
+    }
+
     public static function test_cleanup_sessions_task_applies_per_type_windows()
     {
+        static::__ninety_day_idle_limits();
+
         // Beyond every window...
         $old_web = static::__insert_session(['age_days' => 200, 'login_user_id' => 12345]);
         $old_anonymous = static::__insert_session(['age_days' => 40]);
-        // ...and within them (identified web 3 months, anonymous 30 days).
+        // ...and within them (identified web 90 days here, anonymous 30 days).
         $mid_web = static::__insert_session(['age_days' => 40, 'login_user_id' => 12345]);
         $fresh_anonymous = static::__insert_session(['age_days' => 2]);
 
@@ -155,9 +170,9 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             ->pluck('session_token')
             ->all();
 
-        static::__assert_false(in_array($old_web, $remaining, true), 'web beyond 3 months gone');
+        static::__assert_false(in_array($old_web, $remaining, true), 'identified web session beyond the idle limit gone');
         static::__assert_false(in_array($old_anonymous, $remaining, true), 'anonymous beyond 30 days gone');
-        static::__assert_true(in_array($mid_web, $remaining, true), 'identified web session within 3 months kept (40d only passes the ANONYMOUS cutoff)');
+        static::__assert_true(in_array($mid_web, $remaining, true), 'identified web session within the idle limit kept (40d only passes the ANONYMOUS cutoff)');
         static::__assert_true(in_array($fresh_anonymous, $remaining, true), 'anonymous within 30 days kept');
     }
 
@@ -379,8 +394,10 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
 
     public static function test_a_portal_identity_is_not_read_as_anonymous()
     {
-        // 40 days idle: past the 30-day anonymous window, well inside the 3-month
-        // window an IDENTIFIED session gets. Only the portal_user_id half of the
+        static::__ninety_day_idle_limits();
+
+        // 40 days idle: past the 30-day anonymous window, well inside the 90-day
+        // window an IDENTIFIED session gets here. Only the portal_user_id half of the
         // identity test saves it.
         $portal = static::__insert_portal_session(['age_days' => 40]);
         $anonymous = static::__insert_session(['age_days' => 40]);
@@ -396,22 +413,84 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         static::__assert_false(in_array($anonymous, $remaining, true), 'the identity-less row of the same age IS collected');
     }
 
-    public static function test_a_portal_identity_expires_on_the_web_window()
+    public static function test_a_portal_identity_expires_on_the_idle_limit()
     {
+        static::__ninety_day_idle_limits();
+
         $stale = static::__insert_portal_session(['age_days' => 200]);
         $fresh = static::__insert_portal_session(['age_days' => 40]);
 
         $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
 
-        static::__assert_greater_than(0, $result['web'], 'identified session past 3 months deleted');
+        static::__assert_greater_than(0, $result['web'], 'identified session past the idle limit deleted');
 
         $remaining = DB::table('_sessions')
             ->whereIn('session_token', [$stale, $fresh])
             ->pluck('session_token')
             ->all();
 
-        static::__assert_false(in_array($stale, $remaining, true), 'portal session beyond 3 months gone');
-        static::__assert_true(in_array($fresh, $remaining, true), 'portal session within 3 months kept');
+        static::__assert_false(in_array($stale, $remaining, true), 'portal session beyond the idle limit gone');
+        static::__assert_true(in_array($fresh, $remaining, true), 'portal session within the idle limit kept');
+    }
+
+    /**
+     * The collection window follows the LONGER idle limit plus the Ajax grace: with the
+     * limits at 30 days each, a signed-in row 29 days old is kept and one 31 days old goes.
+     */
+    public static function test_identified_rows_follow_the_configured_idle_limit()
+    {
+        config([
+            'rsx.sessions.staff.max_idle_minutes' => 43200,
+            'rsx.sessions.portal.max_idle_minutes' => 43200,
+            'rsx.sessions.ajax_grace_minutes' => 120,
+        ]);
+
+        $inside = static::__insert_session(['age_days' => 29, 'login_user_id' => 12345]);
+        $outside = static::__insert_session(['age_days' => 31, 'login_user_id' => 12345]);
+
+        static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
+
+        $remaining = DB::table('_sessions')->whereIn('session_token', [$inside, $outside])->pluck('session_token')->all();
+
+        static::__assert_true(in_array($inside, $remaining, true), 'a signed-in row inside the idle limit is kept');
+        static::__assert_false(in_array($outside, $remaining, true), 'a signed-in row past the idle limit and the grace is collected');
+    }
+
+    /**
+     * An idle limit of 0 means a sign-in never goes idle, so no signed-in row may be
+     * collected for its age - in either experience, because one row can carry both.
+     */
+    public static function test_an_unlimited_idle_window_collects_no_identified_row()
+    {
+        config([
+            'rsx.sessions.staff.max_idle_minutes' => 43200,
+            'rsx.sessions.portal.max_idle_minutes' => 0,
+        ]);
+
+        $ancient = static::__insert_session(['age_days' => 900, 'login_user_id' => 12345]);
+
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
+
+        static::__assert_equals(0, $result['web']);
+        static::__assert_true(DB::table('_sessions')->where('session_token', $ancient)->exists(), 'the row is still there');
+    }
+
+    /**
+     * A device record lives exactly as long as some session row still names it.
+     */
+    public static function test_a_device_no_row_names_is_collected()
+    {
+        $orphan = DB::table('_session_devices')->insertGetId(['user_agent' => 'orphan']);
+        $in_use = DB::table('_session_devices')->insertGetId(['user_agent' => 'in use']);
+
+        $token = static::__insert_session(['age_days' => 1, 'login_user_id' => 12345]);
+        DB::table('_sessions')->where('session_token', $token)->update(['device_id' => $in_use]);
+
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
+
+        static::__assert_greater_than(0, $result['devices']);
+        static::__assert_false(DB::table('_session_devices')->where('id', $orphan)->exists(), 'the orphan is gone');
+        static::__assert_true(DB::table('_session_devices')->where('id', $in_use)->exists(), 'the device in use is kept');
     }
 
     public static function test_the_playwright_backstop_ignores_which_identity_a_row_carries()

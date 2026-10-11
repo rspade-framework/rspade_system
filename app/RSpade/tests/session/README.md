@@ -33,6 +33,8 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   per-IP brute-force throttle (config `rsx.sessions.login_throttle`)
 - `app/RSpade/Core/Models/Login_User_Model.php`, `User_Model.php`, `Site_Model.php`
 - Cleanup: `app/RSpade/Core/Session/Session_Cleanup_Service.php` (scheduled task)
+- `app/RSpade/Core/Session/Rsx_Session_Controller.php` (the SPA's page-view report)
+- `app/RSpade/Core/Js/Rsx_Session.js` (page-view reporting, the lost-session announcement)
 
 ## Man page(s)
 
@@ -85,6 +87,18 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 - Session token lookup + expired-session cleanup. (php - commits, needs reset)
 - Web-mode session creation, cookie round-trip, token regeneration, CSRF against
   a stored token, multi-device session management. (http - live server)
+
+### Session lifetime, sign-in rotation and devices
+
+- http (`session_sign_in_rotation.sh`): a sign-in moves the browser to a new row and token;
+  the superseded token never authenticates and is never re-cookied; the rows share a device.
+- http (`session_lifetime.sh`): the two limits against real rows whose clocks were moved
+  back - page navigation vs. the Ajax grace, the session_expired envelope, the page-view
+  report, last_seen, and what does and does not count as a page view.
+- playwright (`session_expired.js`): the client announces a lost sign-in once per page to the
+  registered handler (or reloads), and reports SPA page views at most once a minute.
+- php (`Session_Cleanup_Test`): signed-in rows are collected on the longer idle limit plus
+  the grace, never under an unlimited one; orphan device records go.
 
 ## Documents
 

@@ -1697,10 +1697,39 @@ return [
     |
     */
     'sessions' => [
-        // Minutes of inactivity before a WEB (browser) session that carries an
-        // IDENTITY expires - a staff login, a portal login, or both, since one row
-        // serves both experiences. Default: 3 months.
-        'web_timeout_minutes' => 131400,
+        // HOW LONG A SIGN-IN LASTS, per experience. Enforced when a request arrives
+        // (Session::enforce_timeouts() / Portal_Session::enforce_timeouts()), not by a
+        // sweeper, and measured on the session row.
+        //
+        // max_length_minutes: from the SIGN-IN. The hard ceiling - a session is ended
+        //   this long after it began however active it is, and the person signs in again
+        //   (facing their second factor again, if they have one). This is the limit that
+        //   bounds a session somebody else got hold of, because a thief is never idle.
+        // max_idle_minutes: from the last PAGE VIEW - a rendered page or an SPA
+        //   navigation. Ajax and API calls are not page views, so an open tab that polls
+        //   does not keep a session alive.
+        //
+        // Default: 30 days each. 0 means no limit. An application handling sensitive
+        // records sets both far lower (hours); see rsx:man session (SESSION LIFETIME).
+        'staff' => [
+            'max_length_minutes' => 43200,
+            'max_idle_minutes' => 43200,
+        ],
+
+        // The same two limits for a client-portal sign-in. One browser session row can
+        // carry both identities; each is judged by its own limits on its own requests.
+        'portal' => [
+            'max_length_minutes' => 43200,
+            'max_idle_minutes' => 43200,
+        ],
+
+        // How long past its limit a sign-in still answers NON-PAGE requests - Ajax
+        // calls, thumbnails, downloads. A page (and an SPA navigation) is refused at the
+        // limit itself and signs the person out; this window exists so a page that was
+        // already open can still finish what it was doing, such as saving the form on
+        // screen. The first such request after the window ends the sign-in itself and
+        // answers the session_expired envelope. Default: 2 hours.
+        'ajax_grace_minutes' => 120,
 
         // Minutes of inactivity before an API session expires. Default: 7 days.
         'api_timeout_minutes' => 10080,

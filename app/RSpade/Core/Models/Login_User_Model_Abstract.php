@@ -51,6 +51,7 @@ use App\RSpade\Core\Session\Session;
  * @property int $is_developer
  * @property int $is_verified
  * @property string $last_login
+ * @property string $last_seen
  * @property string $password
  * @property string $remember_token
  * @property int $status_id

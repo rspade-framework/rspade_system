@@ -78,6 +78,7 @@ use App\RSpade\Core\Portal\Rsx_Portal;
  * @property int $id
  * @property int $is_verified
  * @property string $last_login
+ * @property string $last_seen
  * @property array $metadata
  * @property string $password
  * @property int $site_id

@@ -591,7 +591,34 @@ NAVIGATION
           spa_hash_change fires (see SPA EVENTS). A change of path or query
           always re-dispatches, and actions are never reused.
         - URL updates in address bar via pushState()
+        - Back/Forward returns a page to where it was scrolled (below)
         - Links to external or non-SPA routes perform full page load
+
+    Scroll Position:
+        A new navigation opens at the top. Back and Forward return a page to
+        where it was scrolled when it was left, and that is the framework's -
+        an action does nothing for it and calls no scrollTop() of its own.
+
+        Each history entry records the position of ITS OWN page, kept current
+        while the page is on screen, so it is there however the page is left:
+        a link, Back/Forward, or a full page load. The position is measured on,
+        and restored to, the element the page actually scrolls in - the action
+        root when that is the scrolling box, else its nearest scrollable
+        ancestor, else the document - so a layout that scrolls inside a
+        container works the same as one that scrolls the window.
+
+        Restoration waits for the page. It is applied once the action has
+        rendered and again, for good, when the action is ready (on_load and
+        on_ready complete), so content that arrives by Ajax is there to scroll
+        to. A page that comes back shorter than it was is scrolled as far as it
+        goes. An `at` anchor in the URL outranks a restoration (rsx:man
+        anchors), and a layout marked data-anchor-scroll="manual" opts out of
+        the scroll-to-top, as before.
+
+        history.state on an SPA entry is the framework's: {spa_run, spa_index,
+        scroll, form_data}. Code that calls history.replaceState() itself must
+        pass history.state back (or spread it), never null - a wiped state
+        loses the entry's position in both senses. Rsx.url_hash_set() does.
 
     Programmatic Navigation:
         Spa.dispatch(url)
@@ -715,6 +742,15 @@ THE NAVIGATION GUARD
     Back/Forward is always subject to the guard. The one exception is a
     fragment-only Back/Forward, which leaves the page in place and is not a
     navigation at all - it fires spa_hash_change and asks nobody.
+
+    A REFUSED BACK/FORWARD LEAVES THE HISTORY STACK ALONE. By the time the
+    guard is asked, the browser has already moved to the entry the user was
+    heading for, so the framework steps it back to the one it left: the address
+    is restored, nothing is added or discarded, and Back and Forward afterwards
+    reach the same pages they did before. (Between an entry the SPA wrote and
+    one it did not - an in-page fragment link's - the distance is not knowable;
+    there the previous URL is pushed instead, which restores the address and
+    drops the entries ahead.)
 
     Worked example, complete and current:
         system/app/RSpade/resource/reference_app/app/frontend/contacts/edit/

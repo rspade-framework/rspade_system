@@ -1,6 +1,6 @@
 ---
 name: session-auth
-description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::verify_credentials() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifecycle windows and the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
+description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::verify_credentials() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifetime limits (rsx.sessions.staff / .portal max_length_minutes and max_idle_minutes, the session_expired envelope, Rsx.set_session_expired_handler()), sign-in rotation and device records, the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, a \"you have been signed out\" dialog, an idle or absolute session timeout, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
 ---
 
 # Sessions and Login
@@ -149,7 +149,9 @@ $sessions = Session::get_sessions_for_user($login_user_id);   // admin view
 $info     = Session::get_current_session_info();              // this session, or null
 ```
 
-Only ACTIVE sessions are returned, and **the WHOLE set of them on purpose** - a user cannot terminate a session they were not shown. Two things keep the set small, neither a cap on the query: the concurrent-session cap, and retention by type. (`Portal_Session::get_sessions_for_user()` is the same query on `portal_user_id`.)
+Each entry carries `id` (what the terminate functions take), `device_summary`, `ip_address`, `last_active`, `signed_in_at`, `first_seen`, `device_id` and `is_current`. **One browser is one entry however often it has signed in**: a sign-in moves the browser to a new session row (below), and `device_id` / `first_seen` stay the same across them - show `first_seen` as "first signed in" and `signed_in_at` as the current sign-in.
+
+Only ACTIVE sessions are returned, and **the WHOLE set of them on purpose** - a user cannot terminate a session they were not shown. Two things keep the set small, neither a cap on the query: the concurrent-session cap, and the session limits below. (`Portal_Session::get_sessions_for_user()` is the same query on `portal_user_id`.)
 
 ### Terminating - pick by whose sessions, and who is asking
 
@@ -197,19 +199,53 @@ public static function on_terminated(array $payload) {
 
 ---
 
-## Lifecycle windows
+## Session lifetime
 
-**Never implement "Remember Me"**: the cookie is long-lived, the ROW expires. Every session is stamped at creation with a `type_id` - a **writer-side fact, never re-derived from the user-agent**.
+**Never implement "Remember Me"**: the cookie is always long-lived, and config ends a sign-in. Two limits per experience, overridden in `rsx/resource/config/rsx.php`:
 
-| type | who mints it | idle window |
-|---|---|---|
-| `TYPE_WEB` (with an identity) | a browser sign-in | `rsx.sessions.web_timeout_minutes` (3mo) |
-| `TYPE_WEB` (anonymous) | a first visit | `anonymous_timeout_minutes` (30d) |
-| `TYPE_API` | reserved - no writer (Bearer requests are cookie-less) | 7d |
-| `TYPE_PLAYWRIGHT` | the `rsx:debug` harness | 1d |
-| `TYPE_CLI` | any artisan/task/test process | 1d |
+```php
+'sessions' => [
+    'staff'  => ['max_length_minutes' => 43200, 'max_idle_minutes' => 43200],   // the defaults: 30 days each
+    'portal' => ['max_length_minutes' => 43200, 'max_idle_minutes' => 43200],
+    'ajax_grace_minutes' => 120,
+],
+```
 
-`Session_Cleanup_Service::cleanup_sessions` (hourly, `#[Exclusive]`, chunked) does the deleting. **There is no portal window** - a row carrying `portal_user_id` is a web row with an identity. `rsx:debug` additionally deletes the harness sessions its own RUN minted (`Session::purge_playwright_sessions`) - run-scoped, not request-scoped, because dev-auth signs in the navigation and the page's XHRs ride that session's cookie.
+- **`max_length_minutes`** - from the sign-in. The hard ceiling; the person signs in again (second factor included). **This is the one that bounds a hijacked session** - a thief is never idle.
+- **`max_idle_minutes`** - from the last PAGE VIEW: a page rendering its bundle, or a completed SPA navigation (the browser reports those itself). **Ajax, downloads, thumbnails and API calls are not page views**, so a polling tab does not keep a sign-in alive.
+- `0` = no limit. A page view also stamps `last_seen` on the account (`users`, `login_users`, `portal_users`), at most once a minute.
+
+**Enforced at request time, before the gates - you write nothing:**
+
+| request | past a limit |
+|---|---|
+| page navigation | signed out, redirected to sign-in with the URL captured, flash says why |
+| SPA navigation | same judgement, through the page-view report - no grace |
+| Ajax / thumbnail / download | keeps working for `ajax_grace_minutes` (so the open form can still save), then signs out and answers the `session_expired` envelope |
+
+**The one thing an application supplies is the dialog.** The framework announces a lost sign-in ONCE per page - `session_expired`, or `auth_required` on a page rendered signed in (terminated elsewhere) - to the handler you register; with none it reloads the page:
+
+```javascript
+static on_app_modules_define() {
+    Rsx.set_session_expired_handler((info) => {
+        // an undismissable dialog showing info.message, whose button does window.location.reload()
+    });
+}
+```
+
+The reload is the whole "return to login": the server redirects and brings the user back to this URL afterwards. Worked example: `system/app/RSpade/resource/reference_app/lib/modal/modal.js`.
+
+### A sign-in moves the browser to a new session row
+
+Every real sign-in (`RsxAuth::login()`, a passed 2FA challenge, passkey, SSO, a portal sign-in) mints a NEW `_sessions` row with a new token and CSRF token, carries the tenant, the other experience's identity, session values and flash alerts across, and **supersedes** the old row - it stays as an anonymous session and never authenticates again. So a copied or planted cookie is worthless across a sign-in, and a forced re-login actually evicts whoever else held it. Consequences worth knowing:
+
+- `Session::get_session_id()` is a different number after a sign-in. Never store one across a login expecting it to match.
+- The CSRF token changes with it. A sign-in made by an Ajax call is handed the new token automatically; a hand-built form rendered before the sign-in must be re-rendered.
+- `logout()`, site switches and impersonation begin/stop do NOT rotate - they are record updates on the live row.
+
+### Collection
+
+Rows nobody comes back to are deleted hourly by `Session_Cleanup_Service::cleanup_sessions` (`#[Exclusive]`, chunked): a signed-in browser row once it is past the longer idle limit plus the grace, an anonymous one at `anonymous_timeout_minutes` (30d), and the machine types (`TYPE_API` 7d, `TYPE_PLAYWRIGHT` 1d, `TYPE_CLI` 1d) on their own windows. Every row is stamped at creation with a `type_id` - a **writer-side fact, never re-derived from the user-agent**. `rsx:debug` additionally deletes the harness sessions its own RUN minted.
 
 **The concurrent cap** (`rsx.sessions.max_web_sessions_per_user`, default 25; 0/null disables) signs out a user's oldest WEB sessions at every sign-in - the staff cap deactivates the row, the portal cap clears the portal properties off it (the row may still carry a staff login). Machine sessions are never counted or evicted.
 
@@ -298,6 +334,9 @@ Never write a one-off script or raw SQL for either: a hand-written `UPDATE login
 - **Failed-attempt count reads zero for a user you know just failed.** The window (`login_throttle.window_minutes`, default 15) elapsed, or the cache was restarted. Both are expected - the counters are ephemeral, and they are a statistic rather than the enforcement.
 - **A login form reports "invalid email or password" for a correct password.** The attempt was throttled and the `Auth_Throttled_Exception` was swallowed into the same branch as a credential miss. Catch it separately and show `$e->getMessage()`.
 - **A test or command "cannot log in any more".** It cannot be the throttle: CLI has no client IP and is never throttled. Clear a real lockout with `Login_Throttle::reset($ip)`.
+- **A user reports being signed out "for no reason".** A session limit (`rsx.sessions.staff` / `.portal`): the sign-in screen's flash says which - "session has expired" is `max_length_minutes`, "period of inactivity" is `max_idle_minutes`.
+- **A page that polls forever still gets signed out.** Correct: Ajax is not a page view. Idle means nobody navigated.
+- **Ajax calls fail the CSRF check right after a custom sign-in.** The page is using a token from before the sign-in moved the browser to a new row. Sign in through an Ajax endpoint (the envelope updates the token) or reload.
 - **A test signs in but `last_login` moves.** Pass `$touch_last_login = false` to `RsxAuth::login()` for harness logins.
 
 ---

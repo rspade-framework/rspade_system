@@ -385,6 +385,26 @@ class Dispatcher
             return static::__transform_response($realm, static::__build_response($realm, response_auth_required()), $original_method, $request);
         }
 
+        // --- Session lifetime (rsx.sessions.staff / rsx.sessions.portal) ---
+        // A sign-in that has outlived its limits is ended HERE, ahead of the gates. A
+        // DOCUMENT navigation is judged at the limit itself and answers the login
+        // redirect, with the intended URL captured and a flash saying why. Anything else
+        // on the page channel - a thumbnail, a download, an iframe's document - is a
+        // sub-request of a page that was already open, so it gets the same grace an Ajax
+        // call does and, past it, simply continues signed out. Sec-Fetch-Dest is what
+        // tells the two apart; a caller that does not send it is treated as a navigation.
+        $fetch_dest = (string) $request->headers->get('Sec-Fetch-Dest', 'document');
+        $is_navigation = $fetch_dest === 'document' || $fetch_dest === '';
+        $timeout_reason = $realm['realm'] === Auth_Gates::REALM_PORTAL
+            ? Portal_Session::enforce_timeouts($is_navigation)
+            : Session::enforce_timeouts($is_navigation);
+
+        if ($timeout_reason !== null && $is_navigation) {
+            Flash_Alert::warning(Session::timeout_message($timeout_reason));
+
+            return static::__transform_response($realm, static::__build_response($realm, response_auth_required()), $original_method, $request);
+        }
+
         // --- Declarative #[Auth] gates ---
         // Every gate the matched surface declares must pass BEFORE any application code
         // runs - the realm's Main::pre_dispatch, the controller's pre_dispatch and the

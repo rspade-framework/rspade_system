@@ -27,6 +27,7 @@ use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
 use App\RSpade\Core\Revisions\Revision;
@@ -69,6 +70,7 @@ class Ajax
     const ERROR_NOT_FOUND = 'not_found';
     const ERROR_UNAUTHORIZED = 'unauthorized';
     const ERROR_AUTH_REQUIRED = 'auth_required';
+    const ERROR_SESSION_EXPIRED = 'session_expired';  // The sign-in outlived rsx.sessions.* and was just ended
     const ERROR_FATAL = 'fatal';
     const ERROR_GENERIC = 'generic';
     const ERROR_QUESTION = 'question';        // Not a failure: the endpoint is asking the user something
@@ -180,6 +182,7 @@ class Ajax
             self::ERROR_NOT_FOUND => 'The requested record was not found',
             self::ERROR_UNAUTHORIZED => 'You do not have permission to perform this action',
             self::ERROR_AUTH_REQUIRED => 'Please log in to continue',
+            self::ERROR_SESSION_EXPIRED => 'Your session has expired. Please sign in again.',
             self::ERROR_FATAL => 'A fatal error has occurred',
             self::ERROR_SERVER => 'A server error occurred. Please try again.',
             self::ERROR_NETWORK => 'Could not connect to server. Please check your connection.',
@@ -513,6 +516,13 @@ class Ajax
         $envelope['_server_time'] = Rsx_Time::now_iso();
         $envelope['_user_timezone'] = Rsx_Time::get_user_timezone();
 
+        // A sign-in made by this request moved the browser to a new session row, with a
+        // new CSRF token; the page that asked still holds the old one.
+        $rotated_csrf_token = Session::_rotated_csrf_token();
+        if ($rotated_csrf_token !== null) {
+            $envelope['_csrf'] = $rotated_csrf_token;
+        }
+
         $console_messages = array_slice(Debugger::_get_console_messages(), $console_mark);
         if (!empty($console_messages)) {
             // Each message is [channel, [arguments]]
@@ -546,6 +556,11 @@ class Ajax
     public static function handle_browser_request(Request $request, string $controller_name, string $action_name): Response
     {
         Debugger::disable_console_html_output();
+
+        $expired = static::__timeout_refusal();
+        if ($expired !== null) {
+            return response()->json($expired);
+        }
 
         $membership = static::__membership_refusal();
         if ($membership !== null) {
@@ -613,7 +628,7 @@ class Ajax
         }
 
         $responses = [];
-        $membership = static::__membership_refusal(false);
+        $membership = static::__timeout_refusal(false) ?? static::__membership_refusal(false);
 
         if ($membership === null) {
             $halted = Dispatcher::ajax_main_pre_dispatch($request, ['_route' => '/_ajax/_batch']);
@@ -687,6 +702,36 @@ class Ajax
         }
 
         return null;
+    }
+
+    /**
+     * Session lifetime (rsx.sessions.staff / rsx.sessions.portal), asked once per Ajax
+     * request for the request's own experience. An Ajax call is allowed
+     * rsx.sessions.ajax_grace_minutes past the limit - the page that sent it may have been
+     * open when the limit passed, and should still be able to save what is on screen. The
+     * first call after that window ends the sign-in and every call in the request answers
+     * the session_expired envelope, which the client turns into its "you have been signed
+     * out" handling (Rsx.set_session_expired_handler()).
+     *
+     * @param bool $with_flash
+     * @return array|null The session_expired envelope, or null to proceed
+     */
+    private static function __timeout_refusal(bool $with_flash = true): ?array
+    {
+        $reason = Rsx_Portal::is_portal_request()
+            ? Portal_Session::enforce_timeouts(false)
+            : Session::enforce_timeouts(false);
+
+        if ($reason === null) {
+            return null;
+        }
+
+        return static::__side_channels([
+            '_success' => false,
+            'error_code' => self::ERROR_SESSION_EXPIRED,
+            'reason' => Session::timeout_message($reason),
+            'metadata' => ['cause' => $reason],
+        ], 0, $with_flash);
     }
 
     /**

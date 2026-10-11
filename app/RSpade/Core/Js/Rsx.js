@@ -493,6 +493,29 @@ class Rsx {
     // Whether the beforeunload listener has been installed (once per page load).
     static _navigation_guard_beforeunload_installed = false;
 
+    // The application's "your sign-in is gone" handler, or null. ONE slot.
+    static _session_expired_handler = null;
+
+    /**
+     * Register what happens when the server reports that this page's sign-in is gone -
+     * it outlived rsx.sessions.*, or it was ended from another device or by an
+     * administrator.
+     *
+     * The handler is called ONCE per page, with {message}. The page behind it is a
+     * signed-in page nobody is signed in to, so the usual answer is a dialog that
+     * cannot be dismissed, whose one button reloads the page: the server then sends the
+     * browser to the sign-in screen with the current URL captured.
+     *
+     * With no handler registered the framework reloads at once, which loses whatever
+     * was on screen. Register one from a static on_app_modules_define(). One slot,
+     * last wins.
+     *
+     * @param {function({message: string}): void} fn
+     */
+    static set_session_expired_handler(fn) {
+        Rsx._session_expired_handler = fn;
+    }
+
     /**
      * Register the navigation guard: an async callback consulted before the user
      * leaves the page they are on. The classic use is an editor with unsaved changes.
@@ -1228,8 +1251,12 @@ class Rsx {
     static _SCROLL_STORAGE_KEY = 'rsx_scroll_pos';
 
     /**
-     * Pending scroll restoration state
-     * Set when a refresh is detected, cleared when restoration succeeds
+     * Pending scroll restoration state: {x, y}, plus optionally
+     *   scroller      a function answering the element to scroll (default: the document)
+     *   from_history  true for a Back/Forward restoration, which the SPA settles when
+     *                 the action is ready
+     * Set when a refresh is detected or by a Back/Forward dispatch; cleared when the
+     * restoration succeeds.
      * @private
      */
     static _pending_scroll = null;
@@ -1316,9 +1343,12 @@ class Rsx {
      * Call this after content that may increase page height has loaded
      * (e.g., after SPA action on_ready completes).
      *
+     * @param {boolean} [settle=false] Scroll now even if the content is still too short
+     *        (the browser clamps to what exists) and stop waiting. For the last attempt,
+     *        once nothing more is going to load.
      * @returns {boolean} True if scroll was restored, false if pending/skipped
      */
-    static try_restore_scroll() {
+    static try_restore_scroll(settle = false) {
         // No pending restoration
         if (!Rsx._pending_scroll) {
             return false;
@@ -1326,24 +1356,32 @@ class Rsx {
 
         const target = Rsx._pending_scroll;
 
-        // Check if page is tall enough to scroll to target position
-        // Page needs to be at least (target.y + viewport height) tall
-        const page_height = document.documentElement.scrollHeight;
-        const viewport_height = window.innerHeight;
-        const min_height_needed = target.y + viewport_height;
+        // The element that scrolls: the document, unless the restoration names another
+        // (an application whose layout scrolls inside a container).
+        const scroller = target.scroller ? target.scroller() : (document.scrollingElement || document.documentElement);
 
-        if (page_height < min_height_needed) {
+        // The content must be at least (target.y + the visible height) tall to hold it.
+        const page_height = scroller.scrollHeight;
+        const min_height_needed = target.y + scroller.clientHeight;
+
+        if (page_height < min_height_needed && !settle) {
             // Page not tall enough yet - keep pending for retry
             console_debug('Spa', `Scroll restore waiting: page ${page_height}px < needed ${min_height_needed}px`);
             return false;
         }
 
-        // Page is tall enough - restore scroll position
-        window.scrollTo({
+        scroller.scrollTo({
             left: target.x,
             top: target.y,
             behavior: 'instant'
         });
+
+        // A Back/Forward restoration applied before the action is ready stays queued:
+        // content that loads afterwards can move the page again, so it is applied once
+        // more, for good, when the SPA settles it.
+        if (target.from_history && !settle) {
+            return true;
+        }
 
         // Mark as complete - clear pending state
         Rsx._pending_scroll = null;
@@ -1488,10 +1526,11 @@ class Rsx {
             state[key] = String(value);
         }
 
-        // Update URL without adding history
+        // Update URL without adding history. The entry keeps its state object: the SPA
+        // stores its position in the stack and the page's scroll position there.
         const new_hash = Rsx._serialize_hash(state);
         const url = window.location.pathname + window.location.search + new_hash;
-        history.replaceState(null, '', url);
+        history.replaceState(history.state, '', url);
     }
 
     /**
@@ -1520,10 +1559,10 @@ class Rsx {
             }
         }
 
-        // Update URL without adding history
+        // Update URL without adding history, keeping the entry's state object.
         const new_hash = Rsx._serialize_hash(state);
         const url = window.location.pathname + window.location.search + new_hash;
-        history.replaceState(null, '', url);
+        history.replaceState(history.state, '', url);
     }
 
     /**
