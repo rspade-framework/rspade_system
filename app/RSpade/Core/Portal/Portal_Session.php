@@ -755,9 +755,12 @@ class Portal_Session
      * See Session::get_sessions_for_user().
      *
      * @param int|null $portal_user_id If null, uses current logged-in user
+     * @param bool $include_impersonations Also answer the rows on which a staff member is
+     *                          viewing the portal as this user (each entry carries
+     *                          `is_impersonation`). False for the user's own screen.
      * @return array Array of session info
      */
-    public static function get_sessions_for_user(?int $portal_user_id = null): array
+    public static function get_sessions_for_user(?int $portal_user_id = null, bool $include_impersonations = false): array
     {
         if ($portal_user_id === null) {
             $portal_user_id = self::get_portal_user_id();
@@ -769,7 +772,10 @@ class Portal_Session
 
         $current_session_id = self::has_session() && !self::__is_cli() ? Session::get_session_id() : null;
 
+        // A staff member viewing the portal as this user is on THEIR OWN browser row, which
+        // carries this portal identity while it lasts: not one of the user's sessions.
         $sessions = self::__device_session_query((int) $portal_user_id)
+            ->when(!$include_impersonations, fn ($query) => $query->whereNull('impersonator_user_id'))
             ->orderBy('last_active', 'desc')
             ->get();
 
@@ -791,6 +797,7 @@ class Portal_Session
                     'signed_in_at' => $session->portal_login_at,
                     'first_seen' => $first_seen[$session->device_id] ?? $session->created_at,
                     'is_current' => $session->id === $current_session_id,
+                    'is_impersonation' => $session->impersonator_user_id !== null,
                 ];
             })
             ->toArray();

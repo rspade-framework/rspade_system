@@ -2612,13 +2612,23 @@ class Session extends Rsx_System_Model_Abstract
      * nothing ever expired - now TYPE_PLAYWRIGHT, deleted as each request ends -
      * and was a retention bug wearing a query bug's clothes.
      *
+     * AN IMPERSONATION IS NOT ONE OF THE USER'S SESSIONS. begin_impersonation() puts the
+     * target's identity on the IMPERSONATOR's own browser row, so that row matches this
+     * query for as long as the impersonation runs - carrying the impersonator's address
+     * and device. It is not a sign-in by the user and is not theirs to see: it is left
+     * out unless $include_impersonations asks for it, which is for an administrator's
+     * view of somebody's sessions, where each entry's `is_impersonation` lets the screen
+     * label it.
+     *
      * @param int|null $login_user_id If null, uses current logged-in user
      * @param int|null $site_id Only the sessions currently on this site - for a screen that
      *                          shows one tenant's view of an identity that may belong to
      *                          several. Null for every site.
+     * @param bool $include_impersonations Also answer the rows on which somebody else is
+     *                          acting as this user. False for the user's own screen.
      * @return array Array of session info
      */
-    public static function get_sessions_for_user(?int $login_user_id = null, ?int $site_id = null): array
+    public static function get_sessions_for_user(?int $login_user_id = null, ?int $site_id = null, bool $include_impersonations = false): array
     {
         if ($login_user_id === null) {
             $login_user_id = self::get_login_user_id();
@@ -2633,6 +2643,7 @@ class Session extends Rsx_System_Model_Abstract
         $sessions = static::where('login_user_id', $login_user_id)
             ->where('active', true)
             ->when($site_id !== null, fn ($query) => $query->where('site_id', $site_id))
+            ->when(!$include_impersonations, fn ($query) => $query->whereNull('impersonator_login_user_id'))
             ->orderBy('last_active', 'desc')
             ->get();
 
@@ -2656,6 +2667,7 @@ class Session extends Rsx_System_Model_Abstract
                     'signed_in_at' => $session->login_at,
                     'first_seen' => $first_seen[$session->device_id] ?? $session->created_at,
                     'is_current' => $session->id === $current_session_id,
+                    'is_impersonation' => $session->impersonator_login_user_id !== null,
                 ];
             })
             ->toArray();

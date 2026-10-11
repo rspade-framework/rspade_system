@@ -325,9 +325,12 @@ SESSION & AUTH
                                          identity
 
     Device session management (for a "your sessions" screen):
-      get_sessions_for_user(?int $id = null): array
-                                         ALL live sessions carrying this portal
-                                         identity, most recent first. Capped per
+      get_sessions_for_user(?int $id = null, bool $include_impersonations = false): array
+                                         ALL of this portal user's own live
+                                         sessions, most recent first. A staff
+                                         View as Client session is left out
+                                         unless asked for, and each entry
+                                         says is_impersonation. Capped per
                                          user at sign-in by
                                          rsx.sessions.max_web_sessions_per_user
                                          (default 25); see rsx:man session

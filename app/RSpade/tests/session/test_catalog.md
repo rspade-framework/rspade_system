@@ -491,3 +491,10 @@ refuses a cross-site save or delete.
 | pref-var-05 | never in the payload | `toArray()` on the writer and on fresh instances | no trace of the key or the value | implemented |
 | pref-var-06 | soft delete keeps, row removal cascades | soft delete, then delete the row | value still read; then zero rows | implemented |
 | pref-var-07 | an unsaved record is refused | `set_variable()` on a new model | a RuntimeException saying to save first | implemented |
+| SESSION-IMP-01 | the staff session listing leaves an impersonation of the user out by default | php | one own row and one row carrying the identity with an impersonator | only the own row; `is_impersonation` false | implemented | 2026-10-11 |
+| SESSION-IMP-02 | asked for, the impersonation is answered and marked | php | the same rows, `$include_impersonations = true` | two entries; `is_impersonation` true on the impersonated one | implemented | 2026-10-11 |
+| SESSION-IMP-03 | the site filter and the impersonation filter apply together | php | an impersonation row, listed for its site | 0 by default, 1 on request | implemented | 2026-10-11 |
+| SESSION-IMP-04 | the portal listing leaves a View as Client session out by default and marks it on request | php | one own portal row and one staff row viewing as the portal user | only the own row; both on request, marked | implemented | 2026-10-11 |
+| SESSION-IMP-05 | the daily task retires a staff impersonation older than `rsx.sessions.impersonation_max_days`, keeping whose identity it carried and who acted as them | php | impersonations started 8 and 6 days ago and the user's own session, limit 7 | the 8-day row inactive with both identities kept; the others active | implemented | 2026-10-11 |
+| SESSION-IMP-06 | an old portal View as Client loses its portal properties only | php | a staff row viewing as a portal user for 9 days | row active, staff identity kept, portal properties and impersonation columns null | implemented | 2026-10-11 |
+| SESSION-IMP-07 | `0` switches the impersonation age limit off | php | a 400-day impersonation, limit 0 | still active | implemented | 2026-10-11 |

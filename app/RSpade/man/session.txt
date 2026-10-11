@@ -967,6 +967,15 @@ IMPERSONATION
           session and clears the impersonation columns alongside login_user_id -
           you cannot be mid-impersonation across a logout. stop_impersonation() is
           the graceful "return to admin"; logout() is the hard exit.
+        - AN IMPERSONATION ENDS AFTER rsx.sessions.impersonation_max_days (7; 0 =
+          never). It has no sign-in of its own to expire - it rides the
+          impersonator's browser session - so a daily task
+          (Session_Cleanup_Service::end_stale_impersonations) ends the ones
+          older than that. A staff impersonation's row is RETIRED: inactive,
+          still recording whose identity it carried and who was acting as them,
+          and the impersonator signs in again as themselves. A portal View as
+          Client loses its portal identity and the staff session carries on.
+          The audit record of the impersonation is permanent either way.
         - Non-recursive: begin_impersonation() throws while already impersonating.
         - Throws on self-impersonation (target == current login_user_id).
         - NO rotation on begin or stop - both are pure record updates on the live
@@ -1746,9 +1755,12 @@ SESSION MANAGEMENT
         // an identity that may belong to several
         $sessions = Session::get_sessions_for_user($login_user_id, $site_id);
 
+        // An administrator's view: impersonations of that user included
+        $sessions = Session::get_sessions_for_user($login_user_id, null, true);
+
         Each entry: id, device_id, site_id, ip_address, user_agent, user_agent_parsed,
         device_summary, location, last_active, created_at, signed_in_at,
-        first_seen, is_current. `id` is the session to pass to the terminate
+        first_seen, is_current, is_impersonation. `id` is the session to pass to the terminate
         functions. One browser is one entry however often it has signed in:
         a sign-in moves it to a new row (SECURITY, Sign-In Rotation), and
         device_id and first_seen - when that browser FIRST signed in - stay
@@ -1767,11 +1779,24 @@ SESSION MANAGEMENT
           - a sign-in ends at its limits (SESSION LIFETIME) and idle rows are
             collected by type (GARBAGE COLLECTION above).
 
+        An IMPERSONATION is not one of the user's sessions and is left out.
+        Impersonating puts the target's identity on the impersonator's own
+        browser row, so that row carries the target's identity - and the
+        impersonator's address and device - while it lasts. It is not a
+        sign-in by the user, so their own "where you're signed in" screen
+        never lists it. The third argument, $include_impersonations, answers
+        those rows too, each with is_impersonation true: that is for an
+        administrator's view of somebody's sessions, which labels them.
+        terminate_all_other_sessions() called by the user still ends an
+        impersonation of them - it matches every row carrying their identity.
+
         The 62,617-row incident that prompted this review was harness sessions
         nothing ever expired - now TYPE_PLAYWRIGHT, deleted as each run ends - a
         retention bug, not a query bug.
         Portal_Session::get_sessions_for_user() is the same query narrowed on
-        portal_user_id instead of login_user_id. A row with no
+        portal_user_id instead of login_user_id, with the same rule for a
+        staff member viewing the portal as that user (View as Client): left
+        out unless its second argument, $include_impersonations, is true. A row with no
         portal identity never appears there, and vice versa: that is PROPERTY
         isolation, and it is what replaced the old row isolation.
 

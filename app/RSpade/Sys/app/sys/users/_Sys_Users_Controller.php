@@ -155,7 +155,9 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
             return response_not_found('No login identity with that id.');
         }
 
-        $sessions = Session::get_sessions_for_user((int) $login_user->id);
+        // The operator's view: sessions on which somebody else is acting as this identity
+        // are included, and the Impersonation column names who.
+        $sessions = Session::get_sessions_for_user((int) $login_user->id, null, true);
         $extra = $sessions === [] ? collect() : DB::table('_sessions')
             ->whereIn('id', array_column($sessions, 'id'))
             ->get(['id', 'site_id', 'type_id', 'impersonator_login_user_id', 'impersonation_started_at'])

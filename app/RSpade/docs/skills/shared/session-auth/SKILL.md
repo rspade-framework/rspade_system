@@ -147,13 +147,15 @@ A listing of "which sites may I use" therefore restates neither column: it filte
 
 ```php
 $sessions = Session::get_sessions_for_user();                 // current user, most recent first
-$sessions = Session::get_sessions_for_user($login_user_id);   // admin view
+$sessions = Session::get_sessions_for_user($login_user_id, null, true);   // admin view, impersonations included
 $info     = Session::get_current_session_info();              // this session, or null
 ```
 
-Each entry carries `id` (what the terminate functions take), `device_summary`, `ip_address`, `last_active`, `signed_in_at`, `first_seen`, `device_id` and `is_current`. **One browser is one entry however often it has signed in**: a sign-in moves the browser to a new session row (below), and `device_id` / `first_seen` stay the same across them - show `first_seen` as "first signed in" and `signed_in_at` as the current sign-in.
+Each entry carries `id` (what the terminate functions take), `device_summary`, `ip_address`, `last_active`, `signed_in_at`, `first_seen`, `device_id`, `is_current` and `is_impersonation`. **One browser is one entry however often it has signed in**: a sign-in moves the browser to a new session row (below), and `device_id` / `first_seen` stay the same across them - show `first_seen` as "first signed in" and `signed_in_at` as the current sign-in.
 
 Only ACTIVE sessions are returned, and **the WHOLE set of them on purpose** - a user cannot terminate a session they were not shown. Two things keep the set small, neither a cap on the query: the concurrent-session cap, and the session limits below. (`Portal_Session::get_sessions_for_user()` is the same query on `portal_user_id`.)
+
+**An impersonation is not one of the user's sessions.** While somebody is acting as a user, the impersonator's own browser row carries that user's identity - and the impersonator's address and device. Both listings leave such a row out by default, so a user's own security screen never shows it as a sign-in of theirs; pass `$include_impersonations = true` (third argument for staff, second for portal) on an ADMINISTRATOR's view and label the entries whose `is_impersonation` is true.
 
 ### Terminating - pick by whose sessions, and who is asking
 

@@ -381,6 +381,78 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
     }
 
     /**
+     * End the impersonations that have run longer than rsx.sessions.impersonation_max_days.
+     *
+     * An impersonation has no sign-in of its own to expire: it rides the impersonator's
+     * browser session, so one left open is the target's identity on somebody else's
+     * browser for as long as that browser stays signed in. Past the limit:
+     *
+     *   - a STAFF impersonation's row is RETIRED - made inactive, still recording whose
+     *     identity it carried and who was acting as them. The impersonator's browser is
+     *     signed out and signs in again as itself. The row leaves both session listings
+     *     with that, since they answer active rows only, and is collected with the other
+     *     inactive rows.
+     *   - a portal VIEW AS CLIENT loses its portal properties only: the row is the staff
+     *     member's own session, which the portal view ending is no reason to end.
+     *
+     * The audit record of the impersonation (_audit_sessions) is permanent and untouched.
+     *
+     * @param Task_Instance $task Task instance for logging
+     * @param array $params Task parameters (unused)
+     * @return null
+     */
+    #[Task('End impersonations older than rsx.sessions.impersonation_max_days (runs daily)')]
+    #[Exclusive]
+    #[Schedule('daily at 3am')]
+    public static function end_stale_impersonations(Task_Instance $task, array $params = [])
+    {
+        $days = config('rsx.sessions.impersonation_max_days');
+        if (!is_int($days) || $days < 0) {
+            throw new \RuntimeException('rsx.sessions.impersonation_max_days must be an integer >= 0, got ' . var_export($days, true));
+        }
+
+        if ($days === 0) {
+            $task->stdout('rsx.sessions.impersonation_max_days is 0: impersonations are never ended for age.');
+            $task->summary('Impersonation age limit is off; nothing ended.');
+
+            return null;
+        }
+
+        $cutoff = now()->subDays($days);
+
+        $staff = Session::whereNotNull('impersonator_login_user_id')
+            ->where('active', true)
+            ->where('impersonation_started_at', '<', $cutoff)
+            ->raw_bulk()
+            ->update(['active' => false]);
+
+        // One statement over the matching rows; the columns are the portal property set
+        // Session::_clear_portal_properties_on() clears.
+        $portal = Session::whereNotNull('impersonator_user_id')
+            ->whereNull('impersonator_login_user_id')
+            ->where('active', true)
+            ->where('impersonation_started_at', '<', $cutoff)
+            ->raw_bulk()
+            ->update([
+                'portal_user_id' => null,
+                'portal_site_id' => null,
+                'portal_login_at' => null,
+                'portal_last_page_view_at' => null,
+                'impersonator_user_id' => null,
+                'impersonation_started_at' => null,
+            ]);
+
+        $task->stdout(($staff + $portal) > 0
+            ? "Ended {$staff} staff impersonation(s) and {$portal} portal view-as-client session(s) older than {$days} day(s)."
+            : "No impersonation is older than {$days} day(s); nothing ended.");
+
+        $task->state(['staff_ended' => $staff, 'portal_ended' => $portal]);
+        $task->summary("Ended {$staff} staff and {$portal} portal impersonations older than {$days} days.");
+
+        return null;
+    }
+
+    /**
      * The last_active cutoff before which a signed-in browser session is collected, or
      * null when either experience's idle window is unlimited.
      *

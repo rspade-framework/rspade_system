@@ -1821,6 +1821,16 @@ return [
         // including crawlers, so they are swept sooner than a signed-in session.
         'anonymous_timeout_minutes' => 43200,
 
+        // Days an IMPERSONATION may run before the daily
+        // Session_Cleanup_Service::end_stale_impersonations task ends it. An
+        // impersonation has no sign-in of its own to expire - it rides the
+        // impersonator's browser session - so without this it lasts as long as that
+        // browser stays signed in. A staff impersonation's row is retired (the
+        // impersonator signs in again as themselves); a portal View as Client loses
+        // its portal identity and the staff session carries on. A SECURITY WINDOW on
+        // a borrowed identity, not an operation timeout. 0 = never ended for age.
+        'impersonation_max_days' => 7,
+
         // How many concurrent WEB sessions one user may hold. On every sign-in the
         // user's older web sessions beyond this count (by last_active) are signed
         // out - the staff cap deactivates the row, the portal cap clears the portal
