@@ -7,10 +7,6 @@
 
 namespace App\RSpade\Core\TwoFactor;
 
-use BaconQrCode\Renderer\ImageRenderer;
-use BaconQrCode\Renderer\Image\SvgImageBackEnd;
-use BaconQrCode\Renderer\RendererStyle\RendererStyle;
-use BaconQrCode\Writer;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -18,6 +14,7 @@ use lbuchs\WebAuthn\WebAuthnException;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Qr\Rsx_Qr_Code;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Session;
@@ -150,12 +147,6 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  */
 abstract class Rsx_Two_Factor_Abstract
 {
-    /**
-     * Pixel size of the rendered QR code. A layout number, not a security one - the SVG is
-     * vector and the host element scales it.
-     */
-    private const QR_SIZE = 240;
-
     /** A challenge answer kind: a code from a confirmed authenticator app. */
     public const ANSWER_TOTP = 'totp';
 
@@ -626,7 +617,7 @@ abstract class Rsx_Two_Factor_Abstract
         return [
             'secret' => $secret,
             'otpauth_uri' => $uri,
-            'qr_svg' => static::__qr_svg($uri),
+            'qr_svg' => Rsx_Qr_Code::generate($uri)['svg'],
         ];
     }
 
@@ -1759,34 +1750,6 @@ abstract class Rsx_Two_Factor_Abstract
         }
 
         return mb_substr($label, 0, 100);
-    }
-
-    /**
-     * The provisioning URI as an inline-embeddable SVG.
-     *
-     * The XML declaration the renderer emits is stripped: the string is destined for a
-     * jqhtml template, where it is embedded INSIDE an existing HTML document, and an
-     * "<?xml ...?>" prologue partway down a page is invalid markup.
-     *
-     * @param string $uri
-     * @return string An SVG document starting at <svg.
-     */
-    protected static function __qr_svg(string $uri): string
-    {
-        $writer = new Writer(new ImageRenderer(
-            new RendererStyle(self::QR_SIZE, 1),
-            new SvgImageBackEnd()
-        ));
-
-        $svg = $writer->writeString($uri);
-
-        $start = strpos($svg, '<svg');
-
-        if ($start === false) {
-            shouldnt_happen('The QR renderer produced no <svg> element');
-        }
-
-        return substr($svg, $start);
     }
 
     // -------------------------------------------------------------------------

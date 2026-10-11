@@ -9,10 +9,12 @@ report prints through (rsx:man helpers). Its JS twin lives in `Core/Js/functions
 ## Source files
 
 - `app/RSpade/helpers.php` - `bytes_to_human()`
+- `app/RSpade/Core/Qr/Rsx_Qr_Code.php` - `Rsx_Qr_Code::generate()`, the one QR code generator
 
 ## Man page(s)
 
 - `rsx:man helpers`
+- `rsx:man qr_codes`
 
 ## Testable surface
 

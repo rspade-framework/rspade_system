@@ -1210,7 +1210,9 @@ CONFIGURATION
 
     Dependencies (framework-internal, already installed): lbuchs/webauthn and
     bacon/bacon-qr-code. They are NOT in dependencies.exposed_composer:
-    application code talks to Rsx_Two_Factor, not to either library.
+    application code talks to Rsx_Two_Factor, not to either library. The
+    enrollment QR code is made by Rsx_Qr_Code, which an application calls for
+    QR codes of its own (rsx:man qr_codes).
 
 NOTES AND GOTCHAS
     - A passkey is bound to the HOSTNAME it was enrolled on. Moving

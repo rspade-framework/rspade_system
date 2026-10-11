@@ -211,6 +211,11 @@ COMPOSER PACKAGES
     `php artisan rsx:composer provides` before depending on one, or ask for it to
     be exposed.
 
+    QR codes are the worked example of that line: the QR library is internal,
+    and the supported call is the framework's own Rsx_Qr_Code::generate($text),
+    which answers an inline SVG with its recommended screen and print size.
+    rsx:man qr_codes.
+
 THE TWO RULES THAT MAKE THIS A LIBRARY
     Exposure is a standing commitment
         A package on this list is expected to remain available indefinitely at a

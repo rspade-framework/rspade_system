@@ -26,16 +26,15 @@
         color: var(--bs-secondary-color);
     }
 
-    // The server's SVG carries no dimensions of its own worth trusting on a phone, so the
-    // box is sized here and the document is told to fill it.
+    // The SVG arrives at its own recommended screen size (Rsx_Qr_Code); it only shrinks,
+    // square, on a screen narrower than that.
     &__qr {
-        width: 200px;
-        height: 200px;
+        max-width: 100%;
 
         svg {
-            width: 100%;
-            height: 100%;
             display: block;
+            max-width: 100%;
+            height: auto;
         }
     }
 
