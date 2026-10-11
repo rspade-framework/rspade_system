@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Task;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -17,8 +18,8 @@ use App\RSpade\Core\Time\Rsx_Time;
 /**
  * Task_Health_Checks - scheduler probes for rsx:health.
  *
- * Declared next to the task machinery they probe. One reads the worker pools as rsx-lockd
- * accounts them; the other two read _task_schedules: one asks whether the
+ * Declared next to the task machinery they probe. One reads the task system's switch; one
+ * reads the worker pools as rsx-lockd accounts them; the other two read _task_schedules: one asks whether the
  * `rsx:task:process` cron is ticking at all, the other whether a schedule that IS ticking
  * keeps failing.
  *
@@ -43,6 +44,49 @@ class Task_Health_Checks
 
     /** Characters of a failing schedule's explanation carried into the WARN detail. */
     private const REASON_EXCERPT_LENGTH = 60;
+
+    /**
+     * Whether the task system is on (Task::disabled_state()).
+     *
+     * OFF is a FAIL: no queued run starts and no schedule runs, silently, for as long as
+     * nobody turns it back on - and a box left off after a server replacement or a
+     * maintenance window whose disable step failed looks healthy in every other row. The
+     * detail names since when, by whom and why, and the remediation is the command.
+     *
+     * Under the maintenance flag the system is off because the window turned it off, and
+     * leaving the window turns it back on: that is INFO (the flag is read off disk, as a probe
+     * of the box right now - the Task Worker Pools row's convention).
+     *
+     * @return array
+     */
+    #[Health_Check('Task System')]
+    public static function task_system(): array
+    {
+        $state = Task::disabled_state();
+
+        if ($state === null) {
+            return [
+                'status' => 'OK',
+                'detail' => 'enabled',
+            ];
+        }
+
+        $detail = "disabled since {$state['disabled_at']} by {$state['disabled_by']} on {$state['host']}"
+            . ($state['reason'] !== null ? " ({$state['reason']})" : '');
+
+        if (Framework_Maintenance::is_active_on_disk()) {
+            return [
+                'status' => 'INFO',
+                'detail' => $detail . ' - the maintenance flag is up; php artisan rsx:maintenance:disable turns the task system back on',
+            ];
+        }
+
+        return [
+            'status' => 'FAIL',
+            'detail' => $detail . ' - no queued task starts and no schedule runs',
+            'remediation' => 'php artisan rsx:tasks:enable',
+        ];
+    }
 
     /**
      * The task worker pools as rsx-lockd accounts them (Task_Pool::stats(), read without the
@@ -160,6 +204,15 @@ class Task_Health_Checks
     #[Health_Check('Task Scheduler Liveness')]
     public static function task_scheduler_liveness(): array
     {
+        // With the task system off no schedule advances, by design: the Task System row is
+        // the finding, and a stale schedule here would only repeat it as a second one.
+        if (!Task::is_enabled()) {
+            return [
+                'status' => 'INFO',
+                'detail' => 'the task system is disabled - no schedule runs (see the Task System row)',
+            ];
+        }
+
         $schedule_count = DB::table('_task_schedules')->count();
 
         // A missing scheduler is silent, and on a sealed build everything it drives is

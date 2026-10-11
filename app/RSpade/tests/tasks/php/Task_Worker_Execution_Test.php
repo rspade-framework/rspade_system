@@ -15,6 +15,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
+use App\RSpade\Tests\Tasks\Php\Task_Worker_Victim;
 
 /**
  * The worker loop driven in-process, and the abandoned-worker arm of the rsx:task:process
@@ -218,29 +219,43 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A run from an OLDER daemon generation on THIS host is settled by its pid: a dead pid is
-     * abandoned, a live one is left to record its own outcome.
+     * A run from an OLDER daemon generation on THIS host is settled by its pid: a pid that is
+     * no longer a task worker of this project is abandoned - whether nothing holds it or an
+     * unrelated process does - and one that still is a worker is left to record its own
+     * outcome.
      */
     public static function test_older_generation_on_this_host_is_judged_by_pid()
     {
         static::__reset_fixture();
 
-        $older = static::__older_generation();
-        $dead = static::__plant_running_row(17, $older, self::DEAD_PID);
-        $live = static::__plant_running_row(18, $older, getmypid());
+        $worker_pid = Task_Worker_Victim::start_worker();
+        $reused_pid = Task_Worker_Victim::start_plain();
+        try {
+            $older = static::__older_generation();
+            $dead = static::__plant_running_row(17, $older, self::DEAD_PID);
+            $live = static::__plant_running_row(18, $older, $worker_pid);
+            $reused = static::__plant_running_row(19, $older, $reused_pid);
 
-        Artisan::call('rsx:task:process');
+            Artisan::call('rsx:task:process');
 
-        $dead_row = static::__row($dead);
-        static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) $dead_row->status_id, 'dead pid -> abandoned');
-        static::__assert_equals(1, (int) $dead_row->abandon_count);
-        static::__assert_contains('worker 17 of a previous rsx-lockd generation', (string) $dead_row->status_reason);
+            $dead_row = static::__row($dead);
+            static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) $dead_row->status_id, 'dead pid -> abandoned');
+            static::__assert_equals(1, (int) $dead_row->abandon_count);
+            static::__assert_contains('worker 17 of a previous rsx-lockd generation', (string) $dead_row->status_reason);
 
-        $live_row = static::__row($live);
-        static::__assert_equals(Task_Run_Model::STATUS_RUNNING, (int) $live_row->status_id, 'live pid -> left alone');
-        static::__assert_equals(18, (int) $live_row->worker_id);
+            $live_row = static::__row($live);
+            static::__assert_equals(Task_Run_Model::STATUS_RUNNING, (int) $live_row->status_id, 'a pid that is still a task worker -> left alone');
+            static::__assert_equals(18, (int) $live_row->worker_id);
 
-        static::__reset_fixture();
+            $reused_row = static::__row($reused);
+            static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) $reused_row->status_id, 'a pid now held by an unrelated process -> abandoned');
+            static::__assert_contains("PID {$reused_pid} is not a task worker", (string) $reused_row->status_reason);
+            static::__assert_true(Task_Worker_Victim::running($reused_pid), 'the unrelated process is untouched');
+        } finally {
+            Task_Worker_Victim::reap($worker_pid);
+            Task_Worker_Victim::reap($reused_pid);
+            static::__reset_fixture();
+        }
     }
 
     /**

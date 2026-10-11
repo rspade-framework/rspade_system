@@ -21,11 +21,12 @@
 #          conflict guard in do_disable() is what holds it there.
 #
 # WHAT IT DOES
-#   enable : raise the flag file (its CONTENT is the operator reason) -> force-kill
-#            running background tasks -> stop realtime, fpc-proxy, php-fpm,
-#            rsx-lockd, and redis LAST.
+#   enable : raise the flag file (its CONTENT is the operator reason) -> turn the task
+#            system off and stop running background tasks (rsx:tasks:disable) -> stop
+#            realtime, fpc-proxy, php-fpm, rsx-lockd, and redis LAST.
 #   disable: start redis FIRST (everything else depends on it), then rsx-lockd,
-#            php-fpm, realtime, fpc-proxy -> clear the flag.
+#            php-fpm, realtime, fpc-proxy -> clear the flag -> turn the task system back
+#            on (rsx:tasks:enable).
 #
 # ORDERING IS LOAD-BEARING. The flag goes up BEFORE the lock daemon and redis stop:
 # a process booting in that window must already see maintenance mode, otherwise it
@@ -33,7 +34,7 @@
 # cache) and hard-fatals on the refused connect. With the flag up first, CLUSTER
 # locks (named_*/site_*) are granted as NO-OPS - a lock exists to exclude a
 # concurrent writer and maintenance has already removed every one of them (web
-# 503, task runners refused, workers killed) - while SYSTEM locks (flock-backed,
+# 503, task runners refused, running tasks stopped) - while SYSTEM locks (flock-backed,
 # this box only) are UNTOUCHED, since their contenders are exactly what
 # maintenance does not stop. Redis reads miss silently. rsx-lockd also stops
 # AFTER its PHP consumers (php-fpm),
@@ -50,7 +51,13 @@
 # accepted and documented; determinism beats a state file that can go stale.
 #
 # Both actions are IDEMPOTENT. --no-services touches only the flag (test fixtures,
-# containers with no supervisord).
+# containers with no supervisord): it neither turns the task system off nor back on.
+#
+# THE TASK SYSTEM'S SWITCH IS STATELESS HERE TOO. disable turns the task system on whether
+# or not this window turned it off: an operator who had run rsx:tasks:disable on purpose
+# before the window finds it on afterwards, exactly as an operator-stopped unit is started.
+# A failure to turn it back on is reported loudly and never fails the transition - the
+# services are back; rsx:health FAILs its "Task System" row until the switch is on.
 #
 # DISABLE ALWAYS STARTS THE SERVICES. A maintenance task stops the moving parts while
 # it works; when it is over they go back, whether or not the task succeeded. A tree
@@ -251,12 +258,25 @@ do_enable() {
 
     [ "$SERVICES" = true ] || return 0
 
-    # Force-kill running background tasks so nothing keeps writing. Best-effort: a
-    # pre-DB or broken tree must not fail the transition. The override token keeps
-    # this immune to the gate regardless of future classification changes.
-    php "$SYSTEM_DIR/artisan" rsx:tasks:kill-all \
-        --explanation="maintenance quiesce" \
-        --_framework-update-override >/dev/null 2>&1 || true
+    # Turn the task system off and stop what is running, so nothing keeps writing:
+    # rsx:tasks:disable throws the database switch (no new task starts on ANY host sharing
+    # this database), asks every running task to stop, and kills what is still running after
+    # rsx.tasks.stop_grace_seconds - synchronously, so it returns once this host's runs have
+    # settled (exit 2 when an inline run inside a web request, which is never signalled, is
+    # still going). Best-effort: a pre-DB or broken tree must not fail the transition, and says so.
+    # The override token keeps this immune to the gate regardless of future classification
+    # changes. do_disable() turns the task system back on.
+    say "  Turning the task system off and stopping running tasks..."
+    php "$SYSTEM_DIR/artisan" rsx:tasks:disable \
+        --reason="maintenance mode: $REASON" \
+        --_framework-update-override
+    case "$?" in
+        0) : ;;
+        # Off, with an inline run still inside a web request (listed above): it is never
+        # signalled, and it ends with php-fpm, which is stopped below.
+        2) warn "the task system is off; the web-request task(s) listed above end when php-fpm stops." ;;
+        *) warn "could not turn the task system off (continuing); running tasks were not stopped." ;;
+    esac
 
     # -------------------------------------------------------------------------
     # QUIESCE THE NODE DAEMONS.
@@ -291,7 +311,7 @@ do_enable() {
     # on-demand contract is what keeps a post-update daemon from serving the code
     # it was started with.
     #
-    # Best-effort like the task kill above, and NO TIMEOUT: TERM, one settle pass,
+    # Best-effort like the task stop above, and NO TIMEOUT: TERM, one settle pass,
     # then whatever is still there goes. Same reaper pattern as
     # bin/environment_updates/110_relocate_build_tmp.sh.
     # -------------------------------------------------------------------------
@@ -474,6 +494,19 @@ do_disable() {
         err "Failed to remove the maintenance flag: $FLAG"
         err "Remove it by hand to leave maintenance mode."
         exit 1
+    fi
+
+    # The task system back on, AFTER the flag is gone: the command then runs as an ordinary
+    # process (live locks, live cache, its realtime frame delivered), and the first
+    # rsx:task:process tick - no longer refused - picks up the queued work. Best-effort and
+    # LOUD: the services are back either way, and a box left with its task system off runs
+    # no queued task and no schedule until somebody turns it on.
+    if [ "$SERVICES" = true ]; then
+        php "$SYSTEM_DIR/artisan" rsx:tasks:enable || {
+            err "The task system could NOT be turned back on: no queued task starts and no schedule runs."
+            err "Turn it on by hand:  php artisan rsx:tasks:enable"
+            err "(rsx:health reports the Task System row as FAIL until it is on.)"
+        }
     fi
 
     ok "Maintenance mode OFF."

@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Task\Cron_Parser;
+use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Lock;
@@ -41,6 +42,11 @@ use App\RSpade\Core\Task\Task_Runner;
  *   3. Run the task - no pool lock held.
  *   4. Pool lock. Record the outcome, then claim the next run (back to 2). When nothing is
  *      claimable, or --max-time has passed: leave, unlock, exit.
+ *
+ * WHILE THE TASK SYSTEM IS OFF (Task::is_enabled()) a worker claims nothing: one that starts
+ * exits before it joins, and one that finishes a run reads the switch again - from the
+ * database, under its pool lock, before every claim - and leaves. The run it holds is not
+ * touched by the switch; stopping it is rsx:tasks:disable's business.
  *
  * TWO POOLS CLAIM THE SAME PENDING ROWS (the scheduled pool takes dispatched work first), and
  * each holds only its own lock - so every claim is a GUARDED write (WHERE status is still
@@ -105,6 +111,12 @@ class Task_Worker_Command extends Command
         $this->skip_ids = [];
         $this->tasks_processed = 0;
 
+        if (!Task::is_enabled()) {
+            $this->info('[WORKER] The task system is disabled (php artisan rsx:tasks:enable), exiting');
+
+            return 0;
+        }
+
         try {
             // Admission, under the pool lock: count() is the OTHER members, so a full pool is
             // one this worker would push past the cap.
@@ -122,6 +134,13 @@ class Task_Worker_Command extends Command
             // Invariant at the top of every iteration: this process holds the pool lock and
             // is a member.
             while (true) {
+                // Read at every claim, never remembered: the switch may have been thrown
+                // while the last task ran. A task-table read, which THE RULE allows here.
+                if (!Task::is_enabled()) {
+                    $this->info('[WORKER] The task system is disabled (php artisan rsx:tasks:enable), exiting');
+                    break;
+                }
+
                 $claim = $this->claim_next_task($identity);
 
                 if ($claim === null) {

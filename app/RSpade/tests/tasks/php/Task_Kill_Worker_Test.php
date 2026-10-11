@@ -17,6 +17,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
+use App\RSpade\Tests\Tasks\Php\Task_Worker_Victim;
 
 /**
  * Force stops and force kills, carried out by a kill worker (Task_Kill_Worker).
@@ -27,11 +28,12 @@ use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
  * that ended first makes the request MOOT, and an inline run inside a web request (no pool
  * identity, not an artisan process) is never signalled.
  *
- * The victim is a REAL process: `sleep` started with proc_open() as this test's child, its
- * pid written onto a RUNNING row. A row carrying a worker_id is a pool worker's, so carry_out
- * signals it; the test then reaps the child. carry_out() is driven in this process after a
- * claim_for_this_process() - the path rsx:tasks:kill-all takes, and the one a kill worker
- * takes after its pool claim.
+ * The victim is a REAL process (Task_Worker_Victim), this test's child, its pid written onto
+ * a RUNNING row. A row carrying a worker_id is a pool worker's, and carry_out signals its pid
+ * only while that pid reads as a task worker of this project - so the pool victims are
+ * worker-shaped, and a plain `sleep` stands in for a pid the kernel reused and for a php-fpm
+ * worker. carry_out() is driven in this process after a claim_for_this_process() - the path
+ * rsx:tasks:disable takes, and the one a kill worker takes after its pool claim.
  *
  * Commits real rows, so this class provisions a clean baseline and opts out of transactions.
  */
@@ -45,9 +47,6 @@ class Task_Kill_Worker_Test extends Rsx_Test_Abstract
 
     const OTHER_HOST = 'task-kill-worker-test.other-host.invalid';
 
-    /** @var array<int, resource> victim pid => proc_open handle */
-    private static array $victims = [];
-
     public static function setup()
     {
         Session::logout();
@@ -55,51 +54,23 @@ class Task_Kill_Worker_Test extends Rsx_Test_Abstract
 
     public static function teardown()
     {
-        foreach (array_keys(self::$victims) as $pid) {
-            static::__reap($pid);
-        }
+        Task_Worker_Victim::reap_all();
     }
 
-    /**
-     * Start a `sleep` child and return its pid once it is running AS sleep: until the child
-     * has exec'd, its command line is not yet the one the kill worker reads. A bounded poll on
-     * a process this test does not schedule (the house bound, tests/CLAUDE.md).
-     */
+    /** A live process that reads as a task worker of this project (Task_Worker_Victim). */
     private static function __spawn_victim(): int
     {
-        $process = proc_open(['sleep', '300'], [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
-        $pid = (int) proc_get_status($process)['pid'];
-        self::$victims[$pid] = $process;
-
-        for ($poll = 0; $poll < 1200; $poll++) {
-            if (str_starts_with((string) @file_get_contents('/proc/' . $pid . '/cmdline'), "sleep\0")) {
-                return $pid;
-            }
-            usleep(100000);
-        }
-
-        throw new \RuntimeException("the victim process {$pid} never started running sleep");
+        return Task_Worker_Victim::start_worker();
     }
 
-    /** Kill (if still running) and reap a victim. */
     private static function __reap(int $pid): void
     {
-        if (!isset(self::$victims[$pid])) {
-            return;
-        }
-        if (proc_get_status(self::$victims[$pid])['running']) {
-            posix_kill($pid, SIGKILL);
-        }
-        proc_close(self::$victims[$pid]);
-        unset(self::$victims[$pid]);
+        Task_Worker_Victim::reap($pid);
     }
 
-    /** Running, by its /proc entry (a zombie has an empty command line and is not). */
     private static function __running(int $pid): bool
     {
-        $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
-
-        return $cmdline !== false && $cmdline !== '';
+        return Task_Worker_Victim::running($pid);
     }
 
     /** A RUNNING row whose worker is $pid on $host; a worker_id makes it a pool worker's. */
@@ -121,7 +92,7 @@ class Task_Kill_Worker_Test extends Rsx_Test_Abstract
         return array_column(Task_Run_Model::find($task_id)->output_after(null, ['operator']), 'line');
     }
 
-    /** Claim a request for this process and carry it out, as rsx:tasks:kill-all does. */
+    /** Claim a request for this process and carry it out, as rsx:tasks:disable does. */
     private static function __carry_out(Task_Kill_Request_Model $request): string
     {
         static::__assert_true(Task_Kill_Worker::claim_for_this_process((int) $request->id), 'the request was claimable');
@@ -252,7 +223,7 @@ class Task_Kill_Worker_Test extends Rsx_Test_Abstract
      */
     public static function test_an_inline_run_inside_a_web_request_is_never_signalled()
     {
-        $pid = static::__spawn_victim();
+        $pid = Task_Worker_Victim::start_plain();
         try {
             $run = static::__running_row($pid, null);
             $request = Task_Kill_Worker::request($run, Task_Kill_Request_Model::MODE_FORCE_KILL, 0, 'x', 'a tester');
@@ -301,41 +272,24 @@ class Task_Kill_Worker_Test extends Rsx_Test_Abstract
         DB::table('_task_schedules')->where('id', $schedule_id)->delete();
     }
 
-    // -------------------------------------------------------------------------
-    // rsx:tasks:kill-all
-    // -------------------------------------------------------------------------
-
-    public static function test_kill_all_requires_an_explanation()
-    {
-        static::__assert_true(Artisan::call('rsx:tasks:kill-all') !== 0, 'rsx:tasks:kill-all without --explanation must fail');
-    }
-
     /**
-     * kill-all settles this host's runs KILLED before it returns, and leaves another host's run
-     * with a pending request for that host's kill workers.
+     * A pool run whose recorded pid now belongs to an UNRELATED process - the worker died and
+     * the kernel handed its pid on, as happens across a reboot - is settled KILLED with no
+     * signal: the process there is not the worker, so it is never the target.
      */
-    public static function test_kill_all_kills_this_hosts_runs_synchronously()
+    public static function test_a_pool_runs_reused_pid_is_never_signalled()
     {
-        DB::table('_tasks')->where('status_id', Task_Run_Model::STATUS_RUNNING)->delete();
-
-        $pid = static::__spawn_victim();
+        $pid = Task_Worker_Victim::start_plain();
         try {
-            $local = static::__running_row($pid);
-            $remote = static::__running_row(static::DEAD_PID, 44, self::OTHER_HOST);
+            $run = static::__running_row($pid);
+            $request = Task_Kill_Worker::request($run, Task_Kill_Request_Model::MODE_FORCE_KILL, 0, 'silent', 'a tester');
 
-            static::__assert_equals(0, Artisan::call('rsx:tasks:kill-all', ['--explanation' => 'quiesce']));
-            $output = Artisan::output();
-
-            static::__assert_false(static::__running($pid), 'this host\'s worker is dead');
-            static::__assert_equals(Task_Run_Model::STATUS_KILLED, (int) Task_Run_Model::find($local->id)->status_id);
-            static::__assert_equals('quiesce', Task_Run_Model::find($local->id)->status_reason);
-
-            static::__assert_equals(Task_Run_Model::STATUS_RUNNING, (int) Task_Run_Model::find($remote->id)->status_id, 'another host\'s run is left to that host');
-            static::__assert_equals(Task_Kill_Request_Model::STATUS_PENDING, (int) Task_Kill_Request_Model::where('task_id', $remote->id)->value('status_id'));
-            static::__assert_contains('queued for host ' . self::OTHER_HOST, $output);
+            static::__assert_contains('killed_no_process', static::__carry_out($request));
+            static::__assert_true(static::__running($pid), 'the unrelated process holding the pid was not signalled');
+            static::__assert_equals(Task_Run_Model::STATUS_KILLED, (int) Task_Run_Model::find($run->id)->status_id);
+            static::__assert_contains('the worker process was already gone', implode("\n", static::__operator_lines($run->id)));
         } finally {
             static::__reap($pid);
-            DB::table('_tasks')->where('status_id', Task_Run_Model::STATUS_RUNNING)->delete();
         }
     }
 }

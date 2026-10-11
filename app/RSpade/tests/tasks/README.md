@@ -34,7 +34,8 @@ framework.
 - `Task_Retention_Service.php`, `Task_Health_Checks.php`
 - Commands: `rsx:task:worker`, `rsx:task:process`, `rsx:task:run`, `rsx:task:killer`,
   `rsx:task:list`, `rsx:tasks:list`, `rsx:tasks:stop`, `rsx:tasks:cancel`,
-  `rsx:tasks:kill-all`
+  `rsx:tasks:disable`, `rsx:tasks:enable` (the task system's switch: `Task::is_enabled()`,
+  `disabled_state()`, `disable()`, `enable()`, the `_task_system_off` row)
 - `Task_Command_ManifestSupport.php` - `#[Command]` discovery and the build-time FATALs;
   `Task_Command_Registrar.php` + `Task_Alias_Command.php` - registration, and the one command
   class every alias is an instance of

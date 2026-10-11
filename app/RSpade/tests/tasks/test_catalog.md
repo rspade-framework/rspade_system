@@ -106,7 +106,7 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | task-exec-03 | a failing run is FAILED and the worker goes on | always_throws then marker_a | FAILED with error; next COMPLETED | implemented |
 | task-exec-04 | a current-generation worker that left the pool is abandoned at once, live pid or not | departed wid, this pid | PENDING retry, abandon_count 1, reason, operator line | implemented |
 | task-exec-05 | a live member's run is left alone | this process joined; dead pid | RUNNING | implemented |
-| task-exec-06 | an older generation on this host is judged by pid | dead pid; live pid | abandoned; RUNNING | implemented |
+| task-exec-06 | an older generation on this host is judged by pid, held to a task worker's command line | dead pid; worker-shaped pid; a pid an unrelated process holds | abandoned; RUNNING; abandoned ("is not a task worker"), that process untouched | implemented |
 | task-exec-07 | an older generation on another host is left alone and counted by health | three other-host rows + one local | RUNNING; previous_generation_rows 3 on 2 hosts; WARN | implemented |
 | task-exec-08 | a run with no worker_id is judged by pid on its own host | inline dead pid; dispatched dead pid; other host | inline FAILED; dispatched PENDING; other RUNNING | implemented |
 
@@ -214,7 +214,8 @@ A held lock is another process (Task_Lock_Holder); the run holding it is a RUNNI
 | task-wait-10 | precedence | not due + locked; locked + no free worker; no free worker | scheduled; lock (with holder); workers | implemented |
 | task-wait-11 | derived, never stored: a changed holder is a different answer | holder settles, another member runs; then the lock is freed | the new holder's id; then queued; the pending row byte-identical | implemented |
 | task-wait-12 | only the holder's run id is exposed | a holder with params | four keys; no param value, no task name | implemented |
-| task-wait-13 | many pending runs cost one query | 24 pending runs, one Task_Waiting | exactly one query (the running rows); to_status_arrays() agrees | implemented |
+| task-wait-13 | many pending runs cost two queries | 24 pending runs, one Task_Waiting | exactly two queries (the switch, the running rows); to_status_arrays() shares the resolver | implemented |
+| task-wait-15 | the task system being off is the first reason | switch off; a due run, a not-yet-due run, a running run | {disabled, "task system disabled - php artisan rsx:tasks:enable"} for both pending runs; null for the running one; one query; on again -> queued | implemented |
 | task-wait-14 | the helpers: run_lock_identity, group_members, pending_ids_on_run_lock | fixture methods and pending rows | group shared by members; members from the manifest; waiters per group / identity / parameter set; none for an unmanaged task | implemented |
 
 ## Task_Kill_Worker_Test (php, $requires_db_reset + no-tx) - force stops and kills carried out
@@ -223,14 +224,13 @@ A held lock is another process (Task_Lock_Holder); the run holding it is a RUNNI
 |----|---------|-------|----------|--------|
 | task-kill-01 | a request binds host, pid, mode and due time; one live request per run and mode; another host's run | RUNNING row | fields; duplicate null; host = the worker's | implemented |
 | task-kill-02 | only a running run with a worker pid can be requested | pending; no pid | null | implemented |
-| task-kill-03 | a force kill signals the worker and settles KILLED | real sleep child, pool row, force_kill() | process gone; KILLED, reason, two operator lines; request DONE 'killed' | implemented |
+| task-kill-03 | a force kill signals the worker and settles KILLED | worker-shaped child (Task_Worker_Victim), pool row, force_kill() | process gone; KILLED, reason, two operator lines; request DONE 'killed' | implemented |
 | task-kill-04 | a run that ended first makes the request moot | stopped during the grace | MOOT; nothing signalled; verdict kept | implemented |
 | task-kill-05 | a request whose worker changed is moot | worker_pid changed | MOOT; new worker not signalled | implemented |
 | task-kill-06 | an inline run in a web request is never signalled | no worker_id, non-artisan pid | MOOT; alive; operator line | implemented |
 | task-kill-07 | a worker already gone is settled KILLED without a signal | dead pid | killed_no_process | implemented |
 | task-kill-08 | a killed scheduled run counts on its schedule | schedule + run | consecutive_failures 1, "killed: ..." | implemented |
-| task-kill-09 | rsx:tasks:kill-all requires --explanation | no option | non-zero | implemented |
-| task-kill-10 | kill-all kills this host's runs synchronously, queues another host's | local sleep run + remote run | local KILLED; remote PENDING request; "queued for host" | implemented |
+| task-kill-09 | a pool run whose pid an unrelated process now holds is never signalled | plain `sleep` on a pool row, force kill | killed_no_process; the process still running; run KILLED, "the worker process was already gone" | implemented |
 | task-kill-11 | the kill worker loop (rsx:task:killer) admits itself to the kill pool and drains this host's requests | spawned killer | requests DONE; pool left | planned |
 | task-kill-12 | rsx:task:process hands a request whose kill worker died back to the queue | CLAIMED request, departed kill-pool wid | PENDING again | planned |
 
@@ -440,6 +440,38 @@ child pointed at the test database.
 | task-queue-08 | the report exists once the queue has held an item | clear / pop / push_many([]) on a new run; then push, clear | no report, queue() null; then reported and empty | implemented |
 | task-queue-09 | unheld calls write as they are made | first call after a quiet spell | stored at once | implemented |
 
+## Task_System_Switch_Test (php, $requires_db_reset + no-tx, live rsx-lockd, child artisan processes) - the task system's off switch
+
+Children are real `php artisan` processes on the test database: a task being stopped, an inline caller waiting for the switch.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-switch-01 | the switch round-trips and records who threw it | disable(reason) twice, enable twice | is_enabled false; {disabled_at now, "the command line", reason, host}; second disable false and the record kept; enable true then false; blank reason = null | implemented |
+| task-switch-02 | the commands are idempotent and rsx:tasks:list states the switch | enable; disable x2; --grace=soon; list; enable; list | "already on"; "OFF"; "already off" with the first reason kept; non-zero; "Task system: DISABLED since ... (first)"; "Task system: enabled" | implemented |
+| task-switch-03 | a worker claims nothing while off | pending run; a worker per pool | exit 0, "The task system is disabled", pool empty, run PENDING; COMPLETED after enable | implemented |
+| task-switch-04 | a busy worker finishes its run and leaves | a run that throws the switch, then a second pending run | first COMPLETED, second PENDING, worker out of its pool | implemented |
+| task-switch-05 | dispatch enqueues and starts no task worker; the kill pool is not switched off | spawning on, switch off | spawn_worker false for on_demand and scheduled, registry unchanged; true for kill; row PENDING | implemented |
+| task-switch-06 | the tick recovers and starts no task worker | abandoned run + due pending run, spawning on | [ABANDONED TASK], the dead run back to PENDING; no "spawned a worker"; --once runs nothing | implemented |
+| task-switch-07 | schedules wait and catch up with one run | schedule 30 days overdue, every minute | no run and next_run_at untouched while off; one run after enable (two workers), next_run_at in the future | implemented |
+| task-switch-08 | an inline caller queues, waits and runs after enable | child rsx:task:run while off; a worker while off; enable | PENDING inline row, "disabled" wait line, body not entered, child alive; worker claims nothing; after enable exit 0, COMPLETED with no worker_id, the body entered once, the stderr line | implemented |
+| task-switch-09 | a waiter and a worker never both run the queued run | child #[Command] `rsx_test:exit --code=7` while off; enable; in-process worker | child exits 7; one row, FAILED return_code 7 | implemented |
+| task-switch-10 | a waiter that dies leaves its run for a worker | child SIGKILLed while waiting; a tick; enable; worker | row PENDING through the tick; COMPLETED under a worker_id, the body entered once | implemented |
+| task-switch-11 | the health row | on; off with a reason | OK; FAIL naming since/by/reason with `php artisan rsx:tasks:enable`; Task Scheduler Liveness INFO | implemented |
+| task-switch-12 | disable stops a cooperative run gracefully | child running runs_until_stopped; pending run; --grace=3600 | exit 0 at once, run STOPPED, its kill request MOOT, the pending run untouched | implemented |
+| task-switch-13 | disable kills a run that ignores the stop after the grace; another host's run is left | worker-shaped victim + other-host row; --grace=1 | victim dead, run KILLED with stop_requested_at and the reason; remote RUNNING with a PENDING request, named in the output; "No task is running on this host" | implemented |
+| task-switch-14 | disable reports a web-request run it cannot kill | inline row on a non-artisan pid; --grace=1 | exit 2; process alive; run RUNNING with stop_requested_at; listed | implemented |
+
+## Task_Dead_Run_Recovery_Test (php, $requires_db_reset + no-tx, live rsx-lockd) - what an outage leaves, and the first tick after it
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-dead-01 | one tick settles every run a rebooted host left RUNNING | previous-generation pool runs (dispatched, scheduled) and an inline run, all with dead pids | dispatched PENDING with a paced retry; scheduled FAILED, counted, next_run_at kept; inline FAILED | implemented |
+| task-dead-02 | a reused pid neither keeps a dead run alive nor gets killed | previous-generation pool run two hours old on a plain `sleep` pid | abandoned on the first tick ("is not a task worker"); no kill request, no [TASK TIMEOUT]; the process untouched | implemented |
+| task-dead-03 | another host's unsettled run does not hold its #[Exclusive] identity | other-host previous-generation RUNNING exclusive_task; dispatch + worker | stuck run RUNNING; the new run reads "queued" and COMPLETES | implemented |
+| task-dead-04 | a schedule's queued run that was never claimed is claimed by the next worker | PENDING scheduled-origin row with schedule_id, a day overdue | COMPLETED; schedule last_task_id + last_success_at | implemented |
+| task-dead-05 | a long-overdue schedule runs once | every-minute schedule 30 days overdue; two scheduled workers | one run row; next_run_at in the future | implemented |
+| task-dead-06 | long-overdue pending runs each run once, oldest due first | three pending runs 10/30/20 days overdue | run order by due time; three rows, each COMPLETED | implemented |
+
 ## Deferred / planned
 
 | ID | Purpose | Type | Reason | Status |
@@ -448,3 +480,8 @@ child pointed at the test database.
 | task-d-02 | a dispatch on this host spawns a kill worker for a force kill (Task::spawn_worker('kill')) | php | spawn path; under the suite spawns are off by default | planned |
 | task-d-03 | rsx:tasks:list running table (worker PID, progress, status text) | cli | Schedules table covered by task-vis-03 | planned |
 | task-d-04 | orphaned temp directory removal by Task_Retention_Service::remove_orphaned_temp_directories() | php | the run's own cleanup is covered; the sweep of a directory left by a killed run is not | planned |
+| task-d-10 | an inline run whose pid was reused stays RUNNING (the reaper has no command line to hold an inline pid to) | php | pins a known gap; awaiting an owner decision on the evidence (docs.dev/audits/task_dead_run_recovery_audit_2026_10_11.md, scenario 2) | blocked |
+| task-d-11 | a RUNNING run on a host that no longer exists is settled | php | no mechanism declares a host gone; awaiting an owner decision (same audit, scenario 3) | blocked |
+| task-d-12 | rsx-lockd restarting under live workers: the run locks are released while their tasks still run | php | cannot restart the daemon from inside a test run | deferred |
+| task-d-13 | the Task System health row reads INFO under the maintenance flag | php | needs the real flag raised; the branch is one read of Framework_Maintenance::is_active_on_disk() | deferred |
+| task-d-14 | a web request blocked in Task::internal() while the system is off, ended by the web server, leaves its run queued | http | needs a served fixture route and a php-fpm request limit; the dead-waiter case is task-switch-10 | deferred |

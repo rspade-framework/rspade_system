@@ -16,6 +16,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
+use App\RSpade\Tests\Tasks\Php\Task_Worker_Victim;
 
 /**
  * The timeout arm of the rsx:task:process reaper
@@ -37,9 +38,10 @@ use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
  * arm is Task_Worker_Execution_Test; the kill itself is Task_Kill_Worker_Test; that every
  * reporting call stamps a sign of life is Task_Sign_Of_Life_Test.
  *
- * The worker is a REAL process - `sleep`, this test's child - on a run carrying a pool
- * identity of an older rsx-lockd generation, which the reaper judges by the pid on this host:
- * alive, so the timeout is what decides. Under the suite no kill worker is spawned, so the
+ * The worker is a REAL process - this test's child, whose command line is a task worker's
+ * (Task_Worker_Victim) - on a run carrying a pool identity of an older rsx-lockd generation,
+ * which the reaper judges by the pid on this host: still a task worker, so the timeout is what
+ * decides. Under the suite no kill worker is spawned, so the
  * test carries the request out itself after the tick.
  *
  * Commits real rows, so this class provisions a clean baseline and opts out of transactions.
@@ -49,53 +51,25 @@ class Task_Timeout_Reaper_Test extends Rsx_Test_Abstract
     protected static $requires_db_reset = true;
     protected static $use_database_transactions = false;
 
-    /** @var array<int, resource> victim pid => proc_open handle */
-    private static array $victims = [];
-
     public static function teardown()
     {
-        foreach (array_keys(self::$victims) as $pid) {
-            static::__reap($pid);
-        }
+        Task_Worker_Victim::reap_all();
     }
 
-    /**
-     * Start a `sleep` child and return its pid once it is running AS sleep. A bounded poll on
-     * a process this test does not schedule (the house bound, tests/CLAUDE.md).
-     */
+    /** A live process that reads as a task worker of this project (Task_Worker_Victim). */
     private static function __spawn_victim(): int
     {
-        $process = proc_open(['sleep', '300'], [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
-        $pid = (int) proc_get_status($process)['pid'];
-        self::$victims[$pid] = $process;
-
-        for ($poll = 0; $poll < 1200; $poll++) {
-            if (str_starts_with((string) @file_get_contents('/proc/' . $pid . '/cmdline'), "sleep\0")) {
-                return $pid;
-            }
-            usleep(100000);
-        }
-
-        throw new \RuntimeException("the victim process {$pid} never started running sleep");
+        return Task_Worker_Victim::start_worker();
     }
 
     private static function __reap(int $pid): void
     {
-        if (!isset(self::$victims[$pid])) {
-            return;
-        }
-        if (proc_get_status(self::$victims[$pid])['running']) {
-            posix_kill($pid, SIGKILL);
-        }
-        proc_close(self::$victims[$pid]);
-        unset(self::$victims[$pid]);
+        Task_Worker_Victim::reap($pid);
     }
 
     private static function __running(int $pid): bool
     {
-        $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
-
-        return $cmdline !== false && $cmdline !== '';
+        return Task_Worker_Victim::running($pid);
     }
 
     /**

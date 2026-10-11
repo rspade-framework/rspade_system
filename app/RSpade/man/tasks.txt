@@ -94,7 +94,7 @@ RUNS
                                         requested: it stopped early, at a clean point
         6 Killed     STATUS_KILLED      a kill worker killed it (force stop, force
                                         kill, the silence limit or a requested
-                                        timeout, rsx:tasks:kill-all)
+                                        timeout, rsx:tasks:disable)
         7 Cancelled  STATUS_CANCELLED   taken off the queue before it ran
 
     Pending and Running are LIVE (Task_Run_Model::LIVE_STATUSES, is_live()); the other
@@ -430,7 +430,9 @@ STARTING A RUN
        return is settled FAILED and returned (read status_id and return_code). An
        #[Exclusive]/#[Debounce] task first takes its identity's run lock, waiting for a
        running instance to finish. A fatal error that ends the process mid-run settles the
-       row FAILED from a shutdown function, so it is never left RUNNING.
+       row FAILED from a shutdown function, so it is never left RUNNING. While the task
+       system is off the run is queued and the call waits (TURNING THE TASK SYSTEM OFF AND
+       ON).
 
     3. Console: php artisan rsx:task:run <Service> <method> [--key=value ...]
        Task::internal() with the command's own stdout and stderr attached: the task's
@@ -758,7 +760,11 @@ LIFECYCLE CONTROL
            MOOT. The force-stop grace is the window a cooperative task gets to finish
            cleanly; the poll is a condition check, not a deadline;
         3. sends SIGKILL to the worker's pid on this host (the grace period is the polite
-           window, so there is no SIGTERM step) and waits for the process to be gone;
+           window, so there is no SIGTERM step) and waits for the process to be gone. A
+           pool run's pid is signalled only while it is still a task worker of this
+           project by its command line: a pid the kernel has since handed to an unrelated
+           process is never signalled, and the run settles KILLED with the worker noted
+           as already gone;
         4. settles the run KILLED with the explanation as status_reason and an operator
            line; a scheduled run counts as a failure on its schedule.
 
@@ -820,6 +826,9 @@ READING A RUN (Task_Run_Model)
 
     The first reason that applies, in this order:
 
+        disabled    the task system is off (TURNING THE TASK SYSTEM OFF AND ON): nothing
+                    is claimed, whatever else is true of the run
+                        task system disabled - php artisan rsx:tasks:enable
         scheduled   scheduled_for is in the future (a deferred dispatch, a debounce
                     delay, a retry after an abandonment)
                         scheduled for <time>
@@ -1110,10 +1119,15 @@ FAILURE AND ABANDONMENT
         the daemon's own generation     not alive -> abandoned, whatever host ran it.
                                         Alive -> running.
         an older generation, THIS host  the daemon restarted since the claim and cannot
-                                        know; the pid decides.
+                                        know; the pid decides - it must still be a task
+                                        worker of this project by its command line, so a
+                                        pid the kernel has handed to another process
+                                        since (a reboot) does not keep a dead run alive.
         an older generation, ANOTHER    left alone for that host's own tick; rsx:health's
         host                            Task Worker Pools row WARNs while any remains.
-        no worker_id (inline)           the pid on its own host decides.
+        no worker_id (inline)           the pid on its own host decides (pid existence:
+                                        an inline run's process may be a web server
+                                        worker or any command).
 
     Settling an abandoned run:
 
@@ -1156,12 +1170,107 @@ MAINTENANCE MODE
                            pool while the window is up, so a dispatch made during it leaves
                            its row PENDING for the first tick after the window.
         rsx:task:run       REFUSED unless --force. --force is consumed by the gate and
-                           never reaches the task's parameters.
+                           never reaches the task's parameters. Inside a window raised
+                           with its services half the task system is off, so a run that
+                           passes the gate queues and waits for the window to end.
 
-    Enabling maintenance first runs rsx:tasks:kill-all, which force-kills this host's
-    running runs synchronously, in its own process (no kill worker can be spawned in the
-    window): each is SIGKILLed and settled KILLED with the explanation. See
-    rsx:man maintenance_mode.
+    Enabling maintenance first runs rsx:tasks:disable, which turns the task system off and
+    stops the running runs synchronously, in its own process (no kill worker can be
+    spawned in the window); leaving it runs rsx:tasks:enable. See TURNING THE TASK SYSTEM
+    OFF AND ON and rsx:man maintenance_mode.
+
+TURNING THE TASK SYSTEM OFF AND ON
+
+    One switch, stored in the database, so it is one fact for every host that shares the
+    database:
+
+        php artisan rsx:tasks:disable [--reason="..."] [--grace=<seconds>]
+        php artisan rsx:tasks:enable
+
+    WHILE IT IS OFF, EVERY TASK - DISPATCHED OR INLINE - QUEUES, AND NOTHING RUNS until
+    rsx:tasks:enable:
+
+        Task::dispatch()      writes its PENDING row as always and starts no worker.
+        a worker              claims nothing and exits; one that is running a task
+                              finishes it (or is stopped, below), reads the switch before
+                              its next claim, and exits.
+        rsx:task:process      still settles abandoned runs, hands back orphaned kill
+                              requests and starts KILL workers; it starts no task worker.
+                              --once runs nothing.
+        a #[Schedule]         produces no run. A schedule that came due while the system
+                              was off runs ONCE after it is back on, however many of its
+                              ticks passed, and then follows its cadence from that moment.
+        an inline run         Task::internal(), rsx:task:run and a #[Command] write the
+                              run PENDING and the caller WAITS for its answer, with no
+                              limit, re-reading the switch every 2 seconds. A command says
+                              once on stderr that it is waiting for rsx:tasks:enable. Once
+                              the system is back on the waiting process claims its own run
+                              and executes it in-process, and the caller gets its ordinary
+                              answer (the settled row; the exit code). If a worker claims
+                              the run first, the caller waits for that run to settle and
+                              returns it: the claim is one guarded write, so the run
+                              executes exactly once.
+
+    A caller that stops waiting loses nothing: if the waiting process ends - the server is
+    restarted, a web server ends a request that outlived its own limit - the run is an
+    ordinary PENDING run and a worker runs it after the system is back on. The work is never
+    lost; that caller does not see the answer. A queued inline run of an #[Exclusive] /
+    #[Debounce] task is its own row (it does not join the identity's coalesced pending
+    run) and executes under the identity's run lock like every other run. No flag makes
+    anything run while the system is off.
+
+    Every PENDING run then reads `task system disabled - php artisan rsx:tasks:enable` as
+    what it is waiting for.
+
+    rsx:tasks:disable IS SYNCHRONOUS. It throws the switch FIRST, then:
+
+        1. asks every RUNNING run - a worker's and an inline one alike - to stop, as a
+           FORCE STOP (LIFECYCLE CONTROL): a task that checks is_stop_requested() ends at
+           its next check and settles STOPPED;
+        2. waits out the grace - --grace, default rsx.tasks.stop_grace_seconds (60) -
+           re-reading the runs, so it returns as soon as they have ended, and kills what
+           is still running on THIS host when the grace has passed (settled KILLED). The
+           kills are carried out in the command's own process;
+        3. names what it leaves running: a run on ANOTHER host keeps its kill request for
+           that host's own rsx:task:process tick, and an inline run inside a WEB REQUEST
+           on this host - asked to stop, never signalled - ends when the task sees the
+           request or when its web request ends.
+
+    Exit codes: 0 - off, and no task is running on this host; 2 - off, and the inline
+    web-request runs it listed are still running on this host; 1 - a bad option. PENDING
+    runs are never touched. Disabling a system that is already off keeps the record of the
+    first disabling and runs the stop pass again; enabling one that is on says so. Both
+    exit 0.
+
+    rsx:tasks:enable only removes the switch. Nothing is started by it: the next
+    rsx:task:process tick spawns the workers for what is due, and waiting inline callers
+    proceed within two seconds.
+
+    The switch records when it was thrown, by whom (a signed-in identity's printed name, or
+    "the command line"), on which host and the --reason. While it is off:
+
+        rsx:tasks:list     leads with "Task system: DISABLED since ... by ... (reason)"
+        rsx:health         the Task System row is a FAIL naming the same and the command
+                           (INFO while the maintenance flag is up - leaving the window
+                           turns it back on)
+        /_sys              the Tasks and Task Workers screens lead with an alert
+
+    In PHP: Task::is_enabled(), Task::disabled_state() ({disabled_at, disabled_by, reason,
+    host} or null), Task::disable($reason) and Task::enable() - the last two only write the
+    switch; stopping what is running is the command's.
+
+    REPLACING A SERVER (or recreating its container):
+
+        php artisan rsx:tasks:disable --reason="replacing the server"
+        # wait for it to return 0: nothing is running on this host
+        # ... replace the server; the database carries the switch across ...
+        php artisan rsx:tasks:enable        # on the new server
+
+    Stopped this way, no run is left RUNNING under a host that no longer exists. A host
+    that is lost WITHOUT this - and comes back under another hostname, as a recreated
+    container does unless its hostname is pinned - leaves its RUNNING runs unsettled: only
+    the host that ran a worker can judge its pid (FAILURE AND ABANDONMENT), and rsx:health
+    WARNs about them in the Task Worker Pools row.
 
 COMMANDS
 
@@ -1169,17 +1278,18 @@ COMMANDS
     php artisan rsx:task:list                                Discovered tasks, with the
                                                              #[Command] each is reachable
                                                              as (or '-')
-    php artisan rsx:tasks:list                               Pools (workers of cap), running
-                                                             runs with worker PIDs, the
-                                                             queued count, every schedule
+    php artisan rsx:tasks:list                               The task system's switch, pools
+                                                             (workers of cap), running runs
+                                                             with worker PIDs, the queued
+                                                             count, every schedule
     php artisan rsx:tasks:stop <id> [--force [--grace=N]] [--kill] [--explanation="..."]
                                                              Graceful stop; --force = force
                                                              stop; --kill = force kill
     php artisan rsx:tasks:cancel <id> [--explanation="..."]  Cancel a pending run
-    php artisan rsx:tasks:kill-all --explanation="..."       Force-kill every running run:
-                                                             this host's at once, another
-                                                             host's queued for its kill
-                                                             workers
+    php artisan rsx:tasks:disable [--reason="..."] [--grace=N]
+                                                             Turn the task system off and
+                                                             stop what is running
+    php artisan rsx:tasks:enable                             Turn it back on
     php artisan rsx:task:process [--once] [--force-scheduled]  The cron tick (below)
     php artisan rsx:task:worker [--pool=on_demand|scheduled] [--max-time=300]
     php artisan rsx:task:killer                              A kill worker (spawned for you)
@@ -1243,6 +1353,7 @@ DATABASE SCHEMA
     _task_attachments  (task_id, name) unique; temp_file_id -> _temp_files (cascade)
     _task_schedules    one row per #[Schedule] (SCHEDULES)
     _task_kill_requests  force stops and kills waiting for a kill worker
+    _task_system_off   one row while the task system is off: when, by whom, why, where
 
     The side tables cascade from _tasks. All are framework system tables - read them
     through the models and the readers above.
@@ -1269,8 +1380,10 @@ TROUBLESHOOTING
 
     A dispatched run stays Pending
         - The run says why: its status shows what it is waiting for (READING A RUN, WHAT
-          A PENDING RUN IS WAITING FOR) - a time, a lock and the run holding it, or a
-          free worker.
+          A PENDING RUN IS WAITING FOR) - the task system being off, a time, a lock and
+          the run holding it, or a free worker.
+        - Is the task system off? rsx:tasks:list says so on its first line, and
+          rsx:health FAILs its Task System row: php artisan rsx:tasks:enable.
         - Are the pools full? rsx:health "Task Worker Pools" shows each pool's members
           against its cap; /_sys/workers shows what they are running. A busy worker
           reaches the row when it finishes.

@@ -9,24 +9,28 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 
 /**
- * List live task state: the worker pools, the RUNNING runs (with worker PIDs), the count of
+ * List live task state: whether the task system is on (and, when off, since when, by whom
+ * and why), the worker pools, the RUNNING runs (with worker PIDs), the count of
  * queued runs, then every #[Schedule] with its cadence and failure record. Distinct from
  * rsx:task:list, which lists task DEFINITIONS from the manifest and touches no database.
  */
 class Tasks_List_Command extends Command
 {
     protected $signature = 'rsx:tasks:list';
-    protected $description = 'List the worker pools, running task runs (with worker PIDs), queued count and schedules';
+    protected $description = 'List the task system switch, the worker pools, running task runs (with worker PIDs), queued count and schedules';
 
     /** Characters of the failure explanation shown in the Schedules table. */
     private const ERROR_EXCERPT_LENGTH = 50;
 
     public function handle()
     {
+        $this->list_switch();
+        $this->newLine();
         $this->list_pools();
         $this->newLine();
         $this->list_running_tasks();
@@ -34,6 +38,22 @@ class Tasks_List_Command extends Command
         $this->list_schedules();
 
         return 0;
+    }
+
+    /** Whether the task system is on; when it is off, the record of who turned it off. */
+    private function list_switch(): void
+    {
+        $state = Task::disabled_state();
+
+        if ($state === null) {
+            $this->info('Task system: enabled');
+
+            return;
+        }
+
+        $this->warn("Task system: DISABLED since {$state['disabled_at']} by {$state['disabled_by']} on {$state['host']}"
+            . ($state['reason'] !== null ? " ({$state['reason']})" : ''));
+        $this->line('  No new task starts. Turn it back on: php artisan rsx:tasks:enable');
     }
 
     /** Each pool's members against its cap. */

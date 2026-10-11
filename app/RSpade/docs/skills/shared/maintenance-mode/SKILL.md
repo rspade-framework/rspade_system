@@ -12,7 +12,7 @@ php artisan rsx:maintenance:disable
 
 One flag file (`storage/state/.maintenance.mode.framework.update`) whose **content is your reason**. Both commands are **intercepted PRE-BOOT in `system/artisan`** and shell out to `system/bin/maintenance-mode.sh`, which is why they work on a broken tree, can never be refused by the gate they control, and appear in no `php artisan list`. Both are idempotent.
 
-`--no-services` does the flag half only (no supervisorctl, no task kill).
+`--no-services` does the flag half only (no supervisorctl; the task system is neither turned off nor back on).
 
 ---
 
@@ -38,7 +38,7 @@ php artisan rsx:maintenance:disable
 
 Refusals exit 75 and always name the way out (`php artisan rsx:maintenance:disable`). Classification is pre-boot and autoload-free, so it holds even when `vendor/` is half-synced.
 
-**Running one task by hand during the window** is legitimate and supported: `php artisan rsx:task:run My_Service method --force`. (`force` is in `Task_Run_Command`'s `$skip_builtins`, so it is never mistaken for a task parameter.)
+**No task runs inside a full window.** The window turns the task system off, so `php artisan rsx:task:run My_Service method --force` passes the CLI gate and then QUEUES its run and waits until the window ends (as a `#[Command]` does) - `rsx:man tasks`, TURNING THE TASK SYSTEM OFF AND ON. Only under `--no-services`, where the flag alone is up, does `--force` run the task. (`force` is in `Task_Run_Command`'s `$skip_builtins`, so it is never mistaken for a task parameter.)
 
 ---
 
@@ -52,13 +52,13 @@ While PHP still runs: **503 with `Retry-After: 120`** and an HTML page quoting y
 
 ## The service order, and why it is load-bearing
 
-**Enable**: write the flag **FIRST** -> `rsx:tasks:kill-all` -> quiesce the node RPC helpers -> `supervisorctl stop` realtime, fpc-proxy, php-fpm, rsx-lockd, **redis LAST**.
+**Enable**: write the flag **FIRST** -> `rsx:tasks:disable` (the task system OFF - a database switch, so on every host sharing it - and this host's running tasks stopped: asked, then killed after `rsx.tasks.stop_grace_seconds`, so the step can take that long) -> quiesce the node RPC helpers -> `supervisorctl stop` realtime, fpc-proxy, php-fpm, rsx-lockd, **redis LAST**.
 
 The flag goes up before anything stops because **a process booting into the window must already SEE maintenance mode** - otherwise it selects the live backends (cluster locks over rsx-lockd, the Redis cache) and hard-fatals on the refused connect. The lock daemon stops AFTER its PHP consumers so no live request loses a lock out from under itself.
 
-**Disable**: refuse if the repo has unmerged paths (see below) -> start redis FIRST, then rsx-lockd, **wait for rsx-lockd to actually answer** before starting php-fpm, then php-fpm, realtime, fpc-proxy -> remove the flag LAST. The readiness wait exists because spawning is not serving: a request taking a cluster lock against a daemon that is not yet listening waits with no deadline and no error ("the site is slow", nothing in any log). That wait has **no timeout** by design - it says "still waiting for rsx-lockd" every 5s rather than admitting traffic on a silent deadline.
+**Disable**: refuse if the repo has unmerged paths (see below) -> start redis FIRST, then rsx-lockd, **wait for rsx-lockd to actually answer** before starting php-fpm, then php-fpm, realtime, fpc-proxy -> remove the flag -> `rsx:tasks:enable` (best-effort and LOUD: a failure prints an `[ERROR]` naming the command and never fails the transition; `rsx:health` FAILs its Task System row until it is on). The readiness wait exists because spawning is not serving: a request taking a cluster lock against a daemon that is not yet listening waits with no deadline and no error ("the site is slow", nothing in any log). That wait has **no timeout** by design - it says "still waiting for rsx-lockd" every 5s rather than admitting traffic on a silent deadline.
 
-Disable is **stateless**: it starts whichever of the five units exist, with no record of what enable stopped - so a unit you had deliberately stopped beforehand gets started. Deliberate; determinism beats a state file that can go stale.
+Disable is **stateless**: it starts whichever of the five units exist, with no record of what enable stopped - so a unit you had deliberately stopped beforehand gets started, and a task system you had deliberately turned off (`rsx:tasks:disable`) is ON after the window. Deliberate; determinism beats a state file that can go stale.
 
 **The node RPC helpers are a special case.** The build helpers (js-parser, js-transformer, minify, jqhtml-compile, js-sanitizer, js-code-quality) and ssr-server are spawned on demand by whatever PHP process needed one, then abandoned to PID 1 - **no `supervisorctl stop` reaches them**, and stopping php-fpm kills the workers, never the daemons they left behind. They are found by `pgrep -f -- '--socket=<tmp>/'` and TERM/settle/KILLed. They must die because a maintenance window is by definition the moment the code under them changes. **Disable does not restart them**, deliberately: they hold no state, the next process that needs one spawns it, and that is what guarantees the post-window daemon runs post-window code.
 

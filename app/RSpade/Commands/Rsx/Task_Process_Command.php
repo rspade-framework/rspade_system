@@ -38,6 +38,11 @@ use App\RSpade\Core\Task\Task_Runner;
  *    runs, scheduled for due schedules, kill for due kill requests on this host. It does NOT
  *    become a worker itself.
  *
+ * WHILE THE TASK SYSTEM IS OFF (Task::is_enabled(), read from the database at each spawn) steps 1-3 run as
+ * always - a dead run is still settled, a kill request still gets its kill worker, which is
+ * what rsx:tasks:disable on another host relies on - and step 4 starts no task worker, so
+ * nothing new runs and no schedule produces a run. --once runs nothing.
+ *
  * One try per tick is enough: a worker drains its work until nothing is claimable, and every
  * dispatch tries a spawn of its own. The spawn reads the pool's count first, so a full pool
  * (or maintenance mode) starts nothing; a worker that starts anyway admits itself under its
@@ -70,7 +75,11 @@ class Task_Process_Command extends Command
 
         // Testing aid: drain one task inline instead of relying on a spawned worker.
         if ($this->option('once')) {
-            $this->process_one_task();
+            if (Task::is_enabled()) {
+                $this->process_one_task();
+            } else {
+                $this->info('[ONCE MODE] The task system is disabled; the queue waits for: php artisan rsx:tasks:enable');
+            }
         }
 
         return 0;
@@ -93,12 +102,16 @@ class Task_Process_Command extends Command
      *        gone, wherever it ran - abandoned;
      *      - an older generation (known: false - the daemon restarted since the claim, and a
      *        restart ends every membership while the workers keep running): only the host
-     *        that ran the worker can tell, by its pid. On this host a dead pid is abandoned
-     *        and a live one is left to record its own outcome; a run from another host is
-     *        left alone for that host's own tick.
+     *        that ran the worker can tell, by its pid. On this host the pid must still be a
+     *        TASK WORKER of this project (Task::is_worker_process(): its command line, never
+     *        bare pid existence - after a reboot the kernel hands old pids to unrelated
+     *        processes): one that is not is abandoned, one that is is left to record its own
+     *        outcome; a run from another host is left alone for that host's own tick.
      *
      *    A run with NO worker_id ran inline (Task::internal(), rsx:task:run, --once), which is
      *    no pool member: the verdict is the local pid probe, taken only on the run's own host.
+     *    An inline run's process may be a php-fpm worker or any artisan command, so there is
+     *    no command line to hold it to - the probe is pid existence.
      *
      * 2. SILENT, OR PAST A REQUESTED TIMEOUT - a POOL worker is alive AND runs on this host,
      *    and its run has shown no sign of life for rsx.tasks.silent_timeout seconds, or - for a
@@ -147,12 +160,12 @@ class Task_Process_Command extends Command
                             // host's pid evidence can settle it.
                             continue;
                         }
-                        if ($this->pid_alive((int) $task->worker_pid)) {
+                        if (Task::is_worker_process((int) $task->worker_pid)) {
                             $live[] = $task;
                             continue;
                         }
                         $reason = "worker {$task->worker_id} of a previous rsx-lockd generation is no longer"
-                            . " running (PID {$task->worker_pid} is gone on {$this_host})";
+                            . " running (PID {$task->worker_pid} is not a task worker on {$this_host})";
                     }
 
                     $this->settle_abandoned($task, $reason);
@@ -416,7 +429,16 @@ class Task_Process_Command extends Command
 
             foreach ($claimed as $request) {
                 $verdict = $verdicts[$request->id];
-                $gone = $verdict['known'] ? !$verdict['alive'] : !$this->pid_alive((int) $request->worker_pid);
+                // An older generation's kill worker is judged like a task worker: by its
+                // command line. A request with no worker_id was claimed by a command carrying
+                // out its own kills (rsx:tasks:disable), which is no worker: its pid is probed.
+                if ($verdict['known']) {
+                    $gone = !$verdict['alive'];
+                } elseif ($request->worker_id !== null) {
+                    $gone = !Task::is_worker_process((int) $request->worker_pid);
+                } else {
+                    $gone = !$this->pid_alive((int) $request->worker_pid);
+                }
                 if (!$gone) {
                     continue;
                 }
@@ -504,7 +526,8 @@ class Task_Process_Command extends Command
 
     /**
      * One spawn try per pool with due work. Task::spawn_worker() declines when the pool is
-     * full, maintenance mode is up or this process's own spawns fill the cap; the worker it
+     * full, maintenance mode is up, the task system is off (the two task pools - a kill
+     * worker is still started) or this process's own spawns fill the cap; the worker it
      * starts joins only if the pool still has room once it holds the pool lock. An unreachable
      * rsx-lockd throws: the pool is the admission count, and the daemon is a hard dependency.
      */

@@ -98,6 +98,14 @@ OUTPUT CONTRACT
        or a throw. A task that THROWS prints its failure line to stderr and exits 1; the
        exception is recorded on the run's error.
 
+       WHILE THE TASK SYSTEM IS OFF (php artisan rsx:tasks:disable; rsx:man tasks, TURNING
+       THE TASK SYSTEM OFF AND ON) a command does not run and does not fail: its run is
+       queued, one line on stderr says it is waiting for `php artisan rsx:tasks:enable`,
+       and it waits - with no limit - until the system is back on. It then runs and exits
+       with its code as above. A command ended while it waits leaves its run queued for a
+       worker; a run cancelled from the queue, or killed under the worker that ran it,
+       exits 1.
+
            php artisan myapp:import | wc -l          # stdout to the pipe, stderr to the
                                                      # terminal
            php artisan myapp:import 2>/dev/null      # discard stderr

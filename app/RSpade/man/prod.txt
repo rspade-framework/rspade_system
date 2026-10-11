@@ -563,6 +563,26 @@ ADMINISTRATION
         intercepted pre-boot and shell out, so they work on a broken tree and
         are immune to their own gate. rsx:man maintenance_mode.
 
+    rsx:tasks:disable [--reason] [--grace] / rsx:tasks:enable
+        REPLACING A HOST (a new server, or a recreated container): turn the
+        task system off on the old one first -
+
+            php artisan rsx:tasks:disable --reason="replacing the server"
+
+        - and wait for it to return 0. It stops what is running (asks, then
+        kills after rsx.tasks.stop_grace_seconds) and from then on every task,
+        dispatched or inline, only queues. The switch lives in the database,
+        so it carries over; on the new host, once it is serving:
+
+            php artisan rsx:tasks:enable
+
+        and the next rsx:task:process tick picks up the queue. A host removed
+        WITHOUT this leaves its running task runs RUNNING under a hostname
+        nothing answers to any more - a container's hostname is its id unless
+        pinned, so pin it (or stop the tasks first) on any box whose container
+        is recreated. rsx:health FAILs its Task System row for as long as the
+        switch is off. rsx:man tasks, TURNING THE TASK SYSTEM OFF AND ON.
+
     migrate + rsx:migrate:check_consistency
         See WHY MIGRATE COMES BEFORE THE BUILD above and rsx:man migrations.
         check_consistency runs in a prod mode only and refuses elsewhere.

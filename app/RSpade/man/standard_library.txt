@@ -221,32 +221,44 @@ SYSTEM PROGRAMS
     production target alike. They are present on a box that runs one of those
     images; a host built another way installs them itself.
 
-    weasyprint      HTML to PDF, for a document the application prints - an
-                    invoice, a statement, a report:
-
-                        weasyprint page.html page.pdf
-
-                    A renderer, not a browser. It runs no JavaScript, so the
-                    input is finished HTML with its stylesheets inlined or
-                    reachable as files. It lays out paged-media CSS (@page
-                    size and margins, page breaks, running headers and
-                    footers, page counters) and writes every <a href> as a
-                    link in the PDF. It is NOT a browser's layout engine: a
-                    sheet for it is written as a document - blocks, tables,
-                    simple flex rows - and checked in its output, never
-                    assumed from how the page looks on screen. Box shadows
-                    and filters are not drawn. Reach for it when the server
-                    must produce the PDF itself; never install a headless
+    headless Chromium (Playwright)
+                    A real browser with no window, driven through the
+                    `playwright` npm package the framework ships. It is what
+                    `rsx:debug` and the browser tests render pages with, and
+                    it is ALSO how an application makes a PDF on the server -
+                    an invoice, a statement, a report: load the page, call
+                    page.pdf(). The browser's own print engine lays it out
+                    (@page, @media print, break rules) and every <a href>
+                    becomes a link in the PDF. That second use is why the
+                    browser's shared libraries are in the PRODUCTION image and
+                    not only the development one. Reach for it when the
+                    server must produce the PDF itself; never install a second
                     browser or a PDF library for that.
 
-                    A PDF is set in the SERVER's fonts, and both images carry
-                    the same ones: sans-serif is Noto Sans, serif is Noto
-                    Serif, monospace is DejaVu Sans Mono (fontconfig,
-                    fonts-noto-core, fonts-dejavu-core).
+                    Both images carry the browser complete - its libraries and
+                    Chromium itself, at the build the shipped package launches
+                    - so `require('playwright').chromium.launch()` works with
+                    nothing to install or configure, from the command line and
+                    from a web request alike. A host built another way, or a
+                    box whose image is older than its framework, fetches it
+                    with:
 
-                    Spawn it with an argv array (Symfony Process), never a
-                    shell string, and hand it only HTML the application
-                    generated.
+                        cd system && npx playwright install chromium
+
+                    Reach it through the `playwright` package, never by a path
+                    into its browser directory - that path carries a build
+                    number and moves with every Playwright update. Hand it
+                    only HTML the application generated.
+
+                    A PDF is set in the SERVER's fonts, and both images carry
+                    the same ones: Chromium prints generic sans-serif and
+                    serif in Liberation Sans and Liberation Serif and
+                    monospace in DejaVu Sans Mono, with Noto covering other
+                    scripts and symbols. A sheet that must look one way names
+                    its own @font-face.
+
+                    Every package in the images and why it is there:
+                    system/app/RSpade/resource/docker/README.md.
 
 THE TWO RULES THAT MAKE THIS A LIBRARY
     Exposure is a standing commitment

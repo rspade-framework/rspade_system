@@ -16,6 +16,7 @@ use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
+use App\RSpade\Core\Task\Task_Lock;
 use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
@@ -41,6 +42,11 @@ class Task
      * exception is rethrown to the caller; a task that returns a failure code is settled
      * FAILED and returned (read status_id / return_code).
      *
+     * WHILE THE TASK SYSTEM IS OFF (is_enabled()) the run is QUEUED and this call WAITS: the
+     * row is written PENDING, nothing executes, and the call returns - with its ordinary
+     * answer - only after the system is back on and the run has settled. See
+     * __queue_and_wait().
+     *
      * @param string $rsx_service Service name (e.g., 'Seeder_Service')
      * @param string $rsx_task Task/method name (e.g., 'seed_clients')
      * @param array $params Parameters to pass to the task
@@ -54,16 +60,26 @@ class Task
     public static function internal($rsx_service, $rsx_task, $params = [], ?array $console_streams = null): Task_Run_Model
     {
         $service_class = static::resolve_task_class($rsx_service, $rsx_task);
+
         $params_hash = Task_Concurrency::params_hash($params);
+        $managed = Task_Concurrency::is_managed($service_class, $rsx_task);
 
-        // An inline run of a single-instance task takes the identity's run lock like a
-        // worker would, waiting for a running instance to finish.
-        $run_lock = Task_Concurrency::is_managed($service_class, $rsx_task)
-            ? Task_Concurrency::acquire_run_lock($service_class, $rsx_task, $params_hash)
-            : null;
+        if (static::is_enabled()) {
+            // An inline run of a single-instance task takes the identity's run lock like a
+            // worker would, waiting for a running instance to finish.
+            $run_lock = $managed ? Task_Concurrency::acquire_run_lock($service_class, $rsx_task, $params_hash) : null;
 
-        $id = Task_Runner::insert_row($service_class, $rsx_task, $params, Task_Run_Model::ORIGIN_INLINE, Task_Runner::running_fields());
-        Task_Notify::lifecycle($id);
+            $id = Task_Runner::insert_row($service_class, $rsx_task, $params, Task_Run_Model::ORIGIN_INLINE, Task_Runner::running_fields());
+            Task_Notify::lifecycle($id);
+        } else {
+            [$id, $run_lock] = static::__queue_and_wait($service_class, $rsx_task, $params, $params_hash, $managed, $console_streams);
+
+            if ($id !== null && $run_lock === false) {
+                // Somebody else ran or ended the queued run (a worker, a cancel): its settled
+                // row is this call's answer.
+                return Task_Run_Model::find($id);
+            }
+        }
 
         // A fatal error ends this process without returning here; the run must not be left
         // RUNNING behind it.
@@ -93,6 +109,85 @@ class Task
         }
 
         return Task_Run_Model::find($id);
+    }
+
+    /**
+     * How often an inline caller waiting for the task system to come back on re-reads the
+     * switch and its queued row. The poll of a condition, never a deadline: the wait ends when
+     * an operator runs rsx:tasks:enable, however long that takes. Two seconds because the wait
+     * is measured in the minutes a server replacement takes - each read is one primary-key
+     * lookup, and every other queued run waits for the next cron tick, up to a minute.
+     */
+    const DISABLED_POLL_SECONDS = 2;
+
+    /**
+     * An inline run asked for while the task system is off: queue it, wait, and claim it.
+     *
+     * The run's row is written PENDING (origin Inline) - it shows in the queue, and its wait
+     * line says the task system is disabled - and NOTHING executes. This process then waits,
+     * with no limit, re-reading every DISABLED_POLL_SECONDS:
+     *
+     *   - the system is back on and the row is still PENDING: this process claims it with the
+     *     guarded PENDING -> RUNNING write every claim uses (after taking the identity's run
+     *     lock, for an #[Exclusive] / #[Debounce] task) and the caller runs it in-process, as
+     *     an inline run always runs;
+     *   - the row is no longer PENDING - a worker claimed it first, or it was cancelled: this
+     *     process waits until it has settled and the caller returns that row. The two claims
+     *     are the same guarded write, so the run executes exactly once.
+     *
+     * If this process DIES while it waits (the server restart the switch exists for) the row
+     * is an ordinary PENDING run: a pool worker claims and runs it after the system is back
+     * on, under the same run-lock rules, and nothing recovers or reaps it meanwhile. It does
+     * not join the identity's coalesced pending run: an inline call's params and answer are
+     * its own.
+     *
+     * A command-line caller is told once, on stderr, what it is waiting for.
+     *
+     * @return array{0: int, 1: Task_Lock|null|false} The run's id with the run lock this
+     *         process holds for it (null for an unmanaged task) - the row is RUNNING here and
+     *         the caller executes it; or false in place of the lock when the run has settled
+     *         without this process.
+     */
+    private static function __queue_and_wait(string $service_class, string $rsx_task, array $params, string $params_hash, bool $managed, ?array $console_streams): array
+    {
+        $id = Task_Runner::insert_row($service_class, $rsx_task, $params, Task_Run_Model::ORIGIN_INLINE);
+        Task_Notify::lifecycle($id);
+
+        $stderr = $console_streams !== null ? ($console_streams[1] ?? null) : (php_sapi_name() === 'cli' ? STDERR : null);
+        if ($stderr !== null) {
+            fwrite($stderr, 'The task system is disabled: ' . class_basename($service_class) . "::{$rsx_task} is queued as task {$id} and runs once it is back on."
+                . " Waiting for: php artisan rsx:tasks:enable\n");
+        }
+
+        while (true) {
+            $status_id = (int) DB::table('_tasks')->where('id', $id)->value('status_id');
+
+            if ($status_id !== Task_Run_Model::STATUS_PENDING) {
+                if (!in_array($status_id, Task_Run_Model::LIVE_STATUSES, true)) {
+                    return [$id, false];
+                }
+            } elseif (static::is_enabled()) {
+                $run_lock = $managed ? Task_Concurrency::acquire_run_lock($service_class, $rsx_task, $params_hash) : null;
+
+                $claimed = DB::table('_tasks')
+                    ->where('id', $id)
+                    ->where('status_id', Task_Run_Model::STATUS_PENDING)
+                    ->update(Task_Runner::running_fields());
+
+                if ($claimed) {
+                    Task_Notify::lifecycle($id);
+
+                    return [$id, $run_lock];
+                }
+
+                // A worker took it between the read and the write: wait for its settle.
+                $run_lock?->release();
+
+                continue;
+            }
+
+            sleep(self::DISABLED_POLL_SECONDS);
+        }
     }
 
     /**
@@ -229,6 +324,86 @@ class Task
     }
 
     /**
+     * Is the task system on? Read from the database on every call (one primary-key read of
+     * _task_system_off) and never remembered: the switch is one fact for every host sharing
+     * the database, and a worker, a tick and a spawn each ask at the moment it matters.
+     *
+     * OFF means NOTHING STARTS EXECUTING, by any route, and EVERYTHING QUEUES: a worker
+     * claims nothing and leaves, the tick and dispatch() start no task worker (so no schedule
+     * produces a run), and an inline run - internal(), rsx:task:run, a #[Command] - is written
+     * PENDING while its caller waits for the system to come back on. dispatch() enqueues as
+     * always. The tick still settles dead runs and serves kill requests.
+     */
+    public static function is_enabled(): bool
+    {
+        return !DB::table('_task_system_off')->where('id', 1)->exists();
+    }
+
+    /**
+     * The record of the task system being off, or null while it is on.
+     *
+     * @return array{disabled_at: string, disabled_by: string, reason: ?string, host: string}|null
+     *         disabled_at is ISO 8601; disabled_by is who asked (a printed name, or
+     *         "the command line"); host is the machine the request was made on.
+     */
+    public static function disabled_state(): ?array
+    {
+        $row = DB::table('_task_system_off')->where('id', 1)->first(['disabled_at', 'actor_label', 'reason', 'host']);
+        if ($row === null) {
+            return null;
+        }
+
+        return [
+            'disabled_at' => Rsx_Time::to_iso($row->disabled_at),
+            'disabled_by' => $row->actor_label,
+            'reason' => $row->reason,
+            'host' => $row->host,
+        ];
+    }
+
+    /**
+     * Turn the task system OFF. Returns true when this call turned it off, false when it was
+     * off already - the record of the first disabling is kept.
+     *
+     * This writes the switch and nothing else: runs already RUNNING keep running. Stopping
+     * them is `php artisan rsx:tasks:disable`, which calls this first and then stops them.
+     *
+     * @param string|null $reason Why, for the health row, the panel and rsx:tasks:list
+     */
+    public static function disable(?string $reason = null): bool
+    {
+        $reason = $reason !== null && trim($reason) !== '' ? trim($reason) : null;
+
+        // One statement: of two hosts disabling at once, exactly one writes the record.
+        $written = DB::affectingStatement(
+            'INSERT IGNORE INTO _task_system_off (id, disabled_at, actor_label, reason, host) VALUES (1, ?, ?, ?, ?)',
+            [now()->format('Y-m-d H:i:s.v'), Task_Run_Model::acting_label(), $reason, Task_Pool::host()]
+        );
+
+        if ($written) {
+            Task_Notify::system_switched();
+        }
+
+        return (bool) $written;
+    }
+
+    /**
+     * Turn the task system ON. Returns true when this call turned it on, false when it was on
+     * already. Nothing is started here: the next rsx:task:process tick spawns the workers for
+     * whatever is due.
+     */
+    public static function enable(): bool
+    {
+        $removed = DB::table('_task_system_off')->where('id', 1)->delete();
+
+        if ($removed) {
+            Task_Notify::system_switched();
+        }
+
+        return (bool) $removed;
+    }
+
+    /**
      * Get all scheduled tasks from manifest
      *
      * Scans the manifest for methods with #[Schedule] attribute
@@ -332,11 +507,14 @@ class Task
      * room for it. A task pool (on_demand, scheduled) gets an rsx:task:worker, the kill pool an
      * rsx:task:killer.
      *
-     * Three refusals come before the spawn, cheapest first:
+     * Four refusals come before the spawn, cheapest first:
      *
      *   0. Maintenance mode (Framework_Maintenance::is_active()): nothing is started while the
      *      window is up - the worker command itself is refused there. The work stays queued,
      *      and the first rsx:task:process tick after the window closes starts its worker.
+     *      Then the task system's own switch (is_enabled()): while it is off no TASK worker
+     *      is started - a kill worker still is, since stopping the runs in flight is what
+     *      turning the system off consists of.
      *   1. The workers THIS process spawned into the pool that are still running
      *      (is_worker_process(), /proc, no shared state). This is what caps a script that
      *      dispatches on every write: once its own spawns fill the cap, every further
@@ -355,7 +533,8 @@ class Task
      * a hard framework dependency.
      *
      * @return bool True when a worker was spawned; false when the pool is full, maintenance
-     *              mode is up, or this process does not spawn workers (spawn_workers()).
+     *              mode is up, the task system is off (a task pool), or this process does not
+     *              spawn workers (spawn_workers()).
      */
     public static function spawn_worker(string $pool): bool
     {
@@ -364,6 +543,10 @@ class Task
         }
 
         if (Framework_Maintenance::is_active()) {
+            return false;
+        }
+
+        if ($pool !== Task_Pool::KILL && !static::is_enabled()) {
             return false;
         }
 
@@ -417,18 +600,24 @@ class Task
     }
 
     /**
-     * Is this pid a running task or kill worker of THIS project? Read from /proc/<pid>/cmdline,
-     * so it needs no shared state at all.
+     * Is this pid a running task or kill worker of THIS project? Read from /proc/<pid>, so it
+     * needs no shared state at all.
      *
-     * A worker is a process whose command line names both this project's artisan path and
-     * rsx:task:worker or rsx:task:killer - the command line Rsx_Artisan::dispatch_detached()
-     * builds. The match is on the command-line TEXT, not on exact argv tokens, so a worker is
-     * recognised from the moment it is forked: until its exec the child is a copy of the
-     * spawning bash, whose single `-c` argument carries that same text. And the command line,
-     * rather than bare pid existence, is what makes the answer safe to act on: a pid the
+     * A worker is a process whose command line names rsx:task:worker or rsx:task:killer and
+     * this project's artisan: either by its full path - the command line
+     * Rsx_Artisan::dispatch_detached() builds - or as the bare argument `artisan` in a process
+     * whose working directory is this project's (a worker somebody started by hand from
+     * there). The full-path match is on the command-line TEXT, not on exact argv tokens, so a
+     * worker is recognised from the moment it is forked: until its exec the child is a copy
+     * of the spawning bash, whose single `-c` argument carries that same text. And the command
+     * line, rather than bare pid existence, is what makes the answer safe to act on: a pid the
      * kernel reused for an unrelated process is not a worker, and an exited worker nobody has
      * reaped yet (a zombie) has an empty command line. A process can exit between the check
      * and the read, and that race IS the answer "not running", so a failed read means gone.
+     *
+     * Everything that decides whether a POOL run's worker is still there asks this: the spawn
+     * cap, the reaper's judgment of a run from a previous rsx-lockd generation, the kill
+     * worker before it signals, and the /_sys worker evidence.
      *
      * @param int $pid
      * @return bool
@@ -444,8 +633,16 @@ class Task
             return false;
         }
 
-        return (str_contains($cmdline, 'rsx:task:worker') || str_contains($cmdline, 'rsx:task:killer'))
-            && str_contains($cmdline, base_path('artisan'));
+        if (!str_contains($cmdline, 'rsx:task:worker') && !str_contains($cmdline, 'rsx:task:killer')) {
+            return false;
+        }
+
+        if (str_contains($cmdline, base_path('artisan'))) {
+            return true;
+        }
+
+        return in_array('artisan', explode("\0", $cmdline), true)
+            && @readlink('/proc/' . $pid . '/cwd') === base_path();
     }
 
     /**

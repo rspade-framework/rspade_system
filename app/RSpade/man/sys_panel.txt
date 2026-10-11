@@ -93,6 +93,15 @@ DESCRIPTION
     The developer is a developer, so every task gate passes here: the console
     shows and controls every run whatever the application's own gates say.
 
+    While the task system is OFF (php artisan rsx:tasks:disable; rsx:man tasks,
+    TURNING THE TASK SYSTEM OFF AND ON) the Tasks and Task Workers screens
+    lead with an alert: that it is disabled, since when, by whom, on which host
+    and why, and the command that turns it back on - php artisan
+    rsx:tasks:enable. It appears and goes without a reload, and every queued
+    run reads "task system disabled - php artisan rsx:tasks:enable" as what it
+    is waiting for. The panel shows the switch; it is thrown from the command
+    line.
+
     TASKS is one realtime grid of every run: the live runs on top - running
     runs first, oldest start first, then queued runs, earliest due first -
     and the finished runs below them, newest first. Columns: id, task and

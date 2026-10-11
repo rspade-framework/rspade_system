@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Lock;
 use App\RSpade\Core\Task\Task_Pool;
@@ -21,6 +22,9 @@ use App\RSpade\Core\Time\Rsx_Time;
  * the running rows at the moment somebody asks, so it cannot go stale and a holder that died
  * leaves nothing to clean up. The first reason that applies, in this order:
  *
+ *   disabled   the task system is off (Task::is_enabled()): no worker claims anything,
+ *              whatever else is true of the run
+ *                  "task system disabled - php artisan rsx:tasks:enable"
  *   scheduled  the run is not due yet (scheduled_for is in the future)
  *                  "scheduled for <time>"
  *   lock       its #[Exclusive] / #[Debounce] run lock is held - by a run of the same
@@ -44,11 +48,13 @@ use App\RSpade\Core\Time\Rsx_Time;
  * query, bounded by the pools' caps plus the inline runs in flight), the pools' caps, and each
  * lock's state (one daemon round trip per lock identity) - so describing a page of pending
  * runs costs the same few reads as describing one. Never keep an instance beyond the read it
- * was made for: what it remembers is a snapshot.
+ * was made for: what it remembers is a snapshot. The switch is one of the things it remembers
+ * (one read per instance).
  */
 #[Instantiatable]
 class Task_Waiting
 {
+    const REASON_DISABLED = 'disabled';
     const REASON_SCHEDULED = 'scheduled';
     const REASON_LOCK = 'lock';
     const REASON_WORKERS = 'workers';
@@ -64,6 +70,9 @@ class Task_Waiting
     private array $lock_in_use = [];
 
     private ?int $max_workers = null;
+
+    /** Whether the task system is on, read once for this instance. */
+    private ?bool $system_enabled = null;
 
     /**
      * What one run is waiting for; null unless it is pending. For several runs, make one
@@ -83,6 +92,11 @@ class Task_Waiting
     {
         if ((int) $run->status_id !== Task_Run_Model::STATUS_PENDING) {
             return null;
+        }
+
+        $this->system_enabled ??= Task::is_enabled();
+        if (!$this->system_enabled) {
+            return static::__answer(self::REASON_DISABLED, 'task system disabled - php artisan rsx:tasks:enable');
         }
 
         if ($run->scheduled_for !== null && Rsx_Time::is_future($run->scheduled_for)) {

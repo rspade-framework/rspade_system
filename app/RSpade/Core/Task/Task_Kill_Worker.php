@@ -29,8 +29,9 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * A KILL WORKER claims one request, then re-reads the run every POLL_SECONDS until the
  * request is due: a run that ended (stopped on its own, completed, failed) or whose worker is
  * no longer the one the request names makes the request MOOT. When it is due, the worker's
- * process is SIGKILLed - on this host only - and the run settles KILLED with the explanation
- * and an operator line. Kill workers never take a task pool's lock beyond their own claim.
+ * process is SIGKILLed - on this host only, and only while that pid is still a task worker of
+ * this project (Task::is_worker_process(); a reused pid is never signalled) - and the run
+ * settles KILLED with the explanation and an operator line. Kill workers never take a task pool's lock beyond their own claim.
  *
  * An inline run inside a WEB REQUEST is never signalled: its pid is a php-fpm worker serving
  * other requests. Its kill request is settled moot, naming that only a graceful stop applies.
@@ -175,8 +176,14 @@ class Task_Kill_Worker
             return static::__finish($request, Task_Kill_Request_Model::STATUS_MOOT, 'inline run inside a web request; not signalled');
         }
 
+        // Only the process the request means is ever signalled. A pool run's pid must still
+        // be a task worker of this project (its command line): a pid the kernel has since
+        // handed to an unrelated process is not the worker, which is then simply gone. An
+        // inline run's pid was held to an artisan command line just above.
+        $is_target = $task->worker_id !== null ? Task::is_worker_process($pid) : static::__process_exists($pid);
+
         $signalled = false;
-        if (static::__process_exists($pid)) {
+        if ($is_target) {
             posix_kill($pid, 9);
             $signalled = true;
 
@@ -223,7 +230,7 @@ class Task_Kill_Worker
     }
 
     /**
-     * Claim a pending request for THIS process to carry out directly (rsx:tasks:kill-all, which
+     * Claim a pending request for THIS process to carry out directly (rsx:tasks:disable, which
      * cannot spawn a kill worker under maintenance mode). False when a kill worker took it.
      */
     public static function claim_for_this_process(int $request_id): bool

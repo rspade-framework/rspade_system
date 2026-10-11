@@ -201,4 +201,27 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
         static::__assert_equals(_Sys_Tasks_Controller::UPCOMING_LIMIT, count($workers['queued']));
         static::__assert_equals(12, $workers['queued_total']);
     }
+
+    /** RP-TASKS-07 - system_state says whether the task system is on, and when it is off who turned it off, when, why, and the command that turns it back on */
+    public static function test_system_state()
+    {
+        static::__assert_equals(
+            ['is_enabled' => true, 'disabled' => null, 'enable_command' => 'php artisan rsx:tasks:enable'],
+            static::__endpoint('system_state')
+        );
+
+        Task::disable('replacing the server');
+
+        $state = static::__endpoint('system_state');
+        static::__assert_false($state['is_enabled']);
+        static::__assert_equals('replacing the server', $state['disabled']['reason']);
+        static::__assert_equals(Task::disabled_state(), $state['disabled'], 'the record, as Task::disabled_state() gives it');
+        static::__assert_not_null($state['disabled']['disabled_at']);
+        static::__assert_not_empty($state['disabled']['disabled_by']);
+        static::__assert_equals('php artisan rsx:tasks:enable', $state['enable_command']);
+
+        // A queued run says so too: the grid and the Workers screen print this line.
+        $pending = static::__plant(Task_Run_Model::STATUS_PENDING);
+        static::__assert_equals('disabled', static::__endpoint('detail', ['id' => $pending])['task']['waiting']['reason']);
+    }
 }

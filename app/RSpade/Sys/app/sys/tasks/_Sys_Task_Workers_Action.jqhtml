@@ -6,7 +6,8 @@ its total.
 
 Pools (rsx.tasks.pools): on_demand runs dispatched work; scheduled runs #[Schedule] work and
 takes queued dispatched work first; kill carries out force stops and kills. Clicking a run
-opens it (_Sys_Task_Detail). Live: refreshes on Task_List_Changed_Topic.
+opens it (_Sys_Task_Detail). Live: refreshes on Task_List_Changed_Topic. While the task system
+is off the screen leads with _Sys_Task_System_Notice.
 --%>
 <Define:_Sys_Task_Workers_Action>
 <_Sys_Page_Scaffold>
@@ -16,6 +17,7 @@ opens it (_Sys_Task_Detail). Live: refreshes on Task_List_Changed_Topic.
                 <button type="button" class="btn btn-sm btn-secondary" data-action="refresh"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
             </Slot:actions>
         </_Sys_Page_Header>
+        <_Sys_Task_System_Notice />
         <% if (this.data.error_data) { %>
             <_Sys_Error $error_data=this.data.error_data />
         <% } else if (!this.data.workers) { %>

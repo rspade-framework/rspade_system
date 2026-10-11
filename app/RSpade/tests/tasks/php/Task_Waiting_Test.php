@@ -346,7 +346,7 @@ class Task_Waiting_Test extends Rsx_Test_Abstract
      * One Task_Waiting describes a page of pending runs with ONE query - the running rows -
      * however many runs it is asked about; a fresh instance per run would repeat it per run.
      */
-    public static function test_many_pending_runs_cost_one_query()
+    public static function test_many_pending_runs_cost_two_queries()
     {
         static::__clear_live();
         $holder_id = static::__running('group_alpha', [], true);
@@ -370,8 +370,9 @@ class Task_Waiting_Test extends Rsx_Test_Abstract
                 DB::flushQueryLog();
             }
 
-            static::__assert_count(1, $made, '24 pending runs, one query: ' . implode(' | ', $made));
-            static::__assert_contains('_tasks', $made[0], 'the running rows');
+            static::__assert_count(2, $made, '24 pending runs, two queries: ' . implode(' | ', $made));
+            static::__assert_contains('_task_system_off', $made[0], 'the switch, once');
+            static::__assert_contains('_tasks', $made[1], 'the running rows, once');
 
             foreach ($answers as $index => $answer) {
                 if ($index % 2 === 0) {
@@ -389,6 +390,45 @@ class Task_Waiting_Test extends Rsx_Test_Abstract
         } finally {
             Task_Lock_Holder::release($holder);
         }
+    }
+
+    /**
+     * While the task system is off that is what every pending run waits for, ahead of every
+     * other reason - a run not yet due included - and the whole page costs one read of the
+     * switch.
+     */
+    public static function test_the_task_system_being_off_comes_first()
+    {
+        static::__clear_live();
+        $due = static::__pending('plain_task');
+        $later = static::__pending('plain_task', ['n' => 2], ['scheduled_for' => date('Y-m-d H:i:s', time() + 3600) . '.000']);
+        $running = Task_Run_Model::find(static::__running('plain_task', ['n' => 3]));
+
+        \App\RSpade\Core\Task\Task::disable('test');
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $waiting = new Task_Waiting();
+            $answers = [$waiting->describe($due), $waiting->describe($later), $waiting->describe($running)];
+            $made = array_column(DB::getQueryLog(), 'query');
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        static::__assert_equals(
+            ['reason' => 'disabled', 'text' => 'task system disabled - php artisan rsx:tasks:enable', 'lock' => null, 'held_by_task_id' => null],
+            $answers[0]
+        );
+        static::__assert_equals('disabled', $answers[1]['reason'], 'ahead of "scheduled"');
+        static::__assert_null($answers[2], 'a run that is not pending still waits for nothing');
+        static::__assert_count(1, $made, 'one read of the switch for the page: ' . implode(' | ', $made));
+
+        static::__assert_equals('disabled', $due->to_status_array()['waiting']['reason'], 'and it rides the status array');
+
+        \App\RSpade\Core\Task\Task::enable();
+        static::__assert_equals('queued', Task_Waiting::of($due)['reason'], 'back on: the ordinary reasons again');
     }
 
     // -------------------------------------------------------------------------

@@ -202,6 +202,7 @@ FRAMEWORK INVENTORY
         Task Schedule Failures      all
         Task Scheduler Liveness     all           WARN in development, FAIL on
                                                   a sealed build
+        Task System                 all
         Task Worker Pools           all
         Turnstile                   all
         Web Exposure                all           security, and the
@@ -463,12 +464,23 @@ FRAMEWORK INVENTORY
                                  rotating logs or reaping workers and every one
                                  of those failures is silent. The signal cannot
                                  say WHICH of a dead cron and a wedged pool is
-                                 wrong, and says so.
+                                 wrong, and says so. INFO while the task system
+                                 is off, when no schedule advances by design -
+                                 the Task System row carries that finding.
         Task Schedule Failures   WARN naming each #[Schedule] whose
                                  consecutive failed runs reached
                                  rsx.tasks.failing_schedule_warn_after (3), with
                                  an excerpt of its last error. Never FAIL: the
                                  schedule still runs at its cadence.
+        Task System              whether the task system is on (rsx:man tasks,
+                                 TURNING THE TASK SYSTEM OFF AND ON). FAIL while
+                                 it is off - no queued task starts and no
+                                 schedule runs - naming since when, by whom, on
+                                 which host and the reason given, with
+                                 `php artisan rsx:tasks:enable` as the
+                                 remediation. INFO while the maintenance flag is
+                                 up: the window turned it off, and
+                                 rsx:maintenance:disable turns it back on.
         Task Worker Pools        the three pools (on_demand, scheduled, kill) as
                                  rsx-lockd accounts them (rsx:man tasks, THE
                                  WORKER POOLS): each pool's members against

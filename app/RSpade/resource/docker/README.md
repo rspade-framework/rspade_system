@@ -57,11 +57,74 @@ runs it as root before the application serves traffic.
 | OPcache | revalidate every request | revalidate every 10s |
 | PHP-FPM | root, `ondemand`, 8 workers a pool | `www-data`, `dynamic`, pools **sized to the machine at start** (below) |
 | PHP memory limit | 256 MB | 320 MB |
-| Browser libraries | yes (`rsx:debug`) | no |
+| Headless-browser libraries (Playwright / Chromium) | yes | yes — an application prints PDFs with it; see below |
 | Blank credentials | generated + printed once | **refuses to start** |
 | LibreOffice, poppler | yes | yes — document preview is a runtime feature |
-| WeasyPrint (HTML to PDF), Noto + DejaVu fonts | yes | yes — the same renderer and the same fonts, so a PDF made in either is the same PDF |
+| Fonts (Liberation, DejaVu, Noto) | yes | yes — the same set, so a server-drawn document is the same in either |
 | ImageMagick policy (`imagemagick/policy.xml`) | raster coders only | raster coders only |
+
+## What is installed, and why
+
+Every package is in the image for a reason, and the reason decides which target
+carries it. The Dockerfile says the same beside each line; this is the list in one
+place.
+
+**Both targets (the `base` stage)**
+
+| Packages | Why |
+|---|---|
+| `nginx`, `libnginx-mod-http-brotli-filter` | the web server, with Brotli for compiled bundles |
+| `redis-server`, `redis-tools` | cache, session and realtime plumbing; `redis-cli` is what the entrypoint and `rsx:health` probe with |
+| `supervisor` | starts and restarts every service; the container's process manager |
+| `mysql-client` | `migrate`, `db:query`, the schema-cache restore and operator access all shell out to it. The SERVER is a dev-target concern |
+| `ca-certificates`, `curl`, `wget`, `gnupg2`, `unzip` | fetching and verifying at build time and at run time (composer, mirrored assets, package keys) |
+| `imagemagick`, `ghostscript`, `optipng` | thumbnails and uploads: ImageMagick rasterises, Ghostscript is how it reads a PDF's first page, optipng shrinks what is stored |
+| `libreoffice`, `poppler-utils` | document preview and search: soffice converts Office files to a PDF rendition, `pdftotext` extracts text. Runtime features, so not dev-only |
+| Chromium (`npx playwright install chromium`, in `/opt/ms-playwright`) | the browser itself, at the build the shipped Playwright package launches. See "The headless browser" below |
+| `libnss3`, `libnspr4`, `libatk-bridge2.0-0`, `libatspi2.0-0`, `libdrm2`, `libgbm1`, `libxkbcommon0`, `libxcomposite1`, `libxdamage1`, `libxfixes3`, `libxrandr2`, `libxcursor1`, `libasound2t64` | the shared libraries headless Chromium links. **Not a test-only dependency**: besides `rsx:debug` and the browser tests, a downstream application drives the same browser through the shipped `playwright` package to **generate PDFs on the server**. That is why they are in prod, and why they must stay |
+| `fonts-liberation`, `fonts-dejavu-core`, `fontconfig`, `fonts-noto-core` | what LibreOffice, ImageMagick and the browser draw text with. A server-made document is set in the server's fonts, so both targets carry one set. Liberation stands in for the common Office faces and is what Chromium prints generic sans-serif and serif in; DejaVu Sans Mono is its monospace; Noto supplies the scripts and symbols those do not cover |
+| `git`, `openssh-client` | framework updates and `rsx:git`; `openssh-client` is git's transport for an ssh remote, which git only recommends, so it is named |
+| `rsync`, `procps`, `less`, `nano` | the updater copies with rsync; `ps`/`pkill` are how workers and the health checks see processes; a pager and an editor for whoever shells in |
+| `python3` | `bin/mysqlpv`, the progress viewer on a database dump or restore. Base and not dev, because the schema-cache restore runs on `migrate` in every target |
+| PHP 8.5 and its extensions | the list mirrors `Rsx_Php_Requirements::REQUIRED_EXTENSIONS`, which every request enforces at boot. `sodium` and OPcache are compiled into the binary and have no package |
+| Composer | application-layer packages (`rsx:composer`) |
+| Node 23, npm 11 | the framework's own helpers are node: the realtime relay, the full-page cache proxy, rsx-lockd, the JS compilers, Playwright. npm is pinned to 11 because 12 refuses this node |
+
+**Development only (the `dev` stage)**
+
+| Packages | Why |
+|---|---|
+| `mysql-server` | a self-contained environment; production brings its own database |
+| `python3-aiosmtpd` | the mail catcher: an SMTP sink with no web UI, so nothing leaves a development box |
+| `fzf`, `jq`, `man-db`, `gh` | quality of life for a developer in the shell |
+| Docker Engine, `iptables`, `uidmap`, a pinned `runc` | `rsx:test` runs in sibling containers started against this daemon (below) |
+
+### The headless browser
+
+Both images carry a complete, working headless Chromium: the shared libraries, and
+the browser itself in `/opt/ms-playwright`, installed at build time by the same
+Playwright version the framework ships in `system/node_modules` (`ARG
+PLAYWRIGHT_VERSION` in the Dockerfile; a framework test fails when the two differ).
+The `playwright` package finds it with nothing to configure:
+
+    const { chromium } = require('playwright');
+    const browser = await chromium.launch();
+
+- `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` is set for every process that
+  inherits the container's environment.
+- PHP-FPM clears its workers' environment, so a browser started from a web request
+  does not see that variable. The per-user default locations for `root`
+  (development PHP) and `www-data` (production PHP) are links to the same
+  directory, so it is found there too.
+- Chromium only. Firefox and WebKit are not installed in either target.
+- A box whose `system/` carries a newer Playwright than its image was built for
+  fetches the build it is missing with `cd system && npx playwright install
+  chromium`; rebuilding the image is the durable answer.
+- Reach the browser through the `playwright` package, never by a path into that
+  directory: the directory names carry a build number that moves with every
+  Playwright update.
+- Chromium refuses to start its own sandbox as root, so a process running as root
+  passes `args: ['--no-sandbox']`. Hand it only HTML the application generated.
 
 ## Services
 

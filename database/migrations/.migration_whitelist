@@ -701,6 +701,11 @@
             "created_at": "2026-10-11T19:03:25+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_process_queue_to_file_storage"
+        },
+        "2026_10_11_220825_create_task_system_off_table.php": {
+            "created_at": "2026-10-11T22:08:25+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe create_task_system_off_table"
         }
     }
 }

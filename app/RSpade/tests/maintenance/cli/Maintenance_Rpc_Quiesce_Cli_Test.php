@@ -23,7 +23,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * So this test does two things instead, and between them they cover the same ground:
  *
  *   1. STRUCTURAL - the block exists and sits where the sequence requires: after the task
- *      kill, before the first supervisor stop, inside the services region.
+ *      stop, before the first supervisor stop, inside the services region.
  *   2. BEHAVIORAL - the block's own lines are EXTRACTED FROM THE SCRIPT and run verbatim
  *      against planted fake daemons. Nothing is retyped here, so the assertion cannot drift
  *      away from what the script actually does: if someone rewrites the reaper, this test
@@ -102,7 +102,7 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
 
     /**
      * The block runs where the enable sequence requires: inside the services half, after the
-     * background tasks are killed, and before anything is handed to supervisorctl.
+     * background tasks are stopped, and before anything is handed to supervisorctl.
      *
      * Ordering is the whole point. A daemon spawned by an in-flight FPM request while this
      * runs is caught moments later by the php-fpm stop, so the pair leaves nothing behind.
@@ -115,13 +115,13 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
         static::__assert_true($do_enable !== false, 'do_enable() must exist');
 
         $services_gate = strpos($source, '[ "$SERVICES" = true ] || return 0', $do_enable);
-        $kill_all = strpos($source, 'rsx:tasks:kill-all', $do_enable);
+        $task_stop = strpos($source, 'rsx:tasks:disable', $do_enable);
         $quiesce = strpos($source, self::QUIESCE_PGREP, $do_enable);
         $first_stop = strpos($source, "stop_unit '^realtime'", $do_enable);
 
         static::__assert_true($quiesce !== false, 'do_enable() must quiesce the node daemons');
         static::__assert_true($services_gate !== false, 'do_enable() must gate the services half');
-        static::__assert_true($kill_all !== false, 'do_enable() must kill running tasks');
+        static::__assert_true($task_stop !== false, 'do_enable() must stop running tasks');
         static::__assert_true($first_stop !== false, 'do_enable() must stop the realtime unit');
 
         static::__assert_true(
@@ -129,8 +129,8 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
             'the quiesce belongs INSIDE the services half - --no-services must not touch daemons'
         );
         static::__assert_true(
-            $kill_all < $quiesce,
-            'the quiesce runs after the task kill'
+            $task_stop < $quiesce,
+            'the quiesce runs after the task stop'
         );
         static::__assert_true(
             $quiesce < $first_stop,

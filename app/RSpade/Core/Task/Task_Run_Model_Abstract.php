@@ -477,7 +477,7 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
             return false;
         }
 
-        $request = Task_Kill_Worker::request(static::find($this->id), Task_Kill_Request_Model::MODE_FORCE_STOP, $grace_seconds, static::__reason('force stop', $explanation), static::__actor_label());
+        $request = Task_Kill_Worker::request(static::find($this->id), Task_Kill_Request_Model::MODE_FORCE_STOP, $grace_seconds, static::__reason('force stop', $explanation), static::acting_label());
         $line = $request !== null
             ? "Force stop requested: killed if still running in {$grace_seconds}s"
             : 'Force stop requested: a kill of this run is already pending';
@@ -499,7 +499,7 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
             return false;
         }
 
-        Task_Kill_Worker::request($this, Task_Kill_Request_Model::MODE_FORCE_KILL, 0, static::__reason('force kill', $explanation), static::__actor_label());
+        Task_Kill_Worker::request($this, Task_Kill_Request_Model::MODE_FORCE_KILL, 0, static::__reason('force kill', $explanation), static::acting_label());
         $this->__operator_line('Force kill requested', $explanation);
 
         return true;
@@ -580,7 +580,7 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
 
     private function __operator_line(string $what, ?string $explanation): void
     {
-        $line = $what . ' by ' . static::__actor_label();
+        $line = $what . ' by ' . static::acting_label();
         if ($explanation !== null && trim($explanation) !== '') {
             $line .= ': ' . trim($explanation);
         }
@@ -590,16 +590,16 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
 
     private static function __reason(string $what, ?string $explanation): string
     {
-        $reason = $what . ' by ' . static::__actor_label();
+        $reason = $what . ' by ' . static::acting_label();
 
         return $explanation !== null && trim($explanation) !== '' ? $reason . ': ' . trim($explanation) : $reason;
     }
 
     /**
-     * Who is acting, for an operator line: the signed-in identity's printed name, or where
-     * the request came from when nobody is signed in.
+     * Who is acting, for an operator line or a record of who did something: the signed-in
+     * identity's printed name, or where the request came from when nobody is signed in.
      */
-    private static function __actor_label(): string
+    public static function acting_label(): string
     {
         $actor = Rsx_Model_Abstract::_resolve_context_actor();
         if ($actor !== null) {

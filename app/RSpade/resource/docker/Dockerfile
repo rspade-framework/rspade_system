@@ -4,11 +4,11 @@
 # Three targets from one file. Two of them share every base layer:
 #
 #   --target dev    a complete development environment: MySQL inside the
-#                   container, Playwright's browser libraries for rsx:debug,
-#                   and OPcache set to notice file changes immediately.
+#                   container, a Docker Engine for the test runner, and OPcache
+#                   set to notice file changes immediately.
 #
 #   --target prod   the same application runtime with no MySQL SERVER (bring
-#                   your own), no browser libraries, and OPcache holding its
+#                   your own), no test tooling, and OPcache holding its
 #                   compiled state for 10 seconds instead of re-checking every
 #                   request.
 #
@@ -56,15 +56,22 @@ RUN apt-get update && apt-get install -y \
         imagemagick ghostscript optipng \
     # document preview and text extraction - RUNTIME features, both targets
         libreoffice poppler-utils fonts-liberation fonts-dejavu-core \
-    # HTML to PDF for an application's own printable documents (an invoice, a
-    # statement): `weasyprint in.html out.pdf`. A renderer, not a browser - it runs
-    # no JavaScript, lays out paged-media CSS (@page, page breaks, running headers)
-    # and keeps every <a href> as a link in the PDF. Both targets, so a document
-    # made in development is the document made in production; fontconfig and the
-    # Noto families are here for the same reason - the generic sans-serif and serif
-    # families resolve to the same faces in both images, DejaVu Sans Mono (above)
-    # is monospace, and a PDF is set in the SERVER's fonts.
-        weasyprint fontconfig fonts-noto-core \
+    # Playwright's headless browser dependencies - the shared libraries Chromium
+    # links. BASE layer, not dev, and it STAYS in prod: the browser is not only how
+    # `php artisan rsx:debug /path` and the browser tests render a page, it is how
+    # an APPLICATION makes a PDF on the server (an invoice, a statement) - the
+    # `playwright` package the framework ships drives the same Chromium, and a PDF
+    # printed by it keeps every <a href> as a link. Removing these from the prod
+    # target breaks PDF generation downstream, with nothing here to say why.
+        libnss3 libnspr4 libatk-bridge2.0-0 libatspi2.0-0 libdrm2 libgbm1 \
+        libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+        libxcursor1 libasound2t64 \
+    # one font set for everything a server draws - a browser-printed PDF is set in
+    # the SERVER's fonts, so both targets carry the same faces and a document made
+    # in development is the document made in production. Chromium prints generic
+    # sans-serif and serif in Liberation Sans / Serif and monospace in DejaVu Sans
+    # Mono (above); Noto supplies the scripts and symbols those do not cover.
+        fontconfig fonts-noto-core \
     # the framework shells out to these. openssh-client is git's transport for an
     # ssh:// or git@host: remote - git only RECOMMENDS it, so it is named here
     # rather than left to be pulled in by something else.
@@ -156,6 +163,34 @@ RUN curl -fsSL https://deb.nodesource.com/setup_23.x | bash - \
     && apt-get update && apt-get install -y nodejs \
     && npm install -g npm@11 \
     && rm -rf /var/lib/apt/lists/*
+
+# Headless Chromium, the browser Playwright drives. BOTH targets, production
+# included: it is how `rsx:debug` and the browser tests render a page, and it is how
+# an APPLICATION prints a PDF on the server through the `playwright` package the
+# framework ships. It is not a test-only dependency - leave it out of prod and
+# PDF generation downstream stops working.
+#
+# THE VERSION IS THE FRAMEWORK'S. A Playwright package launches exactly the browser
+# build it was released with, so this pin equals the version of the `playwright`
+# package in system/node_modules (a framework test compares the two). Updating that
+# package means updating this number and rebuilding the image; a box on an older
+# image runs `npx playwright install chromium` to fetch the build it is missing.
+#
+# ONE COPY, FOUND BY EVERYONE. The browsers live in /opt/ms-playwright and
+# PLAYWRIGHT_BROWSERS_PATH says so to every process that inherits the container's
+# environment. PHP-FPM clears its workers' environment, so a browser started from a
+# web request never sees that variable - which is why the per-user default
+# locations for root (development PHP) and www-data (production PHP) are links to
+# the same directory. `install chromium` fetches Chromium and its headless shell for
+# the architecture being built; nothing here names one.
+ARG PLAYWRIGHT_VERSION=1.64.0
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN npx --yes playwright@${PLAYWRIGHT_VERSION} install chromium \
+    && chmod -R a+rX /opt/ms-playwright \
+    && mkdir -p /root/.cache /var/www/.cache \
+    && ln -sfn /opt/ms-playwright /root/.cache/ms-playwright \
+    && ln -sfn /opt/ms-playwright /var/www/.cache/ms-playwright \
+    && rm -rf /root/.npm
 
 # Service configuration. Copied in one layer; the per-target OPcache policy and
 # supervisor programs are layered on top by the targets below.
@@ -284,11 +319,6 @@ RUN sed -i "s/^target=.*/target=dev/" /.rspade_container \
 RUN apt-get update && apt-get install -y \
     # the database, for a self-contained development environment
         mysql-server \
-    # Playwright's headless browser dependencies - this is what makes
-    # `php artisan rsx:debug /path` able to render a real page
-        libnss3 libnspr4 libatk-bridge2.0-0 libatspi2.0-0 libdrm2 libgbm1 \
-        libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-        libxcursor1 libasound2t64 \
     # the development mail sink: an SMTP-only catcher, no web UI
     # (supervisor/conf.d/mail-catcher.conf says why not Mailpit)
         python3-aiosmtpd \

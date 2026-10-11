@@ -1,0 +1,23 @@
+<%--
+_Sys_Task_System_Notice - the alert a task screen shows while the task system is OFF
+(php artisan rsx:tasks:disable; rsx:man tasks, TURNING THE TASK SYSTEM OFF AND ON).
+
+No arguments. Self-loading from _Sys_Tasks_Controller::system_state and live: it re-reads on
+every Task_List_Changed_Topic frame, and the switch publishes one when it is thrown, so the
+alert appears and disappears without a reload. While the task system is on it renders nothing.
+
+    <_Sys_Task_System_Notice />
+--%>
+<Define:_Sys_Task_System_Notice tag="div">
+    <% if (this.data.state && !this.data.state.is_enabled) { %>
+        <% const _d = this.data.state.disabled; %>
+        <div class="_Sys_Task_System_Notice__alert" role="alert">
+            <i class="_Sys_Task_System_Notice__icon bi bi-exclamation-triangle-fill"></i>
+            <div class="_Sys_Task_System_Notice__body">
+                <div class="_Sys_Task_System_Notice__title">The task system is disabled</div>
+                <div class="_Sys_Task_System_Notice__line">No queued task starts and no schedule runs. Disabled <%= Rsx_Time.format_datetime(_d.disabled_at) %> by <%= _d.disabled_by %> on <span class="_Sys_Task_System_Notice__mono"><%= _d.host %></span><% if (_d.reason) { %>: <%= _d.reason %><% } %></div>
+                <div class="_Sys_Task_System_Notice__line">Turn it back on: <code class="_Sys_Task_System_Notice__command"><%= this.data.state.enable_command %></code></div>
+            </div>
+        </div>
+    <% } %>
+</Define:_Sys_Task_System_Notice>

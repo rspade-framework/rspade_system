@@ -24,8 +24,8 @@ use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 /**
  * The Tasks screens' endpoints: the tasks grid (active runs on top, finished runs below),
  * one run's detail with its attachments, the lifecycle actions a developer takes on a run
- * (graceful stop, force stop, force kill, cancel, run again), the schedules with Run now, and
- * the worker pools.
+ * (graceful stop, force stop, force kill, cancel, run again), the schedules with Run now, the
+ * worker pools, and whether the task system is on.
  *
  * A run's live views - its output console and its reports - are the Core task widgets
  * (Task_Output, Task_Report, Task_Report_Browser) reading through Rsx_Task_Controller, where a
@@ -283,6 +283,26 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
             'id' => $id,
             'outcome' => $pending_before !== null && $pending_before === $id ? 'coalesced' : 'dispatched',
             'concurrency' => $mode,
+        ];
+    }
+
+    /**
+     * Whether the task system is on, and when it is off the record of who turned it off
+     * (Task::disabled_state()) with the command that turns it back on. What
+     * _Sys_Task_System_Notice shows on the Tasks and Task Workers screens.
+     *
+     * @return array {is_enabled: bool, disabled: null|{disabled_at, disabled_by, reason, host},
+     *                enable_command: string}
+     */
+    #[Ajax_Endpoint]
+    public static function system_state(Request $request, array $params = [])
+    {
+        $disabled = Task::disabled_state();
+
+        return [
+            'is_enabled' => $disabled === null,
+            'disabled' => $disabled,
+            'enable_command' => 'php artisan rsx:tasks:enable',
         ];
     }
 

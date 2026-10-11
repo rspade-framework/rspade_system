@@ -8,12 +8,18 @@ says what is in this DIRECTORY and what must stay true when editing it.
 
 ## What is here
 
-- `Task.php` — the facade: `set_next_run()` (one upsert of `_task_schedules.next_run_at` for a
+- `Task.php` — the facade: THE SWITCH (`is_enabled()` / `disabled_state()` read
+  `_task_system_off` on every call, never memoized across a loop iteration or a tick;
+  `disable($reason)` / `enable()` are the only writers and publish
+  `Task_Notify::system_switched()`), `set_next_run()` (one upsert of `_task_schedules.next_run_at` for a
   DECLARED schedule; throws for a task with no `#[Schedule]`), `dispatch()` (coalescing through `Task_Concurrency` for a managed
   task, then one `spawn_worker()` try per task pool), `internal()` (an INLINE run: row,
-  identity run lock, shutdown-function settle, revision unit, console streams),
+  identity run lock, shutdown-function settle, revision unit, console streams; while the
+  system is off, `__queue_and_wait()` - a PENDING row, a poll every `DISABLED_POLL_SECONDS`,
+  then the guarded claim of its own row),
   `get_scheduled_tasks()`, `resolve_task_class()`, `spawn_worker($pool)` (refuse when
-  spawning is off, under maintenance mode, while this process's own spawns into the pool
+  spawning is off, under maintenance mode, while the task system is off (the two task
+  pools; a kill worker is still started), while this process's own spawns into the pool
   fill its cap (`is_worker_process()`, `/proc`), then read the pool count under the pool
   lock, unlock, and spawn only below the cap - `rsx:task:killer` for the kill pool,
   `rsx:task:worker --pool=` otherwise) and the process switch `spawn_workers(bool)` (OFF by
@@ -49,8 +55,9 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `params_hash()`, the coalescing enqueue under the identity's
   enqueue lock, `try_acquire_run_lock()` (a worker's non-blocking try), `acquire_run_lock()`
   (an inline run waits), `reschedule_pending_after_completion()`.
-- `Task_Waiting.php` — what a PENDING run is waiting for (`scheduled` / `lock` / `workers` /
-  `queued`), derived per read: one instance memoizes the RUNNING rows (one query: holders by
+- `Task_Waiting.php` — what a PENDING run is waiting for (`disabled` / `scheduled` / `lock` /
+  `workers` / `queued`), derived per read: one instance memoizes the switch (one read), the
+  RUNNING rows (one query: holders by
   run lock identity + busy pool workers), the pools' caps and each lock's `is_in_use()`.
 - `Task_Lock.php` — one named `RsxLocks` lock held across control flow (the enqueue and run
   locks). A claim is guarded by its pool lock and a guarded write, never by a `Task_Lock`.
@@ -66,7 +73,8 @@ says what is in this DIRECTORY and what must stay true when editing it.
 - `Task_Kill_Worker.php` — `request()` (records a `_task_kill_requests` row bound to the
   target's `worker_host`; spawns a kill worker when that is this host), `run()` (the
   `rsx:task:killer` loop under the kill pool), `carry_out()` (poll until due or moot,
-  SIGKILL, settle KILLED), `claim_for_this_process()` (`rsx:tasks:kill-all`).
+  SIGKILL - a pool run's pid only while `Task::is_worker_process()` - settle KILLED),
+  `claim_for_this_process()` (`rsx:tasks:disable`).
 - `Task_Gates.php` — the view gate, view scope and control gate per realm (deny by default,
   a staff developer passes); `can_subscribe_to_task()` / `can_subscribe_to_list()` for the
   topics.
@@ -93,8 +101,13 @@ says what is in this DIRECTORY and what must stay true when editing it.
   class in that directory through the container, and this one takes constructor arguments.
   Contract: `rsx:man task_commands`.
 - `Cron_Parser.php` — normalizes both 5-field cron and the plain-English `#[Schedule]` phrases.
-- `Task_Health_Checks.php` — `rsx:health` rows: Task Worker Pools, Task Scheduler Liveness,
-  Task Schedule Failures.
+- `Task_Health_Checks.php` — `rsx:health` rows: Task System (FAIL while off; INFO under the
+  maintenance flag), Task Worker Pools, Task Scheduler Liveness (INFO while off), Task
+  Schedule Failures.
+- The switch's commands are `Commands/Rsx/Tasks_Disable_Command.php` (switch first, then the
+  synchronous stop pass: `force_stop()` on every RUNNING run, this host's kill requests
+  carried out in-process, re-read until none is owed) and `Tasks_Enable_Command.php`;
+  `system/bin/maintenance-mode.sh` calls both.
 
 ## Invariants to keep when editing here
 
@@ -138,7 +151,9 @@ says what is in this DIRECTORY and what must stay true when editing it.
   all four are. `rsx:task:process` asks the daemon about every RUNNING run with a
   `worker_id` in ONE `members_alive()` per pool, under that pool's lock: the daemon's own
   generation and not alive -> abandoned at once; an older generation (`known: false`) ->
-  this host judges its own runs by pid and leaves other hosts' alone. A run with no
+  this host judges its own runs by pid - the pid must be a task worker of this project
+  (`Task::is_worker_process()`, the command line; never bare pid existence, which a reused
+  pid satisfies) - and leaves other hosts' alone. A run with no
   `worker_id` (inline) is the local pid probe on its own host. No grace period exists and
   none may be added. The silence limit (and a run's own requested timeout) is enforced as a
   force-kill REQUEST for a live local run.
@@ -148,8 +163,24 @@ says what is in this DIRECTORY and what must stay true when editing it.
   returned a failure or threw is settled FAILED and nothing re-runs it. `rsx.tasks.retry` is
   owner-set pacing, not a timeout.
 - **Maintenance spawns nothing.** `spawn_worker()` returns false while
-  `Framework_Maintenance::is_active()`, for every pool. `rsx:tasks:kill-all` therefore carries
+  `Framework_Maintenance::is_active()`, for every pool. `rsx:tasks:disable` therefore carries
   out this host's kills in its own process.
+- **OFF means nothing starts executing, by any route, and everything queues.** Every path
+  that would begin a task body asks `Task::is_enabled()` first, from the database, at the
+  moment it would begin: the worker before it joins and before every claim (under its pool
+  lock - a task-table read), `spawn_worker()` for the two task pools, `--once`, and
+  `internal()`, which queues its run PENDING and waits. There is no bypass flag and no
+  internal allowance; a new execution entry must ask too. Recovery is NOT execution and
+  never asks: the reaper, `recover_kill_requests()`, the kill pool and `Task_Kill_Worker`
+  run while the system is off - `rsx:tasks:disable` on one host depends on the other
+  hosts' ticks carrying out their kills.
+- **A queued inline run is an ordinary PENDING row.** Its waiter claims it with the same
+  guarded PENDING -> RUNNING write a worker uses (after the identity's run lock), so
+  whichever of the two wins, the body is entered once; a waiter that died leaves nothing to
+  recover. Nothing may mark such a row as owned by its waiter.
+- **A kill signals only its target.** `carry_out()` SIGKILLs a pool run's pid only while
+  that pid is a task worker of this project by its command line, and an inline run's only
+  when it is an artisan process of this project; anything else settles without a signal.
 - **The console streams are the RUNNER's.** `Task_Instance::set_console_streams()` is called
   by `Task::internal()`'s fourth argument, which only `Task_Run_Command` (and therefore every
   alias) passes - so an application calling `internal()` prints to nobody's console. The

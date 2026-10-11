@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Tasks\Php;
 
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
+use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Run_Model;
 
@@ -93,6 +94,44 @@ class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
         }
 
         $task->state(['batches_done' => $done]);
+
+        return null;
+    }
+
+    /**
+     * A cooperative task with nothing else to do: runs until it is asked to stop, checking on
+     * a short interval, then returns - the run settles STOPPED.
+     */
+    #[Task('exec fixture that runs until asked to stop')]
+    public static function runs_until_stopped(Task_Instance $task, array $params = [])
+    {
+        while (!$task->is_stop_requested()) {
+            usleep(100000);
+        }
+
+        return null;
+    }
+
+    /**
+     * Appends one line to the file named by $params['path'] - evidence, visible across
+     * processes, of how many times the body was entered.
+     */
+    #[Task('exec fixture that appends a line to a file')]
+    public static function appends_line(Task_Instance $task, array $params = [])
+    {
+        file_put_contents($params['path'], "ran\n", FILE_APPEND);
+
+        return null;
+    }
+
+    /**
+     * Turns the task system off from inside a run - the switch thrown while a worker is busy.
+     */
+    #[Task('exec fixture that turns the task system off')]
+    public static function disables_task_system(Task_Instance $task, array $params = [])
+    {
+        self::$run_order[] = 'OFF';
+        Task::disable('fixture: thrown mid-run');
 
         return null;
     }

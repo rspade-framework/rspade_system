@@ -33,9 +33,15 @@ WHAT ENABLE DOES (in order - the order is load-bearing)
        booting into the window must already SEE maintenance mode, or it would select the live
        backends (cluster locks over rsx-lockd, the Redis cache) and hard-fatal on the refused
        connect.
-    2. rsx:tasks:kill-all - force-kill this host's running task runs, synchronously in its own
-       process (SIGKILL, each run settled KILLED with the explanation; rsx:man tasks).
-       Best-effort: a pre-database or broken tree must not fail the transition.
+    2. rsx:tasks:disable --reason="maintenance mode: <reason>" - turn the task system OFF
+       (a switch in the database: no task starts on ANY host sharing it) and stop this
+       host's running task runs, synchronously in its own process: each is asked to stop,
+       and what is still running after rsx.tasks.stop_grace_seconds is SIGKILLed and
+       settled KILLED (rsx:man tasks, TURNING THE TASK SYSTEM OFF AND ON). So this step
+       takes up to that grace when a task ignores the request. Best-effort: a pre-database
+       or broken tree must not fail the transition, and the script says so when the
+       command fails. An inline run inside a web request is never signalled; the command
+       lists it, and it ends when php-fpm is stopped in step 4.
     3. Quiesce the node daemons - every node process whose command line names a socket
        under tmp/ (the node service and ssr-server, plus anything added later,
        since the match is on the socket DIRECTORY rather than a name): SIGTERM, one settle
@@ -71,11 +77,21 @@ WHAT DISABLE DOES
        it is waiting for. That is deliberate - a visible "still waiting for rsx-lockd" is
        better than a silent deadline that admits traffic to a daemon which never came up.
        Ctrl-C is always available; the flag stays raised, so nothing is half-open.
-    2. Remove the flag - LAST, so nothing serves before its services are back.
+    2. Remove the flag, so nothing serves before its services are back.
+    3. rsx:tasks:enable - turn the task system back on, after the flag is gone so the
+       command runs as an ordinary process. The next rsx:task:process tick picks up what
+       queued during the window. Best-effort and LOUD: a failure prints an [ERROR] naming
+       `php artisan rsx:tasks:enable` and never fails the transition - the services are
+       back either way, and rsx:health FAILs its Task System row until the switch is on.
+
+    Steps 1, 1a and 3 are the SERVICES half: --no-services removes the flag only.
 
     Disable is STATELESS: it starts whichever of the five units exist, with no record of what
-    enable stopped. A unit an operator had deliberately stopped beforehand will therefore be
-    started. That is accepted and deliberate - determinism beats a state file that can go stale.
+    enable stopped, and it turns the task system on whether or not this window turned it
+    off. A unit an operator had deliberately stopped beforehand will therefore be started,
+    and a task system an operator had deliberately disabled beforehand (rsx:tasks:disable)
+    is ON after the window - disable it again if that was intended. That is accepted and
+    deliberate - determinism beats a state file that can go stale.
 
 WHY THE RPC DAEMONS ARE A SPECIAL CASE
     The node build helpers (js-parser, js-transformer, minify, jqhtml-compile, js-sanitizer,
@@ -219,8 +235,8 @@ WHAT CHANGES WHILE SERVICES ARE STOPPED
     (owner ruling 2026-08-11): a `maint:` token, granted instantly, holding nothing, touching
     no file, waiting for no one. That is not a shortcut - it is what the window means. A lock
     exists to exclude a concurrent writer, and maintenance has already removed every one of
-    them: web requests are 503, the task runners are refused, the background workers are
-    killed.
+    them: web requests are 503, the task runners are refused, the running tasks are
+    stopped.
 
     It USED to degrade to the flock backend, on the reasoning that a single-box lock is
     equivalent to a cluster-wide one once the fleet is down. True, and beside the point: it
@@ -259,8 +275,8 @@ WHAT CHANGES WHILE SERVICES ARE STOPPED
 FLAGS
     --reason=<text>   The operator reason (enable only). Defaults to "maintenance mode".
                       It is the flag's content and appears in the web 503 and every refusal.
-    --no-services     Touch the flag ONLY - no task kill, no RPC daemon quiesce, no
-                      supervisorctl. For containers with no supervisord and for tests.
+    --no-services     Touch the flag ONLY - the task system is neither turned off nor back
+                      on, no RPC daemon quiesce, no supervisorctl. For containers with no supervisord and for tests.
     --force           (disable only) Leave maintenance mode even though a schema-cache
                       build is in progress or was interrupted. Unmerged index entries do
                       NOT need it - see DISABLE ALWAYS STARTS THE SERVICES.
@@ -283,8 +299,8 @@ RSX VS LARAVEL
     middleware and public/index.php's pre-render require were both removed), so there is
     exactly ONE maintenance mode.
 
-    RSpade's: gates the CLI (allow-most) as well as the web, kills running background
-    tasks, stops and restarts the runtime services including the lock daemon and redis,
+    RSpade's: gates the CLI (allow-most) as well as the web, turns the task system off
+    and stops running background tasks, stops and restarts the runtime services including the lock daemon and redis,
     carries an operator reason through to every message, and keeps the framework
     functional without any of those services for the duration.
 
@@ -296,8 +312,12 @@ TROUBLESHOOTING
         it (a --force pull repairs the zone).
 
     A task ran anyway during the window
-        Only the RUNNERS are gated. A human `rsx:task:run --force` is allowed by design, and a
-        task already running when enable fired is killed, not gated. Long-running external
+        Inside a window raised with its services half, nothing in the task system runs:
+        the window turns the task system off, so a `rsx:task:run --force` or a #[Command]
+        passes the CLI gate and then QUEUES its run and waits for the window to end
+        (rsx:man tasks, TURNING THE TASK SYSTEM OFF AND ON). Under --no-services only the
+        flag is up: the RUNNERS are gated and a human `rsx:task:run --force` runs. A task
+        already running when enable fired is stopped, not gated. Long-running external
         processes started outside the task system are not affected at all.
 
     Redis write warnings in the log after maintenance

@@ -93,6 +93,17 @@ class Task_Notify
     }
 
     /**
+     * The task system was turned off or on (Task::disable() / Task::enable()). Every list
+     * watcher that names no task is told - a screen that lists runs re-reads, and with it
+     * whatever it shows of the switch. The frame carries no task: a subscription filtered to
+     * one class or method does not match it.
+     */
+    public static function system_switched(): void
+    {
+        static::__send('Task_List_Changed_Topic', []);
+    }
+
+    /**
      * Send what was held back while this process held a pool lock. Called by whoever releases
      * the lock; a no-op when nothing is waiting.
      */

@@ -26,6 +26,12 @@ use App\RSpade\Core\Task\Task_Run_Model;
  *   EXIT CODE is the run's return code: 0 for success (the task returned null, true or 0),
  *          the code it returned for a failure (clamped to 1..255), 1 for false or a throw.
  *
+ * WHILE THE TASK SYSTEM IS OFF (php artisan rsx:tasks:disable) nothing runs: rsx:task:run and
+ * every #[Command] alias queue their run, say once on STDERR that they are waiting for
+ * `php artisan rsx:tasks:enable`, and wait - with no limit - until the system is back on;
+ * the task then runs and the command exits with its code as always. There is no flag that
+ * insists. A command killed while it waits leaves its run queued for a worker.
+ *
  * USAGE:
  * php artisan rsx:task:run Service task_name                    # Basic execution
  * php artisan rsx:task:run Service task_name --param=value      # With parameters
@@ -96,6 +102,7 @@ class Task_Run_Command extends Command
         // Task::internal() called from application code prints to nobody's console.
         $streams = [STDOUT, $this->output->isQuiet() ? null : STDERR];
 
+
         try {
             Task::resolve_task_class($service, $task);
         } catch (\Exception $e) {
@@ -115,6 +122,14 @@ class Task_Run_Command extends Command
         $code = (int) $run->return_code;
         if ((int) $run->status_id === Task_Run_Model::STATUS_FAILED) {
             return $code >= 1 && $code <= 255 ? $code : 1;
+        }
+
+        // A run queued while the task system was off can end without this process: cancelled
+        // from the queue, or killed under the worker that ran it.
+        if (in_array((int) $run->status_id, [Task_Run_Model::STATUS_CANCELLED, Task_Run_Model::STATUS_KILLED], true)) {
+            fwrite(STDERR, "Task {$run->id} was " . strtolower($run->status_id__label) . ($run->status_reason ? ": {$run->status_reason}" : '') . "\n");
+
+            return 1;
         }
 
         return 0;

@@ -134,7 +134,7 @@ $run = Task::internal('Report_Service', 'generate', ['month' => 12]);   // settl
 ```bash
 php artisan rsx:task:run Report_Service generate --month=12   # inline; stdout/stderr/exit code
 php artisan rsx:task:list                                     # discovered tasks
-php artisan rsx:tasks:list                                    # pools, running runs, schedules
+php artisan rsx:tasks:list                                    # the switch, pools, running runs, schedules
 ```
 
 - **`dispatch()`** writes a PENDING row and, when due now, spawns a detached worker if a pool has room. Options: `scheduled_for` (a FUTURE value is the only thing that defers a run; refused - it throws - for an `#[Exclusive]`/`#[Debounce]` task, which times its own runs) and `timeout` (a HARD limit on that run, seconds from its start, reporting or not - only for a caller that wants one). Any other option throws - there is no `queue`.
@@ -194,7 +194,6 @@ php artisan rsx:tasks:stop 327                       # graceful
 php artisan rsx:tasks:stop 327 --force --grace=30    # force stop
 php artisan rsx:tasks:stop 327 --kill                # force kill
 php artisan rsx:tasks:cancel 327
-php artisan rsx:tasks:kill-all --explanation="..."
 ```
 
 **A stop is COOPERATIVE.** It interrupts nothing: the task stops early only if it calls `$task->is_stop_requested()` between units of work and returns when it answers true - leaving its data consistent and saying what it did in `summary()`. The run then settles STOPPED. Only a force stop or kill ends a task that does not check.
@@ -337,14 +336,33 @@ Retention: finished runs' output is cut to 150 lines and their attachments unlin
 
 ---
 
+## Turning the task system off and on
+
+```bash
+php artisan rsx:tasks:disable --reason="replacing the server" [--grace=30]
+php artisan rsx:tasks:enable
+```
+
+One switch, **stored in the database** (one fact for every host sharing it). **While it is off, every task - dispatched or inline - QUEUES; nothing runs until `rsx:tasks:enable`; an inline caller waits for its answer.**
+
+- `Task::dispatch()` writes its PENDING row as always; no worker is started, a worker claims nothing and exits, and no `#[Schedule]` produces a run. A schedule that came due meanwhile runs **once** after enable, then follows its cadence.
+- **`Task::internal()`, `rsx:task:run` and a `#[Command]` queue the run PENDING and WAIT** - no limit, re-reading every 2 s; a command says once on stderr that it is waiting for `php artisan rsx:tasks:enable`. After enable the waiting process claims and runs its own run in-process and the caller gets its ordinary answer; if a worker claimed it first the caller returns that settled run. It executes exactly once. **A waiter that goes away loses nothing**: the process dies with the server, or a web server ends a request that outlived its limit, and the run stays queued for a worker - that caller just never sees the answer. So an endpoint that calls `Task::internal()` blocks while the system is off; where the answer is not needed in the request, `dispatch()`.
+- `rsx:task:process` keeps settling dead runs and starting kill workers. No flag makes anything run.
+- **`rsx:tasks:disable` is synchronous**: switch first, then every RUNNING run gets a force stop - asked to stop, killed after the grace (`--grace`, default `rsx.tasks.stop_grace_seconds`) - and it returns once this host's runs have settled. **Exit 0 = off and nothing running here**; 2 = off, with the inline web-request runs it lists still running (never signalled); another host's runs keep their kill request for that host's tick. Idempotent both ways.
+- It is seen everywhere: every pending run's wait line reads `task system disabled - php artisan rsx:tasks:enable`, `rsx:tasks:list` leads with it, `rsx:health` FAILs its **Task System** row, `/_sys` Tasks and Task Workers show an alert. In PHP: `Task::is_enabled()`, `Task::disabled_state()`.
+- `rsx:maintenance:enable` runs the disable and `rsx:maintenance:disable` the enable - so a task system you had turned off on purpose is ON after a maintenance window.
+
+**Replacing a server**: `rsx:tasks:disable` -> wait for exit 0 -> replace it -> `rsx:tasks:enable` on the new one. A host lost without that leaves its RUNNING runs unsettled when it returns under another hostname (a recreated container's hostname is its id unless pinned): only the host that ran a worker can judge its pid.
+
 ## Troubleshooting
 
 - **The run FAILED with "The task returned array".** A task returns a return code, not data. Move the data to `summary()`/`state()` and return `null`.
-- **Dispatched, stays Pending.** The run says why - its `waiting` line names a time, a lock and the run holding it, or the busy workers. Pools full (`rsx:health` "Task Worker Pools", `/_sys/workers`), a future `scheduled_for`, a retry backoff (`status_reason` says), a busy `#[Exclusive]` identity or exclusive group, `Task::spawn_workers(false)`, or inside a test. The cron tick picks it up.
+- **Dispatched, stays Pending.** The run says why - its `waiting` line names the task system being off (`php artisan rsx:tasks:enable`), a time, a lock and the run holding it, or the busy workers. Pools full (`rsx:health` "Task Worker Pools", `/_sys/workers`), a future `scheduled_for`, a retry backoff (`status_reason` says), a busy `#[Exclusive]` identity or exclusive group, `Task::spawn_workers(false)`, or inside a test. The cron tick picks it up.
 - **A widget says "Unavailable" / `Rsx_Task.get()` answers not found.** The viewer fails `task.view.authorize` - with no handler nobody but a developer passes.
 - **A long task was Killed: "no report for Ns (cap 1800s)".** It went 30 minutes without reporting. Call `$task->heartbeat()` and report progress on every item; a task that reports is never killed for how long it runs.
 - **A stop did nothing.** The task never calls `is_stop_requested()`; force-stop it. A run inside a web request is never killed.
 - **`Cannot reach rsx-lockd ...`.** The daemon is down (`rsx:health` "Lock Server"); a dispatch's row IS written before the throw.
-- **Refused under maintenance mode.** `rsx:task:process`/`:worker` are blocked (exit 75); `rsx:task:run` needs `--force`.
+- **Refused under maintenance mode.** `rsx:task:process`/`:worker` are blocked (exit 75); `rsx:task:run` needs `--force` to pass the gate - and inside a full window the task system is off, so it then queues and waits for the window to end.
+- **A command or a request "hangs" in `Task::internal()`.** The task system is off and the call is waiting (the command said so on stderr): `php artisan rsx:tasks:enable`.
 
 Details: `rsx:man tasks`, `rsx:man task_commands`, `rsx:man locks`, `rsx:man sys_panel` (the Tasks and Task Workers screens). Colocated: `system/app/RSpade/Core/Task/CLAUDE.md`. Related: `rspade:task-commands`, `rspade:locks-and-subprocesses`, `rspade:event-hooks`, `rspade:realtime`.

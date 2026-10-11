@@ -1,5 +1,6 @@
 <%--
-_Sys_Tasks_Action - the Tasks screen: two tabs.
+_Sys_Tasks_Action - the Tasks screen: two tabs, under the alert shown while the task system
+is off (_Sys_Task_System_Notice).
 
     tasks     - _Sys_Tasks_DataGrid (every run: active ones on top, finished below; live)
     schedules - _Sys_Tasks_Schedules (every #[Schedule] with its run statistics; Run now)
@@ -10,6 +11,7 @@ tab is the hash key "tab"; the grid's state is under the grid key "tasks".
 <Define:_Sys_Tasks_Action>
 <_Sys_Page_Scaffold class="_Sys_Page_Scaffold--wide">
     <Slot:main>
+        <_Sys_Task_System_Notice />
         <_Sys_Tabs $sid="tabs" $hash="tab" $tabs=([
             {key: 'tasks', label: 'Tasks', icon: 'bi-list-check'},
             {key: 'schedules', label: 'Schedules', icon: 'bi-calendar-event'},

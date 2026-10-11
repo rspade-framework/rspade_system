@@ -956,7 +956,7 @@ Committed-By: rsx:framework:pull"; then
 # enter_maintenance - raise the window before anything is touched.
 #
 # ONE implementation, in bin/maintenance-mode.sh (the same script `php artisan
-# rsx:maintenance:enable` runs): flag + reason, task kill-all, then stop every
+# rsx:maintenance:enable` runs): flag + reason, the task system off and its running tasks stopped, then stop every
 # supervised service in dependency order. THAT SCRIPT OWNS THE SERVICE LIST - it is
 # deliberately not repeated here, so adding a service is a one-file change and this
 # comment cannot go stale. cleanup() lifts it on every exit path, Ctrl-C included.
