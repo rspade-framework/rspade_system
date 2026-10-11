@@ -74,6 +74,19 @@ signed_in_user() {
     sql "SELECT login_user_id FROM _sessions WHERE id = ${SESSION_ID}"
 }
 
+# An expired session row is RETIRED: inactive, still recording whose it was, and pointing
+# at the successor row the browser was moved to - which is signed out.
+assert_retired() {
+    local row successor
+    row="$(sql "SELECT login_user_id, active, superseded_by_id FROM _sessions WHERE id = ${SESSION_ID}")"
+    echo "$row" | grep -qE '"login_user_id": *[0-9]+' || fail "$1: the expired row no longer records whose it was: $row"
+    echo "$row" | grep -qE '"active": *(0|false)' || fail "$1: the expired row is still active: $row"
+    successor="$(echo "$row" | grep -oE '"superseded_by_id": *[0-9]+' | grep -oE '[0-9]+$' || true)"
+    [ -n "$successor" ] || fail "$1: the expired row names no successor: $row"
+    sql "SELECT login_user_id, active FROM _sessions WHERE id = ${successor}" | grep -qE '"login_user_id": *null' \
+        || fail "$1: the successor row is still signed in"
+}
+
 # The test signs in as an account of its own, so it depends on no shipped credential.
 seed_account() {
     (cd "$PROJECT_DIR" && php artisan tinker --execute='
@@ -130,7 +143,7 @@ headers="$(curl -s -D - -o /dev/null -b "$JAR" -c "$JAR" -H 'Sec-Fetch-Dest: doc
 status="$(echo "$headers" | head -1 | awk '{print $2}')"
 [ "$status" = "302" ] || fail "navigation past the limit returned $status (expected 302)"
 echo "$headers" | grep -i '^Location:' | grep -q '/login' || fail "navigation past the limit did not redirect to /login: $(echo "$headers" | grep -i '^Location:')"
-signed_in_user | grep -qE '"login_user_id": *null' || fail "the session still carries its identity after the navigation"
+assert_retired "after the navigation"
 login_page="$(curl -s -b "$JAR" -c "$JAR" -H 'Sec-Fetch-Dest: document' "${BASE}/login" 2>/dev/null)"
 printf '%s' "$login_page" | grep -q 'Your session has expired' || fail "the sign-in screen does not carry the expiry message"
 echo "[TEST] 2. OK" >&2
@@ -144,7 +157,7 @@ age last_page_view_at $((LIMIT + 180))
 body="$(ajax Rsx_Timezone_Controller/get_settings)"
 printf '%s' "$body" | grep -q '"error_code":"session_expired"' || fail "expected the session_expired envelope, got: $body"
 printf '%s' "$body" | grep -q '"cause":"idle"' || fail "expected cause idle, got: $body"
-signed_in_user | grep -qE '"login_user_id": *null' || fail "the session still carries its identity after the Ajax refusal"
+assert_retired "after the Ajax refusal"
 echo "[TEST] 3. OK" >&2
 
 # ---------------------------------------------------------------------------
@@ -155,7 +168,7 @@ sign_in
 age login_at $((LIMIT + 60))
 body="$(ajax Rsx_Session_Controller/page_view)"
 printf '%s' "$body" | grep -q 'session_expired' || fail "the page-view report inside the grace window was not refused: $body"
-signed_in_user | grep -qE '"login_user_id": *null' || fail "the session still carries its identity after the page-view refusal"
+assert_retired "after the page-view refusal"
 echo "[TEST] 4. OK" >&2
 
 # ---------------------------------------------------------------------------

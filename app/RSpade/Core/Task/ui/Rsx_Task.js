@@ -207,6 +207,35 @@ class Rsx_Task {
     }
 
     /**
+     * What a PENDING run is waiting for, as one line; '' for a run that is not pending.
+     *
+     * The server derives it on every read (status.waiting: {reason, text, lock,
+     * held_by_task_id}; reason is scheduled | lock | workers | queued) and stores nothing, so
+     * a refetch is always current:
+     *
+     *     scheduled for Oct 11, 2026 3:30 PM
+     *     waiting for exclusive lock "billing" (held by task #327)
+     *     waiting for a free worker (3 of 3 busy)
+     *     waiting for a worker to start
+     *
+     * A not-yet-due run's time is formatted here, from status.scheduled_for, in the viewer's
+     * own timezone. A view of ONE pending run hears Task_Changed_Topic when a run on the same
+     * lock starts or settles; a list reloads on Task_List_Changed_Topic as it does anyway.
+     */
+    static waiting_text(status) {
+        const waiting = status ? status.waiting : null;
+        if (!waiting) {
+            return '';
+        }
+
+        if (waiting.reason === 'scheduled' && status.scheduled_for) {
+            return 'scheduled for ' + Rsx_Time.format_datetime(status.scheduled_for);
+        }
+
+        return waiting.text;
+    }
+
+    /**
      * "45.5%", "3 of 257", or both - the progress a status reports, as text; '' when none.
      */
     static progress_text(status) {

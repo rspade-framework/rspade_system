@@ -253,8 +253,10 @@ FRAMEWORK INVENTORY
                                  framework-created dangling link, or blocked/reserved
                                  name; OK with a count otherwise. Remediation:
                                  rsx:heal claude-skills. See template_app(3).
-        Document Render Backlog  render + extraction queue depth and failed
-                                 counts (pending/failed/unindexed/extract_failed).
+        Document Render Backlog  the document worker's queue
+                                 (due/retrying/failed/extract_failed): WARN on
+                                 more than 500 due, or on any blob waiting for
+                                 a retry or failed for good.
                                  ONE probe for one worker and one queue; it
                                  replaced "Search Index Backlog" on 2026-08-22.
                                  Remediation points at rsx:documents:status.

@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Realtime\Realtime;
+use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Pool;
 
 /**
@@ -17,7 +18,9 @@ use App\RSpade\Core\Task\Task_Pool;
  * Three topics, each a "something changed, go look" with no data beyond the filter
  * (frames are notification-only; the watcher refetches through a gated endpoint):
  *
- *   Task_Changed_Topic {id}       the run's lifecycle, reports, messages or attachments
+ *   Task_Changed_Topic {id}       the run's lifecycle, reports, messages or attachments -
+ *                                 and, for a PENDING run, a lifecycle move of a run on the
+ *                                 same run lock (what it is waiting for may have changed)
  *   Task_Output_Topic {id}        the run's output (stdout / stderr / operator lines) -
  *                                 separate because output is the high-volume, niche feed
  *   Task_List_Changed_Topic {class, method}
@@ -56,8 +59,9 @@ class Task_Notify
     }
 
     /**
-     * A run entered, left or moved between lifecycle states: its own watchers, and every
-     * list watcher whose filter names this run's task (or nothing), are told.
+     * A run entered, left or moved between lifecycle states: its own watchers, every list
+     * watcher whose filter names this run's task (or nothing), and the watchers of each PENDING
+     * run waiting on the same run lock are told.
      */
     public static function lifecycle(int $task_id): void
     {
@@ -68,12 +72,24 @@ class Task_Notify
         static::__send('Task_Changed_Topic', ['id' => $task_id]);
 
         // A task-table read, which THE RULE allows under a pool lock.
-        $row = DB::table('_tasks')->where('id', $task_id)->first(['class', 'method']);
+        $row = DB::table('_tasks')->where('id', $task_id)->first(['class', 'method', 'params_hash']);
         if ($row === null) {
             return;
         }
 
         static::__send('Task_List_Changed_Topic', ['class' => class_basename($row->class), 'method' => $row->method]);
+
+        // THE WAITERS. A pending run of an #[Exclusive] / #[Debounce] task says what it is
+        // waiting for (Task_Waiting), and that answer names the run holding its lock - so it
+        // changes when a run on the same lock starts or settles. Those pending runs (one per
+        // identity; one per member method of a group) get their own changed frame, and a
+        // single-run view re-reads. Task-table reads again; the frames obey the pool-lock rule
+        // above like any other.
+        foreach (Task_Concurrency::pending_ids_on_run_lock($row->class, $row->method, (string) $row->params_hash) as $waiter_id) {
+            if ($waiter_id !== $task_id) {
+                static::__send('Task_Changed_Topic', ['id' => $waiter_id]);
+            }
+        }
     }
 
     /**

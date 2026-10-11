@@ -9,6 +9,7 @@ namespace App\RSpade\Sys\App\Sys\Tasks;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Waiting;
 use App\RSpade\Sys\App\Sys\Tasks\_Sys_Tasks_Controller;
 use App\RSpade\Sys\Theme\Components\_Sys_DataGrid_Abstract;
 
@@ -121,10 +122,11 @@ class _Sys_Tasks_DataGrid extends _Sys_DataGrid_Abstract
         $ids = array_map(fn ($row) => (int) $row['id'], $records);
         $tasks = Task_Run_Model::whereIn('id', $ids)->get()->keyBy('id');
 
+        $waiting = new Task_Waiting();
         $rows = [];
         foreach ($ids as $id) {
             if (isset($tasks[$id])) {
-                $rows[] = _Sys_Tasks_Controller::present($tasks[$id], false);
+                $rows[] = _Sys_Tasks_Controller::present($tasks[$id], false, $waiting);
             }
         }
 

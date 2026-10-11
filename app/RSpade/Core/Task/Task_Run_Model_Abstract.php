@@ -19,6 +19,7 @@ use App\RSpade\Core\Task\Task_Kill_Request_Model;
 use App\RSpade\Core\Task\Task_Kill_Worker;
 use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Schedule_Model;
+use App\RSpade\Core\Task\Task_Waiting;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
@@ -831,9 +832,14 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
      * The run as JSON-ready data: the shape the task API endpoints and the task widgets read.
      * Lifecycle moments are ISO strings or null; reports a task never set are null.
      *
+     * `waiting` says what a PENDING run is waiting for - {reason, text, lock,
+     * held_by_task_id}, derived at this read and never stored (Task_Waiting) - and is null
+     * for every other run. A caller presenting SEVERAL runs passes one Task_Waiting to all of
+     * them, or calls to_status_arrays(), so the lookups behind it are made once.
+     *
      * @return array
      */
-    public function to_status_array(): array
+    public function to_status_array(?Task_Waiting $waiting = null): array
     {
         $iso = fn ($value) => $value !== null ? Rsx_Time::to_iso($value) : null;
 
@@ -854,6 +860,7 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
             'started_at' => $iso($this->started_at),
             'completed_at' => $iso($this->completed_at),
             'stop_requested_at' => $iso($this->stop_requested_at),
+            'waiting' => ($waiting ?? new Task_Waiting())->describe($this),
             'status_text' => $this->status_text,
             'progress_percent' => $this->progress_percent(),
             'progress_count' => $this->progress_count(),
@@ -862,6 +869,24 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
             'last_report_at' => $iso($this->last_report_at),
             'reports' => $this->available_reports(),
         ];
+    }
+
+    /**
+     * to_status_array() for several runs, in order, sharing one Task_Waiting: what the pending
+     * ones are waiting for is resolved once per lock, not once per run.
+     *
+     * @param iterable<static> $runs
+     * @return array<int, array>
+     */
+    public static function to_status_arrays(iterable $runs): array
+    {
+        $waiting = new Task_Waiting();
+        $out = [];
+        foreach ($runs as $run) {
+            $out[] = $run->to_status_array($waiting);
+        }
+
+        return $out;
     }
 
     private function __report_body(int $kind_id): ?string

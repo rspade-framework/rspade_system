@@ -718,6 +718,18 @@ class Ajax
      */
     private static function __timeout_refusal(bool $with_flash = true): ?array
     {
+        // A call carrying the token of a session row that has since been replaced (a
+        // sign-in or an expiry on this browser, or a copied cookie): the row is dead, so
+        // the call is refused exactly as an expired one is.
+        if (Session::_arrived_on_retired_token()) {
+            return [
+                '_success' => false,
+                'error_code' => self::ERROR_SESSION_EXPIRED,
+                'reason' => 'This session has ended. Reload the page to continue.',
+                'metadata' => ['cause' => 'retired'],
+            ];
+        }
+
         $reason = Rsx_Portal::is_portal_request()
             ? Portal_Session::enforce_timeouts(false)
             : Session::enforce_timeouts(false);

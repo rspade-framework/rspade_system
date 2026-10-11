@@ -1,7 +1,7 @@
 <%--
 _Sys_Task_Workers_Action - the worker pools at work: each pool's workers against its cap,
 every running run with the worker running it, the kill workers' pending force stops and
-kills, and what comes next - the oldest queued runs and the next schedules due, each with
+kills, and what comes next - the oldest queued runs (with what each is waiting for) and the next schedules due, each with
 its total.
 
 Pools (rsx.tasks.pools): on_demand runs dispatched work; scheduled runs #[Schedule] work and
@@ -85,12 +85,13 @@ opens it (_Sys_Task_Detail). Live: refreshes on Task_List_Changed_Topic.
                     <% } else { %>
                         <div class="table-responsive">
                             <table class="table table-hover mb-0">
-                                <thead><tr><th>Task</th><th>Due</th><th></th></tr></thead>
+                                <thead><tr><th>Task</th><th>Due</th><th>Waiting for</th><th></th></tr></thead>
                                 <tbody>
                                     <% for (const _t of _w.queued) { %>
                                         <tr class="_Sys_Task_Workers_Action__row" data-task-id="<%= _t.id %>">
                                             <td><span class="_Sys_Task_Workers_Action__mono">#<%= _t.id %> <%= _t.name %></span></td>
                                             <td><%= Rsx_Time.format_datetime(_t.scheduled_for) %></td>
+                                            <td><%= Rsx_Task.waiting_text(_t) %></td>
                                             <td class="text-end"><_Sys_Task_Actions $task=_t /></td>
                                         </tr>
                                     <% } %>

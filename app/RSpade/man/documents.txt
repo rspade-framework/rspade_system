@@ -16,11 +16,97 @@ DESCRIPTION
     text <Document_Text_Preview> renders.
 
     The pipeline itself needs no operating: an attachment queues its blob on upload,
-    the worker is kicked immediately and sweeps every 10 minutes, and FAILED is
-    terminal. These commands answer the three questions an operator actually has -
+    the worker is kicked immediately and sweeps every 10 minutes, and a document
+    that fails is retried by the worker a fixed number of times before it is left
+    FAILED. These commands answer the three questions an operator actually has -
     what is the queue doing, what failed and why, and how do I make it try again.
 
     Nothing here converts anything itself. rerender re-queues; the worker renders.
+
+    THE WORK QUEUE
+        The worker takes blobs in the order of ONE column,
+        _file_storage.process_due_at (index idx_process_due on process_due_at, id):
+
+            NULL     the worker has nothing to do for this blob - nothing is owed,
+                     or its attempts are spent.
+            a time   the blob owes work - a rendition (render_status_id PENDING or
+                     FAILED), its text (is_indexed = 0), or both - and may be
+                     attempted at or after that time.
+
+        A new blob is born due. render_pending takes the earliest due blob, again
+        and again, until none is due. process_attempt_count beside it counts the
+        attempts charged since the blob last entered the queue.
+
+        ONE DOCUMENT CANNOT STOP THE QUEUE. A document is input the application
+        does not control, and a converter or a spreadsheet reader can run on a
+        damaged one without end. Four rules keep that from costing anything but the
+        document itself:
+
+            1. THE ATTEMPT IS CHARGED BEFORE IT STARTS. Taking a blob adds one to
+               its attempt count and moves its due time
+               rsx.documents.retry_after_minutes (30) ahead, before any work runs.
+               Whatever becomes of the attempt, or of the worker, the blob has been
+               counted and is no longer first in line.
+            2. ONE CHILD PROCESS PER DOCUMENT. The work runs in a process of its
+               own (the hidden command rsx:documents:process_one), and the worker
+               kills it and every process it started at rsx.documents.kill_seconds
+               (60). Recorded as "killed after 60 seconds".
+            3. EACH STAGE IS BOUNDED inside the child - the render and the text
+               extraction separately, rsx.documents.stage_seconds (20) each.
+               Recorded as "render exceeded 20 seconds" / "text extraction
+               exceeded 20 seconds".
+            4. THREE ATTEMPTS (rsx.documents.max_attempts), a retry interval
+               apart. After the last the blob leaves the queue FAILED and only an
+               operator puts it back - rsx:documents:rerender for the render,
+               rsx:search:reindex for the text. Either one gives the blob a full
+               set of attempts.
+
+        The render and the text extraction of one blob share ONE queue entry and
+        ONE attempt counter: an attempt runs whatever the blob still owes, and a
+        blob whose text failed while its render succeeded is retried on the same
+        schedule.
+
+        A FAILED ATTEMPT LOOKS FAILED. Between attempts and after the last, the
+        render state is FAILED with the reason recorded, so every screen shows the
+        failed-document preview and never "Preparing preview...". Whether another
+        attempt is coming is the queue's answer (process_due_at), not the render
+        state's. A later attempt that succeeds reaches open pages by realtime frame.
+
+        A WEB REQUEST NEVER GRANTS ATTEMPTS. Retries come from the worker's drain
+        only. A request for a FAILED document's thumbnail is answered with the
+        placeholder, one for its rendition with a 404, and neither changes anything
+        in the queue.
+
+        PACED PASSES. The pass sets no timeout, and reports before every document,
+        so the task system's silence limit never applies to a pass that is working
+        (rsx:man tasks, THE SILENCE LIMIT). A long backlog is taken in paced
+        passes instead: a pass that has been draining for
+        rsx.documents.drain_yield_after_minutes (20) and still finds work due
+        stops BETWEEN two documents, sets its own next run
+        rsx.documents.drain_resume_after_minutes (10) ahead
+        ($task->run_again_in()), writes how many documents are still waiting to
+        its output and summary, and returns - a SUCCESSFUL run:
+
+            Yielding after 20 minute(s): 212 document(s) processed, 3 to retry, 1
+            failed; 1840 still waiting. The next pass is set for Oct 11, 2026 3:30 PM.
+
+        It is a voluntary yield, so the other scheduled work - which shares the
+        scheduled pool with this drain - gets a turn; the two numbers are pacing,
+        not timeouts. Nothing is cut short (the check is made only between
+        documents), nothing fails and nothing is lost: every blob still due is
+        still in the queue. A pass that empties the queue never yields, and an
+        upload's kick still starts a pass at once.
+
+        OWED WORK THAT IS SWITCHED OFF IS DEFERRED, NOT CHARGED. A rendition owed
+        while rsx.libreoffice.enabled is false, or text owed while
+        rsx.search.enabled is false, is offered again one retry interval later
+        with no attempt counted.
+
+        The two time limits are sanctioned timeouts, justified beside their keys in
+        config/rsx.php (rsx:man config_rsx, 'documents'). The limit is the price
+        every other document pays for one that cannot be processed, so it is set by
+        how long the queue may stand still: at the defaults a document that cannot
+        be processed costs the queue behind it at most three minutes in all.
 
     The state machine, the component and the caching rules are rsx:man thumbnails.
     The text half is rsx:man document_search. The binary is rsx:man libreoffice.
@@ -109,7 +195,8 @@ DESCRIPTION
         They are different failures on different columns with different remedies,
         and one document can have either, both, or neither.
 
-            RENDER      soffice could not turn the document into a PDF.
+            RENDER      the rendition could not be produced (soffice could not
+                        make a PDF, or a workbook could not be read).
                         _file_storage.render_status_id = FAILED, reason in
                         render_error. Listed by rsx:documents:failed. Re-queued by
                         rsx:documents:rerender --failed.
@@ -117,18 +204,31 @@ DESCRIPTION
                         with status FAILED, reason in its error column. Re-queued by
                         rsx:search:reindex --failed.
 
-        rsx:documents:failed prints BOTH tables, each with its own remedy line
-        underneath, so a wrong guess costs nothing.
+        Both are retried by the worker first, under the one attempt counter; the
+        two commands are what an operator runs once the attempts are spent, or to
+        skip the wait. rsx:documents:failed prints BOTH tables, each with its own
+        remedy line underneath, so a wrong guess costs nothing.
 
 RSX:DOCUMENTS:STATUS
-    Render-state counts, extraction counts, the rendition cache, and when the worker
-    next runs. Read-only; always exits 0.
+    The work queue, render-state counts, extraction counts, the rendition cache, and
+    when the worker next runs. Read-only; always exits 0.
 
         $ php artisan rsx:documents:status
 
         Document render pipeline status
           rendering enabled  : yes  (rsx.libreoffice.enabled)
           extraction enabled : yes  (rsx.search.enabled)
+
+        Work queue (_file_storage.process_due_at):
+        +------------------------------------------------------------+-------+
+        | State                                                      | Blobs |
+        +------------------------------------------------------------+-------+
+        | Due now                                                    | 0     |
+        | Waiting for a retry (failed attempt, retried after 30 min) | 1     |
+        | Deferred (owed work is switched off)                       | 0     |
+        | Failed, out of attempts (3) - rsx:documents:failed         | 2     |
+        +------------------------------------------------------------+-------+
+          next waiting blob comes due Oct 11, 2026 1:22 PM
 
         Blob render state (_file_storage.render_status_id):
         +--------------+-------+
@@ -137,18 +237,18 @@ RSX:DOCUMENTS:STATUS
         | Not Required | 21    |
         | Pending      | 0     |
         | Rendered     | 2     |
-        | Failed       | 0     |
+        | Failed       | 3     |
         +--------------+-------+
 
         Text extraction (_search_indexes):
-        +-----------------------+-------+
-        | State                 | Blobs |
-        +-----------------------+-------+
-        | Queued (is_indexed=0) | 0     |
-        | Extracted             | 12    |
-        | Failed                | 1     |
-        | Unsupported           | 10    |
-        +-----------------------+-------+
+        +---------------------+-------+
+        | State               | Blobs |
+        +---------------------+-------+
+        | Owed (is_indexed=0) | 0     |
+        | Extracted           | 12    |
+        | Failed              | 1     |
+        | Unsupported         | 10    |
+        +---------------------+-------+
 
         PDF rendition cache (tmp/renditions):
         +--------+---------------------------------------+
@@ -165,43 +265,66 @@ RSX:DOCUMENTS:STATUS
         Worker schedule: every 10 minutes, next run Aug 22, 2026 5:10 AM
 
     Reading it
+        The work queue table is the worker's own view. "Due now" is the backlog:
+        what the next pass takes. "Waiting for a retry" is a failed attempt sitting
+        out its interval - nothing can take it yet, and the line under the table
+        says when the earliest one comes due. "Deferred" owes work that is switched
+        off. "Failed, out of attempts" is a blob whose render is FAILED and which
+        has left the queue: the worker will not touch it again until an operator
+        re-queues it.
+
         Every enum label appears in the render table even at zero, so a state can
-        never be missing merely because nothing is in it.
+        never be missing merely because nothing is in it. Its Failed row counts
+        every FAILED blob - the ones waiting for a retry and the ones out of
+        attempts together.
 
         "Not Required" is the healthy majority: images, PDFs and anything else with
         nothing to convert. It is not a backlog.
 
-        A Pending count that does not fall between runs means the worker is not
+        A "Due now" count that does not fall between runs means the worker is not
         running (check the cron behind rsx:task:process, and rsx:health "Document
-        Render Backlog"), or rendering is disabled - which the two enabled lines at
-        the top say plainly.
+        Render Backlog"). A Pending count that does not fall while nothing is due
+        means rendering is disabled and the blobs are deferred - which the two
+        enabled lines at the top say plainly.
 
-        The extraction table counts _search_indexes rows; "Queued" counts blobs whose
-        is_indexed is still 0, which is the ABSENCE of a row, so it is reported
-        separately rather than as a status.
+        The extraction table counts _search_indexes rows, each the outcome of the
+        LAST attempt; "Owed" counts blobs whose is_indexed is still 0 - never
+        attempted, or failed and waiting for a retry - so it is reported separately
+        rather than as a status.
 
         Unsupported is normal and large: an image or a zip has no extractor at all.
 
 RSX:DOCUMENTS:FAILED
-    Every blob whose RENDER failed, with the reason, plus - in a second table - every
-    FAILED text extraction. Read-only; always exits 0, because "there are failures"
-    is a report, not a command failure. rsx:health is what turns a failure count into
-    a non-zero exit.
+    Every blob whose RENDER is FAILED, with the reason, the attempts charged and when
+    the next attempt is due (or that none is coming), plus - in a second table -
+    every FAILED text extraction. Read-only; always exits 0, because "there are
+    failures" is a report, not a command failure. rsx:health reports the same
+    counts as a WARN.
 
         --limit=N   rows per table. Default 50. 0 = ALL rows (the one place a limit
                     is the operator's to choose).
 
         $ php artisan rsx:documents:failed
 
-        [OK] No failed documents.
+        2 failed document(s): 1 waiting for another attempt, 1 out of attempts.
+        +---------+--------------+-------------+----------------------------+----------+------------------------+
+        | Storage | Hash         | File name   | Error                      | Attempts | Next attempt           |
+        +---------+--------------+-------------+----------------------------+----------+------------------------+
+        | 54      | b9a9981875bf | ledger.xlsx | render exceeded 20 seconds | 1 of 3   | Oct 11, 2026 1:22 PM   |
+        | 55      | fed981dd55b3 | notes.docx  | LibreOffice produced no... | 3 of 3   | none - out of attempts |
+        +---------+--------------+-------------+----------------------------+----------+------------------------+
+          Re-queue with a full set of attempts: php artisan rsx:documents:rerender --failed
 
         1 failed text extraction(s):
-        +---------+--------------+-------------+------------------------------+---------------------+
-        | Storage | Hash         | File name   | Error                        | Indexed at          |
-        +---------+--------------+-------------+------------------------------+---------------------+
-        | 1       | b679cb5021b8 | w2_2025.pdf | pdftotext failed for b679... | Aug 8, 2026 2:32 AM |
-        +---------+--------------+-------------+------------------------------+---------------------+
-          Re-queue with: php artisan rsx:search:reindex --failed
+        +---------+--------------+-------------+------------------------------+---------------------+------------------------+
+        | Storage | Hash         | File name   | Error                        | Last attempt        | Next attempt           |
+        +---------+--------------+-------------+------------------------------+---------------------+------------------------+
+        | 1       | b679cb5021b8 | w2_2025.pdf | pdftotext failed for b679... | Aug 8, 2026 2:32 AM | none - out of attempts |
+        +---------+--------------+-------------+------------------------------+---------------------+------------------------+
+          Re-queue with a full set of attempts: php artisan rsx:search:reindex --failed
+
+    A row with a "Next attempt" time needs nothing done: the worker takes it then.
+    "none - out of attempts" is the operator's to re-queue once the cause is fixed.
 
     A content-addressed blob has no name of its own, so "File name" is borrowed from
     a representative attachment referencing it - preferring one whose extension is a
@@ -218,20 +341,25 @@ RSX:DOCUMENTS:RERENDER
         --all            every blob that has ever entered the pipeline - PENDING,
                          RENDERED or FAILED. NEVER the NOT_REQUIRED images and text
                          files, which soffice could only fail on.
-        --failed         blobs whose last RENDER failed (see the distinction above).
+        --failed         blobs whose RENDER is FAILED (see the distinction above) -
+                         waiting for a retry and out of attempts alike.
         --storage=ID     one blob by _file_storage id.
         --attachment=ID  the blob backing one attachment id.
 
     What it does, in order: resolves the selector to a set of rows, DELETES each
-    one's PDF rendition, sets the rows back to PENDING with rendered_at and
-    render_error cleared (in keyset chunks, so the resident-row count is bounded
-    however large the match), notifies open pages where that is meaningful, and kicks
-    the worker once.
+    one's rendition, sets the rows back to PENDING with rendered_at and
+    render_error cleared, DUE NOW WITH NO ATTEMPTS CHARGED (in keyset chunks, so the
+    resident-row count is bounded however large the match), notifies open pages
+    where that is meaningful, and kicks the worker once. It renders nothing itself.
 
-    DELETING THE RENDITION IS THE POINT. render_storage() short-circuits on a
-    rendition that is already on disk - correct for the normal path, and it would
-    make a rerender a no-op. Without the delete, "re-render" would only re-record
-    the state it already had.
+    IT IS THE RESET OF THE ATTEMPT COUNTER. A blob that spent its attempts gets a
+    full set again, which is why this is an operator's decision and never something
+    a page request can cause.
+
+    DELETING THE RENDITION IS THE POINT. The worker short-circuits on a rendition
+    that is already on disk - correct for the normal path, and it would make a
+    rerender a no-op. Without the delete, "re-render" would only re-record the state
+    it already had.
 
         $ php artisan rsx:documents:rerender
         [ERROR] Exactly one selector is required: --all | --failed | --storage=ID | --attachment=ID
@@ -260,11 +388,20 @@ RSX:DOCUMENTS:RERENDER
 WHEN TO REACH FOR WHICH
     A document shows the extension icon forever
         rsx:documents:status - is it Pending (worker not running / rendering
-        disabled) or Failed? If Failed, rsx:documents:failed names the reason. Fix
-        the cause, then rsx:documents:rerender --failed.
+        disabled) or Failed? If Failed, rsx:documents:failed names the reason and
+        says whether the worker will try again by itself. Out of attempts: fix the
+        cause, then rsx:documents:rerender --failed.
 
     A preview says "Preparing preview..." and stays there
-        Same answer: the blob is PENDING. rsx:documents:status.
+        The blob is PENDING and no attempt has reported yet: rsx:documents:status.
+        A document whose attempt failed says "Preview could not be generated"
+        instead, between retries as well as after the last one.
+
+    A document fails with "render exceeded 20 seconds" on every attempt
+        It needs longer than the stage bound on this hardware. If it is an ordinary
+        document for this site, raise rsx.documents.stage_seconds (and
+        kill_seconds above twice that) in rsx/resource/config/rsx.php, then
+        rsx:documents:rerender --failed.
 
     You changed something about how documents convert
         rsx:documents:rerender --all, then let the worker drain. Expect it to take a
@@ -276,16 +413,60 @@ WHEN TO REACH FOR WHICH
 
     A rendition was evicted by the LRU cache
         Nothing to do. The thumbnail endpoint and the rendition endpoint each notice
-        and re-queue the blob themselves, serving a placeholder / 404 for that one
-        request while the worker reconverts.
+        and re-queue the RENDERED blob themselves, serving a placeholder / 404 for
+        that one request while the worker reconverts.
+
+APPLICATION CODE AND THE QUEUE
+    An application rarely touches any of this. When it does, three rules:
+
+    PROCESS A DOCUMENT NOW with Document_Render_Service::process_storage($storage).
+    It is the one route from "this blob owes work" to "the work was attempted" -
+    the drain uses it for every blob - and it is callable from a web request: it
+    charges the attempt, runs the document in the child process and waits for it,
+    then returns
+
+        ['outcome' => ..., 'reason' => ?string, 'attempt' => int,
+         'max_attempts' => int, 'next_attempt_at' => ?string, 'render_label' => string]
+
+    where outcome is one of Document_Render_Service::OUTCOME_DONE (nothing is owed),
+    OUTCOME_RETRY (the attempt failed, another is scheduled), OUTCOME_FAILED
+    (attempts spent), OUTCOME_WAITING (what it owes is switched off) or
+    OUTCOME_TAKEN (another process charged this attempt first). A blob that is not
+    in the queue answers DONE and nothing runs.
+
+    Document_Render_Service::render_storage() and
+    Search_Index_Service::extract_storage() ARE COMMAND-LINE ONLY. They are the unit
+    of work the child runs, their stages are bounded by an alarm that does not exist
+    under php-fpm, and from a web request they throw a LogicException naming
+    process_storage(). They write the outcome and never the queue columns.
+
+    SAY THAT A BLOB OWES WORK THROUGH THE MODEL. Writing render_status_id = PENDING
+    or is_indexed = 0 by itself queues nothing - the worker reads process_due_at:
+
+        $storage->requeue_render();      // PENDING, artifacts cleared, due now,
+                                         // attempts reset, worker kicked
+                                         // (requeue_render(false) = no kick)
+        $storage->is_indexed = 0;        // say WHAT is owed ...
+        $storage->save();
+        $storage->mark_work_owed();      // ... then that it is: due now, attempts reset
+
+    A set UPDATE writes File_Storage_Model::work_owed_values() beside the columns
+    that say what is owed. The reference app's development pages are the worked
+    example:
+    system/app/RSpade/resource/reference_app/app/dev/document_preview/document_preview_controller.php
+    and .../app/dev/attachment_thumbnail/attachment_thumbnail_controller.php.
+
+    $storage->is_render_failed_for_good() answers "FAILED, and the worker will not
+    try again by itself".
 
 SEE ALSO
     rsx:man thumbnails       Render state machine, caching, <Attachment_Thumbnail>
     rsx:man document_search  Text extraction, search, Document_Preview and
                              Document_Text_Preview
-    rsx:man libreoffice      Headless soffice and its one sanctioned timeout
+    rsx:man libreoffice      Headless soffice and the document sandbox
+    rsx:man config_rsx       rsx.documents - attempts, retry interval, the two time limits
     rsx:man file_upload      Attachments and the deduplicated blob store
     rsx:man health           rsx:health and the Document Render Backlog row
     rsx:man tasks            #[Exclusive], #[Schedule] and the worker pools
 
-RSX Framework              Last updated 2026-08-22                DOCUMENTS(1)
+RSX Framework              Last updated 2026-10-11                DOCUMENTS(1)

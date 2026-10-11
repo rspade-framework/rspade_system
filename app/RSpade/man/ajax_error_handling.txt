@@ -48,7 +48,9 @@ RESPONSE FORMATS
     abort's message.
 
     "session_expired" is the framework's own: the sign-in outlived
-    rsx.sessions.* and was just ended (metadata.cause is "length" or "idle").
+    rsx.sessions.* and was just ended (metadata.cause is "length" or "idle"), or
+    the call carried the token of a session row that has since been replaced
+    (metadata.cause "retired").
     Nothing in an application returns or handles it per call. The client
     announces it - and "auth_required" on a page that was rendered signed in -
     once per page to the handler registered with

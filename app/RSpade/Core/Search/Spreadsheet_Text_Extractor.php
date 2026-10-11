@@ -16,7 +16,7 @@ use App\RSpade\Core\Search\Rsx_Text_Extractor_Abstract;
  * the one that mattered:
  *
  *   - PhpSpreadsheet is a DECLARED framework dependency, so this runs in-process. No soffice
- *     spawn, no #[Exclusive] worker slot, no 120-second external-binary timeout.
+ *     spawn, no external binary. It is bounded like every extraction, by the worker's stage bound.
  *   - It decouples a spreadsheet's TEXT from its RENDITION. Spreadsheets no longer produce a
  *     PDF (a paginated print view of a grid is not a preview of a grid - see
  *     Spreadsheet_Rendition), and if extraction still went through soffice, dropping that

@@ -15,6 +15,8 @@ use App\RSpade\Core\Task\Task_Gates;
  *
  * Published (by Task_Notify) when a run's lifecycle moves - queued, started, settled, stopped,
  * killed, cancelled - and when the running task writes a report, a message or an attachment.
+ * A PENDING run also gets one when a run on the same run lock starts or settles: what it is
+ * waiting for (Task_Waiting) is derived at read time and names the run holding the lock.
  * Its output has its own topic (Task_Output_Topic). The frame carries the id only, and the
  * watcher refetches through a gated endpoint.
  *

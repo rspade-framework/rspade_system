@@ -523,8 +523,11 @@ FRAMEWORK EVENT CATALOG
             Fired from: Search_Index_Service::extract_storage, keyed on the
                         deduplicated blob, before the framework extractor registry.
                         Runs INSIDE the Document_Render_Service background worker
-                        (the same pass that produced the PDF rendition), never in a
-                        web request. 'path' is always the SOURCE BLOB - the
+                        (the child process that produced the PDF rendition), never
+                        in a web request, and UNDER THE TEXT-EXTRACTION STAGE BOUND
+                        (rsx.documents.stage_seconds, 20): a handler still running
+                        at the bound is interrupted and the attempt recorded FAILED.
+                        'path' is always the SOURCE BLOB - the
                         rendition shortcut is applied only after the chain declines.
             Data: {storage: File_Storage_Model, path: string, mime: string}
             Return: null (decline) | string (extracted text) |

@@ -477,33 +477,43 @@ RENDER PIPELINE (non-image files)
         NOT_REQUIRED (1)  Nothing to convert: an image, a plain PDF, a zip. THE
                           DEFAULT - store_blob() sees only bytes and cannot know the
                           mime.
-        PENDING      (2)  Queued. The queue IS this column; there is no side table.
-        RENDERED     (3)  Rendition on disk, rendered_at set, text extracted.
-        FAILED       (4)  TERMINAL. render_error carries the reason; the sweeper NEVER
-                          retries it. Re-rendering is an explicit operator action.
+        PENDING      (2)  A rendition is owed and no attempt has reported yet.
+        RENDERED     (3)  Rendition on disk, rendered_at set.
+        FAILED       (4)  The last attempt failed; render_error carries the reason.
+                          The worker retries it rsx.documents.retry_after_minutes
+                          apart, up to rsx.documents.max_attempts attempts in all;
+                          after the last it stays FAILED until an operator
+                          re-renders it. Whether another attempt is coming is not
+                          in this value - it is the work queue's answer
+                          (_file_storage.process_due_at; rsx:man documents). The
+                          picture is the same either way: the extension icon.
 
     WHO SETS PENDING. The ATTACHMENT does, not the blob: on create and on
     relink_storage(), if its pipeline_mime() matches config('rsx.preview.convertible')
     and the blob is still NOT_REQUIRED, the attachment flips it to PENDING and kicks
     the worker (File_Storage_Model::request_render()). Dedup falls out of the
     condition - a blob already PENDING, RENDERED or FAILED is left alone, so
-    re-uploading the same bytes converts nothing and the thumbnail is immediate.
+    re-uploading the same bytes converts nothing and the thumbnail is immediate,
+    and an upload never hands a FAILED blob fresh attempts.
 
     THE WORKER. Document_Render_Service::render_pending is #[Exclusive] and
     #[Schedule('every 10 minutes')], kicked promptly on upload and swept on that
-    schedule so a killed worker resumes unnoticed. It drains ONE blob per iteration
-    (render_status_id = PENDING OR is_indexed = 0), and per blob: produces the PDF
+    schedule so a killed worker resumes unnoticed. It takes ONE blob per iteration -
+    the earliest due in its queue (_file_storage.process_due_at) - charges the
+    attempt, and runs the blob in a child process of its own, which: produces the PDF
     rendition with ONE soffice run, extracts the text in the same pass, settles
     RENDERED/rendered_at (or FAILED/render_error), purges the thumbnail cache for the
     hash, and emits a realtime frame on every attachment referencing the blob. It is
-    the ONLY caller of soffice for renditions, which is why no concurrency semaphore
-    exists any more.
+    the ONLY caller of soffice for renditions, so no concurrency semaphore exists.
+    Attempts, retries and the two time limits are rsx:man documents, THE WORK QUEUE.
 
     SELF-HEAL ON AN EVICTED RENDITION. The rendition cache is LRU-capped
     (config('rsx.preview.quota_max_bytes'), 200MB), so a RENDERED blob's rendition can
     be evicted while the row still says RENDERED. The thumbnail endpoint notices the
     missing file, re-queues the blob (requeue_render()), and serves the placeholder -
-    never an error page. The NEXT worker pass reconverts it. rsx:thumbnails:generate
+    never an error page. The NEXT worker pass reconverts it. Only a RENDERED blob is
+    re-queued this way: a request for a FAILED document serves the placeholder and
+    never grants it another set of attempts. rsx:thumbnails:generate
     does NOT do this: a cache-warming pass skips such a blob rather than queueing work
     as a side effect.
 
@@ -693,7 +703,9 @@ TROUBLESHOOTING
 
     PENDING that never moves means the worker is not running (check rsx:task:process,
     and rsx:health "Document Render Backlog"), or rsx.libreoffice.enabled is false.
-    FAILED is terminal by design: fix the cause, then
+    FAILED is retried by the worker a fixed number of times - rsx:documents:failed
+    shows the attempts charged and when the next one is due. Once it reads "out of
+    attempts": fix the cause, then
     php artisan rsx:documents:rerender --failed. Note that rerender DELETES the
     rendition file first, so the worker truly reconverts rather than short-circuiting
     on the file that is already there.
@@ -760,7 +772,7 @@ SEE ALSO
     rsx:man external_api         Bearer access to the thumbnail routes from an integration
     rsx:man documents            Operating the render pipeline (status/failed/rerender)
     rsx:man document_search      Text extraction, Document_Preview, the same worker
-    rsx:man libreoffice          The soffice invocation and its one sanctioned timeout
+    rsx:man libreoffice          The soffice invocation and the document sandbox
     rsx:man file_upload          File attachment and upload system
     rsx:man storage_directories  Storage directory organization
     rsx:man config_rsx           RSX configuration reference

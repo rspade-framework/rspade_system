@@ -16,6 +16,7 @@ use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Task\Task_Waiting;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Sys\App\Sys\Tasks\_Sys_Tasks_DataGrid;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
@@ -308,12 +309,14 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
             ];
         }
 
+        $waiting = new Task_Waiting();
+
         // Bounded by the pools' caps: every running run is listed.
         $running = Task_Run_Model::where('status_id', Task_Run_Model::STATUS_RUNNING)
             ->orderBy('started_at')
             ->orderBy('id')
             ->get()
-            ->map(fn ($task) => static::present($task, false))
+            ->map(fn ($task) => static::present($task, false, $waiting))
             ->all();
 
         $kill_requests = DB::table('_task_kill_requests')
@@ -334,7 +337,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
 
         $queued_query = Task_Run_Model::where('status_id', Task_Run_Model::STATUS_PENDING);
         $queued = (clone $queued_query)->orderBy('scheduled_for')->orderBy('id')->limit(self::UPCOMING_LIMIT)->get()
-            ->map(fn ($task) => static::present($task, false))
+            ->map(fn ($task) => static::present($task, false, $waiting))
             ->all();
 
         $schedules_due = DB::table('_task_schedules')
@@ -363,11 +366,13 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
 
     /**
      * A run as the panel reads it: the status array, the worker evidence (while it runs), the
-     * schedule and which actions apply. $full adds params and attachments.
+     * schedule and which actions apply. $full adds params and attachments. A caller presenting
+     * several runs passes one Task_Waiting to all of them (what a pending run is waiting for
+     * is then resolved once per lock, not once per row).
      */
-    public static function present(Task_Run_Model $task, bool $full): array
+    public static function present(Task_Run_Model $task, bool $full, ?Task_Waiting $waiting = null): array
     {
-        $status = $task->to_status_array();
+        $status = $task->to_status_array($waiting);
         $status['pool'] = $task->pool_id !== null ? Task_Run_Model::$enums['pool_id'][(int) $task->pool_id]['label'] : null;
         // The worker is shown only while the run is RUNNING: once it settles the process that
         // ran it is over, and the pid the row keeps as evidence names nothing a reader can act on.

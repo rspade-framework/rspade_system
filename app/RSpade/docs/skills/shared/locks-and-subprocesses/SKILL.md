@@ -86,6 +86,8 @@ Rsx_Artisan::dispatch_detached('rsx:task:worker', ['--pool=on_demand']);   // fi
 
 Command name and argv tokens stay **separate** (the helper escapes each).
 
+`Rsx_Artisan::run_bounded($command, $args, $seconds, $output)` is `run()` with a hard limit: at `$seconds` the child **and every process it started** are killed (SIGKILL to the process group) and `Rsx_Artisan::KILLED_AT_LIMIT` is returned in place of an exit code. **It is a timeout, so the no-timeout mandate governs every call of it** - it exists for a child working on input the application does not control, which may never finish, where the caller records the kill as a failed attempt and carries on (the document worker's one child per uploaded document, `rsx.documents.kill_seconds`). Work of your own that must run to completion uses `run()`. The kill does not reach a process outside the group - a docker container is a child of the docker daemon.
+
 **Why it is a mandate.** A lock belongs to a connection, so a child is a stranger to the daemon **including a stranger to its own parent**. Any lock this process holds that the child also needs produces a child queued behind its own parent while the parent blocks in `waitpid`. Neither can move, and **NOTHING REPORTS IT**: the deadlock detector walks lock state, and the parent's half of this cycle is an OS wait. It wedged a framework test run for twelve hours on 2026-08-11.
 
 *(That incident came from the AUTOMATIC per-tenant write lock, which took `cluster:SITE_<id>` on the first `save()` to a site-scoped model. That mechanism is DISABLED as of 2026-08-11 - backlog B-87 - but the hazard is general: it applies to every lock, and named locks are taken by hand all the time.)*

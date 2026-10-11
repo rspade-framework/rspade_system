@@ -10,9 +10,10 @@ TEST_NAME="Session Sign-In Rotation"
 # port 80, so the cookie is the development-only unprefixed `rsx` (Rsx_Session_Cookie).
 #
 # Proves SIGN-IN ROTATION (rsx:man session): a sign-in moves the browser to a NEW session
-# row with a new token, and the row it arrived with is superseded - stripped of every
-# identity, never re-cookied, and never able to authenticate again. That is what makes a
-# copied or planted cookie worthless across a sign-in. The browser's rows are tied
+# row with a new token, and the row it arrived with is RETIRED - marked inactive, its
+# record left as it was, pointing at its successor. A request still carrying the retired
+# token is refused (401) and is sent no cookie. That is what makes a copied or planted
+# cookie worthless across a sign-in. The browser's rows are tied
 # together by one device record.
 
 LOGIN_EMAIL="session-rotation-http@rspade.test"
@@ -118,7 +119,8 @@ fi
 echo "[TEST] 2. OK - new token issued, exactly one session cookie in the response" >&2
 
 # ---------------------------------------------------------------------------
-# 3. The new token is signed in; the old one is not, and is never re-cookied.
+# 3. The new token is signed in; a request on the old one is refused and never
+#    re-cookied - a page, an Ajax call and a public page alike.
 # ---------------------------------------------------------------------------
 echo "[TEST] 3. New token authenticates; the copied one does not..." >&2
 status="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "${BASE}/dashboard" 2>/dev/null)"
@@ -128,18 +130,28 @@ if [ "$status" != "200" ]; then
 fi
 stolen_headers="$(curl -s -D - -o /dev/null -b "$STOLEN" "${BASE}/dashboard" 2>/dev/null)"
 stolen_status="$(echo "$stolen_headers" | head -1 | awk '{print $2}')"
-if [ "$stolen_status" != "302" ]; then
-    echo "FAIL: $TEST_NAME - /dashboard on the superseded token returned $stolen_status (expected the 302 to login)"
+if [ "$stolen_status" != "401" ]; then
+    echo "FAIL: $TEST_NAME - /dashboard on the retired token returned $stolen_status (expected 401)"
     exit 1
 fi
 if echo "$stolen_headers" | grep -qi '^Set-Cookie: rsx='; then
-    echo "FAIL: $TEST_NAME - a request on the superseded token was sent a session cookie"
+    echo "FAIL: $TEST_NAME - a request on the retired token was sent a session cookie"
+    exit 1
+fi
+stolen_ajax="$(curl -s -b "$STOLEN" -X POST -H 'Content-Type: application/json' -d '{}' "${BASE}/_ajax/Rsx_Timezone_Controller/get_settings" 2>/dev/null || true)"
+if ! printf '%s' "$stolen_ajax" | grep -q '"error_code":"session_expired"' || ! printf '%s' "$stolen_ajax" | grep -q '"cause":"retired"'; then
+    echo "FAIL: $TEST_NAME - an Ajax call on the retired token was not refused as session_expired/retired: $stolen_ajax"
+    exit 1
+fi
+if [ "$(curl -s -o /dev/null -w '%{http_code}' -b "$STOLEN" "${BASE}/login" 2>/dev/null)" != "401" ]; then
+    echo "FAIL: $TEST_NAME - a public page on the retired token was served"
     exit 1
 fi
 echo "[TEST] 3. OK" >&2
 
 # ---------------------------------------------------------------------------
-# 4. The rows: the old one is superseded and identity-free, the new one carries the
+# 4. The rows: the old one is retired (inactive, pointing at its successor), the new
+#    one carries the
 #    identity, its sign-in time and a device; both name the same device.
 # ---------------------------------------------------------------------------
 echo "[TEST] 4. Row state..." >&2
@@ -148,8 +160,8 @@ new_row="$(sql "SELECT id, login_user_id, login_at, last_page_view_at, device_id
 old_device="$(echo "$old_row" | grep -oE '"device_id": *[0-9]+' | grep -oE '[0-9]+$' || true)"
 new_device="$(echo "$new_row" | grep -oE '"device_id": *[0-9]+' | grep -oE '[0-9]+$' || true)"
 new_id="$(echo "$new_row" | grep -oE '"id": *[0-9]+' | grep -oE '[0-9]+$' || true)"
-if ! echo "$old_row" | grep -qE '"login_user_id": *null'; then
-    echo "FAIL: $TEST_NAME - the superseded row still carries an identity: $old_row"
+if ! echo "$old_row" | grep -qE '"active": *(0|false)'; then
+    echo "FAIL: $TEST_NAME - the retired row is still active: $old_row"
     exit 1
 fi
 if ! echo "$old_row" | grep -qE "\"superseded_by_id\": *${new_id}\b"; then
@@ -183,6 +195,24 @@ if [ "$third_device" != "$new_device" ]; then
     exit 1
 fi
 echo "[TEST] 5. OK" >&2
+
+# ---------------------------------------------------------------------------
+# 6. A retired row keeps the record of whose it was: signing in again on a browser
+#    that is already signed in retires a row that carries the identity, and it still
+#    carries it afterwards.
+# ---------------------------------------------------------------------------
+echo "[TEST] 6. A retired row still records who it belonged to..." >&2
+login >/dev/null
+retired="$(sql "SELECT login_user_id, active, superseded_by_id FROM _sessions WHERE session_token = '${token_third}'")"
+if ! echo "$retired" | grep -qE '"active": *(0|false)' || ! echo "$retired" | grep -qE '"superseded_by_id": *[0-9]+'; then
+    echo "FAIL: $TEST_NAME - the row the latest sign-in replaced was not retired: $retired"
+    exit 1
+fi
+if ! echo "$retired" | grep -qE '"login_user_id": *[0-9]+'; then
+    echo "FAIL: $TEST_NAME - the retired row no longer records whose it was: $retired"
+    exit 1
+fi
+echo "[TEST] 6. OK" >&2
 
 (cd "$PROJECT_DIR" && php artisan db:query "DELETE FROM _sessions WHERE device_id = ${new_device}" >/dev/null 2>&1)
 

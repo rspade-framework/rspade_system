@@ -123,6 +123,88 @@ class Task_Concurrency
     }
 
     /**
+     * Every task method declaring #[Exclusive('$group')], from the manifest.
+     *
+     * @return array<int, array{0: string, 1: string}> [fully-qualified class, method] pairs
+     */
+    public static function group_members(string $group): array
+    {
+        $members = [];
+
+        foreach (Manifest::by_attribute('Exclusive') as $row) {
+            if ($row['member'] === null || $row['class'] === null) {
+                continue;
+            }
+            if (($row['instances'][0][0] ?? null) !== $group) {
+                continue;
+            }
+
+            $fqcn = Manifest::php_class_metadata($row['class'])['fqcn'] ?? null;
+            if ($fqcn !== null) {
+                $members[] = [$fqcn, $row['member']];
+            }
+        }
+
+        return $members;
+    }
+
+    /**
+     * What a run's RUN lock is keyed on - the group for a grouped #[Exclusive] task, else the
+     * identity (identity_key()) - or null for an unmanaged task, which has no run lock. Two
+     * runs with the same answer can never run at once.
+     */
+    public static function run_lock_identity(string $class, string $method, string $params_hash): ?string
+    {
+        $identity = static::identity_key($class, $method, $params_hash);
+        if ($identity === null) {
+            return null;
+        }
+
+        $group = static::get_policy($class, $method)['group'];
+
+        return $group !== null ? static::__group_identity($group) : $identity;
+    }
+
+    /**
+     * The PENDING runs that wait on the same run lock as a run of ($class, $method,
+     * $params_hash): the identity's own pending run, and for a grouped task the pending run of
+     * every member of the group. A handful of rows at most (one pending run per identity);
+     * empty for an unmanaged task. Task-table reads only.
+     *
+     * @return int[]
+     */
+    public static function pending_ids_on_run_lock(string $class, string $method, string $params_hash): array
+    {
+        $policy = static::get_policy($class, $method);
+        if ($policy['mode'] === null) {
+            return [];
+        }
+
+        $query = DB::table('_tasks')->where('status_id', Task_Run_Model::STATUS_PENDING);
+
+        if ($policy['group'] !== null) {
+            $members = static::group_members($policy['group']);
+            if ($members === []) {
+                return [];
+            }
+            $query->where(function ($where) use ($members) {
+                foreach ($members as [$member_class, $member_method]) {
+                    $where->orWhere(function ($member) use ($member_class, $member_method) {
+                        $member->where('class', $member_class)->where('method', $member_method);
+                    });
+                }
+            });
+        } else {
+            $query->where('class', $class)->where('method', $method);
+            if ($policy['mode'] === 'debounce') {
+                $query->where('params_hash', $params_hash);
+            }
+        }
+
+        return $query->orderBy('id')->pluck('id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    /**
      * Whether a task method is single-instance (Exclusive or Debounce).
      */
     public static function is_managed(string $class, string $method): bool

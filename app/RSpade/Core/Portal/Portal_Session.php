@@ -479,8 +479,10 @@ class Portal_Session
      * End the portal sign-in on this browser's session when it has outlived
      * rsx.sessions.portal, and say why. The portal twin of Session::enforce_timeouts():
      * same two clocks (portal_login_at, portal_last_page_view_at), same Ajax grace, and
-     * the sign-out clears the portal properties only - a staff login on the row is judged
-     * by its own limits, on staff requests.
+     * the same retirement - the expired row is marked inactive with its record intact and
+     * the browser moves to a successor, on which only the portal properties are cleared.
+     * A staff login is carried to the successor and is judged by its own limits, on staff
+     * requests.
      *
      * @param bool $strict True for a page; false gives the Ajax grace
      * @return string|null 'length' or 'idle' when the sign-in was just ended, else null
@@ -490,6 +492,7 @@ class Portal_Session
         $reason = Session::_timeout_reason('portal', $strict);
 
         if ($reason !== null) {
+            Session::_retire_expired_row();
             self::logout();
         }
 

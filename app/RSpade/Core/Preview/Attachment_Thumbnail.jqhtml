@@ -28,7 +28,7 @@ File_Storage_Model::RENDER_STATUS_*, or 'none' when there is no resident blob):
   1 NOT_REQUIRED - an image or PDF: the picture is rasterized straight from the blob.
   2 PENDING      - queued for render: the extension icon is served, uncacheable.
   3 RENDERED     - the real page-1 raster.
-  4 FAILED       - terminal: the extension icon, permanently.
+  4 FAILED       - the last render attempt failed: the extension icon, uncacheable.
   unavailable    - the record could not be fetched (deleted, or not visible to this user).
 --%>
 <Define:Attachment_Thumbnail tag="div">

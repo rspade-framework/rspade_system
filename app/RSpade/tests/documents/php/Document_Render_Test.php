@@ -29,8 +29,10 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * attachments are removed in teardown to unlink their on-disk blobs.
  *
  * KICK SUPPRESSION: rsx.search.enabled=false for the whole class. That is the pipeline kick
- * switch (Document_Render_Service::kick), so creating an attachment records its state but never
- * spawns a detached worker - the tests drive render_storage()/render_pending() directly.
+ * switch (Document_Render_Service::kick), so creating an attachment records its state and
+ * queues nothing - the tests drive render_storage(), the unit of work, directly and in this
+ * process. The queue around it (attempts, retries, the child process, the drain) is
+ * Document_Work_Queue_Test; the per-stage time bound is Document_Stage_Bound_Test.
  */
 class Document_Render_Test extends Rsx_Test_Abstract
 {
@@ -157,8 +159,8 @@ class Document_Render_Test extends Rsx_Test_Abstract
         );
     }
 
-    // DOCUMENTS-REQUEST-IDEMPOTENT: request_render() only ever moves NOT_REQUIRED. FAILED is
-    // terminal, so an upload of the same bytes must not silently retry it.
+    // DOCUMENTS-REQUEST-IDEMPOTENT: request_render() only ever moves NOT_REQUIRED. An upload of
+    // the same bytes must not hand a FAILED blob a fresh set of attempts.
     public static function test_request_render_is_idempotent()
     {
         $attachment = static::__make_attachment(static::__unique_bytes('idem'), 'idem.docx');
@@ -173,7 +175,7 @@ class Document_Render_Test extends Rsx_Test_Abstract
         static::__assert_equals(
             File_Storage_Model::RENDER_STATUS_FAILED,
             (int) static::__storage($attachment)->render_status_id,
-            'FAILED is terminal - request_render() does not re-queue it'
+            'request_render() does not re-queue a FAILED blob'
         );
     }
 
@@ -199,7 +201,42 @@ class Document_Render_Test extends Rsx_Test_Abstract
             'a missing blob renders FAILED'
         );
         static::__assert_contains('missing on disk', (string) $reloaded->render_error, 'the reason is recorded');
-        static::__assert_equals(1, (int) $reloaded->is_indexed, 'the extraction half of the queue is settled too');
+
+        $index = Search_Index_Model::forModel('File_Storage_Model', $reloaded->id)->first();
+        static::__assert_not_empty($index, 'the extraction half recorded an outcome of its own');
+        static::__assert_equals(Search_Index_Model::STATUS_FAILED, (int) $index->status_id, 'and it is FAILED');
+        static::__assert_equals(0, (int) $reloaded->is_indexed, 'a failed extraction is still owed - the queue decides whether it is retried');
+    }
+
+    // DOCUMENTS-RENDER-RETRIES-FAILED: the unit of work renders a blob whose render is FAILED as
+    // well as one that is PENDING - FAILED is what an earlier attempt left, and being run again is
+    // the retry. Proved with a rendition already on disk, so no converter is needed.
+    public static function test_failed_render_is_attempted_again_by_the_unit_of_work()
+    {
+        $attachment = static::__make_attachment(static::__unique_bytes('retry'), 'retry.docx');
+        $storage = static::__storage($attachment);
+
+        $rendition_path = File_Preview_Controller::rendition_cache_path($storage);
+        if (!is_dir(dirname($rendition_path))) {
+            mkdir(dirname($rendition_path), 0755, true);
+        }
+        file_put_contents($rendition_path, 'sentinel');
+        static::$created_files[] = $rendition_path;
+
+        $storage->render_status_id = File_Storage_Model::RENDER_STATUS_FAILED;
+        $storage->render_error = 'the earlier attempt failed';
+        $storage->is_indexed = 1;
+        $storage->save();
+
+        Document_Render_Service::render_storage($storage);
+
+        $reloaded = static::__storage($attachment);
+        static::__assert_equals(
+            File_Storage_Model::RENDER_STATUS_RENDERED,
+            (int) $reloaded->render_status_id,
+            'the retry rendered it'
+        );
+        static::__assert_true($reloaded->render_error === null, 'the earlier reason is cleared');
     }
 
     // DOCUMENTS-RENDER-SHORTCIRCUIT: a blob whose rendition is already on disk (the backfill case,
@@ -319,41 +356,6 @@ class Document_Render_Test extends Rsx_Test_Abstract
             Realtime::_testing_reset();
             config(['rsx.realtime.enabled' => false]);
         }
-    }
-
-    // ============================================================================================
-    // THE DRAIN LOOP
-    // ============================================================================================
-
-    // DOCUMENTS-FAILED-NOT-REQUEUED: the sweeper must never pick a FAILED blob back up. A queue
-    // that retries a terminal failure forever is a queue that hides its own failures.
-    public static function test_failed_blob_is_not_requeued_by_the_worker()
-    {
-        $attachment = static::__make_attachment(static::__unique_bytes('terminal'), 'terminal.docx');
-        $storage = static::__storage($attachment);
-
-        $storage->render_status_id = File_Storage_Model::RENDER_STATUS_FAILED;
-        $storage->render_error = 'soffice said no';
-        $storage->is_indexed = 1;
-        $storage->save();
-
-        // LibreOffice off keeps the pass from converting any OTHER queued blob in the baseline;
-        // the extraction half still drains, which is exactly the behavior being relied on.
-        config(['rsx.libreoffice.enabled' => false]);
-
-        try {
-            static::__run_task_method(Document_Render_Service::class, 'render_pending');
-        } finally {
-            config(['rsx.libreoffice.enabled' => true]);
-        }
-
-        $reloaded = static::__storage($attachment);
-        static::__assert_equals(
-            File_Storage_Model::RENDER_STATUS_FAILED,
-            (int) $reloaded->render_status_id,
-            'FAILED stays FAILED across a worker pass'
-        );
-        static::__assert_equals('soffice said no', (string) $reloaded->render_error, 'the recorded reason survives');
     }
 
     // ============================================================================================

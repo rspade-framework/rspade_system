@@ -18,9 +18,10 @@ DESCRIPTION
     SOFFICE IS INVOKED BY THE BACKGROUND WORKER AND BY NOTHING ELSE. A web request
     never converts a document. Document_Render_Service::render_pending is #[Exclusive],
     so at most one pass runs cluster-wide and its soffice calls are serialized by
-    construction; the text extractor's own fods/fodp conversions run inside that same
-    worker pass. See rsx:man documents for operating the pipeline and rsx:man thumbnails
-    for the render state machine.
+    construction; the pass hands each document to a child process of its own, and the
+    text extractor's fods/fodp conversions run in that same child. See rsx:man documents
+    for operating the pipeline and the worker's queue, and rsx:man thumbnails for the
+    render state machine.
 
     THIS IS WHY THERE IS NO CONCURRENCY SECTION ANY MORE. Until 2026-08-22 three
     callers (a thumbnail renderer, the text extractor, and the preview controller)
@@ -60,11 +61,14 @@ HOW IT WORKS
     every slide - see rsx:man document_search.
 
     FAIL LOUD, RECORD, MOVE ON. __convert_to_pdf() throws on any failure (missing
-    soffice, non-zero exit, no output, timeout). render_storage() catches it, records
+    soffice, non-zero exit, no output, the stage bound expiring). The child records
     render_status_id = FAILED with the message in render_error, attempts the extraction
-    anyway so the failure is visible to rsx:search:reindex --failed as well, notifies
-    open pages, and continues to the next blob. FAILED IS TERMINAL - the sweeper never
-    retries it; php artisan rsx:documents:rerender --failed is the operator action.
+    anyway (a document that cannot be rendered may still have text that can be read),
+    and notifies open pages; the worker moves on to the next blob. A FAILED ATTEMPT IS
+    RETRIED BY THE WORKER, rsx.documents.retry_after_minutes later, until the blob has
+    had rsx.documents.max_attempts attempts; after the last it stays FAILED and
+    php artisan rsx:documents:rerender --failed is the operator action. The queue and
+    its rules are rsx:man documents, THE WORK QUEUE.
 
 ENABLE / DISABLE
     config('rsx.libreoffice.enabled') is the master switch (env LIBREOFFICE_ENABLED,
@@ -73,49 +77,41 @@ ENABLE / DISABLE
     - Enabled + conversion succeeds  -> rendition on disk, real document thumbnail,
                                         Document_Preview shows the document.
     - Enabled + conversion fails      -> FAILED recorded with its reason; the generic
-                                        extension icon is served (uncacheable).
+                                        extension icon is served (uncacheable). The
+                                        worker retries it on the queue's schedule.
     - Disabled                        -> NO soffice call is ever made. Convertible
-                                        documents STAY PENDING (they are not lost - the
-                                        day it is switched back on the sweeper renders
-                                        them), the rendition endpoint has nothing to
-                                        serve, and thumbnails use the extension icon.
-                                        Text extraction of PDFs and plain text keeps
-                                        draining normally.
+                                        documents STAY PENDING and stay in the queue,
+                                        DEFERRED: offered again every retry interval
+                                        with no attempt charged, so the first pass
+                                        after it is switched back on renders them. The
+                                        rendition endpoint has nothing to serve, and
+                                        thumbnails use the extension icon. Text
+                                        extraction of PDFs and plain text keeps
+                                        draining normally, and a workbook's HTML
+                                        rendition (PhpSpreadsheet, no soffice) is
+                                        still produced.
 
     Disable on nodes where LibreOffice is not installed:
         LIBREOFFICE_ENABLED=false   (in that node's .env)
 
-TIMEOUT
-    config('rsx.libreoffice.timeout') - default 120 seconds - is THE ONE SANCTIONED
-    TIMEOUT in this subsystem, and the only one in the document pipeline. The
-    justification is written out in full beside the key in config/rsx.php, because a
-    sanctioned timeout that is not justified in place is not sanctioned. In brief:
+TIME LIMITS
+    NO KEY UNDER rsx.libreoffice BOUNDS A CONVERSION. soffice and pdftotext carry no
+    limit of their own (the process is started with none): each runs inside one of
+    the document worker's two stages - the render, or the text extraction - and is
+    bounded WITH that stage, by config('rsx.documents.stage_seconds'), default 20.
+    One number covers the external binaries and the in-process readers alike.
 
-    WHAT IT BOUNDS
-        ONE external document-binary invocation made by the render worker: soffice (a
-        rendition, or an fods/fodp text conversion) or pdftotext. It bounds the
-        EXTERNAL BINARY - never any work of ours, and never the worker's own pass.
+    When a stage runs past its bound while a binary is running, the binary is
+    stopped, the stage is abandoned, and the attempt is recorded FAILED with the
+    reason ("render exceeded 20 seconds", "text extraction exceeded 20 seconds").
+    Behind the stage bound the worker holds a hard kill over the whole child process
+    and everything it started - soffice included - at
+    config('rsx.documents.kill_seconds'), default 60.
 
-    WHY IT QUALIFIES
-        These binaries do not merely run slowly on malformed input; they WEDGE - the
-        process never returns and never will. The worker is single-threaded, so one
-        wedged document would stop every later document in the queue forever. Expiry
-        degrades to a WORKING OUTCOME: the blob is recorded FAILED with its reason, the
-        extension icon is served, and the queue moves on.
-
-    WHY 120
-        The number does not separate "fast" from "slow"; it separates "still working"
-        from "never coming back". A large, complex document on a loaded box legitimately
-        takes well over a minute, so 120 sits far above any honest render, while a
-        wedged soffice would sit there forever.
-
-    WHY ONE KEY FOR BOTH BINARIES
-        pdftotext is the same shape of risk with the same degradation. A second number
-        would have to be argued separately and would drift; one key, one number, every
-        site. (config('rsx.search.timeout') was that second number and is gone.)
-
-    Do NOT lower this because renders "should be faster" - that will start failing
-    legitimate renders.
+    Both are SANCTIONED TIMEOUTS, justified in full beside their keys in
+    config/rsx.php and described in rsx:man documents, THE WORK QUEUE. A site whose
+    ordinary documents need longer than 20 seconds to convert on its hardware raises
+    stage_seconds (and kill_seconds with it) in rsx/resource/config/rsx.php.
 
 THE DOCUMENT SANDBOX
     config('rsx.libreoffice.sandbox') - 'none' (default) or 'docker' (env
@@ -244,12 +240,17 @@ THE DOCUMENT SANDBOX
     thumbnail over through the document.thumbnail_render resolve chain
     (rsx:man document_search).
 
-  THE TIMEOUT PATH
-    When the sanctioned bound expires, Symfony kills the process it started -
-    which under the sandbox is the docker CLIENT, not the container. So every
-    caller that enforces the bound also runs `docker kill` on the container it
-    named (Document_Sandbox::container_name() / ::kill()). Without that, a wedged
-    converter would keep running with the work dir still mounted.
+  WHEN THE STAGE BOUND EXPIRES
+    The process the worker stops is the one PHP started - which under the sandbox
+    is the docker CLIENT, not the container. So Document_Stage_Bound::run_process(),
+    the one place a document binary is started, also runs `docker kill` on the
+    container it named (Document_Sandbox::container_name() / ::kill()). Without
+    that, a wedged converter would keep running with the work dir still mounted.
+
+    The worker's hard kill (rsx.documents.kill_seconds) reaches the docker client
+    and NOT the container, which is a child of the docker daemon. The stage bound
+    is what stops a sandboxed converter, which is one more reason kill_seconds
+    stays above twice stage_seconds.
 
   THE HEALTH ROWS
     rsx:health carries one "Document Sandbox" check in every mode:
@@ -298,8 +299,6 @@ CONFIGURATION
                              (env LIBREOFFICE_BINARY_PATH) = auto-detect on PATH and
                              common install locations (/usr/bin/soffice,
                              /usr/local/bin/soffice, /opt/libreoffice/program/soffice).
-        timeout      int     Per-invocation cap in seconds on the external binary.
-                             Default 120. See TIMEOUT above.
         sandbox      string  'none' (default) or 'docker'. See THE DOCUMENT
                              SANDBOX above (env LIBREOFFICE_SANDBOX). Any other
                              value throws at first use.
@@ -312,6 +311,9 @@ CONFIGURATION
         sandbox_memory
                      string  Memory cap for a sandboxed conversion. Default '1g'.
         sandbox_pids int     Pid cap for a sandboxed conversion. Default 256.
+
+    How long a conversion may run is config('rsx.documents.stage_seconds') - see
+    TIME LIMITS above.
 
     WHICH MIMES CONVERT is config('rsx.preview.convertible') - one list, read by the
     attachment (to decide whether a new upload owes a render) and by the worker. It is
@@ -350,8 +352,8 @@ VERIFYING
         php artisan rsx:test --framework --group=documents
 
     Includes the real-soffice render path (it auto-skips when soffice is absent), the
-    rendition-exists short-circuit, the terminal-FAILED behaviour and the thumbnail
-    cache purge.
+    rendition-exists short-circuit, the work queue (charge-first attempts, retry,
+    the stage bound and the kill) and the thumbnail cache purge.
 
 SEE ALSO
     rsx:man prod             Deployment requirements, including the sandbox
@@ -363,4 +365,4 @@ SEE ALSO
     rsx:man tasks            #[Exclusive], #[Schedule] and the worker pool
     docs.dev/reference/docker_container_additions_7_2_2026.md
 
-RSX Framework              Last updated 2026-09-18               LIBREOFFICE(1)
+RSX Framework              Last updated 2026-10-11               LIBREOFFICE(1)

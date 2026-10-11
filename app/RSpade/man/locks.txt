@@ -258,6 +258,24 @@ LOCK GROUPS AND SUBPROCESSES
     few milliseconds when quiet, longer when saturated. A null return means no
     process was started.
 
+    Rsx_Artisan::run_bounded($command, $args, $seconds, &$output, $env) is run()
+    with a HARD LIMIT on the child's life. At $seconds the child and every process
+    it started are killed with SIGKILL (the whole process group, so a binary the
+    child spawned is not left running as an orphan) and the method returns
+    Rsx_Artisan::KILLED_AT_LIMIT instead of an exit code; $output holds whatever
+    was written before the end. It is synchronous and joins the lock group like
+    run().
+
+    run_bounded() IS A TIMEOUT, and the no-timeout mandate applies to every call
+    of it. It exists for one shape of child: work on input the application does
+    not control, which may never finish, where the caller records the kill as a
+    failed attempt and carries on. Its caller is the document worker, which runs
+    each uploaded document in a child of its own (rsx:man documents, THE WORK
+    QUEUE) and justifies its number at config('rsx.documents.kill_seconds'). A
+    caller with work of its own to run to completion uses run(). What the kill
+    cannot reach is a process that left the group on purpose or is not a
+    descendant at all - a docker container is a child of the docker daemon.
+
     ARTISAN-SPAWN-01 (rsx:check) enforces this. Artisan::call() is in-process on
     this connection, already reentrant, and is not flagged.
 

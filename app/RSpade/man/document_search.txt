@@ -59,14 +59,19 @@ DESCRIPTION
     AND its preview all appear a few seconds AFTER the upload, not during it.
 
 EXTRACTION PIPELINE
-    The queue IS a flag. Every File_Storage_Model blob carries is_indexed:
+    TWO FACTS, kept apart. Every File_Storage_Model blob carries is_indexed, which
+    says whether its text is OWED; the _search_indexes row says what the LAST
+    attempt FOUND:
 
-        is_indexed = 0    queued (never attempted, or re-queued)
-        is_indexed = 1    attempted (a _search_indexes row now exists for it)
+        no row, is_indexed = 0          never attempted
+        EXTRACTED / UNSUPPORTED         a definitive answer; is_indexed = 1
+        FAILED, is_indexed = 0          an attempt failed and the worker will try
+                                        again
+        FAILED, is_indexed = 1          failed for good - the attempts are spent;
+                                        re-queued only by rsx:search:reindex
 
-    There is NO stored PENDING state. The ABSENCE of a _search_indexes row (with
-    is_indexed = 0) is the queue. A row is written only AFTER an attempt, so its
-    status_id is always one of three terminal outcomes:
+    There is NO stored PENDING state: a row is written only AFTER an attempt, so its
+    status_id is always one of three outcomes:
 
         EXTRACTED     text pulled (may be empty - a text-free/all-image PDF is a
                       VALID empty extraction, not a failure; OCR is out of scope).
@@ -74,8 +79,9 @@ EXTRACTION PIPELINE
                       the cap and RECORDED (row metadata truncated=true +
                       original_bytes) - still EXTRACTED, never a silent partial
         FAILED        an extractor threw a real, RETRYABLE fault (missing binary,
-                      non-zero exit, a missing/corrupt source); the error is stored
-                      on the row
+                      non-zero exit, a missing/corrupt source), the stage ran past
+                      its bound, or the process running it died; the error is
+                      stored on the row. The worker retries it - see below
                       A SCANNED PDF is the case that surprises people: it is
                       application/pdf, so it HAS an extractor, pdftotext runs, and
                       it succeeds - yielding EMPTY text. It records EXTRACTED with
@@ -89,33 +95,48 @@ EXTRACTION PIPELINE
                       because a retry can never help (unlike FAILED)
 
     Draining. Document_Render_Service::render_pending is #[Exclusive] (at most one
-    pass runs cluster-wide) and #[Schedule('every 10 minutes')]. It processes ONE blob
-    per iteration - the lowest id owing EITHER a rendition (render_status_id = PENDING)
-    or an extraction (is_indexed = 0) - until nothing is owed; each attempt moves the
-    row out of the queue (RENDERED/FAILED, is_indexed = 1) so work never repeats and
-    the loop terminates. A prompt kick (Task::dispatch on blob creation/materialization
-    and on a blob entering PENDING) drains uploads without waiting for the sweep.
+    pass runs cluster-wide) and #[Schedule('every 10 minutes')]. The queue is ONE
+    column on the blob, _file_storage.process_due_at: a blob that owes a rendition,
+    its text, or both carries the time it may next be attempted, and the worker
+    takes the earliest due blob, one per iteration, until none is due. A prompt kick
+    (Task::dispatch on blob creation/materialization and on a blob entering PENDING)
+    drains uploads without waiting for the sweep.
 
-    (Search_Index_Service::index_pending was the extraction-only worker and NO LONGER
-    EXISTS. Search_Index_Service::extract_storage($storage, ?$rendition_path) remains
-    as the unit of work, called by the render worker.)
+    ATTEMPTS, RETRIES AND BOUNDS. Each blob is processed in a child process of its
+    own. The attempt is charged before it starts; a FAILED extraction leaves
+    is_indexed at 0 and is tried again config('rsx.documents.retry_after_minutes')
+    (30) later, up to config('rsx.documents.max_attempts') (3) attempts, after which
+    the row stays FAILED and is_indexed becomes 1. The render and the extraction of
+    one blob share that counter. The whole computation of a blob's text - an
+    application's document.extract_text handler, the external binaries and the
+    in-process readers alike - runs under ONE wall-clock bound,
+    config('rsx.documents.stage_seconds') (20); past it the attempt is recorded
+    FAILED with "text extraction exceeded 20 seconds". Full rules: rsx:man
+    documents, THE WORK QUEUE.
 
-    Two master switches, governed separately, and this is the subtle part.
-    config('rsx.search.enabled') governs EXTRACTION and is also the kick switch; when
-    false, no worker is spawned on upload and the extraction half of the queue is
-    skipped (existing rows untouched). config('rsx.libreoffice.enabled') governs
-    RENDERING. A box with LibreOffice off must still extract PDFs and plain text, so
-    the queue narrows to "is_indexed = 0" and PENDING rows simply WAIT - they are
-    still queued, and the day soffice is installed the sweeper renders them. (If both
-    are off the worker returns immediately.)
+    Search_Index_Service::extract_storage($storage, ?$rendition_path) is the unit of
+    work the worker's child runs. It is COMMAND-LINE ONLY and throws from a web
+    request; code that wants a blob processed now calls
+    Document_Render_Service::process_storage($storage) (rsx:man documents,
+    APPLICATION CODE AND THE QUEUE).
+
+    Two master switches, governed separately. config('rsx.search.enabled') governs
+    EXTRACTION and is also the kick switch: when false, no worker is spawned on
+    upload, and a blob that owes ONLY its text is deferred - offered again one retry
+    interval later, no attempt charged, existing rows untouched. (A pass that runs
+    for a blob's rendition extracts whatever text that blob owes as well.)
+    config('rsx.libreoffice.enabled') governs RENDERING through soffice. A box with
+    LibreOffice off still extracts PDFs and plain text, and a convertible document
+    stays PENDING, deferred the same way, until the switch comes back. (If both are
+    off the worker returns immediately.)
 
     Re-extraction. Bump config('rsx.search.extractor_version') when an extractor
     changes in a way that should re-produce existing text, then:
 
         php artisan rsx:search:reindex --below-version=N
 
-    re-queues every blob indexed by an older generation (sets is_indexed = 0). The
-    cron/kick re-extracts them one at a time.
+    re-queues every blob indexed by an older generation (is_indexed = 0, due now, no
+    attempts charged). The cron/kick re-extracts them one at a time.
 
     Office documents route by FAMILY, because no single route covers them all:
 
@@ -165,8 +186,14 @@ FILTER CHAINS (the app extension surface)
     terminal default. See rsx:man event_hooks (RESOLVE EVENTS).
 
     document.extract_text  (Search_Index_Service::extract_storage)
-        Now runs INSIDE the render worker's pass, not in a worker of its own. The
-        payload and contract are unchanged, and 'path' is still the SOURCE BLOB - the
+        Runs INSIDE the render worker's child process for the blob - a command-line
+        process, never a web request - and INSIDE THE TEXT-EXTRACTION STAGE BOUND:
+        the handler and whatever it calls share config('rsx.documents.stage_seconds')
+        (20 seconds) with the rest of the extraction. A handler still running at the
+        bound is interrupted where it stands (a Document_Stage_Timeout_Exception
+        thrown from the alarm), the attempt is recorded FAILED and the worker
+        retries it. A handler that calls a slow external service either answers
+        inside the bound or the site raises it. 'path' is the SOURCE BLOB - the
         rendition shortcut is applied after the chain declines, so a handler always
         sees the original document.
         Payload:  ['storage' => File_Storage_Model, 'path' => string, 'mime' => string]
@@ -474,11 +501,11 @@ DOCUMENT_TEXT_PREVIEW COMPONENT
         pending      no index row yet - extraction is  (Extracting Text...)
                      still queued
         available    text was extracted                the text, newlines preserved
-        error /      extraction FAILED (terminal), a   (Document Text Unavailable)
-        unsupported  degraded upload, a file type with
-                     no extractable text, an extraction
-                     that yielded nothing, or a caller
-                     the gate refused
+        error /      the last extraction attempt       (Document Text Unavailable)
+        unsupported  FAILED, a degraded upload, a file
+                     type with no extractable text, an
+                     extraction that yielded nothing,
+                     or a caller the gate refused
 
     The three unavailable causes deliberately collapse into ONE notice: they are the
     same answer to a reader. An operator distinguishes them with
@@ -612,9 +639,12 @@ CONFIGURATION
     REMOVED 2026-08-22 - delete any override you carry: rsx.search.timeout,
     rsx.preview.rendition_timeout, rsx.libreoffice.max_concurrent and
     rsx.libreoffice.slot_wait_timeout. With one #[Exclusive] worker as the only caller
-    of soffice there is no pool to size and no slot to wait for, and ONE sanctioned
-    bound - config('rsx.libreoffice.timeout'), 120s - now covers every external
-    document-binary call (soffice AND pdftotext). See rsx:man libreoffice, TIMEOUT.
+    of soffice there is no pool to size and no slot to wait for, and every external
+    document-binary call (soffice AND pdftotext) is bounded by the stage it runs in -
+    config('rsx.documents.stage_seconds'). See rsx:man libreoffice, TIME LIMITS.
+
+    config/rsx.php -> 'documents' (the worker's attempts and time limits) is
+    rsx:man config_rsx, 'documents'.
 
     The soffice binary path and master switch are config('rsx.libreoffice.*')
     (rsx:man libreoffice).
@@ -650,9 +680,11 @@ REINDEX COMMAND
         --attachment=ID        re-queue the blob backing one attachment
                                (materializes external bytes first)
 
-    Re-queuing is uniform: it sets is_indexed = 0 on the resolved blobs and dispatches
+    Re-queuing is uniform: it sets is_indexed = 0 on the resolved blobs, makes them
+    due now with NO ATTEMPTS CHARGED, and dispatches
     Document_Render_Service::render_pending; the sweep/kick then re-extracts one blob
-    at a time.
+    at a time. A blob has one queue entry for everything it owes, so a re-queued
+    blob whose render is FAILED has that render attempted again in the same passes.
 
     REINDEX IS THE TEXT HALF ONLY. --failed here means an EXTRACTION failure (a
     _search_indexes row with status FAILED). A RENDER failure - soffice could not

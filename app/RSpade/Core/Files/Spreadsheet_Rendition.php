@@ -29,7 +29,8 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
  *
  * So a spreadsheet renders to HTML instead, through PhpSpreadsheet, which is a declared
  * framework dependency and reads the workbook IN-PROCESS: no soffice spawn, no external
- * binary that can wedge, no 120-second timeout.
+ * binary that can wedge. A workbook that keeps the reader busy without end is stopped by the
+ * worker's stage bound (rsx.documents.stage_seconds).
  *
  * FORMULAS ARE NEVER EVALUATED. A spreadsheet file stores the CACHED RESULT of every formula
  * next to the formula itself - it is what the application that saved the file last computed.

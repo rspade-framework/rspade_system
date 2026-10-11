@@ -315,7 +315,9 @@ class Task_Worker_Command extends Command
         if (Task_Concurrency::is_managed($schedule->class, $schedule->method)) {
             $run_lock = Task_Concurrency::try_acquire_run_lock($schedule->class, $schedule->method, $params_hash);
             if (!$run_lock) {
-                DB::table('_task_schedules')->where('id', $schedule->id)->update([
+                // Guarded on the due time this worker read, like the claim below: a next run
+                // set explicitly since (Task::set_next_run()) is not overwritten.
+                DB::table('_task_schedules')->where('id', $schedule->id)->where('next_run_at', $schedule->next_run_at)->update([
                     'next_run_at' => $next_run_at,
                     'updated_at' => now(),
                 ]);

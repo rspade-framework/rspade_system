@@ -62,7 +62,12 @@ MODELS
             id          Primary key
             hash        Content hash (or incremented variant on collision)
             size        Byte size of the blob
-            is_indexed  Text-extraction queue flag (0 = queued, 1 = attempted)
+            is_indexed  Text extraction owed (0) or settled (1)
+            process_due_at / process_attempt_count
+                        The document worker's queue: when the blob may next be
+                        attempted (NULL = nothing for the worker to do) and the
+                        attempts charged. Written only through the model's
+                        queue methods - rsx:man documents
             created_at / updated_at / created_by_id / created_by_type /
             updated_by_id / updated_by_type
 
@@ -1516,14 +1521,18 @@ DOCUMENT TEXT EXTRACTION AND PREVIEW
         extracts its text in the same pass; the thumbnail pipeline then
         rasterizes that same rendition. Render state lives on the blob
         (_file_storage.render_status_id: NOT_REQUIRED / PENDING / RENDERED /
-        FAILED, terminal), read as $file->get_render_status(). Operating it is
-        rsx:man documents (rsx:documents:status / :failed / :rerender).
+        FAILED), read as $file->get_render_status(). A failed attempt - render
+        or extraction - is retried by the worker, 30 minutes apart, three
+        attempts in all (config rsx.documents), and then stays FAILED for an
+        operator. Each document runs in its own child process under two time
+        limits. Operating it is rsx:man documents (rsx:documents:status /
+        :failed / :rerender).
 
     Text extraction
-        Every new blob is queued via the File_Storage_Model.is_indexed flag
-        (0 = queued, 1 = attempted); the ABSENCE of a _search_indexes row IS the
-        queue (no stored PENDING). The render worker above drains it one blob at
-        a time. Rows are terminal:
+        Every new blob owes its text (File_Storage_Model.is_indexed = 0) and is
+        born in the worker's queue; there is no stored PENDING - a blob with no
+        _search_indexes row has not been attempted yet. The render worker above
+        drains it one blob at a time. A row is the outcome of the last attempt:
         STATUS_EXTRACTED / STATUS_FAILED / STATUS_UNSUPPORTED (an image/zip is
         UNSUPPORTED, not FAILED - no OCR). Formats: PDF text layer (pdftotext),
         Office (headless LibreOffice), plain text.

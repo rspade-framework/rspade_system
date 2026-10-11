@@ -886,8 +886,8 @@ ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and t
            login form is a 500 for a user who merely typed a password wrong ten times.
         5. Confirm the address the framework sees is the real client's. Anything in
            FRONT of nginx - a load balancer, a TLS terminator, a CDN - must append
-           X-Forwarded-For AND be listed (address or CIDR) in rsx.http.trusted_proxies
-           in rsx/resource/config/rsx.php. Unlisted, every request appears to come
+           X-Forwarded-For AND be listed (address or CIDR, comma-separated) in
+           TRUSTED_PROXIES in .env, which rsx.http.trusted_proxies reads. Unlisted, every request appears to come
            from that device and the throttle is global. Never list a range a client
            can connect from directly: a trusted peer's X-Forwarded-For is believed.
         6. Review rsx.sessions.login_throttle against how your users actually behave.

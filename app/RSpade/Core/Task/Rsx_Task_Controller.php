@@ -36,8 +36,8 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     const READ_PAGE = 1000;
 
     /**
-     * One run's status: Task_Run_Model::to_status_array() plus `can` - which lifecycle actions
-     * the viewer may perform on it.
+     * One run's status: Task_Run_Model::to_status_array() - with `waiting`, what a pending run
+     * is waiting for - plus `can`: which lifecycle actions the viewer may perform on it.
      *
      * @param array $params task_id
      */
@@ -175,7 +175,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
 
         $rows = $query->orderByDesc('id')->limit(Task_Run_Model::SEARCH_PAGE_SIZE)->get();
 
-        return ['tasks' => $rows->map(fn ($task) => $task->to_status_array())->all()];
+        return ['tasks' => Task_Run_Model::to_status_arrays($rows)];
     }
 
     /**
@@ -211,7 +211,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
         $rows = array_slice($rows, 0, $page_size);
 
         return [
-            'tasks' => array_map(fn ($task) => $task->to_status_array(), $rows),
+            'tasks' => Task_Run_Model::to_status_arrays($rows),
             'next_cursor' => $more ? (string) end($rows)->id : null,
         ];
     }

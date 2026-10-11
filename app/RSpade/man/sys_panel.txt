@@ -99,7 +99,11 @@ DESCRIPTION
     origin, status, scheduled or started time, finished time, and progress
     (a live run's bar and status line; a finished run's status only - its
     error, reason or last status line); a running run's row is
-    highlighted. Filters: scope ("All active and completed tasks", "Active tasks", "Completed tasks" -
+    highlighted. A QUEUED run with no status line of its own shows what it is
+    WAITING FOR - "scheduled for <time>", "waiting for exclusive lock
+    "<group>" (held by task #<id>)", "waiting for a free worker (2 of 3 busy)"
+    or "waiting for a worker to start" - worked out afresh on every load and
+    stored nowhere (rsx:man tasks, WHAT A PENDING RUN IS WAITING FOR). Filters: scope ("All active and completed tasks", "Active tasks", "Completed tasks" -
     completed being every finished status: completed, failed, stopped,
     killed, cancelled), status, task, origin and "finished within" (by
     completed_at, the dashboard's own definition of a recent failure);
@@ -125,7 +129,8 @@ DESCRIPTION
     names it.
 
     A row opens the RUN DIALOG, three columns: the run's facts and actions
-    (task, status, the status line and progress, origin, pool, queued /
+    (task, status, the status line - for a queued run, what it is waiting
+    for - and progress, origin, pool, queued /
     scheduled / started / finished times, stop requested, the worker while
     the run is running - PID, host and whether that process is alive here,
     gone (abandoned; the next rsx:task:process tick settles it), on another
@@ -163,7 +168,7 @@ DESCRIPTION
     and state, as in the run dialog), start and live progress, with its
     actions; the pending KILL REQUESTS (task, force stop or kill, host, when
     due, which kill worker holds it, the explanation); the oldest ten QUEUED
-    runs with the queued total; and the next ten SCHEDULES due with the
+    runs, each with what it is waiting for, and the queued total; and the next ten SCHEDULES due with the
     schedule total. Any run opens the run dialog. It refreshes as runs start
     and finish (Task_List_Changed_Topic).
 

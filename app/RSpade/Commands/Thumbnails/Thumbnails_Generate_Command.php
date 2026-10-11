@@ -90,7 +90,7 @@ class Thumbnails_Generate_Command extends Command
                 continue;
             }
 
-            // A document whose render is queued or terminally failed has no real thumbnail to
+            // A document whose render is queued or failed has no real thumbnail to
             // warm: the serving path answers it with an uncached placeholder, and generating here
             // would write the extension icon under the real cache key - the exact poisoning this
             // pipeline exists to prevent. The blob is warmed by the pass AFTER it renders.

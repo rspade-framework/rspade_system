@@ -15,12 +15,16 @@ Shipped in the Document Pipeline epic, Batch 2 (extraction core).
   `Rsx_Model_Abstract`; `status_id` enum EXTRACTED/FAILED/UNSUPPORTED; `$realtime_silent`); `search()` for filtering and `search_ranked()` for ranking - the latter selects MySQL's
   score as `relevance` and pre-orders by it).
 - `app/RSpade/Core/Search/Search_Index_Service.php` - the `extract_storage()` unit of work
-  (filter chain -> rendition shortcut -> registry -> UNSUPPORTED terminal; LibreOffice
-  master-switch gate; always sets `is_indexed=1`). The QUEUE and the worker belong to
+  (filter chain -> rendition shortcut -> registry -> UNSUPPORTED; LibreOffice master-switch
+  gate; the whole computation under the text-extraction stage bound, command line only). A
+  definitive answer (EXTRACTED / UNSUPPORTED) sets `is_indexed=1`; a FAILED attempt leaves the
+  text owed, so the worker retries it under the blob's attempt counter. `record_failure()`
+  writes a failure the worker's child never reported; `settle_failure()` stops owing one whose
+  attempts are spent. The QUEUE, the attempts and the worker belong to
   `Document_Render_Service` (tests/documents).
 - `app/RSpade/Core/Search/Rsx_Text_Extractor_Abstract.php` + `Pdftotext_Text_Extractor`,
   `Libreoffice_Text_Extractor`, `Plain_Text_Extractor`.
-- `app/RSpade/Core/Files/File_Storage_Model.php` - `is_indexed` queue flag, prompt kick on
+- `app/RSpade/Core/Files/File_Storage_Model.php` - `is_indexed` (0 = the text is owed), prompt kick on
   `find_or_create()` (now `Document_Render_Service::kick()`), `get_search_index()`.
 - `app/RSpade/Core/Files/File_Attachment_Model.php` - `get_extracted_text()`,
   `get_extraction_status()` (no materialize), static `search_text()`.

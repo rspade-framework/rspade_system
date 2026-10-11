@@ -8,7 +8,8 @@ says what is in this DIRECTORY and what must stay true when editing it.
 
 ## What is here
 
-- `Task.php` — the facade: `dispatch()` (coalescing through `Task_Concurrency` for a managed
+- `Task.php` — the facade: `set_next_run()` (one upsert of `_task_schedules.next_run_at` for a
+  DECLARED schedule; throws for a task with no `#[Schedule]`), `dispatch()` (coalescing through `Task_Concurrency` for a managed
   task, then one `spawn_worker()` try per task pool), `internal()` (an INLINE run: row,
   identity run lock, shutdown-function settle, revision unit, console streams),
   `get_scheduled_tasks()`, `resolve_task_class()`, `spawn_worker($pool)` (refuse when
@@ -22,15 +23,19 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `execute()` (`pre_task()`, the method, echo captured line by line as stdout, a throw is an
   outcome, a worker's leaked locks released and named), `settle()` (flush, guarded
   RUNNING -> COMPLETED/STOPPED/FAILED, schedule statistics, run lock release + re-anchor of a
-  coalesced pending run), `settle_abandoned_inline()`, `running_fields()`.
+  coalesced pending run, THEN the lifecycle frame - the waiters it tells must read the lock
+  free), `settle_abandoned_inline()`, `running_fields()`.
 - `Task_Run_Outcome.php` — THE RETURN CONTRACT, in one place (`from_return()`,
   `from_throwable()`, `exit_code()`).
 - `Task_Instance.php` — the `$task` handle: the reporting calls, held and written together
-  at `FLUSH_INTERVAL` (a write rate), `is_stop_requested()`, attachments (inside the blob
+  at `FLUSH_INTERVAL` (a write rate; every reporting call ends in `__reported()`, so the next
+  write stamps `last_report_at` even when nothing else changed), `run_again_in()`,
+  `is_stop_requested()`, attachments (inside the blob
   store's reference scope; a replaced blob released if orphaned), the console streams a
   runner attaches (`set_console_streams()`), and `record_operator_line()`.
 - `Task_Run_Model(_Abstract).php` — `_tasks`, one row per run: enums, report readers,
-  cursor reads of output and messages, `to_status_array()`, `search_query()` /
+  cursor reads of output and messages, `to_status_array()` / `to_status_arrays()` (with
+  `waiting`), `search_query()` /
   `find_first_1000()` / `find_page()`, and the lifecycle operations (`request_stop`,
   `force_stop`, `force_kill`, `cancel`, `rerun`), each writing an operator line.
   `Task_Schedule_Model`, `Task_Attachment_Model` (a `#[Blob_Reference]` + `Blob_Referencing`)
@@ -39,9 +44,14 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `#[Exclusive('group')]`, the RUN lock is the group's while pending rows stay per method -
   `group_of()`, `is_group_running()`, `enqueue_coalesced_without_waiting()` for the schedule
   tick that queues behind another member under the pool lock) / `#[Debounce]`
-  (`class::method::params_hash`): `params_hash()`, the coalescing enqueue under the identity's
+  (`class::method::params_hash`): `run_lock_identity()`, `group_members()` (from the
+  manifest's attribute index), `pending_ids_on_run_lock()` (the waiters of one lock),
+  `params_hash()`, the coalescing enqueue under the identity's
   enqueue lock, `try_acquire_run_lock()` (a worker's non-blocking try), `acquire_run_lock()`
   (an inline run waits), `reschedule_pending_after_completion()`.
+- `Task_Waiting.php` — what a PENDING run is waiting for (`scheduled` / `lock` / `workers` /
+  `queued`), derived per read: one instance memoizes the RUNNING rows (one query: holders by
+  run lock identity + busy pool workers), the pools' caps and each lock's `is_in_use()`.
 - `Task_Lock.php` — one named `RsxLocks` lock held across control flow (the enqueue and run
   locks). A claim is guarded by its pool lock and a guarded write, never by a `Task_Lock`.
 - `Task_Pool.php` — the client of rsx-lockd's worker-pool accountant (`pool.*` ops,
@@ -64,7 +74,9 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `Task_List_Changed_Topic.php` (data `{class, method}`, so a filter can name one task) —
   the realtime frames: published once per site that holds a subscription the frame matches
   (shallow: every filter key equal) in the relay's registry, nothing when nobody watches;
-  each topic's `can_subscribe()` is `Task_Gates`.
+  each topic's `can_subscribe()` is `Task_Gates`. `lifecycle()` also sends
+  `Task_Changed_Topic` for every PENDING run on the moved run's run lock
+  (`pending_ids_on_run_lock()`).
 - `Rsx_Task_Controller.php` — the browser's endpoints (both realms, `#[Auth('public')]`,
   the gates decide; reads `#[Portal_Impersonation_Readable]`) and the `/_task/xterm.mjs` +
   `/_task/xterm-fit.mjs` module routes. `BundleCompiler` adds its JS stub to every bundle.
@@ -128,7 +140,8 @@ says what is in this DIRECTORY and what must stay true when editing it.
   generation and not alive -> abandoned at once; an older generation (`known: false`) ->
   this host judges its own runs by pid and leaves other hosts' alone. A run with no
   `worker_id` (inline) is the local pid probe on its own host. No grace period exists and
-  none may be added. Timeout enforcement is a force-kill REQUEST for a live local run.
+  none may be added. The silence limit (and a run's own requested timeout) is enforced as a
+  force-kill REQUEST for a live local run.
 - **Abandonment is retried; a failure never is.** An abandoned DISPATCHED run goes back to
   PENDING at now + `rsx.tasks.retry.base_seconds` * 2^(n-1) (`abandon_count`) and FAILS on
   the `retry.attempts`-th; an abandoned scheduled or inline run is FAILED. A run that
@@ -148,8 +161,24 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `FLUSH_INTERVAL` is a write rate and must never become a timeout.
 - **The gates fail closed.** With no handler for a realm's event, `Task_Gates` denies (the
   scope answers `0 = 1`); only a staff developer bypasses. Every new task surface asks it.
-- **The reaper's execution cap is framework infrastructure, not licence to add timeouts.**
-  See the no-timeout mandate.
+- **A task is limited in SILENCE, never in run time.** The reaper measures a worker-run task
+  from its last sign of life - the latest of `started_at`, `last_heartbeat_at`,
+  `last_report_at` - against `rsx.tasks.silent_timeout`; a run that keeps reporting is never
+  killed for time. `_tasks.timeout` is NULL unless a dispatch named one, and a named one is
+  the only hard limit (from `started_at`, replacing the silence rule for that run). So:
+  every NEW reporting call on `Task_Instance` must end in `__reported()`, including its
+  early returns; `insert_row()` must never write a default into `timeout`; and none of this
+  is licence to add a timeout anywhere else (the no-timeout mandate).
+- **What a pending run waits for is DERIVED, never stored.** `Task_Waiting` reads the row,
+  the lock daemon and the running rows when asked; no column may be added to cache it, and no
+  path may write "blocked by" state onto a run - a dead holder must leave nothing to clean
+  up. A list presents its runs through ONE `Task_Waiting` (`to_status_arrays()`), never one
+  per row. Only the holder's run id reaches a viewer.
+- **An explicit next run survives everything but its own claim.** `set_next_run()` writes
+  `next_run_at`; reconciliation touches that column only for a changed expression or
+  `--force-scheduled`, and BOTH worker writes that advance it (the claim, and the coalesced
+  tick of a busy identity) are guarded on the `next_run_at` the worker read. A new write to
+  that column must be guarded the same way.
 - Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]` classes.
 
 ## See also

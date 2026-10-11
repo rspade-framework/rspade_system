@@ -11,6 +11,7 @@ use Exception;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\Document_Sandbox;
+use App\RSpade\Core\Files\Document_Stage_Bound;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Storage_Model;
@@ -228,7 +229,7 @@ class Document_Sandbox_Test extends Rsx_Test_Abstract
         );
 
         $name = Document_Sandbox::container_name($command);
-        static::__assert_not_null($name, 'the container is named, so the timeout path has something to kill');
+        static::__assert_not_null($name, 'the container is named, so an expired stage bound has something to kill');
         static::__assert_true(str_starts_with((string) $name, 'rsx-doc-'), 'sandbox containers are recognisable: ' . $name);
         Document_Sandbox::_testing_set_image_present(true);
         try {
@@ -575,7 +576,7 @@ class Document_Sandbox_Test extends Rsx_Test_Abstract
 
         $text = static::__with_config(
             ['rsx.libreoffice.sandbox' => 'docker'],
-            static fn () => Pdftotext_Text_Extractor::extract($sample, 'application/pdf')
+            static fn () => Document_Stage_Bound::run('text extraction', static fn () => Pdftotext_Text_Extractor::extract($sample, 'application/pdf'))
         );
 
         static::__assert_not_empty(trim($text), 'the PDF text layer came back from inside the container');

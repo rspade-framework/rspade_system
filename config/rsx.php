@@ -1101,6 +1101,81 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | The Document Worker (preview renditions + text extraction)
+    |--------------------------------------------------------------------------
+    |
+    | Document_Render_Service::render_pending takes the blobs that owe a preview rendition
+    | or their extracted text, earliest due first (_file_storage.process_due_at), and
+    | processes each in a CHILD PROCESS of its own (rsx:documents:process_one). An attempt
+    | is charged to the blob before its child starts; a failed attempt is recorded FAILED
+    | and retried later, and a blob that has spent every attempt stays FAILED until an
+    | operator re-queues it (rsx:documents:rerender / rsx:search:reindex). One document
+    | that cannot be processed therefore costs the queue behind it at most
+    | max_attempts * kill_seconds, once.
+    |
+    | THE TWO TIME LIMITS BELOW ARE SANCTIONED TIMEOUTS (owner ruling 2026-10-11, after a
+    | downstream field report: one workbook that never finished was taken first by every
+    | pass, and nothing behind it was ever processed). The no-timeout mandate requires a
+    | timeout to be justified where it lives:
+    |
+    | - stage_seconds: the wall-clock bound on ONE STAGE of ONE document inside the child -
+    |   the render (soffice to PDF, or a workbook to HTML in-process) and the text
+    |   extraction (soffice, pdftotext or an in-process reader) each get this long.
+    |     WHAT IT BOUNDS - a parse of one uploaded file, which is input the application
+    |     does not control: a converter or a spreadsheet reader does not merely run slowly
+    |     on a hostile or damaged file, it can run without end. It never bounds the queue,
+    |     the worker's pass, or any work whose size the application chose.
+    |     WHAT EXPIRY DOES - the stage is abandoned and the attempt is recorded FAILED with
+    |     the reason ("render exceeded 20 seconds"); the document shows the icon-and-title
+    |     preview every failed document shows, is retried retry_after_minutes later, and
+    |     after max_attempts stays FAILED for an operator. The uploaded file is untouched:
+    |     nothing is lost but a preview and a search entry that can be produced again.
+    |     WHY 20 - the limit is the price every OTHER document pays for one that cannot be
+    |     processed, so it is set by how long the queue may stand still, not by how slow a
+    |     conversion may be. A document that needs longer on this hardware is one this
+    |     pipeline declines to preview; raise it here, in the application's config, when a
+    |     site's ordinary documents need more.
+    |
+    | - kill_seconds: how long the PARENT waits for the child before killing it and every
+    |   process it started (soffice is a grandchild) with SIGKILL.
+    |     WHAT IT BOUNDS - the child process as a whole, for the cases the stage bound
+    |     cannot reach: the stage bound is a signal handled between PHP statements, so a
+    |     child stuck inside one native call, or dead on its feet, never answers it.
+    |     WHAT EXPIRY DOES - the same recorded FAILED attempt ("killed after 60 seconds"),
+    |     retried on the same schedule.
+    |     WHY 60 - two stages of stage_seconds each, plus the margin a PHP process needs to
+    |     start on a loaded box. Keep it above 2 * stage_seconds, or the kill pre-empts
+    |     the stage bound and its more precise reason.
+    |
+    | - max_attempts: attempts a blob gets each time it enters the queue. The third failure
+    |   is permanent.
+    | - retry_after_minutes: how long a failed blob waits before its next attempt. This is
+    |   a schedule, not a timeout: it decides when work is next offered, and ends nothing.
+    |
+    | - drain_yield_after_minutes / drain_resume_after_minutes: the PACING of a long drain.
+    |   A pass of the worker (Document_Render_Service::render_pending) that has been
+    |   draining for drain_yield_after_minutes and still finds work due stops BETWEEN two
+    |   documents, sets its own next run drain_resume_after_minutes from now, reports how
+    |   many documents are still waiting and returns - a successful run.
+    |     THESE ARE NOT TIMEOUTS (owner-set pacing, 2026-10-11). It is a voluntary yield so
+    |     the other scheduled work, which shares the scheduled pool with this drain, gets a
+    |     turn during a backlog that takes hours. Nothing is cut short - the check is made
+    |     only between documents - nothing fails, and nothing is lost: every blob still due
+    |     is still in the queue, and the next pass (or the next upload's kick) takes it up.
+    |     A pass that empties the queue first never yields.
+    |
+    */
+    'documents' => [
+        'stage_seconds' => 20,
+        'kill_seconds' => 60,
+        'max_attempts' => 3,
+        'retry_after_minutes' => 30,
+        'drain_yield_after_minutes' => 20,
+        'drain_resume_after_minutes' => 10,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | LibreOffice Integration (the document render worker)
     |--------------------------------------------------------------------------
     |
@@ -1120,30 +1195,9 @@ return [
     |   extension icon. Text extraction of non-LibreOffice formats keeps draining.
     | - binary_path: absolute path to the `soffice` binary. NULL = auto-detect on PATH and
     |   common install locations.
-    | - timeout: SANCTIONED TIMEOUT (owner ruling 2026-08-22). This is the narrow case the
-    |   no-timeout mandate allows, and it is written down here because a sanctioned timeout
-    |   that is not justified in place is not sanctioned:
-    |
-    |     WHAT IT BOUNDS - ONE external document-binary invocation by the render worker:
-    |     `soffice` (rendition or fods/fodp text conversion) or `pdftotext`. It bounds the
-    |     EXTERNAL BINARY, never any work of ours, and never the worker's own pass.
-    |     WHY IT QUALIFIES - these binaries do not merely run slowly on malformed input,
-    |     they WEDGE: the process never returns and never will. The render worker is
-    |     single-threaded, so one wedged document would stop every later document in the
-    |     queue forever. Expiry degrades to a WORKING OUTCOME - the blob is recorded FAILED
-    |     with its reason, the generic extension icon is served, and the queue moves on.
-    |     WHY 120 AND NOT AN ARBITRARY NUMBER - the value does not separate "fast" from
-    |     "slow"; it separates "still working" from "never coming back". A large, complex
-    |     document on a loaded box legitimately takes well over a minute, so the number sits
-    |     far above any honest render, while a wedged soffice would sit here forever. That is
-    |     the 599/601 answer: 119s might still be a real render, and nothing that has not
-    |     answered by 121s is going to answer at all.
-    |     WHY ONE KEY FOR BOTH BINARIES - pdftotext is the same shape of risk with the same
-    |     degradation. A second number would have to be argued separately and would drift;
-    |     one key, one number, every site.
-    |
-    |   If you are tempted to LOWER this because renders "should be faster", do not - that is
-    |   the "give it room" fallacy inverted, and it will start failing legitimate renders.
+    | - How long a conversion may run is not set here: soffice and pdftotext run inside
+    |   one of the document worker's two stages and are bounded with it, by
+    |   rsx.documents.stage_seconds.
     |
     | THE DOCUMENT SANDBOX (sandbox, sandbox_image, sandbox_memory, sandbox_pids)
     |
@@ -1183,7 +1237,6 @@ return [
     'libreoffice' => [
         'enabled' => env('LIBREOFFICE_ENABLED', true),
         'binary_path' => env('LIBREOFFICE_BINARY_PATH', null),
-        'timeout' => 120,
         'sandbox' => env('LIBREOFFICE_SANDBOX', 'none'),
         'sandbox_image' => env('LIBREOFFICE_SANDBOX_IMAGE', 'rspade/rspade-docconvert:latest'),
         'sandbox_memory' => '1g',
@@ -1446,12 +1499,27 @@ return [
             'kill' => ['max_workers' => 10],
         ],
 
-        // Execution cap for a task that does not carry its own timeout (seconds).
-        // Enforced by the rsx:task:process reaper: each cron tick, a RUNNING task whose
-        // worker is still alive past its cap is force-killed by a kill worker and settled
-        // KILLED. Granularity is therefore the cron tick interval (one minute), not the second.
-        // Set to 0 to run uncapped tasks unbounded (a row's own timeout still applies).
-        'default_timeout' => 1800,  // 30 minutes
+        // THE SILENCE LIMIT (seconds): how long a worker-run task may go WITHOUT REPORTING
+        // before it is force-killed. A task has no limit on how long it RUNS - a run that
+        // keeps reporting that it is alive runs for as long as its work takes. The limit is
+        // measured from the run's last sign of life: the latest of when it started, its last
+        // $task->heartbeat() and its last written report (status, progress, eta, state, the
+        // queue calls, message, stdout/stderr and captured echo, an attachment, summary). A
+        // task that reports nothing is therefore killed this long after it started.
+        //
+        // A SANCTIONED TIMEOUT (owner ruling, 2026-10-11), and what it bounds is the SILENCE
+        // of a task, never its work: a long task reports on every item (heartbeat/progress),
+        // which costs one held write per 0.25 s, and a run that does so is never cut short.
+        // What it catches is a task that has stopped doing anything - wedged in a call that
+        // never returns - which would otherwise hold its worker slot, and its #[Exclusive]
+        // lock, forever. On expiry the rsx:task:process reaper requests a force kill, a kill
+        // worker carries it out, and the run settles KILLED with the reason "no report for
+        // Ns (cap Ms)". Enforced once per cron tick, so its granularity is a minute.
+        //
+        // An inline run (Task::internal(), rsx:task:run, a #[Command]) is never killed for
+        // time. A run dispatched with an explicit 'timeout' option is under that HARD limit
+        // from its start instead, and not under this one. 0 = no silence limit.
+        'silent_timeout' => 1800,  // 30 minutes
 
         // How long a FORCE STOP waits for the task to stop on its own before its worker is
         // killed (Task_Run_Model::force_stop(), when the caller names no grace). Owner-set: it is
@@ -1679,8 +1747,11 @@ return [
     |
     */
     'http' => [
-        // e.g. ['10.0.0.0/8', '192.0.2.10']. Empty: loopback only.
-        'trusted_proxies' => [],
+        // TRUSTED_PROXIES in .env: addresses or CIDRs separated by commas, e.g.
+        // TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10. It is an environment key because the
+        // device in front of a box is a fact about that box, never about the application.
+        // Empty: loopback only.
+        'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) env('TRUSTED_PROXIES', ''))), 'strlen')),
     ],
 
     /*

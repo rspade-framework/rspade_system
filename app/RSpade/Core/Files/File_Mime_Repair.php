@@ -101,6 +101,7 @@ class File_Mime_Repair
                 // Re-queue text extraction for the (deduplicated) blob.
                 $storage->is_indexed = 0;
                 $storage->save();
+                $storage->mark_work_owed();
             }
             $blobs_requeued++;
 

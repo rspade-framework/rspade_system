@@ -374,10 +374,11 @@ class Document_Sandbox
     /**
      * Kill a sandbox container by name, ignoring errors.
      *
-     * THE TIMEOUT PATH NEEDS THIS. When the sanctioned bound (rsx.libreoffice.timeout) expires,
-     * Symfony kills the process it started - which under the sandbox is the docker CLIENT, not
-     * the container. Killing the client leaves the wedged converter running with the work dir
-     * still mounted. So every caller that enforces the bound kills the named container beside it.
+     * THE STAGE BOUND NEEDS THIS. When a stage of the document worker runs past its limit
+     * (rsx.documents.stage_seconds), the process it stops is the one PHP started - which under
+     * the sandbox is the docker CLIENT, not the container. Stopping the client leaves the wedged
+     * converter running with the work dir still mounted, so Document_Stage_Bound::run_process()
+     * kills the named container beside it.
      *
      * Errors are ignored on purpose: the container may already be gone, which is the outcome we
      * wanted anyway.
@@ -739,7 +740,7 @@ class Document_Sandbox
     }
 
     /**
-     * An unguessable per-invocation container name, so the timeout path has something to kill and
+     * An unguessable per-invocation container name, so an expired stage bound has something to kill and
      * two concurrent workers never collide.
      *
      * @return string

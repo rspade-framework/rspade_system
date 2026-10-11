@@ -292,11 +292,12 @@ class Task_Reports_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(
             ['id', 'class', 'method', 'name', 'params', 'origin', 'status_id', 'status', 'is_live', 'status_reason', 'error', 'return_code',
-                'scheduled_for', 'started_at', 'completed_at', 'stop_requested_at', 'status_text', 'progress_percent', 'progress_count',
+                'scheduled_for', 'started_at', 'completed_at', 'stop_requested_at', 'waiting', 'status_text', 'progress_percent', 'progress_count',
                 'eta_at', 'last_heartbeat_at', 'last_report_at', 'reports'],
             array_keys($status)
         );
         static::__assert_equals($task->get_id(), $status['id']);
+        static::__assert_null($status['waiting'], 'only a pending run is waiting for something (Task_Waiting_Test)');
         static::__assert_equals('Task_Exec_Fixture_Service', $status['class'], 'the simple class name');
         static::__assert_equals('Task_Exec_Fixture_Service::marker_a', $status['name']);
         static::__assert_equals('Inline', $status['origin']);
@@ -362,9 +363,12 @@ class Task_Reports_Test extends Rsx_Test_Abstract
     {
         $task = static::__instance_started(60);
 
+        // started_at is written on a whole second, so the elapsed time the estimate sees is 60
+        // to 61 seconds and a quarter done leaves 180 to 183 - rounded up to a whole second
+        // and read back against a clock that has moved on by up to one more.
         $task->progress_count(3, 12);
         $eta = static::__eta_in($task);
-        static::__assert_true($eta >= 177 && $eta <= 183, "3 of 12 in 60 seconds leaves about 180, got {$eta}");
+        static::__assert_true($eta >= 177 && $eta <= 185, "3 of 12 in 60 seconds leaves about 180, got {$eta}");
     }
 
     public static function test_progress_that_says_nothing_clears_the_eta_instead_of_guessing()

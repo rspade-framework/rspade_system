@@ -19,7 +19,8 @@ use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * The three operator commands over the document render pipeline: rsx:documents:status,
- * rsx:documents:failed and rsx:documents:rerender.
+ * rsx:documents:failed and rsx:documents:rerender - and the registration of the worker's hidden
+ * child command, rsx:documents:process_one.
  *
  * Run in-process through Artisan::call() - these commands read and write ordinary rows, so a
  * subprocess would buy nothing but a second boot. The class COMMITS (the commands run their own
@@ -120,6 +121,9 @@ class Documents_Commands_Cli_Test extends Rsx_Test_Abstract
         $storage->render_error = $error;
         $storage->rendered_at = $status_id === File_Storage_Model::RENDER_STATUS_RENDERED ? Rsx_Time::now_iso() : null;
         $storage->is_indexed = 1;
+        // Out of the queue: a settled blob, and for FAILED one whose attempts are spent.
+        $storage->process_due_at = null;
+        $storage->process_attempt_count = $status_id === File_Storage_Model::RENDER_STATUS_FAILED ? File_Storage_Model::work_max_attempts() : 0;
         $storage->save();
 
         $path = File_Preview_Controller::rendition_cache_path($storage);
@@ -196,6 +200,12 @@ class Documents_Commands_Cli_Test extends Rsx_Test_Abstract
         static::__assert_true($reloaded->render_error === null, 'the previous reason is cleared');
         static::__assert_true($reloaded->rendered_at === null, 'rendered_at is cleared');
         static::__assert_false(file_exists($rendition), 'the rendition file is deleted so the render really re-runs');
+        static::__assert_equals(0, (int) $reloaded->process_attempt_count, 'the operator reset: attempts back to 0');
+        static::__assert_equals(
+            1,
+            File_Storage_Model::work_due_query()->where('id', $failed->id)->count(),
+            'and due now - the blob that was out of attempts is back in the queue'
+        );
 
         static::__assert_equals(
             File_Storage_Model::RENDER_STATUS_RENDERED,
@@ -228,6 +238,48 @@ class Documents_Commands_Cli_Test extends Rsx_Test_Abstract
             "the attachment's blob is queued"
         );
         static::__assert_false(file_exists($rendition), 'its rendition is deleted');
+        static::__assert_equals(
+            1,
+            File_Storage_Model::work_due_query()->where('id', $storage->id)->count(),
+            'and it is due now'
+        );
+    }
+
+    // --failed is the reset for a blob the worker is STILL retrying too: mid-cycle, with attempts
+    // charged and a retry scheduled, it goes back to a full set of attempts, due now.
+    public static function test_rerender_resets_a_blob_waiting_for_a_retry()
+    {
+        $storage = static::__storage(static::__make_attachment(static::__unique_bytes('midcycle'), 'mid_cycle.docx'));
+        static::__force_state($storage, File_Storage_Model::RENDER_STATUS_FAILED, 'render exceeded 20 seconds');
+        File_Storage_Model::where('id', $storage->id)->update([
+            'process_attempt_count' => 2,
+            'process_due_at' => DB::raw('NOW(3) + INTERVAL 25 MINUTE'),
+        ]);
+
+        [$code, $output] = static::__artisan('rsx:documents:rerender', ['--storage' => $storage->id]);
+        static::__assert_equals(0, $code, 'the re-queue succeeds: ' . $output);
+
+        $reloaded = File_Storage_Model::find($storage->id);
+        static::__assert_equals(File_Storage_Model::RENDER_STATUS_PENDING, (int) $reloaded->render_status_id);
+        static::__assert_equals(0, (int) $reloaded->process_attempt_count, 'attempts back to 0');
+        static::__assert_equals(
+            1,
+            File_Storage_Model::work_due_query()->where('id', $storage->id)->count(),
+            'due now, not in 25 minutes'
+        );
+    }
+
+    // The worker's child command is not an operator command: it is registered (the worker spawns
+    // it by name) and absent from `php artisan list`.
+    public static function test_child_command_is_hidden_from_list()
+    {
+        [$code, $output] = static::__artisan('list');
+        static::__assert_equals(0, $code);
+        static::__assert_contains('rsx:documents:rerender', $output, 'precondition: the operator commands are listed');
+        static::__assert_false(str_contains($output, 'rsx:documents:process_one'), 'the child command is not listed');
+
+        [$code, $output] = static::__artisan('rsx:documents:process_one', ['storage_id' => 999999999]);
+        static::__assert_equals(1, $code, 'it is registered all the same, and exits 1 for a blob that does not exist');
     }
 
     // ============================================================================================
@@ -249,7 +301,11 @@ class Documents_Commands_Cli_Test extends Rsx_Test_Abstract
             static::__assert_contains($definition['label'], $output, 'the extraction state is listed: ' . $definition['label']);
         }
 
-        static::__assert_contains('Queued (is_indexed=0)', $output, 'the extraction queue itself is a row');
+        static::__assert_contains('Owed (is_indexed=0)', $output, 'the text still owed is a row');
+        static::__assert_contains('Work queue', $output, 'the queue section is present');
+        foreach (['Due now', 'Waiting for a retry', 'Deferred', 'Failed, out of attempts'] as $queue_state) {
+            static::__assert_contains($queue_state, $output, 'the queue state is listed: ' . $queue_state);
+        }
         static::__assert_contains('PDF rendition cache', $output, 'the rendition cache section is present');
         static::__assert_contains('Worker schedule:', $output, 'the closing worker line is present');
     }
@@ -282,6 +338,21 @@ class Documents_Commands_Cli_Test extends Rsx_Test_Abstract
         static::__assert_contains('quarterly_report.docx', $output, 'the blob is named by a referencing attachment');
         static::__assert_contains('LibreOffice PDF conversion failed', $output, 'the recorded reason is shown');
         static::__assert_contains('rsx:documents:rerender --failed', $output, 'the remedy is named');
+        static::__assert_contains('0 waiting for another attempt, 1 out of attempts', $output, 'the header says where the failures stand');
+        static::__assert_contains('3 of 3', $output, 'the row shows its attempts');
+        static::__assert_contains('none - out of attempts', $output, 'and that no further attempt is coming');
+
+        // The same blob mid-cycle: one attempt charged, the next one scheduled.
+        File_Storage_Model::where('id', $first->id)->update([
+            'process_attempt_count' => 1,
+            'process_due_at' => DB::raw('NOW(3) + INTERVAL 30 MINUTE'),
+        ]);
+
+        [$code, $output] = static::__artisan('rsx:documents:failed');
+        static::__assert_contains('1 waiting for another attempt, 0 out of attempts', $output, 'a failure the worker will retry is counted as waiting');
+        static::__assert_contains('1 of 3', $output, 'with the attempts charged so far');
+
+        File_Storage_Model::where('id', $first->id)->update(['process_attempt_count' => 3, 'process_due_at' => null]);
 
         $second = static::__storage(static::__make_attachment(static::__unique_bytes('f2'), 'agenda.docx'));
         static::__force_state($second, File_Storage_Model::RENDER_STATUS_FAILED, 'LibreOffice produced no PDF rendition');

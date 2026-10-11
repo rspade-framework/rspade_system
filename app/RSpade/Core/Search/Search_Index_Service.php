@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Core\Search;
 
+use App\RSpade\Core\Files\Document_Stage_Bound;
+use App\RSpade\Core\Files\Document_Stage_Timeout_Exception;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Manifest\Manifest;
@@ -20,21 +22,30 @@ use App\RSpade\Core\Time\Rsx_Time;
  * Search_Index_Service - document text extraction (framework core).
  *
  * The unit of work, not the queue. Document_Render_Service owns the queue and the worker: it
- * drains _file_storage.is_indexed = 0 alongside the rendition queue and calls extract_storage()
- * per blob, so one soffice-era document is handled by ONE pass instead of by two competing
- * background jobs. Extraction is keyed on the deduplicated blob, so identical bytes are extracted
+ * takes each blob that owes work (_file_storage.process_due_at) and calls extract_storage()
+ * for the ones whose text is owed (is_indexed = 0), in the same pass that produces the preview
+ * rendition. Extraction is keyed on the deduplicated blob, so identical bytes are extracted
  * exactly once regardless of how many attachments reference them.
  *
- * There is NO stored PENDING state: the absence of a _search_indexes row (with is_indexed=0) IS
- * the queue. A row is written only AFTER an attempt, always EXTRACTED / FAILED / UNSUPPORTED, and
- * is_indexed is ALWAYS set afterward so work never repeats and the worker's loop terminates.
+ * WHAT THE TWO FACTS MEAN. is_indexed on the blob says whether extraction is OWED; the
+ * _search_indexes row says what the last attempt FOUND.
+ *   - no row, is_indexed = 0      never attempted.
+ *   - EXTRACTED / UNSUPPORTED     a definitive answer. is_indexed = 1, nothing repeats.
+ *   - FAILED, is_indexed = 0      an attempt failed (threw, ran past its stage bound, or died
+ *                                 with its process) and the worker will try again, under the
+ *                                 same attempt counter as the render.
+ *   - FAILED, is_indexed = 1      failed for good: the attempts are spent. Re-queued only by
+ *                                 an operator (rsx:search:reindex).
  */
 class Search_Index_Service extends Rsx_Service_Abstract
 {
     /**
-     * Extract (or record the non-extraction of) a single blob, writing its _search_indexes row
-     * and marking the blob is_indexed=1. This is the unit of work - callable directly (tests,
-     * per-blob reindex) or from the drain loop.
+     * Extract (or record the non-extraction of) a single blob, writing its _search_indexes row.
+     * This is the unit of work - called by the document worker's child process, and directly by
+     * a test. A definitive answer (EXTRACTED, UNSUPPORTED) marks the blob is_indexed=1; a FAILED
+     * attempt leaves is_indexed alone, so a blob that owed its text still owes it.
+     *
+     * Command line only: the computation runs under the stage bound (Document_Stage_Bound).
      *
      * Resolution order:
      *   1. App filter chain document.extract_text (first non-null handler wins).
@@ -55,6 +66,8 @@ class Search_Index_Service extends Rsx_Service_Abstract
      */
     public static function extract_storage(File_Storage_Model $storage, ?string $rendition_path = null): Search_Index_Model
     {
+        Document_Stage_Bound::require_cli('Search_Index_Service::extract_storage()');
+
         $path = $storage->get_full_path();
 
         // The blob should always be resident (content-addressed local cache). A missing file is a
@@ -69,6 +82,33 @@ class Search_Index_Service extends Rsx_Service_Abstract
             );
         }
 
+        // ONE STAGE, ONE BOUND (rsx.documents.stage_seconds, justified at its config key): the
+        // whole computation of this blob's text - the application's own handlers, the external
+        // binaries, the in-process readers - runs inside it. Only the computation: the row is
+        // written after the bound is released, so a database write is never interrupted.
+        try {
+            $outcome = Document_Stage_Bound::run(
+                'text extraction',
+                fn () => static::__extract($storage, $path, $rendition_path)
+            );
+        } catch (Document_Stage_Timeout_Exception $e) {
+            return static::__write_result($storage, Search_Index_Model::STATUS_FAILED, '', $e->getMessage(), 'none');
+        }
+
+        return static::__write_result($storage, ...$outcome);
+    }
+
+    /**
+     * Work out what this blob's text is, without writing anything.
+     *
+     * @param File_Storage_Model $storage
+     * @param string $path The resident blob.
+     * @param string|null $rendition_path See extract_storage().
+     * @return array{0: int, 1: string, 2: ?string, 3: string, 4: ?array} The arguments of
+     *         __write_result() after the blob: status, content, error, method, metadata.
+     */
+    protected static function __extract(File_Storage_Model $storage, string $path, ?string $rendition_path): array
+    {
         $sniffed = mime_content_type($path);
         if ($sniffed === false) {
             $sniffed = 'application/octet-stream';
@@ -80,7 +120,7 @@ class Search_Index_Service extends Rsx_Service_Abstract
         // so we borrow one from a representative attachment referencing this blob - preferring an
         // attachment whose extension is a known document type (a blob shared by a .docx and a .zip
         // upload extracts as the docx). An orphan blob with no attachment falls through to the raw
-        // sniff (unchanged behavior).
+        // sniff.
         $representative_extension = static::__representative_extension($storage);
         $mime = File_Attachment_Model::resolve_pipeline_mime($sniffed, $representative_extension);
 
@@ -104,7 +144,7 @@ class Search_Index_Service extends Rsx_Service_Abstract
 
         // 2) The rendition shortcut: a word-processing document whose PDF the render worker has
         // already produced. Extracting from that PDF with pdftotext is the SAME document without a
-        // second soffice run - the expensive half of the old three-conversions-per-document story.
+        // second soffice run.
         if ($rendition_path !== null && file_exists($rendition_path) && static::__is_word_processing_mime($mime)) {
             $extractor_class = 'Pdftotext_Text_Extractor';
             $extract_path = $rendition_path;
@@ -116,19 +156,13 @@ class Search_Index_Service extends Rsx_Service_Abstract
 
         if ($extractor_class === null) {
             // 4) Nothing handles this mime -> UNSUPPORTED (not a failure).
-            return static::__write_result($storage, Search_Index_Model::STATUS_UNSUPPORTED, '', null, 'none');
+            return [Search_Index_Model::STATUS_UNSUPPORTED, '', null, 'none', null];
         }
 
         // LibreOffice master switch, mirroring the thumbnail registry: check BEFORE invoking, so a
         // disabled LibreOffice yields UNSUPPORTED, never a soffice call.
         if ($extractor_class === 'Libreoffice_Text_Extractor' && !config('rsx.libreoffice.enabled', true)) {
-            return static::__write_result(
-                $storage,
-                Search_Index_Model::STATUS_UNSUPPORTED,
-                '',
-                'LibreOffice disabled',
-                $extractor_class
-            );
+            return [Search_Index_Model::STATUS_UNSUPPORTED, '', 'LibreOffice disabled', $extractor_class, null];
         }
 
         $fqcn = static::__resolve_extractor_fqcn($extractor_class);
@@ -139,21 +173,10 @@ class Search_Index_Service extends Rsx_Service_Abstract
             // Structurally unextractable by design (encrypted / password-protected): UNSUPPORTED
             // with the reason, NOT FAILED - a retry can never help, so it must not pollute the
             // failed-audit signal. An UNSUPPORTED row MAY carry a reason in the error column.
-            return static::__write_result(
-                $storage,
-                Search_Index_Model::STATUS_UNSUPPORTED,
-                '',
-                $e->getMessage(),
-                $extractor_class
-            );
+            return [Search_Index_Model::STATUS_UNSUPPORTED, '', $e->getMessage(), $extractor_class, null];
         } catch (\Throwable $e) {
-            return static::__write_result(
-                $storage,
-                Search_Index_Model::STATUS_FAILED,
-                '',
-                $e->getMessage(),
-                $extractor_class
-            );
+            // Every other failure, the stage bound's Document_Stage_Timeout_Exception included.
+            return [Search_Index_Model::STATUS_FAILED, '', $e->getMessage(), $extractor_class, null];
         }
 
         // Oversize handling is CENTRALIZED here (never in the extractors) so recorded truncation
@@ -179,14 +202,45 @@ class Search_Index_Service extends Rsx_Service_Abstract
             }
         }
 
-        return static::__write_result(
-            $storage,
-            Search_Index_Model::STATUS_EXTRACTED,
-            $text,
-            null,
-            $extractor_class,
-            $metadata
-        );
+        return [Search_Index_Model::STATUS_EXTRACTED, $text, null, $extractor_class, $metadata];
+    }
+
+    /**
+     * Record that an extraction attempt failed WITHOUT having run to an answer of its own -
+     * its process was killed, or ended before writing a row. Written by the worker's parent
+     * process when it reconciles a child that never reported; the blob stays owed
+     * (is_indexed is not touched), so the worker's attempt counter decides what happens next.
+     *
+     * @param File_Storage_Model $storage
+     * @param string $error
+     * @return Search_Index_Model
+     */
+    public static function record_failure(File_Storage_Model $storage, string $error): Search_Index_Model
+    {
+        return static::__write_result($storage, Search_Index_Model::STATUS_FAILED, '', $error, 'none');
+    }
+
+    /**
+     * Extraction of this blob has failed for good: stop owing it.
+     *
+     * The FAILED row the last attempt wrote is kept with its reason; a blob that has no
+     * FAILED row gets one, so "not owed, no text" is never a state without an explanation.
+     * Called by the worker when a blob's attempts are spent.
+     *
+     * @param File_Storage_Model $storage
+     * @param string $error The reason to record when the last attempt left none.
+     * @return void
+     */
+    public static function settle_failure(File_Storage_Model $storage, string $error): void
+    {
+        $index = Search_Index_Model::forModel('File_Storage_Model', $storage->id)->first();
+
+        if (!$index || (int) $index->status_id !== Search_Index_Model::STATUS_FAILED) {
+            static::__write_result($storage, Search_Index_Model::STATUS_FAILED, '', $error, 'none');
+        }
+
+        $storage->is_indexed = 1;
+        $storage->save();
     }
 
     /**
@@ -194,27 +248,27 @@ class Search_Index_Service extends Rsx_Service_Abstract
      *
      * @param File_Storage_Model $storage
      * @param mixed $resolved
-     * @return Search_Index_Model
+     * @return array The arguments of __write_result() after the blob.
      */
-    protected static function __apply_resolved(File_Storage_Model $storage, $resolved): Search_Index_Model
+    protected static function __apply_resolved(File_Storage_Model $storage, $resolved): array
     {
         if (is_string($resolved)) {
-            return static::__write_result($storage, Search_Index_Model::STATUS_EXTRACTED, $resolved, null, 'app_filter');
+            return [Search_Index_Model::STATUS_EXTRACTED, $resolved, null, 'app_filter', null];
         }
 
         if (is_array($resolved) && isset($resolved['status'])) {
             if ($resolved['status'] === 'unsupported') {
-                return static::__write_result($storage, Search_Index_Model::STATUS_UNSUPPORTED, '', $resolved['error'] ?? null, 'app_filter');
+                return [Search_Index_Model::STATUS_UNSUPPORTED, '', $resolved['error'] ?? null, 'app_filter', null];
             }
 
             if ($resolved['status'] === 'failed') {
-                return static::__write_result(
-                    $storage,
+                return [
                     Search_Index_Model::STATUS_FAILED,
                     '',
                     $resolved['error'] ?? 'app filter reported failure',
-                    'app_filter'
-                );
+                    'app_filter',
+                    null,
+                ];
             }
         }
 
@@ -226,7 +280,8 @@ class Search_Index_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Write (upsert) the _search_indexes row for this blob and mark it is_indexed=1.
+     * Write (upsert) the _search_indexes row for this blob, and mark the blob is_indexed=1 when
+     * the status is a definitive answer.
      *
      * @param File_Storage_Model $storage
      * @param int $status_id
@@ -260,10 +315,13 @@ class Search_Index_Service extends Rsx_Service_Abstract
 
         $index->save();
 
-        // ALWAYS mark the blob processed so the drain loop terminates and work never repeats,
-        // regardless of the outcome.
-        $storage->is_indexed = 1;
-        $storage->save();
+        // A definitive answer ends the owing. A FAILED attempt does not: the blob still owes its
+        // text, and the worker's attempt counter - not this row - decides whether it is tried
+        // again (settle_failure() is what stops owing a failure).
+        if ($status_id !== Search_Index_Model::STATUS_FAILED) {
+            $storage->is_indexed = 1;
+            $storage->save();
+        }
 
         return $index;
     }

@@ -9,18 +9,25 @@ namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Realtime\Realtime;
+use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
+use App\RSpade\Core\Task\Task_Waiting;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Tests\Tasks\Php\Task_Concurrency_Fixture_Service;
 use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
 
 /**
  * Task_Notify - the frames a watcher follows runs by.
  *
- *   Task_Changed_Topic {id}       a run's lifecycle, reports, messages or attachments
+ *   Task_Changed_Topic {id}       a run's lifecycle, reports, messages or attachments -
+ *                                 and, for a PENDING run, a lifecycle move of a run on the
+ *                                 same run lock (what it is waiting for is derived at read
+ *                                 time, and names the run holding the lock)
  *   Task_Output_Topic {id}        a run's output lines
  *   Task_List_Changed_Topic {class, method}
  *                                 a run entered, left or moved between lifecycle states;
@@ -169,6 +176,187 @@ class Task_Notify_Test extends Rsx_Test_Abstract
 
         $list_frames = array_values(array_filter(Realtime::_testing_published(), fn ($p) => $p['topic'] === 'Task_List_Changed_Topic'));
         static::__assert_equals(['class' => 'Task_Exec_Fixture_Service', 'method' => 'marker_a'], $list_frames[0]['data'], 'the frame names the task by its simple service name');
+    }
+
+    // -------------------------------------------------------------------------
+    // The waiters: pending runs on the same run lock
+    // -------------------------------------------------------------------------
+
+    private static function __fixture_row(string $method, array $fields = [], array $params = []): int
+    {
+        $id = Task_Runner::insert_row(Task_Concurrency_Fixture_Service::class, $method, $params, Task_Run_Model::ORIGIN_DISPATCHED, $fields);
+        self::$runs[] = $id;
+
+        return $id;
+    }
+
+    /** The ids Task_Changed_Topic was published for, sorted. */
+    private static function __changed_ids(): array
+    {
+        $ids = [];
+        foreach (static::__published() as [$topic, $site_id, $id]) {
+            if ($topic === 'Task_Changed_Topic') {
+                $ids[] = $id;
+            }
+        }
+        sort($ids);
+
+        return $ids;
+    }
+
+    /**
+     * What a pending run is waiting for names the run holding its lock, and is derived at read
+     * time - so when a run starts or settles, every PENDING run on the same run lock gets its
+     * own changed frame and a view of that one run re-reads. For an exclusive group that is
+     * the pending run of every member; runs on other locks, and unmanaged runs, hear nothing.
+     */
+    public static function test_a_lifecycle_move_tells_the_pending_runs_on_the_same_group_lock()
+    {
+        static::__clean();
+        DB::table('_tasks')->where('class', Task_Concurrency_Fixture_Service::class)->whereIn('status_id', Task_Run_Model::LIVE_STATUSES)->delete();
+
+        $holder = static::__fixture_row('group_alpha', Task_Runner::running_fields());
+        $waiting_beta = static::__fixture_row('group_beta');
+        $waiting_alpha = static::__fixture_row('group_alpha');
+        $other_lock = static::__fixture_row('exclusive_task');
+        $unmanaged = static::__fixture_row('plain_task');
+        $finished_beta = static::__fixture_row('group_beta', ['status_id' => Task_Run_Model::STATUS_COMPLETED]);
+        static::__clean();
+
+        foreach ([$holder, $waiting_beta, $waiting_alpha, $other_lock, $unmanaged, $finished_beta] as $id) {
+            static::__watch('Task_Changed_Topic', $id, 1);
+        }
+
+        Task_Notify::lifecycle($holder);
+
+        static::__assert_equals(
+            [$holder, $waiting_beta, $waiting_alpha],
+            static::__changed_ids(),
+            'the run itself and the two pending runs of its group; not another lock\'s, not an unmanaged run, not a finished one'
+        );
+    }
+
+    public static function test_the_waiters_of_an_ungrouped_lock_are_its_own_identity_only()
+    {
+        static::__clean();
+        DB::table('_tasks')->where('class', Task_Concurrency_Fixture_Service::class)->whereIn('status_id', Task_Run_Model::LIVE_STATUSES)->delete();
+
+        $exclusive_holder = static::__fixture_row('exclusive_task', Task_Runner::running_fields());
+        $exclusive_waiter = static::__fixture_row('exclusive_task');
+        $debounce_holder = static::__fixture_row('debounce_task', Task_Runner::running_fields(), ['client' => 1]);
+        $debounce_same = static::__fixture_row('debounce_task', [], ['client' => 1]);
+        $debounce_other = static::__fixture_row('debounce_task', [], ['client' => 2]);
+        $grouped = static::__fixture_row('group_beta');
+        static::__clean();
+
+        foreach ([$exclusive_holder, $exclusive_waiter, $debounce_holder, $debounce_same, $debounce_other, $grouped] as $id) {
+            static::__watch('Task_Changed_Topic', $id, 1);
+        }
+
+        Task_Notify::lifecycle($exclusive_holder);
+        static::__assert_equals([$exclusive_holder, $exclusive_waiter], static::__changed_ids(), '#[Exclusive]: the method\'s pending run');
+
+        static::__clean();
+        foreach ([$exclusive_waiter, $debounce_holder, $debounce_same, $debounce_other, $grouped] as $id) {
+            static::__watch('Task_Changed_Topic', $id, 1);
+        }
+
+        Task_Notify::lifecycle($debounce_holder);
+        static::__assert_equals([$debounce_holder, $debounce_same], static::__changed_ids(), '#[Debounce]: the pending run of the same parameter set only');
+    }
+
+    /** An unmanaged run has no lock, so nothing waits on it: its move tells only itself. */
+    public static function test_an_unmanaged_runs_move_tells_no_other_run()
+    {
+        static::__clean();
+        $moved = static::__fixture_row('plain_task', Task_Runner::running_fields());
+        $pending = static::__fixture_row('plain_task');
+        static::__clean();
+        static::__watch('Task_Changed_Topic', $moved, 1);
+        static::__watch('Task_Changed_Topic', $pending, 1);
+
+        Task_Notify::lifecycle($moved);
+
+        static::__assert_equals([$moved], static::__changed_ids());
+    }
+
+    /** Only watched waiters are published to, each on the sites watching it. */
+    public static function test_a_waiter_frame_goes_only_where_that_waiter_is_watched()
+    {
+        static::__clean();
+        DB::table('_tasks')->where('class', Task_Concurrency_Fixture_Service::class)->whereIn('status_id', Task_Run_Model::LIVE_STATUSES)->delete();
+        $holder = static::__fixture_row('group_alpha', Task_Runner::running_fields());
+        $watched = static::__fixture_row('group_beta');
+        $unwatched = static::__fixture_row('group_alpha');
+        static::__clean();
+        static::__watch('Task_Changed_Topic', $watched, 3);
+        static::__watch('Task_Changed_Topic', $watched, 8);
+
+        Task_Notify::lifecycle($holder);
+
+        static::__assert_equals(
+            [['Task_Changed_Topic', 3, $watched], ['Task_Changed_Topic', 8, $watched]],
+            static::__sorted(static::__published()),
+            'the watched waiter, once per site; nothing for the run nobody watches'
+        );
+    }
+
+    /** Under a pool lock the waiters' frames are held back with the rest (a worker's settle). */
+    public static function test_waiter_frames_under_a_pool_lock_wait_for_flush_deferred()
+    {
+        static::__clean();
+        DB::table('_tasks')->where('class', Task_Concurrency_Fixture_Service::class)->whereIn('status_id', Task_Run_Model::LIVE_STATUSES)->delete();
+        $holder = static::__fixture_row('group_alpha', Task_Runner::running_fields());
+        $waiter = static::__fixture_row('group_beta');
+        static::__clean();
+        static::__watch('Task_Changed_Topic', $waiter, 1);
+
+        Task_Pool::lock(Task_Pool::ON_DEMAND);
+        try {
+            Task_Notify::lifecycle($holder);
+            static::__assert_equals([], static::__published(), 'nothing is published under the lock');
+        } finally {
+            Task_Pool::unlock(Task_Pool::ON_DEMAND);
+        }
+
+        Task_Notify::flush_deferred();
+        static::__assert_equals([['Task_Changed_Topic', 1, $waiter]], static::__published());
+    }
+
+    /**
+     * End to end, every way a run starts or settles goes through lifecycle(): an inline run of
+     * one group member tells the pending run of another when it starts and when it settles -
+     * and the settle's frame comes after the lock is released.
+     */
+    public static function test_a_real_run_tells_its_groups_waiters_when_it_starts_and_settles()
+    {
+        static::__clean();
+        DB::table('_tasks')->where('class', Task_Concurrency_Fixture_Service::class)->whereIn('status_id', Task_Run_Model::LIVE_STATUSES)->delete();
+        $waiter = static::__fixture_row('group_beta');
+        static::__clean();
+        static::__watch('Task_Changed_Topic', $waiter, 1);
+
+        $run = Task::internal('Task_Concurrency_Fixture_Service', 'group_alpha');
+        self::$runs[] = (int) $run->id;
+
+        static::__assert_equals([$waiter, $waiter], static::__changed_ids(), 'one frame when the holder started, one when it settled');
+        static::__assert_false(Task_Concurrency::is_group_running('fixture_group'), 'the group lock is free by the time the waiter re-reads');
+        static::__assert_equals('queued', Task_Waiting::of(Task_Run_Model::find($waiter))['reason'], 'so its next read no longer names a holder');
+    }
+
+    /** A cancel, a kill and an abandonment settle through lifecycle() too. */
+    public static function test_a_cancelled_run_tells_the_waiters_on_its_lock()
+    {
+        static::__clean();
+        DB::table('_tasks')->where('class', Task_Concurrency_Fixture_Service::class)->whereIn('status_id', Task_Run_Model::LIVE_STATUSES)->delete();
+        $cancelled = static::__fixture_row('group_alpha');
+        $waiter = static::__fixture_row('group_beta');
+        static::__clean();
+        static::__watch('Task_Changed_Topic', $waiter, 1);
+
+        static::__assert_true(Task_Run_Model::find($cancelled)->cancel('not needed'));
+
+        static::__assert_equals([$waiter], static::__changed_ids());
     }
 
     public static function test_nobody_watching_publishes_nothing()

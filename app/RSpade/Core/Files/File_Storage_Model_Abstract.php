@@ -39,6 +39,8 @@ use App\RSpade\Core\Search\Search_Index_Model;
  * @property string $hash
  * @property int $id
  * @property int $is_indexed
+ * @property int $process_attempt_count
+ * @property string $process_due_at
  * @property string $render_error
  * @property int $render_status_id
  * @property string $rendered_at
@@ -77,10 +79,14 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      *   NOT_REQUIRED  nothing to render (an image, a zip, a plain PDF). The DEFAULT: store_blob()
      *                 sees only bytes and cannot know the mime, so the ATTACHMENT flips the blob
      *                 to PENDING when its pipeline mime is convertible.
-     *   PENDING       queued. The worker's queue IS this value - there is no separate table.
-     *   RENDERED      rendition on disk, rendered_at set, text extraction done.
-     *   FAILED        TERMINAL. render_error carries the reason and the sweeper never retries;
-     *                 re-rendering is an explicit operator action (rsx:documents:rerender).
+     *   PENDING       a rendition is owed and no attempt has reported yet. Shown as "preparing".
+     *   RENDERED      rendition on disk, rendered_at set.
+     *   FAILED        the last attempt failed; render_error carries the reason. Whether the
+     *                 worker will try again is not in this value - it is the work queue's
+     *                 answer (see THE WORK QUEUE below): a FAILED blob that still has a
+     *                 process_due_at is waiting for its next attempt, one without is failed for
+     *                 good and re-renders only on an operator's rsx:documents:rerender. Either
+     *                 way every screen shows the failed-document preview, never "preparing".
      *
      * @var array
      */
@@ -509,10 +515,12 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
         // Prompt kick for the document render worker (PDF rendition + text extraction). This is
         // the single choke point for a NEW unique blob entering the store (covers upload,
         // create_from_*, external materialization); a dedup hit returns earlier and never reaches
-        // here. The blob starts is_indexed=0, so even without this kick the 10-minute sweeper
-        // would eventually pick it up; the dispatch just drains promptly. #[Exclusive] coalesces
-        // concurrent kicks. The blob is NOT_REQUIRED at this point - the attachment adds the
-        // rendition half of the work by calling request_render() once it knows the mime.
+        // here. The row was BORN in the work queue: is_indexed defaults to 0 (its text is owed)
+        // and process_due_at defaults to the insert time, in the same INSERT - so even without
+        // this kick the 10-minute sweeper takes it; the dispatch just drains promptly.
+        // #[Exclusive] coalesces concurrent kicks. The blob is NOT_REQUIRED at this point - the
+        // attachment adds the rendition half of the work by calling request_render() once it
+        // knows the mime.
         Document_Render_Service::kick();
 
         return $file_storage;
@@ -522,10 +530,9 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      * Queue this blob for document rendering: NOT_REQUIRED -> PENDING, then kick the worker.
      *
      * IDEMPOTENT BY DESIGN, and that is the whole dedup story. Only NOT_REQUIRED moves; a blob
-     * already PENDING (queued), RENDERED (done) or FAILED (terminal) is left exactly as it is.
-     * So the second, tenth and hundredth attachment created over the same deduplicated bytes
-     * call this freely and cost nothing - and a FAILED blob is never silently retried by an
-     * upload, which is what makes FAILED mean something.
+     * already PENDING (queued), RENDERED (done) or FAILED is left exactly as it is. So the
+     * second, tenth and hundredth attachment created over the same deduplicated bytes call this
+     * freely and cost nothing - and an upload never hands a FAILED blob fresh attempts.
      *
      * Called by File_Attachment_Model when its pipeline mime matches rsx.preview.convertible -
      * the attachment is the only layer that knows the filename and extension.
@@ -543,32 +550,33 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
 
     /**
      * Put this blob back in the render queue UNCONDITIONALLY: -> PENDING, artifacts of any earlier
-     * attempt cleared, worker kicked.
+     * attempt cleared, due now with a full set of attempts, worker kicked.
      *
-     * The difference from request_render() is the absence of the state guard, so this is the ONE
-     * way a RENDERED or FAILED blob re-enters the queue - and every caller of it is an explicit
-     * decision that the previous outcome is no longer valid:
-     *   - a serving path that finds the rendition GONE from disk (the LRU cache evicted it while
-     *     the row still says RENDERED). Self-healing: the request serves a placeholder and the
-     *     worker rebuilds the rendition, rather than showing anyone an error page over a cache
-     *     eviction.
+     * The difference from request_render() is the absence of the state guard, so every caller of
+     * it is an explicit decision that the previous outcome is no longer valid:
+     *   - a serving path that finds the rendition of a RENDERED blob GONE from disk (the LRU
+     *     cache evicted it). Self-healing: the request serves a placeholder and the worker
+     *     rebuilds the rendition, rather than showing anyone an error page over a cache eviction.
+     *     A serving path never calls this for a FAILED blob - a web request must not be able to
+     *     hand a document that cannot be rendered another set of attempts.
      *   - the operator command rsx:documents:rerender.
      *
      * $kick is the ONE knob: pass false to record the queued state WITHOUT spawning a worker. The
-     * only callers that want that are the ones which will run the render themselves and need to
+     * only callers that want that are the ones which will run the document themselves and need to
      * observe each step (the /dev/attachment_thumbnail page, which resets a document to PENDING so
      * a human - or Playwright - can watch the placeholder swap when the render is triggered by
      * hand). The row is still queued either way, so the 10-minute sweeper is the backstop.
      *
-     * @param bool $kick Whether to ask for a render pass now.
+     * @param bool $kick Whether to ask for a worker pass now.
      * @return void
      */
     public function requeue_render(bool $kick = true): void
     {
-        $this->render_status_id = static::RENDER_STATUS_PENDING;
-        $this->rendered_at = null;
-        $this->render_error = null;
-        $this->save();
+        static::where('id', $this->id)->update(array_merge(
+            static::render_pending_values(),
+            static::work_owed_values()
+        ));
+        $this->__reload_row();
 
         if ($kick) {
             Document_Render_Service::kick();
@@ -576,8 +584,194 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     }
 
     /**
-     * Get the extracted-text search index row for this blob, or null if it has not been indexed
-     * yet (no attempt recorded). Absence of a row + is_indexed=0 means it is still queued.
+     * The column values of "a rendition is owed and nothing has been attempted": PENDING with
+     * every artifact of an earlier attempt cleared. For a set UPDATE; always written together
+     * with work_owed_values(), because a PENDING blob the queue does not know about is never
+     * rendered.
+     *
+     * @return array
+     */
+    public static function render_pending_values(): array
+    {
+        return [
+            'render_status_id' => static::RENDER_STATUS_PENDING,
+            'rendered_at' => null,
+            'render_error' => null,
+        ];
+    }
+
+    // =========================================================================================
+    // THE WORK QUEUE
+    //
+    // Document_Render_Service takes blobs in the order of ONE column:
+    //
+    //   process_due_at IS NULL   the worker has nothing to do for this blob - nothing is owed,
+    //                            or its attempts are spent.
+    //   process_due_at = a time  the blob owes work (a rendition: render_status_id PENDING or
+    //                            FAILED; its text: is_indexed = 0) and may be attempted at or
+    //                            after that time.
+    //
+    // process_attempt_count is how many attempts have been charged since the blob last entered
+    // the queue. An attempt is charged BEFORE it starts and pushes the due time forward by the
+    // retry interval, so an attempt that dies without a word has still been counted, and the
+    // blob it was working on is no longer first in line.
+    //
+    // Every write of these two columns is one of the methods below. The times are the
+    // DATABASE's clock (NOW(3)) on both sides of every comparison.
+    // =========================================================================================
+
+    /**
+     * The column values of "this blob owes work": due now, no attempts charged.
+     *
+     * THE one statement of it. Anything that makes a blob owe work - a render queued, its text
+     * marked un-extracted - writes these beside it, in a set UPDATE or through mark_work_owed().
+     *
+     * @return array
+     */
+    public static function work_owed_values(): array
+    {
+        return [
+            'process_due_at' => DB::raw('NOW(3)'),
+            'process_attempt_count' => 0,
+        ];
+    }
+
+    /**
+     * This blob owes work: due now, with a full set of attempts. The caller has already said
+     * WHAT is owed (render_status_id, is_indexed).
+     *
+     * @return void
+     */
+    public function mark_work_owed(): void
+    {
+        static::where('id', $this->id)->update(static::work_owed_values());
+        $this->__reload_row();
+    }
+
+    /**
+     * The blobs the worker may take now, as a query: one range read from the front of
+     * idx_process_due however large the table is. Order it with ->orderBy('process_due_at')
+     * ->orderBy('id') to take them earliest-due first.
+     *
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    public static function work_due_query()
+    {
+        return static::where('process_due_at', '<=', DB::raw('NOW(3)'));
+    }
+
+    /**
+     * Charge one attempt to this blob and push its due time one retry interval ahead - the
+     * step that comes BEFORE the attempt runs.
+     *
+     * Guarded: it succeeds only if the row is still due and still carries the attempt count
+     * this instance read, so two processes can never both charge - and run - the same attempt.
+     *
+     * @return bool False when another process took the blob first; nothing was changed.
+     */
+    public function charge_work_attempt(): bool
+    {
+        $minutes = static::work_retry_after_minutes();
+
+        $charged = static::where('id', $this->id)
+            ->where('process_due_at', '<=', DB::raw('NOW(3)'))
+            ->where('process_attempt_count', (int) $this->process_attempt_count)
+            ->update([
+                'process_attempt_count' => DB::raw('process_attempt_count + 1'),
+                'process_due_at' => DB::raw("NOW(3) + INTERVAL {$minutes} MINUTE"),
+            ]);
+
+        if ($charged !== 1) {
+            return false;
+        }
+
+        $this->__reload_row();
+
+        return true;
+    }
+
+    /**
+     * Take this blob out of the queue. $attempts_spent says how it left: false = everything
+     * owed was produced (the counter returns to 0), true = its attempts are spent and what is
+     * still missing is failed for good (the counter stays at the limit, which is how a
+     * permanently failed blob reads).
+     *
+     * @param bool $attempts_spent
+     * @return void
+     */
+    public function close_work(bool $attempts_spent = false): void
+    {
+        static::where('id', $this->id)->update([
+            'process_due_at' => null,
+            'process_attempt_count' => $attempts_spent ? static::work_max_attempts() : 0,
+        ]);
+        $this->__reload_row();
+    }
+
+    /**
+     * Owed work that cannot be attempted right now (a rendition while LibreOffice is switched
+     * off, text while extraction is switched off) is offered again one retry interval from now,
+     * with no attempt charged: the blob waits for the switch without holding the front of the
+     * queue.
+     *
+     * @return void
+     */
+    public function defer_work(): void
+    {
+        $minutes = static::work_retry_after_minutes();
+
+        static::where('id', $this->id)->update([
+            'process_due_at' => DB::raw("NOW(3) + INTERVAL {$minutes} MINUTE"),
+            'process_attempt_count' => 0,
+        ]);
+        $this->__reload_row();
+    }
+
+    /**
+     * Read this row back after a set UPDATE wrote it, so the instance carries what the database
+     * now holds (the due time is the database's clock, not a value this process computed).
+     *
+     * @return void
+     */
+    private function __reload_row(): void
+    {
+        $this->setRawAttributes(static::where('id', $this->id)->firstOrFail()->getRawOriginal(), true);
+    }
+
+    /**
+     * Attempts a blob gets each time it enters the queue (rsx.documents.max_attempts).
+     *
+     * @return int
+     */
+    public static function work_max_attempts(): int
+    {
+        return max(1, (int) config('rsx.documents.max_attempts'));
+    }
+
+    /**
+     * Minutes between a failed attempt and the next one (rsx.documents.retry_after_minutes).
+     *
+     * @return int
+     */
+    public static function work_retry_after_minutes(): int
+    {
+        return max(1, (int) config('rsx.documents.retry_after_minutes'));
+    }
+
+    /**
+     * True when the worker will not attempt this blob again by itself: its render FAILED and it
+     * is no longer in the queue.
+     *
+     * @return bool
+     */
+    public function is_render_failed_for_good(): bool
+    {
+        return (int) $this->render_status_id === static::RENDER_STATUS_FAILED && $this->process_due_at === null;
+    }
+
+    /**
+     * Get the extracted-text search index row for this blob, or null when no extraction attempt
+     * has recorded an outcome yet.
      *
      * @return Search_Index_Model|null
      */

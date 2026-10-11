@@ -1050,7 +1050,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
 
         $render_status = (int) $storage->render_status_id;
 
-        // Queued or terminally failed: placeholder, uncached and uncacheable.
+        // Queued or failed: placeholder, uncached and uncacheable.
         if ($render_status === File_Storage_Model::RENDER_STATUS_PENDING
             || $render_status === File_Storage_Model::RENDER_STATUS_FAILED) {
             return static::__serve_thumbnail_placeholder($attachment, $width, $height);

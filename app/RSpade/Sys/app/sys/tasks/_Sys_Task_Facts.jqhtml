@@ -1,7 +1,7 @@
 <%--
 _Sys_Task_Facts - a run's identity, lifecycle and live status: the task name with its status
 badge and the actions that apply now, the facts (origin, pool, schedule and finish times, the reported ETA, the
-worker and whether it is alive here, the return code, the error), the status line and progress,
+worker and whether it is alive here, the return code, the error), the status line (for a pending run with none: what it is waiting for) and progress,
 the parameters, and the files it attached.
 
 $task_id - the run (required)
@@ -16,6 +16,7 @@ Fires 'acted' after a lifecycle action.
     <Spinner class="_Sys_Task_Facts__loading" />
 <% } else { %>
     <% const _t = this.data.task; %>
+    <% const _line = _t.status_text || Rsx_Task.waiting_text(_t); %>
     <div class="_Sys_Task_Facts__title">
         <span class="_Sys_Task_Facts__name"><%= _t.name %></span>
         <Task_Status_Badge $task=_t />
@@ -23,10 +24,10 @@ Fires 'acted' after a lifecycle action.
     <div class="_Sys_Task_Facts__actions">
         <_Sys_Task_Actions $sid="actions" $task=_t $size="md" />
     </div>
-    <% if (_t.status_text || _t.progress_percent !== null || _t.progress_count) { %>
+    <% if (_line || _t.progress_percent !== null || _t.progress_count) { %>
         <div class="_Sys_Task_Facts__live">
-            <% if (_t.status_text) { %>
-                <div class="_Sys_Task_Facts__status_text"><%= _t.status_text %></div>
+            <% if (_line) { %>
+                <div class="_Sys_Task_Facts__status_text"><%= _line %></div>
             <% } %>
             <% if (_t.progress_percent !== null || _t.progress_count) { %>
                 <div class="_Sys_Task_Facts__bar">

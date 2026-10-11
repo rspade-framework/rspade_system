@@ -1277,21 +1277,34 @@ SUBSYSTEM PRIMERS
     single #[Exclusive] task on a ten-minute schedule, kicked promptly when a
     genuinely new blob is stored. It owns every heavy document operation;
     before it existed, one Word document was converted three times by
-    competing web requests. THE QUEUE IS TWO COLUMNS ON THE BLOB, with no
-    side table: a render is owed while the status is PENDING, and an
-    extraction is owed while is_indexed is 0. Rendering and extraction have
-    separate master switches, and with rendering off the queue narrows to the
-    extraction predicate - otherwise the loop would spin forever on a row
-    that can never leave PENDING.
+    competing web requests. THE QUEUE IS ONE COLUMN ON THE BLOB, with no
+    side table: process_due_at is NULL when the worker has nothing to do and
+    otherwise the time the blob may next be attempted; WHAT is owed is still
+    the render status (PENDING or FAILED) and is_indexed = 0. Every write of
+    the queue columns is a method in THE WORK QUEUE section of
+    File_Storage_Model_Abstract. The drain takes the earliest due blob and
+    hands it to process_storage(), which CHARGES THE ATTEMPT FIRST (count + 1,
+    due time one retry interval ahead, one guarded UPDATE), runs the blob in a
+    child process (the hidden rsx:documents:process_one, through
+    Rsx_Artisan::run_bounded()), then reads the ROW back and settles it - the
+    child reports nothing, the row is the result. Charging first is what
+    terminates the loop and what keeps a document that kills its worker from
+    being first in line again. Rendering and extraction have separate master
+    switches; owed work that is switched off is DEFERRED one retry interval
+    with no attempt charged.
 
     RENDER STATE LIVES ON THE BLOB. NOT_REQUIRED is the DEFAULT, because
     ingest sees only bytes and cannot know the mime; the ATTACHMENT flips it
     to PENDING once it knows the extension, through an idempotent request
     that only ever moves NOT_REQUIRED -> PENDING. That idempotence is the
     dedup story, and it is why a new upload can never silently retry a FAILED
-    blob. RENDERED and FAILED are the outcomes; FAILED IS TERMINAL and is
-    never swept again - only an explicit rerender revives it. The unit of
-    work never throws: any error becomes FAILED plus a recorded reason.
+    blob. RENDERED and FAILED are the outcomes of an attempt. FAILED is
+    retried by the drain - and only by the drain, never by a web request -
+    until rsx.documents.max_attempts are spent; a FAILED blob with a due time
+    is waiting for its next attempt, one without is failed for good and only
+    an explicit rerender revives it. The unit of work (render_storage(),
+    command line only) never throws: any error becomes FAILED plus a recorded
+    reason.
     Publication of a rendition is atomic (temp file beside the destination,
     then rename), and a successful render PURGES the thumbnail cache for that
     hash - required, not tidy-up, because the placeholder icon may be sitting
@@ -1303,17 +1316,24 @@ SUBSYSTEM PRIMERS
     directly rather than resolving the blob, because a display question must
     not materialise bytes.
 
-    THE ONE SANCTIONED TIMEOUT IN THIS SUBSYSTEM is rsx.libreoffice.timeout,
-    120 seconds. It bounds ONE invocation of an external binary that can
-    genuinely wedge - never any of our own work - and expiry degrades to a
-    working outcome: the blob is marked FAILED with a reason, the icon is
-    served, the queue moves on. The config entry carries its own 599/601
-    justification. Match that bar or do not add a timeout.
+    THE TWO SANCTIONED TIMEOUTS IN THIS SUBSYSTEM are
+    rsx.documents.stage_seconds (20) and rsx.documents.kill_seconds (60).
+    Both bound a parse of ONE uploaded file - input the application does not
+    control - and never the queue or the worker's pass; expiry degrades to a
+    working outcome: a recorded FAILED attempt, the icon served, the queue
+    moving on. The stage bound (Document_Stage_Bound) is a pcntl alarm whose
+    handler throws between PHP statements, which is why a stage runs only on
+    the command line and why the external binaries carry no limit of their
+    own - they run inside a stage. The kill is coreutils `timeout
+    --signal=KILL` over the child's process group, for the child an alarm
+    cannot reach. The config entry carries the justification of each number.
+    Match that bar or do not add a timeout.
 
     SEARCH. _search_indexes holds one row per deduplicated BLOB, and its
-    statuses are always terminal - EXTRACTED, FAILED, UNSUPPORTED. There is
-    no stored PENDING: the ABSENCE of a row, expressed as is_indexed = 0, IS
-    the queue. THE ROW HAS NO site_id AND CANNOT, so
+    status is the outcome of the last attempt - EXTRACTED, FAILED,
+    UNSUPPORTED. There is no stored PENDING: a blob with no row has not been
+    attempted, and is_indexed = 0 says its text is still owed (a FAILED row
+    beside it is a failure the worker will retry). THE ROW HAS NO site_id AND CANNOT, so
     File_Attachment_Model::search_text() returns an Eloquent BUILDER that the
     application MUST site-scope. It keeps the matching blob ids as a SQL
     sub-select rather than plucking them into PHP, because a broad match is
@@ -1520,7 +1540,15 @@ SUBSYSTEM PRIMERS
 
         Rsx_Artisan::passthru($command, $args): int
         Rsx_Artisan::run($command, $args, &$output, $env): int
+        Rsx_Artisan::run_bounded($command, $args, $seconds, &$output, $env): int
         Rsx_Artisan::dispatch_detached($command, $args, $propagate = false)
+
+    run_bounded() is run() with a hard limit on the child's life: at $seconds
+    the child and every process it started are killed (SIGKILL to the process
+    group) and Rsx_Artisan::KILLED_AT_LIMIT is returned. IT IS A TIMEOUT, so
+    by mandate not for general use - its one caller is the document worker's
+    one-child-per-document, and a caller with work of its own to run to
+    completion uses run().
 
     The command name and every argv token are escaped separately; the PHP
     binary is chosen correctly for the SAPI (the fpm binary cannot run a

@@ -55,6 +55,8 @@ class Files_Repair_Mime_Routing_Test extends Rsx_Test_Abstract
 
         $storage->is_indexed = 1;  // simulate a prior (mis-routed) extraction attempt
         $storage->save();
+        // ...which settled it: out of the worker's queue, with attempts on the counter.
+        File_Storage_Model::where('id', $storage->id)->update(['process_due_at' => null, 'process_attempt_count' => 2]);
 
         $attachment = new File_Attachment_Model();
         $attachment->key = File_Attachment_Model::generate_key();
@@ -93,6 +95,12 @@ class Files_Repair_Mime_Routing_Test extends Rsx_Test_Abstract
         static::__assert_equals(6, (int) $repaired->file_type_id, 'file_type_id re-bucketed to DOCUMENT (6)');
         static::__assert_equals('application/zip', $repaired->mime_type, 'mime_type (raw sniff) is intentionally left unchanged');
         static::__assert_equals(0, (int) File_Storage_Model::find($storage->id)->is_indexed, 'blob re-queued (is_indexed reset to 0)');
+        static::__assert_equals(0, (int) File_Storage_Model::find($storage->id)->process_attempt_count, 're-queued with a full set of attempts');
+        static::__assert_equals(
+            1,
+            File_Storage_Model::work_due_query()->where('id', $storage->id)->count(),
+            're-queued INTO the worker queue: due now'
+        );
         static::__assert_false(is_file($rendition), 'stale rendition cache deleted');
         static::__assert_false(is_file($thumb), 'stale thumbnail cache deleted');
 

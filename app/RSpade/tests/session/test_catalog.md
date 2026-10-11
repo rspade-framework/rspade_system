@@ -210,8 +210,10 @@ Self-seeding (its own account, via tinker). Needs a framework-development box fo
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | sess-rotate-01 | a sign-in moves the browser to a new token, in exactly one session cookie | anon session -> POST /login | token differs; one `Set-Cookie: rsx=` | implemented |
-| sess-rotate-02 | the new token authenticates; the token the browser arrived with does not, and is never re-cookied | GET /dashboard on each | 200 / 302 with no Set-Cookie | implemented |
-| sess-rotate-03 | the superseded row is identity-free and points at its successor; the new row carries the identity and its clocks | the two rows | as stated | implemented |
+| sess-rotate-02 | the new token authenticates; the token the browser arrived with does not, and is never re-cookied | GET /dashboard on each | 200 / 401 with no Set-Cookie | implemented |
+| sess-rotate-03 | the old row is retired - inactive, pointing at its successor; the new row carries the identity and its clocks | the two rows | as stated | implemented |
+| sess-rotate-06 | a request on a retired token is refused and sent no cookie | /dashboard, an Ajax call and /login on the copied cookie | 401, session_expired cause retired, 401; no Set-Cookie | implemented |
+| sess-rotate-07 | a retired row still records whose it was | a sign-in on an already signed-in browser | the replaced row: inactive, superseded_by_id set, login_user_id intact | implemented |
 | sess-rotate-04 | the rows share one device; a later sign-in on the browser lands on the same device | row state; sign out, sign in | same device_id, third token | implemented |
 
 ## http/session_lifetime.sh (http - live server)
@@ -222,9 +224,9 @@ Self-seeding. Moves a real session's clocks back against the shipped defaults (3
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | sess-life-01 | inside the grace window an Ajax call and a page sub-request still answer | login_at 30d+1h ago | `_success` true; 200 for `Sec-Fetch-Dest: image`; still signed in | implemented |
-| sess-life-02 | a page navigation past the limit signs out, redirects to sign-in and says why | same row, `Sec-Fetch-Dest: document` | 302 to /login; identity cleared; the message on the sign-in page | implemented |
-| sess-life-03 | past the grace an Ajax call signs out and answers session_expired | last_page_view_at 30d+3h ago | `error_code` session_expired, cause idle; identity cleared | implemented |
-| sess-life-04 | the page-view report gets no grace | login_at 30d+1h ago, POST page_view | session_expired; identity cleared | implemented |
+| sess-life-02 | a page navigation past the limit signs out, redirects to sign-in and says why | same row, `Sec-Fetch-Dest: document` | 302 to /login; the row retired (inactive, identity intact) and its successor signed out; the message on the sign-in page | implemented |
+| sess-life-03 | past the grace an Ajax call signs out and answers session_expired | last_page_view_at 30d+3h ago | `error_code` session_expired, cause idle; the row retired and its successor signed out | implemented |
+| sess-life-04 | the page-view report gets no grace | login_at 30d+1h ago, POST page_view | session_expired; the row retired and its successor signed out | implemented |
 | sess-life-05 | the page-view report stamps the session and last_seen on the account | stamp 5 minutes old | stamp advanced; login_users.last_seen set | implemented |
 | sess-life-06 | an Ajax call is not a page view | stamp 5 minutes old, any Ajax call | stamp unchanged | implemented |
 | sess-life-07 | rendering a page is a page view | GET /dashboard | stamp advanced | implemented |

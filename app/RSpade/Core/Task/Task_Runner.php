@@ -37,6 +37,9 @@ class Task_Runner
      * current realm (Rsx_Model_Abstract::_resolve_context_actor()) and the current site - so an
      * application's view gate can show users the runs they started.
      *
+     * `timeout` stays NULL unless $fields names one: NULL is "no hard limit - the silence rule
+     * applies" (rsx.tasks.silent_timeout), a number is a hard limit somebody asked for.
+     *
      * @param array $fields Any further _tasks columns (status_id, scheduled_for, schedule_id, ...)
      */
     public static function insert_row(string $class, string $method, array $params, int $origin_id, array $fields = []): int
@@ -55,7 +58,6 @@ class Task_Runner
             'dispatched_by_id' => $actor['id'] ?? null,
             'dispatched_by_type' => $actor !== null ? Type_Ref_Registry::class_to_id($actor['type']) : null,
             'scheduled_for' => $now,
-            'timeout' => config('rsx.tasks.default_timeout'),
             'created_at' => $now,
             'updated_at' => $now,
         ];
@@ -161,14 +163,16 @@ class Task_Runner
             static::__update_schedule($id, $outcome, $now);
         }
 
-        Task_Notify::lifecycle($id);
-
         if ($run_lock !== null) {
             // Release the identity run lock and re-anchor any coalesced pending run (mirrors
             // the JS debounce finally{}).
             $run_lock->release();
             Task_Concurrency::reschedule_pending_after_completion($instance->get_class(), $instance->get_method(), Task_Concurrency::params_hash($instance->get_params()));
         }
+
+        // After the release: the frame also tells the runs waiting on this lock to look again,
+        // and what they read must be the lock free and their own row re-anchored.
+        Task_Notify::lifecycle($id);
     }
 
     /**

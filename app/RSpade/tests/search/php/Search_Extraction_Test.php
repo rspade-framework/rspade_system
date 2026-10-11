@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Search\Php;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Files\Document_Stage_Bound;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Libreoffice;
@@ -187,13 +188,63 @@ class Search_Extraction_Test extends Rsx_Test_Abstract
         static::__assert_equals(Search_Index_Model::STATUS_FAILED, $index->status_id, 'a missing blob -> FAILED');
 
         $storage_id = $attachment->file_storage_id;
-        $before = File_Storage_Model::find($storage_id);
-        static::__assert_equals(1, (int) $before->is_indexed, 'the blob is marked indexed after the attempt');
+        static::__assert_equals(
+            0,
+            (int) File_Storage_Model::find($storage_id)->is_indexed,
+            'a FAILED attempt is not an answer: the text is still owed'
+        );
+
+        // The worker has spent this blob's attempts: the failure is final and the blob has left
+        // the queue. That is the state an operator finds, and the one reindex --failed resets.
+        Search_Index_Service::settle_failure(File_Storage_Model::find($storage_id), 'unused: the row already carries a reason');
+        File_Storage_Model::find($storage_id)->close_work(true);
+
+        $settled = File_Storage_Model::find($storage_id);
+        static::__assert_equals(1, (int) $settled->is_indexed, 'a failure settled for good is no longer owed');
+        static::__assert_null($settled->process_due_at, 'and is out of the queue');
+        static::__assert_contains(
+            'source blob missing on disk',
+            (string) Search_Index_Model::forModel('File_Storage_Model', $storage_id)->first()->error,
+            'settling keeps the reason the last attempt recorded'
+        );
 
         Artisan::call('rsx:search:reindex', ['--failed' => true]);
 
         $after = File_Storage_Model::find($storage_id);
         static::__assert_equals(0, (int) $after->is_indexed, 'reindex --failed re-queued the blob (is_indexed back to 0)');
+        static::__assert_equals(0, (int) $after->process_attempt_count, 'with a full set of attempts');
+        static::__assert_equals(
+            1,
+            File_Storage_Model::work_due_query()->where('id', $storage_id)->count(),
+            'due now'
+        );
+    }
+
+    // A definitive answer ends the owing; a failure does not. This is what lets a failed
+    // extraction share the render's attempt counter: the worker sees a blob that still owes its
+    // text, and the FAILED row beside it says the last attempt did not get there.
+    public static function test_only_a_definitive_answer_marks_the_blob_indexed()
+    {
+        $extracted = static::__make_attachment('plain words ' . uniqid(), 'answer.txt');
+        static::__assert_equals(Search_Index_Model::STATUS_EXTRACTED, (int) static::__extract($extracted)->status_id);
+        static::__assert_equals(1, (int) File_Storage_Model::find($extracted->file_storage_id)->is_indexed, 'EXTRACTED is an answer');
+
+        $unsupported = static::__make_attachment(random_bytes(64) . uniqid(), 'opaque.bin');
+        static::__assert_equals(Search_Index_Model::STATUS_UNSUPPORTED, (int) static::__extract($unsupported)->status_id);
+        static::__assert_equals(1, (int) File_Storage_Model::find($unsupported->file_storage_id)->is_indexed, 'UNSUPPORTED is an answer');
+
+        $failing = static::__make_attachment('gone ' . uniqid(), 'gone.txt');
+        $storage = File_Storage_Model::find($failing->file_storage_id);
+        @unlink($storage->get_full_path());
+
+        static::__assert_equals(Search_Index_Model::STATUS_FAILED, (int) static::__extract($failing)->status_id);
+        static::__assert_equals(0, (int) File_Storage_Model::find($storage->id)->is_indexed, 'FAILED leaves the text owed');
+
+        // The worker's parent records a failure the child never reported the same way: a FAILED
+        // row, still owed.
+        $index = Search_Index_Service::record_failure(File_Storage_Model::find($storage->id), 'killed after 60 seconds');
+        static::__assert_equals('killed after 60 seconds', (string) $index->error, 'record_failure() writes the reason');
+        static::__assert_equals(0, (int) File_Storage_Model::find($storage->id)->is_indexed, 'and leaves the text owed');
     }
 
     public static function test_storage_delete_cascades_index_row()
@@ -245,7 +296,7 @@ class Search_Extraction_Test extends Rsx_Test_Abstract
         file_put_contents($path, static::__minimal_fodt($token));
 
         try {
-            $text = Libreoffice_Text_Extractor::extract($path, 'application/vnd.oasis.opendocument.text');
+            $text = Document_Stage_Bound::run('text extraction', fn () => Libreoffice_Text_Extractor::extract($path, 'application/vnd.oasis.opendocument.text'));
             static::__assert_contains($token, $text, 'office document text recovered via headless soffice');
         } finally {
             @unlink($path);
@@ -268,7 +319,7 @@ class Search_Extraction_Test extends Rsx_Test_Abstract
         file_put_contents($path, static::__minimal_fods($alpha, $beta));
 
         try {
-            $text = Libreoffice_Text_Extractor::extract($path, 'application/vnd.oasis.opendocument.spreadsheet');
+            $text = Document_Stage_Bound::run('text extraction', fn () => Libreoffice_Text_Extractor::extract($path, 'application/vnd.oasis.opendocument.spreadsheet'));
             static::__assert_contains('SheetAlpha', $text, 'first sheet name present');
             static::__assert_contains('SheetBeta', $text, 'second sheet name present');
             static::__assert_contains($alpha, $text, 'first sheet cell token present');
@@ -292,7 +343,7 @@ class Search_Extraction_Test extends Rsx_Test_Abstract
         file_put_contents($path, static::__minimal_fodp($token));
 
         try {
-            $text = Libreoffice_Text_Extractor::extract($path, 'application/vnd.oasis.opendocument.presentation');
+            $text = Document_Stage_Bound::run('text extraction', fn () => Libreoffice_Text_Extractor::extract($path, 'application/vnd.oasis.opendocument.presentation'));
             static::__assert_contains($token, $text, 'presentation slide text recovered via fodp flat XML');
         } finally {
             @unlink($path);

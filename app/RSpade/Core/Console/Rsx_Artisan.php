@@ -46,8 +46,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Detached_Processes;
  * while both believe they are exclusive is precisely the failure the lock daemon exists to
  * prevent - so:
  *
- *   - passthru() and run() are synchronous: the parent blocks until the child exits, so
- *     they ALWAYS propagate. There is no way to turn it off, because there is no case
+ *   - passthru(), run() and run_bounded() are synchronous: the parent blocks until the child
+ *     exits, so they ALWAYS propagate. There is no way to turn it off, because there is no case
  *     where a blocked parent wants its child to deadlock against it.
  *   - dispatch_detached() does not wait for its child, so it does NOT propagate by default. The
  *     opt-in is spelled $propagate_locks_and_i_will_wait for a reason: passing true is a
@@ -97,6 +97,79 @@ class Rsx_Artisan
     {
         $exit_code = 0;
         exec_safe(self::__command_line($command, $args, true), $output, $exit_code, $env);
+
+        return $exit_code;
+    }
+
+    /**
+     * What run_bounded() returns when the limit expired and the child was killed. Not an exit
+     * code - a killed process has none - and no artisan command can exit with a negative one.
+     */
+    public const KILLED_AT_LIMIT = -9;
+
+    /**
+     * run(), with a hard limit on the child's life: after $seconds the child AND EVERY PROCESS
+     * IT STARTED are killed with SIGKILL, and KILLED_AT_LIMIT is returned.
+     *
+     * A TIMEOUT, so by mandate not for general use. It exists for the one shape of child the
+     * mandate allows a bound on: work on input the application does not control, which may
+     * never finish, where the caller records the kill as a failed attempt and carries on - the
+     * document worker's one-child-per-document (Document_Render_Service::process_storage()).
+     * The NUMBER is the caller's and is justified where the caller keeps it. A caller with
+     * work of its own to run to completion uses run().
+     *
+     * THE MECHANISM is coreutils `timeout --signal=KILL`. timeout makes itself the leader of
+     * a new process group and runs the command inside it; at the limit it sends SIGKILL to
+     * the whole group - the artisan process, anything that process spawned and is waiting on
+     * (a converter binary is a GRANDCHILD of this method's caller), and timeout itself. A
+     * grandchild is therefore never left running as an orphan, and because every holder of
+     * the output pipe is in the group, reading the output ends when they die. What it cannot
+     * reach is a process that left the group on purpose (setsid) or one that is not a
+     * descendant at all - a docker container is a child of the docker daemon - so a caller
+     * that starts such a thing bounds it by its own means first.
+     *
+     * TELLING THE KILL FROM AN ORDINARY ENDING. timeout dies by its own SIGKILL, which the
+     * shell waiting for it reports as status 137 - the same number it reports when the child
+     * was killed by someone else (the kernel's out-of-memory killer, say) and timeout passed
+     * that on. The clock separates them: timeout only kills at the limit, so 137 at or after
+     * $seconds is the limit and 137 before it is the child's own ending, returned as 137.
+     *
+     * Synchronous, so the child joins this process's lock group like run().
+     *
+     * @param string $command Artisan command name
+     * @param array<int, string> $args Whole argv tokens
+     * @param int $seconds The limit, in whole seconds
+     * @param array<int, string> $output Populated with the child's output lines (stdout and
+     *        stderr), by reference - whatever was written before the end, when it was killed
+     * @param array<string, string> $env Extra environment merged OVER our own (facts about the
+     *        environment, never invocation intent - see run())
+     * @return int The child's exit code, or KILLED_AT_LIMIT
+     */
+    public static function run_bounded(string $command, array $args, int $seconds, array &$output = [], array $env = []): int
+    {
+        if ($seconds < 1) {
+            throw new \InvalidArgumentException('Rsx_Artisan::run_bounded() needs a limit of at least one second');
+        }
+
+        // An inner, explicit bash waits for timeout and hands its status on. Its OWN stderr is
+        // discarded: the only thing it ever writes there is the job notice ("Killed ...") for a
+        // timeout that died at the limit, which is this method's return value, not output. The
+        // child's stderr is merged into its stdout inside, so nothing the child says is lost.
+        $bounded = 'timeout --signal=KILL ' . $seconds . ' '
+            . self::__command_line($command, $args, true) . ' 2>&1; exit $?';
+
+        $started = microtime(true);
+        $exit_code = 0;
+
+        exec_safe('bash -c ' . escapeshellarg($bounded) . ' 2>/dev/null', $output, $exit_code, $env);
+
+        if ($exit_code === -1) {
+            throw new \RuntimeException("Rsx_Artisan::run_bounded({$command}) could not start the child process");
+        }
+
+        if ($exit_code === 137 && microtime(true) - $started >= $seconds) {
+            return self::KILLED_AT_LIMIT;
+        }
 
         return $exit_code;
     }

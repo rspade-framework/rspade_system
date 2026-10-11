@@ -1,0 +1,180 @@
+THE DOCUMENT WORKER HAS A QUEUE COLUMN, ATTEMPTS AND TWO TIME LIMITS: process_storage() IS THE ONE ROUTE, rsx.libreoffice.timeout IS GONE
+Date: 2026-10-11
+
+IF YOU DO NOTHING: any controller of yours that calls Document_Render_Service::render_storage() or Search_Index_Service::extract_storage() from a web request throws "runs only in a command-line process" (a fork still carrying the template's /dev/document_preview and /dev/attachment_thumbnail pages has two such calls); a blob you re-queue by writing is_indexed = 0 or render status PENDING yourself is never picked up; an rsx.libreoffice.timeout override you carry is ignored; and a document.extract_text handler of yours that takes longer than 20 seconds is interrupted and its document recorded FAILED.
+
+SUMMARY
+    Category 2: the calls and the config key an application uses to drive the
+    document worker changed, and two template pages call the old ones.
+
+    The worker (Document_Render_Service::render_pending) takes blobs from one
+    queue column, runs each document in a child process of its own, retries a
+    failed one, and bounds how long any one document may take:
+
+        _file_storage.process_due_at         NULL = nothing for the worker to
+                                             do; a time = the blob owes work
+                                             and may be attempted from then
+        _file_storage.process_attempt_count  attempts charged since the blob
+                                             entered the queue
+
+        rsx.documents.stage_seconds        20   each stage of one document: the
+                                                render, and the text extraction
+        rsx.documents.kill_seconds         60   the document's child process
+        rsx.documents.max_attempts          3   attempts, then FAILED for good
+        rsx.documents.retry_after_minutes  30   wait between attempts
+
+    A FAILED render or extraction is therefore retried by the worker - 30
+    minutes apart, three attempts in all - and only then stays FAILED until an
+    operator re-queues it. A web request never grants an attempt. Every screen
+    shows a failed attempt as failed, between retries and after the last.
+
+    Four things in YOUR code can be affected. Each is independent; most
+    applications have none of them.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - The migration 2026_10_11_190325 (php artisan migrate): the two columns
+      and their index. Every blob that owed work is due now; a blob whose
+      render had FAILED and which owed nothing else keeps that outcome with
+      its attempts spent.
+    - The worker, its child command, the two time limits, and the
+      rsx:documents:status / rsx:documents:failed / rsx:health output that
+      shows what is due, what is waiting for a retry and what is out of
+      attempts.
+    - rsx:documents:rerender and rsx:search:reindex re-queue with a full set of
+      attempts.
+
+ACTION REQUIRED
+
+    1. A config override of rsx.libreoffice.timeout
+
+           grep -n "timeout" rsx/resource/config/rsx.php
+
+       The key is no longer read. soffice and pdftotext carry no limit of their
+       own; each runs inside a stage of the worker and is bounded with it.
+       Delete the override. If you carried it because your ordinary documents
+       need a long conversion, set the stage bound instead, and keep the kill
+       above twice the stage:
+
+           'documents' => [
+               'stage_seconds' => 45,
+               'kill_seconds'  => 120,
+           ],
+
+       The defaults are 20 and 60: a document that needed more than 20 seconds
+       to render, or more than 20 to extract, is now recorded FAILED with
+       "render exceeded 20 seconds" / "text extraction exceeded 20 seconds".
+       php artisan rsx:documents:failed lists them.
+
+    2. render_storage() / extract_storage() called from a web request
+
+           grep -rn "render_storage\|extract_storage" rsx/
+
+       Both are the unit of work the worker's child process runs, and both
+       refuse outside the command line:
+
+           LogicException: Document_Render_Service::render_storage() runs only
+           in a command-line process: its stages are bounded by a pcntl alarm,
+           which does not exist under fpm-fcgi. From a web request call
+           Document_Render_Service::process_storage(), which runs the document
+           in a child process.
+
+       Replace the call. process_storage() charges the attempt, runs the
+       document in the child, waits for it and settles the row:
+
+           // before
+           Document_Render_Service::render_storage($storage);
+
+           // after
+           $result = Document_Render_Service::process_storage($storage);
+
+       It returns ['outcome', 'reason', 'attempt', 'max_attempts',
+       'next_attempt_at', 'render_label'], with outcome one of
+       Document_Render_Service::OUTCOME_DONE / OUTCOME_RETRY / OUTCOME_FAILED /
+       OUTCOME_WAITING / OUTCOME_TAKEN. Read the blob back for its state as
+       before. A blob that is not in the queue answers OUTCOME_DONE and nothing
+       runs, so re-queue it first (item 3).
+
+       Use process_storage() from a #[Task] or a command as well: called there
+       directly, render_storage() runs but never writes the queue columns.
+
+       A FORK THAT STILL CARRIES THE TEMPLATE'S DEVELOPMENT PAGES has this call
+       twice. Copy the two endpoints from the reference app:
+
+           system/app/RSpade/resource/reference_app/app/dev/document_preview/document_preview_controller.php
+               run_extraction()   render_storage() -> process_storage()
+               reset_extraction() gains $storage->mark_work_owed() (item 3)
+           system/app/RSpade/resource/reference_app/app/dev/attachment_thumbnail/attachment_thumbnail_controller.php
+               run_render()       render_storage() -> process_storage()
+
+    3. Code that re-queues a blob by writing the columns itself
+
+           grep -rn "is_indexed\|RENDER_STATUS_PENDING" rsx/
+
+       The worker takes blobs by process_due_at. is_indexed = 0 and render
+       status PENDING still say WHAT a blob owes, but written alone they leave
+       it outside the queue and nothing ever processes it - no error anywhere.
+
+       A rendition:
+
+           // before
+           $storage->render_status_id = File_Storage_Model::RENDER_STATUS_PENDING;
+           $storage->save();
+
+           // after - PENDING, earlier artifacts cleared, due now, attempts
+           // reset, worker kicked (requeue_render(false) = no kick)
+           $storage->requeue_render();
+
+       Text:
+
+           $storage->is_indexed = 0;
+           $storage->save();
+           $storage->mark_work_owed();      // add this: due now, attempts reset
+
+       A set UPDATE writes File_Storage_Model::work_owed_values() beside the
+       columns that say what is owed:
+
+           File_Storage_Model::whereIn('id', $ids)->update(array_merge(
+               ['is_indexed' => 0],
+               File_Storage_Model::work_owed_values()
+           ));
+
+       request_render() (NOT_REQUIRED -> PENDING, called for you when a
+       convertible attachment is created) is unchanged and needs nothing.
+
+    4. A document.extract_text handler
+
+           grep -rn "document.extract_text" rsx/
+
+       The handler runs inside the text-extraction stage and shares its bound
+       with the rest of the extraction: 20 seconds by default. One still running
+       at the bound is interrupted where it stands, the attempt is recorded
+       FAILED ("text extraction exceeded 20 seconds") and the worker retries it
+       twice more, 30 minutes apart, before leaving the document FAILED.
+
+       A handler that reads a file locally needs nothing. One that calls an
+       external service (an OCR or transcription API) must answer inside the
+       bound, or the site raises rsx.documents.stage_seconds and kill_seconds
+       as in item 1.
+
+VERIFICATION
+    grep -rn "render_storage\|extract_storage" rsx/ answers nothing, and
+    grep -n "libreoffice" rsx/resource/config/rsx.php shows no 'timeout'.
+
+    Upload an Office document: php artisan rsx:documents:status shows nothing
+    left under "Due now" once the worker has run, and the document's thumbnail
+    and preview appear. If you kept the development pages, Reset and Render on
+    /dev/attachment_thumbnail and Reset Extraction / Extract Now on
+    /dev/document_preview complete without an error.
+
+    php artisan rsx:documents:failed lists every FAILED document with its
+    attempts and its next attempt time; a row reading "exceeded 20 seconds" on
+    an ordinary document of yours is the signal to raise the stage bound.
+
+SEE ALSO
+    rsx:man documents - THE WORK QUEUE, APPLICATION CODE AND THE QUEUE
+    rsx:man config_rsx - 'documents'
+    rsx:man libreoffice - TIME LIMITS
+    rsx:man document_search - FILTER CHAINS
+    skill rspade:document-preview

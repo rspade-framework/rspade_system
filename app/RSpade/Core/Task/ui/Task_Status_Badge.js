@@ -22,7 +22,13 @@ class Task_Status_Badge extends Component {
 
         try {
             const status = await Rsx_Task.get(this.args.task_id);
-            this.data.status = { status_id: status.status_id, status: status.status, status_reason: status.status_reason };
+            this.data.status = {
+                status_id: status.status_id,
+                status: status.status,
+                status_reason: status.status_reason,
+                scheduled_for: status.scheduled_for,
+                waiting: status.waiting,
+            };
         } catch (e) {
             this.data.error_data = e;
         }

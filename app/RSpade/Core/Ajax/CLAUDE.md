@@ -66,7 +66,9 @@ batch, a `controller`, an `action`, and `params` that are an object when present
 Once per Ajax request, ahead of the membership check, for the request's own experience:
 `Session::enforce_timeouts(false)` / `Portal_Session::enforce_timeouts(false)`. Not strict -
 an Ajax call gets `rsx.sessions.ajax_grace_minutes` past the limit. When the sign-in is
-ended, every call in the request answers `session_expired`. `Rsx_Session_Controller::
+ended, every call in the request answers `session_expired`. Ahead of that, a request whose
+cookie names a RETIRED session row (`Session::_arrived_on_retired_token()` - replaced by a
+sign-in or an expiry) answers `session_expired` with cause `retired` and runs nothing. `Rsx_Session_Controller::
 page_view` (the SPA's page-view report) enforces strictly in its own body.
 
 A request that signed somebody in carries `_csrf` in its envelope: the sign-in moved the

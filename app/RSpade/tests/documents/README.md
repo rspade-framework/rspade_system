@@ -12,6 +12,17 @@ because both products of a render - the rendition (`storage/rsx-renditions/{hash
 and the thumbnail cache key - are already content-addressed on the deduplicated blob hash.
 N attachments over identical bytes therefore share one render.
 
+The worker's QUEUE is one column on the same row, `_file_storage.process_due_at`: NULL means
+the worker has nothing to do for the blob, a time means it owes work and may be attempted from
+then. `process_attempt_count` counts the attempts charged since the blob entered the queue. One
+document that cannot be processed must never stop the documents behind it, and four rules see
+to that: the attempt is charged (count + 1, due time one retry interval ahead) BEFORE the work
+starts; the work runs in a child process of its own (`rsx:documents:process_one`) that the
+parent kills, with everything it started, after `rsx.documents.kill_seconds`; each stage inside
+the child - render, text extraction - is bounded by `rsx.documents.stage_seconds`; and after
+`rsx.documents.max_attempts` failed attempts the blob leaves the queue FAILED until an operator
+re-queues it. A failed attempt reads as FAILED at once, so no screen waits on it.
+
 Shipped in the Async Document Rendering epic: Phase 1 (schema, model state, the worker),
 Phase 2 (render-state-aware serving - the thumbnail endpoint, the rendition endpoint and the
 preview-info payload), Phase 3 (the client half - `File_Attachment_Model::fetch()`, the
@@ -21,12 +32,22 @@ operator commands `rsx:documents:status|failed|rerender`).
 ## Source under test
 
 - `app/RSpade/Core/Files/Document_Render_Service.php` - the `#[Task] #[Exclusive]`
-  10-minute worker (`render_pending`), the `render_storage()` unit of work, the
-  thumbnail-cache purge, the realtime notification, the `#[Health_Check]` and
-  `get_statistics()`.
-- `app/RSpade/Core/Files/File_Storage_Model.php` - the `render_status_id` enum
-  (NOT_REQUIRED / PENDING / RENDERED / FAILED), `rendered_at`, `render_error`, and the
-  idempotent `request_render()`.
+  10-minute worker (`render_pending`, which takes the earliest due blob until none is due),
+  `process_storage()` (charge the attempt, run the child under the kill limit, read the row back
+  and settle it: done / retry / failed / waiting / taken), the `render_storage()` unit of work
+  the child runs, the thumbnail-cache purge, the realtime notification, the `#[Health_Check]`,
+  `queue_statistics()` and `get_statistics()`.
+- `app/RSpade/Core/Files/File_Storage_Model_Abstract.php` - the `render_status_id` enum
+  (NOT_REQUIRED / PENDING / RENDERED / FAILED), `rendered_at`, `render_error`, the idempotent
+  `request_render()`, and THE WORK QUEUE: `work_owed_values()` / `mark_work_owed()` (the one
+  statement of "this blob owes work"), `work_due_query()`, the guarded `charge_work_attempt()`,
+  `close_work()` and `defer_work()`.
+- `app/RSpade/Core/Files/Document_Stage_Bound.php` (+ `Document_Stage_Timeout_Exception`) - the
+  per-stage wall-clock bound (a pcntl alarm whose handler throws; command line only) and
+  `run_process()`, the one way an external document binary is run.
+- `app/RSpade/Core/Console/Rsx_Artisan.php` - `run_bounded()`: an artisan child under a hard
+  limit, killed with its whole process group (`timeout --signal=KILL`), `KILLED_AT_LIMIT`.
+- `app/RSpade/Commands/Documents/Documents_Process_One_Command.php` - the hidden child command.
 - `app/RSpade/Core/Files/File_Attachment_Model.php` - `fetch()` / `portal_fetch()` (the gated ORM
   read behind `File_Attachment_Model.fetch(id)` in JavaScript, with the blob embedded), the create /
   `relink_storage()` hook that queues a convertible blob, `is_convertible_mime()`, `get_render_status()`, the `?v=`
@@ -64,13 +85,16 @@ operator commands `rsx:documents:status|failed|rerender`).
   URL is spelled in JavaScript.
 - `app/RSpade/Core/Preview/Document_Preview.{jqhtml,js}` - the PENDING / FAILED waiting states and
   the same subscribe-and-swap.
-- `app/RSpade/Commands/Documents/` - the operator surface: `rsx:documents:status` (render,
-  extraction, rendition-cache and worker-schedule state), `rsx:documents:failed` (the terminal
-  failures of both halves, with their reasons and their two different remedies) and
-  `rsx:documents:rerender` (the ONLY way a RENDERED or FAILED blob re-enters the queue - it deletes
-  the rendition first, or `render_storage()` would short-circuit on the file already on disk).
+- `app/RSpade/Commands/Documents/` - the operator surface: `rsx:documents:status` (the work
+  queue, render, extraction, rendition-cache and worker-schedule state), `rsx:documents:failed`
+  (the failures of both halves, with their reasons, the attempts charged and the next attempt or
+  that none is coming, and their two different remedies) and `rsx:documents:rerender` (the
+  operator's reset: PENDING, due now, attempts back to 0 - it deletes the rendition first, or
+  `render_storage()` would short-circuit on the file already on disk).
 - `rsx/app/dev/attachment_thumbnail/` - the dev page the Playwright test drives.
 - Migration: `2026_08_22_090059_add_render_status_to_file_storage` (columns, index, backfill).
+- Migration: `2026_10_11_190325_add_process_queue_to_file_storage` (`process_due_at`,
+  `process_attempt_count`, `idx_process_due`, backfill).
 
 ## Man pages that define behavior
 
@@ -82,14 +106,19 @@ operator commands `rsx:documents:status|failed|rerender`).
 | Area | Type | Notes |
 |------|------|-------|
 | The document sandbox (the command seam, the converter image and its build-on-first-use, the health rows, a real containerised render) | php | implemented (the two container tests skip where a hardened container will not start) |
-| The blob render state machine (queue on create, dedup, idempotent request, terminal FAILED) | php | implemented |
-| `render_storage()` outcomes (missing file, rendition short-circuit, real soffice, extraction folded in) | php | implemented |
+| The blob render state machine (queue on create, dedup, idempotent request) | php | implemented (`Document_Render_Test`) |
+| `render_storage()` outcomes (missing file, rendition short-circuit, a FAILED render run again, real soffice, extraction folded in) | php | implemented (`Document_Render_Test`) |
 | Side effects of RENDERED (thumbnail-cache purge, realtime emission) | php | implemented |
-| The drain loop's queue selection and termination | php | partially implemented (FAILED not re-queued) |
+| The work queue: born due, earliest-due order, the index the query reads, the up-front charge and its guard, deferral of switched-off work, re-queueing | php | implemented (`Document_Work_Queue_Test`) |
+| Attempts: retry spacing, permanent failure at the third, the abandoned last attempt settled without running, a blob outside the queue never processed | php | implemented (`Document_Work_Queue_Test`) |
+| The child process: success, a failing document passed by the drain, a crashed child, the hard kill reaping a grandchild | php | implemented (`Document_Work_Queue_Test`; real children, misbehaviour from `Document_Worker_Fixture_Handler`) |
+| Paced passes: a drain that yields with work remaining and sets its own next run; no yield when the queue empties; the pacing config | php | implemented (`Document_Work_Queue_Test`; the twenty minutes are staged by setting `rsx.documents.drain_yield_after_minutes` to 0) |
+| The stage bound: overrun, disarm, external binary stopped, both stages recorded FAILED | php | implemented (`Document_Stage_Bound_Test`, in-process with a one-second limit) |
+| A hard kill under the docker sandbox; `process_storage()` from a php-fpm request | php / http | planned |
 | Status-aware serving (placeholder `no-store`, rendition-sourced thumbnails, `?v=` changes, rendition 404 states, preview-info shape) | php | implemented |
 | `File_Attachment_Model::fetch()` / `portal_fetch()` (payload shape, gate denial, no byte access) | php | implemented |
 | `<Attachment_Thumbnail>` placeholder -> real-raster swap without reload | playwright | implemented |
-| `rsx:documents:status` / `:failed` / `:rerender` | cli | implemented |
+| `rsx:documents:status` / `:failed` / `:rerender`, and the hidden child command's registration | cli | implemented |
 | Markdown rendering and sanitisation (`Markdown_Rendition`), the text/markdown viewer entry, and `get_markdown_html` end to end | php | implemented |
 
 ## Running
@@ -103,6 +132,12 @@ node system/app/RSpade/tests/documents/playwright/attachment_thumbnail_swap.js
 ```
 
 The real-binary test skips itself when `Libreoffice::find_soffice()` returns null.
+
+`Document_Work_Queue_Test` spawns real child processes (one PHP boot per attempt) and its
+hard-kill test waits out a kill limit of at least eight seconds; it empties the queue of
+whatever the baseline carried before every test. `Document_Worker_Fixture_Handler` sits on the
+real `document.extract_text` chain and acts only on a blob whose bytes begin with one of its
+markers.
 
 The Playwright test drives `/dev/attachment_thumbnail`, and **that route now ships CLOSED**: the
 template's dev showcase declares `#[Auth('closed')]`, which nothing satisfies. The test reports the

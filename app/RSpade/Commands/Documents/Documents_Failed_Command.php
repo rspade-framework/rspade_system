@@ -14,11 +14,12 @@ use App\RSpade\Core\Time\Rsx_Time;
 use Illuminate\Console\Command;
 
 /**
- * rsx:documents:failed - what the document pipeline could not process, and why.
+ * rsx:documents:failed - what the document pipeline could not process, why, and what happens next.
  *
- * FAILED is terminal in both halves of the pipeline (nothing retries it), so this command is the
- * only place those failures surface with their reasons attached. Two tables, because they have two
- * different remedies:
+ * A failed attempt is retried by the worker a few times before the blob is left FAILED for an
+ * operator, so every row says where its blob stands: the attempts charged, and either the time
+ * of the next attempt or that none is coming. Two tables, because the two halves of the
+ * pipeline have two different remedies once the attempts are spent:
  *   render failures    -> rsx:documents:rerender --failed
  *   extraction failures -> rsx:search:reindex --failed
  *
@@ -78,19 +79,25 @@ class Documents_Failed_Command extends Command
                 substr((string) $storage->hash, 0, 12),
                 Document_Render_Service::representative_file_name($storage) ?? '(orphan blob)',
                 $this->__excerpt((string) $storage->render_error),
-                $storage->rendered_at === null ? '-' : Rsx_Time::format_datetime($storage->rendered_at),
+                $this->__attempts($storage),
+                $this->__next_attempt($storage),
             ];
             $shown++;
         }
 
-        $this->line("{$total} failed document(s):");
-        $this->table(['Storage', 'Hash', 'File name', 'Error', 'Rendered at'], $rows);
+        $retrying = File_Storage_Model::where('render_status_id', File_Storage_Model::RENDER_STATUS_FAILED)
+            ->whereNotNull('process_due_at')
+            ->count();
+        $spent = $total - $retrying;
+
+        $this->line("{$total} failed document(s): {$retrying} waiting for another attempt, {$spent} out of attempts.");
+        $this->table(['Storage', 'Hash', 'File name', 'Error', 'Attempts', 'Next attempt'], $rows);
 
         if ($shown < $total) {
             $this->line("  showing {$shown} of {$total} - use --limit=0 for all");
         }
 
-        $this->line('  Re-queue with: php artisan rsx:documents:rerender --failed');
+        $this->line('  Re-queue with a full set of attempts: php artisan rsx:documents:rerender --failed');
     }
 
     /**
@@ -127,18 +134,43 @@ class Documents_Failed_Command extends Command
                 $storage ? (Document_Render_Service::representative_file_name($storage) ?? '(orphan blob)') : '(gone)',
                 $this->__excerpt((string) $index->error),
                 $index->indexed_at === null ? '-' : Rsx_Time::format_datetime($index->indexed_at),
+                $storage ? $this->__next_attempt($storage) : '-',
             ];
             $shown++;
         }
 
         $this->line("{$total} failed text extraction(s):");
-        $this->table(['Storage', 'Hash', 'File name', 'Error', 'Indexed at'], $rows);
+        $this->table(['Storage', 'Hash', 'File name', 'Error', 'Last attempt', 'Next attempt'], $rows);
 
         if ($shown < $total) {
             $this->line("  showing {$shown} of {$total} - use --limit=0 for all");
         }
 
-        $this->line('  Re-queue with: php artisan rsx:search:reindex --failed');
+        $this->line('  Re-queue with a full set of attempts: php artisan rsx:search:reindex --failed');
+    }
+
+    /**
+     * Attempts charged to this blob, of the attempts it gets.
+     *
+     * @param File_Storage_Model $storage
+     * @return string
+     */
+    private function __attempts(File_Storage_Model $storage): string
+    {
+        return (int) $storage->process_attempt_count . ' of ' . File_Storage_Model::work_max_attempts();
+    }
+
+    /**
+     * When the worker next attempts this blob, or that it will not.
+     *
+     * @param File_Storage_Model $storage
+     * @return string
+     */
+    private function __next_attempt(File_Storage_Model $storage): string
+    {
+        return $storage->process_due_at === null
+            ? 'none - out of attempts'
+            : Rsx_Time::format_datetime($storage->process_due_at);
     }
 
     /**

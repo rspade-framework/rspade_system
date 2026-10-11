@@ -142,8 +142,9 @@ class Preview_Extracted_Text_Test extends Rsx_Test_Abstract
         static::__assert_null($result['text'], 'no text accompanies unsupported');
     }
 
-    // PREVIEW-TEXT-FAILED: a recorded FAILED extraction reads as 'error'. Terminal - nothing but
-    // rsx:search:reindex retries it, so the component must not sit in a waiting state over it.
+    // PREVIEW-TEXT-FAILED: a recorded FAILED extraction reads as 'error' - while the worker still
+    // has retries left for it and after the last one alike - so the component never sits in a
+    // waiting state over a failure.
     public static function test_failed_extraction_reads_as_error()
     {
         $attachment = static::__make_attachment('failed_text.txt', 'this blob will lose its bytes');

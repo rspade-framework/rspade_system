@@ -84,8 +84,8 @@ cannot tell which is happening, and must not try to - report with `$task->stdout
 `stderr()` and `status()`, never `$this->line()`.
 
 A console run is an inline run: `#[Exclusive]`/`#[Debounce]` hold (it waits for a running
-instance of its identity), and it carries the configured execution cap
-(`rsx.tasks.default_timeout`).
+instance of its identity). Being inline, it is never killed for time - the silence limit
+(`rsx.tasks.silent_timeout`) applies only to runs a pool worker executes.
 
 ---
 

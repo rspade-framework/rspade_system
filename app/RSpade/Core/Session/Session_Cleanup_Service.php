@@ -113,7 +113,8 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);
         $deleted = [];
 
-        // Browser sessions that never carried ANY identity - in either experience.
+        // Browser sessions that carry NO identity - in either experience. (A retired row
+        // keeps the identity it had and falls under the next rule.)
         $deleted['anonymous'] = self::_delete_chunked(
             fn () => DB::table('_sessions')
                 ->where('type_id', Session::TYPE_WEB)

@@ -16,15 +16,19 @@ use Illuminate\Console\Command;
 /**
  * rsx:documents:rerender - put documents back in the render queue.
  *
- * FAILED is terminal and RENDERED is final, so this command is the ONLY way a blob that has
- * already been through the pipeline goes through it again. Re-queuing is uniform: resolve a set of
- * _file_storage rows, DELETE each one's PDF rendition (otherwise render_storage() short-circuits on
- * the file that is already on disk and nothing is actually re-rendered), set the rows back to
- * PENDING with rendered_at/render_error cleared, then kick the worker once.
+ * THE OPERATOR'S RESET. A RENDERED blob is final and a FAILED blob whose attempts are spent is
+ * left alone by the worker, so this command is how a blob that has been through the pipeline
+ * goes through it again. Re-queuing is uniform: resolve a set of _file_storage rows, DELETE each
+ * one's rendition (otherwise render_storage() short-circuits on the file that is already on disk
+ * and nothing is actually re-rendered), set the rows back to PENDING with rendered_at/render_error
+ * cleared, DUE NOW WITH NO ATTEMPTS CHARGED, then kick the worker once.
+ *
+ * It renders nothing itself: the worker takes the blobs and runs each in its own child process
+ * (Document_Render_Service::process_storage()), which is the only route a document is rendered by.
  *
  * Exactly ONE selector must be given (fail loud otherwise):
  *   --all            every blob that has ever been in the pipeline
- *   --failed         blobs whose last RENDER failed
+ *   --failed         blobs whose RENDER is FAILED - waiting for a retry or out of attempts alike
  *   --storage=ID     one blob by _file_storage id
  *   --attachment=ID  the blob backing one attachment
  */
@@ -214,17 +218,14 @@ class Documents_Rerender_Command extends Command
     }
 
     /**
-     * The queued state: PENDING with every artifact of the previous attempt cleared.
+     * The queued state: PENDING with every artifact of the previous attempt cleared, due now
+     * with a full set of attempts.
      *
      * @return array
      */
     private function __pending_values(): array
     {
-        return [
-            'render_status_id' => File_Storage_Model::RENDER_STATUS_PENDING,
-            'rendered_at' => null,
-            'render_error' => null,
-        ];
+        return array_merge(File_Storage_Model::render_pending_values(), File_Storage_Model::work_owed_values());
     }
 
     /**

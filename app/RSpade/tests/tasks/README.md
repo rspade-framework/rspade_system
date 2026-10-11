@@ -24,6 +24,7 @@ framework.
 - `Task_Runner.php` + `Task_Run_Outcome.php` - insert, execute (echo capture), settle; the
   return contract
 - `Task_Concurrency.php` + `Task_Lock.php` - identities, coalescing enqueue, run locks
+- `Task_Waiting.php` - what a pending run is waiting for, derived per read
 - `Task_Pool.php` - the three pools' rsx-lockd connection (lock, membership, count, liveness,
   stats), over `Core/Locks/Lockd_Connection.php`
 - `Task_Kill_Worker.php` + `Task_Kill_Request_Model(_Abstract).php` - force stops and kills
@@ -46,12 +47,14 @@ Test-only fixtures in `tasks/php/`:
   `--code` given) so the cli tests have real registered aliases to drive.
 - `Task_Exec_Fixture_Service` - markers recording execution order, every return shape, a
   stoppable loop, throwing and printing tasks.
-- `Task_Concurrency_Fixture_Service` - `#[Exclusive]`, `#[Debounce(30)]` and plain tasks.
+- `Task_Concurrency_Fixture_Service` - `#[Exclusive]`, a two-member
+  `#[Exclusive('fixture_group')]` group, `#[Debounce(30)]` and plain tasks.
 - `Task_Lock_Holder` - another PROCESS holding a named run lock (RsxLocks is re-entrant within a
   process, so "running elsewhere" needs a second one): holds until released, or releases the
   moment a writer queues behind it.
 
-None carries a `#[Schedule]`; a test that needs a schedule writes a `_task_schedules` row.
+None carries a `#[Schedule]`; a test that needs a schedule writes a `_task_schedules` row
+(`Task_Next_Run_Test`, whose subject refuses an undeclared schedule, uses a real framework one).
 They exist only while the suite runs (the test trees enter the manifest only then).
 
 ## Man page(s)
@@ -75,17 +78,23 @@ They exist only while the suite runs (the test trees enter the manifest only the
   `Task_Pools_Test`) Admission and spawning (`Task_Spawn_Admission_Test`); the rsx-lockd client
   itself (`Task_Pool_Test`).
 - The worker loop and the abandoned-run verdicts (`Task_Worker_Execution_Test`); retry pacing of
-  an abandoned run (`Task_Abandonment_Retry_Test`); the timeout arm requesting a force kill
-  (`Task_Timeout_Reaper_Test`).
+  an abandoned run (`Task_Abandonment_Retry_Test`); the silence limit - a run that stops
+  reporting is force-killed, one that keeps reporting never is - and a requested timeout
+  (`Task_Timeout_Reaper_Test`); every reporting call stamping the run alive
+  (`Task_Sign_Of_Life_Test`).
 - Schedules: reconcile against the manifest (`Task_Schedule_Reconcile_Test`), run rows and
   statistics (`Task_Schedule_Run_Test`), visibility in rsx:health and rsx:tasks:list
-  (`Task_Schedule_Visibility_Test`).
+  (`Task_Schedule_Visibility_Test`), setting the next run explicitly -
+  `Task::set_next_run()` / `$task->run_again_in()` (`Task_Next_Run_Test`).
+- What a pending run is waiting for, derived at read time: each reason and its exact text,
+  precedence, a changed holder, one query for many runs (`Task_Waiting_Test`).
 - Reports and output: every report, coalescing, readers, `to_status_array()`
   (`Task_Reports_Test`); output rows, console streams, echo capture (`Task_Output_Test`);
   attachments and their blob references (`Task_Attachments_Test`).
 - Lifecycle operations and their commands (`Task_Lifecycle_Test`); kill requests carried out
   against a real process (`Task_Kill_Worker_Test`).
-- Gates (`Task_Gates_Test`), realtime frames (`Task_Notify_Test`), retention
+- Gates (`Task_Gates_Test`), realtime frames - a run's own, the lists', and the frames to the
+  pending runs waiting on a moved run's lock (`Task_Notify_Test`), retention
   (`Task_Retention_Test`).
 - The `#[Command]` declaration and registration (`Task_Command_Definition_Test`) and the alias
   driven for real - stdout, stderr, -q, exit codes, the recorded run (cli;

@@ -116,6 +116,10 @@ SPAWNING A COMMAND FROM PHP
 
            Rsx_Artisan::passthru($cmd, $args)   streams the child's output through
            Rsx_Artisan::run($cmd, $args, $out, $env)  captures it
+           Rsx_Artisan::run_bounded($cmd, $args, $seconds, $out, $env)
+                                                run(), killed with every process it
+                                                started at $seconds - a TIMEOUT, see
+                                                rsx:man locks before reaching for it
            Rsx_Artisan::dispatch_detached($cmd, $args) fire and forget (waits only for
                                                 the pid handshake - rsx:man locks)
 

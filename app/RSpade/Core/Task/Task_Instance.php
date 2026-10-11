@@ -11,9 +11,11 @@ use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Files\Rsx_Temp_Files;
 use App\RSpade\Core\Files\Temp_File_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
+use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Attachment_Model;
 use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Run_Model;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Task_Instance - the `$task` handle every task method receives: how a running task REPORTS.
@@ -33,6 +35,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
  *   stdout($text) / stderr($text)    output lines; echo / print are captured as stdout too
  *   attach_file() / attach_bytes()   a named file for outside consumers to retrieve
  *   summary($text)                   the completion summary
+ *   run_again_in($seconds)           set this task's own #[Schedule] to run next that far from now
  *
  * and the run's RETURN VALUE is its return code: null, true or 0 is success; false or any
  * other integer is failure (Task_Run_Outcome).
@@ -45,6 +48,13 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * comes first. A task
  * about to go quiet for a long step calls flush() so its watchers see the latest state.
  * Attachments are written immediately.
+ *
+ * EVERY REPORT IS A SIGN OF LIFE. Each write stamps last_report_at, and every reporting call
+ * above leads to a write - also one that changes nothing a watcher reads (a status() repeating
+ * the last text, a queue_pop() on an empty queue). The reaper measures a worker-run task's
+ * silence from the latest of started_at, last_heartbeat_at and last_report_at
+ * (rsx.tasks.silent_timeout), so a task that keeps reporting is never killed for time and one
+ * that reports nothing is. is_stop_requested() is a read, not a report.
  *
  * Every run - dispatched, scheduled or inline - has its _tasks row, so every report is
  * recorded the same way wherever the task runs. A console runner (rsx:task:run, a #[Command])
@@ -83,6 +93,12 @@ class Task_Instance
     /** Messages waiting to be written: [body, at]. */
     private array $pending_messages = [];
 
+    /**
+     * A reporting call was made since the last write, so the next write stamps last_report_at
+     * even when it carries nothing else.
+     */
+    private bool $pending_touch = false;
+
     /** microtime(true) of the last write; 0 means none yet, so the first report goes at once. */
     private float $last_flush = 0.0;
 
@@ -97,6 +113,13 @@ class Task_Instance
 
     /** _tasks.has_queue: the run's queue has held an item, so the queue report exists. */
     private bool $has_queue = false;
+
+    /**
+     * An item was pushed since the last write. Held apart from the pending pushes because a
+     * push popped again before it was written leaves none of them, and the run has still had
+     * a queue: its report exists, and reads as empty.
+     */
+    private bool $pending_has_queue = false;
 
     /** Queue items waiting to be appended, JSON-encoded, in order. */
     private array $pending_queue_pushes = [];
@@ -170,11 +193,15 @@ class Task_Instance
     /**
      * Record that the task is alive. Every write of held reports also stamps last_report_at;
      * a heartbeat is the explicit "still working" for a step that reports nothing else.
+     *
+     * A LONG TASK REPORTS ON EVERY ITEM. A worker-run task that shows no sign of life - no
+     * heartbeat and no other report - for rsx.tasks.silent_timeout seconds (30 minutes) is
+     * force-killed; one that keeps reporting runs for as long as its work takes.
      */
     public function heartbeat(): void
     {
         $this->pending_row['last_heartbeat_at'] = static::__now();
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -189,13 +216,16 @@ class Task_Instance
         }
 
         if ($text === $this->last_status_text) {
+            // Nothing for a watcher, and still a report: the task said it is alive.
+            $this->__reported();
+
             return;
         }
 
         $this->last_status_text = $text;
         $this->pending_row['status_text'] = $text;
         $this->__append_output(Task_Run_Model::STREAM_STDERR, $text);
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -210,7 +240,7 @@ class Task_Instance
 
         $this->pending_row['progress_percent'] = $percent;
         $this->__estimate_eta($percent / 100);
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -228,7 +258,7 @@ class Task_Instance
         $this->pending_row['progress_done'] = $done;
         $this->pending_row['progress_total'] = $total;
         $this->__estimate_eta($total > 0 ? min(1.0, $done / $total) : null);
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -246,7 +276,7 @@ class Task_Instance
         }
 
         $this->pending_row['eta_at'] = date('Y-m-d H:i:s', time() + $seconds) . '.000';
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -283,7 +313,7 @@ class Task_Instance
     public function state(array|object $state): void
     {
         $this->pending_reports[Task_Run_Model::REPORT_STATE_JSON] = static::__json($state, 'state()');
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     // ------------------------------------------------------------------------------------
@@ -308,7 +338,8 @@ class Task_Instance
     public function queue_push(string|array $item): void
     {
         $this->pending_queue_pushes[] = static::__json($item, 'queue_push()');
-        $this->__maybe_flush();
+        $this->pending_has_queue = true;
+        $this->__reported();
     }
 
     /**
@@ -331,11 +362,10 @@ class Task_Instance
 
         foreach ($items as $item) {
             $this->pending_queue_pushes[] = static::__json($item, 'queue_push_many()');
+            $this->pending_has_queue = true;
         }
 
-        if ($items !== []) {
-            $this->__maybe_flush();
-        }
+        $this->__reported();
     }
 
     /**
@@ -348,11 +378,9 @@ class Task_Instance
             $this->pending_queue_pops++;
         } elseif ($this->pending_queue_pushes !== []) {
             array_shift($this->pending_queue_pushes);
-        } else {
-            return;
         }
 
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -367,6 +395,7 @@ class Task_Instance
     {
         $body = static::__json($item, 'queue_remove()');
 
+        $this->pending_touch = true;
         $this->flush();
         if (!$this->has_queue) {
             return;
@@ -394,6 +423,8 @@ class Task_Instance
     public function queue_clear(): void
     {
         if (!$this->has_queue && $this->pending_queue_pushes === []) {
+            $this->__reported();
+
             return;
         }
 
@@ -404,7 +435,7 @@ class Task_Instance
             $this->queue_stored = 0;
         }
 
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -421,7 +452,7 @@ class Task_Instance
     public function summary(string $text): void
     {
         $this->pending_reports[Task_Run_Model::REPORT_SUMMARY] = $text;
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -431,7 +462,7 @@ class Task_Instance
     public function message(string $text): void
     {
         $this->pending_messages[] = [$text, static::__now()];
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -443,7 +474,7 @@ class Task_Instance
         foreach (static::__lines($text) as $line) {
             $this->__append_output(Task_Run_Model::STREAM_STDOUT, $line);
         }
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -455,7 +486,7 @@ class Task_Instance
         foreach (static::__lines($text) as $line) {
             $this->__append_output(Task_Run_Model::STREAM_STDERR, $line);
         }
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -484,14 +515,31 @@ class Task_Instance
     }
 
     /**
+     * Set THIS task's own #[Schedule] to run next $seconds from now, and return that moment
+     * (ISO). For a task that stops early on purpose and wants to pick its work up again
+     * sooner, or later, than its cadence would: the run after that one returns to the cadence.
+     * It names the task, not the run, so it works however this run was started (by the
+     * schedule, by Task::dispatch(), inline). Throws for a task that declares no #[Schedule].
+     * An absolute moment, or another task's schedule, is Task::set_next_run().
+     */
+    public function run_again_in(int $seconds): string
+    {
+        if ($seconds < 0) {
+            throw new \InvalidArgumentException("run_again_in() takes a number of seconds from now, got {$seconds}.");
+        }
+
+        return Task::set_next_run(class_basename($this->class), $this->method, Rsx_Time::add(Rsx_Time::now_iso(), $seconds));
+    }
+
+    /**
      * Write every held report now. A task about to spend a long time without reporting calls
      * this so its watchers see where it is.
      */
     public function flush(): void
     {
-        $queue_pending = $this->pending_queue_clear || $this->pending_queue_pops > 0 || $this->pending_queue_pushes !== [];
+        $queue_pending = $this->pending_queue_clear || $this->pending_queue_pops > 0 || $this->pending_queue_pushes !== [] || $this->pending_has_queue;
 
-        if ($this->pending_row === [] && $this->pending_reports === [] && $this->pending_output === [] && $this->pending_messages === [] && !$queue_pending) {
+        if ($this->pending_row === [] && $this->pending_reports === [] && $this->pending_output === [] && $this->pending_messages === [] && !$queue_pending && !$this->pending_touch) {
             return;
         }
 
@@ -500,7 +548,7 @@ class Task_Instance
         $output_written = $this->pending_output !== [];
 
         $row = $this->pending_row;
-        if ($this->pending_queue_pushes !== [] && !$this->has_queue) {
+        if ($this->pending_has_queue && !$this->has_queue) {
             $row['has_queue'] = 1;
         }
         $row['last_report_at'] = $now;
@@ -553,7 +601,10 @@ class Task_Instance
             foreach (array_chunk($rows, 500) as $chunk) {
                 DB::table('_task_queue')->insert($chunk);
             }
+        }
+        if ($this->pending_has_queue) {
             $this->has_queue = true;
+            $this->pending_has_queue = false;
         }
         if ($this->queue_stored !== null) {
             $this->queue_stored += count($this->pending_queue_pushes) - $this->pending_queue_pops;
@@ -566,6 +617,7 @@ class Task_Instance
         $this->pending_queue_pushes = [];
         $this->pending_queue_pops = 0;
         $this->pending_queue_clear = false;
+        $this->pending_touch = false;
         $this->last_flush = microtime(true);
 
         Task_Notify::changed($this->id, $changed, $output_written);
@@ -666,7 +718,7 @@ class Task_Instance
     public function _record_captured_stdout(string $line): void
     {
         $this->pending_output[] = [Task_Run_Model::STREAM_STDOUT, $line, static::__now()];
-        $this->__maybe_flush();
+        $this->__reported();
     }
 
     /**
@@ -712,6 +764,16 @@ class Task_Instance
         }
 
         return $this->queue_stored - $this->pending_queue_pops;
+    }
+
+    /**
+     * Every reporting call ends here: the run has shown a sign of life, so the next write
+     * stamps last_report_at whether or not the call changed anything a watcher reads.
+     */
+    private function __reported(): void
+    {
+        $this->pending_touch = true;
+        $this->__maybe_flush();
     }
 
     private function __maybe_flush(): void
@@ -763,6 +825,10 @@ class Task_Instance
                 Rsx_Temp_Files::delete($previous);
             }
         }
+
+        // An attachment is a report: stamp the run alive, with whatever else was held.
+        $this->pending_touch = true;
+        $this->flush();
 
         Task_Notify::changed($this->id, true, false);
     }

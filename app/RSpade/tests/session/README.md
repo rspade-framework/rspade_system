@@ -91,7 +91,9 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 ### Session lifetime, sign-in rotation and devices
 
 - http (`session_sign_in_rotation.sh`): a sign-in moves the browser to a new row and token;
-  the superseded token never authenticates and is never re-cookied; the rows share a device.
+  the old row is retired (inactive, its record intact), a request on its token is refused
+  (401 / session_expired cause retired) and never re-cookied; the rows share a device.
+  `session_lifetime.sh` asserts the same retirement for an expired sign-in.
 - http (`session_lifetime.sh`): the two limits against real rows whose clocks were moved
   back - page navigation vs. the Ajax grace, the session_expired envelope, the page-view
   report, last_seen, and what does and does not count as a page view.

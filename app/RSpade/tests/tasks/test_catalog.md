@@ -1,7 +1,7 @@
 # Test catalog: tasks
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (reason) | `planned`.
-Type: php / cli (given per section). Last updated: 2026-10-07.
+Type: php / cli (given per section). Last updated: 2026-10-11.
 
 ## Task_Definition_Test (php, default isolation) - vocabulary, cron, discovery, the instance handle
 
@@ -29,7 +29,7 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 | task-disp-03 | an unknown option is refused and nothing is enqueued | ['queue' => ...] | throws naming the options; row count unchanged | implemented |
 | task-disp-03b | scheduled_for on an #[Exclusive]/#[Debounce] task is refused and nothing is enqueued | exclusive fixture, scheduled_for 2030 | throws; row count unchanged | implemented |
 | task-disp-04 | dispatch returns the id of exactly one new row | echo task | int id, +1 row | implemented |
-| task-disp-05 | the row: PENDING, Dispatched, FQCN, params + params_hash, due now, default timeout, no worker | params | each column | implemented |
+| task-disp-05 | the row: PENDING, Dispatched, FQCN, params + params_hash, due now, NULL timeout (no hard limit unless asked for), no worker | params | each column | implemented |
 | task-disp-06 | timeout and a future scheduled_for are stored | options | 45; the given moment | implemented |
 | task-disp-07 | the dispatcher identity and site are recorded | signed out; acting as user 1 | null pair; actor id + type-ref id, site 1 | implemented |
 | task-disp-08 | internal() returns the settled inline run | echo task | COMPLETED, Inline, code 0, this pid, no worker_id, state on the run | implemented |
@@ -146,16 +146,76 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 | task-vis-02 | below the threshold is OK | threshold - 1 | OK | implemented |
 | task-vis-03 | rsx:tasks:list renders pools and the Schedules table | failing + healthy schedule | streak and first error line; dashes for healthy | implemented |
 
-## Task_Timeout_Reaper_Test (php, $requires_db_reset + no-tx) - the timeout arm of rsx:task:process
+## Task_Timeout_Reaper_Test (php, $requires_db_reset + no-tx) - the silence limit and a requested timeout, in rsx:task:process
+
+A live worker is a real `sleep` child; the run's row is written with the start time and signs of life each case needs.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| task-timeout-01 | a live worker past its own timeout gets a force kill, carried out | live sleep pid, timeout 60, started 120 s ago | request (cap 60s), [TASK TIMEOUT]; after carry_out: process dead, KILLED | implemented |
+| task-timeout-01 | a live worker past its own timeout gets a force kill, carried out | live sleep pid, timeout 60, started 120 s ago | request (cap 60s), [TASK TIMEOUT]; after carry_out: process dead, KILLED "timed out after" | implemented |
 | task-timeout-02 | inside its cap: untouched | timeout 600, 10 s | no request, RUNNING | implemented |
-| task-timeout-03 | no run timeout inherits rsx.tasks.default_timeout | NULL, default 30, 90 s | request names cap 30s | implemented |
-| task-timeout-04 | no cap anywhere: unbounded | NULL, default 0, a day | no request | implemented |
+| task-timeout-03 | a SILENT run is killed at the silence limit | NULL timeout, silent_timeout 30, started 90 s ago, no report | request "no report for Ns (cap 30s)", [TASK TIMEOUT]; carried out: KILLED, reason "no report for", process dead | implemented |
+| task-timeout-04 | silent_timeout 0 is no silence limit | NULL, 0, a day silent | no request, RUNNING | implemented |
 | task-timeout-05 | a run with a live request is not requested twice | two ticks | one request; second tick silent | implemented |
 | task-timeout-06 | an INLINE run is never killed for time | inline row (no worker_id), live pid, cap 60, an hour in | no request, RUNNING, process alive, nothing reported | implemented |
+| task-timeout-07 | a silent run inside the limit is untouched | NULL, 30, started 10 s ago | no request | implemented |
+| task-timeout-08 | a REPORTING run outlives the limit | a day in; last_report_at 5 s ago / last_heartbeat_at 5 s ago / stale heartbeat + fresh report | no request for any, nothing reported, worker alive | implemented |
+| task-timeout-09 | the limit runs from the LAST sign of life | a day in, heartbeat 500 s ago, report 90 s ago, limit 30 | "no report for 9Xs (cap 30s)" - not a day | implemented |
+| task-timeout-10 | an invalid silence limit throws | silent_timeout 'soon' | RuntimeException naming the key | implemented |
+| task-timeout-11 | an explicit timeout is HARD even for a reporting run | timeout 60, 120 s in, report 1 s ago | "timed out after" | implemented |
+| task-timeout-12 | an explicit timeout replaces the silence limit | timeout 7200, 600 s silent, limit 30 | no request | implemented |
+
+## Task_Sign_Of_Life_Test (php, default isolation) - every report stamps the run alive
+
+The row's stamps are pushed into the past first, so "stamped" is a moved value; the instance's last write time is pinned through reflection.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-life-01 | every reporting call stamps last_report_at by itself | heartbeat, status, progress, progress_count, eta, state, queue_push, queue_push_many (also []), queue_pop / queue_remove / queue_clear on an empty queue, message, stdout, stderr, summary - one fresh run each, no flush | stamped | implemented |
+| task-life-02 | a heartbeat stamps its own column too | heartbeat() | last_heartbeat_at and last_report_at | implemented |
+| task-life-03 | the queue calls on a queue holding items stamp | pop, remove, clear | stamped | implemented |
+| task-life-04 | an unchanged status is still a sign of life | status('copying') twice | stamped; no second stderr line | implemented |
+| task-life-05 | captured echo is a sign of life | the runner executes a task that only echoes, then throws | stamped while it ran | implemented |
+| task-life-06 | a held report is stamped by the next reporting call after the interval | heartbeat inside the interval; then a call after it | held; then both columns stamped | implemented |
+| task-life-07 | a held report is stamped at the settle | held status; settle | stamped | implemented |
+| task-life-08 | a stop check alone is not a report | is_stop_requested() | nothing stamped | implemented |
+
+## Task_Next_Run_Test (php, $requires_db_reset + no-tx) - setting a schedule's next run
+
+The subject is a real declared schedule (Session_Values_Cleanup_Service, hourly), because an undeclared one is what the API refuses.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-next-01 | set_next_run writes the moment and answers it | an ISO moment 2 h ahead | returned as ISO UTC; next_run_at equals it | implemented |
+| task-next-02 | the moment may carry any offset | the same instant at -06:00 | stored as the UTC instant | implemented |
+| task-next-03 | a task without a #[Schedule] throws | fixture marker_a | the exact message; no row written | implemented |
+| task-next-04 | not a task / not a moment throws | unknown method; 'next tuesday'; a date; '' | throws each time | implemented |
+| task-next-05 | an unregistered declaration is registered by the call | _task_schedules emptied | one row, the declared expression, the moment | implemented |
+| task-next-06 | reconciliation leaves an explicit next run alone | set; two ticks | same row, same moment | implemented |
+| task-next-07 | the cadence resumes after the moved run | set due now; scheduled-pool worker | one COMPLETED Scheduled run; next_run_at = the cron expression's next cadence | implemented |
+| task-next-08 | run_again_in works from a run of any origin | instances of a scheduled, a dispatched and an inline run | next_run_at = now + N each time; the moment answered | implemented |
+| task-next-09 | run_again_in throws without a #[Schedule], and for a negative wait | fixture run; -1 | throws | implemented |
+
+## Task_Waiting_Test (php, default isolation, live rsx-lockd) - what a pending run is waiting for
+
+A held lock is another process (Task_Lock_Holder); the run holding it is a RUNNING row the test writes.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-wait-01 | a run that is not pending waits for nothing | running; each terminal status | null; to_status_array()['waiting'] null | implemented |
+| task-wait-02 | not due yet | scheduled_for an hour ahead | {scheduled, "scheduled for <time>", null, null}; status carries the ISO scheduled_for | implemented |
+| task-wait-03 | a grouped lock names the group and the holder | group lock held; RUNNING group_alpha; pending group_beta | `waiting for exclusive lock "fixture_group" (held by task #N)`, lock = group, id | implemented |
+| task-wait-04 | an ungrouped lock names only the holder | identity lock held; RUNNING + pending exclusive_task | `waiting for exclusive lock (held by task #N)`, lock null | implemented |
+| task-wait-05 | a held lock with no running row leaves the holder off | both locks held, no RUNNING rows | the two texts without the parenthesis; id null | implemented |
+| task-wait-06 | a #[Debounce] run waits only on its own parameter set | lock of {client: 1} held | the same set: lock wait; another set: queued | implemented |
+| task-wait-07 | a running row without a held lock is not a lock wait | RUNNING group_alpha, lock free | queued | implemented |
+| task-wait-08 | every claiming worker busy | caps 2 + 1; three worker runs and one inline run | "waiting for a free worker (3 of 3 busy)" | implemented |
+| task-wait-09 | a free worker | caps 2 + 1; two worker runs | {queued, "waiting for a worker to start"} | implemented |
+| task-wait-10 | precedence | not due + locked; locked + no free worker; no free worker | scheduled; lock (with holder); workers | implemented |
+| task-wait-11 | derived, never stored: a changed holder is a different answer | holder settles, another member runs; then the lock is freed | the new holder's id; then queued; the pending row byte-identical | implemented |
+| task-wait-12 | only the holder's run id is exposed | a holder with params | four keys; no param value, no task name | implemented |
+| task-wait-13 | many pending runs cost one query | 24 pending runs, one Task_Waiting | exactly one query (the running rows); to_status_arrays() agrees | implemented |
+| task-wait-14 | the helpers: run_lock_identity, group_members, pending_ids_on_run_lock | fixture methods and pending rows | group shared by members; members from the manifest; waiters per group / identity / parameter set; none for an unmanaged task | implemented |
 
 ## Task_Kill_Worker_Test (php, $requires_db_reset + no-tx) - force stops and kills carried out
 
@@ -210,7 +270,7 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 | task-rep-11 | progress_percent is derived from a count; a reported percentage wins | 1 of 4; 0 of 0; 10% + count | 25; null; 10 | implemented |
 | task-rep-12 | available_reports lists what was set, in a stable order | every report + settle | the ten names in order | implemented |
 | task-rep-13 | output_after reads by cursor, stream and page | stdout, stderr, operator | order, streams, cursor, limit; unknown stream throws | implemented |
-| task-rep-14 | to_status_array shape | running run with status + count | exact key list and values | implemented |
+| task-rep-14 | to_status_array shape | running run with status + count | exact key list (with `waiting`, null for a run that is not pending) and values | implemented |
 | task-rep-15 | a run has no ETA until something sets one | a status only | eta_at null | implemented |
 | task-rep-16 | a percentage estimates the ETA from the pace so far | a run started 100 s ago; 50%, then 25% | about 100 s left, then about 300 s | implemented |
 | task-rep-17 | a count estimates the ETA the same way | a run started 60 s ago; 3 of 12 | about 180 s left | implemented |
@@ -233,6 +293,7 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
+| task-att-00 | an attachment stamps the run alive | attach_bytes, attach_file on a run whose last_report_at was aged | last_report_at stamped | implemented |
 | task-att-01 | attach_bytes records the file as a temp file | bytes | row fields, sniffed mime, temp file under uploads/_temp keyed at random, nothing in _file_storage, read_bytes/read_stream, download response | implemented |
 | task-att-02 | attach_file copies a file and leaves the source | temp file | source name, given mime, bytes; source kept | implemented |
 | task-att-03 | attachments are listed by name; a missing name is null | two names | alpha, zeta | implemented |
@@ -273,6 +334,13 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 | task-notify-01 | a change reaches each site watching that run, once | registry with several sites and topics | Task_Changed_Topic to sites 1 and 7 | implemented |
 | task-notify-02 | output has its own topic | changed(output only), changed(both) | Task_Output_Topic; both | implemented |
 | task-notify-03 | a lifecycle move reaches the run and every list watcher whose filter matches its task | lifecycle() on a real run; list watchers unfiltered, {class}, {class, method}, another class, another method | run topic + list topic to the unfiltered, class and class+method sites only; frame data {class: simple name, method} | implemented |
+| task-notify-07 | a lifecycle move tells the PENDING runs on the same group lock | RUNNING group_alpha; pending group_beta + group_alpha; pending exclusive_task and plain_task; a finished group_beta - all watched | Task_Changed_Topic for the run and the two pending group runs only | implemented |
+| task-notify-08 | an ungrouped lock's waiters are its own identity | #[Exclusive] and #[Debounce] holders with pending runs (same / other parameter set) | the method's pending run; the same parameter set's only | implemented |
+| task-notify-09 | an unmanaged run's move tells no other run | RUNNING + pending plain_task | the moved run only | implemented |
+| task-notify-10 | a waiter frame goes only where that waiter is watched | one waiter watched on two sites, one unwatched | two frames, both for the watched waiter | implemented |
+| task-notify-11 | waiter frames under a pool lock wait for flush_deferred() | lifecycle() under the on_demand lock | nothing; then the waiter's frame | implemented |
+| task-notify-12 | a real run tells its group's waiters when it starts and when it settles | Task::internal() of group_alpha with a watched pending group_beta | two frames for the waiter; the group lock free and the waiter "queued" at the next read | implemented |
+| task-notify-13 | a cancelled run tells the waiters on its lock | cancel() of a pending group_alpha | the pending group_beta's frame | implemented |
 | task-notify-04 | nobody watching publishes nothing | registry for another run | nothing | implemented |
 | task-notify-05 | under a pool lock frames wait for flush_deferred(), once | two changes under the lock | nothing; one frame; second flush nothing | implemented |
 | task-notify-06 | a run's own writes announce themselves | report, output line, operator line | changed; output; output | implemented |

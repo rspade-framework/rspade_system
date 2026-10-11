@@ -351,11 +351,16 @@ THE RECOMMENDED DEPLOYMENT
     only from a TRUSTED PROXY: loopback (the framework's own nginx -> FPC
     proxy -> nginx hops) plus config('rsx.http.trusted_proxies'), which ships
     EMPTY. A box with anything in front of nginx MUST list that device's
-    addresses or CIDRs in rsx/resource/config/rsx.php:
+    addresses or CIDRs, separated by commas, in its .env:
 
-        'http' => [
-            'trusted_proxies' => ['10.0.0.0/8'],
-        ],
+        TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10
+
+    The entry is the address nginx sees the connection arrive FROM - for a
+    reverse proxy in a container beside the application, that container's
+    address on the shared network. Pin it: an address the container runtime
+    assigns can change when the stack is recreated, and the entry then matches
+    nothing. The proxy needs no header configured beyond appending
+    X-Forwarded-For, which a reverse proxy does by default.
 
     Unlisted, every request appears to come from the device: the per-IP login
     and second-factor throttles count every visitor as one, and login history,

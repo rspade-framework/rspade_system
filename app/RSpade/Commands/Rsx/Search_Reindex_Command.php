@@ -13,8 +13,9 @@ use Illuminate\Support\Facades\DB;
  * rsx:search:reindex - re-queue document text extraction, or report the index state.
  *
  * Re-queuing is uniform: resolve a set of _file_storage ids, set their is_indexed flag back to
- * 0 (chunked), then kick Document_Render_Service::render_pending. The worker then re-extracts
- * them one at a time. Exactly ONE selector must be given (fail loud otherwise).
+ * 0 and make them due now with no attempts charged (chunked), then kick
+ * Document_Render_Service::render_pending. The worker then re-extracts them one at a time.
+ * Exactly ONE selector must be given (fail loud otherwise).
  *
  * Selectors:
  *   --all               re-queue every blob
@@ -142,7 +143,7 @@ class Search_Reindex_Command extends Command
     }
 
     /**
-     * Set is_indexed=0 on the target blobs (chunked). Returns the count queued.
+     * Put the target blobs back in the queue owing their text (chunked). Returns the count queued.
      *
      * A sub-query target is walked by keyset, so no matter how many blobs match, at most
      * CHUNK ids are ever resident. Keying on id (which the update does not touch) keeps the
@@ -159,7 +160,7 @@ class Search_Reindex_Command extends Command
     private function __requeue($storage_ids, bool $all): int
     {
         if ($all) {
-            return File_Storage_Model::query()->update(['is_indexed' => 0]);
+            return File_Storage_Model::query()->update($this->__owed_values());
         }
 
         if (!is_array($storage_ids)) {
@@ -179,7 +180,7 @@ class Search_Reindex_Command extends Command
                 }
 
                 $last_id = (int) end($ids);
-                $queued += File_Storage_Model::whereIn('id', $ids)->update(['is_indexed' => 0]);
+                $queued += File_Storage_Model::whereIn('id', $ids)->update($this->__owed_values());
             }
 
             return $queued;
@@ -192,10 +193,23 @@ class Search_Reindex_Command extends Command
 
         $queued = 0;
         foreach (array_chunk($storage_ids, self::REQUEUE_CHUNK_SIZE) as $chunk) {
-            $queued += File_Storage_Model::whereIn('id', $chunk)->update(['is_indexed' => 0]);
+            $queued += File_Storage_Model::whereIn('id', $chunk)->update($this->__owed_values());
         }
 
         return $queued;
+    }
+
+    /**
+     * The re-queued state: text owed, due now with a full set of attempts.
+     *
+     * A blob has ONE queue entry and one attempt counter for everything it owes, so a blob
+     * whose render is FAILED has that render attempted again in the same passes.
+     *
+     * @return array
+     */
+    private function __owed_values(): array
+    {
+        return array_merge(['is_indexed' => 0], File_Storage_Model::work_owed_values());
     }
 
     /**

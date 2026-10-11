@@ -109,7 +109,7 @@ class Task_Dispatch_Test extends Rsx_Test_Abstract
         static::__assert_equals($params, $row->params);
         static::__assert_equals(Task_Concurrency::params_hash($params), $row->params_hash);
         static::__assert_true(strtotime($row->scheduled_for) <= time() && strtotime($row->scheduled_for) >= $before - 1, 'due now');
-        static::__assert_equals((int) config('rsx.tasks.default_timeout'), (int) $row->timeout, 'the configured default cap');
+        static::__assert_null($row->timeout, 'no hard limit unless one is asked for by name: the silence limit applies');
         static::__assert_null($row->started_at);
         static::__assert_null($row->completed_at);
         static::__assert_null($row->stop_requested_at);

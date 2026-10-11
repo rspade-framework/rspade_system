@@ -56,6 +56,33 @@ class Task_Attachments_Test extends Rsx_Test_Abstract
     // Attaching
     // -------------------------------------------------------------------------
 
+    /**
+     * An attachment is a report: it is written at once, and it stamps the run alive
+     * (last_report_at) like every other report - the reaper's silence limit is measured from it.
+     */
+    public static function test_an_attachment_stamps_the_run_alive()
+    {
+        foreach (['attach_bytes()', 'attach_file()'] as $call) {
+            $task = static::__instance();
+            DB::table('_tasks')->where('id', $task->get_id())->update(['last_report_at' => '2001-01-01 00:00:00.000']);
+
+            if ($call === 'attach_bytes()') {
+                $task->attach_bytes('report', static::__unique_bytes('alive'), 'report.txt');
+            } else {
+                $path = Rsx_Project_Paths::tmp_path('rsxtest_task_attach_alive_' . getmypid() . '.txt');
+                file_put_contents($path, static::__unique_bytes('alive file'));
+                try {
+                    $task->attach_file('report', $path);
+                } finally {
+                    unlink($path);
+                }
+            }
+
+            $stamp = DB::table('_tasks')->where('id', $task->get_id())->value('last_report_at');
+            static::__assert_true(strtotime((string) $stamp) > strtotime('2020-01-01'), "{$call} stamps last_report_at");
+        }
+    }
+
     public static function test_attach_bytes_records_the_file_as_a_temp_file()
     {
         $task = static::__instance();

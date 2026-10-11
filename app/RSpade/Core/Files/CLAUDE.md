@@ -17,8 +17,17 @@ is a pointer, not a second copy.
 `Document_Render_Service` is the single background worker behind all of it: one soffice
 run per document produces the PDF rendition that feeds BOTH the thumbnail and
 `<Document_Preview>`, and extracts the text in the same pass. Render state lives on the
-blob (`File_Storage_Model::RENDER_STATUS_*`); FAILED is terminal. Nothing converts inside
-a web request.
+blob (`File_Storage_Model::RENDER_STATUS_*`). Nothing converts inside a web request.
+
+The worker's queue is one column on the blob, `_file_storage.process_due_at` (NULL = the
+worker has nothing to do; a time = owed work, attemptable from then), with
+`process_attempt_count` beside it - THE WORK QUEUE section of `File_Storage_Model_Abstract`
+holds every write of the two. Each document runs in a child process of its own
+(`rsx:documents:process_one`, hidden) spawned by `Document_Render_Service::process_storage()`
+through `Rsx_Artisan::run_bounded()`; the attempt is charged before the child starts, each
+stage inside it is bounded by `Document_Stage_Bound`, and a blob gets
+`rsx.documents.max_attempts` attempts a retry interval apart before it stays FAILED for an
+operator. `render_storage()` is the unit of work the child runs - command line only.
 
 Both models here are a BASE PLUS A SHELL. `File_Attachment_Model_Abstract` and
 `File_Storage_Model_Abstract` carry every member - `$table`, the enum constants, the

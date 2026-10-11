@@ -119,8 +119,8 @@ OUTPUT CONTRACT
 
        A #[Command] run is an inline run, so #[Exclusive]/#[Debounce] hold: a
        single-instance task waits for a running instance of its identity to finish before
-       it starts. It also carries the configured execution cap (rsx.tasks.default_timeout,
-       rsx:man tasks EXECUTION TIMEOUT).
+       it starts. Being inline, it is never killed for time: the silence limit applies
+       only to runs a pool worker executes (rsx:man tasks THE SILENCE LIMIT).
 
 BUILD-TIME RULES
        Every rule is enforced by Task_Command_ManifestSupport during the manifest build and

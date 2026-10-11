@@ -240,10 +240,15 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         $path = static::sheet_rendition_cache_path($storage);
 
         if (!file_exists($path)) {
-            // The background render has not produced it, or the LRU cache evicted it. Queue it
-            // and answer 404 - Document_Preview is already in its "preparing" state machine and
-            // the realtime frame on the attachment brings it back when the rendition lands.
-            $storage->requeue_render();
+            // The background render has not produced it, or the LRU cache evicted it. An
+            // EVICTED rendition (the row still says RENDERED) is queued again; every other
+            // state is already the worker's - and a FAILED workbook in particular is never
+            // handed fresh attempts by a request for it. Answer 404 either way: Document_Preview
+            // is in its own state machine and the realtime frame on the attachment brings it
+            // back when the rendition lands.
+            if ((int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_RENDERED) {
+                $storage->requeue_render();
+            }
 
             abort(404, 'Spreadsheet preview is being prepared.');
         }
@@ -330,7 +335,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         $storage = $attachment->resolve_storage();
 
         // Only a RENDERED blob has a rendition to serve. PENDING means "not ready" and FAILED
-        // means "never"; both answer with the state LABEL and nothing else - render_error is
+        // means "not from this request"; both answer with the state LABEL and nothing else - render_error is
         // operator information (soffice's stderr, a path on the box) and never leaves the server.
         if ((int) $storage->render_status_id !== File_Storage_Model::RENDER_STATUS_RENDERED) {
             $state = $storage->render_status_id__label;
@@ -623,7 +628,8 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      *                  document, which is an ANSWER, not a failure).
      *     pending      extraction has not run yet. The render/extract worker emits a realtime
      *                  frame on this attachment when it lands, and the component refetches.
-     *     error        extraction failed (terminal - nothing retries it but rsx:search:reindex),
+     *     error        the last extraction attempt failed (the worker may still retry it; a
+     *                  realtime frame arrives if a later attempt succeeds),
      *                  or the upload itself was degraded (preview_unavailable).
      *     unsupported  this file type carries no extractable text.
      *

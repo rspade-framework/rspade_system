@@ -8,6 +8,7 @@
 namespace App\RSpade\Commands\Documents;
 
 use App\RSpade\Core\Files\Document_Render_Service;
+use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Time\Rsx_Time;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -15,9 +16,10 @@ use Illuminate\Support\Facades\DB;
 /**
  * rsx:documents:status - the state of the document render pipeline, in one screen.
  *
- * Four questions an operator asks when a thumbnail is still a placeholder, answered in order:
- * how much is queued or failed (render), how much text extraction is owed, how full the rendition
- * cache is, and whether the worker is actually scheduled to run.
+ * Five questions an operator asks when a thumbnail is still a placeholder, answered in order:
+ * what the worker's queue holds (due now, waiting for a retry, out of attempts), the render state
+ * of every blob, how much text extraction is owed, how full the rendition cache is, and whether
+ * the worker is actually scheduled to run.
  *
  * Read-only and always exit 0 - "silent success" does not apply to a command whose entire product
  * IS the output.
@@ -37,6 +39,9 @@ class Documents_Status_Command extends Command
         $this->line('  extraction enabled : ' . (config('rsx.search.enabled', true) ? 'yes' : 'no') . '  (rsx.search.enabled)');
         $this->newLine();
 
+        $this->__print_queue($stats['queue']);
+        $this->newLine();
+
         $this->__print_render_states($stats['render']);
         $this->newLine();
 
@@ -49,6 +54,30 @@ class Documents_Status_Command extends Command
         $this->__print_worker_schedule();
 
         return 0;
+    }
+
+    /**
+     * The worker's queue: what it may take now, what is waiting, and what it has given up on.
+     *
+     * @param array $queue Document_Render_Service::queue_statistics().
+     * @return void
+     */
+    private function __print_queue(array $queue): void
+    {
+        $max_attempts = File_Storage_Model::work_max_attempts();
+        $retry_minutes = File_Storage_Model::work_retry_after_minutes();
+
+        $this->line('Work queue (_file_storage.process_due_at):');
+        $this->table(['State', 'Blobs'], [
+            ['Due now', $queue['due']],
+            ["Waiting for a retry (failed attempt, retried after {$retry_minutes} min)", $queue['retrying']],
+            ['Deferred (owed work is switched off)', $queue['deferred']],
+            ["Failed, out of attempts ({$max_attempts}) - rsx:documents:failed", $queue['failed']],
+        ]);
+
+        if ($queue['next_retry_at'] !== null) {
+            $this->line('  next waiting blob comes due ' . Rsx_Time::format_datetime($queue['next_retry_at']));
+        }
     }
 
     /**
@@ -72,8 +101,8 @@ class Documents_Status_Command extends Command
     }
 
     /**
-     * Text extraction: the queue (is_indexed=0, which has no index row at all) followed by the
-     * terminal outcomes recorded in _search_indexes.
+     * Text extraction: the blobs still owing their text (is_indexed=0 - never attempted, or
+     * waiting for a retry) followed by the last-attempt outcomes recorded in _search_indexes.
      *
      * @param array $extraction_counts label => count.
      * @param int $unindexed
@@ -81,7 +110,7 @@ class Documents_Status_Command extends Command
      */
     private function __print_extraction(array $extraction_counts, int $unindexed): void
     {
-        $rows = [['Queued (is_indexed=0)', $unindexed]];
+        $rows = [['Owed (is_indexed=0)', $unindexed]];
         foreach ($extraction_counts as $label => $count) {
             $rows[] = [$label, $count];
         }

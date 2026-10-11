@@ -3,7 +3,8 @@ Task_Report - one report of a task run, live.
 
 $task_id  (required) the run (_tasks id)
 $kind     (required) which report:
-            status_text      the last status line
+            status_text      the last status line; for a pending run that has reported none,
+                             what the run is waiting for (Rsx_Task.waiting_text())
             progress         the percentage
             progress_count   "3 of 257"
             progress_text    whichever of the two the run reports, as one line (for a grid cell)
@@ -66,10 +67,11 @@ and shows "(Not reported)" until the run sets the report. Reading needs the run'
             <span class="Task_Report__inline" title="<%= Rsx_Time.format_datetime(_status.last_heartbeat_at) %>"><%= Rsx_Time.relative(_status.last_heartbeat_at) %></span>
         <% } %>
     <% } else if (_kind === 'status_text') { %>
-        <% if (!_status.status_text) { %>
+        <% const _line = _status.status_text || Rsx_Task.waiting_text(_status); %>
+        <% if (!_line) { %>
             <div class="Task_Report__notice">(Not reported)</div>
         <% } else { %>
-            <div class="Task_Report__text"><%= _status.status_text %></div>
+            <div class="Task_Report__text"><%= _line %></div>
         <% } %>
     <% } else if (_kind === 'return_code') { %>
         <% if (_status.return_code === null) { %>

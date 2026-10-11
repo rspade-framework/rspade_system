@@ -1,0 +1,43 @@
+THE TASK EXECUTION CAP COUNTS SILENCE, NOT RUN TIME: rsx.tasks.default_timeout IS NOW rsx.tasks.silent_timeout
+Date: 2026-10-11
+
+IF YOU DO NOTHING: an rsx.tasks.default_timeout override in your rsx/resource/config/rsx.php is ignored and the shipped 1800 seconds applies; and a long-running #[Task] of yours that reports nothing while it works is still killed 30 minutes after it starts.
+
+SUMMARY
+    Category 2: a config key an application may override was renamed, and
+    what it measures changed.
+
+    A task run by a worker has no limit on how long it runs so long as it
+    keeps reporting. rsx.tasks.silent_timeout (1800) is the number of seconds
+    a run may go WITHOUT A REPORT before the rsx:task:process reaper has it
+    killed. Every Task_Instance reporting call is a report: heartbeat(),
+    status(), progress(), progress_count(), eta(), state(), the queue_*
+    calls, message(), stdout(), stderr(), attach_file(), attach_bytes(),
+    summary(). A run that reports nothing is killed that long after it
+    started.
+
+    A run dispatched with an explicit timeout - Task::dispatch(..., ['timeout'
+    => N]) - keeps N as a hard limit from its start, reporting or not.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do: the reaper's new rule,
+    and every framework task reporting per item.
+
+WHAT YOU MUST DO
+    1. If rsx/resource/config/rsx.php sets 'tasks' => ['default_timeout' =>
+       ...], rename the key to 'silent_timeout'. Read the value again while
+       you are there: it is now seconds of silence, so a number raised to let
+       a long task finish can usually go back to the default.
+
+    2. Read every #[Task] of yours that can run for more than a few minutes.
+       One that loops calls $task->heartbeat() (or progress_count(), or any
+       other report) on EVERY item - "render a preview of everything in the
+       system" reports after each document. A task that does one long
+       operation with nothing to report in between is dispatched with an
+       explicit timeout sized to that operation, or the box raises
+       rsx.tasks.silent_timeout to cover it.
+
+SEE ALSO
+    rsx:man tasks - the reporting API and the silence rule
+    rsx:man config_rsx - rsx.tasks
+    skill rspade:background-tasks - designing a task for its watchers

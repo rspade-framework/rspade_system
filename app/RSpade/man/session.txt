@@ -833,17 +833,25 @@ SECURITY
             2. everything the old row held rides across: the tenant, the other
                experience's identity and its clocks, session values
                (Session::put_value()) and pending flash alerts;
-            3. the row the browser arrived with is SUPERSEDED: stripped of every
-               identity and pointed at its successor (superseded_by_id). It
-               stays active as an anonymous session and is never sent a cookie
-               again.
+            3. the row the browser arrived with is RETIRED: marked inactive and
+               pointed at its successor (superseded_by_id), with everything it
+               recorded left in place. It is dead - it resumes nothing - and it
+               stays in the table, until it is collected, as the record of who
+               it belonged to.
+
+        A REQUEST STILL CARRYING A RETIRED ROW'S TOKEN IS REFUSED: a page answers
+        401 "This session has ended", an Ajax call the session_expired envelope
+        (metadata.cause "retired"), and no session cookie is sent with either, so
+        it cannot replace the successor's. Such a request was in flight when the
+        browser was moved, or comes from a copy of the old cookie. It never runs
+        as an anonymous visitor and nothing is created for it.
 
         WHY: the row the browser presents at sign-in may be held by somebody
         else too - a copied cookie, or a token planted before the visitor
         signed in. Writing the identity onto that row would authenticate every
         holder at once, and a forced re-login (SESSION LIFETIME) would hand a
-        stolen cookie straight back. After a rotation the old token is an
-        anonymous session and nothing more, permanently.
+        stolen cookie straight back. After a rotation the old token names a
+        dead row, permanently.
 
         WHAT DOES NOT ROTATE. No token STRING on a row ever changes; the
         browser moves to a different row. logout(), a site switch and an
@@ -1411,8 +1419,14 @@ SESSION LIFETIME
         Limits are enforced when a request arrives, ahead of the #[Auth] gates.
         No sweeper is involved, so they hold on a box with no cron tick.
 
-        A PAGE NAVIGATION past a limit signs the browser out (a logout() - the
-        row survives as an anonymous session), redirects to the sign-in screen
+        AN EXPIRED SESSION IS DEAD. Its row is RETIRED exactly as a sign-in
+        retires one (Sign-In Rotation): marked inactive with its record intact -
+        whose it was, in which tenant, since when - and the browser is moved to a
+        successor row on which the expired sign-in is ended. A sign-in of the
+        OTHER experience on the same browser rides to the successor and is judged
+        by its own limits.
+
+        A PAGE NAVIGATION past a limit retires the row, redirects to the sign-in screen
         with the intended URL captured, and flashes why: "Your session has
         expired. Please sign in again." or "You were signed out after a period
         of inactivity. Please sign in again."
@@ -1506,9 +1520,7 @@ GARBAGE COLLECTION
                                         used. Never collected for age when
                                         either idle limit is 0 (unlimited).
             anonymous_timeout_minutes    43200   (30 days)   TYPE_WEB with
-                                                             neither (a
-                                                             superseded row
-                                                             is one of these)
+                                                             neither
             api_timeout_minutes          10080   (7 days)    TYPE_API
             playwright_timeout_minutes    1440   (1 day)     TYPE_PLAYWRIGHT
             cli_timeout_minutes           1440   (1 day)     TYPE_CLI
@@ -2207,7 +2219,7 @@ LOGIN THROTTLE (BRUTE FORCE)
         Trusted: loopback (127.0.0.1, ::1 - the framework's own nginx -> FPC
         proxy -> nginx hops) plus config('rsx.http.trusted_proxies'), empty by
         default. A box behind a load balancer, TLS terminator or CDN MUST list
-        that device's addresses or CIDRs there; until it does, every request
+        that device's addresses or CIDRs in TRUSTED_PROXIES in .env; until it does, every request
         appears to come from the device and the per-IP throttle counts every
         visitor as one (rsx:man prod, rsx:man prelaunch_checklist).
 

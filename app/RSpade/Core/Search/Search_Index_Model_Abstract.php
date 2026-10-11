@@ -14,9 +14,10 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  * reference them, and the row carries NO site_id - the deduplicated blob is cross-site,
  * so site scoping happens at the attachment join (File_Attachment_Model::search_text).
  *
- * Rows are written by Search_Index_Service after an extraction attempt, so status_id is
- * always terminal (EXTRACTED / FAILED / UNSUPPORTED) - there is no stored PENDING; the
- * absence of a row (with _file_storage.is_indexed = 0) IS the pending queue.
+ * Rows are written by Search_Index_Service after an extraction attempt, so status_id is the
+ * outcome of the LAST attempt (EXTRACTED / FAILED / UNSUPPORTED) - there is no stored PENDING,
+ * and a blob with no row has never been attempted. Whether text is still OWED is the blob's
+ * _file_storage.is_indexed = 0: a FAILED row beside it is a failure the worker will retry.
  *
  * content holds the extracted text under a FULLTEXT index; search() runs MATCH...AGAINST
  * over it. See rsx:man document_search.
@@ -83,9 +84,9 @@ abstract class Search_Index_Model_Abstract extends Rsx_Model_Abstract
     /**
      * Enum field definitions.
      *
-     * status_id is the extraction lifecycle. There is NO stored PENDING state - the absence of
-     * a row (with _file_storage.is_indexed=0) IS the queue. A row is written only after an
-     * extraction attempt, so status_id is always one of these three.
+     * status_id is the outcome of the last extraction attempt. There is NO stored PENDING state:
+     * a row is written only after an attempt, so status_id is always one of these three, and a
+     * blob with no row has not been attempted yet.
      *
      * @var array
      */

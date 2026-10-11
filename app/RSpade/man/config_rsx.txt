@@ -5,7 +5,7 @@ NAME
 
 SYNOPSIS
     config('rsx.mode')                       # read one key
-    config('rsx.tasks.default_timeout')      # read a nested key
+    config('rsx.tasks.silent_timeout')       # read a nested key
     config('rsx.portal', [])                 # read a whole section
 
 DESCRIPTION
@@ -209,7 +209,7 @@ HTTP MIDDLEWARE
 
 HTTP
     'http' => [
-        'trusted_proxies' => [],
+        'trusted_proxies' => [],     // .env TRUSTED_PROXIES, comma-separated
     ]
 
     trusted_proxies      Addresses or CIDRs of anything in FRONT of nginx
@@ -217,7 +217,9 @@ HTTP
                          TLS terminator, a CDN's published ranges. Loopback
                          (127.0.0.1, ::1) is ALWAYS trusted on top of this
                          list (the framework's own nginx -> FPC proxy ->
-                         nginx hops). Empty by default.
+                         nginx hops). Empty by default. Set per box
+                         with TRUSTED_PROXIES in .env, addresses or CIDRs
+                         separated by commas (rsx:man prod).
 
     App\Http\Middleware\TrustProxies is the ONE client-address resolver:
     X-Forwarded-For is honoured only when the immediate peer (REMOTE_ADDR) is
@@ -583,21 +585,60 @@ FILE SUBSYSTEM
                                 NOT serving. Extension wins over the byte sniff
                                 for documents. Apps may extend it.
 
+    'documents' => [
+        'stage_seconds' => 20,        # SANCTIONED timeout: one stage of one document
+        'kill_seconds' => 60,         # SANCTIONED timeout: the document's child process
+        'max_attempts' => 3,          # attempts per entry into the queue
+        'retry_after_minutes' => 30,  # wait between a failed attempt and the next
+        'drain_yield_after_minutes' => 20,   # PACING: a pass yields after this long...
+        'drain_resume_after_minutes' => 10,  # ...and sets its next pass this far ahead
+    ]
+
+    The document worker (Document_Render_Service::render_pending): preview
+    renditions and text extraction, one blob at a time, each in a child process
+    of its own. An attempt is charged before it starts, a failed one is recorded
+    FAILED and retried retry_after_minutes later, and after max_attempts the blob
+    stays FAILED until an operator re-queues it (rsx:documents:rerender /
+    rsx:search:reindex).
+
+    stage_seconds and kill_seconds are SANCTIONED TIMEOUTS, justified in full
+    beside the keys in config/rsx.php. Both bound a parse of ONE uploaded file -
+    input the application does not control, which a converter or a reader can
+    run on without end - never the queue, the worker's pass, or work whose size
+    the application chose. Expiry is a recorded FAILED attempt and the
+    failed-document preview; the uploaded file is untouched.
+      stage_seconds  wall-clock bound on each stage inside the child: the render
+                     (soffice to PDF, or a workbook to HTML in-process) and the
+                     text extraction (soffice, pdftotext, an in-process reader,
+                     or a document.extract_text handler) get this long EACH. It
+                     is set by how long the queue may stand still, not by how
+                     slow a conversion may be: raise it in the application's
+                     config when a site's ordinary documents need more.
+      kill_seconds   how long the worker waits for the child before killing it
+                     and every process it started. It covers what the stage
+                     bound cannot reach (a child stuck inside one native call).
+                     KEEP IT ABOVE 2 * stage_seconds, or the kill pre-empts the
+                     stage bound and its more precise reason.
+    retry_after_minutes is a schedule, not a timeout: it decides when work is
+    next offered and ends nothing.
+    drain_yield_after_minutes / drain_resume_after_minutes are owner-set PACING,
+    not timeouts: a pass of the worker that has drained for the first and still
+    finds work due stops between two documents, sets its own next run the second
+    ahead, says how many documents are still waiting and returns successfully -
+    a voluntary yield, so the other scheduled work gets a turn during a long
+    backlog. Nothing is cut short, nothing fails, and every blob still due stays
+    in the queue. A pass that empties the queue never yields.
+    See: php artisan rsx:man documents (THE WORK QUEUE, PACED PASSES)
+
     'libreoffice' => [
         'enabled' => env('LIBREOFFICE_ENABLED', true),
         'binary_path' => env('LIBREOFFICE_BINARY_PATH', null),  # null = autodetect
-        'timeout' => 120,             # THE one sanctioned timeout (see below)
     ]
 
     Headless LibreOffice, invoked ONLY by Document_Render_Service's background
     worker - never inside a web request. Off, or a failed conversion, degrades
-    to the generic extension icon.
-
-    timeout is a SANCTIONED TIMEOUT (owner ruling 2026-08-22), justified in full
-    beside the key in config/rsx.php: it bounds ONE external document-binary
-    invocation (soffice or pdftotext), which WEDGES rather than merely running
-    slowly, and expiry degrades to a working outcome (FAILED + extension icon).
-    One key covers both binaries. Do not lower it.
+    to the generic extension icon. How long a conversion may run is not set
+    here: soffice and pdftotext are bounded by rsx.documents.stage_seconds.
 
     REMOVED 2026-08-22 - delete any override you carry: max_concurrent and
     slot_wait_timeout. One #[Exclusive] worker is now the only caller of soffice,
@@ -617,8 +658,8 @@ FILE SUBSYSTEM
     'enabled' is also the kick switch for that worker. Bump extractor_version
     then rsx:search:reindex --below-version=N to re-extract.
 
-    REMOVED 2026-08-22 - delete any override you carry: search.timeout. The one
-    sanctioned rsx.libreoffice.timeout now bounds pdftotext too.
+    REMOVED 2026-08-22 - delete any override you carry: search.timeout.
+    pdftotext is bounded by rsx.documents.stage_seconds.
     See: php artisan rsx:man document_search
 
     'preview' => [
@@ -666,7 +707,7 @@ TASK SYSTEM
             'scheduled' => ['max_workers' => 1],
             'kill' => ['max_workers' => 10],
         ],
-        'default_timeout' => 1800,             # 30 min
+        'silent_timeout' => 1800,              # 30 min WITHOUT A REPORT
         'stop_grace_seconds' => 60,
         'failing_schedule_warn_after' => 3,
         'retry' => ['base_seconds' => 600, 'attempts' => 5],
@@ -679,8 +720,14 @@ TASK SYSTEM
 
     'pools' caps each worker pool on its own: on_demand runs dispatched work,
     scheduled runs #[Schedule] work (and queued dispatched work first), kill
-    carries out force stops and kills. A cap below 1 throws. default_timeout is
-    the execution cap the cron tick enforces with a force kill (0 = none).
+    carries out force stops and kills. A cap below 1 throws. silent_timeout is
+    THE SILENCE LIMIT: the seconds a worker-run task may go WITHOUT REPORTING
+    (no heartbeat, no status, progress, output or any other report) before the
+    cron tick has it force-killed, measured from its last sign of life. It never
+    limits how long a task RUNS - a task that keeps reporting is not bounded -
+    so a long task must report as it goes, on every item. 0 = no silence limit;
+    an inline run is never killed for time; a run dispatched with an explicit
+    'timeout' option is under that hard limit instead.
     stop_grace_seconds is the default grace of Task_Run_Model::force_stop() -
     the window a cooperative task gets to finish, owner-set, not a bound on any
     operation. 'retry' paces the re-run of a dispatched run whose worker died or
@@ -690,7 +737,8 @@ TASK SYSTEM
     30 minutes by Task_Retention_Service: a finished run's output is cut to its
     last output_keep_lines lines and its attachments unlinked after
     output_truncate_after_minutes; the run is purged after purge_after_minutes.
-    See: rsx:man tasks (THE WORKER POOLS, FAILURE AND ABANDONMENT, RETENTION)
+    See: rsx:man tasks (THE WORKER POOLS, THE SILENCE LIMIT, FAILURE AND
+    ABANDONMENT, RETENTION)
 
 LOCKS
     'locks' => [

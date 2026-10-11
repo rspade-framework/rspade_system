@@ -22,7 +22,7 @@ States, in the order the template tests them:
   error_data set        the endpoint refused, or the attachment is gone   -> (Text Unavailable)
   info === null         the first load has not answered yet               -> (Loading...)
   status 'pending'      no index row yet - extraction is queued           -> (Extracting Text...)
-  status 'error'        extraction failed (terminal) or a degraded upload -> (Text Unavailable)
+  status 'error'        extraction failed, or a degraded upload          -> (Text Unavailable)
   status 'unsupported'  nothing extractable                              -> (Text Unavailable)
   status 'available'
     with empty text     the file is genuinely empty                       -> (This file is empty)

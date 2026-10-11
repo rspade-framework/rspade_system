@@ -375,6 +375,20 @@ class Dispatcher
             return static::__transform_response($realm, $bearer_refusal, $original_method, $request);
         }
 
+        // --- A retired session token ---
+        // The row this request's cookie names was replaced by a successor (a sign-in, or
+        // an expiry) and is dead. The request was in flight when that happened, or comes
+        // from a copy of the old cookie: it is refused here, before the gates and before
+        // any application code, and no session cookie is sent with the answer.
+        if (Session::_arrived_on_retired_token()) {
+            return static::__transform_response(
+                $realm,
+                Error_Screens::http_status($request, 401, 'This session has ended. Reload the page to continue.'),
+                $original_method,
+                $request
+            );
+        }
+
         // --- Site membership (users.is_enabled, staff) ---
         // The request-time half of the framework's is_enabled contract, asked ONCE per
         // request and ahead of the gates: a session whose membership was disabled or

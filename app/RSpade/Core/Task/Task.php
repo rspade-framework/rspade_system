@@ -21,6 +21,7 @@ use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Task - starting background work: dispatch() a run to the worker pools, or run one
@@ -115,7 +116,11 @@ class Task
      *   - 'scheduled_for' => Earliest run time (default: now). A future value defers the run.
      *                        Refused (throws) for an #[Exclusive] / #[Debounce] task, which
      *                        times its own runs.
-     *   - 'timeout'       => Maximum execution time in seconds (default: from config)
+     *   - 'timeout'       => A HARD execution limit for this run, in seconds from its
+     *                        start: past it the run is force-killed whether or not it is
+     *                        reporting. Given by name only - without it a run has no limit
+     *                        on how long it runs, only on how long it may go without
+     *                        reporting (rsx.tasks.silent_timeout).
      * @return int The run's id (the existing pending run's, when coalesced).
      */
     public static function dispatch(string $rsx_service, string $rsx_task, array $params = [], array $options = []): int
@@ -168,6 +173,59 @@ class Task
         }
 
         return $id;
+    }
+
+    /**
+     * Set when a #[Schedule] task runs NEXT, and return that moment (ISO).
+     *
+     * One run is moved; the cadence is not. The scheduled-pool worker that claims the run at
+     * $at recomputes the following one from the task's cron expression, exactly as after any
+     * scheduled run - so this brings one run forward, or puts one off, and the schedule then
+     * carries on as declared. The tick's reconciliation leaves the moment alone (it rewrites
+     * next_run_at only for a declaration whose expression changed, and under
+     * --force-scheduled). A moment in the past is due now. A moment that comes due while the
+     * task is still running is coalesced like any other tick of an #[Exclusive] task.
+     *
+     * It names the TASK, so the caller may be anything: an endpoint, a script, another task,
+     * or a run of the task itself however that run was started ($task->run_again_in() is the
+     * spelling for "this task, this many seconds from now").
+     *
+     * @param string $rsx_service Service name (e.g. 'Report_Service')
+     * @param string $rsx_task    The #[Task] method carrying the #[Schedule]
+     * @param string $at          The moment, as an ISO datetime string (Rsx_Time)
+     * @return string The moment written, ISO 8601 UTC
+     * @throws Exception when the task declares no #[Schedule], or $at is not a datetime
+     */
+    public static function set_next_run(string $rsx_service, string $rsx_task, string $at): string
+    {
+        $service_class = static::resolve_task_class($rsx_service, $rsx_task);
+
+        $cron_expression = null;
+        foreach (static::get_scheduled_tasks() as $declaration) {
+            if ($declaration['class'] === $service_class && $declaration['method'] === $rsx_task) {
+                $cron_expression = $declaration['cron_expression'];
+                break;
+            }
+        }
+        if ($cron_expression === null) {
+            throw new Exception("Task::set_next_run(): {$rsx_service}::{$rsx_task} declares no #[Schedule], so it has no next run to set.");
+        }
+
+        $next_run_at = Rsx_Time::to_database($at);
+        if ($next_run_at === null) {
+            throw new Exception("Task::set_next_run(): the next run of {$rsx_service}::{$rsx_task} needs a moment, got an empty value.");
+        }
+
+        // One statement: the schedule's row is written by the tick's reconciliation, and a
+        // declaration that tick has not registered yet is registered here.
+        $now = now()->format('Y-m-d H:i:s.v');
+        DB::statement(
+            'INSERT INTO _task_schedules (class, method, cron_expression, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+            . ' ON DUPLICATE KEY UPDATE next_run_at = VALUES(next_run_at), updated_at = VALUES(updated_at)',
+            [$service_class, $rsx_task, $cron_expression, $next_run_at, $now, $now]
+        );
+
+        return Rsx_Time::to_iso($next_run_at);
     }
 
     /**

@@ -3,9 +3,8 @@
 namespace App\RSpade\Core\Search;
 
 use Exception;
-use Symfony\Component\Process\Exception\ProcessTimedOutException;
-use Symfony\Component\Process\Process;
 use App\RSpade\Core\Files\Document_Sandbox;
+use App\RSpade\Core\Files\Document_Stage_Bound;
 use App\RSpade\Core\Files\Libreoffice;
 use App\RSpade\Core\Search\Rsx_Text_Extractor_Abstract;
 
@@ -59,10 +58,6 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
             }
         }
 
-        // The one sanctioned timeout: it bounds the EXTERNAL soffice binary, which wedges rather
-        // than merely running slowly on malformed input. Justified in full at its config key.
-        $timeout = (int) config('rsx.libreoffice.timeout', 120);
-
         // Private work dir - LibreOffice needs an isolated user profile and an output dir.
         $work_dir = sys_get_temp_dir() . '/rsx_soffice_txt_' . bin2hex(random_bytes(8));
         if (!mkdir($work_dir, 0700, true) && !is_dir($work_dir)) {
@@ -81,17 +76,17 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
             }
 
             if (static::__is_spreadsheet_mime($mime)) {
-                $fods = static::__convert($soffice, $work_dir, $staged, 'fods', 'fods', $timeout);
+                $fods = static::__convert($soffice, $work_dir, $staged, 'fods', 'fods');
                 return static::__stream_flat_xml($fods, true);
             }
 
             if (static::__is_presentation_mime($mime)) {
-                $fodp = static::__convert($soffice, $work_dir, $staged, 'fodp', 'fodp', $timeout);
+                $fodp = static::__convert($soffice, $work_dir, $staged, 'fodp', 'fodp');
                 return static::__stream_flat_xml($fodp, false);
             }
 
             // Writer family (and any other Office mime): the "Text (encoded)" filter emits UTF-8.
-            $txt = static::__convert($soffice, $work_dir, $staged, 'txt:Text (encoded):UTF8', 'txt', $timeout);
+            $txt = static::__convert($soffice, $work_dir, $staged, 'txt:Text (encoded):UTF8', 'txt');
             $raw = file_get_contents($txt);
             if ($raw === false) {
                 throw new Exception('Failed to read LibreOffice text output for ' . basename($source_path));
@@ -147,7 +142,6 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
      * @param string $source_path The STAGED input, inside $work_dir.
      * @param string $convert_to soffice --convert-to argument (e.g. 'fods', 'txt:Text (encoded):UTF8')
      * @param string $output_ext extension soffice will give the produced file (e.g. 'fods', 'txt')
-     * @param int $timeout
      * @return string Absolute path to the produced output file.
      * @throws Exception
      */
@@ -156,8 +150,7 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
         string $work_dir,
         string $source_path,
         string $convert_to,
-        string $output_ext,
-        int $timeout
+        string $output_ext
     ): string {
         // Every path here is inside the work dir, which the sandbox mounts at its own absolute
         // path - so ONE argv is correct both on the host and in the container.
@@ -172,23 +165,8 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
             $source_path,
         ], $work_dir);
 
-        $process = new Process($command);
-
-        // Hard cap the external binary (see the timeout note above).
-        $process->setTimeout($timeout);
-
-        try {
-            $process->run();
-        } catch (ProcessTimedOutException $e) {
-            // Expiry kills the process Symfony started - which under the sandbox is the docker
-            // CLIENT, leaving the wedged converter running in its container.
-            $container = Document_Sandbox::container_name($command);
-            if ($container !== null) {
-                Document_Sandbox::kill($container);
-            }
-
-            throw $e;
-        }
+        // soffice runs inside the text-extraction stage and is bounded with it.
+        $process = Document_Stage_Bound::run_process($command);
 
         $out_path = $work_dir . '/' . pathinfo($source_path, PATHINFO_FILENAME) . '.' . $output_ext;
         if (!file_exists($out_path)) {

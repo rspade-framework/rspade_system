@@ -29,7 +29,7 @@ IT IS AN IFRAME, AND SANDBOXED, FOR TWO SEPARATE REASONS.
   reader sees is the document.
 
 States, in the order the template tests them:
-  render_status 'failed'   terminal - the workbook could not be read     -> (Preview Unavailable)
+  render_status 'failed'   the last attempt could not read the workbook  -> (Preview Unavailable)
   rendition_url set        the rendition exists                          -> the grid
   otherwise                queued, or evicted from the LRU cache         -> (Preparing Preview...)
 

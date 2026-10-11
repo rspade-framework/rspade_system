@@ -83,7 +83,9 @@ RUNS
                      rsx:task:process --once - run in the calling process
 
     Status (status_id), with the Task_Run_Model constants:
-        1 Pending    STATUS_PENDING     queued; scheduled_for says when it is due
+        1 Pending    STATUS_PENDING     queued; scheduled_for says when it is due, and
+                                        the run says what it is waiting for (WHAT A
+                                        PENDING RUN IS WAITING FOR)
         2 Running    STATUS_RUNNING     claimed; worker_pid / worker_host say where
         3 Completed  STATUS_COMPLETED   the task returned success
         4 Failed     STATUS_FAILED      a failure return, a throw, or an abandonment
@@ -91,7 +93,8 @@ RUNS
         5 Stopped    STATUS_STOPPED     the task returned success after a stop was
                                         requested: it stopped early, at a clean point
         6 Killed     STATUS_KILLED      a kill worker killed it (force stop, force
-                                        kill, timeout, rsx:tasks:kill-all)
+                                        kill, the silence limit or a requested
+                                        timeout, rsx:tasks:kill-all)
         7 Cancelled  STATUS_CANCELLED   taken off the queue before it ran
 
     Pending and Running are LIVE (Task_Run_Model::LIVE_STATUSES, is_live()); the other
@@ -141,6 +144,17 @@ REPORTING (Task_Instance)
                                                same name again replaces the file
         $task->summary(string $text)           the completion summary
         $task->flush()                         write every held report now
+        $task->run_again_in(int $seconds)      set this task's own #[Schedule] to run next
+                                               that far from now (SCHEDULES, SETTING THE
+                                               NEXT RUN)
+
+    A LONG TASK MUST REPORT AS IT GOES, OR IT IS KILLED. A task has no limit on how long it
+    runs so long as it keeps reporting that it is alive. A task expected to run long -
+    "render a preview of everything in the system" - reports its status as it goes:
+    heartbeat() and its progress on EVERY item. A worker-run task that goes 30 minutes
+    (rsx.tasks.silent_timeout) without a single report is taken for stuck and force-killed
+    (THE SILENCE LIMIT). Every call in the list above except flush() and run_again_in()
+    counts as a report.
 
     ECHO IS STDOUT. Everything the task prints (echo, print, var_dump) is captured line by
     line as stdout, wherever the run executes - a worker, an inline run, a console run -
@@ -158,8 +172,11 @@ REPORTING (Task_Instance)
     go quiet for a long step calls flush() first so its watchers see
     where it is. Attachments are written immediately. REPORT ON EVERY ITEM: holding
     reports back is the framework's job, and a task that batches its own reports - the
-    queue every 25th item, say - only makes its watchers that much staler. The heartbeat plays no part in worker
-    liveness (THE WORKER POOLS): a task may run for hours without reporting anything.
+    queue every 25th item, say - only makes its watchers that much staler. No report plays any part in worker
+    liveness (THE WORKER POOLS) - a worker is alive while its process is - but reports are
+    what the silence limit reads (THE SILENCE LIMIT): a task that reports steadily is
+    stamped alive in the database at least every 0.25 s plus the gap between two of its
+    own reports, and a task that reports nothing for 30 minutes is killed.
 
     THE ETA. A run's ETA is null until something sets it. A task that reports progress
     never sets it: every progress() and progress_count() call re-estimates it from the
@@ -228,7 +245,9 @@ REPORTING (Task_Instance)
 
     Stop check (cooperative - see LIFECYCLE CONTROL):
         $task->is_stop_requested()             reads the row (every call); held reports
-                                               are written at the usual rate
+                                               are written at the usual rate. A read,
+                                               not a report: by itself it does not count
+                                               as a sign of life
 
     Identity and scratch space:
         $task->get_id(), get_class(), get_method(), get_params()
@@ -327,9 +346,13 @@ DESIGNING A TASK'S REPORTING
     stop is never answered and only a kill ends the run. Check it where stopping leaves
     the data coherent - between items, never in the middle of one - and return success
     (null) so the run settles STOPPED with whatever it finished. heartbeat() lets a
-    watcher tell a slow item from a stuck one. Both are cheap: reports are written at a
-    rate (REPORTING, WRITE RATE, NOT A TIMEOUT), not per call. A task with a single long step
-    and no loop needs neither, beyond one flush() before it goes quiet.
+    watcher tell a slow item from a stuck one, AND IT IS WHAT KEEPS A LONG RUN ALIVE: the
+    framework kills a worker-run task that has reported nothing for 30 minutes (THE
+    SILENCE LIMIT), and has no other limit on a task that reports. Both are cheap:
+    reports are written at a rate (REPORTING, WRITE RATE, NOT A TIMEOUT), not per call. A
+    task with a single long step and no loop flushes before it goes quiet - and if that
+    one step can outlast the silence limit, it is not one step: break it up so the task
+    can report between the pieces.
 
 ATTACHMENTS: A FILE FOR THE RUN'S INITIATOR
 
@@ -392,7 +415,10 @@ STARTING A RUN
                           run (the cron tick or a later spawn picks it up once due). Refused
                           (throws) for an #[Exclusive]/#[Debounce] task, whose timing is the
                           coalesced pending row's (CONCURRENCY).
-         'timeout'        the run's execution cap in seconds (EXECUTION TIMEOUT)
+         'timeout'        a HARD limit on this run, in seconds from its start: past it
+                          the run is force-killed whether or not it is reporting. Only
+                          for a caller that wants that; without it a run is under the
+                          silence limit alone (THE SILENCE LIMIT)
 
        For an #[Exclusive]/#[Debounce] task the id returned is THE pending run of its
        identity - the existing one, or the one just created.
@@ -629,6 +655,38 @@ SCHEDULES
     deleted (its past runs keep their rows, schedule_id cleared). A scheduled-pool worker
     advances next_run_at BEFORE running, so the cadence holds across a slow or crashed run.
 
+    SETTING THE NEXT RUN. When a schedule next runs can be set explicitly - one run is
+    moved, the cadence is not:
+
+        Task::set_next_run(string $service, string $method, string $at): string
+            Sets _task_schedules.next_run_at to the moment $at (an ISO datetime string,
+            Rsx_Time) and returns it as ISO 8601 UTC. Callable from anywhere: an endpoint,
+            a script, another task.
+        $task->run_again_in(int $seconds): string
+            The same for THIS task's own schedule, $seconds from now - what a task calls
+            to hand its worker back and pick its work up again later. It names the task,
+            not the run, so it works whether the calling run was started by the schedule,
+            by Task::dispatch() or inline.
+
+    Both THROW for a task that declares no #[Schedule] ("... declares no #[Schedule], so it
+    has no next run to set."), and for a moment that is not a datetime. The worker that
+    claims the run at that moment recomputes the following one from the cron expression,
+    as after any scheduled run, so the regular cadence resumes by itself. Reconciliation
+    never moves it: the tick rewrites next_run_at only for a declaration whose expression
+    changed, and under --force-scheduled. A moment in the past is due now; a moment that
+    comes due while an #[Exclusive] task is still running is coalesced into that run like
+    any tick. A declaration the tick has not registered yet is registered by the call.
+
+        // A drain that yields after 20 minutes with work left, and resumes in 10.
+        if (microtime(true) - $started >= 1200 && $more_is_due) {
+            $task->run_again_in(600);
+            $task->summary("Processed {$done}; {$remaining} still waiting.");
+            return null;                       // a successful run
+        }
+
+    The framework's document worker paces a long backlog exactly this way (rsx:man
+    documents, PACED PASSES).
+
     A scheduled task that fails does not stop its schedule: the run is FAILED, the schedule
     counts the failure (consecutive_failures + 1, last_error, last_error_at) and runs again
     at its next cadence. A success resets the streak. Visibility:
@@ -740,13 +798,60 @@ READING A RUN (Task_Run_Model)
         messages_after(?int $after_id, int $limit = 1000)  [{id, body, at}]
         attachments(), attachment($name)  Task_Attachment_Model rows; read the bytes with
                                       read_bytes() / read_stream() / download_response()
-        to_status_array()             the JSON shape the endpoints and widgets read
+        to_status_array()             the JSON shape the endpoints and widgets read,
+                                      with `waiting` (below)
+        Task_Run_Model::to_status_arrays($runs)
+                                      the same for several runs, resolving what the
+                                      pending ones wait for once per lock, not per run
 
     The output and message readers are cursor reads: pass the last id seen for the next
     page. A task attachment is a temp file (rsx:man temp_files) named under the run - it
     is not a File_Attachment_Model: no owner, no file gates and no deletion window; the
     task's view gate is who may read it, and an application serves one through its own
     gated endpoint with download_response().
+
+    WHAT A PENDING RUN IS WAITING FOR. A PENDING run says why it has not started. The
+    answer is DERIVED EVERY TIME THE RUN IS READ - from its own row, the lock daemon and
+    the running runs - and never stored, so it is never stale and a holder that died
+    leaves nothing behind to correct. to_status_array() carries it as `waiting` (null for
+    a run that is not pending); in PHP, Task_Waiting::of($run):
+
+        ['reason' => ..., 'text' => ..., 'lock' => ?string, 'held_by_task_id' => ?int]
+
+    The first reason that applies, in this order:
+
+        scheduled   scheduled_for is in the future (a deferred dispatch, a debounce
+                    delay, a retry after an abandonment)
+                        scheduled for <time>
+        lock        its #[Exclusive]/#[Debounce] run lock is held - by a run of its own
+                    identity, or of any task of its exclusive group
+                        waiting for exclusive lock "<group>" (held by task #<id>)
+                        waiting for exclusive lock (held by task #<id>)
+                    The first for a named group (lock = the group name), the second for
+                    a task with no group. The holder is the RUNNING run on that lock; in
+                    the moment between a lock being taken and its run being marked
+                    running there is none, and the parenthesis is left off
+        workers     every worker that could claim it is busy
+                        waiting for a free worker (<busy> of <max> busy)
+                    busy = runs a pool worker is running; max = the on_demand cap plus
+                    the scheduled cap (both pools claim pending runs)
+        queued      none of the above - it starts when a worker reaches it
+                        waiting for a worker to start
+
+    `text` is the line as written above; for `scheduled` the server's text is formatted in
+    its own timezone, and a client formats status.scheduled_for itself
+    (Rsx_Task.waiting_text(status) does). held_by_task_id is ALL a viewer is told about
+    the holder: its run id, never its name, params or owner.
+
+    The widgets show the line where a pending run has no status of its own: <Task_Report
+    $kind="status_text">, the hover text of <Task_Status_Badge>, and the /_sys Tasks grid,
+    run view and Task Workers "Queued" list. The task's own status_text is untouched.
+
+    LIVE. Nothing is stored, so "it changed" is a frame like any other: when a run starts
+    or settles (completes, fails, stops, is killed, cancelled or abandoned), every PENDING
+    run waiting on the same run lock gets its own Task_Changed_Topic frame, and a view of
+    that one run re-reads. A list re-reads on Task_List_Changed_Topic, which covers every
+    reason. There is no frame for the free-worker wait alone.
 
     SEARCH. Task_Run_Model::search_query(array $filter) returns a Builder; an unknown key
     throws. Keys: id, ids, class (simple name or FQCN), method, params (an EXACT parameter
@@ -849,6 +954,8 @@ GATES AND THE BROWSER API
                                                       runs of ONE task, by name (method
                                                       null: every task of the service)
         await Rsx_Task.live_runs(class_name, method)  its pending + running runs
+        Rsx_Task.waiting_text(status)                 what a pending run is waiting for,
+                                                      one line ('' when not pending)
 
     IS A TASK RUNNING? A page that must know whether a task is running - a button to
     disable while an import runs, a banner while a sync is in flight - watches the task BY
@@ -866,7 +973,9 @@ GATES AND THE BROWSER API
 
     TOPICS. Frames are notification-only; refetch on each (rsx:man realtime):
 
-        Task_Changed_Topic {id}       lifecycle, reports, messages, attachments
+        Task_Changed_Topic {id}       lifecycle, reports, messages, attachments; for
+                                      a pending run, also a start or settle of a run
+                                      on the same run lock (what it waits for changed)
         Task_Output_Topic {id}        output lines (the busy feed, only a console needs it)
         Task_List_Changed_Topic {class, method}
                                       a run entered, left or changed lifecycle state.
@@ -889,9 +998,13 @@ WIDGETS
 
         <Task_Status_Badge $task_id=... />      the status, toned; or $task=<a status
                                                 object> to draw one already in hand
-                                                (a list row) and fetch nothing
+                                                (a list row) and fetch nothing. Hover:
+                                                the run's reason, or what a pending
+                                                run is waiting for
         <Task_Report $task_id=... $kind=... [$bar=true] />
-                                                one report: status_text, progress,
+                                                one report: status_text (for a pending
+                                                run with none: what it is waiting
+                                                for), progress,
                                                 progress_count, progress_text (whichever of
                                                 the two, one line - a grid cell), eta (a
                                                 live countdown), heartbeat, state_json (a
@@ -945,18 +1058,43 @@ THE SAMPLE TASK
         php artisan rsx:task:run _Sys_Oregon_Trail_Service travel --speed=0  # no pauses
     then try rsx:tasks:stop <id> while it runs.
 
-EXECUTION TIMEOUT
+THE SILENCE LIMIT
 
-    A run a POOL WORKER executes is capped by its timeout (a dispatch() option), else
-    rsx.tasks.default_timeout (1800 s; 0 on both = no cap). An INLINE run (Task::internal(),
-    rsx:task:run, a #[Command]) is never capped: it belongs to the process that started it,
-    and how long it takes is that caller's business.
+    A TASK HAS NO LIMIT ON HOW LONG IT RUNS, SO LONG AS IT KEEPS REPORTING THAT IT IS
+    ALIVE. The one global limit is on SILENCE: a run a pool worker executes that shows no
+    sign of life for rsx.tasks.silent_timeout seconds (1800 = 30 minutes) is taken for
+    stuck and force-killed.
 
-    Enforcement lives in the cron tick: a RUNNING pool-worker run whose worker is STILL ALIVE
-    on the host the tick runs on, past its cap, gets a force-kill request ("timed out after Ns
-    (cap Ms)"), carried out by a kill worker and settled KILLED; one [TASK TIMEOUT] line is
-    logged. Granularity is the cron tick (one minute). This reaper cap is framework
-    infrastructure - you never add a timeout to your own task.
+    So a task expected to run long - "render a preview of everything in the system" -
+    MUST REPORT ITS STATUS AS IT GOES: heartbeat() and its progress on every item. It then
+    runs for as many hours as the work takes. If it reports nothing, it is killed 30
+    minutes after it started.
+
+    THE SIGN OF LIFE is the latest of the run's started_at, last_heartbeat_at and
+    last_report_at. Every reporting call stamps one: heartbeat(), status() (a repeat of
+    the same text included), progress(), progress_count(), eta(), state(), every queue
+    call, message(), stdout() / stderr() and anything the task echoes, attach_file() /
+    attach_bytes(), summary(). Reports are written at a rate (REPORTING, WRITE RATE), so
+    the stamp in the database trails a steady reporter by at most 0.25 s plus the gap
+    between two of its reports. is_stop_requested() is a read and stamps nothing.
+
+    Enforcement lives in the cron tick: a RUNNING pool-worker run whose worker is STILL
+    ALIVE on the host the tick runs on, silent past the limit, gets a force-kill request
+    with the explanation "no report for Ns (cap Ms)", carried out by a kill worker and
+    settled KILLED (status_reason and an operator line carry the explanation); one
+    [TASK TIMEOUT] line is logged. Granularity is the cron tick (one minute).
+    rsx.tasks.silent_timeout = 0 is no silence limit.
+
+    NOT UNDER IT:
+      - An INLINE run (Task::internal(), rsx:task:run, a #[Command]) is never killed for
+        time: it belongs to the process that started it.
+      - A run dispatched with an explicit 'timeout' option is under THAT limit instead: a
+        hard cap from its start, reporting or not ("timed out after Ns (cap Ms)").
+        _tasks.timeout is NULL for every other run.
+
+    The limit is framework infrastructure and bounds silence, never work - you never add a
+    timeout to your own task. A task that must give its worker back partway through a long
+    job does so voluntarily (SCHEDULES, SETTING THE NEXT RUN).
 
 FAILURE AND ABANDONMENT
 
@@ -1050,7 +1188,8 @@ COMMANDS
 
         * * * * * cd /var/www/html && php artisan rsx:task:process
 
-    Each tick it: (1) settles abandoned runs and requests force kills for timed-out ones;
+    Each tick it: (1) settles abandoned runs and requests force kills for runs silent
+    past the silence limit (or past a requested timeout);
     (2) hands back kill requests whose kill worker died; (3) reconciles _task_schedules
     from the manifest; (4) tries ONE spawn per pool with due work - on_demand (else
     scheduled) for due dispatched runs, scheduled for due schedules, kill for this host's
@@ -1066,7 +1205,8 @@ CONFIGURATION (config/rsx.php 'tasks')
             'scheduled' => ['max_workers' => 1],
             'kill'      => ['max_workers' => 10],
         ],
-        'default_timeout'             => 1800,  // execution cap (0 = none); EXECUTION TIMEOUT
+        'silent_timeout'              => 1800,  // seconds WITHOUT A REPORT before a worker-run
+                                                // task is killed (0 = none); THE SILENCE LIMIT
         'stop_grace_seconds'          => 60,    // force_stop()'s default grace
         'failing_schedule_warn_after' => 3,     // rsx:health threshold
         'retry' => [
@@ -1080,7 +1220,8 @@ CONFIGURATION (config/rsx.php 'tasks')
         ],
     ],
 
-    stop_grace_seconds is owner-set: the window a cooperative task gets to finish cleanly,
+    silent_timeout bounds a task's SILENCE, never its run time: a run that keeps reporting
+    is not limited by it. stop_grace_seconds is owner-set: the window a cooperative task gets to finish cleanly,
     not a bound on any operation. 'retry' is pacing for work a dead worker ABANDONED, never
     a timeout, and never applied to a task that failed.
 
@@ -1127,6 +1268,9 @@ TESTING
 TROUBLESHOOTING
 
     A dispatched run stays Pending
+        - The run says why: its status shows what it is waiting for (READING A RUN, WHAT
+          A PENDING RUN IS WAITING FOR) - a time, a lock and the run holding it, or a
+          free worker.
         - Are the pools full? rsx:health "Task Worker Pools" shows each pool's members
           against its cap; /_sys/workers shows what they are running. A busy worker
           reaches the row when it finishes.
@@ -1136,6 +1280,11 @@ TROUBLESHOOTING
           says so), an #[Exclusive]/#[Debounce] identity whose run is still running, or
           an exclusive group with another of its tasks running.
         - Cron is the backstop: * * * * * php artisan rsx:task:process
+
+    A long task was Killed with "no report for Ns (cap 1800s)"
+        - It went 30 minutes without reporting and was taken for stuck (THE SILENCE
+          LIMIT). Call $task->heartbeat() - and report progress - on every item of its
+          loop; a task that reports is never killed for how long it runs.
 
     A stop did nothing
         - A graceful stop is cooperative: the task must call is_stop_requested(). Use

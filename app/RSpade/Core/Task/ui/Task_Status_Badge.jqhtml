@@ -7,6 +7,9 @@ $task     a status object already in hand (Rsx_Task.get(), a find()/page() row):
           draws it and fetches nothing - a list that reloads on Task_List_Changed_Topic
           passes this rather than one live badge per row
 
+Hovering the badge shows the run's reason (why it was cancelled, killed or is being retried)
+or, for a pending run that has none, what it is waiting for (Rsx_Task.waiting_text()).
+
 One of the two is required. Reading needs the run's view gate (Task_Gates); a run the viewer
 may not see shows as "Unavailable".
 --%>
@@ -20,6 +23,6 @@ may not see shows as "Unavailable".
     <% } else if (!_status) { %>
         <span class="Task_Status_Badge__badge Task_Status_Badge__badge--neutral">...</span>
     <% } else { %>
-        <span class="Task_Status_Badge__badge Task_Status_Badge__badge--<%= Rsx_Task.tone(_status.status_id) %>" title="<%= _status.status_reason || '' %>"><%= _status.status %></span>
+        <span class="Task_Status_Badge__badge Task_Status_Badge__badge--<%= Rsx_Task.tone(_status.status_id) %>" title="<%= _status.status_reason || Rsx_Task.waiting_text(_status) %>"><%= _status.status %></span>
     <% } %>
 </Define:Task_Status_Badge>

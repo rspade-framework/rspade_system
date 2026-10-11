@@ -16,7 +16,9 @@ lands - no reload, no polling.
 States, in the order the template tests them:
   preview_unavailable  - a degraded upload (unparseable image bytes). No viewer.
   render_status_id 2   - PENDING: queued for render. "Preparing preview..." + the extension icon.
-  render_status_id 4   - FAILED: terminal. "Preview could not be generated" + the extension icon.
+  render_status_id 4   - FAILED: the last render attempt failed. "Preview could not be generated" +
+                         the extension icon. The worker may retry it; a realtime frame brings a
+                         later success here.
                          The operator reason (render_error) is deliberately NOT exported here.
   urls.rendition       - a PDF (its own blob) or a RENDERED convertible document -> Pdf_Viewer.
   otherwise            - Image_Viewer / Icon_Viewer / an app-registered viewer.
@@ -79,7 +81,8 @@ Public methods (delegate to the active viewer; no-op before it is ready):
                 <% } %>
             </div>
         <% } else if (this.data.info && this.data.info.render_status_id === 4) { %>
-            <%-- FAILED is terminal - nothing retries it but an operator (rsx:documents:rerender). --%>
+            <%-- FAILED: the last attempt failed. Shown between the worker's retries and after
+                 the last one alike - never "Preparing preview". --%>
             <div class="Document_Preview__failed">
                 <img class="Document_Preview__state-icon" src="<%= this.data.info.urls.icon %>" alt="">
                 <div class="Document_Preview__state-title">Preview could not be generated</div>

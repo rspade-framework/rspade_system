@@ -197,8 +197,9 @@ class Session extends Rsx_System_Model_Abstract
 
     /**
      * Everything on a row that says WHO is signed in on it, in either experience, and
-     * since when. A sign-in carries all of it to the browser's new row and strips it
-     * from the superseded one (__rotate_for_sign_in()).
+     * since when. When the browser moves to a new row (__succeed_row()) all of it is
+     * carried there; the row it leaves keeps its own copy, as the record of who it
+     * belonged to.
      */
     private const IDENTITY_COLUMNS = [
         'site_id',
@@ -247,6 +248,12 @@ class Session extends Rsx_System_Model_Abstract
     // null when no sign-in rotated. The page that made the request still holds the old
     // row's token; an Ajax response hands it this one (_rotated_csrf_token()).
     private static ?string $_rotated_csrf_token = null;
+
+    // True when this request arrived carrying the token of a RETIRED row: one a sign-in
+    // or an expiry already replaced. The request is refused (the dispatcher and the Ajax
+    // entry point ask _arrived_on_retired_token()) and no session cookie is emitted for
+    // it, so it can never overwrite the cookie of the row that replaced it.
+    private static bool $_arrived_on_retired_token = false;
 
     // Request-scoped overrides
     private static $_request_site_id_override = null;
@@ -400,6 +407,7 @@ class Session extends Rsx_System_Model_Abstract
         self::$_has_set_cookie = false;
         self::$_minted_this_request = false;
         self::$_rotated_csrf_token = null;
+        self::$_arrived_on_retired_token = false;
         self::$_session = null;
         self::$_login_user = null;
         self::$_user = null;
@@ -517,11 +525,15 @@ class Session extends Rsx_System_Model_Abstract
 
         // One cookie, one row: the token identifies the BROWSER's session, whatever
         // identities it happens to carry.
-        $session = static::where('session_token', $session_token)
-            ->where('active', true)
-            ->first();
+        $session = static::where('session_token', $session_token)->first();
 
-        if (!$session) {
+        // An INACTIVE row is dead: it resumes nothing, whatever it still records. One
+        // that was RETIRED - replaced by a successor at a sign-in or an expiry - marks
+        // the request as well: the browser was handed the successor's token, so a
+        // request still carrying this one was already in flight, or comes from somebody
+        // holding a copy of the old cookie. Either way it is refused.
+        if (!$session || !$session->active) {
+            self::$_arrived_on_retired_token = $session !== null && !empty($session->superseded_by_id);
             self::$_session = null;
 
             return;
@@ -541,20 +553,30 @@ class Session extends Rsx_System_Model_Abstract
 
         // Re-emit the SAME token cookie on every response (sliding 365-day expiry).
         // A row's token STRING never changes (a new one is only ever minted WITH a new
-        // row - a first visit, or a sign-in), so re-sending the identical value merely
-        // refreshes the browser-side expiry and can never desync from the row.
-        //
-        // A SUPERSEDED row is the exception: a sign-in replaced it and the browser was
-        // given the new row's token in that response. A request still carrying this
-        // one was in flight when that happened (or comes from somebody who copied the
-        // cookie), and re-emitting the old value would overwrite the cookie the
-        // sign-in just set. The row stays usable as an anonymous session, so nothing
-        // has to be minted for such a request either.
+        // row - a first visit, a sign-in, an expiry), so re-sending the identical value
+        // merely refreshes the browser-side expiry and can never desync from the row.
         self::$_session_token = $session_token;
+        self::_set_cookie();
+    }
 
-        if (empty($session->superseded_by_id)) {
-            self::_set_cookie();
-        }
+    /**
+     * Whether this request arrived carrying the token of a retired session row - one a
+     * sign-in or an expiry already replaced with a successor.
+     *
+     * Such a request is refused before any application code runs: the page channel
+     * answers 401, an Ajax call the session_expired envelope. It was either in flight
+     * when the browser was moved to the successor, or it comes from a copy of the old
+     * cookie.
+     *
+     * FRAMEWORK INTERNAL - the dispatcher and the Ajax entry point.
+     *
+     * @return bool
+     */
+    public static function _arrived_on_retired_token(): bool
+    {
+        self::init();
+
+        return self::$_arrived_on_retired_token;
     }
 
     /**
@@ -615,30 +637,19 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
-     * Give the browser a NEW session row for a sign-in, and supersede the one it
-     * arrived with.
+     * Give the browser a NEW session row for a sign-in, and retire the one it arrived
+     * with.
      *
      * A sign-in is the one moment the browser's credential changes. The row it presented
      * may have been held by somebody else too - a copied cookie, a token planted before
      * the visitor signed in - and writing the identity onto it would authenticate every
-     * holder at once. So the identity goes onto a row whose token nobody has seen:
-     *
-     *   - a new row is minted (new session token, new CSRF token) carrying everything the
-     *     old one held - the tenant, the other experience's identity and its clocks, the
-     *     device - and the cookie is replaced in this response;
-     *   - session values and pending flash alerts move with it, so a parked second-factor
-     *     challenge or a redirect's message survives the sign-in it belongs to;
-     *   - the old row is stripped of every identity and marked superseded_by_id. It stays
-     *     ACTIVE as an anonymous session and is never re-cookied (init()), so a request
-     *     that was in flight with the old token finds a row, mints nothing and cannot
-     *     overwrite the new cookie. Its token never authenticates anybody again.
-     *
-     * No token STRING on a live row ever changes; the browser moves to a different row.
+     * holder at once. So the identity goes onto a row whose token nobody has seen
+     * (__succeed_row()), and the old row is dead from that moment.
      *
      * Skipped when this request minted the current row: that token has not left the
-     * server yet, so there is nothing to supersede. Never called in CLI (no cookie).
+     * server yet, so there is nothing to retire. Never called in CLI (no cookie).
      *
-     * @return int|null The superseded row's id, or null when nothing was rotated
+     * @return int|null The retired row's id, or null when nothing was rotated
      */
     private static function __rotate_for_sign_in(): ?int
     {
@@ -648,6 +659,31 @@ class Session extends Rsx_System_Model_Abstract
             return null;
         }
 
+        return self::__succeed_row();
+    }
+
+    /**
+     * Move the browser from its current session row to a successor, and retire the
+     * current one.
+     *
+     *   - the successor is a new row (new session token, new CSRF token) carrying
+     *     everything the old one held - the tenant, both experiences' identities and
+     *     their clocks, the device - and the cookie is replaced in this response;
+     *   - session values and pending flash alerts move with it, so a parked
+     *     second-factor challenge or a redirect's message survives;
+     *   - the old row is RETIRED: marked inactive and superseded_by_id, with every
+     *     column it had left as it was. It records who it belonged to until it is
+     *     collected, and it is dead - it resumes nothing, and a request that still
+     *     carries its token is refused (init(), _arrived_on_retired_token()).
+     *
+     * No token STRING on a live row ever changes; the browser moves to a different row.
+     * The caller then writes what changed onto the successor: the new identity at a
+     * sign-in, the cleared one at an expiry.
+     *
+     * @return int The retired row's id
+     */
+    private static function __succeed_row(): int
+    {
         $old = self::$_session;
 
         // The device is the long-lived record of this browser; a row gains one at its
@@ -680,13 +716,11 @@ class Session extends Rsx_System_Model_Abstract
         DB::table('_session_values')->where('session_id', $old->id)->update(['session_id' => $new->id]);
         DB::table('_flash_alerts')->where('session_id', $old->id)->update(['session_id' => $new->id]);
 
-        $cleared = ['superseded_by_id' => $new->id, 'device_id' => $device_id];
-
-        foreach (self::IDENTITY_COLUMNS as $column) {
-            $cleared[$column] = $column === 'site_id' ? 0 : null;
-        }
-
-        static::where('id', $old->id)->raw_bulk()->update($cleared);
+        static::where('id', $old->id)->raw_bulk()->update([
+            'active' => false,
+            'superseded_by_id' => $new->id,
+            'device_id' => $device_id,
+        ]);
 
         self::$_session = $new;
         self::$_session_token = $new->session_token;
@@ -699,6 +733,29 @@ class Session extends Rsx_System_Model_Abstract
         self::__replace_cookie();
 
         return (int) $old->id;
+    }
+
+    /**
+     * Retire the browser's current row because a sign-in on it has EXPIRED, moving the
+     * browser to a successor that still carries everything the row held. The caller
+     * then signs the expired experience out on the successor (logout()).
+     *
+     * An expired session is dead, and stays in the table as the record of whose it was
+     * and when it ended; what the browser holds afterwards is a different row. A sign-in
+     * of the OTHER experience on the same browser is carried across and is judged by its
+     * own limits.
+     *
+     * FRAMEWORK INTERNAL - enforce_timeouts() and Portal_Session::enforce_timeouts().
+     *
+     * @return void
+     */
+    public static function _retire_expired_row(): void
+    {
+        if (self::$_api_identity !== null || self::__is_cli() || empty(self::$_session)) {
+            return;
+        }
+
+        self::__succeed_row();
     }
 
     /**
@@ -928,6 +985,12 @@ class Session extends Rsx_System_Model_Abstract
 
         // CLI mode: no response, no headers, no cookie
         if (self::__is_cli()) {
+            return;
+        }
+
+        // A request that arrived on a retired row's token is being refused; whatever it
+        // touches on the way out must not replace the cookie of the successor row.
+        if (self::$_arrived_on_retired_token) {
             return;
         }
 
@@ -1504,10 +1567,12 @@ class Session extends Rsx_System_Model_Abstract
      * Invoked ONCE per request by the dispatcher (a page: $strict) and by the Ajax entry
      * point (not strict - the grace applies), ahead of the #[Auth] gates, so the request
      * continues as a signed-out one and its ordinary channel answers: the login redirect
-     * for a page, the session_expired envelope for an Ajax call. CREATES NOTHING.
+     * for a page, the session_expired envelope for an Ajax call.
      *
-     * The sign-out is a logout(): the row survives as the browser's anonymous session,
-     * and signing in again moves the browser to a new row.
+     * The expired row is RETIRED, not edited: it is marked inactive with everything it
+     * recorded left in place, and the browser is moved to a successor row on which the
+     * staff sign-in is then ended (_retire_expired_row() + logout()). Nothing is created
+     * while no limit has been passed.
      *
      * @param bool $strict True for a page; false gives the Ajax grace
      * @return string|null 'length' or 'idle' when the sign-in was just ended, else null
@@ -1517,6 +1582,7 @@ class Session extends Rsx_System_Model_Abstract
         $reason = self::_timeout_reason('staff', $strict);
 
         if ($reason !== null) {
+            self::_retire_expired_row();
             self::logout();
         }
 

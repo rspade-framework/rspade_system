@@ -1,6 +1,6 @@
 ---
 name: document-preview
-description: "Previewing, rendering and searching inside documents in RSX - the ONE background render worker (Document_Render_Service) that produces a PDF rendition and extracts text in a single pass, the render_status_id state machine on the blob (NOT_REQUIRED/PENDING/RENDERED/FAILED), the <Document_Preview> component with its \"Preparing preview...\" state and preview_loaded/page_changed events, its extracted-text sibling <Document_Text_Preview> with its \"(Extracting Text...)\" and \"(Document Text Unavailable)\" notices, the server-side viewer registry (Pdf_Viewer / Image_Viewer / Text_Viewer / Icon_Viewer) and how to override it, should_show_text_preview() and can_open_inline() as the two presentation questions an attachment answers, the three document.* resolve chains (extract_text, preview_rendition, thumbnail_render), EXTRACTED/FAILED/UNSUPPORTED extraction statuses, search_text() with mandatory site scoping, and rsx:documents:status/failed/rerender plus rsx:search:reindex triage. Use when showing a PDF or Office document in a page, searching inside uploaded files, plugging in a custom viewer or converter, showing a .txt / .csv / .log as itself, deciding whether to show extracted text beside a preview or offer an \"Open in Browser\" link, or debugging a document that shows a placeholder icon, a preview stuck on \"Preparing preview...\", a text panel stuck on \"(Extracting Text...)\", or missing extracted text."
+description: "Previewing, rendering and searching inside documents in RSX - the ONE background render worker (Document_Render_Service) that produces a PDF rendition and extracts text in a single pass, the render_status_id state machine on the blob (NOT_REQUIRED/PENDING/RENDERED/FAILED), the worker's queue (process_due_at, charged attempts, retries, rsx.documents.stage_seconds / kill_seconds / max_attempts / retry_after_minutes), Document_Render_Service::process_storage(), mark_work_owed() / requeue_render(), the <Document_Preview> component with its \"Preparing preview...\" state and preview_loaded/page_changed events, its extracted-text sibling <Document_Text_Preview> with its \"(Extracting Text...)\" and \"(Document Text Unavailable)\" notices, the server-side viewer registry (Pdf_Viewer / Image_Viewer / Text_Viewer / Icon_Viewer) and how to override it, should_show_text_preview() and can_open_inline() as the two presentation questions an attachment answers, the three document.* resolve chains (extract_text, preview_rendition, thumbnail_render), EXTRACTED/FAILED/UNSUPPORTED extraction statuses, search_text() with mandatory site scoping, and rsx:documents:status/failed/rerender plus rsx:search:reindex triage. Use when showing a PDF or Office document in a page, searching inside uploaded files, plugging in a custom viewer or converter, showing a .txt / .csv / .log as itself, deciding whether to show extracted text beside a preview or offer an \"Open in Browser\" link, or debugging a document that shows a placeholder icon, a preview stuck on \"Preparing preview...\", a text panel stuck on \"(Extracting Text...)\", missing extracted text, a failure reading \"render exceeded 20 seconds\", \"text extraction exceeded 20 seconds\" or \"killed after 60 seconds\", or the LogicException \"runs only in a command-line process\" from render_storage() / extract_storage()."
 ---
 
 # Document preview and search
@@ -11,18 +11,59 @@ Every part of this system keys its work on the **DEDUPLICATED blob** (`File_Stor
 
 ## The pipeline: one worker, three products
 
-`Document_Render_Service::render_pending` — `#[Exclusive]`, `#[Schedule('every 10 minutes')]`, kicked the moment a convertible document is uploaded — is the **only** thing that runs `soffice`. Per blob, in one pass: it produces the PDF **rendition**, extracts the **text** from it, and settles the blob's render state; the **thumbnail** is later rasterized from that same rendition. Nothing converts inside a web request.
+`Document_Render_Service::render_pending` — `#[Exclusive]`, `#[Schedule('every 10 minutes')]`, kicked the moment a convertible document is uploaded — is the **only** thing that runs `soffice`. Per blob, in one pass, in a **child process of its own**: it produces the PDF **rendition**, extracts the **text** from it, and settles the blob's render state; the **thumbnail** is later rasterized from that same rendition. Nothing converts inside a web request.
 
 **Render state lives on the blob**, `_file_storage.render_status_id`, read as `$attachment->get_render_status()`:
 
 | State | Meaning |
 |---|---|
 | `NOT_REQUIRED` (1) | Nothing to convert — an image, a plain PDF, a zip. The default. |
-| `PENDING` (2) | Queued. The queue IS this column; there is no side table. |
-| `RENDERED` (3) | Rendition on disk, `rendered_at` set, text extracted. |
-| `FAILED` (4) | **Terminal.** `render_error` holds the reason; the sweeper never retries. |
+| `PENDING` (2) | A rendition is owed and no attempt has reported yet. Shown as "Preparing preview…". |
+| `RENDERED` (3) | Rendition on disk, `rendered_at` set. |
+| `FAILED` (4) | The last attempt failed; `render_error` holds the reason. **The worker retries it** (below); whether another attempt is coming is the queue's answer, not this value's. Shown as "Preview could not be generated" either way. |
 
-An attachment flips its blob to `PENDING` on create/relink when its `pipeline_mime()` matches `config('rsx.preview.convertible')`. Dedup falls out: a blob already PENDING/RENDERED/FAILED is left alone, so re-uploading the same bytes converts nothing.
+An attachment flips its blob to `PENDING` on create/relink when its `pipeline_mime()` matches `config('rsx.preview.convertible')`. Dedup falls out: a blob already PENDING/RENDERED/FAILED is left alone, so re-uploading the same bytes converts nothing — and never hands a FAILED blob fresh attempts.
+
+### The work queue: one document cannot stop the rest
+
+The worker's queue is ONE column on the blob, `_file_storage.process_due_at` — `NULL` = nothing for the worker to do; a time = the blob owes work (a rendition, its text, or both) and may be attempted from then. `process_attempt_count` sits beside it. The drain takes the earliest due blob until none is due. A document is input the application does not control, so four rules bound what a bad one can cost (`config('rsx.documents')`):
+
+| Rule | Key (default) | What you see |
+|---|---|---|
+| The attempt is **charged before it starts** — count + 1, due time pushed one retry interval ahead | `retry_after_minutes` (30) | a blob whose worker died is still counted, and is no longer first in line |
+| One **child process per document**, killed with everything it started | `kill_seconds` (60) | `killed after 60 seconds` |
+| Each **stage** in the child is bounded — render and text extraction separately | `stage_seconds` (20) | `render exceeded 20 seconds` / `text extraction exceeded 20 seconds` |
+| A fixed number of attempts, then FAILED for good | `max_attempts` (3) | `rsx:documents:failed`: `3 of 3`, `none - out of attempts` |
+
+Render and extraction share the one queue entry and the one counter. **Retries come from the drain only — a web request never grants an attempt**: a request for a FAILED document's thumbnail gets the placeholder, one for its rendition a 404, and neither changes anything. Owed work that is switched off (`rsx.libreoffice.enabled`, `rsx.search.enabled`) is *deferred* one interval with no attempt charged. After the last attempt only an operator puts the blob back (`rsx:documents:rerender`, `rsx:search:reindex` — each resets the attempts).
+
+**A long backlog is drained in paced passes.** The pass sets no timeout and reports before every document, so the task system's silence limit never touches a working pass. After `drain_yield_after_minutes` (20), between two documents and only while work is still due, it sets its own next run `drain_resume_after_minutes` (10) ahead (`$task->run_again_in()`), says how many documents are still waiting (`Yielding after 20 minute(s): ... 1840 still waiting.`) and returns **successfully** - a voluntary yield so other scheduled work gets a turn. These two are pacing, not timeouts: nothing is cut short, nothing fails, every blob still due stays queued. A pass that empties the queue never yields; an upload's kick still starts one at once.
+
+`stage_seconds` and `kill_seconds` are **owner-sanctioned timeouts — do not "fix" them.** They bound a parse of one uploaded file, never the queue or the worker's pass; expiry is a recorded FAILED attempt and the failed-document preview, and the uploaded file is untouched. The number is set by how long the queue may stand still, not by how slow a conversion may be: a site whose ordinary documents need longer raises `stage_seconds` in `rsx/resource/config/rsx.php`, keeping `kill_seconds` above twice that. The full justification is written beside the keys in `config/rsx.php`.
+
+### Touching the queue from application code
+
+```php
+// Process one blob NOW and wait for it - callable from a web request.
+$result = Document_Render_Service::process_storage($storage);
+// ['outcome' => OUTCOME_DONE|RETRY|FAILED|WAITING|TAKEN, 'reason', 'attempt',
+//  'max_attempts', 'next_attempt_at', 'render_label']
+
+$storage->requeue_render();          // PENDING, artifacts cleared, due now, attempts reset, worker kicked
+$storage->requeue_render(false);     // ... without kicking the worker
+
+$storage->is_indexed = 0;            // say WHAT is owed ...
+$storage->save();
+$storage->mark_work_owed();          // ... then that it IS: due now, attempts reset
+
+$storage->is_render_failed_for_good();   // FAILED and out of the queue
+```
+
+- **`Document_Render_Service::render_storage()` and `Search_Index_Service::extract_storage()` are command-line only.** They are the unit of work the child runs, and from a web request they throw `LogicException` ("… runs only in a command-line process …"). `process_storage()` is the route: it charges the attempt, runs the document in the child and settles the row.
+- **Writing `render_status_id = PENDING` or `is_indexed = 0` alone queues nothing** — the worker reads `process_due_at`. Use the methods above; a set UPDATE writes `File_Storage_Model::work_owed_values()` beside the columns that say what is owed.
+- `process_storage()` on a blob that is not in the queue answers `OUTCOME_DONE` and runs nothing — re-queue it first.
+
+Worked example: `system/app/RSpade/resource/reference_app/app/dev/document_preview/document_preview_controller.php` (reset + process) and `.../app/dev/attachment_thumbnail/attachment_thumbnail_controller.php`.
 
 **The consequence every page must know: an Office document's picture, preview and text all appear a few seconds AFTER the upload, not during it.** Until then the thumbnail is an extension-icon placeholder (served `no-store`, never written to the cache) and the preview says "Preparing preview…". When the render lands, the worker emits a realtime frame on every attachment referencing the blob and both components swap themselves in place — no reload, no polling. On a realtime-disabled box the placeholder simply persists until the next navigation.
 
@@ -92,7 +133,7 @@ Four states, one of which is always painted:
 | loading | the first fetch has not answered | `(Loading...)` |
 | `pending` | no index row yet - extraction is queued | `(Extracting Text...)` |
 | `available` | text was extracted | the text, newlines preserved |
-| `error` / `unsupported` | extraction FAILED (terminal), a degraded upload, a file type carrying no text, an extraction that yielded nothing, or a gate refusal | `(Document Text Unavailable)` |
+| `error` / `unsupported` | the last extraction attempt FAILED, a degraded upload, a file type carrying no text, an extraction that yielded nothing, or a gate refusal | `(Document Text Unavailable)` |
 
 The three unavailable causes collapse into one notice on purpose: they are the same answer to a reader. An operator tells them apart with `rsx:search:reindex --status` and `rsx:documents:failed`.
 
@@ -181,7 +222,7 @@ public static function convert_cad($data)
 
 Anything outside the contract fails loud. `preview_rendition` runs AFTER the auth gates; `thumbnail_render` runs BEFORE the framework renderer registry.
 
-**Where they run now.** `extract_text` fires **inside the render worker's pass**, not in a worker of its own, and its `path` is always the SOURCE BLOB (the rendition shortcut is applied only after the chain declines). `thumbnail_render` still runs FIRST — ahead of both the rendition path and the renderer registry — and its `path` is the source blob too, so a handler that takes over an Office mime behaves exactly as it always did; it is **not fired at all** for a PENDING or FAILED blob, which serve the placeholder without entering the render path. `preview_rendition`'s contract is unchanged; only the framework path behind it became serve-only, so a handler that converts on demand still works.
+**Where they run.** `extract_text` fires **inside the render worker's child process** (command line, never a web request) and **inside the text-extraction stage bound**: the handler shares `rsx.documents.stage_seconds` (20s) with the rest of the extraction, and one still running at the bound is interrupted, the attempt recorded FAILED and retried. A handler that calls a slow external service answers inside the bound, or the site raises it. Its `path` is always the SOURCE BLOB (the rendition shortcut is applied only after the chain declines). `thumbnail_render` still runs FIRST — ahead of both the rendition path and the renderer registry — and its `path` is the source blob too, so a handler that takes over an Office mime behaves exactly as it always did; it is **not fired at all** for a PENDING or FAILED blob, which serve the placeholder without entering the render path. `preview_rendition`'s contract is unchanged; only the framework path behind it became serve-only, so a handler that converts on demand still works.
 
 ---
 
@@ -189,16 +230,16 @@ Anything outside the contract fails loud. `preview_rendition` runs AFTER the aut
 
 **Extraction is asynchronous — never expect text right after an upload.**
 
-The queue is the `_file_storage.is_indexed` flag: there is **no stored PENDING status**, because the absence of a `_search_indexes` row IS "queued". The render worker above drains it — one blob per iteration, the lowest id owing either a rendition or an extraction. (`Search_Index_Service::index_pending` no longer exists; `Search_Index_Service::extract_storage($storage, ?$rendition_path)` remains as the unit of work.)
+Two facts, kept apart: `_file_storage.is_indexed` says whether text is **owed**, and the `_search_indexes` row says what the **last attempt found**. There is **no stored PENDING status** — a blob with no row has not been attempted. The render worker above extracts in the same pass as the rendition, under the same queue and the same attempt counter. (`Search_Index_Service::extract_storage($storage, ?$rendition_path)` is the unit of work the worker's child runs — command line only.)
 
-**Two master switches, governed separately.** `config('rsx.search.enabled')` governs extraction and is also the worker's kick switch. `config('rsx.libreoffice.enabled')` governs rendering; with it off, PENDING rows simply **wait** (they are not lost — the sweeper renders them the day soffice arrives) while PDFs and plain text keep extracting normally.
+**Two master switches, governed separately.** `config('rsx.search.enabled')` governs extraction and is also the worker's kick switch. `config('rsx.libreoffice.enabled')` governs rendering through soffice; with it off, PENDING rows stay queued, **deferred** (offered again every retry interval, nothing charged — the first pass after soffice arrives renders them) while PDFs and plain text keep extracting normally.
 
 **Word-processing documents no longer run soffice for text**: `pdftotext` reads the rendition the same pass just produced. Spreadsheets and presentations keep their own `fods`/`fodp` conversion, because flat XML is the only route that reads every sheet and slide. Net: one soffice run for a Writer document, two for a sheet or deck — it used to be three for all of them.
 
-Rows are terminal, one of three:
+A row is the outcome of the last attempt, one of three:
 
 - **EXTRACTED** — text is stored (capped at `rsx.search.max_text_bytes`, 2MB; over-cap is TRUNCATED and recorded, never silently dropped and never FAILED).
-- **FAILED** — an extractor ran and genuinely failed (missing blob, broken binary).
+- **FAILED** — an extractor ran and genuinely failed (missing blob, broken binary), ran past the stage bound, or died with its process. With `is_indexed = 0` beside it the worker will retry; with `is_indexed = 1` the attempts are spent and only `rsx:search:reindex` re-queues it.
 - **UNSUPPORTED** — no configured extractor matched the mime. Images and archives land here, **not** in FAILED. There is no OCR.
 
 That distinction is the point: do not build retry or alerting logic around images. `config('rsx.search.extractors')` is the fnmatch mime map (PDF → pdftotext, Office/RTF → LibreOffice, `text/*`/csv/json → plain).
@@ -248,13 +289,13 @@ Dedup means one matching blob can back several attachments, so the builder can y
 
 | Command | Use it when |
 |---|---|
-| `rsx:documents:status` | first: render + extraction counts, rendition cache, next worker run |
-| `rsx:documents:failed [--limit=N]` | a document shows the icon forever — the reason is printed (`--limit=0` = all) |
-| `rsx:documents:rerender --failed` | after fixing the cause of render failures |
+| `rsx:documents:status` | first: the work queue (due now / waiting for a retry / deferred / failed, out of attempts), render + extraction counts, rendition cache, next worker run |
+| `rsx:documents:failed [--limit=N]` | a document shows the icon forever — the reason is printed with the attempts charged and the next attempt time, or `none - out of attempts` (`--limit=0` = all) |
+| `rsx:documents:rerender --failed` | after fixing the cause of render failures — every FAILED blob, due now with a full set of attempts |
 | `rsx:documents:rerender --storage=ID` / `--attachment=ID` | one document; open pages are notified immediately |
 | `rsx:documents:rerender --all` | you changed how documents convert. Every blob that ever entered the pipeline — never the NOT_REQUIRED images |
 
-Exactly one selector, or it exits 1. `rerender` **deletes each rendition file first** — without that, `render_storage()` short-circuits on the file already on disk and re-render is a no-op.
+Exactly one selector, or it exits 1. `rerender` **deletes each rendition file first** — without that, the worker short-circuits on the file already on disk and re-render is a no-op. It renders nothing itself: it re-queues with the attempts reset and kicks the worker.
 
 `rsx:search:reindex` — the text half, exactly ONE selector:
 
@@ -263,7 +304,7 @@ Exactly one selector, or it exits 1. `rerender` **deletes each rendition file fi
 | `--status` | first: report index counts, re-queue nothing |
 | `--attachment=<id>` | one document looks wrong (materializes external bytes) |
 | `--storage=<id>` | you already know the blob id |
-| `--failed` | a dependency was broken/missing and has been fixed |
+| `--failed` | a dependency was broken/missing and has been fixed (re-queued blobs get a full set of attempts) |
 | `--below-version=<N>` | an extractor changed; `rsx.search.extractor_version` was bumped |
 | `--all` | last resort — the whole corpus |
 
@@ -279,7 +320,7 @@ Start with `--status`. A large `UNSUPPORTED` count is usually correct (images); 
 
 **There is no concurrency semaphore any more.** One `#[Exclusive]` worker is the sole caller of soffice, so invocations are serialized by construction. `rsx.libreoffice.max_concurrent`, `rsx.libreoffice.slot_wait_timeout`, `rsx.preview.rendition_timeout` and `rsx.search.timeout` were all removed on 2026-08-22 — **delete any override you carry.**
 
-**ONE owner-sanctioned timeout lives here — do not "fix" it.** `rsx.libreoffice.timeout` (120s) bounds a single external document-binary invocation, `soffice` or `pdftotext`. It qualifies under the no-timeout mandate because those binaries WEDGE rather than merely running slowly, the worker is single-threaded (so one wedged document would block every later one forever), and expiry degrades to a working outcome: the blob is recorded FAILED and the extension icon is served. It is not a cap on our own work, and lowering it will start failing legitimate renders. The full justification is written beside the key in `config/rsx.php`.
+**No key under `rsx.libreoffice` bounds a conversion.** `soffice` and `pdftotext` carry no limit of their own: each runs inside one of the worker's two stages and is bounded with it, by `rsx.documents.stage_seconds` (see **The work queue** above). Under the sandbox, an expired stage also kills the named container, because the process PHP stops is only the docker client.
 
 ---
 
@@ -287,8 +328,11 @@ Start with `--status`. A large `UNSUPPORTED` count is usually correct (images); 
 
 - **Nothing renders, no error** — the attachment id is wrong, or the mime resolved to `Icon_Viewer` (no viewer registered for it).
 - **Handler never fires on `loaded`** — you listened for the reserved lifecycle event; it is `preview_loaded`.
-- **Preview stuck on "Preparing preview…"** — the blob is PENDING. `rsx:documents:status`: if the count never falls the worker is not running (`rsx:task:process`, `rsx:health` "Document Render Backlog") or `rsx.libreoffice.enabled` is false.
-- **A document shows the extension icon forever** — that IS the correct picture for PENDING or FAILED. `rsx:documents:status` says which; `rsx:documents:failed` names the reason. FAILED is terminal by design.
+- **Preview stuck on "Preparing preview…"** — the blob is PENDING and no attempt has reported. `rsx:documents:status`: if "Due now" never falls the worker is not running (`rsx:task:process`, `rsx:health` "Document Render Backlog"); PENDING with nothing due means `rsx.libreoffice.enabled` is false and the blobs are deferred.
+- **A document shows the extension icon forever** — that IS the correct picture for PENDING or FAILED. `rsx:documents:status` says which; `rsx:documents:failed` names the reason and whether the worker will try again by itself. Out of attempts → fix the cause, then `rsx:documents:rerender --failed`.
+- **`render exceeded 20 seconds` on every attempt** — the document needs longer than the stage bound on this hardware. If it is an ordinary document for the site, raise `rsx.documents.stage_seconds` (and `kill_seconds` above twice that), then rerender.
+- **`… runs only in a command-line process …`** — `render_storage()` / `extract_storage()` called from a web request. Call `Document_Render_Service::process_storage($storage)`.
+- **You set `is_indexed = 0` or PENDING and nothing happens** — the blob is not in the queue. `mark_work_owed()` / `requeue_render()`.
 - **404 from `/_preview/pdf/:key`** — not an error condition: the blob is not RENDERED yet and the body names the state. The viewer never requests it in that state.
 - **415 from `/_preview/pdf/:key`** — the mime is not in `rsx.preview.convertible`.
 - **403 on a preview that a download allows** — the route is dual-gated; check `file.thumbnail.authorize`, not just `file.download.authorize`.

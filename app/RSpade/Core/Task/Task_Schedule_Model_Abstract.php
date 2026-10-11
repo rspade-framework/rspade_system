@@ -19,6 +19,10 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * advancing next_run_at and creating the run's _tasks row in one transaction, so a schedule
  * has a run history like any other task.
  *
+ * next_run_at may also be SET: Task::set_next_run() (and $task->run_again_in() for a task's
+ * own schedule) moves one run; reconciliation leaves a matching declaration's next_run_at
+ * alone, and the claim of that run recomputes the following one from the cron expression.
+ *
  * The run statistics (last_success_at, last_error_at, last_error, consecutive_failures,
  * last_task_id) are written when a scheduled run settles. A schedule is never stopped by its
  * failures: each failing run is FAILED, and the schedule runs again at its next cadence.

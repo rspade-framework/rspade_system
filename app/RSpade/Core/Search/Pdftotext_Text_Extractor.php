@@ -3,9 +3,8 @@
 namespace App\RSpade\Core\Search;
 
 use Exception;
-use Symfony\Component\Process\Exception\ProcessTimedOutException;
-use Symfony\Component\Process\Process;
 use App\RSpade\Core\Files\Document_Sandbox;
+use App\RSpade\Core\Files\Document_Stage_Bound;
 use App\RSpade\Core\Search\Rsx_Extraction_Unsupported_Exception;
 use App\RSpade\Core\Search\Rsx_Text_Extractor_Abstract;
 
@@ -58,26 +57,9 @@ class Pdftotext_Text_Extractor extends Rsx_Text_Extractor_Abstract
                 throw new Exception('Failed to stage PDF for text extraction');
             }
 
-            // ONE sanctioned timeout bounds every external document binary this pipeline invokes -
-            // soffice and pdftotext alike. Both are the same shape (an external process that can wedge
-            // on malformed input and never return), so they share one number rather than carrying a
-            // second, separately-argued one. Justified in full at the config key.
+            // pdftotext runs inside the text-extraction stage and is bounded with it.
             $command = Document_Sandbox::command([$binary, '-enc', 'UTF-8', $staged, '-'], $work_dir);
-            $process = new Process($command);
-            $process->setTimeout((int) config('rsx.libreoffice.timeout', 120));
-
-            try {
-                $process->run();
-            } catch (ProcessTimedOutException $e) {
-                // Expiry kills the process Symfony started - which under the sandbox is the docker
-                // CLIENT, leaving the wedged converter running in its container.
-                $container = Document_Sandbox::container_name($command);
-                if ($container !== null) {
-                    Document_Sandbox::kill($container);
-                }
-
-                throw $e;
-            }
+            $process = Document_Stage_Bound::run_process($command);
 
             if (!$process->isSuccessful()) {
                 $stderr = trim($process->getErrorOutput());

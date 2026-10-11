@@ -28,7 +28,8 @@ use App\RSpade\Core\Task\Task_Runner;
  * Each tick it:
  * 1. Recovers RUNNING runs that will never settle on their own: those whose worker has left its
  *    pool (rsx-lockd's answer, asked under that pool's lock), and those whose live local worker
- *    has outrun the run's timeout (a force kill is requested and a kill worker carries it out).
+ *    has reported nothing for rsx.tasks.silent_timeout, or has outrun a timeout the run was
+ *    dispatched with (a force kill is requested and a kill worker carries it out).
  * 2. Hands kill requests whose kill worker died back to the queue.
  * 3. Reconciles _task_schedules against the manifest's #[Schedule] declarations (register new,
  *    re-register a changed cron expression, delete removed) so schedule edits take effect
@@ -56,7 +57,7 @@ class Task_Process_Command extends Command
      * lines that matter. There is deliberately no "starting"/"complete" pair.
      *
      * Everything below still speaks up, because everything below is CONDITIONAL: an abandoned
-     * run and a timeout warn (an unreachable rsx-lockd throws); a schedule actually registered,
+     * run and a silent or timed-out run warn (an unreachable rsx-lockd throws); a schedule actually registered,
      * changed or removed says so; a spawn says so when it started a worker. --once is a testing
      * flag and narrates itself. Keep it that way - problems and real events, never a heartbeat.
      */
@@ -99,11 +100,12 @@ class Task_Process_Command extends Command
      *    A run with NO worker_id ran inline (Task::internal(), rsx:task:run, --once), which is
      *    no pool member: the verdict is the local pid probe, taken only on the run's own host.
      *
-     * 2. TIMED OUT - a POOL worker is alive AND runs on this host, and it has exceeded its
-     *    execution cap (the run's own timeout, else rsx.tasks.default_timeout). A force kill is
-     *    requested and a kill worker carries it out - the same path an operator's force kill
-     *    takes. This is the ONLY enforcement of tasks.timeout, so the cap's granularity is one
-     *    cron tick.
+     * 2. SILENT, OR PAST A REQUESTED TIMEOUT - a POOL worker is alive AND runs on this host,
+     *    and its run has shown no sign of life for rsx.tasks.silent_timeout seconds, or - for a
+     *    run dispatched with an explicit timeout - has run that long since it started
+     *    (enforce_task_timeout()). A force kill is requested and a kill worker carries it out -
+     *    the same path an operator's force kill takes. This is the only enforcement of either
+     *    limit, so their granularity is one cron tick.
      */
     private function detect_stuck_tasks(): void
     {
@@ -303,9 +305,19 @@ class Task_Process_Command extends Command
     }
 
     /**
-     * Request a force kill of a live run that has outrun its execution cap: the run's own
-     * timeout, else rsx.tasks.default_timeout (0 on both = no cap). A run that already has a
-     * live kill request is left to it.
+     * Request a force kill of a live worker-run task that is past its limit. Two rules, and a
+     * run is under exactly one of them:
+     *
+     *   - SILENCE (the rule for every run that names no timeout): the run has shown no sign of
+     *     life for rsx.tasks.silent_timeout seconds. The sign of life is the latest of
+     *     started_at, last_heartbeat_at and last_report_at - every Task_Instance reporting
+     *     call stamps one of them - so a task that keeps reporting has NO limit on how long it
+     *     runs, and one that reports nothing is killed that long after it started. 0 = no
+     *     silence limit.
+     *   - A HARD LIMIT (only a run dispatched with an explicit 'timeout'): that many seconds
+     *     from started_at, reporting or not - somebody asked for it by name.
+     *
+     * A run that already has a live kill request is left to it.
      *
      * @param object $task A RUNNING _tasks row whose worker process is alive on this host.
      */
@@ -313,30 +325,70 @@ class Task_Process_Command extends Command
     {
         // An inline run belongs to the process that started it (a command, a request): its
         // length is that caller's business, and the reaper never kills it for time.
-        if ($task->worker_id === null) {
+        if ($task->worker_id === null || $task->started_at === null) {
             return;
         }
 
-        $timeout = (int) ($task->timeout ?? 0);
-        if ($timeout <= 0) {
-            $timeout = (int) config('rsx.tasks.default_timeout', 0);
+        $now = time();
+        $hard_limit = (int) ($task->timeout ?? 0);
+
+        if ($hard_limit > 0) {
+            $ran_for = $now - strtotime($task->started_at);
+            if ($ran_for <= $hard_limit) {
+                return;
+            }
+
+            $explanation = "timed out after {$ran_for}s (cap {$hard_limit}s)";
+        } else {
+            $silent_limit = static::__silent_timeout();
+            if ($silent_limit === 0) {
+                return;
+            }
+
+            $silent_for = $now - static::__last_sign_of_life($task);
+            if ($silent_for <= $silent_limit) {
+                return;
+            }
+
+            $explanation = "no report for {$silent_for}s (cap {$silent_limit}s)";
         }
 
-        if ($timeout <= 0 || $task->started_at === null) {
-            return;
-        }
-
-        $ran_for = time() - strtotime($task->started_at);
-        if ($ran_for <= $timeout) {
-            return;
-        }
-
-        $explanation = "timed out after {$ran_for}s (cap {$timeout}s)";
         $requested = Task_Kill_Worker::request(Task_Run_Model::find($task->id), Task_Kill_Request_Model::MODE_FORCE_KILL, 0, $explanation, 'the timeout reaper');
 
         if ($requested) {
             $this->warn("[TASK TIMEOUT] {$task->class}::{$task->method} (task {$task->id}, worker PID {$task->worker_pid}) {$explanation} -> force kill requested");
         }
+    }
+
+    /**
+     * When a RUNNING run last showed it was alive, as a unix time: the latest of its start, its
+     * last heartbeat and its last written report.
+     *
+     * @param object $task A _tasks row with started_at set
+     */
+    private static function __last_sign_of_life(object $task): int
+    {
+        $latest = strtotime($task->started_at);
+
+        foreach ([$task->last_heartbeat_at ?? null, $task->last_report_at ?? null] as $moment) {
+            if ($moment !== null) {
+                $latest = max($latest, strtotime($moment));
+            }
+        }
+
+        return $latest;
+    }
+
+    /** rsx.tasks.silent_timeout, validated: whole seconds, 0 for no silence limit. */
+    private static function __silent_timeout(): int
+    {
+        $seconds = config('rsx.tasks.silent_timeout');
+
+        if (!is_int($seconds) || $seconds < 0) {
+            throw new \RuntimeException('rsx.tasks.silent_timeout must be an integer >= 0 (seconds; 0 = no limit), got ' . var_export($seconds, true));
+        }
+
+        return $seconds;
     }
 
     /**

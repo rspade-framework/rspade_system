@@ -245,7 +245,7 @@ The reload is the whole "return to login": the server redirects and brings the u
 
 ### A sign-in moves the browser to a new session row
 
-Every real sign-in (`RsxAuth::login()`, a passed 2FA challenge, passkey, SSO, a portal sign-in) mints a NEW `_sessions` row with a new token and CSRF token, carries the tenant, the other experience's identity, session values and flash alerts across, and **supersedes** the old row - it stays as an anonymous session and never authenticates again. So a copied or planted cookie is worthless across a sign-in, and a forced re-login actually evicts whoever else held it. Consequences worth knowing:
+Every real sign-in (`RsxAuth::login()`, a passed 2FA challenge, passkey, SSO, a portal sign-in) mints a NEW `_sessions` row with a new token and CSRF token, carries the tenant, the other experience's identity, session values and flash alerts across, and **retires** the old row - marked inactive with its record (whose it was, which tenant, since when) left in place, pointing at its successor. **A request still carrying a retired row's token is refused** (page: 401; Ajax: `session_expired`, cause `retired`) and is sent no cookie. **An expired sign-in retires its row the same way**: the browser moves to a successor row, signed out. So a copied or planted cookie is worthless across a sign-in, and a forced re-login actually evicts whoever else held it. Consequences worth knowing:
 
 - `Session::get_session_id()` is a different number after a sign-in. Never store one across a login expecting it to match.
 - The CSRF token changes with it. A sign-in made by an Ajax call is handed the new token automatically; a hand-built form rendered before the sign-in must be re-rendered.

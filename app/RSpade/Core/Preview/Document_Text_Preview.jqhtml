@@ -15,7 +15,7 @@ States, in the order the template tests them:
                          gone (the ONLY failures reaching the catch)  -> (Document Text Unavailable)
   info === null          the first load has not answered yet          -> (Loading...)
   status 'pending'       no index row yet - extraction is queued     -> (Extracting Text...)
-  status 'error'         extraction failed (terminal), a degraded
+  status 'error'         extraction failed, a degraded
                          upload, or the caller may not read the file -> (Document Text Unavailable)
   status 'unsupported'   this file type carries no extractable text  -> (Document Text Unavailable)
   status 'available'
