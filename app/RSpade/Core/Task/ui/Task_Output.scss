@@ -3,7 +3,7 @@
 // element or descendant rule (`.card button`, `.panel span`) does not outrank it. The
 // terminal is black in both themes (stdout white, stderr bold amber); dark mode only
 // separates its frame from a dark page. No CSS custom properties (an undefined var()
-// invalidates the whole declaration); dark mode is `body.rsx-dark`.
+// invalidates the whole declaration); dark mode is `html.rsx-dark`.
 .Task_Output {
     @include rsx-text-sans;
     display: flex;
@@ -119,7 +119,7 @@
         background: #000;
     }
 
-    body.rsx-dark & {
+    html.rsx-dark & {
         border-color: #3a3f44;
     }
 }

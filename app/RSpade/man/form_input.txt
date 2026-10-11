@@ -244,6 +244,41 @@ VALUE COERCION
         Inside the widget, _get_value() returns Type.from_editor(...) and
         _set_value() reads value.to_storage(); nothing else converts.
 
+THE CORE INPUT: Code_Input
+
+    One concrete input ships in framework core beside the base class, because the
+    framework's own second-factor screens are built on it (rsx:man two_factor):
+
+        <Code_Input $name="code" [$length=6] [$align="center"] [$disabled] />
+
+    A one-time numeric code typed one digit per box. Its value is the digits
+    entered so far as a string - "" empty, "4071" part-way, "407193" complete -
+    and leading zeros survive ("0042" is not 42).
+
+    It keeps ONE invariant: the boxes are filled from the left with no gaps.
+    So wherever a click, a tap or Tab lands, the cursor goes to the first empty
+    box (or after the digit in the last box when all are full); a non-digit is
+    dropped as it is typed; Backspace in an empty box clears the previous one;
+    a paste, or a phone's one-time-code autofill, into any box is spread across
+    the boxes that follow and the overflow discarded (no box has a maxlength,
+    and only the first asks for autocomplete="one-time-code").
+
+    ENTER is left alone once every box is filled, so it takes the path Enter
+    takes in any text input - the form's submit, a form dialog's default
+    button. While a box is empty it is swallowed. A host that is not a form
+    listens for keydown on the component and acts when the event was not
+    default-prevented.
+
+    is_complete() answers whether every box holds a digit. That is for a host
+    that wants to know; it is NOT validation. "All six digits" is a rule the
+    server can see for itself and enforces once.
+
+    Each box is a Bootstrap .form-control, 1.5x the surrounding text, in a row
+    that shrinks to fit a narrow host. The error renderer's is-invalid on the
+    component turns the box borders red. An application restyles it with its
+    own rules on .Code_Input, and replaces it outright by declaring a
+    Code_Input of its own (rsx:man class_override).
+
 EXTENDING ANOTHER INPUT
 
     class Select_Ajax_Input extends Select_Input {
@@ -286,7 +321,6 @@ BUILT-IN INPUTS
     Checkbox_Multiselect_Input    checkbox group whose value is an array
     Hidden_Input                  hidden value, no Form_Field wrapper
     Tag_List_Input                a list of short strings as one array value
-    Pin_Input                     fixed-length code entry
     Profile_Photo_Input           photo upload and crop
     Repeater_Simple_Input         repeating simple values
     Wysiwyg_Input                 rich text (Quill), async initialization

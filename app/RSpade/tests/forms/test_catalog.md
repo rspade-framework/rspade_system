@@ -83,3 +83,18 @@ drew the top alert only when it had found a field error. The probe is a runtime-
 | forms-focus-02 | before ready nothing moves | `focus()` with the ready flag clear | the active element is unchanged | implemented |
 | forms-focus-03 | readiness honours the request after the value | `val('buffered')`, `focus()`, `_mark_ready()` | focused, and the control held the value when it took focus | implemented |
 | forms-focus-04 | readiness alone moves nothing | `_mark_ready()` with nothing pending | the active element is unchanged | implemented |
+
+## code_input.js (playwright) - `Code_Input`, one digit per box
+
+Real keyboard input on a runtime-mounted widget on `/_sys`.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-code-01 | fills from the left, digits only | type `4x0` | value `40`, cursor in box 3 | implemented |
+| forms-code-02 | no gaps | click box 5, type `7` | the digit lands in box 3 | implemented |
+| forms-code-03 | Backspace in an empty box | Backspace | the previous box is cleared, cursor steps back | implemented |
+| forms-code-04 | Enter with boxes empty | Enter | default prevented | implemented |
+| forms-code-05 | paste is spread, overflow dropped | `12-34 5678` into box 3 | `401234`, complete | implemented |
+| forms-code-06 | a full last box takes no more | type `9` | unchanged | implemented |
+| forms-code-07 | Enter with every box full | Enter | not prevented | implemented |
+| forms-code-08 | the input contract | `val('')`, `focus()`, `val('00a42')` | cleared, cursor in box 1, `0042`; `input` carried the value; no `maxlength`, one `one-time-code` | implemented |

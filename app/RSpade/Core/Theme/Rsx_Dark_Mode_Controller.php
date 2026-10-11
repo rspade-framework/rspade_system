@@ -45,10 +45,9 @@ class Rsx_Dark_Mode_Controller extends Rsx_Controller_Abstract
     /**
      * Store the preference.
      *
-     * Returns 'changed', which says the RESOLVED theme moved - that is what tells the
-     * client the page it is looking at is now painted wrong. The client's job on a change
-     * is to make the NEXT navigation a full page load (Spa.disable()), because the theme
-     * is rendered server-side into <body> and only a real request can re-render it.
+     * Returns the stored 'mode' (hand it to Rsx_Dark_Mode.set_mode() to re-theme the page
+     * on screen in place), 'changed' (whether the stored value moved) and 'is_dark' (the
+     * server's resolved answer, null under auto).
      */
     #[Ajax_Endpoint]
     public static function set_dark_mode(Request $request, array $params = [])

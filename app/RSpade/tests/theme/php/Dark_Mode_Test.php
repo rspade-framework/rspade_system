@@ -12,12 +12,13 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Theme\Rsx_Dark_Mode;
 
 /**
- * The theme preference: resolution, the body contract, and the app-declared seam.
+ * The theme preference: resolution, storage, and the vocabulary shipped to the browser.
  *
- * THE PROPERTY THAT MATTERS is that an EXPLICIT preference is answerable on the server -
- * that is what lets the theme be painted into the HTML instead of corrected a frame later
- * by script. AUTO deliberately is not: prefers-color-scheme lives in the browser, so the
- * server must say "I do not know" rather than guess, and these tests pin that null.
+ * The server never paints a theme - autotheme.js puts it on <html> before first paint
+ * from window.rsxapp.theme - so what is pinned here is what that payload is built from:
+ * the stored mode, the class names, and the app-declared attribute sets. AUTO resolves
+ * to null server-side: prefers-color-scheme lives in the browser, so the server must say
+ * "I do not know" rather than guess.
  */
 class Dark_Mode_Test extends Rsx_Test_Abstract
 {
@@ -72,64 +73,32 @@ class Dark_Mode_Test extends Rsx_Test_Abstract
         static::__assert_null(Rsx_Dark_Mode::is_dark(), 'auto resolves to null, never to a guess');
     }
 
-    // --- the body contract -----------------------------------------------------------------------
+    // --- the vocabulary shipped to autotheme.js ---------------------------------------------------
 
     /**
-     * The mode class is always present and names the CHOICE; the dark class appears only
-     * when dark is actually showing. A rule written against the mode class would be wrong
-     * for half of auto's users, which is why they are two different classes.
+     * The mode class names the CHOICE and the dark class names what is SHOWING. A rule
+     * written against the mode class would be wrong for half of auto's users, which is
+     * why they are two different names.
      */
-    public static function test_body_classes_name_mode_and_active_theme()
+    public static function test_mode_class_names_the_choice()
     {
-        static::__set_mode(Login_User_Model::DARK_MODE_DARK);
-        $classes = Rsx_Dark_Mode::body_classes();
-        static::__assert_true(in_array('rsx-theme-dark', $classes, true), 'names the mode');
-        static::__assert_true(in_array('rsx-dark', $classes, true), 'dark is active');
+        static::__assert_equals('rsx-theme-', Rsx_Dark_Mode::mode_class_prefix());
+        static::__assert_equals('rsx-theme-light', Rsx_Dark_Mode::mode_class(Login_User_Model::DARK_MODE_LIGHT));
+        static::__assert_equals('rsx-theme-dark', Rsx_Dark_Mode::mode_class(Login_User_Model::DARK_MODE_DARK));
+        static::__assert_equals('rsx-theme-auto', Rsx_Dark_Mode::mode_class(Login_User_Model::DARK_MODE_AUTO));
+        static::__assert_equals('rsx-dark', Rsx_Dark_Mode::dark_class());
 
-        static::__set_mode(Login_User_Model::DARK_MODE_LIGHT);
-        $classes = Rsx_Dark_Mode::body_classes();
-        static::__assert_true(in_array('rsx-theme-light', $classes, true), 'names the mode');
-        static::__assert_false(in_array('rsx-dark', $classes, true), 'dark is not active');
+        config(['rsx.theme.dark_mode.mode_class_prefix' => 'theme-', 'rsx.theme.dark_mode.dark_class' => 'is-dark']);
+        static::__assert_equals('theme-auto', Rsx_Dark_Mode::mode_class(Login_User_Model::DARK_MODE_AUTO));
+        static::__assert_equals('is-dark', Rsx_Dark_Mode::dark_class());
     }
-
-    public static function test_auto_carries_the_mode_but_no_theme()
-    {
-        static::__set_mode(Login_User_Model::DARK_MODE_AUTO);
-
-        $classes = Rsx_Dark_Mode::body_classes();
-
-        static::__assert_true(in_array('rsx-theme-auto', $classes, true), 'the mode is stated');
-        static::__assert_false(
-            in_array('rsx-dark', $classes, true),
-            'the server never asserts a theme it cannot know - the client resolves auto'
-        );
-    }
-
-    // --- the app-declared seam -------------------------------------------------------------------
 
     /**
      * The framework ships no UI toolkit, so it declares no attribute of its own. An app
-     * names its vocabulary in config and the framework renders it verbatim.
+     * names its vocabulary in config, per resolved theme, and both sets are answerable
+     * whatever the mode - the browser picks between them.
      */
-    public static function test_app_declared_attributes_are_rendered_for_the_active_theme()
-    {
-        config(['rsx.theme.dark_mode.attributes' => [
-            'dark' => ['data-test-theme' => 'dark'],
-            'light' => ['data-test-theme' => 'light'],
-        ]]);
-
-        static::__set_mode(Login_User_Model::DARK_MODE_DARK);
-        static::__assert_equals(['data-test-theme' => 'dark'], Rsx_Dark_Mode::body_attributes());
-
-        static::__set_mode(Login_User_Model::DARK_MODE_LIGHT);
-        static::__assert_equals(['data-test-theme' => 'light'], Rsx_Dark_Mode::body_attributes());
-    }
-
-    /**
-     * Under auto there is nothing honest to render, so nothing is. Rsx_Dark_Mode.js applies
-     * the right set at boot instead.
-     */
-    public static function test_auto_renders_no_attributes()
+    public static function test_app_declared_attributes_are_answered_per_theme()
     {
         config(['rsx.theme.dark_mode.attributes' => [
             'dark' => ['data-test-theme' => 'dark'],
@@ -138,7 +107,8 @@ class Dark_Mode_Test extends Rsx_Test_Abstract
 
         static::__set_mode(Login_User_Model::DARK_MODE_AUTO);
 
-        static::__assert_empty(Rsx_Dark_Mode::body_attributes(), 'auto is resolved client-side');
+        static::__assert_equals(['data-test-theme' => 'dark'], Rsx_Dark_Mode::attributes_for(true));
+        static::__assert_equals(['data-test-theme' => 'light'], Rsx_Dark_Mode::attributes_for(false));
     }
 
     /**
@@ -147,16 +117,27 @@ class Dark_Mode_Test extends Rsx_Test_Abstract
     public static function test_no_declared_vocabulary_is_valid()
     {
         config(['rsx.theme.dark_mode.attributes' => ['dark' => [], 'light' => []]]);
+
+        static::__assert_empty(Rsx_Dark_Mode::attributes_for(true));
+        static::__assert_empty(Rsx_Dark_Mode::attributes_for(false));
+    }
+
+    /**
+     * The view's body class carries the view id and nothing about the theme, which lives
+     * on <html>.
+     */
+    public static function test_body_class_carries_no_theme()
+    {
         static::__set_mode(Login_User_Model::DARK_MODE_DARK);
 
-        static::__assert_empty(Rsx_Dark_Mode::body_attributes());
-        static::__assert_true(in_array('rsx-dark', Rsx_Dark_Mode::body_classes(), true), 'the class still lands');
+        static::__assert_false(str_contains(rsx_body_class(), 'rsx-dark'));
+        static::__assert_false(str_contains(rsx_body_class(), 'rsx-theme-'));
     }
 
     // --- writing ---------------------------------------------------------------------------------
 
     /**
-     * 'changed' is what tells the client the page it is looking at is now painted wrong.
+     * 'changed' reports whether the stored value moved.
      */
     public static function test_set_mode_reports_whether_the_answer_moved()
     {

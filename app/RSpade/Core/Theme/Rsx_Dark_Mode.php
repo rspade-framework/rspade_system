@@ -11,16 +11,17 @@ use App\RSpade\Core\Session\Session;
  *
  * THREE MODES, AND THE THIRD IS NOT AN ABSENCE. light and dark are explicit choices the
  * server can resolve on its own; AUTO means "follow the operating system", which is a
- * real stored preference whose ANSWER only the browser knows. That asymmetry shapes
- * everything here: an explicit mode is decided server-side and painted in the first byte
- * of HTML, while auto is carried to the client as a mode and resolved there.
+ * real stored preference whose ANSWER only the browser knows. So the server never paints
+ * a theme: it ships the mode and the vocabulary in window.rsxapp.theme, and autotheme.js
+ * - a synchronous script every bundle emits ahead of its stylesheets - puts the result
+ * on <html> before the first paint, for all three modes alike.
  *
  * WHAT THIS CLASS OWNS, AND WHAT IT DOES NOT. It owns the preference (read, write,
- * resolve) and the CLASS NAME that expresses it. It owns no colours, no stylesheet and no
+ * resolve) and the CLASS NAMES that express it. It owns no colours, no stylesheet and no
  * opinion about a UI toolkit: RSpade does not know whether an app is built on Bootstrap,
  * Tailwind or hand-written CSS. An app names its own vocabulary in
- * config('rsx.theme.dark_mode.attributes') and the framework renders it on the <body>
- * tag for it - that is the whole extension point.
+ * config('rsx.theme.dark_mode.attributes') and the framework sets it on <html> for it -
+ * that is the whole extension point.
  *
  * STAFF ONLY, deliberately, exactly like the timezone preference: the column lives on
  * login_users, and portal_users has no equivalent. A portal request therefore resolves to
@@ -33,8 +34,8 @@ class Rsx_Dark_Mode
 {
     /**
      * Memoized resolved mode for this request, keyed by the identity it was resolved for.
-     * Resolution touches the database, and the theme is asked for at least twice per
-     * render (the body class, then the rsxapp payload).
+     * Resolution touches the database, and the rsxapp payload asks for it more than once
+     * per render.
      *
      * @var array<string, int>
      */
@@ -69,8 +70,7 @@ class Rsx_Dark_Mode
     }
 
     /**
-     * Store a mode for the signed-in identity. Returns whether the value actually moved,
-     * which is what tells a caller the already-rendered page is now stale.
+     * Store a mode for the signed-in identity. Returns whether the value actually moved.
      */
     public static function set_mode(int $mode): bool
     {
@@ -113,8 +113,7 @@ class Rsx_Dark_Mode
      * say (auto).
      *
      * Null is the honest answer for auto and callers must handle it: the server cannot
-     * read prefers-color-scheme. Anything that renders a definite theme uses this, and
-     * treats null as "let the client decide".
+     * read prefers-color-scheme.
      */
     public static function is_dark(): ?bool
     {
@@ -125,51 +124,6 @@ class Rsx_Dark_Mode
         }
 
         return $mode === Login_User_Model::DARK_MODE_DARK;
-    }
-
-    /**
-     * The classes to put on <body> for this request.
-     *
-     * Always includes the marker class naming the MODE, so CSS and JS can both see what
-     * was asked for; includes the dark class only when dark is definitely active. Under
-     * auto the dark class is absent server-side and Rsx_Dark_Mode.js adds it at boot if
-     * the OS says so.
-     *
-     * @return string[]
-     */
-    public static function body_classes(): array
-    {
-        $classes = [static::mode_class(static::get_mode())];
-
-        if (static::is_dark() === true) {
-            $classes[] = static::dark_class();
-        }
-
-        return $classes;
-    }
-
-    /**
-     * The app's OWN theme vocabulary for this request, as attribute => value.
-     *
-     * THE UI-AGNOSTIC SEAM. RSpade renders these on <body> and has no idea what they
-     * mean; an app declares them in config('rsx.theme.dark_mode.attributes') keyed by
-     * 'dark' and 'light'. A Bootstrap app declares data-bs-theme; something else declares
-     * whatever it uses. Empty by default, because the framework ships no UI toolkit.
-     *
-     * Under AUTO this returns nothing - the answer is not known server-side, and
-     * Rsx_Dark_Mode.js applies the right set at boot instead.
-     *
-     * @return array<string, string>
-     */
-    public static function body_attributes(): array
-    {
-        $is_dark = static::is_dark();
-
-        if ($is_dark === null) {
-            return [];
-        }
-
-        return static::attributes_for($is_dark);
     }
 
     /**
@@ -194,11 +148,19 @@ class Rsx_Dark_Mode
     }
 
     /**
+     * The prefix of the class that names which MODE was chosen.
+     */
+    public static function mode_class_prefix(): string
+    {
+        return (string) config('rsx.theme.dark_mode.mode_class_prefix', 'rsx-theme-');
+    }
+
+    /**
      * The class that names which MODE was chosen (not which theme is showing).
      */
     public static function mode_class(int $mode): string
     {
-        $prefix = (string) config('rsx.theme.dark_mode.mode_class_prefix', 'rsx-theme-');
+        $prefix = static::mode_class_prefix();
 
         if ($mode === Login_User_Model::DARK_MODE_DARK) {
             return $prefix . 'dark';

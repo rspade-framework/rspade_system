@@ -142,7 +142,7 @@ class Schema_Contract
                         'migration' => '2026_08_18_145643 (login_users.timezone_auto)',
                     ],
                     'dark_mode' => [
-                        'where' => 'Rsx_Dark_Mode::get_preference()/set_preference()',
+                        'where' => 'Rsx_Dark_Mode::get_mode()/set_mode()',
                         'migration' => '2026_08_27_105609 (login_users.dark_mode)',
                     ],
                     'remember_token' => ['where' => "Laravel's Authenticatable trait"],

@@ -1,7 +1,7 @@
 // SELF-CONTAINED: the badge is embedded in somebody else's application, so it inherits nothing
 // and sets every property it draws with, nested under its own root so a host's element or
 // descendant rule (`.card span`, `.table td *`) does not outrank it. No CSS custom properties
-// (an undefined var() invalidates the whole declaration); dark mode is `body.rsx-dark`.
+// (an undefined var() invalidates the whole declaration); dark mode is `html.rsx-dark`.
 .Task_Status_Badge {
     @include rsx-text-sans;
     display: inline-block;
@@ -50,7 +50,7 @@
         color: #1a1a1a;
     }
 
-    body.rsx-dark & {
+    html.rsx-dark & {
         .Task_Status_Badge__badge {
             background: #495057;
             color: #f1f3f5;

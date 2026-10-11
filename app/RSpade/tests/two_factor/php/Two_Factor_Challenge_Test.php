@@ -362,19 +362,33 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * An empty input is not an answer.
+     * A blank answer is refused WITHOUT being counted: no input, an empty code and a
+     * whitespace-only code are not guesses, so none of them spends the throttle budget, the
+     * challenge's attempts or the identity's. The challenge is still there afterwards.
      */
-    public static function test_an_empty_answer_is_refused()
+    public static function test_a_blank_answer_is_refused_and_spends_nothing()
     {
         $fixture = static::__enrolled_identity('empty');
+        $email = $fixture['email'];
 
         Rsx_Two_Factor::begin_challenge($fixture['login_user']);
 
-        static::__assert_throws(
-            Two_Factor_Failed_Exception::class,
-            fn () => Rsx_Two_Factor::verify_challenge([])
-        );
+        $before = Login_History::get_failed_attempts_count($email);
 
+        // More blank answers than the challenge's failure cap allows wrong ones.
+        for ($round = 0; $round < Rsx_Two_Factor::challenge_max_failures() + 1; $round++) {
+            foreach ([[], ['code' => ''], ['code' => '   ']] as $input) {
+                static::__assert_throws(
+                    Two_Factor_Failed_Exception::class,
+                    fn () => Rsx_Two_Factor::verify_challenge($input),
+                    'Enter your verification code'
+                );
+            }
+        }
+
+        static::__assert_equals($before, Login_History::get_failed_attempts_count($email), 'no failure was recorded');
+        static::__assert_not_null(Rsx_Two_Factor::challenge_pending(), 'the challenge is still pending');
+        static::__assert_false(Rsx_Two_Factor::is_locked((int) $fixture['login_user']->id), 'the identity is not locked');
         static::__assert_false(Session::is_logged_in());
     }
 

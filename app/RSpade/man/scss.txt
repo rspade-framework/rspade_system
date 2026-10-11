@@ -624,7 +624,7 @@ SEE ALSO
     spa - SPA routing and actions
     jqhtml - Component template system
     responsive - semantic breakpoint mixins and column classes
-    dark_mode - the theme preference, how it reaches <body>, and what the
+    dark_mode - the theme preference, how it reaches <html>, and what the
                 runtime tokens are flipping between
     coding_standards - General naming conventions
     code_quality - Code quality rule system

@@ -400,6 +400,11 @@ class AssetHandler
      */
     protected static function __discover_public_directories()
     {
+        // The framework's own public files (autotheme.js). Everything in it lives under a
+        // /_-prefixed path, which is framework-owned, so it cannot collide with an
+        // application's file.
+        static::$public_directories['_core'] = base_path('app/RSpade/Core/public');
+
         $rsx_path = base_path('rsx');
         
         if (!File::isDirectory($rsx_path)) {

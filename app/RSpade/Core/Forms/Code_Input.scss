@@ -1,0 +1,38 @@
+/* Code_Input - the row of single-digit boxes.
+
+   Each box is the application's own Bootstrap .form-control (border, fill, focus ring,
+   disabled state), so this file declares only what makes it a DIGIT box: its width, centred
+   text, the larger type, and the gap between boxes. Core has no palette; the one colour read
+   here is Bootstrap's own danger variable. */
+.Code_Input {
+    .Code_Input__boxes {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .Code_Input__boxes--center {
+        justify-content: center;
+    }
+
+    .Code_Input__box {
+        /* One and a half times the text around the widget, so a code read off a phone is easy
+           to check. `em` here is the INHERITED size: .form-control sets its own, and this
+           replaces it. */
+        font-size: 1.5em;
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+
+        /* A square-ish cell that may SHRINK (never grow), so the row stays inside a narrow
+           host - a login card, a phone - instead of overflowing it. */
+        flex: 0 1 2.25em;
+        min-width: 0;
+        height: 2.5em;
+        padding: 0;
+    }
+}
+
+/* The error renderer marks the INPUT component root, so the boxes take their invalid state
+   from the component, not from a class of their own. */
+.Code_Input.is-invalid .Code_Input__box {
+    border-color: var(--bs-danger);
+}

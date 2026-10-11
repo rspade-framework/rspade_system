@@ -1,0 +1,62 @@
+<%--
+Code_Input - a numeric code typed one digit per box
+
+The row of boxes a one-time code is typed into: one digit each, the focus advancing as you
+type and retreating as you delete. It is a form input like any other - ONE named value, the
+digits entered so far as a string ("" when empty, "4071" part-way, "407193" complete).
+
+    <Form_Field $label="Verification code" $required=true>
+        <Code_Input $name="code" />
+    </Form_Field>
+
+$name      - the field name (form contract).
+$length    - how many digits (default 6).
+$align     - "center" centres the row in its container; omitted, it sits at the start.
+$disabled  - disables every box; the value is still reported.
+
+Behaviour, all of it in Code_Input.js:
+  - digits only. Any other character is removed as it is typed or pasted.
+  - the boxes always fill from the left with no gaps, so wherever you click or tab in, the
+    cursor lands in the first empty box - or after the digit in the last box when all are full.
+  - pasting (or a phone's one-time-code autofill) into any box spreads the digits across the
+    boxes that follow; anything past the last box is discarded.
+  - Backspace clears the previous box when the current one is empty.
+  - Enter is left alone once every box is filled, so it takes the path Enter takes in any text
+    input (a form's submit, a form dialog's primary button). With boxes still empty it is
+    swallowed.
+
+Methods:
+  val() / val(value)  - the form-input contract. Setting takes the digits of whatever it is
+                        given; in practice it is called with '' to clear.
+  focus()             - the base class's; it lands where the next digit goes.
+  is_complete()       - true when every box holds a digit.
+
+There is NO "you must enter all N digits" validation here. Completeness is a rule the SERVER
+can see for itself, so it lives there once - a client copy of it would hide the day the
+server's copy went missing (see Rsx_Form's docblock). is_complete() is for a host that wants
+to know, and the Enter rule is interaction design, not a check.
+
+Each box is a Bootstrap .form-control, so border, focus ring, disabled and invalid states are
+the application's own. An application restyles the widget with its own rules on .Code_Input.
+--%>
+<Define:Code_Input extends="Form_Input_Abstract" tag="div">
+    <%
+        const _length = int(this.args.length) || 6;
+        let _class = 'Code_Input__boxes';
+        if (this.args.align === 'center') {
+            _class += ' Code_Input__boxes--center';
+        }
+    %>
+    <div class="<%= _class %>">
+        <% for (let _i = 0; _i < _length; _i++) { %>
+            <%-- No maxlength: a paste has to arrive whole before it can be spread across the
+                 boxes. Only the first box asks for the one-time-code autofill, so a phone
+                 offers the code once and it lands where distribution starts. --%>
+            <input type="text" class="form-control Code_Input__box"
+                   inputmode="numeric"
+                   aria-label="Digit <%= _i + 1 %> of <%= _length %>"
+                   autocomplete="<%= _i === 0 ? 'one-time-code' : 'off' %>"
+                   <% if (this.args.disabled) { %>disabled<% } %> />
+        <% } %>
+    </div>
+</Define:Code_Input>

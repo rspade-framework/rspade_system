@@ -46,13 +46,23 @@ class Totp_Enrollment extends Component {
             });
         }
 
-        const $code = this.$sid('code');
-        if ($code.exists()) {
-            $code.off('keydown.tfa').on('keydown.tfa', async function (e) {
-                if (e.key === 'Enter') {
+        // Enter in the code boxes confirms. The widget swallows the key (preventDefault)
+        // while boxes are empty, so only a complete code arrives here unprevented.
+        const code = this.sid('code');
+        if (code) {
+            code.$.off('keydown.tfa').on('keydown.tfa', async function (e) {
+                if (e.key === 'Enter' && !e.isDefaultPrevented()) {
                     await that._confirm();
                 }
             });
+
+            // A refused code leaves the boxes marked until the next render.
+            code.$.toggleClass('is-invalid', !!this.state.error);
+
+            // The cursor starts in the boxes, and returns there after a refusal (a refusal
+            // re-renders). focus() is buffered, so it does not matter that the input may
+            // not be ready yet.
+            code.focus();
         }
 
         const $copy = this.$sid('copy');
@@ -74,7 +84,12 @@ class Totp_Enrollment extends Component {
      * Prove a live code and, on success, move to the reveal.
      */
     async _confirm() {
-        const code = str(this.$sid('code').val()).trim();
+        const code = this.sid('code').val();
+
+        // A blank answer is not an attempt.
+        if (code === '') {
+            return;
+        }
 
         this.state.error = null;
 
@@ -86,8 +101,8 @@ class Totp_Enrollment extends Component {
             // The ONE catch: a wrong or expired code is what this screen exists to handle.
             // The message is the server's, phrased for the person at the keyboard.
             this.state.error = e.message ? e.message : 'That code is not valid.';
+            // The render rebuilds the boxes empty and puts the cursor back in them.
             this.render();
-            this.$sid('code').val('').focus();
             return;
         }
 

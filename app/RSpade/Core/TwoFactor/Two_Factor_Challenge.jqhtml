@@ -19,18 +19,19 @@ THE VERIFICATION ENDPOINT'S CONTRACT, both directions:
   it returns   {redirect: '/somewhere'} - followed with window.location
   it rejects   with a user-safe message, rendered inline here
 
-ONE INPUT FOR EVERY TYPED ANSWER. An issued code (emailed or texted by the application), a
-6-digit authenticator code and a recovery code all go in the same box, because the server
-tries each kind the challenge accepts and the user should not have to know which kind of
-string they are holding. The box asks only for what this challenge accepts and this identity
-can answer with (has_issued_code, has_totp, has_recovery_codes from the challenge state):
-    issued code (+ authenticator) + recovery codes   "6-digit or recovery code"
-    issued code (+ authenticator)                    "6-digit code"
-    authenticator + recovery codes                   "Authenticator or recovery code"
-    authenticator only                               "6-digit code"
-    recovery codes only                              "Recovery code"
-    none of them (a passkey only)                    no box and no Verify - the passkey button
-                                                     is the answer
+THE TYPED ANSWER. A six-digit code - one the application issued (emailed or texted), or an
+authenticator's - is typed one digit per box (<Code_Input>); the server tries each kind the
+challenge accepts, so the user need not know which they are holding. A recovery code is not
+six digits, so it has a plain box of its own. Which is shown follows what this challenge
+accepts and this identity can answer with (has_issued_code, has_totp, has_recovery_codes):
+    a six-digit answer only                 the digit boxes
+    a six-digit answer + recovery codes     the digit boxes and "Use a recovery code instead",
+                                            which swaps in the plain box (and back)
+    recovery codes only                     the plain box
+    none of them (a passkey only)           no box and no Verify - the passkey button is the
+                                            answer
+The cursor starts in the answer and returns there after a refusal. Enter verifies - in the
+digit boxes only once all six are filled.
 
 ISSUED CODES. When the challenge accepts one and the host names a send endpoint
 ($send_controller + $send_method), the screen offers "Send a new code", and sends the FIRST
@@ -41,8 +42,6 @@ code itself when none has been issued yet. The send endpoint's contract:
   it returns   anything; the screen re-reads the challenge and says "A new code has been sent."
   it rejects   with a user-safe message (a resend cap the application keeps), rendered inline
 Without a send endpoint the host issues and delivers the code itself, before the page loads.
-$placeholder replaces the derived text (the box still appears only when there is a code to
-type).
 
 THE THROTTLE MESSAGE MUST SURVIVE. Auth_Throttled_Exception surfaces as an ordinary Ajax
 rejection, so it lands in the same inline error as a wrong code. That is deliberate: "you are
@@ -58,16 +57,14 @@ THE ADDRESS is the masked one (c***e@example.com) unless the application sets
 rsx.two_factor.challenge_shows_full_email, in which case the challenge state carries the full
 address and this prints it.
 
-CANCEL. With $cancel_url the screen offers Cancel beside Verify: it discards the pending
-challenge (challenge_abandon -> abandon_challenge()) and navigates to $cancel_url. The two
-then sit in a row of their own beneath the box, centred, Cancel first - an input, Verify and
-Cancel do not fit one row. Without $cancel_url nothing changes: Verify sits beside the box.
+CANCEL. With $cancel_url the screen offers Cancel before Verify, in the row beneath the
+answer: it discards the pending challenge (challenge_abandon -> abandon_challenge()) and
+navigates to $cancel_url.
 
 Args:
   $controller  (required) - the application controller holding the verification endpoint.
   $method      (required) - the endpoint's method name.
   $cancel_url  - where Cancel leads (normally the login page). Absent: no Cancel.
-  $placeholder - the code box's placeholder, replacing the derived one (e.g. '------').
   $send_controller, $send_method - the application endpoint that issues and delivers a code.
                  Absent: no "Send a new code".
 
@@ -87,8 +84,10 @@ See: php artisan rsx:man two_factor
     <% } else { %>
         <%
             const _c = this.data.challenge;
-            const _code_answer = _c.has_issued_code || _c.has_totp || _c.has_recovery_codes;
-            const _numeric = !_c.has_recovery_codes;
+            const _digits = _c.has_issued_code || _c.has_totp;
+            const _recovery = _c.has_recovery_codes;
+            const _code_answer = _digits || _recovery;
+            const _recovery_box = _recovery && (!_digits || this.state.recovery_mode);
             const _send = _c.has_issued_code && !!this.args.send_controller && !!this.args.send_method;
             const _passkey = _c.has_passkey && this.state.passkeys_supported;
             const _cancel = !!this.args.cancel_url;
@@ -98,27 +97,38 @@ See: php artisan rsx:man two_factor
                 Signing in as <span class="Two_Factor_Challenge__email"><%= _c.email || _c.email_masked %></span>
             </div>
 
-            <% if (_code_answer && _cancel) { %>
-                <input type="text" class="form-control Two_Factor_Challenge__code-input" $sid="code"
-                       inputmode="<%= _numeric ? 'numeric' : 'text' %>" autocomplete="one-time-code" autofocus
-                       placeholder="<%= this.placeholder() %>" aria-label="Verification code" />
+            <% if (_recovery_box) { %>
+                <input type="text" class="form-control Two_Factor_Challenge__recovery-input" $sid="recovery"
+                       autocomplete="off" autocapitalize="off" spellcheck="false"
+                       placeholder="Recovery code" aria-label="Recovery code" />
             <% } else if (_code_answer) { %>
                 <div class="Two_Factor_Challenge__answer">
-                    <input type="text" class="form-control Two_Factor_Challenge__code-input" $sid="code"
-                           inputmode="<%= _numeric ? 'numeric' : 'text' %>" autocomplete="one-time-code" autofocus
-                           placeholder="<%= this.placeholder() %>" aria-label="Verification code" />
-                    <button type="button" class="btn btn-primary" $sid="verify">Verify</button>
+                    <Code_Input $sid="code" $name="code" $align="center" />
                 </div>
             <% } else if (!_passkey) { %>
                 <div class="Two_Factor_Challenge__notice">This account's second step is a passkey, and this browser cannot use one.</div>
             <% } %>
 
-            <% if (_cancel) { %>
+            <% if (this.state.error) { %>
+                <div class="Two_Factor_Challenge__error"><%= this.state.error %></div>
+            <% } %>
+
+            <% if (_code_answer || _cancel) { %>
                 <div class="Two_Factor_Challenge__actions">
-                    <button type="button" class="btn btn-secondary" $sid="cancel">Cancel</button>
+                    <% if (_cancel) { %>
+                        <button type="button" class="btn btn-secondary" $sid="cancel">Cancel</button>
+                    <% } %>
                     <% if (_code_answer) { %>
                         <button type="button" class="btn btn-primary" $sid="verify">Verify</button>
                     <% } %>
+                </div>
+            <% } %>
+
+            <% if (_digits && _recovery) { %>
+                <div class="Two_Factor_Challenge__switch">
+                    <button type="button" class="btn btn-link" $sid="switch">
+                        <%= this.state.recovery_mode ? 'Use a 6-digit code instead' : 'Use a recovery code instead' %>
+                    </button>
                 </div>
             <% } %>
 
@@ -136,10 +146,6 @@ See: php artisan rsx:man two_factor
 
             <% if (this.state.notice) { %>
                 <div class="Two_Factor_Challenge__notice-inline"><%= this.state.notice %></div>
-            <% } %>
-
-            <% if (this.state.error) { %>
-                <div class="Two_Factor_Challenge__error"><%= this.state.error %></div>
             <% } %>
         </div>
     <% } %>

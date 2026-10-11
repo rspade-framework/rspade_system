@@ -626,15 +626,16 @@ abstract class Rsx_Bundle_Abstract
             $rsxapp_data['is_developer'] = true;
         }
 
-        // Theme, ALWAYS present so client code can read it as a constant. 'mode' is the
-        // preference (light/dark/auto); 'is_dark' is the RESOLVED answer, or null under
-        // auto - where only the browser knows and Rsx_Dark_Mode.js decides at boot. The
-        // class names and the app's own attribute vocabulary ride along so the client
-        // applies exactly what the server would have, rather than a second guess at it.
+        // Theme, ALWAYS present: it is everything autotheme.js (emitted directly below
+        // this block) needs to put the theme on <html> before first paint. 'mode' is the
+        // preference (light/dark/auto); 'is_dark' is the server's resolved answer, or
+        // null under auto, where only the browser knows. The class names and the app's
+        // own attribute vocabulary ride along so the script has no vocabulary of its own.
         $rsxapp_data['theme'] = [
             'mode' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::get_mode(),
             'is_dark' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::is_dark(),
             'dark_class' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::dark_class(),
+            'mode_class_prefix' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::mode_class_prefix(),
             'dark_attributes' => (object) \App\RSpade\Core\Theme\Rsx_Dark_Mode::attributes_for(true),
             'light_attributes' => (object) \App\RSpade\Core\Theme\Rsx_Dark_Mode::attributes_for(false),
         ];
@@ -671,6 +672,12 @@ abstract class Rsx_Bundle_Abstract
         $rsxapp_json = json_encode($rsxapp_data, $rsxapp_json_flags);
 
         $html[] = '<script nonce="' . htmlspecialchars(Rsx_Csp::nonce()) . '">window.rsxapp = ' . $rsxapp_json . ';</script>';
+
+        // The theme script: synchronous on purpose, and ahead of every stylesheet, so
+        // <html> carries the theme before the browser has anything to paint. Every other
+        // script below is deferred and would run after the first frame.
+        $autotheme_path = base_path('app/RSpade/Core/public/_rsx/autotheme.js');
+        $html[] = '<script src="/_rsx/autotheme.js?v=' . filemtime($autotheme_path) . '"></script>';
 
         // Sort CDN assets: jQuery first, then others in deterministic order
         $cdn_css = $compiled['cdn_css'] ?? [];

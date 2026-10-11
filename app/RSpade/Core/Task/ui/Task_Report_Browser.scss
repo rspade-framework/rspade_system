@@ -2,7 +2,7 @@
 // nothing and sets every property it draws with, nested under its own root so a host's element
 // or descendant rule (`.card button`, `.sidebar div`) does not outrank it. It is a framed
 // widget with its own surface in each theme. No CSS custom properties (an undefined var()
-// invalidates the whole declaration); dark mode is `body.rsx-dark`.
+// invalidates the whole declaration); dark mode is `html.rsx-dark`.
 .Task_Report_Browser {
     @include rsx-text-sans;
     display: flex;
@@ -90,7 +90,7 @@
         overflow: auto;
     }
 
-    body.rsx-dark & {
+    html.rsx-dark & {
         border-color: #495057;
         background: #212529;
         color: #dee2e6;

@@ -906,11 +906,9 @@ DISABLING SPA NAVIGATION
         Spa.enable();    // back to client-side dispatch
 
     WHY IT EXISTS: some state is decided by the SERVER at page render and cannot
-    be re-decided without a new request. The theme is the worked example - it is
-    rendered onto <body> before the shell loads (rsx:man dark_mode), so a saved
-    theme change cannot be applied to the page already on screen. Disabling
-    navigation means the user's next move repaints the app correctly, with no
-    reload forced on them mid-task.
+    be re-decided without a new request - a setting baked into the shell's
+    markup, say. Disabling navigation means the user's next move loads a page
+    rendered from the new state, with no reload forced on them mid-task.
 
     Back/Forward is exempt: popstate dispatches with force:true, so history
     navigation stays client-side even while disabled.

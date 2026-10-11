@@ -3,7 +3,7 @@
 // descendant rule (`.card div`, `.table td span`) does not outrank it. Its surface is
 // transparent (the host's panel shows through) and its text colour is its own in each theme.
 // No CSS custom properties (an undefined var() invalidates the whole declaration); dark mode
-// is `body.rsx-dark`.
+// is `html.rsx-dark`.
 .Task_Report {
     @include rsx-text-sans;
     // Fills the box its host gives it; a report taller than that scrolls inside it.
@@ -174,7 +174,7 @@
         word-break: break-word;
     }
 
-    body.rsx-dark & {
+    html.rsx-dark & {
         color: #dee2e6;
 
         .Task_Report__notice,

@@ -1239,6 +1239,16 @@ abstract class Rsx_Two_Factor_Abstract
             );
         }
 
+        // A BLANK ANSWER IS NOT A GUESS, so it spends none of the budget below: no failure
+        // row, no throttle count, no attempt against the challenge or the identity. It is
+        // refused here, after every refusal that does not depend on the answer.
+        $has_assertion = isset($input['assertion']) && is_array($input['assertion']);
+        $has_code = isset($input['code']) && is_string($input['code']) && trim($input['code']) !== '';
+
+        if (!$has_assertion && !$has_code) {
+            throw new Two_Factor_Failed_Exception('Enter your verification code.');
+        }
+
         $verified = false;
 
         $accepts = static::__answerable($pending);

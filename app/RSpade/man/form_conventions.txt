@@ -553,7 +553,7 @@ LOADING
         dark theme that does not declare the dark value flashes white.
 
             :root          { --rsx-form-veil: rgba(255, 255, 255, 0.65); }
-            body.rsx-dark  { --rsx-form-veil: rgba(16, 21, 27, 0.7); }
+            html.rsx-dark  { --rsx-form-veil: rgba(16, 21, 27, 0.7); }
 
         It is a VEIL, not a curtain - the translucency is what tells the user the
         form underneath is real and coming.

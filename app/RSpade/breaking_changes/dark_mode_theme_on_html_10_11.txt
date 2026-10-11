@@ -1,0 +1,120 @@
+THE THEME IS ON <html>, NOT <body>: RENAME body.rsx-dark, DROP rsx_body_attributes()
+Date: 2026-10-11
+
+IF YOU DO NOTHING: every dark rule you wrote as `body.rsx-dark` stops matching, silently, so those surfaces stay light on a dark page; and a layout of yours that prints rsx_body_attributes() dies with "Call to undefined function rsx_body_attributes()".
+
+SUMMARY
+    Category 1: a selector and a helper an application writes against moved.
+
+    The theme used to be painted by the server onto <body> for an explicit
+    light or dark preference, and applied by a bundle script after load for
+    auto - which let an auto user (the default, and every signed-out visitor)
+    see a frame of the wrong theme.
+
+    Now one small synchronous script, /_rsx/autotheme.js, puts the theme on
+    <html> before the first paint, in every mode. Every bundle emits it
+    directly after the window.rsxapp block; a layout adds nothing. Under auto
+    it follows the operating system for as long as the page is open.
+
+    What moved:
+
+        <body class="... rsx-theme-dark rsx-dark" data-bs-theme="dark">     before
+        <html class="rsx-theme-dark rsx-dark" data-bs-theme="dark">         now
+
+        - the dark class, the mode class and your declared attributes
+          (config('rsx.theme.dark_mode.attributes')) are on <html>;
+        - <body> carries no theme class; rsx_body_class() answers the view
+          id only;
+        - rsx_body_attributes() is removed;
+        - Rsx_Dark_Mode::body_classes() and ::body_attributes() (PHP) are
+          removed; Rsx_Dark_Mode.apply() (JS) is replaced by
+          Rsx_Dark_Mode.set_mode(mode).
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - the before-paint script, in every bundle and every layout;
+    - auto following a live operating-system change;
+    - the framework's own components restyled against html.rsx-dark;
+    - your attribute config, unchanged: the same 'dark' / 'light' sets are
+      now written on <html>.
+
+WHAT YOU MUST CHANGE
+    1. Rename the selector in your SCSS
+
+           grep -rn "body\.rsx-dark" rsx/
+
+       Every hit becomes html.rsx-dark:
+
+           body.rsx-dark { --surface: #10151b; }          before
+           html.rsx-dark { --surface: #10151b; }          now
+
+           .My_Widget {
+               body.rsx-dark & { background: #10151b; }   before
+               html.rsx-dark & { background: #10151b; }   now
+           }
+
+       Nothing reports a selector you miss: it simply stops matching. A bare
+       `.rsx-dark` descendant selector (`.rsx-dark .My_Widget`) keeps working
+       and needs no change.
+
+    2. Rename an attribute selector tied to <body>
+
+           grep -rn "body\[data-" rsx/
+
+       A rule written `body[data-bs-theme=dark]` (or with your own attribute)
+       becomes `html[data-bs-theme=dark]`, or the bare `[data-bs-theme=dark]`.
+       Bootstrap's own rules are bare and are unaffected.
+
+    3. Remove rsx_body_attributes() from your layouts
+
+           grep -rn "rsx_body_attributes" rsx/
+
+           <body class="{{ rsx_body_class() }}"{!! rsx_body_attributes() !!}>    before
+           <body class="{{ rsx_body_class() }}">                                 now
+
+    4. JavaScript that asks the body
+
+           grep -rnE "rsx-dark|Rsx_Dark_Mode\.apply|data-bs-theme" rsx/ --include=*.js
+
+       $('body').hasClass('rsx-dark') and $('body').attr('data-bs-theme') now
+       answer false / undefined. Ask Rsx_Dark_Mode.is_dark() instead. A call
+       to Rsx_Dark_Mode.apply(is_dark) becomes Rsx_Dark_Mode.set_mode(mode).
+
+RECOMMENDED, NOT REQUIRED
+    APPLY A SAVED THEME AT ONCE. A settings screen that followed the previous
+    guidance calls Spa.disable() after a save, so the new theme appears on the
+    next navigation. That still works, but the page can now be re-themed in
+    place:
+
+        const result = await Rsx_Dark_Mode_Controller.set_dark_mode({dark_mode: mode});
+
+        if (result.changed) {                                     before
+            Spa.disable();
+            Flash_Alert.success('Theme saved. The app will switch over when you navigate away.');
+        }
+
+        Rsx_Dark_Mode.set_mode(result.mode);                      now
+        Flash_Alert.success('Theme saved.');
+
+    If you covered the auto flash yourself with a prefers-color-scheme media
+    query scoped to rsx-theme-auto, it is no longer needed.
+
+THE REFERENCE IMPLEMENTATION
+    system/app/RSpade/resource/reference_app/theme/composition_tokens.scss
+        a token redefined under html.rsx-dark
+    system/app/RSpade/resource/reference_app/app/login/login_layout.blade.php
+        a layout's <body> tag
+    system/app/RSpade/resource/reference_app/app/frontend/settings/user_settings/settings_user_settings_action.js
+        _on_theme_saved() - the in-place switch after a save
+
+VERIFICATION
+    The greps above answer nothing. Load a page with your operating system in
+    dark mode and the preference on Auto: the first frame is dark, and
+    switching the operating system to light changes the page without a
+    reload. View source: <html> carries rsx-dark and your attributes, <body>
+    does not.
+
+SEE ALSO
+    rsx:man dark_mode
+    skill rspade:dark-mode

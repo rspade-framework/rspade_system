@@ -40,6 +40,10 @@ class Two_Factor_Challenge extends Component {
 
             // A user-facing note that is not an error - "A new code has been sent."
             notice: null,
+
+            // The user asked for the plain recovery-code box in place of the digit boxes.
+            // Only meaningful when the challenge takes both kinds of answer.
+            recovery_mode: false,
         };
     }
 
@@ -81,12 +85,37 @@ class Two_Factor_Challenge extends Component {
             });
         }
 
-        const $code = this.$sid('code');
-        if ($code.exists()) {
-            $code.off('keydown.tfa').on('keydown.tfa', async function (e) {
+        // The answer is one of two controls: the digit boxes (a Code_Input component) or the
+        // plain recovery-code box. Enter verifies from either; the digit boxes swallow the key
+        // (preventDefault) while any is empty, so only a complete code arrives unprevented.
+        // The cursor starts in the answer, and a refusal's re-render puts it back.
+        const code = this.sid('code');
+        if (code) {
+            code.$.toggleClass('is-invalid', !!this.state.error);
+            code.$.off('keydown.tfa').on('keydown.tfa', async function (e) {
+                if (e.key === 'Enter' && !e.isDefaultPrevented()) {
+                    await that._verify_code();
+                }
+            });
+            code.focus();
+        }
+
+        const $recovery = this.$sid('recovery');
+        if ($recovery.exists()) {
+            $recovery.off('keydown.tfa').on('keydown.tfa', async function (e) {
                 if (e.key === 'Enter') {
                     await that._verify_code();
                 }
+            });
+            $recovery.focus();
+        }
+
+        const $switch = this.$sid('switch');
+        if ($switch.exists()) {
+            $switch.off('click.tfa').on('click.tfa', function () {
+                that.state.recovery_mode = !that.state.recovery_mode;
+                that.state.error = null;
+                that.render();
             });
         }
 
@@ -117,27 +146,6 @@ class Two_Factor_Challenge extends Component {
      */
     _can_send() {
         return !!(this.args.send_controller && this.args.send_method);
-    }
-
-    /**
-     * The code box's placeholder: $placeholder, else what this identity can type - see the
-     * template's ONE INPUT FOR TWO KINDS OF ANSWER.
-     */
-    placeholder() {
-        if (this.args.placeholder) {
-            return this.args.placeholder;
-        }
-
-        const challenge = this.data.challenge;
-        if (challenge.has_issued_code) {
-            return challenge.has_recovery_codes ? '6-digit or recovery code' : '6-digit code';
-        }
-
-        if (challenge.has_totp && challenge.has_recovery_codes) {
-            return 'Authenticator or recovery code';
-        }
-
-        return challenge.has_totp ? '6-digit code' : 'Recovery code';
     }
 
     /**
@@ -188,11 +196,12 @@ class Two_Factor_Challenge extends Component {
     }
 
     /**
-     * Answer with the typed string - an authenticator code or a recovery code, the server
-     * decides which.
+     * Answer with the typed string - six digits or a recovery code, the server decides
+     * which. A blank answer is not an attempt and is not sent.
      */
     async _verify_code() {
-        const code = str(this.$sid('code').val()).trim();
+        const digits = this.sid('code');
+        const code = digits ? digits.val() : str(this.$sid('recovery').val()).trim();
 
         if (code === '') {
             return;
@@ -256,15 +265,11 @@ class Two_Factor_Challenge extends Component {
     }
 
     /**
-     * Render a failure inline and clear the box, so the retry starts from empty.
+     * Render a failure inline. The render rebuilds the answer empty and puts the cursor
+     * back in it, so the retry starts from nothing.
      */
     _show_error(e) {
         this.state.error = e.message ? e.message : 'That code is not valid.';
         this.render();
-
-        const $code = this.$sid('code');
-        if ($code.exists()) {
-            $code.val('').focus();
-        }
     }
 }

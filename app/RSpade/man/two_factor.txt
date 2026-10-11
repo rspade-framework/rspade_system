@@ -380,6 +380,14 @@ HOW IT WORKS
                real budget, and the halving is only ever discovered by a user
                locked out early.
 
+        A BLANK ANSWER IS NOT A GUESS. verify_challenge() given no assertion
+        and no code, or a code that is empty or only whitespace, refuses with
+        'Enter your verification code.' (REASON_REFUSED) and records nothing:
+        no failure row, no throttle count, no attempt against either cap
+        below. The challenge stays pending. The refusals that do not depend
+        on the answer - the throttle, an expired window, a locked identity -
+        still come first.
+
     ATTEMPT CAPS (COUNTS, NOT TIMEOUTS)
         The per-IP throttle alone is not enough: an attacker who holds the
         password rotates addresses. Every wrong answer to a challenge - a TOTP
@@ -690,7 +698,8 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
 
     <Totp_Enrollment />
         The whole authenticator ceremony: QR code, manual-entry secret, the
-        6-digit proof, and the ONE-TIME recovery-code reveal.
+        6-digit proof (typed one digit per box, <Code_Input>, the cursor
+        already in it), and the ONE-TIME recovery-code reveal.
         Args:   none - it always enrolls the signed-in identity.
         Events: enrolled - the user acknowledged the code sheet (the factor
                 is already live at that point).
@@ -704,16 +713,14 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         A browser without WebAuthn gets a plain notice instead of a button
         that cannot work; the host page is expected to still offer TOTP.
 
-    <Two_Factor_Challenge $controller $method [$cancel_url] [$placeholder]
+    <Two_Factor_Challenge $controller $method [$cancel_url]
                           [$send_controller $send_method] />
         The login challenge screen.
         Args:   $controller, $method (both REQUIRED) - the application's
                 verification endpoint, named the way <Rsx_Form> names one.
-                $cancel_url - adds Cancel: challenge_abandon, then navigate
-                here (normally the login page). Cancel and Verify then sit
-                in a row of their own beneath the box, centred, Cancel
-                first. Absent: no Cancel, Verify beside the box.
-                $placeholder - replaces the derived placeholder (below).
+                $cancel_url - adds Cancel before Verify, in the row beneath
+                the answer: challenge_abandon, then navigate here (normally
+                the login page). Absent: no Cancel.
                 $send_controller, $send_method - the application endpoint that
                 issues and delivers a code (ISSUED CODES). With them, and a
                 challenge accepting an issued code, the screen offers "Send a
@@ -727,20 +734,25 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         Events: no_challenge - nothing is pending (expired window, direct
                 visit). The host page sends the visitor back to /login.
 
-        ONE INPUT FOR EVERY TYPED ANSWER: an issued code, an authenticator
-        code and a recovery code go in the same box, because the server
-        tries each accepted kind and the user should not have to know which
-        kind of string they hold. The box asks only for what the challenge
-        accepts and the identity can answer with:
+        THE TYPED ANSWER. A six-digit code - issued by the application or
+        read off an authenticator; the server tries each accepted kind - is
+        typed one digit per box (<Code_Input>, rsx:man form_input). A
+        recovery code is not six digits and has a plain box of its own.
+        What is shown follows what the challenge accepts and the identity
+        can answer with:
 
-            has_issued_code + has_recovery_codes   "6-digit or recovery code"
-            has_issued_code                        "6-digit code"
-            has_totp + has_recovery_codes   "Authenticator or recovery code"
-            has_totp only                   "6-digit code"
-            has_recovery_codes only         "Recovery code"
+            has_issued_code or has_totp     the digit boxes
+              ... and has_recovery_codes    the digit boxes, plus "Use a
+                                            recovery code instead", which
+                                            swaps in the plain box (and back)
+            has_recovery_codes only         the plain box
             none of them (a passkey only)   no box, no Verify - the passkey
                                             button is the answer (a browser
                                             without WebAuthn gets a notice)
+
+        The cursor starts in the answer and returns to it, emptied, after a
+        refusal. Enter verifies; in the digit boxes only once all six are
+        filled. A blank answer is never posted.
 
         The address shown is email_masked, or email when the application
         set rsx.two_factor.challenge_shows_full_email.

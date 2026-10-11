@@ -58,16 +58,9 @@
         text-align: center;
     }
 
+    // The six digit boxes. Full width so the row can shrink inside a narrow host.
     &__proof {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    &__code-input {
-        width: 140px;
-        text-align: center;
-        letter-spacing: 4px;
+        width: 100%;
     }
 
     &__error {

@@ -103,16 +103,17 @@ return [
     |--------------------------------------------------------------------------
     |
     | The per-identity theme preference (login_users.dark_mode), resolved by
-    | Rsx_Dark_Mode and rendered onto <body> before the SPA shell loads.
+    | Rsx_Dark_Mode and put on <html> before first paint by autotheme.js.
     |
-    | - default: mode for an identity that has expressed no preference, and for every
-    |   portal request (portal accounts have no theme preference). Login_User_Model::
-    |   DARK_MODE_LIGHT / _DARK / _AUTO. AUTO follows the operating system.
-    | - dark_class / mode_class_prefix: the CLASS NAMES the framework puts on <body>.
-    |   The dark class appears only when dark is actually active; the mode class always
+    | - default: mode for a signed-out visitor, an identity that has expressed no
+    |   preference, and every portal request (portal accounts have no theme
+    |   preference). Login_User_Model::DARK_MODE_LIGHT / _DARK / _AUTO. AUTO follows
+    |   the operating system.
+    | - dark_class / mode_class_prefix: the CLASS NAMES the framework puts on <html>.
+    |   The dark class is present exactly while dark is showing; the mode class always
     |   names the chosen mode (rsx-theme-auto even when the OS is currently light).
-    | - attributes: THE APP'S OWN THEME VOCABULARY, keyed 'dark' and 'light', rendered
-    |   onto <body> verbatim. RSpade ships no UI toolkit and no colours, so this is
+    | - attributes: THE APP'S OWN THEME VOCABULARY, keyed 'dark' and 'light', set on
+    |   <html> verbatim. RSpade ships no UI toolkit and no colours, so this is
     |   EMPTY here by design - an app declares what its CSS actually reads. A Bootstrap
     |   5.3 app declares ['dark' => ['data-bs-theme' => 'dark'], 'light' => [...]];
     |   something else declares whatever it uses. See rsx:man dark_mode.

@@ -335,3 +335,22 @@ globals, never window properties, so the lookup is `Manifest.get_class_by_name()
 | TFA-RSN-01 | each failure carries its reason | nothing pending; wrong answers up to the cap; one more | WINDOW_EXPIRED; WRONG_ANSWER each time; CHALLENGE_SPENT on the last; WINDOW_EXPIRED after | implemented |
 | TFA-RSN-02 | a locked identity carries the locked reason | identity cap reached, a correct code on a new challenge | IDENTITY_LOCKED | implemented |
 | TFA-EVT-01 | an exhausted challenge fires the realm's event once, with the identity | wrong answers to the cap, a recording handler on both realms' events | nothing below the cap; one `two_factor.challenge.spent` with the identity, email and failure count; never the portal's | implemented |
+
+## code_entry.js (playwright) - the typed answer is `<Code_Input>`
+
+Both screens against a scripted controller on `/_sys`.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| TFA-CODE-01 | a six-digit challenge shows the boxes alone | `has_totp` only | six boxes, no recovery box, no switch link, cursor in box 1 | implemented |
+| TFA-CODE-02 | a blank answer is not posted | Verify with empty boxes; Enter with two digits | no call to the endpoint | implemented |
+| TFA-CODE-03 | Enter in a complete row verifies | six digits, Enter | `{code}` posted once | implemented |
+| TFA-CODE-04 | a refusal resets the answer | the endpoint rejects | message shown, boxes marked and emptied, cursor in box 1 | implemented |
+| TFA-CODE-05 | recovery codes get a plain box on request | `has_totp` + `has_recovery_codes`, the switch link, a typed code | boxes first; the link swaps in the plain box (focused) and back; the typed code is posted trimmed | implemented |
+| TFA-CODE-06 | a recovery-only challenge | `has_recovery_codes` only | the plain box alone | implemented |
+| TFA-CODE-07 | enrollment uses the boxes | `<Totp_Enrollment>` | six boxes, cursor in them; a blank Confirm posts nothing | implemented |
+| TFA-CODE-08 | a refused enrollment code | `totp_confirm` rejects | message shown, boxes emptied, cursor back | implemented |
+
+A blank answer spends nothing server-side either: `Two_Factor_Challenge_Test::test_a_blank_answer_is_refused_and_spends_nothing`
+(no input, `''` and whitespace, repeated past the challenge's failure cap - no failure row, the
+challenge still pending, the identity not locked).

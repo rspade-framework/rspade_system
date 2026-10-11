@@ -260,7 +260,7 @@ veil, so a dark theme that does not declare it flashes white.
 
 ```scss
 :root         { --rsx-form-veil: rgba(255, 255, 255, 0.65); }
-body.rsx-dark { --rsx-form-veil: rgba(16, 21, 27, 0.7); }
+html.rsx-dark { --rsx-form-veil: rgba(16, 21, 27, 0.7); }
 ```
 
 The overlay hosts the **registered spinner** - `Rsx.set_default_spinner('App_Spinner')`
