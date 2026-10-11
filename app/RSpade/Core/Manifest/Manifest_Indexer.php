@@ -192,7 +192,9 @@ class Manifest_Indexer
 
             $extension = $metadata['extension'] ?? '';
 
-            if ($extension === 'php.upstream') {
+            // An archived file declares nothing: it is the half of an override that was
+            // set aside.
+            if (str_ends_with($extension, '.upstream')) {
                 continue;
             }
 
@@ -669,6 +671,14 @@ class Manifest_Indexer
         Manifest::_restore_orphaned_upstream_files();
 
         // ==================================================================================
+        // STEP 1b: Template and stylesheet overrides
+        // ==================================================================================
+        // A .jqhtml and a .scss declare a name the per-class pass below cannot see (a
+        // component id, a wrapper class). Same rule, same archive, file by file.
+        // ==================================================================================
+        self::_override_framework_templates_and_stylesheets();
+
+        // ==================================================================================
         // STEP 2: Group classes by extension, then by class name
         // ==================================================================================
         // WHICH CLASS NAMES CAN HAVE MOVED. A duplicate appears only when a file that
@@ -899,6 +909,126 @@ class Manifest_Indexer
                         "Fatal: Duplicate {$file_type} class name '{$class_name}' found in multiple files:\n" .
 '  - ' . implode("\n  - ", $files) . "\n" .
 'Each class name must be unique within the same file type.'
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+    * Archive the framework templates and stylesheets the application overrides.
+    *
+    * The per-class pass below handles .php and .js, which declare a CLASS. A jqhtml
+    * template and a stylesheet declare a name too, just under a different key, and are
+    * overridden by the same rule, FILE BY FILE:
+    *
+    *   .jqhtml   declares a component (<Define:Name>). An application template with the
+    *             name of a framework template archives the framework's template.
+    *   .scss     is wrapped in one class (.Name). An application stylesheet wrapped in
+    *             the same class as a framework stylesheet archives the framework's.
+    *
+    * Each file is its own override. Overriding a component's template leaves the
+    * framework's class and stylesheet for it in place, and the reverse; an application
+    * takes over as many of the three as it supplies.
+    *
+    * Two templates of one name in the SAME area are not an override and are not handled
+    * here - Manifest_Store reports them as the duplicate they are.
+    */
+    public static function _override_framework_templates_and_stylesheets(): void
+    {
+        $application = ['jqhtml' => [], 'scss' => []];
+        $framework = ['jqhtml' => [], 'scss' => []];
+
+        foreach (Manifest::$data['data']['files'] as $file => $metadata) {
+            $extension = $metadata['extension'] ?? '';
+
+            $name = match ($extension) {
+                'jqhtml' => $metadata['id'] ?? null,
+                'scss' => $metadata['scss_wrapper_class'] ?? null,
+                default => null,
+            };
+
+            if ($name === null || $name === '') {
+                continue;
+            }
+
+            if (Rsx_Paths::is_framework($file)) {
+                $framework[$extension][$name][] = $file;
+            } elseif (Rsx_Paths::is_application($file)) {
+                $application[$extension][$name][] = $file;
+            }
+        }
+
+        foreach (['jqhtml' => 'template', 'scss' => 'stylesheet'] as $extension => $kind) {
+            foreach ($framework[$extension] as $name => $framework_files) {
+                $application_file = $application[$extension][$name][0] ?? null;
+
+                if ($application_file === null) {
+                    continue;
+                }
+
+                // The same two guards the per-class pass applies before it renames
+                // anything: a poisoned index is not evidence, and the override must be on
+                // disk now.
+                if (Manifest::$_manifest_is_bad) {
+                    error_log(
+                        '[Manifest] Override pass: NOT archiving the framework ' . $kind . ' of '
+                        . $name . ' - this build already marked its manifest bad. The rebuild decides.'
+                    );
+
+                    continue;
+                }
+
+                if (!file_exists(base_path($application_file))) {
+                    error_log(
+                        '[Manifest] Override pass: ignoring stale index entry for the ' . $kind . ' of '
+                        . $name . ' - ' . $application_file . ' is in the file list but not on disk. '
+                        . 'Nothing was archived; dropping the entry and restarting the build.'
+                    );
+
+                    unset(Manifest::$data['data']['files'][$application_file]);
+                    Manifest::flag_needs_restart(
+                        'the override pass dropped a stale index entry for ' . $name
+                        . ' (' . $application_file . ' is indexed but not on disk)'
+                    );
+
+                    continue;
+                }
+
+                $did_change = false;
+
+                foreach ($framework_files as $framework_file) {
+                    $full_framework_path = base_path($framework_file);
+                    $upstream_path = $full_framework_path . '.upstream';
+
+                    if (!file_exists($full_framework_path)) {
+                        continue;
+                    }
+
+                    if (file_exists($upstream_path)) {
+                        // Both present (a framework update re-delivered the file): the
+                        // fresh copy becomes the archive.
+                        unlink($upstream_path);
+                    }
+
+                    rename($full_framework_path, $upstream_path);
+                    Manifest::$_override_pass_renamed = true;
+                    $did_change = true;
+
+                    // Loud, not debug-channel: a file leaving the build must always be
+                    // attributable to the override that took it out.
+                    error_log(
+                        '[Manifest] Override: ' . $name . ' - archived the framework ' . $kind . ' '
+                        . $framework_file . ' to ' . $framework_file . '.upstream, overridden by '
+                        . $application_file
+                    );
+
+                    unset(Manifest::$data['data']['files'][$framework_file]);
+                }
+
+                if ($did_change) {
+                    Manifest::flag_needs_restart(
+                        'the framework ' . $kind . ' of ' . $name . ' was archived as .upstream because it is overridden in rsx/'
                     );
                 }
             }

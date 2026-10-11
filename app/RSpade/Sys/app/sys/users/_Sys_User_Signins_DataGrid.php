@@ -56,7 +56,8 @@ class _Sys_User_Signins_DataGrid extends _Sys_DataGrid_Abstract
         if ($search !== '') {
             $like = '%' . addcslashes($search, '%_\\') . '%';
             $query->where(function ($where) use ($like) {
-                $where->where('ip_address', 'like', $like)->orWhere('user_agent', 'like', $like);
+                $where->where('ip_address', 'like', $like)
+                    ->orWhereIn('user_agent_id', fn ($agents) => $agents->select('id')->from('_user_agents')->where('user_agent', 'like', $like));
             });
         }
 

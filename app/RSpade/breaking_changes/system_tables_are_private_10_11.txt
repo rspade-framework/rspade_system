@@ -1,0 +1,102 @@
+UNDERSCORE-PREFIXED TABLES ARE PRIVATE TO RSPADE: MOVE EVERY DIRECT QUERY ONTO A FRAMEWORK INTERFACE
+Date: 2026-10-11
+
+IF YOU DO NOTHING: any code of yours that reads _sessions.user_agent, _session_devices.user_agent or _login_history.user_agent fails with "Unknown column 'user_agent'", and every other query you wrote against a `_`-prefixed table keeps working only until the release that reshapes that table.
+
+SUMMARY
+    Category 1: a rule about what application code may query, stated as a
+    contract, with one set of columns already gone.
+
+    A table whose name begins with an underscore (_sessions, _login_history,
+    _tasks, _transactions, _email_queue, ...) belongs to the RSpade core. So
+    does its schema. Application code under rsx/ does not read or write one
+    directly; it uses the interface the framework publishes for that
+    feature.
+
+    THE SCHEMA OF A SYSTEM TABLE IS NOT A CONTRACT. Columns are renamed,
+    moved into other tables and dropped between releases, and those changes
+    carry no breaking_changes document. This release is the first example:
+
+        _sessions.user_agent           dropped
+        _session_devices.user_agent    dropped
+        _login_history.user_agent      dropped
+
+    The string now lives once in a private table, and each of the three holds
+    an id. Every framework answer that carried the string still carries it.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - Session::get_sessions_for_user($login_user_id = null, $site_id = null)
+      and Portal_Session::get_sessions_for_user(): each entry still has
+      `user_agent` (the full string), `user_agent_parsed` and
+      `device_summary`. The new optional $site_id narrows to the sessions
+      currently on one site, and each entry now carries `site_id`.
+    - Login_History::get_history_for_user() and present_record(): still
+      `user_agent` and `user_agent_parsed`.
+    - `$session->user_agent` on a Session row still answers the string.
+    - Session::get_audit_session_id() / Session::get_audit_session($id): the
+      permanent record of who performed a logged act (rsx:man session, AUDIT
+      SESSIONS).
+
+WHAT YOU MUST CHANGE
+    1. Find every direct use of a system table
+
+           grep -rnE "DB::(table|select|selectOne|statement|update|insert|delete)\(" rsx/ | grep -E "['\"\` ]_[a-z]"
+           grep -rnE "(FROM|JOIN|INTO|UPDATE)[ \`]+_[a-z]" rsx/
+
+       Each hit is a query, a join or a write against a table that is not
+       yours. (Your migrations under rsx/resource/migrations are not in
+       scope: a migration is a one-time statement against a known schema.)
+
+    2. Move each one onto the framework's interface
+
+           your code reads                     ask instead
+           ---------------------------------   --------------------------------------
+           _sessions (a user's devices)        Session::get_sessions_for_user()
+           _sessions (the current one)         Session::get_current_session_info()
+           _sessions (portal)                  Portal_Session::get_sessions_for_user()
+           _login_history                      Login_History::get_history_for_user()
+           _sessions.id on a log row           Session::get_audit_session_id() to
+                                               record, get_audit_session() to read
+           _transactions / _revisions          $record->revisions(),
+                                               revisions_including_children(),
+                                               Revision_Model::diff()
+           _tasks and its children             Task_Run_Model::find_page() /
+                                               find_first_1000(), Rsx_Task
+           _file_attachments / _file_storage   File_Attachment_Model and its
+                                               documented methods
+
+       A datagrid that searched `user_agent LIKE ...` in SQL filters the
+       rows the accessor returns instead; the sets these calls answer are
+       small (a user's signed-in devices, a page of history).
+
+    3. Where no interface gives you what you need, ask for one
+
+       Do not keep the query. File a change request to RSpade describing
+       what you need to read and why - a new accessor, another field in an
+       existing answer, a filter argument - and the interface is extended.
+       That is the supported route, and it is how the $site_id argument
+       above came to exist.
+
+    4. Stop storing Session::get_session_id() on records of activity
+
+       Not a query, but the same mistake: the id of a row that is replaced
+       at every sign-in, deleted when a command ends and collected when
+       idle. Store Session::get_audit_session_id() (rsx:man session, AUDIT
+       SESSIONS).
+
+THE REFERENCE IMPLEMENTATION
+    system/app/RSpade/resource/reference_app/app/frontend/settings/user_management/settings_user_management_controller.php
+        get_user() - one user's sessions on this site, through
+        Session::get_sessions_for_user($login_user_id, $site_id).
+
+VERIFICATION
+    Both greps in step 1 answer nothing outside rsx/resource/migrations.
+    The screens that showed sessions and sign-in history still show a device
+    for each row.
+
+SEE ALSO
+    rsx:man database_schema_architecture - SYSTEM TABLES ARE PRIVATE
+    rsx:man session
+    skill rspade:session-auth

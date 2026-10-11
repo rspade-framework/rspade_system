@@ -163,6 +163,51 @@ rsx:man bundle_api, JAVASCRIPT STUBS). The __MODEL name and the Base_*_Model.js
 stub names are the CONCRETE's, unchanged by the split, so nothing moves in
 JavaScript.
 
+## JAVASCRIPT CLASSES, TEMPLATES AND STYLESHEETS
+
+The same mechanism covers the three browser-side file kinds. Each is matched by
+the NAME IT DECLARES - never by its file name or its directory - and each file
+is its own override:
+
+    .js       its class name. An rsx/ JS class with the name of a framework JS
+              class archives the framework's .js file.
+    .jqhtml   its component, <Define:Name>. An rsx/ template with the name of a
+              framework template archives the framework's .jqhtml file.
+    .scss     the ONE class the whole stylesheet is wrapped in (.Name { ... }).
+              An rsx/ stylesheet wrapped in the same class as a framework
+              stylesheet archives the framework's .scss file.
+
+So rsx/theme/components/inputs/code/code_input.scss, wrapped in .Code_Input,
+overrides system/app/RSpade/Core/Forms/Code_Input.scss, and nothing about the
+two paths has to agree.
+
+PER FILE, NOT PER COMPONENT. A jqhtml component is usually three files of one
+name, and an application takes over as many of them as it supplies. Overriding
+only the template leaves the framework's class and stylesheet for that component
+in the build; overriding only the stylesheet restyles the framework's component.
+What you did not override keeps arriving with framework updates - and keeps
+changing under the files you did, so a template you copied is yours to keep in
+step with the framework's class.
+
+A stylesheet with no single wrapper class (variables only, or several top-level
+rules) declares no name: it neither overrides nor can be overridden.
+
+Two templates of one component name in the SAME tree - both in rsx/, or both in
+the framework - are a duplicate, not an override, and still stop the build
+("Duplicate jqhtml component name detected").
+
+Archiving and restoring work exactly as for PHP: the framework file becomes
+<file>.upstream, the build prints one line naming it and the rsx/ file that
+displaced it, and deleting the rsx/ file brings it back on the next build. Each
+file is released on its own - removing your stylesheet restores the framework's
+stylesheet and leaves your template override standing.
+
+THE FRAMEWORK'S OWN PANEL DOES NOT SEE YOUR FILES. /_sys and /apidocs are built
+from framework paths only and include nothing under rsx/. A Core file you
+override is archived, so it is absent from those two bundles and your
+replacement is not in them either. Overriding a component the panel uses (a form
+input, say) leaves the panel without it.
+
 ## WHAT THE BUILD PRINTS WHEN IT ARCHIVES
 
 Archiving un-registers a class, so the build never does it silently. Every
@@ -518,7 +563,9 @@ Delete the override file and rebuild:
 The restore pass renames User_Model.php.upstream back to User_Model.php on that
 build - an .upstream file whose class no longer has an override in rsx/ is an
 orphan, and restoring it is the first thing the override pass does. Renaming it
-back by hand works too and is never necessary.
+back by hand works too and is never necessary. The same holds for an archived
+.js, .jqhtml or .scss file, each judged on its own: it comes back when no rsx/
+file of the same kind declares its name.
 
 ## HOW REFERENCES KEEP RESOLVING
 
@@ -628,8 +675,9 @@ shell declares anything or a base ships without exactly one concrete.
 - The ABSTRACT BASE of a split model is not overridable: an rsx/ class named
   X_Model_Abstract would archive the base itself, which is the implementation.
   Override the concrete, which is what the shell is for
-- JavaScript classes do NOT support this override pattern - a duplicate JS
-  class name is a hard fatal build error, not an override
+- A JS class, a jqhtml template and a stylesheet are each overridden by name,
+  file by file (JAVASCRIPT CLASSES, TEMPLATES AND STYLESHEETS above); the
+  framework's own /_sys and /apidocs bundles do not pick the replacement up
 - Framework ARTISAN COMMANDS are not overridable, by design. An application
   writes no command classes at all (rsx:man task_commands - a named command is
   a #[Command] on a #[Task]), and a Laravel command needs an instance handle()

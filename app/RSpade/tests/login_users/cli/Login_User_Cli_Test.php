@@ -91,7 +91,7 @@ class Login_User_Cli_Test extends Rsx_Test_Abstract
             'site_id' => self::SITE_ID,
             'version' => 1,
             'ip_address' => '10.0.0.9',
-            'user_agent' => 'login-user-cli-test',
+            'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('login-user-cli-test'),
             'login_user_id' => $login_user_id,
             'last_active' => now(),
             'created_at' => now(),

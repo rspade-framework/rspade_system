@@ -173,6 +173,11 @@ THE TABLES
         source_id           web / ajax / api / task / cli / test
         endpoint            what the unit was serving
         ip                  the caller's IP, null off a real request
+        audit_session_id    the acting context - identity, tenant,
+                            impersonators, address, session row, user agent -
+                            as a permanent _audit_sessions row (rsx:man
+                            session, AUDIT SESSIONS). Stamped by the framework
+                            on every unit of work, from any source.
         api_request_log_id  the _api_request_log row, when the source is api
         revision_count      how many revisions the action produced
         description         whatever Revision::describe() was given

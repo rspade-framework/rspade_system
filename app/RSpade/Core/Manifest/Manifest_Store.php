@@ -756,6 +756,12 @@ class Manifest_Store
             }
 
             // Check Jqhtml component ID uniqueness
+            //
+            // One declaration in the application and one in the framework is not a
+            // duplicate but an OVERRIDE, and never reaches here: the override pass
+            // (Manifest_Indexer::_override_framework_templates_and_stylesheets()) archives
+            // the framework's template before validation. What is refused is two
+            // declarations nothing can choose between.
             if ($extension === 'jqhtml' && isset($metadata['id'])) {
                 $id = $metadata['id'];
                 if (isset($jqhtml_ids[$id])) {
@@ -764,7 +770,10 @@ class Manifest_Store
 "Found in:\n" .
 "  - {$jqhtml_ids[$id]}\n" .
 "  - {$file_path}\n\n" .
-"Jqhtml component names (<Define:ComponentName>) must be unique across all files.\n\n" .
+"Jqhtml component names (<Define:ComponentName>) must be unique across all files.\n" .
+"(An application component with the name of a FRAMEWORK component is an override,\n" .
+"not a duplicate, and is handled automatically - see rsx:man class_override. These\n" .
+"two are in the same tree.)\n\n" .
 "To resolve: Add specificity to the component name by prefixing with directory segments.\n" .
 "For example, if a component named 'Card' resides in the 'demo' module directory,\n" .
 "rename it to 'Demo_Card' in the <Define:> tag. Similarly, components in nested directories\n" .

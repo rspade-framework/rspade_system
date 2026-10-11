@@ -1520,6 +1520,9 @@ GARBAGE COLLECTION
 
         A _session_devices record is deleted once no session row names it.
 
+        User-agent strings are swept separately and weekly - see AUDIT
+        SESSIONS, User agents.
+
         Identity-less rows are minted for any visitor issued a CSRF token,
         crawlers included, which is why they go first.
 
@@ -1552,6 +1555,98 @@ GARBAGE COLLECTION
             - Emergency cleanup when disk space is low
             - One-time cleanup after changing retention policies
 
+AUDIT SESSIONS
+    A record of something somebody DID - an activity log row, an export record,
+    a revision - has to say who did it and from where, and keep saying it for
+    as long as the record exists.
+
+    NEVER STORE Session::get_session_id() FOR THAT. A _sessions row is
+    operational state: its identity and site change in place, every sign-in
+    replaces it (SECURITY, Sign-In Rotation), a command's row is deleted the
+    moment the process ends, and idle rows are collected. A stored session id
+    stops resolving - and for a command, a task or an API call it never
+    resolved at all.
+
+    Store an audit session instead:
+
+        $log->audit_session_id = Session::get_audit_session_id();
+
+    Session::get_audit_session_id(): int
+        The id of a row in _audit_sessions describing the ACTING CONTEXT:
+
+            site_id, login_user_id, portal_user_id, portal_site_id,
+            impersonator_login_user_id, impersonator_user_id, ip_address,
+            session_row_id, user_agent_id
+
+        The same context answers the same id. When any member changes - a
+        sign-in, a site switch, an impersonation, a new address, a different
+        browser - the next call answers a different row. A row is minted the
+        first time a context is asked for, so a visitor who logs nothing
+        leaves nothing; it is immutable apart from last_seen_at (advanced at
+        most once a minute).
+
+        Works everywhere, and creates no session: a browser request, a
+        Bearer-key API call (session_row_id null), a command or a task
+        (session_row_id, ip_address and user_agent_id null). session_type_id
+        says which - Session::TYPE_WEB / _API / _CLI / _PLAYWRIGHT.
+
+        One resolution per context per process, so a request that writes forty
+        log rows asks the database once.
+
+    Three ways to group what was done:
+
+        _audit_sessions.id     one acting context
+        session_row_id         one sign-in (every context of that session row)
+        device_id              one browser across its sign-ins
+
+    session_row_id and device_id are CORRELATION NUMBERS, deliberately not
+    foreign keys: grouping audit rows by them is an equality test among audit
+    rows and never needs the session or the device to still exist. The session
+    token is not stored - it identifies nothing the row id does not, and it is
+    a credential.
+
+    _audit_sessions IS NEVER GARBAGE-COLLECTED. It is the audit trail's own
+    memory; no retention sweep touches it, so a stored id always resolves.
+
+    Reading one back:
+
+        Session::get_audit_session(int $audit_session_id): ?array
+            {id, site_id, login_user_id, portal_user_id, portal_site_id,
+             impersonator_login_user_id, impersonator_user_id, ip_address,
+             user_agent, session_row_id, device_id, session_type_id,
+             first_seen_at, last_seen_at} - user_agent as the full string.
+            Null for an id that does not exist.
+
+        The table itself is the framework's (every `_`-prefixed table is). An
+        application stores the id in a column of its own and asks the framework
+        what it means; it does not query _audit_sessions.
+
+    The framework attributes its own lane: every recorded unit of work carries
+    _transactions.audit_session_id (rsx:man revisions).
+
+    User agents:
+        Each distinct user-agent string is stored once, whole, in _user_agents,
+        and _sessions, _session_devices, _login_history and _audit_sessions
+        hold its id. So one browser is the same value in all four, whatever the
+        length of its string. That table is private to the framework and has no
+        application interface; the string comes back wherever the framework
+        answers one - `user_agent` in Session::get_sessions_for_user(),
+        Portal_Session::get_sessions_for_user(), get_current_session_info(),
+        Login_History::get_history_for_user() and get_audit_session(), and
+        `$session->user_agent` on a Session row. An application that wants to
+        record a browser on a table of its own stores the string there.
+
+        A string that no session, device, login-history row or audit session
+        names any more is deleted by Session_Cleanup_Service::
+        cleanup_user_agents, weekly (Sunday 02:00), once it has gone a day
+        without being presented. One an audit session names is kept for good.
+
+    get_audit_session_id() fails loudly, like every other framework write: a
+    database that cannot record the audit session cannot record the audit row
+    either. Two requests minting the same context at the same moment is not a
+    failure - the find-or-create is one statement on a unique key, and both
+    get the same id.
+
 SESSION MANAGEMENT
     Multi-Device Session Tracking:
         RSX tracks all active sessions for each user, allowing users to view
@@ -1564,7 +1659,11 @@ SESSION MANAGEMENT
         // For a specific user (admin use)
         $sessions = Session::get_sessions_for_user($login_user_id);
 
-        Each entry: id, device_id, ip_address, user_agent, user_agent_parsed,
+        // Only that user's sessions currently on one site - a tenant's view of
+        // an identity that may belong to several
+        $sessions = Session::get_sessions_for_user($login_user_id, $site_id);
+
+        Each entry: id, device_id, site_id, ip_address, user_agent, user_agent_parsed,
         device_summary, location, last_active, created_at, signed_in_at,
         first_seen, is_current. `id` is the session to pass to the terminate
         functions. One browser is one entry however often it has signed in:

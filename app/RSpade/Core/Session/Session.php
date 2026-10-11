@@ -13,6 +13,7 @@ use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Session\Audit_Session;
 use App\RSpade\Core\Session\Rsx_Session_Cookie;
 use App\RSpade\Core\Session\User_Agent;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -150,7 +151,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
- * @property string $user_agent
+ * @property int $user_agent_id
  * @property int $version
  *
  * @property-read string $type_id__label
@@ -432,6 +433,7 @@ class Session extends Rsx_System_Model_Abstract
 
         // The API identity tier, the loader flags and every resolved cache.
         self::_reset_api_identity();
+        Audit_Session::_reset();
 
         // Per-request overrides a test may have set on its way through. Narrow on purpose.
         self::$_request_site_id_override = null;
@@ -597,7 +599,7 @@ class Session extends Rsx_System_Model_Abstract
             $session->session_token = self::$_session_token;
             $session->csrf_token = $csrf_token;
             $session->ip_address = self::__get_client_ip();
-            $session->user_agent = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
+            $session->user_agent = $_SERVER['HTTP_USER_AGENT'] ?? null;
             $session->last_active = now();
             $session->active = true;
             $session->site_id = 0;
@@ -654,7 +656,7 @@ class Session extends Rsx_System_Model_Abstract
 
         if (empty($device_id)) {
             $device_id = DB::table('_session_devices')->insertGetId([
-                'user_agent' => substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
+                'user_agent_id' => Audit_Session::user_agent_id($_SERVER['HTTP_USER_AGENT'] ?? null),
             ]);
         }
 
@@ -662,7 +664,7 @@ class Session extends Rsx_System_Model_Abstract
         $new->session_token = bin2hex(random_bytes(32));
         $new->csrf_token = bin2hex(random_bytes(32));
         $new->ip_address = self::__get_client_ip();
-        $new->user_agent = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
+        $new->user_agent = $_SERVER['HTTP_USER_AGENT'] ?? null;
         $new->last_active = now();
         $new->active = true;
         $new->version = 1;
@@ -786,7 +788,6 @@ class Session extends Rsx_System_Model_Abstract
         $session->session_token = self::$_session_token;
         $session->csrf_token = bin2hex(random_bytes(32));
         $session->ip_address = self::__get_client_ip();
-        $session->user_agent = 'CLI';
         $session->last_active = now();
         $session->active = true;
         $session->site_id = self::$_cli_site_id ?? 0;
@@ -890,6 +891,10 @@ class Session extends Rsx_System_Model_Abstract
      */
     private static function __classify_session_type(): int
     {
+        if (self::__is_cli()) {
+            return self::TYPE_CLI;
+        }
+
         if (self::$_api_identity !== null) {
             return self::TYPE_API;
         }
@@ -1308,6 +1313,88 @@ class Session extends Rsx_System_Model_Abstract
         self::logout();
 
         return false;
+    }
+
+    // =========================================================================
+    // AUDIT ATTRIBUTION (_audit_sessions, _user_agents)
+    // =========================================================================
+
+    /**
+     * The id of the AUDIT SESSION for whoever is acting right now - the value to store
+     * on a record of something somebody did (an activity log row, an export record).
+     *
+     * NEVER STORE get_session_id() FOR THAT. A session row is operational state: it is
+     * replaced at every sign-in, deleted when a command ends and collected when idle,
+     * so a stored session id stops resolving - and for a command or a task it never
+     * resolved at all. An audit session is a permanent row in _audit_sessions describing
+     * the acting context (identity, tenant, impersonators, address, session row, user
+     * agent), minted on first use and never collected. See Audit_Session.
+     *
+     * Works everywhere: a browser request, a Bearer-key API call, a command, a task. The
+     * same context answers the same id; a sign-in, a site switch, an impersonation or a
+     * new address answers a new one. Creates no session.
+     *
+     * The framework stamps it on every recorded unit of work itself
+     * (_transactions.audit_session_id).
+     *
+     * @return int
+     */
+    public static function get_audit_session_id(): int
+    {
+        return Audit_Session::current_id();
+    }
+
+    /**
+     * What an audit session recorded: site_id, login_user_id, portal_user_id,
+     * portal_site_id, both impersonators, ip_address, user_agent (the string),
+     * session_row_id, device_id, session_type_id, first_seen_at and last_seen_at. Null
+     * when there is no such audit session.
+     *
+     * The way to read an id stored from get_audit_session_id() back - _audit_sessions
+     * itself is the framework's table.
+     *
+     * @param int $audit_session_id
+     * @return array|null
+     */
+    public static function get_audit_session(int $audit_session_id): ?array
+    {
+        return Audit_Session::describe($audit_session_id);
+    }
+
+    /**
+     * The browser's user-agent string for this row - `$session->user_agent`. The row
+     * stores user_agent_id; the string lives once in _user_agents.
+     *
+     * @return string|null
+     */
+    public function getUserAgentAttribute(): ?string
+    {
+        return Audit_Session::user_agent_string($this->attributes['user_agent_id'] ?? null);
+    }
+
+    /**
+     * Assigning `$session->user_agent = $string` records the string in _user_agents and
+     * stores its id.
+     *
+     * @param string|null $user_agent
+     * @return void
+     */
+    public function setUserAgentAttribute(?string $user_agent): void
+    {
+        $this->attributes['user_agent_id'] = Audit_Session::user_agent_id($user_agent);
+    }
+
+    /**
+     * What kind of session this request or process is: Session::TYPE_WEB, _PLAYWRIGHT,
+     * _API or _CLI. A fact about the caller, whether or not a row exists.
+     *
+     * FRAMEWORK INTERNAL - Audit_Session.
+     *
+     * @return int
+     */
+    public static function _current_session_type(): int
+    {
+        return self::__classify_session_type();
     }
 
     // =========================================================================
@@ -2460,9 +2547,12 @@ class Session extends Rsx_System_Model_Abstract
      * and was a retention bug wearing a query bug's clothes.
      *
      * @param int|null $login_user_id If null, uses current logged-in user
+     * @param int|null $site_id Only the sessions currently on this site - for a screen that
+     *                          shows one tenant's view of an identity that may belong to
+     *                          several. Null for every site.
      * @return array Array of session info
      */
-    public static function get_sessions_for_user(?int $login_user_id = null): array
+    public static function get_sessions_for_user(?int $login_user_id = null, ?int $site_id = null): array
     {
         if ($login_user_id === null) {
             $login_user_id = self::get_login_user_id();
@@ -2476,6 +2566,7 @@ class Session extends Rsx_System_Model_Abstract
 
         $sessions = static::where('login_user_id', $login_user_id)
             ->where('active', true)
+            ->when($site_id !== null, fn ($query) => $query->where('site_id', $site_id))
             ->orderBy('last_active', 'desc')
             ->get();
 
@@ -2488,6 +2579,7 @@ class Session extends Rsx_System_Model_Abstract
                 return [
                     'id' => $session->id,
                     'device_id' => $session->device_id,
+                    'site_id' => $session->site_id,
                     'ip_address' => $session->ip_address,
                     'user_agent' => $session->user_agent,
                     'user_agent_parsed' => $parsed_ua,

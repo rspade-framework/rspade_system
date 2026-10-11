@@ -60,7 +60,7 @@ class Session_Cli_Row_Test extends Rsx_Test_Abstract
         static::__assert_not_null($row, 'get_session_id() created a _sessions row in CLI');
         static::__assert_equals(Session::TYPE_CLI, (int) $row->type_id, 'row is stamped TYPE_CLI');
         static::__assert_equals('CLI', $row->ip_address, 'ip_address records what created the row');
-        static::__assert_equals('CLI', $row->user_agent, 'user_agent records what created the row');
+        static::__assert_null($row->user_agent_id, 'a command has no user agent');
         static::__assert_equals(1, (int) $row->active, 'the row is active');
         static::__assert_not_empty($row->session_token, 'a token is minted (never transmitted)');
         static::__assert_not_empty($row->csrf_token, 'a csrf token is minted');

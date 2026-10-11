@@ -48,6 +48,7 @@ use App\RSpade\Core\Revisions\Revision_Model;
  * @property int $actor_id
  * @property int $actor_type
  * @property int $api_request_log_id
+ * @property int $audit_session_id
  * @property string $created_at
  * @property int $created_by_id
  * @property int $created_by_type

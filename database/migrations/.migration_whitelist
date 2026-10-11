@@ -681,6 +681,16 @@
             "created_at": "2026-10-11T04:28:00+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_session_devices_and_timeouts"
+        },
+        "2026_10_11_055554_create_audit_sessions_and_user_agents.php": {
+            "created_at": "2026-10-11T05:55:54+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe create_audit_sessions_and_user_agents"
+        },
+        "2026_10_11_064000_convert_user_agent_columns_to_user_agent_ids.php": {
+            "created_at": "2026-10-11T06:40:00+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe convert_user_agent_columns_to_user_agent_ids"
         }
     }
 }

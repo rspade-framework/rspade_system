@@ -125,6 +125,7 @@ class Revision
             $transaction->source_id = self::_current_source_id();
             $transaction->endpoint = self::$endpoint === null ? null : substr(self::$endpoint, 0, 255);
             $transaction->ip = self::_current_ip();
+            $transaction->audit_session_id = Session::get_audit_session_id();
             $transaction->api_request_log_id = self::$api_request_log_id;
             $transaction->revision_count = 0;
             $transaction->description = self::$description;

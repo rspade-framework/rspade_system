@@ -70,3 +70,11 @@ plus a three-line shell, so an application's override EXTENDS the base and its d
 only what it declared. These three tests are that shape stated over the real tree; CO-A04..A07
 are the manifest refusal that stops a clone coming back in by the side door, and CO-D10..D13 are
 the drift analyzer knowing a split pair has nothing to compare.
+| CO-T01 | An application template archives the framework TEMPLATE of that component name and leaves the framework's class and stylesheet of that name alone | php | framework trio + an rsx template, differently named file | only the `.jqhtml` archived; notice names both files | implemented | 2026-10-11 |
+| CO-T02 | An application stylesheet archives the framework stylesheet with the same WRAPPER CLASS, whatever the two files are called | php | framework template + stylesheet, rsx `some_styles.scss` wrapped in the same class | only the `.scss` archived | implemented | 2026-10-11 |
+| CO-T03 | Nothing is archived when the application declares no such name | php | framework files only | untouched | implemented | 2026-10-11 |
+| CO-T04 | An override named by the index but absent from disk archives nothing | php | stale rsx entry | untouched; "stale index entry" | implemented | 2026-10-11 |
+| CO-T05 | A build that marked its manifest bad archives nothing | php | real override, `manifest_is_bad` | untouched; "NOT archiving" | implemented | 2026-10-11 |
+| CO-T06 | Archived `.js`, `.jqhtml` and `.scss` files are restored when nothing overrides them | php | three `.upstream` files, no rsx files | all three active again | implemented | 2026-10-11 |
+| CO-T07 | An archive is kept only by an override OF ITS OWN KIND | php | three `.upstream` files + an rsx template | template stays archived; class and stylesheet restored | implemented | 2026-10-11 |
+| CO-T08 | An archived file is indexed under `<kind>.upstream` with `upstream_name`, and carries no `class` / `id` / `scss_wrapper_class` | php | `_process_file()` on each archived kind | extension, name, nothing live | implemented | 2026-10-11 |

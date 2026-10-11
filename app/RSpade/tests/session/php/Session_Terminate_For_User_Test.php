@@ -105,7 +105,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
             'site_id'       => self::SITE_ID,
             'version'       => 1,
             'ip_address'    => '10.0.0.9',
-            'user_agent'    => 'terminate-for-user-test',
+            'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('terminate-for-user-test'),
             'login_user_id' => $login_user_id,
             'last_active'   => now(),
             'created_at'    => now(),

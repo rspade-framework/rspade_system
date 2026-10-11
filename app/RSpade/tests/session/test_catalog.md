@@ -160,6 +160,9 @@ and delete their keys in teardown.
 | sess-gc-14 | a portal identity expires on the idle limit | 200-day vs 40-day portal rows, 90-day limits | stale gone, fresh kept | implemented |
 | sess-gc-20 | identified rows follow the longer idle limit plus the Ajax grace | 29-day and 31-day signed-in rows, 30-day limits | kept / collected | implemented |
 | sess-gc-21 | an unlimited idle window collects no identified row | portal idle limit 0, 900-day row | web count 0, row kept | implemented |
+| sess-gc-23 | cleanup_user_agents deletes a string nothing names and keeps one named by a session, a device, a login-history row or an audit session | five 10-day-old strings, four referenced | only the orphan deleted | implemented |
+| sess-gc-24 | a string resolved within the last day is left alone | an unreferenced string resolved now | kept | implemented |
+| sess-gc-25 | resolving a string again protects it from the sweep | a 10-day-old orphan, resolved again | kept | implemented |
 | sess-gc-22 | a device no session row names is collected | an orphan device, one in use | orphan gone, in-use kept | implemented |
 | sess-gc-15 | the playwright backstop ignores which identity a row carries | 2-day portal harness + portal web | harness gone, web kept | implemented |
 | sess-gc-17 | purge_playwright_sessions collects harness rows whatever they carry | staff + portal harness + portal web | both harness rows gone, web kept | implemented |
@@ -212,6 +215,33 @@ Self-seeding. Moves a real session's clocks back against the shipped defaults (3
 | sess-life-05 | the page-view report stamps the session and last_seen on the account | stamp 5 minutes old | stamp advanced; login_users.last_seen set | implemented |
 | sess-life-06 | an Ajax call is not a page view | stamp 5 minutes old, any Ajax call | stamp unchanged | implemented |
 | sess-life-07 | rendering a page is a page view | GET /dashboard | stamp advanced | implemented |
+
+## Audit_Session_Test (php) - the acting context a logged act points at
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-audit-01 | one context is one row however often it is asked for | impersonate, ask twice | same id; site, identity, TYPE_CLI recorded | implemented |
+| sess-audit-02 | a process with no session is attributable, and asking mints no session | CLI identity | session_row_id, ip, user_agent_id null; has_session unchanged | implemented |
+| sess-audit-03 | a different identity or tenant is a different row; the first context is its first row again | three contexts, then the first | three ids; first id again | implemented |
+| sess-audit-04 | nobody signed in is still a context | no identity | a row with null identity and site | implemented |
+| sess-audit-05 | an impersonation is its own context | set the impersonator | new id carrying impersonator_login_user_id | implemented |
+| sess-audit-06 | a row minted in a rolled-back transaction is not answered again | begin, ask, roll back, ask | first row gone; a row exists for the second id | implemented |
+| sess-audit-07 | a user agent is stored once and in full | a 1000+ character string, twice; a variant | same id; different id; the whole string; one row | implemented |
+| sess-audit-08 | no user agent is null | null, '' | null id, null string | implemented |
+| sess-audit-10 | an audit session is read back through the framework, user agent as a string | get_audit_session($id); id 0 | the recorded context; null | implemented |
+| sess-audit-11 | a session row answers its user agent as the string it was given | a 400+ character agent assigned to a row | the same string from a fresh read | implemented |
+| sess-audit-09 | a recorded unit of work carries the audit session | Revision::transaction_id() in a unit of work | _transactions.audit_session_id is the current id | implemented |
+
+## http/audit_session.sh (http - live server)
+
+Self-seeding. Needs a framework-development box for the `/ssr-test` probe.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-audit-http-01 | a cookie-less caller gets an audit session - address and agent recorded, no session row - and no session cookie for asking | GET the probe | id; no `Set-Cookie: rsx=`; row as stated | implemented |
+| sess-audit-http-02 | the same context answers the same id | same request again | same id | implemented |
+| sess-audit-http-03 | a different user agent is a different context | another `User-Agent` | different id | implemented |
+| sess-audit-http-04 | a signed-in browser's audit session names its identity, session row and device | sign in, GET the probe | session_row_id, login_user_id, device_id match the session row | implemented |
 
 ## playwright/session_expired.js (playwright)
 

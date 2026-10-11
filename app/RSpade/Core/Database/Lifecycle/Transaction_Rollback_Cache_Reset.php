@@ -11,6 +11,7 @@ use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Support\Facades\Event;
 use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
+use App\RSpade\Core\Session\Audit_Session;
 
 /**
  * Transaction_Rollback_Cache_Reset
@@ -63,8 +64,10 @@ class Transaction_Rollback_Cache_Reset
     }
 
     /**
-     * Drop every cached view of database state: the volatile cache, and the type-ref
-     * registry's process statics (which the cache flush alone cannot reach).
+     * Drop every cached view of database state: the volatile cache, the type-ref
+     * registry's process statics (which the cache flush alone cannot reach), and the
+     * audit-session ids this process resolved (a row minted inside the rolled-back
+     * transaction is gone).
      *
      * Public because the test runner performs the same two calls where no rollback event
      * fires - it drops and restores the whole test database instead.
@@ -75,5 +78,6 @@ class Transaction_Rollback_Cache_Reset
     {
         RsxCache::clear();
         Type_Ref_Registry::_reset_cached_state();
+        Audit_Session::_reset();
     }
 }

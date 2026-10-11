@@ -57,7 +57,7 @@ class Session_Cap_Test extends Rsx_Test_Abstract
             'type_id'       => $overrides['type_id'] ?? Session::TYPE_WEB,
             'version'       => 1,
             'ip_address'    => '10.0.0.9',
-            'user_agent'    => 'test-browser',
+            'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test-browser'),
             'login_user_id' => $overrides['login_user_id'] ?? $login_user_id,
             'last_active'   => $when,
             'created_at'    => $when,

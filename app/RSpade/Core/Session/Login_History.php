@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Cache\Rsx_Counter;
+use App\RSpade\Core\Session\Audit_Session;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\User_Agent;
 
@@ -116,7 +117,7 @@ class Login_History
             'login_user_id' => $login_user_id,
             'email_attempted' => $email,
             'ip_address' => self::_get_client_ip(),
-            'user_agent' => self::_get_user_agent(),
+            'user_agent_id' => Audit_Session::user_agent_id(self::_get_user_agent()),
             'status' => self::STATUS_SUCCESS,
             'failure_reason' => null,
             'created_at' => now(),
@@ -154,7 +155,7 @@ class Login_History
             'login_user_id' => $login_user_id,
             'email_attempted' => $email,
             'ip_address' => (string) ($client_context['ip_address'] ?? 'CLI'),
-            'user_agent' => $client_context['user_agent'] ?? null,
+            'user_agent_id' => Audit_Session::user_agent_id($client_context['user_agent'] ?? null),
             'status' => $status,
             'failure_reason' => $reason === null ? null : mb_substr($reason, 0, 255),
             'created_at' => now(),
@@ -302,12 +303,14 @@ class Login_History
      */
     public static function present_record(object $record): array
     {
+        $user_agent = Audit_Session::user_agent_string($record->user_agent_id === null ? null : (int) $record->user_agent_id);
+
         return [
             'id' => $record->id,
             'email' => $record->email_attempted,
             'ip_address' => $record->ip_address,
-            'user_agent' => $record->user_agent,
-            'user_agent_parsed' => User_Agent::parse($record->user_agent),
+            'user_agent' => $user_agent,
+            'user_agent_parsed' => User_Agent::parse($user_agent),
             'location' => self::_format_location($record),
             'status' => $record->status,
             'status_label' => self::_get_status_label($record->status),
@@ -375,7 +378,7 @@ class Login_History
         }
 
         $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? null;
-        return $user_agent ? substr($user_agent, 0, 512) : null;
+        return $user_agent ?: null;
     }
 
     /**

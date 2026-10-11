@@ -430,6 +430,10 @@ class Manifest_Scanner
             $extension = 'blade.php';
         } elseif (str_ends_with($file_path, '.php.upstream')) {
             $extension = 'php.upstream';
+        } elseif (preg_match('/\.(js|jqhtml|scss)\.upstream$/', $file_path, $archived)) {
+            // An archived JS class, template or stylesheet: indexed so the restore pass
+            // can tell whose it is, and under an extension no other code path reads.
+            $extension = $archived[1] . '.upstream';
         }
 
         $data = [
@@ -468,6 +472,16 @@ class Manifest_Scanner
                 // Php_Fixer only runs on extension 'php', so upstream files are safe
                 $php_metadata = \App\RSpade\Core\PHP\Php_Parser::parse($absolute_path);
                 $data = array_merge($data, $php_metadata);
+                break;
+
+            case 'js.upstream':
+            case 'jqhtml.upstream':
+            case 'scss.upstream':
+                // An archived framework file is parsed for ONE fact - the name it
+                // declares - which is all the restore pass needs. Nothing else the parser
+                // found is kept: under `class`, `id` or `scss_wrapper_class` an archived
+                // file would be read as a live declaration of that name.
+                $data['upstream_name'] = static::__archived_declared_name($extension, $absolute_path);
                 break;
 
             case 'js':
@@ -1366,11 +1380,50 @@ class Manifest_Scanner
     }
 
     /**
+    * The name an archived .js / .jqhtml / .scss file declares: its JS class, its
+    * <Define:> component, or the single class its stylesheet is wrapped in. Null when it
+    * declares none.
+    */
+    private static function __archived_declared_name(string $extension, string $absolute_path): ?string
+    {
+        if ($extension === 'js.upstream') {
+            return \App\RSpade\Core\JsParsers\Js_Parser::extract_metadata($absolute_path)['class'] ?? null;
+        }
+
+        $parsed = [];
+
+        if ($extension === 'jqhtml.upstream') {
+            ExtensionRegistry::process_file('jqhtml', $absolute_path, $parsed);
+
+            return ($parsed['id'] ?? null) ?: null;
+        }
+
+        // The stylesheet handler decides what a file is from its NAME, and this one ends
+        // in .upstream - so it is read through a copy that ends in .scss.
+        $readable = Rsx_Project_Paths::tmp_path('archived_stylesheet_' . sha1($absolute_path) . '.scss');
+        copy($absolute_path, $readable);
+
+        try {
+            $parsed = (new \App\RSpade\Integrations\Scss\Scss_ManifestModule())->process($readable, []);
+        } finally {
+            unlink($readable);
+        }
+
+        return ($parsed['scss_wrapper_class'] ?? null) ?: null;
+    }
+
+    /**
     * Restore orphaned .upstream files when their override no longer exists
     *
-    * Scans all php.upstream files in the manifest. For each one, checks if a .php file
-    * with the same class name exists. If not, the override was removed and we should
-    * restore the framework file.
+    * An archived framework file comes back when nothing in the application stands in for
+    * it any more:
+    *
+    *   .php.upstream                  no active .php file declares its class
+    *   .js.upstream                   no application JS file declares its class
+    *   .jqhtml.upstream               no application template declares its component
+    *   .scss.upstream                 no application stylesheet is wrapped in its class
+    *
+    * Each file is released on its own, as it was archived on its own.
     */
     public static function _restore_orphaned_upstream_files(): void
     {
@@ -1379,9 +1432,27 @@ class Manifest_Scanner
         // files it is actually about.
         $active_php_classes = [];
         $upstream_entries = [];
+        $application_names = [];
+        $archived_assets = [];
 
         foreach (Manifest::$data['data']['files'] as $file => $metadata) {
             $extension = $metadata['extension'] ?? null;
+
+            if (in_array($extension, ['js.upstream', 'jqhtml.upstream', 'scss.upstream'], true)) {
+                $archived_assets[$file] = [substr($extension, 0, -strlen('.upstream')), $metadata['upstream_name'] ?? null];
+
+                continue;
+            }
+
+            if (Rsx_Paths::is_application($file)) {
+                if ($extension === 'jqhtml' && !empty($metadata['id'])) {
+                    $application_names['jqhtml'][$metadata['id']] = true;
+                } elseif ($extension === 'scss' && !empty($metadata['scss_wrapper_class'])) {
+                    $application_names['scss'][$metadata['scss_wrapper_class']] = true;
+                } elseif (in_array($extension, ['js', 'jsx', 'ts', 'tsx'], true) && !empty($metadata['class'])) {
+                    $application_names['js'][$metadata['class']] = true;
+                }
+            }
 
             if ($extension === 'php' && !empty($metadata['class'])) {
                 $active_php_classes[$metadata['class']] = $file;
@@ -1419,6 +1490,29 @@ class Manifest_Scanner
 
                 Manifest::flag_needs_restart(
                     'an orphaned .upstream file was restored: ' . $class_name . ' (' . $file . ')'
+                );
+            }
+        }
+
+        // Archived JS classes, templates and stylesheets: each is kept while an
+        // application file of the SAME KIND still declares its name.
+        foreach ($archived_assets as $file => [$kind, $name]) {
+            if ($name !== null && isset($application_names[$kind][$name])) {
+                continue;
+            }
+
+            $upstream_path = base_path($file);
+            $restored_path = preg_replace('/\.upstream$/', '', $upstream_path);
+
+            if (file_exists($upstream_path) && !file_exists($restored_path)) {
+                rename($upstream_path, $restored_path);
+                Manifest::$_override_pass_renamed = true;
+                error_log('[Manifest] Override released: ' . ($name ?? 'unnamed') . ' - restored ' . $file);
+
+                unset(Manifest::$data['data']['files'][$file]);
+
+                Manifest::flag_needs_restart(
+                    'an orphaned .upstream file was restored: ' . ($name ?? 'unnamed') . ' (' . $file . ')'
                 );
             }
         }

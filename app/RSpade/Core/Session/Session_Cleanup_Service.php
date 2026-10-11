@@ -55,6 +55,12 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
     private const DELETE_CHUNK_SIZE = 10000;
 
     /**
+     * Every table with a user_agent_id column pointing into _user_agents. A string is an
+     * orphan only when none of them names it.
+     */
+    private const USER_AGENT_REFERENCES = ['_sessions', '_session_devices', '_login_history', '_audit_sessions'];
+
+    /**
      * Delete rows matching a base query in bounded chunks until none remain, or until
      * a stop is requested (checked between chunks; the caller re-checks after the pass).
      * Heartbeats between chunks so a watcher can tell a long backlog-recovery run from a
@@ -90,6 +96,10 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
 
     /**
      * Expire sessions that have gone unused for longer than their type allows.
+     *
+     * _audit_sessions is NOT session state and is never collected, here or anywhere: it is
+     * what a logged act points at once its session is gone. (_user_agents rows it names
+     * live as long as it does; the rest are swept by cleanup_user_agents().)
      *
      * @param Task_Instance $task Task instance for logging
      * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
@@ -207,6 +217,66 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
 
         $task->state($deleted);
         $task->summary("Deleted {$total} idle sessions.");
+
+        return null;
+    }
+
+    /**
+     * Delete the user-agent strings nothing refers to any more.
+     *
+     * _user_agents holds each string once, and four tables point into it: _sessions,
+     * _session_devices, _login_history and _audit_sessions. A browser session can be
+     * minted by any visitor with any string, so once the rows that named a string have
+     * been collected the string goes too. One an audit session names is never an orphan,
+     * because audit sessions are never collected.
+     *
+     * A row resolved within the last day is left alone whatever points at it: resolving
+     * (Audit_Session::user_agent_id()) advances last_seen_at immediately before the
+     * insert that will reference the row, and that insert must find it.
+     *
+     * @param Task_Instance $task Task instance for logging
+     * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
+     * @return null
+     */
+    #[Task('Delete user-agent strings no session, device, login or audit record names (weekly)')]
+    #[Exclusive]
+    #[Schedule('0 2 * * 0')]
+    public static function cleanup_user_agents(Task_Instance $task, array $params = [])
+    {
+        $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);
+        $settled_before = now()->subDay();
+
+        $deleted = self::_delete_chunked(
+            function () use ($settled_before) {
+                $query = DB::table('_user_agents')->where('last_seen_at', '<', $settled_before);
+
+                foreach (self::USER_AGENT_REFERENCES as $table) {
+                    $query->whereNotExists(function ($referenced) use ($table) {
+                        $referenced->select(DB::raw(1))
+                            ->from($table)
+                            ->whereColumn($table . '.user_agent_id', '_user_agents.id');
+                    });
+                }
+
+                return $query;
+            },
+            $task,
+            $chunk_size
+        );
+
+        if ($task->is_stop_requested()) {
+            $task->stdout("Stop requested - stopped after deleting {$deleted} unreferenced user agent(s).");
+            $task->summary("Stopped after deleting {$deleted} unreferenced user agents.");
+
+            return null;
+        }
+
+        $task->stdout($deleted > 0
+            ? "Deleted {$deleted} unreferenced user agent(s)."
+            : 'Every user agent is still referenced; nothing deleted.');
+
+        $task->state(['total_deleted' => $deleted]);
+        $task->summary("Deleted {$deleted} unreferenced user agents.");
 
         return null;
     }

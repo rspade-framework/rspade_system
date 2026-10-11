@@ -25,11 +25,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * The framework test runner is CLI-only, so these exercise the CLI branch of the
  * impersonation methods (mirroring how set_login_user_id()/set_site_id() are
  * tested in Session_Cli_Test). The CLI branch performs the same identity swap and
- * state bookkeeping as the web branch. Neither branch rotates the session_token or
- * csrf: those are minted once at session creation and are IMMUTABLE for the life of
- * the session (owner ruling 2026-07-24 - an identity change is a pure record
- * update, no token rotation, no cookie re-emission). The web-branch DB proof of
- * that stability lives in the http suite (see test_catalog.md).
+ * state bookkeeping as the web branch. Neither branch moves the browser to a new
+ * session row: an impersonation is not a sign-in, so it is a pure record update on
+ * the live row.
  *
  * setup()/teardown() run once per class (not per method), and the impersonation
  * state lives in static properties (not the rolled-back transaction), so every

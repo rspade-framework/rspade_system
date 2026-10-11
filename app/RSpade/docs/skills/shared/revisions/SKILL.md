@@ -73,6 +73,7 @@ foreach ($client->revisions() as $revision) {              // this record only
     $revision->transaction->actor;                         // who
     $revision->transaction->source_id__label;              // Web/Ajax/API/Task/CLI/Test
     $revision->transaction->endpoint;                      // 'Clients_Controller::save'
+    $revision->transaction->audit_session_id;              // the acting context (_audit_sessions) - who, from where
 }
 
 $client->revisions_including_children();                   // + every #[Revision_Parent] child

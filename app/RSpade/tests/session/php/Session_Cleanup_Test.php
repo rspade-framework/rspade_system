@@ -49,7 +49,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'type_id'       => $overrides['type_id'] ?? Session::TYPE_WEB,
             'version'       => 1,
             'ip_address'    => '10.0.0.9',
-            'user_agent'    => $overrides['user_agent'] ?? 'test-browser',
+            'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id($overrides['user_agent'] ?? 'test-browser'),
             'login_user_id' => $overrides['login_user_id'] ?? null,
             'portal_user_id' => $overrides['portal_user_id'] ?? null,
             'last_active'   => $overrides['last_active'] ?? $when,
@@ -70,7 +70,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'login_user_id' => 4242,
             'email_attempted' => 'prune_' . uniqid() . '@example.com',
             'ip_address' => '10.0.0.11',
-            'user_agent' => 'test-browser',
+            'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test-browser'),
             'status' => 'success',
             'failure_reason' => null,
             'created_at' => now()->subDays($age_days),
@@ -99,7 +99,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'site_id'       => 0,
             'version'       => 1,
             'ip_address'    => '127.0.0.1',
-            'user_agent'    => 'test',
+            'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test'),
             'last_active'   => now(),
             'created_at'    => now(),
             'updated_at'    => now(),
@@ -122,7 +122,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'site_id'       => 0,
             'version'       => 1,
             'ip_address'    => '127.0.0.1',
-            'user_agent'    => 'test',
+            'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test'),
             'last_active'   => now(),
             'created_at'    => now(),
             'updated_at'    => now(),
@@ -480,8 +480,8 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
      */
     public static function test_a_device_no_row_names_is_collected()
     {
-        $orphan = DB::table('_session_devices')->insertGetId(['user_agent' => 'orphan']);
-        $in_use = DB::table('_session_devices')->insertGetId(['user_agent' => 'in use']);
+        $orphan = DB::table('_session_devices')->insertGetId(['user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('orphan')]);
+        $in_use = DB::table('_session_devices')->insertGetId(['user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('in use')]);
 
         $token = static::__insert_session(['age_days' => 1, 'login_user_id' => 12345]);
         DB::table('_sessions')->where('session_token', $token)->update(['device_id' => $in_use]);
@@ -491,6 +491,93 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         static::__assert_greater_than(0, $result['devices']);
         static::__assert_false(DB::table('_session_devices')->where('id', $orphan)->exists(), 'the orphan is gone');
         static::__assert_true(DB::table('_session_devices')->where('id', $in_use)->exists(), 'the device in use is kept');
+    }
+
+    // -------------------------------------------------------------------------
+    // Session_Cleanup_Service::cleanup_user_agents() (the weekly sweep)
+    // -------------------------------------------------------------------------
+
+    /**
+     * A user agent recorded $age_days ago, last resolved then.
+     */
+    private static function __insert_user_agent(string $user_agent, int $age_days): int
+    {
+        $id = \App\RSpade\Core\Session\Audit_Session::user_agent_id($user_agent);
+        $when = now()->subDays($age_days);
+
+        DB::table('_user_agents')->where('id', $id)->update(['first_seen_at' => $when, 'last_seen_at' => $when]);
+
+        return $id;
+    }
+
+    /**
+     * A string nothing names is deleted; one named by ANY of the four referencing tables
+     * is kept - each of them, so a table left out of the sweep's list would show here.
+     */
+    public static function test_cleanup_user_agents_deletes_only_what_nothing_names()
+    {
+        $orphan = static::__insert_user_agent('sweep-orphan', 10);
+        $by_session = static::__insert_user_agent('sweep-session', 10);
+        $by_device = static::__insert_user_agent('sweep-device', 10);
+        $by_login = static::__insert_user_agent('sweep-login', 10);
+        $by_audit = static::__insert_user_agent('sweep-audit', 10);
+
+        $token = static::__insert_session(['age_days' => 1, 'login_user_id' => 12345]);
+        DB::table('_sessions')->where('session_token', $token)->update(['user_agent_id' => $by_session]);
+        DB::table('_session_devices')->insert(['user_agent_id' => $by_device]);
+        DB::table('_login_history')->insert([
+            'email_attempted' => 'sweep@rspade.test',
+            'ip_address' => '127.0.0.1',
+            'user_agent_id' => $by_login,
+            'status' => 'success',
+        ]);
+        DB::table('_audit_sessions')->insert([
+            'tuple_hash' => hash('sha256', 'sweep-audit'),
+            'user_agent_id' => $by_audit,
+            'session_type_id' => Session::TYPE_WEB,
+        ]);
+
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_user_agents');
+
+        $remaining = DB::table('_user_agents')
+            ->whereIn('id', [$orphan, $by_session, $by_device, $by_login, $by_audit])
+            ->pluck('id')
+            ->all();
+
+        static::__assert_greater_than(0, $result['total_deleted']);
+        static::__assert_false(in_array($orphan, $remaining), 'the string nothing names is gone');
+        static::__assert_true(in_array($by_session, $remaining), 'named by a session: kept');
+        static::__assert_true(in_array($by_device, $remaining), 'named by a device: kept');
+        static::__assert_true(in_array($by_login, $remaining), 'named by a login-history row: kept');
+        static::__assert_true(in_array($by_audit, $remaining), 'named by an audit session: kept');
+    }
+
+    /**
+     * A string resolved within the last day is left alone even when nothing names it yet:
+     * the insert that will reference it has to find it.
+     */
+    public static function test_cleanup_user_agents_leaves_a_string_resolved_today()
+    {
+        $fresh = static::__insert_user_agent('sweep-just-resolved', 0);
+
+        static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_user_agents');
+
+        static::__assert_true(DB::table('_user_agents')->where('id', $fresh)->exists());
+    }
+
+    /**
+     * Resolving a string again counts as use: it advances last_seen_at.
+     */
+    public static function test_resolving_a_user_agent_again_protects_it_from_the_sweep()
+    {
+        $old = static::__insert_user_agent('sweep-resolved-again', 10);
+
+        \App\RSpade\Core\Session\Audit_Session::_reset();
+        \App\RSpade\Core\Session\Audit_Session::user_agent_id('sweep-resolved-again');
+
+        static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_user_agents');
+
+        static::__assert_true(DB::table('_user_agents')->where('id', $old)->exists());
     }
 
     public static function test_the_playwright_backstop_ignores_which_identity_a_row_carries()

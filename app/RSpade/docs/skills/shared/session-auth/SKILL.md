@@ -1,6 +1,6 @@
 ---
 name: session-auth
-description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::verify_credentials() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifetime limits (rsx.sessions.staff / .portal max_length_minutes and max_idle_minutes, the session_expired envelope, Rsx.set_session_expired_handler()), sign-in rotation and device records, the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, a \"you have been signed out\" dialog, an idle or absolute session timeout, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
+description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::verify_credentials() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifetime limits (rsx.sessions.staff / .portal max_length_minutes and max_idle_minutes, the session_expired envelope, Rsx.set_session_expired_handler()), sign-in rotation and device records, audit sessions (Session::get_audit_session_id(), Session::get_audit_session(), _audit_sessions) for attributing logged activity, the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, a \"you have been signed out\" dialog, an idle or absolute session timeout, an activity or audit log that records who did something, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
 ---
 
 # Sessions and Login
@@ -198,6 +198,21 @@ public static function on_terminated(array $payload) {
 **The concurrent-session cap evicts silently** (no event, no push), so that stream is not a complete record of deactivations.
 
 ---
+
+## Attributing a logged act: the audit session
+
+**Never store `Session::get_session_id()` on a record of something somebody did.** A session row is replaced at every sign-in, deleted when a command ends and collected when idle - the stored id stops resolving, and for a command, task or API call it never resolved. Store the audit session:
+
+```php
+$log->audit_session_id = Session::get_audit_session_id();   // int, always; creates no session
+```
+
+It is the id of a permanent `_audit_sessions` row describing the ACTING CONTEXT - site, staff identity, portal identity and site, both impersonators, client address, session row, user agent. Same context, same id; any change (sign-in, site switch, impersonation, new address or browser) is a new row. Works in a browser request, an API call, a command and a task, and one request resolves its context once however many rows it writes.
+
+- Group by `_audit_sessions.id` (one context), `session_row_id` (one sign-in) or `device_id` (one browser across sign-ins). The last two are correlation numbers, not foreign keys - they keep working after the session is gone.
+- **`_audit_sessions` is never garbage-collected**, so a stored id always resolves. Read it back with `Session::get_audit_session($id)` - the context as an array, `user_agent` as the full string. The table is the framework's; store the id in your own column and never query `_audit_sessions` (or any `_`-prefixed table) yourself.
+- The framework stamps `_transactions.audit_session_id` on every recorded unit of work itself.
+- User-agent strings live once, whole, in the framework's private `_user_agents`; sessions, devices, login history and audit sessions hold an id, and every framework answer (`get_sessions_for_user()`, `Login_History::get_history_for_user()`, `$session->user_agent`) still gives you the string. Unreferenced strings are swept weekly.
 
 ## Session lifetime
 

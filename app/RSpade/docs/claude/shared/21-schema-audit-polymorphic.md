@@ -10,6 +10,10 @@
 
 **No defensive coding in a migration.** No `IF EXISTS`, no `information_schema` queries, no fallbacks. **Know the current state, write the exact transformation.** Failures fail loud — the snapshot rollback is what handles recovery.
 
+### System tables are private
+
+**A `_`-prefixed TABLE belongs to the RSpade core, schema included, and application code in `rsx/` never touches one directly** — no `DB::table('_sessions')`, no raw SQL or join that names one, no query that depends on one of its columns. Reach what it holds through the interface the framework publishes for that feature (`Session::get_sessions_for_user()`, `Login_History::get_history_for_user()`, `Session::get_audit_session()`, `$record->revisions()`, `Task_Run_Model::find_page()`, …). **A system table's schema is not a contract**: columns move, split and disappear between releases with no notice, and only the published interfaces stay stable. **When an interface does not give you what you need, submit a change request to RSpade to extend it — never query the table yourself.** `rsx:man database_schema_architecture`.
+
 ### Audit authorship
 
 Every table carries a polymorphic PAIR per audit column — `created_by_id`+`created_by_type`, `updated_by_id`+`updated_by_type` (both BIGINT), plus `deleted_by_*` where rows soft-delete — because RSpade has three identity models (`User_Model`, `Portal_User_Model`, `Login_User_Model`) and a bare integer could not say which one it meant. **`Rsx_Model_Abstract::save()` stamps it automatically** — no trait, no wiring — and **an explicitly assigned pair always wins** (the pair is ONE unit: set one half and you must set both). Read it back with `$record->created_by` / `get_created_by_author()`.
