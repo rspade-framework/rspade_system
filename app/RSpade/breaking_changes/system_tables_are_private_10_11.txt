@@ -56,7 +56,9 @@ WHAT YOU MUST CHANGE
            _sessions (a user's devices)        Session::get_sessions_for_user()
            _sessions (the current one)         Session::get_current_session_info()
            _sessions (portal)                  Portal_Session::get_sessions_for_user()
-           _login_history                      Login_History::get_history_for_user()
+           _login_history                      Login_History::list_page() for a grid
+                                               (sort, filter, offset, total);
+                                               get_history_for_user() for the newest few
            _sessions.id on a log row           Session::get_audit_session_id() to
                                                record, get_audit_session() to read
            _transactions / _revisions          $record->revisions(),
@@ -65,11 +67,14 @@ WHAT YOU MUST CHANGE
            _tasks and its children             Task_Run_Model::find_page() /
                                                find_first_1000(), Rsx_Task
            _file_attachments / _file_storage   File_Attachment_Model and its
-                                               documented methods
+                                               documented methods; for disk usage
+                                               (an aggregate), File_Storage_Model::
+                                               usage_report()
 
-       A datagrid that searched `user_agent LIKE ...` in SQL filters the
-       rows the accessor returns instead; the sets these calls answer are
-       small (a user's signed-in devices, a page of history).
+       A sign-in history grid that sorted, searched and paged in SQL asks
+       Login_History::list_page(), which does all three in the query and
+       reports the total. Every reader has one of three documented shapes -
+       rsx:man database_schema_architecture, READERS OVER SYSTEM TABLES.
 
     3. Where no interface gives you what you need, ask for one
 

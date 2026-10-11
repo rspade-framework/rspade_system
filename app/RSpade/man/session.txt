@@ -1974,6 +1974,21 @@ LOGIN HISTORY
     READING IT BACK:
         $history = Login_History::get_history_for_user($login_user_id, $limit = 10);
 
+        // One PAGE for a grid: column sort, search, numbered pager
+        $page = Login_History::list_page([
+            'login_user_id' => $login_user_id,   // required
+            'filter' => 'firefox',               // attempted email, IP, user agent
+            'sort' => 'created_at',              // created_at | email | ip_address | status
+            'order' => 'desc',
+            'offset' => 0,
+            'limit' => 25,                       // 1..200
+        ]);
+        // ['rows' => [...same row shape...], 'total' => int, 'offset' => 0, 'limit' => 25]
+        // Invalid input throws InvalidArgumentException. There is no site scope:
+        // a sign-in authenticates the identity before any site is chosen. The
+        // shape is the framework's standard display-page reader - rsx:man
+        // database_schema_architecture, READERS OVER SYSTEM TABLES.
+
         Successes and passkey enrollment outcomes, most recent first. Each
         record: id, email, ip_address, user_agent, user_agent_parsed, location
         (null until geo-IP is wired), status, status_label, failure_reason,

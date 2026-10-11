@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Core\Files;
 
+use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\File_Attachment_Controller;
@@ -617,6 +618,130 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
         return $match;
     }
 
+
+    /**
+     * How much disk the blob store really holds, and what holds it.
+     *
+     * THE STORE IS CONTENT-ADDRESSED: identical bytes are one blob however many
+     * attachments point at them. So the sum of every attachment's file size is NOT the
+     * disk in use - it counts each blob once per REFERENCE, and on a store with heavy
+     * reuse it overstates by orders of magnitude. This is the one place that figure is
+     * computed, with the naive sum reported beside it so the difference is visible.
+     *
+     * Every figure is an aggregate computed in the database; no rows are loaded.
+     *
+     *   stored        everything in the store, whatever references it (attachments,
+     *                 email and task attachments, temp files, blobs awaiting disposal):
+     *                 {blobs, bytes}. THE DISK FIGURE.
+     *   attachments   the live attachments (not deleted):
+     *                 {count, blobs, bytes, naive_bytes} - bytes is deduplicated,
+     *                 naive_bytes is the per-reference sum.
+     *   retained      attachments deleted and still inside the retention window:
+     *                 {count, exclusive_bytes} - the bytes that would be released if they
+     *                 were destroyed today (blobs no live attachment also points at).
+     *   by_category   the live attachments split by fileable_category ('' for none):
+     *                 category => {count, blobs, bytes, naive_bytes, exclusive_bytes}.
+     *                 `bytes` is deduplicated WITHIN the category, so the categories do not
+     *                 add up to the total when they share blobs. `exclusive_bytes` counts
+     *                 only blobs no other category references - what that category costs
+     *                 on its own, which is the figure to quote for "how much disk do my
+     *                 version snapshots take": a blob a snapshot shares with a live
+     *                 document would be on disk either way.
+     *
+     * INSTALL-WIDE, across every site: a blob is shared between tenants by design, so
+     * disk in use is not a per-tenant number. For an operator's capacity report, not a
+     * tenant-facing screen. Read-only.
+     *
+     * @return array
+     */
+    public static function usage_report(): array
+    {
+        $int = fn ($value) => (int) ($value ?? 0);
+
+        $stored = DB::selectOne('SELECT COUNT(*) AS blobs, SUM(size) AS bytes FROM _file_storage');
+
+        $live = DB::selectOne(
+            'SELECT COUNT(*) AS attachments, COUNT(DISTINCT a.file_storage_id) AS blobs, SUM(s.size) AS naive_bytes
+             FROM _file_attachments a
+             JOIN _file_storage s ON s.id = a.file_storage_id
+             WHERE a.deleted_at IS NULL'
+        );
+
+        $live_bytes = DB::selectOne(
+            'SELECT SUM(s.size) AS bytes
+             FROM _file_storage s
+             WHERE EXISTS (SELECT 1 FROM _file_attachments a WHERE a.file_storage_id = s.id AND a.deleted_at IS NULL)'
+        );
+
+        $retained = DB::selectOne(
+            'SELECT COUNT(*) AS attachments FROM _file_attachments WHERE deleted_at IS NOT NULL AND destroyed_at IS NULL'
+        );
+
+        $retained_bytes = DB::selectOne(
+            'SELECT SUM(s.size) AS bytes
+             FROM _file_storage s
+             WHERE EXISTS (SELECT 1 FROM _file_attachments a WHERE a.file_storage_id = s.id AND a.deleted_at IS NOT NULL AND a.destroyed_at IS NULL)
+               AND NOT EXISTS (SELECT 1 FROM _file_attachments a WHERE a.file_storage_id = s.id AND a.deleted_at IS NULL)'
+        );
+
+        $by_category = [];
+
+        // One row per category: bounded by how many categories the application uses.
+        foreach (DB::select(
+            "SELECT COALESCE(a.fileable_category, '') AS category, COUNT(*) AS attachments, SUM(s.size) AS naive_bytes
+             FROM _file_attachments a
+             JOIN _file_storage s ON s.id = a.file_storage_id
+             WHERE a.deleted_at IS NULL
+             GROUP BY COALESCE(a.fileable_category, '')"
+        ) as $row) {
+            $by_category[$row->category] = [
+                'count' => $int($row->attachments),
+                'blobs' => 0,
+                'bytes' => 0,
+                'naive_bytes' => $int($row->naive_bytes),
+                'exclusive_bytes' => 0,
+            ];
+        }
+
+        foreach (DB::select(
+            "SELECT pairs.category, COUNT(*) AS blobs, SUM(s.size) AS bytes,
+                    SUM(CASE WHEN spread.categories = 1 THEN s.size ELSE 0 END) AS exclusive_bytes
+             FROM (
+                 SELECT DISTINCT COALESCE(fileable_category, '') AS category, file_storage_id
+                 FROM _file_attachments
+                 WHERE deleted_at IS NULL
+             ) pairs
+             JOIN _file_storage s ON s.id = pairs.file_storage_id
+             JOIN (
+                 SELECT file_storage_id, COUNT(DISTINCT COALESCE(fileable_category, '')) AS categories
+                 FROM _file_attachments
+                 WHERE deleted_at IS NULL
+                 GROUP BY file_storage_id
+             ) spread ON spread.file_storage_id = pairs.file_storage_id
+             GROUP BY pairs.category"
+        ) as $row) {
+            $by_category[$row->category]['blobs'] = $int($row->blobs);
+            $by_category[$row->category]['bytes'] = $int($row->bytes);
+            $by_category[$row->category]['exclusive_bytes'] = $int($row->exclusive_bytes);
+        }
+
+        ksort($by_category);
+
+        return [
+            'stored' => ['blobs' => $int($stored->blobs), 'bytes' => $int($stored->bytes)],
+            'attachments' => [
+                'count' => $int($live->attachments),
+                'blobs' => $int($live->blobs),
+                'bytes' => $int($live_bytes->bytes),
+                'naive_bytes' => $int($live->naive_bytes),
+            ],
+            'retained' => [
+                'count' => $int($retained->attachments),
+                'exclusive_bytes' => $int($retained_bytes->bytes),
+            ],
+            'by_category' => $by_category,
+        ];
+    }
 
     /**
      * Calculate hash for file content

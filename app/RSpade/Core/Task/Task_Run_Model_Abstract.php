@@ -361,6 +361,10 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
      * One page of the runs matching $filter, newest first, keyset-paged: pass the returned
      * next_cursor back for the page after it; null means there is none.
      *
+     * A WALK, in the terms of rsx:man database_schema_architecture (READERS OVER SYSTEM
+     * TABLES): it visits every match without skipping or repeating one while runs are
+     * being added, and so has no total and no caller-chosen order.
+     *
      * @return array{tasks: static[], next_cursor: ?string}
      */
     public static function find_page(array $filter, ?string $cursor = null, int $page_size = self::SEARCH_PAGE_SIZE): array

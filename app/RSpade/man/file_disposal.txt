@@ -336,6 +336,36 @@ UNREFERENCED BLOBS
     empty. On a SHARED store a listed blob may be referenced by another environment's
     database - check before removing anything.
 
+HOW MUCH DISK THE STORE HOLDS
+    File_Storage_Model::usage_report(): array
+
+    The store is content-addressed, so SUM(attachment size) is not the disk
+    in use: it counts a blob once per reference, and on a store with heavy
+    reuse it overstates by orders of magnitude. usage_report() answers the
+    real figure, computed in the database, with the naive one beside it:
+
+        stored        {blobs, bytes} - everything in the store, whatever
+                      references it. THE DISK FIGURE.
+        attachments   {count, blobs, bytes, naive_bytes} - the live
+                      attachments; bytes deduplicated, naive_bytes the
+                      per-reference sum.
+        retained      {count, exclusive_bytes} - attachments deleted and
+                      still inside the retention window, and the bytes that
+                      destroying them would release.
+        by_category   fileable_category ('' for none) =>
+                      {count, blobs, bytes, naive_bytes, exclusive_bytes}
+
+    by_category[...]['bytes'] is deduplicated WITHIN the category, so the
+    categories do not add up to the total when they share blobs.
+    exclusive_bytes counts only blobs no other category references - what the
+    category costs on its own. For "how much disk do my version snapshots
+    take", quote exclusive_bytes: a blob a snapshot shares with a live
+    document would be on disk either way.
+
+    Install-wide, across every site - a blob is shared between tenants by
+    design, so disk in use is not a per-tenant number. For an operator's
+    capacity report. Read-only.
+
 SEE ALSO
     rsx:man temp_files - the store for pipeline output, outside the blob store
     rsx:man file_upload, rsx:man document_search, rsx:man tasks,

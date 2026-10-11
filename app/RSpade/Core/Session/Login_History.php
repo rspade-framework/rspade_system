@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Cache\Rsx_Counter;
+use App\RSpade\Core\Database\Rsx_Page_Query;
 use App\RSpade\Core\Session\Audit_Session;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\User_Agent;
@@ -287,6 +288,94 @@ class Login_History
             ->get()
             ->map(fn ($record) => self::present_record($record))
             ->toArray();
+    }
+
+    /**
+     * The names list_page() sorts by, and the column behind each. The names are what
+     * present_record() calls the values; the columns are the framework's business.
+     */
+    private const LIST_PAGE_SORTABLE = [
+        'created_at' => 'created_at',
+        'email' => 'email_attempted',
+        'ip_address' => 'ip_address',
+        'status' => 'status',
+    ];
+
+    private const LIST_PAGE_MAX_LIMIT = 200;
+
+    private const LIST_PAGE_DEFAULT_LIMIT = 25;
+
+    /**
+     * One PAGE of a login identity's history, for a grid with column sorting, a search
+     * box and a numbered pager. The standard display-page reader (Rsx_Page_Query;
+     * rsx:man database_schema_architecture, READERS OVER SYSTEM TABLES).
+     *
+     *     $query = [
+     *         'login_user_id' => 12,          // REQUIRED - whose history
+     *         'filter' => 'firefox',          // attempted email, IP address or user agent
+     *         'sort'   => 'created_at',       // created_at | email | ip_address | status
+     *         'order'  => 'desc',
+     *         'offset' => 0,
+     *         'limit'  => 25,                 // 1..200
+     *     ];
+     *
+     * Answers ['rows' => [...], 'total' => int, 'offset' => int, 'limit' => int]; each row
+     * is present_record()'s shape, and total counts every match before the page is cut.
+     * The filter is applied in the query, so it searches the whole history and not the
+     * page. Anything invalid throws InvalidArgumentException.
+     *
+     * THERE IS NO SITE SCOPE, because there is no site to scope by: a sign-in
+     * authenticates the login identity before any site is chosen, and a row records the
+     * identity alone. Which of an identity's sessions are on a site is
+     * Session::get_sessions_for_user($login_user_id, $site_id).
+     *
+     * Ungated, like every reader here: whether the caller may see this identity's history
+     * is the calling endpoint's question.
+     *
+     * @param array $query
+     * @return array{rows: array, total: int, offset: int, limit: int}
+     */
+    public static function list_page(array $query): array
+    {
+        $reader = 'Login_History::list_page';
+
+        $parsed = Rsx_Page_Query::parse(
+            $query,
+            $reader,
+            self::LIST_PAGE_SORTABLE,
+            'created_at',
+            'desc',
+            self::LIST_PAGE_MAX_LIMIT,
+            self::LIST_PAGE_DEFAULT_LIMIT,
+            ['login_user_id']
+        );
+
+        $matching = DB::table('_login_history')
+            ->where('login_user_id', Rsx_Page_Query::require_id($query, 'login_user_id', $reader));
+
+        if ($parsed['filter'] !== '') {
+            $like = Rsx_Page_Query::like($parsed['filter']);
+
+            $matching->where(function ($where) use ($like) {
+                $where->where('email_attempted', 'like', $like)
+                    ->orWhere('ip_address', 'like', $like)
+                    ->orWhereIn('user_agent_id', fn ($agents) => $agents->select('id')->from('_user_agents')->where('user_agent', 'like', $like));
+            });
+        }
+
+        $total = (clone $matching)->count();
+
+        // id breaks ties, so two rows that sort equal keep one order from page to page.
+        $rows = $matching
+            ->orderBy($parsed['sort_column'], $parsed['order'])
+            ->orderBy('id', $parsed['order'])
+            ->offset($parsed['offset'])
+            ->limit($parsed['limit'])
+            ->get()
+            ->map(fn ($record) => self::present_record($record))
+            ->all();
+
+        return Rsx_Page_Query::result($rows, $total, $parsed);
     }
 
     /**

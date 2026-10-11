@@ -94,6 +94,8 @@ The second factor itself is `Rsx_Two_Factor` (TOTP, passkeys, recovery codes): `
 
 ### Login history APIs, and their window
 
+**A sign-in history GRID asks `Login_History::list_page($query)`** - `login_user_id` (required), `filter` (email, IP, user agent), `sort` (`created_at|email|ip_address|status`), `order`, `offset`, `limit` (1..200) - and gets `{rows, total, offset, limit}`, rows in `present_record()`'s shape. Invalid input throws. `get_history_for_user($id, $limit)` is the newest few, for a summary. Never query `_login_history`.
+
 ```php
 Login_History::get_failed_attempts_count($email);     // within the failure window ONLY
 Login_History::get_failed_attempts_count_by_ip($ip);  // same

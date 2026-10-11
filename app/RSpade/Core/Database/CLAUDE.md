@@ -16,6 +16,24 @@
   - *Note: Premature optimization is the root of all evil. When you have thousands of concurrent users in production and N+1 queries become a real bottleneck, you'll be motivated enough to remove these restrictions yourself.*
 - **Forward-only migrations**: No down() methods
 
+## Readers Over System Tables
+
+A `_`-prefixed table is private, so an application reads it only through a reader the
+framework publishes. WRITING ONE: there are three kinds and each has one shape -
+`rsx:man database_schema_architecture`, READERS OVER SYSTEM TABLES, is the standard.
+
+- **A display page** is `list_page(array $query)` answering `{rows, total, offset, limit}`,
+  built on `Rsx_Page_Query::parse()` / `result()` (this directory). The reader declares its
+  scope keys, its sortable NAMES (mapped to columns - never a caller's column), its maximum
+  and default limit, and which columns `filter` searches. Everything invalid throws.
+  First adopter: `Login_History::list_page()`.
+- **A walk** is `find_page(array $filter, ?string $cursor)` - keyset, no total
+  (`Task_Run_Model::find_page()`).
+- **A bounded set** returns everything, and its docblock says what bounds it.
+
+An aggregate is a function that answers the number in SQL
+(`File_Storage_Model::usage_report()`), never rows added up in PHP.
+
 ## Naming Conventions
 
 - **Primary keys**: All tables must have `id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY` (exception: sessions table uses Laravel's VARCHAR id)

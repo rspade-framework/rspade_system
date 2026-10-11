@@ -75,12 +75,14 @@ framework publishes for it - the facade functions and the documented methods
 of framework classes:
 
     who is signed in where        Session::get_sessions_for_user()
-    sign-in history               Login_History::get_history_for_user()
+    sign-in history               Login_History::list_page() (a grid page),
+                                  get_history_for_user() (the newest few)
     who performed a logged act    Session::get_audit_session()
     a record's change history     $record->revisions(), Revision_Model::diff()
     background runs               Task_Run_Model::find_page(), Rsx_Task
     files                         File_Attachment_Model and its documented
                                   methods (rsx:man file_upload)
+    disk the blob store holds     File_Storage_Model::usage_report()
 
 Each feature's man page names its interface.
 
@@ -98,6 +100,82 @@ expose.
 
 The same holds one level down: a `_`-prefixed COLUMN on any table is the
 framework's (COLUMN NAMING CONVENTION above).
+
+READERS OVER SYSTEM TABLES
+---------------------------
+Since an application cannot query a system table, the framework publishes
+READERS. There are three kinds, each with one shape. A new reader is written
+to the shape of its kind; a reader of a kind this section does not describe
+is a design decision to record here first.
+
+1. A DISPLAY PAGE - list_page(array $query)
+
+   For putting rows in front of a person: a grid with column sorting, a
+   search box and a numbered pager ("page 3 of 80").
+
+       Login_History::list_page([
+           'login_user_id' => 12,       // scope keys the reader declares
+           'filter' => 'firefox',       // free text
+           'sort'   => 'created_at',    // a name the reader publishes
+           'order'  => 'desc',          // 'asc' | 'desc'
+           'offset' => 50,              // rows to skip
+           'limit'  => 25,              // rows to return
+       ]);
+
+       => ['rows' => [...], 'total' => 1930, 'offset' => 50, 'limit' => 25]
+
+   - ONE array argument. Every key is optional except the scope keys the
+     reader requires; a key the reader does not declare is an error.
+   - `total` is the number of matching rows BEFORE the page is cut - what a
+     pager needs, and what a cursor cannot give.
+   - OFFSET paging, because "jump to page 5" has no other answer.
+   - `filter` is a string. The READER decides which columns it searches; the
+     caller never names a column. It runs in the query, so it searches the
+     whole set and not the page.
+   - `sort` is a NAME from a list the reader publishes, mapped by the reader
+     to a column. It is not a column name and never reaches SQL as written.
+
+   VALIDATION BELONGS TO THE READER. A reader turns strings from a request
+   into a query, so it trusts none of them: an unpublished sort, an order
+   other than asc/desc, a limit outside 1..the reader's maximum, a negative or
+   non-integer offset, a missing scope and an unknown key each THROW
+   InvalidArgumentException. There is no silent fallback - a fallback is what
+   hides the day a column was renamed. A scope that bounds what the caller may
+   see (whose history, which site) is REQUIRED, never defaulted to
+   "everything".
+
+   Readers are UNGATED, like any model method: whether this caller may see
+   this identity's rows is the calling endpoint's question.
+
+   Implemented with App\RSpade\Core\Database\Rsx_Page_Query, which every
+   display-page reader uses - parse() for the validation, result() for the
+   answer - so the contract is one piece of code and not a convention.
+
+2. A WALK - find_page(array $filter, ?string $cursor)
+
+   For visiting EVERY matching row: an export, a sweep, a report. Keyset
+   paging - pass the returned cursor back for the next page, null means done.
+   No total, no caller-chosen sort (the order is the key's), and no skipped
+   or repeated row while the table changes underneath, which offset paging
+   cannot promise. Task_Run_Model::find_page() is this kind, and
+   Rsx_Result_Set is the same idea for an application's own models.
+
+   A numbered pager cannot be built on a walk, and a whole-table export should
+   not be built on a display page. They are different jobs; pick by the job.
+
+3. A BOUNDED SET - returns everything
+
+   Where the framework itself caps the set, a pager is ceremony.
+   Session::get_sessions_for_user() answers every signed-in device because
+   rsx.sessions.max_web_sessions_per_user bounds them, and a screen that hid
+   one could not offer to sign it out. A "newest N" convenience
+   (Login_History::get_history_for_user($id, $limit)) is the same kind: the
+   cap is in its signature.
+
+An AGGREGATE - a count, a sum, a usage figure - is none of these: it is a
+function that answers the number (File_Storage_Model::usage_report()),
+computed in the database. Loading rows through a reader to add them up in PHP
+is the unbounded read the readers exist to prevent.
 
 DATABASE ACCESS RULES
 ----------------------

@@ -334,6 +334,8 @@ public static function log_destruction($attachment) { /* a throw defers, never h
 
 Retention windows and lookbacks are `config('rsx.files.*')`; the full contract is `rsx:man file_disposal`. **`deleted_retention_days` = 0 means KEEP FOREVER** (set it in `rsx/resource/config/rsx.php` when deleted files must be kept for audit): the scheduled destroy never runs, every deleted attachment stays restorable with its blob pinned, and **NOTHING removes a blob for any reason** - not the daily release pass, not the monthly sweep, not `force_destroy()` (which still destroys the attachment record but keeps the bytes). It is also the setting for a blob store shared by several environments, where no one database can see every reference. `php artisan rsx:files:unreferenced_blobs` lists the bytes that stay (paths on stdout, sizes on stderr). A negative value throws.
 
+**Disk in use is `File_Storage_Model::usage_report()`, never a sum of attachment sizes.** The store is content-addressed, so `SUM(file_size)` counts each blob once per reference and can overstate by orders of magnitude. The report answers `stored` (the disk figure), `attachments` (`bytes` deduplicated, `naive_bytes` beside it), `retained` (what the retention window still holds) and `by_category`, whose `exclusive_bytes` is what a category costs on its own. Install-wide and read-only; `rsx:man file_disposal`.
+
 **Pipeline output is not an attachment.** A CSV export waiting to be downloaded, a file a task attached for its initiator: `Rsx_Temp_Files::store_bytes()` / `store_file()` - random key under `uploads/_temp/`, expiry per file, swept hourly (only this database's rows), served by the feature's own gated endpoint with `$file->download_response()`. `rsx:man temp_files`.
 
 ---

@@ -189,6 +189,19 @@ and delete their keys in teardown.
 (Migrated from the prior bash suite; see the script for exact assertions.) Needs a
 framework-development box: the `/ssr-test` probes are gated `is_framework_developer`.
 
+## Login_History_List_Page_Test (php) - the display-page reader standard
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-page-01 | the answer is one page plus the total of every match, rows in present_record() shape | 5 rows, limit 2 | {rows, total, offset, limit}; 2 rows, total 5, newest first | implemented |
+| sess-page-02 | the scope bounds the answer and is required | another identity; no / zero login_user_id | its own row only; InvalidArgumentException | implemented |
+| sess-page-03 | offset walks the pages | offsets 0, 2, 4 at limit 2 | every row once, in order | implemented |
+| sess-page-04 | the caller sorts by a published name | sort ip_address asc; sort email both ways | ordered; the two ends differ | implemented |
+| sess-page-05 | a sort the reader does not publish is refused, never sent to SQL | a column name, an expression, an injection string, an array | InvalidArgumentException each | implemented |
+| sess-page-06 | order, limit, offset, filter type and unknown keys are validated | 11 bad queries; the maximum, the default, a numeric string | throws each; 200, 25, 3 | implemented |
+| sess-page-07 | the filter searches the whole history - user agent included - before the page is cut | 'firefox' at limit 1; an email part; an address; no match | total 2 with 1 row; 1; 1; 0 | implemented |
+| sess-page-08 | wildcard characters in a filter are literal | '%', 'ada_example' | 0 matches each | implemented |
+
 ## http/session_sign_in_rotation.sh (http - live server)
 
 Self-seeding (its own account, via tinker). Needs a framework-development box for the
