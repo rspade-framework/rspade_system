@@ -691,6 +691,11 @@
             "created_at": "2026-10-11T06:40:00+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe convert_user_agent_columns_to_user_agent_ids"
+        },
+        "2026_10_11_173149_requeue_spreadsheet_renditions.php": {
+            "created_at": "2026-10-11T17:31:49+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe requeue_spreadsheet_renditions"
         }
     }
 }

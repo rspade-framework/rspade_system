@@ -309,6 +309,104 @@ class Task_Reports_Test extends Rsx_Test_Abstract
         static::__assert_equals('busy', $status['status_text']);
         static::__assert_equals(25.0, $status['progress_percent']);
         static::__assert_equals(['done' => 2, 'total' => 8], $status['progress_count']);
-        static::__assert_equals(['status_text', 'progress_count'], $status['reports']);
+        // A progress report estimates the ETA, so that report exists too.
+        static::__assert_equals(['status_text', 'progress_count', 'eta'], $status['reports']);
+    }
+
+    // -------------------------------------------------------------------------
+    // The ETA estimated from progress
+    // -------------------------------------------------------------------------
+
+    /** An instance of a run that started $seconds_ago, with every report written at once. */
+    private static function __instance_started(int $seconds_ago): Task_Instance
+    {
+        $id = Task_Runner::insert_row(Task_Exec_Fixture_Service::class, 'marker_a', [], Task_Run_Model::ORIGIN_INLINE, Task_Runner::running_fields());
+        DB::table('_tasks')->where('id', $id)->update(['started_at' => date('Y-m-d H:i:s', time() - $seconds_ago) . '.000']);
+
+        return Task_Instance::find($id);
+    }
+
+    /** Seconds from now the run's stored ETA names, or null when it has none. */
+    private static function __eta_in(Task_Instance $task): ?int
+    {
+        $task->flush();
+        $eta = static::__run($task)->eta_at();
+
+        return $eta === null ? null : strtotime($eta) - time();
+    }
+
+    public static function test_a_run_has_no_eta_until_something_sets_one()
+    {
+        $task = static::__instance_started(100);
+        $task->status('working');
+
+        static::__assert_null(static::__eta_in($task));
+    }
+
+    public static function test_a_percentage_estimates_the_eta_from_the_pace_so_far()
+    {
+        $task = static::__instance_started(100);
+
+        // Half done in 100 seconds: the other half is expected to take 100 more.
+        $task->progress(50);
+        $eta = static::__eta_in($task);
+        static::__assert_true($eta >= 97 && $eta <= 103, "about 100 seconds left, got {$eta}");
+
+        // A quarter done in the same time: three times as long again.
+        $task->progress(25);
+        $eta = static::__eta_in($task);
+        static::__assert_true($eta >= 296 && $eta <= 304, "about 300 seconds left, got {$eta}");
+    }
+
+    public static function test_a_count_estimates_the_eta_the_same_way()
+    {
+        $task = static::__instance_started(60);
+
+        $task->progress_count(3, 12);
+        $eta = static::__eta_in($task);
+        static::__assert_true($eta >= 177 && $eta <= 183, "3 of 12 in 60 seconds leaves about 180, got {$eta}");
+    }
+
+    public static function test_progress_that_says_nothing_clears_the_eta_instead_of_guessing()
+    {
+        $task = static::__instance_started(100);
+
+        $task->eta(500);
+        static::__assert_not_null(static::__eta_in($task));
+
+        $task->progress(0);
+        static::__assert_null(static::__eta_in($task), 'nothing done yet: no pace to project from');
+
+        $task->eta(500);
+        $task->progress_count(0, 40);
+        static::__assert_null(static::__eta_in($task), 'none of 40 done');
+
+        $task->eta(500);
+        $task->progress_count(0, 0);
+        static::__assert_null(static::__eta_in($task), 'a total of zero divides nothing');
+    }
+
+    public static function test_finished_progress_puts_the_eta_at_now()
+    {
+        $task = static::__instance_started(100);
+
+        $task->progress(100);
+        $eta = static::__eta_in($task);
+        static::__assert_true($eta >= -2 && $eta <= 2, "nothing left, got {$eta}");
+
+        $task->progress_count(9, 5);
+        $eta = static::__eta_in($task);
+        static::__assert_true($eta >= -2 && $eta <= 2, "more done than the total is still finished, got {$eta}");
+    }
+
+    public static function test_a_progress_report_overwrites_an_eta_set_by_hand()
+    {
+        $task = static::__instance_started(100);
+
+        $task->eta(5000);
+        $task->progress(50);
+
+        $eta = static::__eta_in($task);
+        static::__assert_true($eta >= 97 && $eta <= 103, "the estimate, not the 5000 set by hand: {$eta}");
     }
 }

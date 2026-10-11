@@ -13,8 +13,10 @@ both transports with no app dependency: Rsx_Form.vals() sweeps hidden inputs, an
 TWO STATES, decided by whether the server exported a site key (window.rsxapp.turnstile):
   active   - Cloudflare renders its widget into the widget container; the hidden input starts
              empty and carries the token once the challenge resolves.
-  inactive - an inert placeholder illustrates where the widget will sit, and the hidden input
-             carries the sentinel 'inactive' that the server requires when the feature is off.
+  inactive - the hidden input carries the sentinel 'inactive' that the server requires when
+             the feature is off. In development an inert placeholder illustrates where the
+             widget will sit; in a sealed build (debug or production) nothing is shown at all,
+             because a visitor has no use for a notice about a feature the site does not run.
 
 Args:
   $theme       auto | light | dark                        (default auto)
@@ -30,7 +32,7 @@ See: php artisan rsx:man turnstile
         // then re-asserts it, idempotently, after every subsequent render.
         const _active = Turnstile.is_active();
         const _widget_style = _active ? '' : 'display:none;';
-        const _placeholder_style = _active ? 'display:none;' : '';
+        const _placeholder_style = (_active || Rsx.is_prod()) ? 'display:none;' : '';
     %>
     <input type="hidden" name="<%= Turnstile_Input.FIELD %>" $sid="token" />
 

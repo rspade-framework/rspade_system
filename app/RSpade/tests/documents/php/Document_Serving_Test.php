@@ -386,5 +386,25 @@ class Document_Serving_Test extends Rsx_Test_Abstract
             (string) $rendered_info['urls']['rendition'],
             'the rendition URL appears once the rendition exists'
         );
+
+        // The rendition is served cacheable for a year, so its URL carries the render time:
+        // a re-render must reach a browser that already holds the earlier copy.
+        $first_url = (string) $rendered_info['urls']['rendition'];
+        static::__assert_contains(
+            'v=' . strtotime((string) static::__storage($attachment)->rendered_at),
+            $first_url,
+            'the URL is versioned by the render time'
+        );
+
+        $storage = static::__storage($attachment);
+        $storage->rendered_at = date('Y-m-d H:i:s', strtotime((string) $storage->rendered_at) + 60);
+        $storage->save();
+
+        $rerendered_info = File_Preview_Controller::get_preview_info($request, ['attachment_id' => $attachment->id]);
+        static::__assert_not_equals(
+            $first_url,
+            (string) $rerendered_info['urls']['rendition'],
+            'a later render has a different URL'
+        );
     }
 }

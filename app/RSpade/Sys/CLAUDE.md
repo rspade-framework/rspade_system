@@ -73,6 +73,7 @@ contract; this is the roster.
 | `_Sys_Section` | a `.card` section: `$title`, `$icon`, `$count`, `$flush`; `<Slot:actions>` + `<Slot:body>`, or a loose body |
 | `_Sys_Stat_Grid` / `_Sys_Stat_Tile` | headline numbers: `$label`, `$value`, `$sub`, `$tone`, `$href` |
 | `_Sys_Status_Badge` | a status pill; `$status` is a tone (ok/warn/fail/info/muted) or a task/mail/SMS queue word or login-identity status word, mapped once in `_Sys_Status_Badge.TONES`; unknown throws |
+| `_Sys_Time_Until` | a future moment counted down in words ("33 minutes from now"); `$time` is an ISO datetime; rewrites itself every second, reads "any moment now" once the moment has passed, exact time in the title. Used for a live run's ETA in `_Sys_Task_Facts` |
 | `_Sys_Detail_List` / `_Sys_Detail_Item` | key/value facts; an empty `$value` renders a muted em-dash |
 | `_Sys_Empty_State` | an empty region: `$icon`, `$title`, `$body`, `<Slot:cta>` |
 | `_Sys_Tabs` | tab bar + one `<Slot:key>` panel per tab, active tab in the URL hash (`$hash`); fires `tab_change` |

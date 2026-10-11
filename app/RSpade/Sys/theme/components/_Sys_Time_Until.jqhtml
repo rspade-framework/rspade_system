@@ -1,0 +1,16 @@
+<%--
+_Sys_Time_Until - a moment in the future, counted down in words: "33 minutes from now".
+
+$time (required) - the moment, as an ISO datetime string.
+
+The text is rewritten every second for as long as the component is on the page, so it
+needs no refresh from its host. Once the moment has passed it reads "any moment now": the
+thing it names (a task's estimated completion) is late, not finished. The exact time is the
+element's title.
+
+    <_Sys_Time_Until $time=task.eta_at />
+--%>
+<Define:_Sys_Time_Until tag="span">
+    <% if (!this.args.time) { throw new Error('_Sys_Time_Until requires $time'); } %>
+    <span $sid="text" title="<%= Rsx_Time.format_datetime(this.args.time) %>"><%= _Sys_Time_Until.phrase(Rsx_Time.seconds_until(this.args.time)) %></span>
+</Define:_Sys_Time_Until>

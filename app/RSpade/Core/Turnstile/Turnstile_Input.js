@@ -55,7 +55,9 @@ class Turnstile_Input extends Component {
         this._remove_widget();
 
         this.$sid('widget').toggle(active);
-        this.$sid('placeholder').toggle(!active);
+        // The placeholder is a developer's cue that the form is wired and the feature is off.
+        // A sealed build shows visitors nothing; the hidden field still carries the sentinel.
+        this.$sid('placeholder').toggle(!active && Rsx.is_dev());
         this.$sid('token').val(active ? '' : Turnstile_Input.INACTIVE);
     }
 
@@ -78,7 +80,7 @@ class Turnstile_Input extends Component {
             }
         }
 
-        // No-op when inactive: init() never calls back, and the placeholder is already showing.
+        // No-op when inactive: init() never calls back, and the inactive state is already drawn.
         Turnstile.init(function () {
             that._activate();
         });

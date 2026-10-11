@@ -1,8 +1,9 @@
 .Turnstile_Input {
     display: block;
 
-    // Cloudflare's normal-size widget is 300x65. Reserving the height in both states keeps a
-    // form's layout identical whether or not the site has the feature enabled.
+    // Cloudflare's normal-size widget is 300x65. The development placeholder reserves the
+    // same height, so a form is laid out in development as it will be with the feature on.
+    // In a sealed build with the feature off neither is shown and the component takes no room.
     &__widget {
         min-height: 65px;
     }

@@ -71,7 +71,7 @@ $task->heartbeat();                         // "still alive" (plays no part in w
 $task->status('Importing page 3');          // one line, replacing the last; a CHANGE also goes to stderr
 $task->progress(45.5);                      // 0-100, two decimals
 $task->progress_count(3, 257);              // "3 of 257" (percentage derived from it)
-$task->eta(120);                            // seconds from now; stored as a moment
+$task->eta(120);                            // seconds from now - ONLY when no progress is reported (below)
 $task->state(['done' => 3, 'last' => 'x']); // a JSON state object, replacing the last
 $task->queue_push_many(['item 4', 'item 5']); // THE QUEUE: what is ahead, a row per item (below)
 $task->queue_pop();                         // the head is done
@@ -98,7 +98,7 @@ $task->get_id(); $task->get_class(); $task->get_method(); $task->get_params();
 - `status()` - what it is doing now; nearly every multi-step task has one (each change is also a stderr line, so the output reads as a narrative).
 - `stdout()` / `stderr()` - the narrative: what was done, and what went wrong without stopping the run (a skipped record, a retried call). **Say what the run did, and say so when it did nothing**: name each thing as the run acts on it, with the outcome on the same line (`Sent #4812 to dana@example.com "Your invoice" (<id>)`), end with the totals, and print a line when idle (`No mail was due.`), skipped (with the reason) or stopped (with how far it got) - a scheduled run with no output is indistinguishable from one that never looked. Do not flood: one count line for bulk housekeeping, and a task that could list thousands of items lists the first couple of hundred and counts the rest.
 - **ONE progress indicator, only if the task has measurable progress.** `progress_count($done, $total)` when it counts items, `progress($percent)` when its measure is not a count - never both. A task whose only honest values are 0% and 100% (one document converted, one remote call) reports NO progress: `status()` and the lifecycle already say working / done.
-- `eta()` when it can estimate; `state()` for working state worth inspecting (counters); **the queue** for what is still ahead (below); `message()` for milestones; `summary()` at the end.
+- **The ETA estimates itself from progress.** Every `progress()` / `progress_count()` call re-projects it from the pace so far (`elapsed * (1 - done) / done`); with nothing done yet, or a total of 0, it is cleared to null rather than guessed. **Call `eta($seconds)` only in a task that reports no progress** - the next progress report overwrites it. `state()` for working state worth inspecting (counters); **the queue** for what is still ahead (below); `message()` for milestones; `summary()` at the end.
 
 **The queue is the report that shows whether a run is MOVING.** A percentage and a counter cannot tell a stuck run from one working through something large; the same items sitting at the head of the queue can. So it is advanced on every item, and built for that - one stored row per item, a push appends one, a pop removes one, nothing between is rewritten:
 
@@ -267,7 +267,10 @@ Each declaration is a `_task_schedules` row (cadence + statistics); **each run o
 | Marker | Identity | Meaning |
 |---|---|---|
 | `#[Exclusive]` | `class::method` | at most one running + one pending, whatever the params |
+| `#[Exclusive('group')]` | `class::method`, plus one RUN lock shared by the group | the same per method, and at most one task of the GROUP running at a time |
 | `#[Debounce(30)]` | `class::method` + the params | same, and the coalesced follow-up waits 30 s after the previous run COMPLETED |
+
+**An exclusive group is for tasks that all write one resource** (six sync tasks, one remote folder tree): every method naming the group runs one at a time across the cluster. Pending stays **per method**, so a member queued behind another is never replaced by a third - only a repeat of the same method coalesces. A pending run whose group is busy is passed over by every worker and **holds no worker slot while it waits**; the worker that finishes a member re-reads the queue at once. A schedule tick held back by another member is queued, not dropped. **Never get this effect by taking a lock inside the task body** - by then the run occupies a slot, and waiters starve the pool. `Task_Concurrency::is_group_running('group')` asks without acquiring.
 
 Declaring both fails `rsx:check` (`TASK-CONCURRENCY-01`). `dispatch()` of a managed task returns THE pending run's id (existing or new); an inline run waits for a running instance. **They guard one identity against ITSELF**, never a shared table against other writers - take a lock for that:
 
@@ -304,7 +307,7 @@ Retention: finished runs' output is cut to 150 lines and their attachments unlin
 ## Troubleshooting
 
 - **The run FAILED with "The task returned array".** A task returns a return code, not data. Move the data to `summary()`/`state()` and return `null`.
-- **Dispatched, stays Pending.** Pools full (`rsx:health` "Task Worker Pools", `/_sys/workers`), a future `scheduled_for`, a retry backoff (`status_reason` says), a busy `#[Exclusive]` identity, `Task::spawn_workers(false)`, or inside a test. The cron tick picks it up.
+- **Dispatched, stays Pending.** Pools full (`rsx:health` "Task Worker Pools", `/_sys/workers`), a future `scheduled_for`, a retry backoff (`status_reason` says), a busy `#[Exclusive]` identity or exclusive group, `Task::spawn_workers(false)`, or inside a test. The cron tick picks it up.
 - **A widget says "Unavailable" / `Rsx_Task.get()` answers not found.** The viewer fails `task.view.authorize` - with no handler nobody but a developer passes.
 - **A stop did nothing.** The task never calls `is_stop_requested()`; force-stop it. A run inside a web request is never killed.
 - **`Cannot reach rsx-lockd ...`.** The daemon is down (`rsx:health` "Lock Server"); a dispatch's row IS written before the throw.

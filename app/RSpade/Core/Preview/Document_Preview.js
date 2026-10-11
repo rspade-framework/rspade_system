@@ -50,7 +50,11 @@ class Document_Preview extends Component {
         // App-registered viewer (config('rsx.preview.viewers') override): the template rendered an
         // empty host div with $sid="viewer"; instantiate the named component into it. Built-in
         // viewers are already rendered by the template.
-        if (Document_Preview.BUILTIN_VIEWERS.indexOf(viewer_name) === -1) {
+        //
+        // The host exists only in the template's viewer branch. In a waiting or terminal state
+        // (preparing, failed, unavailable) the template drew a notice instead and there is
+        // nothing to instantiate into; the realtime refresh re-runs this once the render lands.
+        if (Document_Preview.BUILTIN_VIEWERS.indexOf(viewer_name) === -1 && this.$sid('viewer').exists()) {
             console_debug('preview', 'Document_Preview: instantiating app-registered viewer', viewer_name);
             this.$sid('viewer').component(viewer_name, {
                 attachment_id: this.args.attachment_id,

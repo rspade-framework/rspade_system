@@ -70,7 +70,8 @@ DESCRIPTION
         the task acquires its own lock (RsxLocks, see LOCKS).
       * #[Exclusive] / #[Debounce] guarantee single-instance for ONE identity - they do
         NOT protect a shared table from OTHER tasks or from web writers. Use a named or
-        per-site lock for that.
+        per-site lock for that. A group of TASKS that must never overlap each other
+        declares one exclusive group, #[Exclusive('name')] (see CONCURRENCY).
 
 RUNS
 
@@ -114,8 +115,11 @@ REPORTING (Task_Instance)
                                                Newlines become spaces; cut to 1000 chars.
         $task->progress(float $percent)        0-100, two decimals, clamped
         $task->progress_count(int $done, int $total)   "3 of 257"
+                                               Either one also re-estimates the ETA
+                                               (THE ETA below).
         $task->eta(int $seconds)               seconds from now; stored as the moment
-                                               (eta_at), so a viewer counts down alone
+                                               (eta_at), so a viewer counts down alone.
+                                               ONLY for a task that reports no progress.
         $task->state(array|object $state)      a JSON state object, replacing the last
         $task->queue_push(string|array $item)  THE QUEUE - the items the task has ahead of
         $task->queue_push_many(array $items)   it, one stored row per item, advanced as
@@ -156,6 +160,19 @@ REPORTING (Task_Instance)
     reports back is the framework's job, and a task that batches its own reports - the
     queue every 25th item, say - only makes its watchers that much staler. The heartbeat plays no part in worker
     liveness (THE WORKER POOLS): a task may run for hours without reporting anything.
+
+    THE ETA. A run's ETA is null until something sets it. A task that reports progress
+    never sets it: every progress() and progress_count() call re-estimates it from the
+    pace so far,
+
+        remaining = elapsed since the run started * (1 - fraction done) / fraction done
+
+    and stores the moment that names. When progress says nothing - 0%, 0 of N, or a total
+    of 0 - there is no pace to project from and the ETA is cleared to null rather than
+    guessed; at 100% it is now. eta($seconds) sets it directly and is meant ONLY for a task
+    with no progress indicator that can still estimate its finish: the next progress
+    report overwrites it. Viewers show it as a countdown (<Task_Report $kind="eta">; the
+    /_sys run view reads "33 minutes from now").
 
     THE QUEUE. A percentage and a counter cannot tell a run that is stuck from one working
     through something large. The queue can: the same items sitting at its head for ten
@@ -239,7 +256,9 @@ DESIGNING A TASK'S REPORTING
                             went wrong but did not stop the run - a skipped record, a
                             retried call (stderr). See SAY WHAT THE RUN DID below.
         progress indicator  ONE of progress() or progress_count() - see below.
-        eta()               when the task can estimate its finish.
+        the ETA             nothing to do when the task reports progress - it is
+                            estimated from that. eta() only for a task with no
+                            progress indicator that can still estimate its finish.
         state()             the task's working state worth inspecting - counters, the
                             current batch.
         the queue           what is still ahead, advanced per item (THE QUEUE above):
@@ -419,10 +438,45 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
     distributed translation of the JS debounce(). #[Exclusive] has no delay. The
     identity differs:
 
-        #[Exclusive]   the method - class::method, whatever the params
+        #[Exclusive]   the method - class::method, whatever the params (with a group
+                       name, also one RUNNING across the group - below)
         #[Debounce]    the method AND its parameter set - class::method + params_hash
                        (sha256 of the params' JSON with every object's keys sorted), so
                        two different parameter sets are debounced independently
+
+    AN EXCLUSIVE GROUP serializes several task methods against each other:
+
+        #[Task('Mirror the remote folder tree')]
+        #[Exclusive('remote_sync')]
+        #[Schedule('daily at 2am')]
+        public static function mirror(Task_Instance $task, array $params = []) { ... }
+
+        #[Task('Push queued uploads')]
+        #[Exclusive('remote_sync')]
+        public static function push(Task_Instance $task, array $params = []) { ... }
+
+    Every method naming the same group shares ONE run lock, so at most one task of the
+    group runs at a time, cluster-wide. Use it for tasks that all write one resource and
+    were each written as its only writer.
+
+        RUNNING   one across the group.
+        PENDING   one per METHOD, exactly as for a bare #[Exclusive]. A push queued while
+                  the mirror runs is never replaced by another member's run; only a
+                  repeat of the same method is coalesced onto it.
+
+    A pending run whose group is busy is PASSED OVER by every worker - it holds no worker
+    slot while it waits - and is claimed as soon as the group's lock is free; the worker
+    that just finished a member looks at the queue again at once. The order in which
+    waiting members run is the queue's (oldest due first). A schedule tick held back only
+    by another member of the group is queued as that method's pending run, not dropped;
+    a tick that finds its OWN method running is coalesced into that run as always. An
+    inline run waits for the group. The group name is a plain string, shared by
+    declaration: nothing registers it.
+
+    Never take the group's lock yourself inside a task body to get the same effect: by
+    then the run occupies a worker slot, and tasks waiting there starve the pool.
+    Task_Concurrency::is_group_running('remote_sync') answers whether any task of a
+    group is running right now, without acquiring anything.
 
     The guarantee holds however the task runs: dispatch() coalesces onto the identity's
     pending run and returns its id; a worker claims a run only while holding the
@@ -1079,7 +1133,8 @@ TROUBLESHOOTING
         - Did this process call Task::spawn_workers(false), or is it a test? Then the cron
           tick drains it.
         - A future 'scheduled_for', a retry backoff after an abandonment (status_reason
-          says so), or an #[Exclusive]/#[Debounce] identity whose run is still running.
+          says so), an #[Exclusive]/#[Debounce] identity whose run is still running, or
+          an exclusive group with another of its tasks running.
         - Cron is the backstop: * * * * * php artisan rsx:task:process
 
     A stop did nothing

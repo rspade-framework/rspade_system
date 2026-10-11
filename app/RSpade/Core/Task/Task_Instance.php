@@ -86,6 +86,12 @@ class Task_Instance
     /** microtime(true) of the last write; 0 means none yet, so the first report goes at once. */
     private float $last_flush = 0.0;
 
+    /**
+     * Unix time (with fraction) the run started: what progress-derived ETAs measure elapsed
+     * time from.
+     */
+    private float $started_at_time;
+
     /** The status text last reported, so an unchanged status writes no stderr line. */
     private ?string $last_status_text = null;
 
@@ -114,6 +120,7 @@ class Task_Instance
         $this->class = $class;
         $this->method = $method;
         $this->params = $params;
+        $this->started_at_time = microtime(true);
     }
 
     /**
@@ -123,6 +130,10 @@ class Task_Instance
     {
         $instance = new self((int) $row->id, (string) $row->class, (string) $row->method, $row->params ?? []);
         $instance->last_status_text = $row->status_text;
+
+        if ($row->started_at !== null) {
+            $instance->started_at_time = (float) strtotime((string) $row->started_at);
+        }
         $instance->has_queue = (bool) $row->has_queue;
 
         return $instance;
@@ -190,15 +201,23 @@ class Task_Instance
     /**
      * Report progress as a percentage: 0 to 100, kept to two decimals. Values outside the
      * range are clamped.
+     *
+     * Every progress report also re-estimates the ETA from it (see __estimate_eta()).
      */
     public function progress(float $percent): void
     {
-        $this->pending_row['progress_percent'] = round(max(0, min(100, $percent)), 2);
+        $percent = round(max(0, min(100, $percent)), 2);
+
+        $this->pending_row['progress_percent'] = $percent;
+        $this->__estimate_eta($percent / 100);
         $this->__maybe_flush();
     }
 
     /**
      * Report progress as a count: $done of $total items.
+     *
+     * Every progress report also re-estimates the ETA from it (see __estimate_eta()). A
+     * total of zero says nothing about how far along the run is, so it clears the ETA.
      */
     public function progress_count(int $done, int $total): void
     {
@@ -208,12 +227,17 @@ class Task_Instance
 
         $this->pending_row['progress_done'] = $done;
         $this->pending_row['progress_total'] = $total;
+        $this->__estimate_eta($total > 0 ? min(1.0, $done / $total) : null);
         $this->__maybe_flush();
     }
 
     /**
      * Report the expected time to completion, in seconds from now. Stored as the moment it
      * names, so a viewer counts down without another report.
+     *
+     * FOR A TASK THAT REPORTS NO PROGRESS. progress() and progress_count() estimate the ETA
+     * themselves on every call and overwrite whatever was set here, so a task that reports
+     * progress never calls this.
      */
     public function eta(int $seconds): void
     {
@@ -223,6 +247,32 @@ class Task_Instance
 
         $this->pending_row['eta_at'] = date('Y-m-d H:i:s', time() + $seconds) . '.000';
         $this->__maybe_flush();
+    }
+
+    /**
+     * Estimate the ETA from the fraction of the work done and the time it took: the rest is
+     * assumed to go at the pace of what is finished.
+     *
+     *     remaining = elapsed * (1 - fraction) / fraction
+     *
+     * With nothing done yet, or no elapsed time, there is no pace to project from and the ETA
+     * is cleared (null) rather than guessed.
+     *
+     * @param float|null $fraction 0..1 of the work done; null when progress cannot say.
+     */
+    private function __estimate_eta(?float $fraction): void
+    {
+        $elapsed = microtime(true) - $this->started_at_time;
+
+        if ($fraction === null || $fraction <= 0 || $elapsed <= 0) {
+            $this->pending_row['eta_at'] = null;
+
+            return;
+        }
+
+        $remaining = $fraction >= 1 ? 0.0 : $elapsed * (1 - $fraction) / $fraction;
+
+        $this->pending_row['eta_at'] = date('Y-m-d H:i:s', (int) ceil(microtime(true) + $remaining)) . '.000';
     }
 
     /**

@@ -17,6 +17,9 @@
  * A viewer's missing-argument throw is the second - jqhtml logs a failed lifecycle hook with
  * console.error instead of letting it escape as an uncaught exception.
  *
+ * It then checks the waiting state (PREVIEW-DYNAMIC-VIEWER-PENDING): with the render still
+ * queued the component shows "Preparing preview..." and instantiates nothing, without error.
+ *
  * Exit 0 on pass, 1 on any failure. Prints PASS:/FAIL: lines.
  */
 const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
@@ -116,6 +119,36 @@ async function run() {
             fail('expected the rendered <h1> "' + HEADING + '", got ' + JSON.stringify(heading));
         } else {
             console.log('PASS: Markdown_Viewer rendered through the dynamic path ("' + heading + '")');
+        }
+
+        // PREVIEW-DYNAMIC-VIEWER-PENDING: while the render is still queued the template draws
+        // "Preparing preview..." and no viewer host, so there is nothing to instantiate into.
+        // The server's answer is scripted to that state for a dynamically instantiated viewer.
+        const pending = await page.evaluate(async (id) => {
+            const real = File_Preview_Controller.get_preview_info;
+            File_Preview_Controller.get_preview_info = async (params) => {
+                const info = await real.call(File_Preview_Controller, params);
+                return { ...info, viewer: 'Spreadsheet_Viewer', render_status_id: 2 };
+            };
+
+            const component = $('<div class="pending-viewer-probe" style="height:400px">')
+                .appendTo('body').component('Document_Preview', { attachment_id: id }).component();
+            await component.ready();
+
+            File_Preview_Controller.get_preview_info = real;
+
+            return {
+                notice: component.$.find('.Document_Preview__state-title').text().trim(),
+                viewers: component.$.find('.Spreadsheet_Viewer').length,
+            };
+        }, uploaded);
+
+        if (page_errors.length) {
+            fail('page error while the render was pending: ' + page_errors.join(' | '));
+        } else if (pending.notice !== 'Preparing preview...' || pending.viewers !== 0) {
+            fail('expected the preparing notice and no viewer, got ' + JSON.stringify(pending));
+        } else {
+            console.log('PASS: a pending render shows the preparing notice and instantiates no viewer');
         }
     } catch (e) {
         fail('exception: ' + (e && e.message ? e.message : String(e)));

@@ -78,9 +78,10 @@ class Task_Worker_Command extends Command
     private const CLAIM_SKIPPED = 'skipped';
 
     /**
-     * Pending runs this worker skipped because their identity is already running elsewhere
-     * (the coalesced pending run). Excluded from selection so the worker doesn't busy-loop;
-     * the running instance / cron poller picks them up.
+     * Pending runs this worker set aside in the current pass because their run lock is held:
+     * the identity is already running, or another task of its exclusive group is. Excluded
+     * from selection so a pass never revisits a row; emptied after every task this worker
+     * settles, since a lock was just released and a set-aside run may be claimable now.
      *
      * @var int[]
      */
@@ -167,6 +168,11 @@ class Task_Worker_Command extends Command
 
                 Task_Runner::settle($instance, $outcome, $run_lock);
                 $this->tasks_processed++;
+
+                // A run lock was just released, and time has passed: a run this worker set
+                // aside because its identity or its exclusive group was busy may be claimable
+                // now, so the next pass looks at every pending run again.
+                $this->skip_ids = [];
                 $this->info("[WORKER] Task {$task_id} " . ($outcome->success ? 'completed' : 'failed: ' . $outcome->error));
 
                 if ($lost !== null) {
@@ -288,7 +294,8 @@ class Task_Worker_Command extends Command
      * A due #[Schedule]: advance its next_run_at and create its run row, RUNNING under this
      * worker, in one transaction. A schedule whose identity is already running (an on-demand
      * run of an #[Exclusive] task) has this tick coalesced into that run: next_run_at is
-     * advanced and nothing runs.
+     * advanced and nothing runs. A schedule held back only by ANOTHER task of its exclusive
+     * group is queued as a pending run instead.
      */
     private function claim_due_schedule(array $identity)
     {
@@ -312,6 +319,32 @@ class Task_Worker_Command extends Command
                     'next_run_at' => $next_run_at,
                     'updated_at' => now(),
                 ]);
+
+                // The lock of an exclusive GROUP may be held by a different task of the
+                // group. This tick is then not a repeat of anything running: it is queued as
+                // this method's pending run, which a worker claims once the group is free.
+                if (Task_Concurrency::group_of($schedule->class, $schedule->method) !== null
+                    && !Task_Concurrency::is_method_running($schedule->class, $schedule->method)) {
+                    $queued_id = Task_Concurrency::enqueue_coalesced_without_waiting(
+                        $schedule->class,
+                        $schedule->method,
+                        $params_hash,
+                        function (string $scheduled_for) use ($schedule) {
+                            return Task_Runner::insert_row(
+                                $schedule->class,
+                                $schedule->method,
+                                [],
+                                Task_Run_Model::ORIGIN_SCHEDULED,
+                                ['schedule_id' => $schedule->id, 'scheduled_for' => $scheduled_for]
+                            );
+                        }
+                    );
+
+                    if ($queued_id !== null) {
+                        // Set aside for this pass: its group is busy right now.
+                        $this->skip_ids[] = $queued_id;
+                    }
+                }
 
                 return self::CLAIM_SKIPPED;
             }

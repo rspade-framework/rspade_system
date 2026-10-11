@@ -50,9 +50,29 @@ DESCRIPTION
                         is served worst by them.
 
         FORMULAS ARE NEVER EVALUATED. A workbook stores the cached RESULT of every
-        formula next to the formula; the preview shows those values, which is what
-        the author last saw. Charts are absent rather than wrong - rendering one
-        needs a chart library this framework does not vendor.
+        formula next to the formula; the preview shows those values, in the cell's
+        own number format, which is what the author last saw. A formula the file
+        stores no result for (some generators write none) shows a dash, never its
+        formula text. Charts are absent rather than wrong - rendering one needs a
+        chart library this framework does not vendor.
+
+        THE GRID KEEPS THE WORKBOOK'S GEOMETRY. Every column is drawn at the width
+        the workbook gives it (its own, or the sheet's default) and every row the
+        workbook sizes at that height; the grid is never fitted to the viewer and
+        scrolls in both directions instead. A row the workbook leaves to size
+        itself grows with its content up to 100px. Light grid lines sit behind
+        every cell and the workbook's own borders draw over them.
+
+        TEXT BEHAVES AS ON THE SHEET. A cell wraps only when the workbook turns
+        wrapping on for it. Otherwise its content stays on one line: left-aligned
+        text runs on across the empty cells to its right and stops at the first
+        cell that holds something; numbers, and right-aligned or centred text,
+        are cut at their own cell's edge.
+
+        A font the workbook names keeps first place and is followed by a sans-serif
+        fallback (Arial, Helvetica), so a workbook authored in a font the reader
+        does not have still looks like a spreadsheet rather than falling to the
+        browser's serif default.
 
         The window is bounded BEFORE the read (Spreadsheet_Preview_Window, a
         PhpSpreadsheet read filter), so a large workbook costs the memory of the

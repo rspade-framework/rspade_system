@@ -36,7 +36,7 @@ class Documents_Rerender_Command extends Command
                             {--storage= : Re-queue one blob by _file_storage id}
                             {--attachment= : Re-queue the blob backing one attachment id}';
 
-    protected $description = 'Re-queue documents for PDF rendering (deletes their renditions first)';
+    protected $description = 'Re-queue documents for rendering (deletes their cached renditions first)';
 
     /** Blob rows per chunk - the ceiling on resident rows however large the match. */
     private const REQUEUE_CHUNK_SIZE = 1000;
@@ -228,20 +228,28 @@ class Documents_Rerender_Command extends Command
     }
 
     /**
-     * Remove a blob's cached PDF rendition, so the worker genuinely re-renders it rather than
+     * Remove a blob's cached rendition, so the worker genuinely re-renders it rather than
      * short-circuiting on the file already on disk.
      *
-     * The row may be a partial select (id + hash) - rendition_cache_path() reads the hash and
-     * nothing else, which is the whole point of a content-addressed path.
+     * Both paths are cleared: a blob has a PDF rendition or a spreadsheet's HTML one, never
+     * both, and the row here may be a partial select (id + hash) that cannot say which. The
+     * paths read the hash and nothing else, which is the whole point of a content-addressed
+     * store.
      *
      * @param File_Storage_Model $storage
      * @return void
      */
     private function __delete_rendition(File_Storage_Model $storage): void
     {
-        $path = File_Preview_Controller::rendition_cache_path($storage);
-        if (file_exists($path)) {
-            @unlink($path);
+        $paths = [
+            File_Preview_Controller::rendition_cache_path($storage),
+            File_Preview_Controller::sheet_rendition_cache_path($storage),
+        ];
+
+        foreach ($paths as $path) {
+            if (file_exists($path)) {
+                @unlink($path);
+            }
         }
     }
 }

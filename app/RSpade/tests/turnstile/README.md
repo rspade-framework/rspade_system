@@ -70,7 +70,8 @@ code during this pass; no divergence found, so there is no `issues_encountered.m
   observable with the feature actually switched on in `.env`, so it SKIPS otherwise. Asserts
   the two network-free rejections (field absent, sentinel while enabled) and probes the
   configured secret against Cloudflare's siteverify endpoint.
-- **playwright** (not implemented): the widget's own browser behaviour - the inert
-  placeholder while disabled, a real iframe while enabled, the token landing in the hidden
-  input, and the auto-reset on a failed submit. Deferred: it needs live Cloudflare keys in
-  the environment, which is the same gate that makes the http test skip.
+- **playwright**: `inactive_display.js` covers the disabled component - the inert
+  placeholder in development, nothing at all in a sealed build, the sentinel in the hidden
+  input either way. The enabled behaviour (a real iframe, the token landing in the hidden
+  input, the auto-reset on a failed submit) is not implemented: it needs live Cloudflare
+  keys in the environment, which is the same gate that makes the http test skip.

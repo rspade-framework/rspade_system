@@ -54,11 +54,14 @@ Skips unless `TURNSTILE_ENABLED=true` is set in `.env` (a stock install has the 
 | turnstile-http-03 | the configured secret reaches siteverify | http | POST the secret + a probe token to siteverify | a JSON body carrying `success` (no verdict asserted - it is a property of which dummy secret is configured) | implemented |
 | turnstile-http-04 | a solved widget logs in end to end | http | dummy always-pass pair + a real browser token | login succeeds | deferred (needs a browser to solve the challenge - playwright tier) |
 
-## Playwright (not implemented)
+## Playwright
+
+`playwright/inactive_display.js` implements pw-01 and pw-05; the rest are planned.
 
 | ID | Purpose | Type | Input | Expected | Status |
 |----|---------|------|-------|----------|--------|
-| turnstile-pw-01 | disabled renders the inert placeholder + `inactive` hidden value | playwright | /login with the feature off | placeholder visible, hidden field = `inactive` | planned |
+| turnstile-pw-01 | disabled in development renders the inert placeholder + `inactive` hidden value | playwright | the component mounted with the feature off | placeholder visible at the widget height, hidden field = `inactive` | implemented |
+| turnstile-pw-05 | disabled in a sealed build renders nothing | playwright | the same, with `window.rsxapp.debug` cleared | placeholder and widget hidden, height 0, hidden field = `inactive` | implemented |
 | turnstile-pw-02 | enabled renders the Cloudflare iframe and fills the hidden field | playwright | /login with the dummy pair | widget iframe present, hidden field carries a token | planned |
 | turnstile-pw-03 | a failed submit resets the widget | playwright | Ajax signup form, forced error | the `error` event resets the widget and clears the token | planned |
 | turnstile-pw-04 | only one Cloudflare script tag however many widgets render | playwright | a page with two `<Turnstile_Input />` | exactly one api.js script element | planned |

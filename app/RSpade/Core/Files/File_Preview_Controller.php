@@ -379,12 +379,16 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * content-addressed store, under the same LRU quota (File_Rendition_Service). Same hash,
      * different extension: one blob can only ever be one of the two.
      *
+     * The `.grid.html` suffix names the rendition's FORMAT (formula results, grid lines, the
+     * workbook's own geometry). A rendition written under an earlier format has another name,
+     * so the worker's "already on disk" short-circuit can never mistake it for a current one.
+     *
      * @param File_Storage_Model $storage
-     * @return string Absolute path (tmp/renditions/{hash}.html).
+     * @return string Absolute path (tmp/renditions/{hash}.grid.html).
      */
     public static function sheet_rendition_cache_path(File_Storage_Model $storage): string
     {
-        return Rsx_File_Paths::renditions_root() . '/' . $storage->hash . '.html';
+        return Rsx_File_Paths::renditions_root() . '/' . $storage->hash . '.grid.html';
     }
 
     /**
@@ -554,13 +558,21 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         } elseif ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED) {
             $storage = File_Storage_Model::find($attachment->file_storage_id);
 
+            // A rendition is served cacheable for a year, and a re-render replaces the file
+            // behind the same key. `v` is the render time, so a re-rendered document has a
+            // new URL and a browser never shows the copy it cached from the render before.
+            $route_params = ['key' => $attachment->key];
+            if ($storage && $storage->rendered_at) {
+                $route_params['v'] = (string) strtotime((string) $storage->rendered_at);
+            }
+
             // A workbook's rendition is HTML at its own endpoint - see sheet_rendition().
             if ($is_spreadsheet) {
                 if ($storage && file_exists(static::sheet_rendition_cache_path($storage))) {
-                    $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::sheet_rendition', ['key' => $attachment->key]));
+                    $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::sheet_rendition', $route_params));
                 }
             } elseif ($storage && file_exists(static::rendition_cache_path($storage))) {
-                $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]));
+                $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::pdf_rendition', $route_params));
             }
         }
 

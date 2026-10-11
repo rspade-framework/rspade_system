@@ -22,7 +22,8 @@ use App\RSpade\Core\Task\Task_Instance;
  *   status()          where the party is right now (each change is also a stderr line)
  *   progress_count()  landmarks reached of 14 (the percentage is derived from it; the miles
  *                     travelled are in the state)
- *   eta()             seconds left in the script
+ *   (the ETA)         never set here: every progress_count() re-estimates it from the pace
+ *                     so far
  *   heartbeat()       every beat
  *   state()           the wagon: date, miles, weather, pace, rations, provisions, the party
  *   queue_push_many() the landmarks ahead, pushed once at the start, and queue_pop() as
@@ -443,8 +444,6 @@ class _Sys_Oregon_Trail_Service extends Rsx_Service_Abstract
                 }
             }
 
-            $seconds_left = max(0, $seconds_left - (int) round($beat['seconds'] * $speed));
-            $task->eta($seconds_left);
         }
 
         $survivors = array_keys(array_filter($wagon['party'], fn ($health) => $health !== 'dead'));

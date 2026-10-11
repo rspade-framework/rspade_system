@@ -149,12 +149,16 @@ THE WIDGET
         active     Cloudflare's widget renders into the component's own
                    container. The hidden field starts empty and receives the
                    token when the challenge resolves.
-        inactive   An inert, obviously-static placeholder shows where the
-                   widget will sit, and the hidden field carries 'inactive'.
+        inactive   The hidden field carries 'inactive'. In DEVELOPMENT an inert,
+                   obviously-static placeholder shows where the widget will sit.
+                   In a sealed build (debug or production) the component shows
+                   nothing and takes no room.
 
-    The placeholder is a deliberate first-class state: on a fresh install every
-    wired form shows it, which is how a developer sees at a glance that the
-    form is wired and the feature is merely off.
+    The placeholder is a developer's cue: on a fresh install every wired form
+    shows it, which is how a developer sees at a glance that the form is wired
+    and the feature is merely off. A site running without the feature shows its
+    visitors no trace of it. The field is submitted and validated identically
+    either way.
 
     THE FIXED FIELD. The component renders a REAL
     <input type="hidden" name="__turnstile">. That one detail is what makes

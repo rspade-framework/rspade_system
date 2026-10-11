@@ -35,7 +35,10 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `force_stop`, `force_kill`, `cancel`, `rerun`), each writing an operator line.
   `Task_Schedule_Model`, `Task_Attachment_Model` (a `#[Blob_Reference]` + `Blob_Referencing`)
   and `Task_Kill_Request_Model` are the side-table models; all are base + shell.
-- `Task_Concurrency.php` — `#[Exclusive]` (identity `class::method`) / `#[Debounce]`
+- `Task_Concurrency.php` — `#[Exclusive]` (identity `class::method`; with a group name,
+  `#[Exclusive('group')]`, the RUN lock is the group's while pending rows stay per method -
+  `group_of()`, `is_group_running()`, `enqueue_coalesced_without_waiting()` for the schedule
+  tick that queues behind another member under the pool lock) / `#[Debounce]`
   (`class::method::params_hash`): `params_hash()`, the coalescing enqueue under the identity's
   enqueue lock, `try_acquire_run_lock()` (a worker's non-blocking try), `acquire_run_lock()`
   (an inline run waits), `reschedule_pending_after_completion()`.

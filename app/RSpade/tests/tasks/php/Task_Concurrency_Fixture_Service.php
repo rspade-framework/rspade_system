@@ -11,8 +11,8 @@ use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
 
 /**
- * Test-only service exercising the concurrency attributes (#[Exclusive] /
- * #[Debounce]) and the plain (unmanaged) case. No #[Schedule] - never auto-run by
+ * Test-only service exercising the concurrency attributes (#[Exclusive], a two-member
+ * #[Exclusive('fixture_group')] group, #[Debounce]) and the plain (unmanaged) case. No #[Schedule] - never auto-run by
  * the cron. Methods are trivial and side-effect-free; each reports what ran.
  */
 class Task_Concurrency_Fixture_Service extends Rsx_Service_Abstract
@@ -39,6 +39,24 @@ class Task_Concurrency_Fixture_Service extends Rsx_Service_Abstract
     public static function plain_task(Task_Instance $task, array $params = [])
     {
         $task->state(['ran' => 'plain']);
+
+        return null;
+    }
+
+    #[Task('Fixture grouped exclusive task alpha (test-only)')]
+    #[Exclusive('fixture_group')]
+    public static function group_alpha(Task_Instance $task, array $params = [])
+    {
+        $task->state(['ran' => 'group_alpha']);
+
+        return null;
+    }
+
+    #[Task('Fixture grouped exclusive task beta (test-only)')]
+    #[Exclusive('fixture_group')]
+    public static function group_beta(Task_Instance $task, array $params = [])
+    {
+        $task->state(['ran' => 'group_beta']);
 
         return null;
     }

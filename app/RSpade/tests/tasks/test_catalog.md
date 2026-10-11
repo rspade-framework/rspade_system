@@ -73,6 +73,16 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 | task-ident-06 | an inline run waits for the running instance | Task_Lock_Holder releases when it sees a waiter; Task::internal() | the run completed and started after the release | implemented |
 | task-ident-07 | a worker sets aside an identity running elsewhere, and claims it once free | holder holds; worker; release; worker | PENDING, then COMPLETED | implemented |
 
+## Task_Exclusive_Group_Test (php, default isolation) - #[Exclusive('group')]: one running across several methods
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-grp-01 | the group is read from the attribute | the two grouped fixture methods, a bare #[Exclusive], #[Debounce], a plain task | group name for the two; null for the rest | implemented |
+| task-grp-02 | every member shares the group's run lock | another process holding the group lock | `is_group_running()` true without acquiring; neither member can take the run lock; a task outside the group can; free again after release | implemented |
+| task-grp-03 | each member keeps its own pending run | dispatch alpha, beta, alpha again | two distinct pending rows; the repeat returns alpha's id | implemented |
+| task-grp-04 | a worker passes over a busy group and runs everything else, then runs the members one after another | pending alpha, beta and a plain task; the group held elsewhere, then released | first pass: plain completed, alpha and beta still pending; second pass: both completed, beta started after alpha finished | implemented |
+| task-grp-05 | a schedule tick held back by another member is queued, not dropped | a due schedule for beta while the group is held elsewhere | one PENDING run with the schedule id and Scheduled origin; next_run_at advanced; it completes once the group is free | implemented |
+
 ## Task_Pools_Test (php, default isolation) - the pools and what each claims
 
 | ID | Purpose | Input | Expected | Status |
@@ -201,6 +211,12 @@ Type: php / cli (given per section). Last updated: 2026-10-07.
 | task-rep-12 | available_reports lists what was set, in a stable order | every report + settle | the ten names in order | implemented |
 | task-rep-13 | output_after reads by cursor, stream and page | stdout, stderr, operator | order, streams, cursor, limit; unknown stream throws | implemented |
 | task-rep-14 | to_status_array shape | running run with status + count | exact key list and values | implemented |
+| task-rep-15 | a run has no ETA until something sets one | a status only | eta_at null | implemented |
+| task-rep-16 | a percentage estimates the ETA from the pace so far | a run started 100 s ago; 50%, then 25% | about 100 s left, then about 300 s | implemented |
+| task-rep-17 | a count estimates the ETA the same way | a run started 60 s ago; 3 of 12 | about 180 s left | implemented |
+| task-rep-18 | progress that says nothing clears the ETA instead of guessing | an ETA set by hand, then 0%, 0 of 40, 0 of 0 | null each time | implemented |
+| task-rep-19 | finished progress puts the ETA at now | 100%; 9 of 5 | now, within 2 s | implemented |
+| task-rep-20 | a progress report overwrites an ETA set by hand | eta(5000) then 50% at 100 s | about 100 s left | implemented |
 
 ## Task_Output_Test (php, default isolation) - output lines, console streams, echo capture
 
