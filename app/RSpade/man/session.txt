@@ -1571,6 +1571,37 @@ AUDIT SESSIONS
 
         $log->audit_session_id = Session::get_audit_session_id();
 
+    TWO IDS, TWO JOBS - never one for the other:
+
+        Session::get_session_id()
+            The browser's CURRENT session row. For supplemental state that
+            BELONGS TO THE SESSION and should die with it: a preference for
+            this browser, a half-finished wizard, a chosen filter. The row is
+            deleted by the cleanup task, by a command ending, and replaced at
+            every sign-in, so a table of yours that stores it declares
+
+                FOREIGN KEY (session_id) REFERENCES _sessions (id)
+                    ON DELETE CASCADE
+
+            and lets its rows go with the session. THAT FOREIGN KEY IS THE ONE
+            REFERENCE AN APPLICATION MAKES TO A SYSTEM TABLE - every other
+            `_`-prefixed table is a black box (rsx:man
+            database_schema_architecture). It is a constraint, not a query:
+            you still never read _sessions.
+
+            Reach for Session::put_value() first (SESSION-SCOPED KEY/VALUE
+            STORAGE): it is this, already built, and its values FOLLOW THE
+            BROWSER ACROSS A SIGN-IN. Rows in a table of your own do not - a
+            sign-in gives the browser a new session id, and rows keyed to the
+            old one stay with the row it left.
+
+        Session::get_audit_session_id()
+            A different number entirely - not the session id, but the id of a
+            permanent record minted on demand for the acting context. For the
+            HISTORICAL record of what somebody did, tied to the session
+            instance, address and user agent it was done from. Never deleted,
+            so it needs no cascade and its meaning never changes.
+
     Session::get_audit_session_id(): int
         The id of a row in _audit_sessions describing the ACTING CONTEXT:
 
@@ -1620,6 +1651,46 @@ AUDIT SESSIONS
         The table itself is the framework's (every `_`-prefixed table is). An
         application stores the id in a column of its own and asks the framework
         what it means; it does not query _audit_sessions.
+
+    Reading many at once - joining onto a query of your own:
+
+        A grid of logged acts usually wants the address and the browser beside
+        each row, searchable and sortable. Audit_Session::join() adds them to
+        your query without your code naming a system table:
+
+            use App\RSpade\Core\Session\Audit_Session;
+
+            $query = Action_Log_Model::query();
+            Audit_Session::join($query, 'action_logs.audit_session_id');
+
+            // conditions and ordering use column(), never a table name
+            $query->where(Audit_Session::column('ip_address'), 'like', $like)
+                  ->orderBy(Audit_Session::column('first_seen_at'), 'desc');
+
+            foreach ($query->limit(25)->get() as $log) {
+                $log->audit_ip_address;
+                $log->audit_user_agent;        // the full string
+                $log->audit_login_user_id;
+            }
+
+        Audit_Session::join($query, string $column)
+            $column is YOUR qualified column holding the audit session id
+            ('table.column'). A LEFT join, so a row with no audit session is
+            still listed with null audit_* values. Every field of
+            get_audit_session() is selected as audit_<name>; a query that
+            selected nothing explicitly keeps its own table's columns. Works on
+            an Eloquent builder and a query builder. Once per query.
+
+        Audit_Session::column(string $name): string
+            The expression for one audit field, for where() / orderBy() /
+            groupBy(). $name is a get_audit_session() key; anything else
+            throws.
+
+        The names are the contract. The tables and columns behind them are
+        not: where a value is stored can change between releases (the address
+        could move to a table of its own, as user-agent strings already have),
+        and get_audit_session() and join() are what keep answering when it
+        does. They are the only supported ways to read an audit session.
 
     The framework attributes its own lane: every recorded unit of work carries
     _transactions.audit_session_id (rsx:man revisions).
@@ -2297,6 +2368,7 @@ LOCATION GEOLOCATION (FUTURE)
         - ipinfo.io (generous free tier)
 
 SEE ALSO
+    skill rspade:audit-session - recording, reading and joining audit sessions
     rsx:man auth              - identity model (login_users + users), the RsxAuth
                                 facade, invitations
     rsx:man two_factor        - second factors: TOTP, passkeys, recovery codes,

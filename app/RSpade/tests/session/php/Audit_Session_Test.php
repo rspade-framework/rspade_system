@@ -188,6 +188,107 @@ class Audit_Session_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * join() puts the audit session on a query of the caller's own: every published field
+     * as audit_<name>, the base table's columns kept, and rows with no audit session
+     * still listed.
+     */
+    public static function test_join_adds_the_audit_fields_to_a_query_of_the_callers_own()
+    {
+        static::__start_clean();
+        Session::impersonate(1, 509, 609);
+
+        $audit_session_id = Session::get_audit_session_id();
+        $agent_id = Audit_Session::user_agent_id('audit-join/1.0');
+        DB::statement("UPDATE _audit_sessions SET user_agent_id = ?, ip_address = '203.0.113.9' WHERE id = ?", [$agent_id, $audit_session_id]);
+
+        $attributed = DB::table('_login_history')->insertGetId([
+            'login_user_id' => $audit_session_id, 'email_attempted' => 'join@rspade.test', 'ip_address' => '10.0.0.1', 'status' => 'success',
+        ]);
+        $unattributed = DB::table('_login_history')->insertGetId([
+            'login_user_id' => 0, 'email_attempted' => 'join-none@rspade.test', 'ip_address' => '10.0.0.2', 'status' => 'success',
+        ]);
+
+        // Any column holding an audit session id will do; login_user_id stands in for one.
+        $query = DB::table('_login_history')->whereIn('_login_history.id', [$attributed, $unattributed]);
+        $returned = Audit_Session::join($query, '_login_history.login_user_id');
+        $rows = $query->orderBy('_login_history.id')->get()->all();
+
+        static::__assert_true($returned === $query, 'the same query comes back');
+        static::__assert_count(2, $rows, 'a row with no audit session is still listed');
+
+        static::__assert_equals('join@rspade.test', $rows[0]->email_attempted, "the query's own columns are kept");
+        static::__assert_equals('203.0.113.9', $rows[0]->audit_ip_address);
+        static::__assert_equals('audit-join/1.0', $rows[0]->audit_user_agent);
+        static::__assert_equals(509, (int) $rows[0]->audit_login_user_id);
+        static::__assert_equals(1, (int) $rows[0]->audit_site_id);
+        static::__assert_equals(Session::TYPE_CLI, (int) $rows[0]->audit_session_type_id);
+        static::__assert_not_empty($rows[0]->audit_first_seen_at);
+
+        static::__assert_null($rows[1]->audit_ip_address);
+        static::__assert_null($rows[1]->audit_user_agent);
+
+        static::__assert_equals(
+            array_keys(array_diff_key(Session::get_audit_session($audit_session_id), ['id' => true])),
+            array_map(fn ($key) => substr($key, 6), array_values(array_filter(array_keys((array) $rows[0]), fn ($key) => str_starts_with($key, 'audit_')))),
+            'the joined fields are exactly the fields get_audit_session() answers'
+        );
+    }
+
+    /**
+     * A condition or an ordering on an audit field is written with column(), so the
+     * caller never names the tables behind the join.
+     */
+    public static function test_column_names_an_audit_field_for_filtering_and_sorting()
+    {
+        static::__start_clean();
+        Session::impersonate(1, 510, 610);
+
+        $audit_session_id = Session::get_audit_session_id();
+        DB::statement("UPDATE _audit_sessions SET ip_address = '198.51.100.7' WHERE id = ?", [$audit_session_id]);
+
+        DB::table('_login_history')->insert([
+            ['login_user_id' => $audit_session_id, 'email_attempted' => 'col-a@rspade.test', 'ip_address' => 'x', 'status' => 'success'],
+            ['login_user_id' => 0, 'email_attempted' => 'col-b@rspade.test', 'ip_address' => 'x', 'status' => 'success'],
+        ]);
+
+        $query = DB::table('_login_history')->whereIn('email_attempted', ['col-a@rspade.test', 'col-b@rspade.test']);
+        Audit_Session::join($query, '_login_history.login_user_id');
+
+        $matches = $query->where(Audit_Session::column('ip_address'), '198.51.100.7')
+            ->orderBy(Audit_Session::column('first_seen_at'), 'desc')
+            ->get()
+            ->all();
+
+        static::__assert_count(1, $matches);
+        static::__assert_equals('col-a@rspade.test', $matches[0]->email_attempted);
+
+        static::__assert_throws(\InvalidArgumentException::class, fn () => Audit_Session::column('tuple_hash'), 'no audit field');
+        static::__assert_throws(\InvalidArgumentException::class, fn () => Audit_Session::join(DB::table('_login_history'), 'login_user_id'), 'not a qualified column');
+        static::__assert_throws(\InvalidArgumentException::class, fn () => Audit_Session::join(DB::table('_login_history'), 'a.b; DROP TABLE x'));
+    }
+
+    /**
+     * On an Eloquent query the rows are still the caller's models, with the audit fields
+     * as attributes.
+     */
+    public static function test_join_works_on_an_eloquent_query()
+    {
+        static::__start_clean();
+        Session::impersonate(1, 511, 611);
+
+        $transaction_id = Revision::unit_of_work('audit join', fn () => Revision::transaction_id());
+
+        $query = \App\RSpade\Core\Revisions\Transaction_Model::query()->where('_transactions.id', $transaction_id);
+        Audit_Session::join($query, '_transactions.audit_session_id');
+        $transaction = $query->first();
+
+        static::__assert_instance_of(\App\RSpade\Core\Revisions\Transaction_Model::class, $transaction);
+        static::__assert_equals($transaction_id, (int) $transaction->id);
+        static::__assert_equals(511, (int) $transaction->audit_login_user_id);
+        static::__assert_equals('audit join', $transaction->description, "the model's own columns are kept");
+    }
+
+    /**
      * A session row answers its user agent as the string it was given, however long.
      */
     public static function test_a_session_row_answers_its_user_agent_as_a_string()

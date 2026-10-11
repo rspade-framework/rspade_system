@@ -243,6 +243,9 @@ Self-seeding. Moves a real session's clocks back against the shipped defaults (3
 | sess-audit-08 | no user agent is null | null, '' | null id, null string | implemented |
 | sess-audit-10 | an audit session is read back through the framework, user agent as a string | get_audit_session($id); id 0 | the recorded context; null | implemented |
 | sess-audit-11 | a session row answers its user agent as the string it was given | a 400+ character agent assigned to a row | the same string from a fresh read | implemented |
+| sess-audit-12 | join() adds every get_audit_session() field as audit_<name> to the caller's query, keeps its own columns, and lists a row with no audit session | a query-builder query over two rows, one attributed | 2 rows; fields set / null; the joined names equal get_audit_session()'s keys | implemented |
+| sess-audit-13 | column() names an audit field for where() and orderBy(); an unknown field or an unqualified column is refused | filter on ip_address, sort on first_seen_at; bad names | 1 match; InvalidArgumentException | implemented |
+| sess-audit-14 | join() on an Eloquent query still answers the caller's models | Transaction_Model query | a Transaction_Model with audit_login_user_id and its own description | implemented |
 | sess-audit-09 | a recorded unit of work carries the audit session | Revision::transaction_id() in a unit of work | _transactions.audit_session_id is the current id | implemented |
 
 ## http/audit_session.sh (http - live server)

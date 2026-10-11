@@ -231,6 +231,100 @@ class Audit_Session
     }
 
     /**
+     * What a joined audit session answers, by published name: the expression behind each,
+     * over the two aliases join() adds. The names are the keys Session::get_audit_session()
+     * returns; the columns behind them are the framework's and may move.
+     */
+    private const JOINED_FIELDS = [
+        'site_id' => 'audit_session.site_id',
+        'login_user_id' => 'audit_session.login_user_id',
+        'portal_user_id' => 'audit_session.portal_user_id',
+        'portal_site_id' => 'audit_session.portal_site_id',
+        'impersonator_login_user_id' => 'audit_session.impersonator_login_user_id',
+        'impersonator_user_id' => 'audit_session.impersonator_user_id',
+        'ip_address' => 'audit_session.ip_address',
+        'user_agent' => 'audit_user_agent.user_agent',
+        'session_row_id' => 'audit_session.session_row_id',
+        'device_id' => 'audit_session.device_id',
+        'session_type_id' => 'audit_session.session_type_id',
+        'first_seen_at' => 'audit_session.first_seen_at',
+        'last_seen_at' => 'audit_session.last_seen_at',
+    ];
+
+    /**
+     * Join the audit session onto a query of your own, so a list of logged acts can show,
+     * search and sort by who performed each one and from where.
+     *
+     *     $query = Action_Log_Model::query();
+     *     Audit_Session::join($query, 'action_logs.audit_session_id');
+     *
+     *     $query->where(Audit_Session::column('ip_address'), 'like', $like)
+     *           ->orderBy(Audit_Session::column('first_seen_at'), 'desc');
+     *
+     *     foreach ($query->limit(25)->get() as $log) {
+     *         $log->audit_ip_address;   $log->audit_user_agent;   $log->audit_login_user_id;
+     *     }
+     *
+     * $column is YOUR column holding a Session::get_audit_session_id() value. The join is
+     * a LEFT join, so a row with no audit session is still listed (its audit_* values are
+     * null). Every published field is added to the select as `audit_<name>` - the names
+     * are get_audit_session()'s keys, user_agent as the full string. A query that selected
+     * nothing explicitly keeps its own table's columns.
+     *
+     * THIS IS THE WAY TO READ AUDIT SESSIONS IN BULK. The tables behind it are the
+     * framework's and are never named in application code: a condition or an ordering on
+     * an audit field is written with column(), which answers the expression to use.
+     *
+     * Call it once per query. Works on an Eloquent builder and on a query builder.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Query\Builder $query
+     * @param string $column The qualified column holding the audit session id ('table.column')
+     * @return \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Query\Builder The same query
+     */
+    public static function join($query, string $column)
+    {
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/', $column)) {
+            throw new \InvalidArgumentException(
+                "Audit_Session::join(): '{$column}' is not a qualified column. Name the table and the column holding the audit session id, e.g. 'action_logs.audit_session_id'."
+            );
+        }
+
+        $base = $query instanceof \Illuminate\Database\Eloquent\Builder ? $query->getQuery() : $query;
+
+        // Adding a select to a query that had none would REPLACE its implicit `*`.
+        if (empty($base->columns)) {
+            $query->select($base->from . '.*');
+        }
+
+        $query->leftJoin('_audit_sessions as audit_session', 'audit_session.id', '=', $column)
+            ->leftJoin('_user_agents as audit_user_agent', 'audit_user_agent.id', '=', 'audit_session.user_agent_id');
+
+        foreach (self::JOINED_FIELDS as $name => $expression) {
+            $query->addSelect($expression . ' as audit_' . $name);
+        }
+
+        return $query;
+    }
+
+    /**
+     * The expression for one audit field in a query join() was applied to - for a where(),
+     * an orderBy() or a groupBy(). $name is one of get_audit_session()'s keys.
+     *
+     * @param string $name
+     * @return string
+     */
+    public static function column(string $name): string
+    {
+        if (!isset(self::JOINED_FIELDS[$name])) {
+            throw new \InvalidArgumentException(
+                "Audit_Session::column(): no audit field '{$name}'. Fields: " . implode(', ', array_keys(self::JOINED_FIELDS)) . '.'
+            );
+        }
+
+        return self::JOINED_FIELDS[$name];
+    }
+
+    /**
      * Forget every id this process has resolved.
      *
      * A row minted inside a database transaction that then rolls back no longer exists,

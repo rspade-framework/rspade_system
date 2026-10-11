@@ -89,7 +89,15 @@ WHAT YOU MUST CHANGE
        Not a query, but the same mistake: the id of a row that is replaced
        at every sign-in, deleted when a command ends and collected when
        idle. Store Session::get_audit_session_id() (rsx:man session, AUDIT
-       SESSIONS).
+       SESSIONS), and show it in a grid with Audit_Session::join($query,
+       'your_table.audit_session_id'), which adds audit_ip_address,
+       audit_user_agent and the rest to your query.
+
+       Session::get_session_id() remains right for one thing: state that
+       belongs to the browser session and should be deleted with it. A table
+       that stores it for that purpose declares FOREIGN KEY (session_id)
+       REFERENCES _sessions (id) ON DELETE CASCADE - the one reference an
+       application makes to a system table.
 
 THE REFERENCE IMPLEMENTATION
     system/app/RSpade/resource/reference_app/app/frontend/settings/user_management/settings_user_management_controller.php

@@ -93,6 +93,20 @@ and they are the only thing an application may build on. Code that reads a
 system table directly works until the next framework update and then fails
 at run time, with nothing at build time to say so.
 
+TWO SANCTIONED CONTACTS, AND NO OTHERS:
+
+    A FOREIGN KEY TO _sessions. A table of yours that holds state belonging to
+    a browser session stores Session::get_session_id() and declares
+    FOREIGN KEY (session_id) REFERENCES _sessions (id) ON DELETE CASCADE, so
+    its rows are removed with the session. A constraint, never a query - and
+    the only foreign key an application points at a system table. (Prefer
+    Session::put_value(), which needs no table; rsx:man session.)
+
+    A JOIN THROUGH A FRAMEWORK CALL. Audit_Session::join($query, $column)
+    joins the audit session onto your own query for a grid, and
+    Audit_Session::column($name) names a field of it for a where() or an
+    orderBy(). Your code names neither table; the framework does.
+
 WHEN THE INTERFACE IS NOT ENOUGH, the answer is a change request to RSpade
 to extend it - a new accessor, another field in an answer, a filter - never
 a query of your own against the table. The data is the framework's to
