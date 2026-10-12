@@ -1151,8 +1151,10 @@ THUMBNAILS
 
     A producer ships file_attachment_id, never a URL; the component fetches the
     record itself (batched) and owns the picture from there, including the swap
-    when a document finishes rendering in the background. Full contract, the
-    render state machine and the FUTURE POSSIBILITIES the component opens up:
+    when a document finishes rendering in the background. It reports what it put
+    on screen with a 'preview_loaded' event - always, whatever that was - so a
+    host never reads the component's <img>. Full contract, the render state
+    machine and the FUTURE POSSIBILITIES the component opens up:
     rsx:man thumbnails.
 
     The routes and builders below are what the component uses. They are
@@ -1558,6 +1560,7 @@ DOCUMENT TEXT EXTRACTION AND PREVIEW
         server-side (PDF / image / icon). An Office document is served from the
         cached rendition once it is RENDERED; until then the component shows
         "Preparing preview..." and swaps itself when the realtime frame arrives.
+        Every state it can show is reported with a 'preview_loaded' event.
         See rsx:man document_search.
 
 CLI COMMANDS

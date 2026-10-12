@@ -8,7 +8,7 @@ is a pointer, not a second copy.
 - **Declared blob references (`#[Blob_Reference]` read by `File_Blob_References`, the `Blob_Referencing` write-side trait, the "Blob References" health row) and the central blob API (`File_Storage_Model::store_blob()` / `store_bytes()` / `read_bytes()` / `read_stream()` / `download_response()` / `inline_response()`)**: `rsx:man file_disposal`
 - **Thumbnails, `<Attachment_Thumbnail>`, the render state machine, the renderer registry**: `rsx:man thumbnails`
 - **The render pipeline in operation (`rsx:documents:status|failed|rerender`)**: `rsx:man documents`
-- **Text extraction, full-text search, `<Document_Preview>` / `<Document_Text_Preview>`, PDF renditions**: `rsx:man document_search`
+- **Text extraction, full-text search, `<Document_Preview>` / `<Document_Text_Preview>`, PDF renditions, the `preview_loaded` event every preview widget emits (state vocabulary, viewer contract)**: `rsx:man document_search`
 - **Headless soffice, invoked only by the render worker, and the document sandbox that can contain it (`Document_Sandbox`)**: `rsx:man libreoffice`
 - **The temp file store (`Rsx_Temp_Files`, `Temp_File_Model`, `Temp_File_Cleanup_Service`) - pipeline output under `uploads/_temp/`, outside the blob store**: `rsx:man temp_files`
 - **Keep-forever (`deleted_retention_days = 0`) releases no blob anywhere (`File_Disposal_Service::blob_release_enabled()`); `rsx:files:unreferenced_blobs` (`File_Blob_Audit`) lists what stays**: `rsx:man file_disposal`

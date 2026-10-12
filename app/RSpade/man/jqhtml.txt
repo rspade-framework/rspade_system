@@ -2337,7 +2337,7 @@ RESERVED NAMES (METHODS AND EVENTS)
         reload(false) semantics from that name.
 
     Reserved EVENT names:
-        create, load, loaded, ready, render, stop, attach, detach
+        create, load, loaded, ready, render, rendered, stop, attach, detach
 
         These are the lifecycle events the framework fires internally
         (with no payload) - a custom event with the same name collides

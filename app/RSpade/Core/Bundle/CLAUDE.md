@@ -24,6 +24,15 @@
 - Waiver 2 is what lets a framework feature on an app route ship its own bundle
   (`Rsx_Api_Docs::page()` -> `_Apidocs_App.blade.php` -> `_Apidocs_Bundle`)
 
+**Include Patterns** (`Bundle_Include_Pattern`)
+- A type-filtered directory include, exactly two forms: `<dir>/*.<ext>`, `<dir>/**/*.<ext>`
+- The ONE definition of the grammar: `BundleCompiler::_process_include_item()` expands with
+  it, and every other reader of an include list (`__validate_path_coverage`,
+  `validate_no_directory_scanning`, `rsx:bundle:show`) asks `is_pattern()` - never test
+  for `*` by hand
+- Malformed, or matching nothing, THROWS naming the pattern; a pattern covers no view
+- Matches go through `_add_scanned_files()`, the same per-file step a directory scan uses
+
 **Auto-Discovery Rules:**
 - Asset Bundles discovered via directory scan cannot have directory paths in `include`
 - If Asset Bundle needs directory scanning, include it explicitly by class name

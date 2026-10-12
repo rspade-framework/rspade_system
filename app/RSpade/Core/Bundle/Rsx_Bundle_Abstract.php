@@ -6,6 +6,7 @@ use RuntimeException;
 use App\RSpade\CodeQuality\RuntimeChecks\BundleErrors;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Bundle\BundleCompiler;
+use App\RSpade\Core\Bundle\Bundle_Include_Pattern;
 use App\RSpade\Core\Csp\Rsx_Csp;
 use App\RSpade\Core\Debug\Console_Debug_Override;
 use App\RSpade\Core\Debug\Debugger;
@@ -29,6 +30,7 @@ use App\RSpade\Core\Session\Session;
  * - Bundle file paths (e.g., rsx/theme/bootstrap5_src_bundle.php)
  * - Directory paths (e.g., rsx/app/frontend)
  * - Regular file paths (e.g., rsx/theme/variables.scss)
+ * - Type-filtered directory patterns (e.g., rsx/theme/*.scss) - see define()
  *
  * USAGE:
  * 1. Create a bundle class that extends Rsx_Bundle_Abstract
@@ -70,8 +72,27 @@ abstract class Rsx_Bundle_Abstract
      * - Bundle aliases: Defined in config/rsx.php bundle_aliases
      * - Bundle classes: MyBundle::class or 'MyBundle'
      * - Bundle files: 'path/to/bundle.php'
-     * - Directories: 'rsx/app/mymodule'
+     * - Directories: 'rsx/app/mymodule' - every file of every type beneath it
      * - Files: 'rsx/theme/style.scss'
+     * - Type-filtered directories, in exactly two forms (Bundle_Include_Pattern):
+     *     'rsx/theme/*.scss'      - that directory's own .scss files, no subdirectory's
+     *     'rsx/theme/** /*.scss'  - its .scss files and those of everything beneath it
+     *                               (written WITHOUT the space; the unspaced sequence
+     *                               would end this comment)
+     *   One directory and one extension per entry. Any other use of '*' fails the
+     *   build naming the two forms, and so does a pattern that matches no file. The
+     *   matches join the bundle at the entry's position, sorted by path.
+     *
+     * Entries are compiled in the order listed, and a file named twice is included
+     * once, at its first position.
+     *
+     * A BUNDLE SERVED TO VISITORS WHO HAVE NOT SIGNED IN (login, signup, password
+     * reset, error pages, a portal's sign-in pages) includes NO shared directory -
+     * a directory publishes every component, model definition and controller stub
+     * beneath it to an anonymous visitor. It names the theme's global stylesheets
+     * (the pattern forms above) and each component, model and script its pages
+     * use BY FILE, parents included, plus its own module directory. See
+     * rsx:man bundle_api, PUBLIC-FACING BUNDLES.
      *
      * @return array Bundle definition
      */
@@ -931,6 +952,13 @@ abstract class Rsx_Bundle_Abstract
         $is_covered = false;
 
         foreach ($include_paths as $include_path) {
+            // A type-filtered pattern names files of one type, never a directory: it
+            // covers no view, which is why a bundle built from patterns and files still
+            // lists its own module directory.
+            if (Bundle_Include_Pattern::is_pattern($include_path)) {
+                continue;
+            }
+
             // Normalize path for comparison
             $include_path = rtrim($include_path, '/');
 
@@ -992,6 +1020,10 @@ abstract class Rsx_Bundle_Abstract
                     $controller_covered = false;
 
                     foreach ($include_paths as $include_path) {
+                        if (Bundle_Include_Pattern::is_pattern($include_path)) {
+                            continue;
+                        }
+
                         $include_path = rtrim($include_path, '/');
 
                         // Check if include path is a file matching the controller

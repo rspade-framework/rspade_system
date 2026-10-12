@@ -39,8 +39,10 @@ Args (the viewer contract Document_Preview passes to every dynamic viewer):
   $attachment_id (required) - the File_Attachment_Model id to read. Throws if absent.
   $file_name     (optional) - shown in no state; accepted so the contract matches its siblings.
 
-Events OUT: 'preview_loaded' {pages:1}. The document scrolls; it does not paginate, so
-set_page is a no-op.
+Events OUT: 'preview_loaded' {pages:1, state, attachment_id}, in every state. state is 'loaded'
+for the rendered document (an empty file included - it is the file, shown), 'unavailable' when
+the record could not be read, 'failed' for a document that should have rendered and did not.
+The document scrolls; it does not paginate, so set_page is a no-op.
 --%>
 <Define:Markdown_Viewer tag="div">
     <% if (!this.args.attachment_id) { throw new Error('Markdown_Viewer requires $attachment_id'); } %>

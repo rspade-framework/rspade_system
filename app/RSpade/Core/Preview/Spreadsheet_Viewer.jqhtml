@@ -42,8 +42,12 @@ Args (the viewer contract Document_Preview passes to every dynamic viewer):
   $attachment_id (required) - the File_Attachment_Model id to read. Throws if absent.
   $file_name     (optional) - used as the iframe title, for assistive technology.
 
-Events OUT: 'preview_loaded' {pages:1}. The grid scrolls; it does not paginate, so set_page is a
-no-op and the host's page chrome stays hidden.
+Events OUT: 'preview_loaded' {pages:1, state, attachment_id}, in every state and again after each
+swap. state is 'loaded' when the grid's iframe has loaded, 'preparing' for (Preparing Preview...),
+'failed' for a FAILED render and 'unavailable' when the record could not be read. An iframe
+reports a load for whatever its request answered and a sandboxed one cannot be inspected, so a
+rendition request that itself fails is still reported 'loaded'. The grid scrolls; it does not
+paginate, so set_page is a no-op and the host's page chrome stays hidden.
 --%>
 <Define:Spreadsheet_Viewer tag="div">
     <% if (!this.args.attachment_id) { throw new Error('Spreadsheet_Viewer requires $attachment_id'); } %>
@@ -63,10 +67,11 @@ no-op and the host's page chrome stays hidden.
                  subscription in on_create brings us back the moment it exists. --%>
             <div class="Spreadsheet_Viewer__notice">(Preparing Preview...)</div>
         <% } else { %>
-            <iframe class="Spreadsheet_Viewer__sheet"
-                    src="<%= _url %>"
-                    sandbox=""
-                    title="<%= this.args.file_name || 'Spreadsheet preview' %>"></iframe>
+            <%-- The sandboxed iframe is created by the class once the viewer is ready, not written here, with
+                 its load handler bound BEFORE it has a source. An iframe gives no way to ask
+                 afterwards whether it has loaded, so one written by the template could finish
+                 before anything was listening and 'preview_loaded' would never be emitted. --%>
+            <div $sid="sheet_host" class="Spreadsheet_Viewer__sheet_host"></div>
         <% } %>
     </div>
 </Define:Spreadsheet_Viewer>

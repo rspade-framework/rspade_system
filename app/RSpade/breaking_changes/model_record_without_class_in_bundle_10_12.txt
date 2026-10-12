@@ -1,0 +1,87 @@
+A MODEL RECORD ARRIVING ON A PAGE WHOSE BUNDLE LACKS THAT MODEL'S CLASS NOW THROWS
+Date: 2026-10-12
+
+IF YOU DO NOTHING: an Ajax endpoint of yours that returns a model record (anything built from toArray()) to a page whose bundle does not include that model now throws in the browser when the response arrives, where it used to hand the page a plain object - the call never resolves and the screen stops at that request.
+
+SUMMARY
+    Category 2: the return contract of every Ajax call changed for one case -
+    a response carrying a record of a model the receiving bundle does not
+    include. It affects an application with a bundle that lists no models, or
+    only some of them, whose pages call an endpoint that returns a record.
+
+    A bundle that includes the models directory ('rsx/models') carries every
+    application model and is unaffected for them.
+
+THE CHANGE
+    Every Ajax response is walked for {__MODEL: 'Name'} records - toArray()
+    adds that key to every model - and each record becomes an instance of the
+    JavaScript class of that name. When the receiving page's bundle did not
+    include the class, the record passed through as a plain object: every
+    field read correctly, and the first model method called on it (a
+    relationship, an enum label, field_length()) failed somewhere else.
+
+    The walk now refuses such a record, naming the model:
+
+        A 'Client_Model' record arrived from the server, but the bundle that
+        received it does not include that model's class. Include the model
+        in the bundle: ...
+
+THE FIX
+    Informational - it arrives with the framework. The refusal is raised while
+    the response is unwrapped, as an uncaught error on the page, for a record
+    at any depth of the response. The framework's own screens return no
+    record their bundle lacks.
+
+ACTION REQUIRED
+    1. List the bundles that do not include the models directory:
+
+           grep -rL "rsx/models'" rsx --include='*_bundle.php' --include='*_Bundle.php'
+
+       A bundle that names individual model files instead is in scope for
+       every model it does not name.
+
+    2. For each such bundle, read the Ajax endpoints its pages call - the
+       controllers in the directories the bundle includes - for a response
+       that carries a model:
+
+           grep -rnE "toArray\(\)|#\[Ajax_Endpoint" <the module directory>
+
+       A returned model object, a collection of them, an array that started
+       from $record->toArray(), and a record nested in any of those all carry
+       __MODEL.
+
+    3. Fix each one, whichever is true of the page.
+
+       The page uses the record as a model. Add the model to the bundle's
+       'include' list - its PHP file, and its hand-written JavaScript class
+       beside it when it has one:
+
+           'include' => [
+               ...
+               'rsx/models/client_model.php',
+           ],
+
+       The page only reads a few fields. Return those fields, so no record
+       reaches it:
+
+           return ['id' => $client->id, 'name' => $client->name];
+
+       On a bundle served to visitors who have not signed in, the second is
+       the right answer: including a model there publishes its columns, enums
+       and relationships to anybody.
+
+       A record of a framework model that has no JavaScript class at all (a
+       model over a '_'-prefixed system table) can only take the second fix.
+
+VERIFICATION
+    Load each screen served by a bundle from step 1 and use it - open its
+    lists, its dialogs, save its forms:
+
+        php artisan rsx:debug /the/route --user=1
+
+    A response that still carries a record the bundle lacks reports the error
+    above in the console, naming the model. No such error on every screen of
+    those bundles is the pass.
+
+    See: rsx:man model_fetch (AUTOMATIC HYDRATION, A Model The Bundle Does Not
+    Carry), rsx:man bundle_api (INCLUDE TYPES, PUBLIC-FACING BUNDLES).

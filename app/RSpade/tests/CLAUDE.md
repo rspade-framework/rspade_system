@@ -12,7 +12,7 @@ worth testing across all test types - implemented or not.
 ```
 tests/
 ├── CLAUDE.md                  # this file - the structure of record
-├── _lib/                     # shared shell infra (test_env.sh, db_reset.sh, snapshot)
+├── _lib/                     # shared infra: shell (test_env.sh, db_reset.sh, snapshot), playwright/sys_page.js
 ├── _archive/                  # retired tests + superseded docs, kept for reference (never run/discovered)
 ├── <concern>/                 # one directory per subsystem of concern (e.g. session, enums, tasks)
 │   ├── README.md              # domain overview + applicability + source/man-page map + testable surface
@@ -101,7 +101,10 @@ declares none.
 **A browser test cannot see the test tree at all.** The trees enter the manifest only while
 `rsx:test` runs, and a playwright script drives the ordinary web server - another process,
 another manifest, another database. Such a test uses a framework-served page (`/_sys`) and
-framework classes, and registers whatever else it needs at runtime in the browser.
+framework classes, and registers whatever else it needs at runtime in the browser. The shared
+opening for such a script is `_lib/playwright/sys_page.js` (`open_sys_page()`: launch, dev-auth on
+the first document request, wait for the SPA) - it sits under a `playwright` directory because
+that basename is what keeps a node script out of the manifest scan.
 
 ## Database isolation (PHP tests)
 

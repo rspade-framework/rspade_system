@@ -85,12 +85,20 @@ class Pdf_Viewer extends Component {
         // change the box costs nothing.
         this._last_render_size = { width: 0, height: 0 };
 
+        // Whether the page on the canvas has yet to be reported with 'preview_loaded'. Set by
+        // whatever asks for a different page and cleared by the render that paints it - which,
+        // when renders overlap, is not always the one that was asked.
+        this._report_owed = true;
+
         this._resize_observer = null;
         this._on_resize = debounce(() => that._handle_resize(), Pdf_Viewer.RESIZE_DEBOUNCE_MS);
     }
 
+    on_render() {
+        this.invalidate('preview_loaded');
+    }
+
     async on_ready() {
-        const that = this;
         try {
             const pdfjs = await Pdf_Viewer._load_pdfjs();
             if (this._stopped) return;
@@ -119,14 +127,14 @@ class Pdf_Viewer extends Component {
             // that before there is a rendered size would race the initial render for the canvas.
             this._observe_container();
 
-            that.trigger('preview_loaded', {
-                pages: this.state.pages,
-                width: this._last_dims.width,
-                height: this._last_dims.height,
-                ratio: this._last_dims.ratio,
-            });
+            this._report('loaded');
         } catch (e) {
+            if (this._stopped) return;
+            // pdf.js could not be loaded, or the document could not be fetched or parsed. The
+            // message is on screen, so this is reported like every other outcome - a host
+            // waiting on this viewer is answered rather than left waiting.
             this._show_error(e);
+            this._report('failed');
         }
     }
 
@@ -156,8 +164,11 @@ class Pdf_Viewer extends Component {
         if (n === this.state.page) return;
 
         this.state.page = n;
+        this._report_owed = true;
         this._render_page(n).then((painted) => {
             if (!painted || this._stopped) return;
+            // The geometry in 'preview_loaded' is the page on screen, so a new page re-reports it.
+            this._report('loaded');
             this.trigger('page_changed', { page: n });
         });
     }
@@ -264,7 +275,13 @@ class Pdf_Viewer extends Component {
             return;
         }
 
-        this._render_page(this.state.page);
+        this._render_page(this.state.page).then((painted) => {
+            // A resize re-raster shows the same page, so it normally has nothing to report. It
+            // does when it superseded the render a page change started: this is then the paint
+            // that put the new page on screen.
+            if (!painted || this._stopped || !this._report_owed) return;
+            this._report('loaded');
+        });
     }
 
     /**
@@ -314,6 +331,24 @@ class Pdf_Viewer extends Component {
         canvas.style.display = prior_display;
 
         return box;
+    }
+
+    /**
+     * Report what is on the canvas. 'loaded' carries the page count and the geometry of the page
+     * currently rendered; 'failed' (the error message is showing) carries zeros.
+     */
+    _report(state) {
+        const loaded = state === 'loaded';
+
+        this._report_owed = false;
+        this.trigger('preview_loaded', {
+            pages: loaded ? this.state.pages : 0,
+            width: loaded ? this._last_dims.width : 0,
+            height: loaded ? this._last_dims.height : 0,
+            ratio: loaded ? this._last_dims.ratio : 0,
+            state: state,
+            attachment_id: this.args.attachment_id ? int(this.args.attachment_id) : null,
+        });
     }
 
     /**

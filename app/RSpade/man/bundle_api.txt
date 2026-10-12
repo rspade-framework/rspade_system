@@ -311,6 +311,58 @@ INCLUDE TYPES
         'rsx/lib/utils.js'
         'rsx/theme/variables.scss'
 
+    Type-Filtered Directories
+        One directory, ONE file type, in exactly two forms:
+
+        'rsx/theme/*.scss'       that directory's own .scss files, and no
+                                 subdirectory's
+        'rsx/theme/**/*.scss'    that directory's .scss files and those of
+                                 everything beneath it
+
+        A directory include takes every file of every type beneath it. A
+        pattern is the granularity between that and one file: it is how a
+        bundle takes a theme's global stylesheets without the component
+        library that lives in the theme's subdirectories.
+
+        The grammar is those two forms and nothing else: a literal directory,
+        an optional '**/' segment, and a file name that is exactly '*.<ext>'
+        with one extension. There are no brace sets, no '?', no character
+        classes, no exclusions and no '*' in any other position. A second
+        extension or a second directory is a second entry.
+
+        - Any other use of '*' fails the build ("Bundle include pattern is not
+          one of the accepted forms"), printing the two forms.
+        - A pattern that matches NO file fails the build ("Bundle include
+          pattern matches no files" / "names a directory that does not
+          exist"), naming the pattern and the bundle. It is never a silent
+          no-op: a bundle that quietly lost its stylesheets renders a working
+          page that looks wrong and reports nothing.
+        - The matches join the bundle at the entry's own position in the
+          include list, sorted by path - the order a directory include uses,
+          identical on every checkout. A file an earlier entry already named
+          keeps its earlier position, so 'rsx/theme/variables.scss' followed
+          by 'rsx/theme/*.scss' leaves the variables first.
+        - The recursive form passes over the directory names a directory
+          include passes over (vendor, node_modules, resource, public, ...).
+        - A pattern is expanded on every compile, so in development a file
+          ADDED to a matched directory is in the bundle on the next request,
+          exactly like a file added beneath a directory include.
+        - A pattern names files, not a directory: it never satisfies the
+          render-time coverage check (BUNDLE PLACEMENT above). A bundle built
+          from patterns and files still lists its own module directory.
+        - An Asset Bundle discovered by a scan may not declare one, for the
+          same reason it may not declare a directory.
+
+        The two forms are DIFFERENT tools. Over a theme, '**/*.scss' takes
+        every component's stylesheet as well - most of the stylesheet weight,
+        and the component inventory as a list of CSS class names. '*.scss'
+        takes only the directory it names, so a theme whose global stylesheets
+        sit at more than one depth needs one entry per directory that holds
+        them. See PUBLIC-FACING BUNDLES below.
+
+        Inside a PHP block comment the recursive form cannot be written as it
+        is: the sequence '*' '/' ends the comment. Write it in a '//' comment.
+
     NPM Modules
         Use Asset Bundles with the 'npm' array. See npm(3) for details.
 
@@ -333,6 +385,104 @@ INCLUDE TYPES
         These resolve to files in any public/ directory in rsx/. Resolution
         cached in Redis for performance. Generates tags with filemtime() for
         fresh cache-busting on each page render.
+
+PUBLIC-FACING BUNDLES
+    A BUNDLE TAKES ITS AUDIENCE FROM ITS LEAST PRIVILEGED PAGE. Everything a
+    bundle includes is downloaded by everybody who can load any page that
+    renders it. A bundle rendered by a page that needs no sign-in - a login
+    page, signup, password reset, an error page, a client portal's sign-in
+    pages - is served to anonymous visitors, whatever else it also serves.
+
+    Such a bundle NEVER includes a shared directory. A directory include of a
+    shared tree (the theme, the shared library, the models) publishes
+    everything in it: the whole component library, every model's ORM
+    definition (columns, enums, relationships) and every controller's route
+    and Ajax stubs. Every endpoint stays gated; what is handed over is the map
+    of the application - its endpoint surface, its domain model and its
+    permission vocabulary - before the visitor has a session.
+
+    A public-facing bundle is a MINIMUM INCLUDE SET, named by hand:
+
+        'include' => [
+            // The theme's global stylesheets, and the framework build they
+            // configure. The pattern takes the theme directory's OWN
+            // stylesheets; its subdirectories are the component library.
+            'rsx/theme/variables.scss',
+            'rsx/theme/responsive.scss',
+            'Bootstrap5_Src_Bundle',
+            'rsx/theme/*.scss',
+
+            // Each component the pages render, by FILE, parent first.
+            'rsx/theme/components/forms/form_field_abstract.jqhtml',
+            'rsx/theme/components/forms/form_field_abstract.js',
+            'rsx/theme/components/forms/form_field.jqhtml',
+            'rsx/theme/components/forms/form_field.js',
+
+            __DIR__,    // required: it covers the views the bundle serves
+        ],
+
+    The rule is "no directory from the SHARED trees", not "no directory": the
+    bundle's own module directory is required by the coverage check.
+
+    ADDING A FEATURE TO SUCH A PAGE MEANS ADDING ITS FILES TO THE BUNDLE. A
+    component, model or script the page newly uses is not there until it is
+    named: the component's template and class (and stylesheet), EVERY PARENT
+    of it - the JS base class it extends and the template its
+    <Define:X extends="Y"> names - each model its JavaScript reads, and each
+    script or npm Asset Bundle it calls.
+
+    How To Find The Set
+        1. Scan the module's templates for component tags.
+        2. Subtract what Core_Bundle already provides: the framework's own
+           components (the form engine, the second-factor and passkey
+           controls, Turnstile, the spinner) reach every bundle.
+        3. Search the module's own JavaScript for model names.
+        4. Include each remaining component by file - never by its directory,
+           which usually holds its siblings too - and its parents.
+        5. Find the theme's global stylesheets at EVERY depth they live at.
+           Do not assume one.
+        6. Compile, load every route the bundle serves, and LOOK at it.
+
+    What Is Missing, And How It Fails
+        a JS class                 throws when the bundle loads, naming itself
+        an extends="" parent       SILENT - the child renders without the
+        template                   parent's markup
+        a stylesheet               SILENT - a working page that looks wrong
+        a component's files        an empty element and a console WARNING
+        entirely                   ("Creating X with defaults"), no error
+        a model class behind a     throws when the response is unwrapped,
+        {__MODEL} response         naming the model (see rsx:man model_fetch)
+        a view's directory         throws at render (BUNDLE PLACEMENT)
+
+    A CLEAN CONSOLE IS NOT EVIDENCE. Capture a screenshot of every page before
+    narrowing a bundle - each state it can show, in light and dark - and
+    compare after. Identical images are conclusive; nothing else catches the
+    silent rows.
+
+    The Component Shake Does Not Do This
+        A sealed build drops the components a bundle never names (THE
+        COMPONENT SHAKE). It drops COMPONENTS ONLY: plain JS classes, model
+        and controller stubs and shared stylesheets are always kept, because
+        any class may be reached by a boot-phase sweep. It never runs in
+        development, which is a mode an application may be served in. The
+        include list is the only control over what a bundle publishes.
+
+    Internal Bundles Are Not Held To This
+        A bundle whose every page requires a staff sign-in includes whole
+        shared directories, and should: an employee reading the JavaScript of
+        the application they work in is not a disclosure, and an include list
+        that must be edited for every new component is a cost with nothing
+        bought. The same holds for the SIGNED-IN bundle of a client portal:
+        its users are outside the organisation, but they are identified, and
+        the convenience of the wide bundle is worth the small exposure. What
+        such a portal owes is a SEPARATE bundle for its sign-in pages, so that
+        anonymous visitors do not receive the signed-in one.
+
+    The worked examples are the reference application's sign-in bundle and
+    its portal's:
+        system/app/RSpade/resource/reference_app/app/login/login_bundle.php
+        system/app/RSpade/resource/reference_app/portal/auth/portal_auth_bundle.php
+    The recurring audit is an entry in rsx:man prelaunch_checklist.
 
 ROUTE EXTRACTION (include_routes)
     Bundles can extract route definitions from directories without bundling
@@ -927,6 +1077,18 @@ TROUBLESHOOTING
         Check paths are relative to project root.
         Verify files exist in manifest.
 
+    "Bundle include pattern is not one of the accepted forms":
+        An include entry contains '*' and is neither '<directory>/*.<ext>'
+        nor '<directory>/**/*.<ext>'. See INCLUDE TYPES.
+
+    "Bundle include pattern matches no files":
+        The directory holds no file of that type at the depth the form
+        covers. '*.scss' does not descend; '**/*.scss' does.
+
+    A page on a hand-listed bundle looks wrong with a clean console:
+        A stylesheet or an extends="" parent template is missing from the
+        include list. Neither is an error. See PUBLIC-FACING BUNDLES.
+
     Processor not running:
         Check processor registered in config.
         Verify file extension matches.
@@ -940,5 +1102,8 @@ SEE ALSO
     rsx:man csp
     rsx:man app_mode
     rsx:man prod
+    rsx:man model_fetch
+    rsx:man prelaunch_checklist
+    skill rspade:bundles - writing a bundle, public-facing bundles
 
 RSX Framework                     2025-12-09                      BUNDLE_API(3)

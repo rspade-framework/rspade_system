@@ -376,18 +376,28 @@ DOCUMENT_PREVIEW COMPONENT
     not one per frame; a box that did not actually move renders nothing. Both fits
     re-render: "width" re-rasterizes on a width change, "contain" on either axis.
 
-    Events OUT (re-emitted from the active viewer; listen on the Document_Preview):
-        'preview_loaded' {pages, width, height, ratio}
+    Events OUT (listen on the Document_Preview; the active viewer's are re-emitted):
+        'preview_loaded' {attachment_id, state, render_status,
+                          pages, width, height, ratio}
         'page_changed'   {page}
 
-        width/height/ratio describe the page CURRENTLY RENDERED, not the document.
-        They are re-reported on every render, so on a mixed-orientation file they
-        change as the reader pages through it. Read 'ratio' as "the shape of the
-        page you are looking at", never as a document-wide fact.
+        'preview_loaded' is emitted for WHATEVER ends up in the frame - a viewer's
+        document, "Preparing preview...", the failed notice, the unavailable card -
+        and again each time that is replaced. The guarantee, the state vocabulary
+        and late subscription are THE PREVIEW_LOADED EVENT below.
+
+        pages is the document's page count (1 for an unpaged viewer, 0 when no
+        viewer is showing a document). width/height/ratio describe the page
+        CURRENTLY RENDERED, not the document: 'preview_loaded' is emitted again
+        after every page change, ahead of 'page_changed', so on a
+        mixed-orientation file they change as the reader pages through it. Read
+        'ratio' as "the shape of the page you are looking at", never as a
+        document-wide fact. An unpaged viewer with no geometry (text, markdown, a
+        grid, the icon) omits the three; a state with no document carries zeros.
 
         The load event is 'preview_loaded', NOT 'loaded' - 'loaded' is a reserved
         jqhtml lifecycle event fired internally with no payload, so a custom event may
-        never reuse it (nor create/load/ready/render/stop). See rsx:man jqhtml.
+        never reuse it (nor create/load/ready/render/rendered/stop). See rsx:man jqhtml.
 
     Methods (delegate to the active viewer; no-op before it is ready):
         set_page(n) / get_page() / get_pages()
@@ -414,6 +424,10 @@ DOCUMENT_PREVIEW COMPONENT
     preview_unavailable=true. get_preview_info() surfaces the flag and <Document_Preview>
     renders a "Preview unavailable" state instead of a viewer (pipeline_mime() is
     application/octet-stream, so it would resolve to Icon_Viewer regardless).
+
+    The same card, with no icon and no file name, is what a record that cannot be
+    read paints - a deleted attachment, or one this user may not see (the endpoint
+    answers both alike). It is a state of the component, never a thrown error.
 
     Viewer registry. get_preview_info() resolves the viewer by mime via
     config('rsx.preview.viewers') (an ordered fnmatch map of mime glob -> viewer
@@ -462,8 +476,33 @@ DOCUMENT_PREVIEW COMPONENT
     rsx/resource/config/rsx.php. A built-in viewer is rendered directly by the
     Document_Preview template; every other viewer name (Spreadsheet_Viewer,
     Markdown_Viewer, and any APP-registered one) is instantiated dynamically into
-    the host element in on_ready with {attachment_id, url, extension, file_name,
-    page, fit}.
+    the host element, once Document_Preview is ready, with {attachment_id, url,
+    extension, file_name, page, fit}.
+
+    THE VIEWER CONTRACT. A viewer is an ordinary jqhtml component that takes those
+    args. For the host's page UI it implements set_page(n) / get_page() /
+    get_pages() and triggers 'page_changed' {page}. And it REPORTS, with
+    'preview_loaded' {state, pages, ...}:
+
+        - when its content is on screen                       state 'loaded'
+        - when it could not show its content                  state 'failed'
+        - when it is showing a notice it will replace itself  state 'preparing'
+          (and again when it has replaced it)
+
+    Something is reported by the time the viewer is ready: its final state, or
+    'preparing' when the content arrives later. A viewer whose work is
+    asynchronous either awaits it in an async on_ready() - jqhtml holds 'ready'
+    until that returns - or reports 'preparing' first. Document_Preview adds
+    attachment_id and render_status to whatever the viewer sends, and reads a
+    payload with no state as 'loaded'.
+
+    A viewer that never reports does not leave a host waiting: when a dynamically
+    instantiated viewer has reached 'ready' and said nothing, Document_Preview
+    reports for it - state 'loaded', pages from get_pages() or 1. That is decided
+    by the lifecycle, not by a clock. The cost of relying on it is accuracy: a
+    viewer that fills itself in after 'ready' is reported 'loaded' early. A viewer
+    whose lifecycle THROWS never becomes ready; that is an error in the console,
+    and nothing is reported on its behalf.
 
 SHOULD_SHOW_TEXT_PREVIEW
     A host that shows extracted text BESIDE a document (a Preview/Text switch, a
@@ -491,7 +530,10 @@ DOCUMENT_TEXT_PREVIEW COMPONENT
         $attachment_id  (required) File_Attachment_Model id. Throws if absent.
         $width/$height  (optional) fixed px; omitted -> fills the container (100%).
 
-    There are no events and no public methods. The args are the entire surface.
+    Events OUT: 'preview_loaded' {attachment_id, state, length} - emitted for every
+    state below and again after the swap out of the waiting one; see THE
+    PREVIEW_LOADED EVENT. length is the text's length in characters, 0 when no text
+    is showing. There are no public methods.
 
     STATES. Four, and the component paints exactly one of them:
 
@@ -509,7 +551,9 @@ DOCUMENT_TEXT_PREVIEW COMPONENT
 
     The three unavailable causes deliberately collapse into ONE notice: they are the
     same answer to a reader. An operator distinguishes them with
-    rsx:search:reindex --status and rsx:documents:failed.
+    rsx:search:reindex --status and rsx:documents:failed. The EVENT keeps one
+    distinction the notice drops: an extraction that failed is 'failed', and text
+    that simply does not exist is 'unavailable'.
 
     TYPOGRAPHY IS INHERITED, BY CONTRACT. document_text_preview.scss declares no
     font-family, font-size, color or line-height - only layout, scrolling and
@@ -531,6 +575,113 @@ DOCUMENT_TEXT_PREVIEW COMPONENT
     like the bytes. Both gates are MANDATORY: with no handler registered for either,
     every preview, rendition and extracted-text read throws naming the missing gate
     (rsx:man file_upload, SECURITY HOOKS). Text is returned uncapped up to config('rsx.search.max_text_bytes').
+
+THE PREVIEW_LOADED EVENT
+    Every preview widget - <Attachment_Thumbnail>, <Document_Preview> and each viewer
+    it hosts, <Document_Text_Preview> - emits the jqhtml event 'preview_loaded' when
+    what it depicts has been put on screen.
+
+    EVERY ONE OF THEM ALWAYS EVENTUALLY EMITS IT, whatever it ended up showing. A
+    picture that would not load, a generic type icon, a record that does not exist,
+    a degraded upload, a waiting notice: each COUNTS as having rendered and each is
+    reported. A host never has to guard against the event not coming, and never
+    reaches into a widget's markup (its <img>, its canvas) to find out for itself.
+
+        this.sid('thumb').on('preview_loaded', (component, data) => {
+            if (data.state !== 'loaded') return;        // only the real picture
+            this.measure(data.natural_width, data.natural_height);
+        });
+
+    THE NAME is not 'loaded' because 'loaded' - like 'rendered' - is a jqhtml
+    lifecycle event the framework fires itself, with no payload, on every
+    component. One name serves every widget.
+
+    A LATE SUBSCRIBER IS STILL TOLD. jqhtml events are sticky: on() and once()
+    registered after the event are called at once with the payload of the last
+    emission. A picture served from cache has usually loaded before any host can
+    subscribe; the host subscribes whenever it likes and is answered. There is no
+    "already loaded?" fork to write.
+
+    IT IS EMITTED AGAIN WHENEVER THE CONTENT CHANGES - the realtime swap from a
+    placeholder to the real picture, a reload() after $attachment_id changed, a
+    page change in a paged viewer. When a widget REPLACES what is on screen it
+    first withdraws the stored emission, so a subscriber that arrives while the
+    next content is still loading waits for that content's report and is never
+    handed the previous one. attachment_id in the payload says which attachment a
+    report describes.
+
+    PAYLOAD. Every emission carries:
+
+        attachment_id   int. The attachment the report describes.
+        state           what is on screen - see the table.
+        render_status   where the widget has one (Attachment_Thumbnail,
+                        Document_Preview): the blob's
+                        File_Storage_Model::RENDER_STATUS_* id, 'none' for a record
+                        with no resident blob, 'unavailable' for no record. The
+                        value Attachment_Thumbnail also writes to
+                        data-render-status.
+
+    plus the widget's own keys: Attachment_Thumbnail adds variant, natural_width,
+    natural_height (rsx:man thumbnails); Document_Preview adds pages, width,
+    height, ratio (DOCUMENT_PREVIEW COMPONENT above); Document_Text_Preview adds
+    length.
+
+    STATE. Four values, one vocabulary:
+
+        loaded       The widget's final content for this attachment is on screen.
+        preparing    A waiting notice or placeholder the widget will replace BY
+                     ITSELF. 'preview_loaded' is emitted again when it does.
+        failed       The content should have been shown and could not be.
+        unavailable  There is nothing to show and nothing went wrong: no record
+                     (deleted, or not visible to this user), or no content of
+                     this kind.
+
+    A host that only needs "has it resolved" ignores state. A host that needs the
+    content checks state === 'loaded'. A host showing its own spinner clears it on
+    anything but 'preparing'.
+
+        widget / what is on screen                                    state
+        ---------------------------------------------------------------------------
+        Attachment_Thumbnail
+          the picture has decoded - the raster, or the type icon of   loaded
+            a file that has no raster
+          the extension icon of a PENDING render has decoded          preparing
+          the extension icon of a FAILED render has decoded           failed
+          the <img> could not be loaded or decoded                    failed
+          the empty placeholder of a record that cannot be read       unavailable
+
+        Document_Preview
+          a viewer's document, page, image, text or grid - the        loaded
+            Icon_Viewer's icon and file name included
+          "Preparing preview..." (PENDING)                            preparing
+          a viewer's own waiting notice - (Extracting Text...),       preparing
+            (Preparing Preview...), a grid still loading
+          "Preview could not be generated" (FAILED)                   failed
+          a viewer that could not show its source - pdf.js could not  failed
+            load or parse it, the image errored, the extraction or
+            the markdown render failed
+          the "Preview unavailable" card - a degraded upload, or a    unavailable
+            record that cannot be read
+          a text file with nothing extractable                        unavailable
+
+        Document_Text_Preview
+          the extracted text                                          loaded
+          (Loading...) / (Extracting Text...)                         preparing
+          (Document Text Unavailable) - the extraction FAILED         failed
+          (Document Text Unavailable) - no record, a file type with   unavailable
+            no text, or a document that contains none
+
+    'loaded' on a thumbnail says the widget is showing its FINAL picture, which for
+    a file type with no raster is that type's icon; whether a file has a picture of
+    its own is the attachment's is_image / has_thumbnail(), not the event's.
+
+    WHAT IS NOT COVERED. The guarantee is about every outcome a widget can DISPLAY.
+    A fault that stops a component's lifecycle outright - the transport failing
+    under <Attachment_Thumbnail>'s record fetch, a custom viewer that throws - is
+    an error, reported the way every unhandled error is, and not a preview state.
+    One viewer cannot see its own failure: Spreadsheet_Viewer shows its grid in a
+    sandboxed iframe, which reports a load for whatever its request answered, so a
+    rendition request that fails in transit is still reported 'loaded'.
 
 SERVER SURFACES
     Every /_preview/ route is declared in BOTH route tables on one handler. A
@@ -764,4 +915,4 @@ SEE ALSO
     rsx:man enums            Search_Index_Model status_id lifecycle
     rsx:man tasks            #[Exclusive], #[Schedule] and the worker pool
 
-RSX Framework              Last updated 2026-08-22           DOCUMENT_SEARCH(1)
+RSX Framework              Last updated 2026-10-12           DOCUMENT_SEARCH(1)

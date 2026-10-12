@@ -645,6 +645,28 @@ AUTOMATIC HYDRATION
         5. If class extends Rsx_Js_Model, creates instance: new Project_Model(data)
         6. Instance constructor strips __MODEL, assigns remaining properties
 
+    A Model The Bundle Does Not Carry:
+        A bundle is not obliged to include every model, so a response can
+        carry a record whose class the receiving page does not have. That
+        record is REFUSED, never handed on as a plain object: the hydrator
+        throws
+
+            A 'Project_Model' record arrived from the server, but the bundle
+            that received it does not include that model's class. ...
+
+        naming the model. A plain object would read correctly field by field
+        and fail only where something later calls a model method on it. The
+        fix is one of two:
+
+        - The page uses the record as a model: include the model's file (or
+          the models directory) in that bundle's 'include' list.
+        - The page has no use for it as a model: return the fields the page
+          needs rather than the record, so no __MODEL reaches it.
+
+        The second is the right answer on a bundle served to visitors who
+        have not signed in, which names its models one by one (rsx:man
+        bundle_api, PUBLIC-FACING BUNDLES).
+
     Result:
         const project = await Project_Model.fetch(1);
         console.log(project.constructor.name);  // "Project_Model"
@@ -673,7 +695,9 @@ AUTOMATIC HYDRATION
     Global Behavior:
         This hydration applies to ALL Ajax responses, not just fetch() calls.
         Any Ajax endpoint returning objects with __MODEL properties will have
-        them automatically instantiated as proper JavaScript class instances.
+        them automatically instantiated as proper JavaScript class instances -
+        and any such endpoint's response throws on a page whose bundle lacks
+        one of those classes.
 
 TROUBLESHOOTING
     Model Not Fetchable:
@@ -687,6 +711,12 @@ TROUBLESHOOTING
         - Verify authorization logic in fetch() method
         - Test with different user roles and permissions
         - Use rsx_dump_die() to debug authorization flow
+
+    "A 'X_Model' record arrived from the server, but the bundle that
+    received it does not include that model's class":
+        - A response carried a model the page's bundle does not include
+        - Include the model's file in the bundle, or return plain fields
+        - See AUTOMATIC HYDRATION, A Model The Bundle Does Not Carry
 
     JavaScript Stub Missing:
         - Verify model discovered during manifest build
@@ -1154,5 +1184,6 @@ SEE ALSO
     rsx:man manifest_api - Model discovery and stub generation
     rsx:man coding_standards - Security patterns and authorization
     rsx:man enums - Model enum definitions and magic properties
+    rsx:man bundle_api - Which models a bundle carries; public-facing bundles
 
 RSX Framework                   2025-11-23                      MODEL_FETCH(3)

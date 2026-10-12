@@ -118,6 +118,7 @@ operator commands `rsx:documents:status|failed|rerender`).
 | Status-aware serving (placeholder `no-store`, rendition-sourced thumbnails, `?v=` changes, rendition 404 states, preview-info shape) | php | implemented |
 | `File_Attachment_Model::fetch()` / `portal_fetch()` (payload shape, gate denial, no byte access) | php | implemented |
 | `<Attachment_Thumbnail>` placeholder -> real-raster swap without reload | playwright | implemented |
+| `<Attachment_Thumbnail>` `preview_loaded`: every state reports (decoded, original variant, unavailable, failed, the PENDING/FAILED icon), sticky delivery to a late subscriber, re-report after a swap or an `$attachment_id` change with no stale replay | playwright | implemented (`attachment_thumbnail_preview_loaded.js`, on `/_sys` - runs as shipped) |
 | `rsx:documents:status` / `:failed` / `:rerender`, and the hidden child command's registration | cli | implemented |
 | Markdown rendering and sanitisation (`Markdown_Rendition`), the text/markdown viewer entry, and `get_markdown_html` end to end | php | implemented |
 
@@ -129,7 +130,15 @@ php artisan rsx:test --framework --group=documents
 
 ```bash
 node system/app/RSpade/tests/documents/playwright/attachment_thumbnail_swap.js
+node system/app/RSpade/tests/documents/playwright/attachment_thumbnail_preview_loaded.js
 ```
+
+`attachment_thumbnail_preview_loaded.js` runs on `/_sys` and uploads its own fixtures (a PNG
+drawn in the page, the suite's animated `cube.gif`), so it needs no application page. It never
+waits on the event it is testing: each step waits for the component to be ready and its `<img>`
+to settle, then asks whether the event was delivered - so a missing event is a FAIL line, not a
+hang. The render-state icons are staged by scripting `File_Attachment_Model.fetch_or_null`, a
+broken picture by aborting its request, and the no-stale-replay window by holding one.
 
 The real-binary test skips itself when `Libreoffice::find_soffice()` returns null.
 

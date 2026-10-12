@@ -5,8 +5,17 @@ Renders a PDF (the rendition url) via pdf.js onto a <canvas>, one page at a time
 lazy-loaded on first use from the framework streaming route (NOT in any bundle). The parent owns
 pagination UI; this viewer only exposes set_page(n)/get_page()/get_pages() and emits events.
 
-Arg: $url (the application/pdf source), $page (initial page, default 1), $fit (how the page is
-scaled inside the box the host gave - "width" (default) or "contain"; anything else throws).
+Args: $url (the application/pdf source), $page (initial page, default 1), $fit (how the page is
+scaled inside the box the host gave - "width" (default) or "contain"; anything else throws),
+$attachment_id (optional; echoed in the event).
+
+Events OUT:
+  'preview_loaded' {pages, width, height, ratio, state, attachment_id} - state 'loaded' once a
+      page is painted, with the page count and the geometry of THAT page; emitted again after
+      every page change. state 'failed', with zeros, when pdf.js could not be loaded or the
+      document could not be fetched or parsed - the "Unable to display this document." message
+      is then what is on screen.
+  'page_changed' {page} - after set_page() painted a different page.
 
 $fit="contain" requires a host with a BOUNDED HEIGHT to divide by; given none it falls back to the
 width fit rather than rendering at a zero scale. The viewer re-renders the current page when that

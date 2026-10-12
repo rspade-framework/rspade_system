@@ -32,7 +32,11 @@ Args (the viewer contract Document_Preview passes to every dynamic viewer):
   $attachment_id (required) - the File_Attachment_Model id to read. Throws if absent.
   $file_name     (optional) - shown in no state; accepted so the contract matches its siblings.
 
-Events OUT: 'preview_loaded' {pages:1}. Single "page"; set_page is a no-op.
+Events OUT: 'preview_loaded' {pages:1, state, attachment_id}, in every state and again after the
+swap out of the waiting one. state is 'loaded' for the text (an empty file included - it is the
+file, shown), 'preparing' for (Extracting Text...), 'failed' when the extraction failed, and
+'unavailable' when the record could not be read or the file has nothing extractable.
+Single "page"; set_page is a no-op.
 
 TYPOGRAPHY IS MONOSPACE, DELIBERATELY, and this is where it differs from Document_Text_Preview.
 That component inherits the host's font by contract, because it presents PROSE extracted from a

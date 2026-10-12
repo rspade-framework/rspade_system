@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Identifier;
 use App\RSpade\Core\Bundle\BundleCompiler;
+use App\RSpade\Core\Bundle\Bundle_Include_Pattern;
 use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
 
 class Bundle_Show_Command extends Command
@@ -313,43 +314,39 @@ class Bundle_Show_Command extends Command
      */
     protected function get_files_for_pattern(string $pattern): array
     {
-        // Use manifest-based discovery
         $manifest_data = Manifest::get_all();
+        $pattern = str_replace('\\', '/', $pattern);
+
+        // An entry written with __DIR__ is absolute; the manifest is keyed project-relative.
+        if (str_starts_with($pattern, '/')) {
+            $pattern = _rsx_relative_build_path($pattern);
+        }
+
+        $pattern = trim($pattern, '/');
+
+        // A type-filtered directory include: the compiler's own expansion, so this
+        // listing cannot disagree with what is compiled.
+        if (Bundle_Include_Pattern::is_pattern($pattern)) {
+            $files = [];
+
+            foreach (Bundle_Include_Pattern::expand($pattern) as $absolute) {
+                $files[] = _rsx_relative_build_path($absolute);
+            }
+
+            return $files;
+        }
+
+        // A file, or a directory and everything beneath it.
         $files = [];
-        
-        // Convert pattern to regex
-        $regex = $this->pattern_to_regex($pattern);
-        
+
         foreach ($manifest_data as $file_path => $file_info) {
-            if (preg_match($regex, $file_path)) {
+            if ($file_path === $pattern || str_starts_with($file_path, $pattern . '/')) {
                 $files[] = $file_path;
             }
         }
-        
+
         return $files;
     }
-    
-    /**
-     * Convert glob pattern to regex
-     */
-    protected function pattern_to_regex(string $pattern): string
-    {
-        $pattern = str_replace('\\', '/', $pattern);
-
-        // If pattern doesn't contain wildcards, treat it as a directory prefix
-        if (strpos($pattern, '*') === false && strpos($pattern, '?') === false) {
-            // Match files in this directory and subdirectories
-            $pattern = preg_quote($pattern, '/');
-            return '/^' . $pattern . '(\/.*)?$/';
-        }
-
-        $pattern = preg_quote($pattern, '/');
-        $pattern = str_replace('\*\*', '.*', $pattern);
-        $pattern = str_replace('\*', '[^/]*', $pattern);
-        $pattern = str_replace('\?', '.', $pattern);
-        return '/^' . $pattern . '$/';
-    }
-    
 
     /**
      * Show JavaScript API stubs included in the bundle

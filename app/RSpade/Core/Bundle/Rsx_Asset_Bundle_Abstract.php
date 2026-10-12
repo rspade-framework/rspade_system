@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Bundle;
 
 use RuntimeException;
+use App\RSpade\Core\Bundle\Bundle_Include_Pattern;
 use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
 
 /**
@@ -125,10 +126,11 @@ abstract class Rsx_Asset_Bundle_Abstract extends Rsx_Bundle_Abstract
             // Check if it's a directory path (not a file)
             $resolved_path = base_path($item);
 
-            // If it resolves to a directory, that's not allowed for discovered asset bundles
-            if (is_dir($resolved_path)) {
+            // If it resolves to a directory, that's not allowed for discovered asset bundles.
+            // A type-filtered pattern scans a directory too.
+            if (is_dir($resolved_path) || Bundle_Include_Pattern::is_pattern($item)) {
                 throw new RuntimeException(
-                    "Asset bundle discovered via directory scan cannot have directory paths in 'include'.\n\n" .
+                    "Asset bundle discovered via directory scan cannot have directory paths or patterns in 'include'.\n\n" .
                     "Bundle: {$bundle_class}\n" .
                     "Discovered by: {$parent_bundle_class}\n" .
                     "Invalid include: {$item}\n\n" .

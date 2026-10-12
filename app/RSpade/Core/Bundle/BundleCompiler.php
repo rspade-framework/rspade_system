@@ -9,6 +9,7 @@ use RecursiveIteratorIterator;
 use RuntimeException;
 use App\RSpade\Core\Auth\Auth_BundleIntegration;
 use App\RSpade\Core\Bundle\Bundle_Component_Shaker;
+use App\RSpade\Core\Bundle\Bundle_Include_Pattern;
 use App\RSpade\Core\Bundle\Cdn_Cache;
 use App\RSpade\Core\Bundle\Concatenator;
 use App\RSpade\Core\Bundle\Minifier;
@@ -962,6 +963,19 @@ class BundleCompiler
             }
         }
 
+        // A type-filtered directory include: '<dir>/*.<ext>' or '<dir>/**/*.<ext>'. It
+        // expands HERE, in its own position in the include list, to its matches sorted by
+        // path - and a malformed pattern or one that matches nothing throws, naming it.
+        // The matches go through the same per-file step a directory scan uses, so an asset
+        // bundle a '.php' pattern reaches is discovered exactly as a directory would find it.
+        if (Bundle_Include_Pattern::is_pattern($item)) {
+            $this->_add_scanned_files(
+                Bundle_Include_Pattern::expand($item, end($this->bundle_stack) ?: null)
+            );
+
+            return;
+        }
+
         // Otherwise treat as file/directory path
         $path = base_path($item);
 
@@ -972,19 +986,6 @@ class BundleCompiler
         }
         if (is_dir($path)) {
             $this->_add_directory($path);
-
-            return;
-        }
-        // Try with wildcards
-        $files = glob($path);
-        if (!empty($files)) {
-            foreach ($files as $file) {
-                if (is_file($file)) {
-                    $this->_add_file($file);
-                } elseif (is_dir($file)) {
-                    $this->_add_directory($file);
-                }
-            }
 
             return;
         }
@@ -1044,9 +1045,6 @@ class BundleCompiler
         // Get excluded directories from config
         $excluded_dirs = config('rsx.manifest.excluded_dirs', ['vendor', 'node_modules', 'storage', '.git', 'public', 'resource']);
 
-        // Track discovered asset bundles to process after file collection
-        $discovered_bundles = [];
-
         // Create a recursive directory iterator with filtering
         $directory = new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS);
         $filter = new RecursiveCallbackFilterIterator($directory, function ($current, $key, $iterator) use ($excluded_dirs) {
@@ -1073,6 +1071,28 @@ class BundleCompiler
         // across two byte-identical checkouts. Explicit file includes are added via
         // _add_file() elsewhere and keep their authored order (e.g. SCSS variable
         // files included before component SCSS); only the SCANNED set is sorted here.
+        $scanned_files = [];
+        foreach ($iterator as $file) {
+            if ($file->isFile()) {
+                $scanned_files[] = $file->getPathname();
+            }
+        }
+        usort($scanned_files, fn ($a, $b) => strcmp(_rsx_relative_build_path($a), _rsx_relative_build_path($b)));
+
+        $this->_add_scanned_files($scanned_files);
+    }
+
+    /**
+    * Add files a SCAN produced - a directory include, or a type-filtered pattern - in the
+    * order given, discovering the Asset Bundles among them.
+    *
+    * @param array<int,string> $scanned_files absolute paths, already in their final order
+    */
+    protected function _add_scanned_files(array $scanned_files): void
+    {
+        // Track discovered asset bundles to process after file collection
+        $discovered_bundles = [];
+
         // path => fqcn for every indexed asset bundle, from the subclass index.
         $asset_bundles_by_path = [];
 
@@ -1081,14 +1101,6 @@ class BundleCompiler
                 $asset_bundles_by_path[$record['file']] = $record['fqcn'];
             }
         }
-
-        $scanned_files = [];
-        foreach ($iterator as $file) {
-            if ($file->isFile()) {
-                $scanned_files[] = $file->getPathname();
-            }
-        }
-        usort($scanned_files, fn ($a, $b) => strcmp(_rsx_relative_build_path($a), _rsx_relative_build_path($b)));
 
         foreach ($scanned_files as $filepath) {
             {

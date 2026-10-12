@@ -52,7 +52,10 @@ denial-is-indistinguishable-from-missing assertion).
   preload hit counting (via the query log); the builder guards that decide hit vs miss.
 - **playwright** - the client half, which only exists in a browser: N parallel fetches
   collapsing to ONE request, dedup, `fetch_or_null` -> null, `fetch` -> `not_found`,
-  chunking past the cap.
+  chunking past the cap; and the hydration walk every Ajax response goes through
+  (`Rsx_Js_Model._instantiate_models_recursive()`): a `{__MODEL}` record becomes an
+  instance of its class, and a record whose class the bundle does not carry is REFUSED,
+  naming the model, rather than passed through as a plain object.
 - **http** - not applicable; the endpoint is exercised in-process and through the browser.
 
 ## Fixtures and their two halves

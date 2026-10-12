@@ -1694,6 +1694,73 @@ ENTRY 18: COMPONENTS THE SEALED BUILD REMOVES (names assembled at run time)
 
 --------------------------------------------------------------------------------
 
+ENTRY 19: BUNDLES SERVED TO VISITORS WHO HAVE NOT SIGNED IN (what a login page
+          publishes)
+
+    What to audit
+        For EVERY bundle in the application, the least authenticated page that
+        renders it - and, when that page needs no sign-in, that the bundle
+        includes no shared directory. The rule and the method are
+        rsx:man bundle_api, PUBLIC-FACING BUNDLES; this entry is the sweep.
+
+        A bundle is downloaded by everybody who can load ANY page that renders
+        it, so it takes its audience from its least privileged page. Enumerate:
+
+            grep -rn "_Bundle::render\|'bundle' =>" rsx --include='*.php'
+            php artisan rsx:routes
+
+        and for each bundle list the routes whose layout prints it, with the
+        #[Auth] / @auth each route declares. One route gated 'public' makes the
+        bundle public.
+
+    Why it matters
+        A directory include of a shared tree - the theme, the shared library,
+        the models - puts the whole component library, every model's columns,
+        enums and relationships, and every controller's route and Ajax stubs
+        into the bundle. On a public bundle that catalogue is handed to anyone
+        who loads the login page. Every endpoint stays gated and nothing
+        breaks, which is why nothing reports it: the application simply
+        publishes a map of itself. The usual cause is not a careless include
+        but a public page sitting in a private module - sign-in pages inside a
+        portal module, rendering the signed-in portal's bundle - or an error
+        page nobody thinks of as having a bundle.
+
+    Guidelines
+        1. The bundles that are normally public: the login module's (login,
+           signup, password reset, invite acceptance), the error pages', and
+           the sign-in and error pages of a client portal.
+        2. A public bundle names the theme's global stylesheets (the
+           '<directory>/*.scss' include form, once per directory that holds
+           globals), the framework build they configure, and each component,
+           model and script its pages use BY FILE, parents included, plus its
+           own module directory.
+        3. Sign-in pages living inside a signed-in module get a bundle of their
+           own; the signed-in bundle stays as wide as is convenient.
+        4. After narrowing one, compare a screenshot of every page it serves
+           against one taken before. A missing stylesheet and a missing
+           extends="" parent template raise no error.
+        5. Read what a public bundle actually carries: load the page, open the
+           compiled application script it references, and search it for a
+           controller or a model that page has no business naming.
+
+    Dos and don'ts
+        DO    'rsx/theme/*.scss' and 'rsx/theme/components/forms/form_field.js'
+        DON'T 'rsx/theme', 'rsx/lib' or 'rsx/models' in a bundle a public page
+              renders
+        DON'T narrow a bundle whose every page requires a staff sign-in; it is
+              work that buys nothing, and neither does narrowing a portal's
+              signed-in bundle
+        DON'T rely on the sealed build's component shake for this: it removes
+              unused components only, never model or controller stubs, and it
+              does not run in development mode
+
+        The reference application pins this for its own bundles in
+        system/app/RSpade/resource/reference_app/tests/Public_Bundle_Contents_Test.php,
+        which derives the application's internals from the manifest and fails
+        when a public bundle's compiled output carries one.
+
+--------------------------------------------------------------------------------
+
 SEE ALSO
     rsx:man bundle_api
     rsx:man login_redirect

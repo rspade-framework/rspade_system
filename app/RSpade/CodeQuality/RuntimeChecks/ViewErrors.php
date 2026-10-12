@@ -99,7 +99,7 @@ class ViewErrors
         $error_message .= "    {\n";
         $error_message .= "        return [\n";
         $error_message .= "            'modules' => ['bootstrap5'],\n";
-        $error_message .= "            'include' => ['rsx/app/{$module_name}/**'],\n";
+        $error_message .= "            'include' => ['rsx/app/{$module_name}'],\n";
         $error_message .= "        ];\n";
         $error_message .= "    }\n";
         $error_message .= "}\n";

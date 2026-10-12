@@ -61,6 +61,25 @@ Shipped in the Document Pipeline epic, Batch 3 (rendition endpoint + filter chai
   showcase CLOSED (`#[Auth('closed')]`). They report the closed gate rather than passing
   vacuously, so running them means opening that surface in your own tree. See B-99 in
   `docs.dev/backlog/BACKLOG.md`.
+  `document_preview_dynamic_viewer.js`, `document_preview_loaded_event.js` and
+  `document_text_preview_loaded_event.js` run on `/_sys` and so run as shipped:
+
+  ```bash
+  node system/app/RSpade/tests/preview/playwright/document_preview_loaded_event.js
+  node system/app/RSpade/tests/preview/playwright/document_text_preview_loaded_event.js
+  ```
+
+  The two `*_loaded_event.js` scripts cover the `preview_loaded` event: that every state a
+  widget can show is reported (a viewer's document, a viewer that failed, the waiting and
+  failed notices, the unavailable card, a viewer that never reports for itself), that a late
+  subscriber is handed the last report, and that it is not handed a stale one after the
+  content changed. They upload their real fixtures through `Ajax.upload()` and stage every
+  state that needs the server mid-render, a broken source or an unshipped viewer by scripting
+  the one endpoint the component reads (`get_preview_info` / `get_extracted_text`), so the
+  component runs unmodified. NEITHER WAITS ON THE EVENT UNDER TEST: each step waits on facts
+  certain to arrive (the component and its viewer are ready, every `<img>` and `<iframe>` has
+  fired load or error) and then asks whether the event was delivered, so a missing event is a
+  FAIL line and never a hang. Both open the page through `tests/_lib/playwright/sys_page.js`.
 
 ## Fixtures are LIVE in dev
 

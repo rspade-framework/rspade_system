@@ -583,6 +583,46 @@ THE ATTACHMENT_THUMBNAIL COMPONENT
     A record that cannot be fetched (deleted, or not visible to this user) paints a
     quiet empty box with data-render-status="unavailable" - never an error.
 
+    THE preview_loaded EVENT
+    ------------------------
+    The component reports what it put on screen, and it ALWAYS eventually reports -
+    a decoded picture, a picture that would not load and the unavailable placeholder
+    all count. A host that must react to the picture listens for it and never
+    reaches for the component's <img>:
+
+        this.sid('thumb').on('preview_loaded', (component, data) => { ... });
+
+        attachment_id    int. The attachment this report describes.
+        state            'loaded'       the picture has decoded: the raster, or the
+                                        type icon of a file that has no raster.
+                         'preparing'    the extension icon of a PENDING render has
+                                        decoded; THE SWAP follows and reports again.
+                         'failed'       the image could not be loaded or decoded, or
+                                        it is the extension icon of a FAILED render.
+                         'unavailable'  the empty box of a record that cannot be
+                                        fetched.
+        render_status    the value on data-render-status: the RENDER_STATUS_* id,
+                         'none' (no resident blob) or 'unavailable' (no record).
+        variant          'thumbnail' - a generated thumbnail (or extension icon) was
+                         requested; 'original' - $allow_animated showed the upload
+                         itself; null when no image is shown.
+        natural_width,   of the image actually SERVED, in px - the thumbnail's own
+        natural_height   size under 'thumbnail', the upload's under 'original'.
+                         0 when no image decoded.
+
+    natural_width is not the upload's width unless variant is 'original': a 4000px
+    photo shown through a 600px thumbnail reports 600. The upload's own dimensions
+    are the attachment's width / height.
+
+    It is emitted once the <img> has settled - at once for a picture the browser
+    already holds - and again after every change of what the component shows: THE
+    SWAP, and a reload() after $attachment_id changed. The event is not named
+    'loaded' because that is a reserved jqhtml lifecycle event. A subscriber that
+    registers late is still handed the last report, and one that registers while
+    the next picture is loading waits for that picture's. The guarantee and the
+    state vocabulary are shared by every preview widget: rsx:man document_search,
+    THE PREVIEW_LOADED EVENT.
+
     PORTAL
     ------
     The same component, unchanged, on portal pages: File_Attachment_Model ships both

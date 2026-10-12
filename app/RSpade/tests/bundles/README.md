@@ -6,7 +6,7 @@ Bundle definition and compilation: `Rsx_Bundle_Abstract` / `Rsx_Module_Bundle_Ab
 `Rsx_Asset_Bundle_Abstract` and the `BundleCompiler` that turns a definition into the
 `vendor` / `app` JS+CSS artifacts under `build/bundles`.
 
-Three concerns live here.
+Four concerns live here.
 
 The first is CACHE CORRECTNESS: a compiled artifact must be
 invalidated by every input that can change its bytes. The compiler keys each bucket
@@ -28,6 +28,14 @@ The third is EXTERNAL REACH: a compiled stylesheet must name no host but our own
 remote `@import` is spliced in and an absolute `url()` becomes `/_vendor/<name>` backed by
 a real file. A stylesheet that still names `fonts.gstatic.com` is a CSP violation the page
 cannot whitelist, and a dependency on somebody else's uptime.
+
+The fourth is the INCLUDE GRAMMAR: an `include` entry is a file, a directory, or a
+type-filtered directory in exactly two forms (`<dir>/*.<ext>`, `<dir>/**/*.<ext>`). The
+pattern is what lets a bundle served to visitors who have not signed in take a theme's
+global stylesheets without the component library beneath them, so its failure modes are the
+ones that matter there: a pattern that silently matched nothing would compile a bundle
+without its stylesheets and report no error, and a pattern that silently matched more than
+its form says would publish files nobody listed.
 
 ## The argv ceiling
 
@@ -55,6 +63,11 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
     the stub registry it extends, wherever the PHP model file lives
   - `_get_js_stubs()` - the one stub-collection path (positional stubs, the extends-resolved
     model stubs, and the four always-included framework controller stubs)
+  - `_process_include_item()` - classifies one `include` entry; a pattern expands here, in
+    its own position
+  - `_add_scanned_files()` - the per-file step a directory scan and a pattern share
+- `system/app/RSpade/Core/Bundle/Bundle_Include_Pattern.php` - the ONE definition of the
+  pattern grammar (`is_pattern()`, `parse()`, `expand()`)
 - `system/app/RSpade/Core/Bundle/Cdn_Cache.php` - the mirror store and `_localize_css()`
 - `system/app/RSpade/Core/Bundle/resource/localize-css-externals.js` - the postcss localizer
 - `system/app/RSpade/Core/Bundle/Rsx_Asset_Bundle_Abstract.php` - the `watch` contract docblock
@@ -73,7 +86,7 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
 
 ## Man pages
 
-- `rsx:man bundles`
+- `rsx:man bundle_api`
 
 ## Testable surface
 
@@ -101,6 +114,13 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
 | SCSS compiles expanded with a sourcemap in dev, compressed + postcss'd in production | asset |
 | SCSS `@import` resolution (the bundler's master-file mechanism) | asset |
 | Invalid SCSS fails loudly and leaves no half-written artifact | asset |
+| `<dir>/*.<ext>` takes the directory's own files of one type and no subdirectory's | asset |
+| `<dir>/**/*.<ext>` takes every depth, sorted by path, skipping excluded directory names | asset |
+| A pattern expands at its own position; an earlier-named file keeps its place | asset |
+| A pattern matching nothing, and a malformed pattern, fail the build naming it | asset |
+| A new file matching a pattern reaches the next compile with nothing else done | asset |
+| A scanned asset bundle may not declare a pattern | asset |
+| A pattern covers no view in the render-time coverage check | php (planned) |
 | Module bundle cannot include a module bundle | php (planned) |
 | Asset bundle discovered via scan cannot declare directory includes | php (planned) |
 

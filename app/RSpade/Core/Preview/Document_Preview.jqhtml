@@ -5,7 +5,7 @@ Renders a real, in-browser preview of a file attachment by resolving a viewer co
 server (File_Preview_Controller::get_preview_info) and dispatching to it. Four viewers are
 rendered by this template (Pdf_Viewer, Image_Viewer, Text_Viewer, Icon_Viewer). Every other name in
 config('rsx.preview.viewers') - the framework's Spreadsheet_Viewer and Markdown_Viewer, and any
-viewer an app registers - is instantiated dynamically in on_ready with
+viewer an app registers - is instantiated dynamically, once this component is ready, with
 {attachment_id, url, extension, file_name, page, fit}.
 
 A convertible document (Word, Excel, PowerPoint, ...) has no PDF rendition until the background
@@ -14,6 +14,8 @@ its attachment id and swaps from "Preparing preview..." to the real Pdf_Viewer w
 lands - no reload, no polling.
 
 States, in the order the template tests them:
+  error_data set       - the record could not be read (deleted, or not visible to this user).
+                         The "Preview unavailable" card with nothing to name. No viewer.
   preview_unavailable  - a degraded upload (unparseable image bytes). No viewer.
   render_status_id 2   - PENDING: queued for render. "Preparing preview..." + the extension icon.
   render_status_id 4   - FAILED: the last render attempt failed. "Preview could not be generated" +
@@ -41,13 +43,39 @@ Args:
   A paginated viewer also re-renders the current page when the frame changes size (debounced), so
   a pane that grows re-rasters at the new size instead of stretching the old bitmap.
 
-Events OUT (re-emitted from the active viewer):
-  'preview_loaded' {pages, width, height, ratio}  - width/height/ratio describe the page CURRENTLY
-                                                   RENDERED, not the document, so on a mixed-
-                                                   orientation file they change with the page.
-                                                  (NOT 'loaded' - that is a reserved jqhtml
-                                                   lifecycle event fired internally with no data)
-  'page_changed'   {page}
+Events OUT:
+  'preview_loaded' {attachment_id, state, render_status, pages, width, height, ratio}
+    What ended up in the frame. ALWAYS eventually emitted, whatever that was, and again each
+    time it is replaced (the realtime swap, a reload() after $attachment_id changed, a page
+    change). A subscriber that registers late is handed the last report; one that registers
+    while the next content is loading waits for it.
+    (NOT 'loaded' - that is a reserved jqhtml lifecycle event fired internally with no data.)
+
+      state          'loaded'       a viewer's content is on screen (Icon_Viewer's icon included).
+                     'preparing'    "Preparing preview...", or a viewer's own waiting notice;
+                                    emitted again when it is replaced.
+                     'failed'       "Preview could not be generated", or a viewer that could not
+                                    show its source.
+                     'unavailable'  the "Preview unavailable" card: a degraded upload, or a
+                                    record that could not be read.
+      render_status  the blob's RENDER_STATUS_* id, 'none' (no resident blob) or 'unavailable'
+                     (no record).
+      pages          the document's page count; 1 for an unpaged viewer, 0 when no viewer is
+                     showing a document.
+      width, height, ratio
+                     the page CURRENTLY RENDERED, not the document, so on a mixed-orientation
+                     file they change with the page. Omitted by viewers with no geometry (text,
+                     markdown, grid, icon); zeros when no document is showing.
+
+  'page_changed'   {page}   re-emitted from the active viewer, after that page's 'preview_loaded'.
+
+The viewer contract. A viewer triggers 'preview_loaded' {state, pages, ...} itself: when its
+content is on screen, when it could not show it ('failed'), and for a notice it will replace by
+itself ('preparing', then again). Something is reported by the time the viewer is ready - work
+that takes longer is awaited in an async on_ready() or announced with 'preparing'. This component
+adds attachment_id and render_status and reads a payload with no state as 'loaded'. A dynamically
+instantiated viewer that reaches 'ready' without reporting is reported for here, as 'loaded', so
+a host is never left waiting on a viewer that says nothing.
 
 Public methods (delegate to the active viewer; no-op before it is ready):
   set_page(n) / get_page() / get_pages()
@@ -60,9 +88,14 @@ Public methods (delegate to the active viewer; no-op before it is ready):
         const _frame_style = 'width:' + _w + ';height:' + _h + ';';
     %>
     <div class="Document_Preview__frame" style="<%= _frame_style %>">
-        <% if (this.data.info && this.data.info.preview_unavailable) { %>
-            <%-- Degraded upload (image bytes were unparseable): no viewer is instantiated, so
-                 on_ready finds no $sid="viewer" component and no-ops. --%>
+        <% if (this.data.error_data) { %>
+            <%-- No record: deleted, or not visible to this user. The same card a degraded upload
+                 gets, with nothing to name. --%>
+            <div class="Document_Preview__unavailable">
+                <div class="Document_Preview__unavailable-title">Preview unavailable</div>
+            </div>
+        <% } else if (this.data.info && this.data.info.preview_unavailable) { %>
+            <%-- Degraded upload (image bytes were unparseable): no viewer is instantiated. --%>
             <div class="Document_Preview__unavailable">
                 <img class="Document_Preview__unavailable-icon" src="<%= this.data.info.urls.icon %>" alt="">
                 <div class="Document_Preview__unavailable-title">Preview unavailable</div>
@@ -93,21 +126,21 @@ Public methods (delegate to the active viewer; no-op before it is ready):
         <% } else if (this.data.info) { %>
             <% const _v = this.data.info.viewer; %>
             <% if (_v === 'Pdf_Viewer' && this.data.info.urls.rendition) { %>
-                <Pdf_Viewer $sid="viewer" $url=this.data.info.urls.rendition $page=(this.args.page||1) $fit=this.args.fit />
+                <Pdf_Viewer $sid="viewer" $attachment_id=this.args.attachment_id $url=this.data.info.urls.rendition $page=(this.args.page||1) $fit=this.args.fit />
             <% } else if (_v === 'Pdf_Viewer') { %>
                 <%-- Resolves to Pdf_Viewer but has no rendition and is in no render state that
                      explains why (a blob that was never materialized). Fall through to the icon
                      rather than handing the viewer a null URL. --%>
-                <Icon_Viewer $sid="viewer" $url=this.data.info.urls.icon $extension=this.data.info.extension $file_name=this.data.info.file_name />
+                <Icon_Viewer $sid="viewer" $attachment_id=this.args.attachment_id $url=this.data.info.urls.icon $extension=this.data.info.extension $file_name=this.data.info.file_name />
             <% } else if (_v === 'Image_Viewer') { %>
-                <Image_Viewer $sid="viewer" $url=this.data.info.urls.inline />
+                <Image_Viewer $sid="viewer" $attachment_id=this.args.attachment_id $url=this.data.info.urls.inline />
             <% } else if (_v === 'Text_Viewer') { %>
                 <%-- Takes $attachment_id, not a url: it reads the file through the text
                      pipeline (decoded and length-capped) rather than fetching raw bytes of
                      unknown charset, and owns the extraction waiting state itself. --%>
                 <Text_Viewer $sid="viewer" $attachment_id=this.args.attachment_id $file_name=this.data.info.file_name />
             <% } else if (_v === 'Icon_Viewer') { %>
-                <Icon_Viewer $sid="viewer" $url=this.data.info.urls.icon $extension=this.data.info.extension $file_name=this.data.info.file_name />
+                <Icon_Viewer $sid="viewer" $attachment_id=this.args.attachment_id $url=this.data.info.urls.icon $extension=this.data.info.extension $file_name=this.data.info.file_name />
             <% } else { %>
                 <div $sid="viewer" class="Document_Preview__dynamic"></div>
             <% } %>

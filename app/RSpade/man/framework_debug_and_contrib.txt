@@ -1366,7 +1366,9 @@ SUBSYSTEM PRIMERS
     in a catch-all icon viewer. <Document_Preview $attachment_id=...> shows
     "Preparing preview..." until the rendition exists and swaps on a realtime
     frame; it re-emits child events as preview_loaded and page_changed
-    (preview_loaded, because loaded is a reserved jqhtml event name).
+    (preview_loaded, because loaded is a reserved jqhtml event name), and
+    reports every state it can show - a notice or a card as much as a
+    document - so a host is never left waiting on it.
 
     OPERATING IT. rsx:documents:status (read-only counts),
     rsx:documents:failed (two tables, two different remedies),

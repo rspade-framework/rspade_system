@@ -26,7 +26,23 @@ Args:
   $attachment_id  (required) - the File_Attachment_Model id to read. Throws if absent.
   $width/$height  (optional) - fixed dimensions in px; omitted -> fills the container (100%).
 
-Events: none. Public methods: none. The args are the entire surface.
+Events OUT:
+  'preview_loaded' {attachment_id, state, length}
+    What this component put on screen. ALWAYS eventually emitted, for every state above, and
+    again after the swap out of a waiting notice. A subscriber that registers late is handed the
+    last report. (NOT 'loaded' - that is a reserved jqhtml lifecycle event.)
+
+      state   'loaded'       the extracted text is on screen.
+              'preparing'    (Loading...) or (Extracting Text...) - replaced by this component
+                             itself, which then reports again.
+              'failed'       (Document Text Unavailable) because the extraction failed
+                             (status 'error').
+              'unavailable'  (Document Text Unavailable) because there is no text to have: no
+                             record this user can read, a file type that carries none
+                             ('unsupported'), or a document that contains none.
+      length  the text's length in characters; 0 when no text is showing.
+
+Public methods: none.
 
 THE TEXT PANE IS TEXT_VIEWER'S. Both components include the one mixin in _text_pane.scss -
 monospace, 13px, pre-wrap, colour inherited on a transparent surface - so an extraction reads

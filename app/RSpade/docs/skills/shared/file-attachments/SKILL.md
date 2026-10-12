@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: "Uploading files in RSX and attaching them to records - the three mandatory file gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize - each throws 'File uploads are disabled' / 'File reads are disabled' when no handler is registered), Ajax.upload(form_data) as the browser transport (POST /api/v1/files for an external integration), the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), a currentColor file-type mark with <File_Type_Icon $file_name> (never a hand-rolled extension map), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, attaching a file uploaded through the external API, showing a thumbnail, avatar or file-type icon, showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks."
+description: "Uploading files in RSX and attaching them to records - the three mandatory file gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize - each throws 'File uploads are disabled' / 'File reads are disabled' when no handler is registered), Ajax.upload(form_data) as the browser transport (POST /api/v1/files for an external integration), the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), a currentColor file-type mark with <File_Type_Icon $file_name> (never a hand-rolled extension map), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, attaching a file uploaded through the external API, showing a thumbnail, avatar or file-type icon, reacting to a thumbnail having loaded (its preview_loaded event - never a load handler on its <img>), showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks."
 ---
 
 # File attachments
@@ -244,6 +244,19 @@ Extra classes go on the invocation as an ordinary HTML attribute (`class="me-2"`
 The same component works unchanged on **portal** pages (`File_Attachment_Model` ships both `fetch()` and `portal_fetch()`). Your `file.thumbnail.authorize` handler is now load-bearing for the portal realm through `fetch` — **it must answer correctly when `'user'` is a `Portal_User_Model`**, or every portal thumbnail silently becomes an empty box.
 
 A record that cannot be fetched (deleted, or not visible to this caller) paints a quiet empty box, never an error.
+
+**Reacting to the picture is the `preview_loaded` event, never the component's `<img>`.** The component emits it once the image has settled and **always eventually emits it** — a broken image and the empty box report too — and because jqhtml events are sticky, a picture that was cached and decoded before you subscribed is still delivered:
+
+```javascript
+on_ready() {
+    this.sid('photo').on('preview_loaded', (c, d) => {
+        // d: {attachment_id, state, render_status, variant, natural_width, natural_height}
+        if (d.state === 'loaded') this.offer_zoom(d.variant, d.natural_width);
+    });
+}
+```
+
+`state` is `loaded` (the picture decoded — the raster, or the type icon of a file with no raster), `preparing` (the extension icon of a render still queued; it reports again after the swap), `failed` (the image would not load, or the icon of a failed render) or `unavailable` (no record). `variant` is `'thumbnail'` or — when `$allow_animated` showed the upload itself — `'original'`, and `natural_width`/`natural_height` are **the served image's**, so they are the upload's own size only under `'original'` (otherwise read the attachment's `width`/`height`). It fires again after every swap and after a `reload()` onto another `$attachment_id`. It is not named `loaded` because that is a reserved jqhtml lifecycle event. The shared state table and guarantee: `rspade:document-preview` (**`preview_loaded`**), `rsx:man thumbnails`.
 
 `File_Attachment_Model.thumbnail_url(record, {type, width, height, preset})` is the single JS builder the component calls. Reach for it directly only when a component genuinely cannot sit at that spot — a widget addressed by attachment **key** rather than id, say — and say why in a comment. Presets live in `config('rsx.thumbnails.presets')` (`profile`, `gallery`, `icon_small`, `icon_large` ship) and **throw** if undefined. `has_thumbnail()` is true iff a renderer is registered for the mime or the blob has rendered.
 

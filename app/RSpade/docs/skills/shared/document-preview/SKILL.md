@@ -108,13 +108,55 @@ on_ready() {
 }
 ```
 
-`preview_loaded` carries `{pages, width, height, ratio}`; `page_changed` carries `{page}`.
+`preview_loaded` carries `{attachment_id, state, render_status, pages, width, height, ratio}`; `page_changed` carries `{page}`.
 
-**`width`/`height`/`ratio` describe the page currently rendered, not the document.** They are re-reported on every render, so on a mixed-orientation file they change as the reader pages through it — read `ratio` as "the shape of the page you are looking at".
+**`width`/`height`/`ratio` describe the page currently rendered, not the document.** `preview_loaded` is emitted again after every page change (ahead of `page_changed`), so on a mixed-orientation file they change as the reader pages through it — read `ratio` as "the shape of the page you are looking at". `pages` is 1 for an unpaged viewer and 0 when no viewer is showing a document; text, markdown, grid and icon viewers have no geometry and omit the three.
 
 **It is `preview_loaded`, NOT `loaded`.** `loaded` is a reserved jqhtml lifecycle event, fired internally with no payload — a custom event of the same name collides with it. This is the worked instance of the reserved-event rule in the jqhtml docs; if you add your own viewer, name its events the same way.
 
-**Degraded uploads**: when an image's bytes could not be parsed, the attachment carries `preview_unavailable` and the component renders a "Preview unavailable" card instead of instantiating a viewer. Nothing throws.
+**Degraded uploads**: when an image's bytes could not be parsed, the attachment carries `preview_unavailable` and the component renders a "Preview unavailable" card instead of instantiating a viewer. Nothing throws. **A record that cannot be read** (deleted, or not visible to this user) paints the same card with nothing to name — a state, never a thrown error.
+
+---
+
+## `preview_loaded`: every preview widget always reports
+
+**`<Attachment_Thumbnail>`, `<Document_Preview>` (and every viewer it hosts) and `<Document_Text_Preview>` each emit `preview_loaded` when what they depict is on screen — and every one of them ALWAYS eventually emits it, whatever it ended up showing.** A broken image, a generic type icon, a record that does not exist, a degraded upload and a waiting notice all count as having rendered. So a host never guards against the event not coming, and **never reaches into a widget's `<img>` or canvas to find out for itself.**
+
+```javascript
+on_ready() {
+    this.sid('thumb').on('preview_loaded', (c, d) => {
+        this.$sid('spinner').toggle(d.state === 'preparing');
+        if (d.state === 'loaded') this.fit_to(d.natural_width, d.natural_height);
+    });
+}
+```
+
+Every payload carries `attachment_id` (so one handler can serve several widgets), `state`, and — on the thumbnail and `Document_Preview` — `render_status` (the blob's `RENDER_STATUS_*` id, `'none'` with no resident blob, `'unavailable'` with no record). Then each widget's own keys:
+
+| Widget | Adds |
+|---|---|
+| `Attachment_Thumbnail` | `variant` (`'thumbnail'`, or `'original'` when `$allow_animated` showed the upload itself; `null` with no image), `natural_width` / `natural_height` of the image actually served (0 with none) |
+| `Document_Preview` | `pages`, `width`, `height`, `ratio` |
+| `Document_Text_Preview` | `length` (characters; 0 with no text showing) |
+
+**`state` is one vocabulary of four values:**
+
+| `state` | Means | Thumbnail | Document_Preview | Document_Text_Preview |
+|---|---|---|---|---|
+| `loaded` | the widget's final content is on screen | the picture decoded — the raster, or the type icon of a file with no raster | a viewer's document / image / text / grid; the `Icon_Viewer` icon | the text |
+| `preparing` | a notice or placeholder the widget **replaces by itself** — it reports again when it does | the extension icon of a PENDING render | "Preparing preview…"; a viewer's own waiting notice | `(Loading...)`, `(Extracting Text...)` |
+| `failed` | the content should have shown and could not | the `<img>` errored; the icon of a FAILED render | "Preview could not be generated"; pdf.js could not load or parse; the image errored; the extraction or markdown render failed | `(Document Text Unavailable)` because the extraction failed |
+| `unavailable` | nothing to show, nothing went wrong | no record (deleted / not visible) | the "Preview unavailable" card — degraded upload, or no record | `(Document Text Unavailable)` because there is no record, the type carries no text, or the document contains none |
+
+A host that only needs "has it resolved" ignores `state`; one that needs the content checks `state === 'loaded'`; one driving its own spinner clears it on anything but `preparing`.
+
+**A late subscriber is still told.** jqhtml events are sticky — `on()` registered after the event runs at once with the last payload — so the picture that was cached and decoded before your `on_ready()` ran is delivered anyway. There is no `img.complete` fork to write.
+
+**It reports again whenever the content changes** — the realtime swap out of a placeholder, a `reload()` after `$attachment_id` changed, a page change. A widget that replaces what is on screen withdraws its stored report first, so a subscriber arriving while the next content loads waits for that content's report and is never handed the previous one.
+
+**`natural_width` on a thumbnail is the SERVED image's width**, not the upload's, unless `variant` is `'original'`: a 4000px photo behind a 600px thumbnail reports 600. For the upload's own size read the attachment's `width` / `height`.
+
+**Not covered**: a fault that stops a lifecycle outright (a transport error under the thumbnail's record fetch, a custom viewer that throws) is an ordinary error, not a state; and `Spreadsheet_Viewer` cannot see its sandboxed iframe fail, so a grid request that fails in transit still reports `loaded`. Contract: `rsx:man document_search` (THE PREVIEW_LOADED EVENT), `rsx:man thumbnails`.
 
 ---
 
@@ -124,7 +166,7 @@ on_ready() {
 <Document_Text_Preview $attachment_id=this.data.doc.id />
 ```
 
-The sibling of `Document_Preview`: same attachment, same subscribe-then-swap story, but it renders the **extracted text** instead of the picture. Args are `$attachment_id` (**required** - it throws without it) and `$width`/`$height` (px; omitted = fill the container). There are no events and no public methods - the args are the whole surface.
+The sibling of `Document_Preview`: same attachment, same subscribe-then-swap story, but it renders the **extracted text** instead of the picture. Args are `$attachment_id` (**required** - it throws without it) and `$width`/`$height` (px; omitted = fill the container). It has no public methods and one event, `preview_loaded` `{attachment_id, state, length}`, emitted for every state below (see **`preview_loaded`** above).
 
 Four states, one of which is always painted:
 
@@ -135,7 +177,7 @@ Four states, one of which is always painted:
 | `available` | text was extracted | the text, newlines preserved |
 | `error` / `unsupported` | the last extraction attempt FAILED, a degraded upload, a file type carrying no text, an extraction that yielded nothing, or a gate refusal | `(Document Text Unavailable)` |
 
-The three unavailable causes collapse into one notice on purpose: they are the same answer to a reader. An operator tells them apart with `rsx:search:reindex --status` and `rsx:documents:failed`.
+The three unavailable causes collapse into one notice on purpose: they are the same answer to a reader. An operator tells them apart with `rsx:search:reindex --status` and `rsx:documents:failed`. The event keeps one distinction the notice drops: a failed extraction is `failed`, text that simply does not exist is `unavailable`.
 
 **The text pane is `Text_Viewer`'s, by contract.** Both components include the framework mixin `rsx-preview-text-pane` (monospace, 13px, `pre-wrap`, colour inherited on a transparent surface - in scope in every SCSS compilation, nothing to import; skill `rspade:scss-rules`), so an extraction reads exactly as a text file does under `<Document_Preview>`. Style the frame you mount it into (its size, its surface), not the text:
 
@@ -185,7 +227,25 @@ Register your own in `rsx/resource/config/rsx.php` under the same key:
 ] + config('rsx.preview.viewers')],
 ```
 
-The built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{attachment_id, url, extension, file_name, page, fit}` (the framework's own `Spreadsheet_Viewer` and `Markdown_Viewer` take this path and read only `attachment_id`). So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `preview_loaded`/`page_changed`.
+The built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{attachment_id, url, extension, file_name, page, fit}` (the framework's own `Spreadsheet_Viewer` and `Markdown_Viewer` take this path and read only `attachment_id`). So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `page_changed`.
+
+**A viewer reports for itself.** It triggers `preview_loaded` `{state, pages, …}` when its content is on screen (`loaded`), when it could not show it (`failed`), and for a notice it will replace by itself (`preparing`, then again when it has) — and it has reported *something* by the time it is ready. Asynchronous work is either awaited in an `async on_ready()` (jqhtml holds `ready` until it returns — `Pdf_Viewer` does this) or announced with `preparing` first (`Spreadsheet_Viewer` does this while its iframe loads). `Document_Preview` adds `attachment_id` and `render_status`, and reads a payload with no `state` as `loaded`.
+
+```javascript
+class Cad_Viewer extends Component {
+    async on_ready() {
+        try {
+            await this.draw(this.args.url);
+            this.trigger('preview_loaded', { pages: 1, state: 'loaded' });
+        } catch (e) {
+            this.$sid('error').show();
+            this.trigger('preview_loaded', { pages: 0, state: 'failed' });
+        }
+    }
+}
+```
+
+**A viewer that never reports still does not strand the host**: once a dynamically instantiated viewer is `ready` and has said nothing, `Document_Preview` reports `loaded` for it (`pages` from `get_pages()`, else 1). That is a lifecycle fact, not a timer — and it is a safety net, not the contract: a viewer that fills itself in after `ready` without saying `preparing` is reported `loaded` early. A viewer whose lifecycle **throws** never becomes ready; that is a console error and nothing is reported for it.
 
 **PDF renditions**: `/_preview/pdf/:key` serves the PDF pdf.js actually loads, and it is **serve-only — it never converts**. A PDF blob is served as-is; a mime listed in `rsx.preview.convertible` is served from the cached rendition at `tmp/renditions/{blob-hash}.pdf` (LRU-swept to `rsx.preview.quota_max_bytes`) **but only when the blob is RENDERED** — otherwise it 404s naming the render state. Anything else is 415. A RENDERED blob whose rendition was LRU-evicted re-queues itself and 404s for that one request, rather than showing an error over a cache eviction. The route is **dual-gated** (`file.thumbnail.authorize` AND `file.download.authorize`), so your file-access hooks apply to previews exactly as they do to downloads. pdf.js itself is lazy-served from `/_preview/pdfjs.mjs` (+ `pdf_worker.mjs`) out of the committed `node_modules` and is **never bundled**.
 
@@ -328,6 +388,8 @@ Start with `--status`. A large `UNSUPPORTED` count is usually correct (images); 
 
 - **Nothing renders, no error** — the attachment id is wrong, or the mime resolved to `Icon_Viewer` (no viewer registered for it).
 - **Handler never fires on `loaded`** — you listened for the reserved lifecycle event; it is `preview_loaded`.
+- **`preview_loaded` fired but there is no picture** — it reports every outcome; check `state` (`preparing`, `failed` and `unavailable` are reports too).
+- **A custom viewer is reported `loaded` before its content appears** — it reached `ready` without reporting; await the work in `async on_ready()` or trigger `preparing` first.
 - **Preview stuck on "Preparing preview…"** — the blob is PENDING and no attempt has reported. `rsx:documents:status`: if "Due now" never falls the worker is not running (`rsx:task:process`, `rsx:health` "Document Render Backlog"); PENDING with nothing due means `rsx.libreoffice.enabled` is false and the blobs are deferred.
 - **A document shows the extension icon forever** — that IS the correct picture for PENDING or FAILED. `rsx:documents:status` says which; `rsx:documents:failed` names the reason and whether the worker will try again by itself. Out of attempts → fix the cause, then `rsx:documents:rerender --failed`.
 - **`render exceeded 20 seconds` on every attempt** — the document needs longer than the stage bound on this hardware. If it is an ordinary document for the site, raise `rsx.documents.stage_seconds` (and `kill_seconds` above twice that), then rerender.

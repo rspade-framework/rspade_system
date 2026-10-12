@@ -39,6 +39,28 @@ File_Storage_Model::RENDER_STATUS_*, or 'none' when there is no resident blob):
   3 RENDERED     - the real page-1 raster.
   4 FAILED       - the last render attempt failed: the extension icon, uncacheable.
   unavailable    - the record could not be fetched (deleted, or not visible to this user).
+
+Events OUT:
+  'preview_loaded' {attachment_id, state, render_status, variant, natural_width, natural_height}
+    What this component put on screen. ALWAYS eventually emitted, whatever that was: a host
+    listens for it and never reaches for the <img>. Emitted once the <img> has settled (at once
+    for a picture the browser already holds) and again after every change of what is shown - the
+    realtime swap, a reload() after $attachment_id changed. A subscriber that registers late is
+    handed the last report; one that registers while the next picture is loading waits for it.
+    (NOT 'loaded' - that is a reserved jqhtml lifecycle event fired internally with no data.)
+
+      state           'loaded'       the picture has decoded: the raster, or the type icon of a
+                                     file that has no raster.
+                      'preparing'    the extension icon of a PENDING render has decoded; the
+                                     swap follows and reports again.
+                      'failed'       the image could not be loaded or decoded, or it is the
+                                     extension icon of a FAILED render.
+                      'unavailable'  the empty box of a record that could not be fetched.
+      render_status   the data-render-status value above (the id, 'none' or 'unavailable').
+      variant         'thumbnail' (a generated thumbnail or extension icon was requested),
+                      'original' ($allow_animated showed the upload itself), null with no image.
+      natural_width,  of the image actually served - the upload's own size only under
+      natural_height  'original'. 0 when no image decoded.
 --%>
 <Define:Attachment_Thumbnail tag="div">
     <% if (!this.args.attachment_id) { throw new Error('Attachment_Thumbnail requires $attachment_id'); } %>

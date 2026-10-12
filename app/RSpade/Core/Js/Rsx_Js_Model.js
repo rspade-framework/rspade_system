@@ -520,7 +520,9 @@ class Rsx_Js_Model {
      * Recursively instantiate ORM models in response data
      *
      * Looks for objects with __MODEL property and instantiates the appropriate
-     * JavaScript model class from the Manifest registry.
+     * JavaScript model class from the Manifest registry. A {__MODEL} record whose class is
+     * not in the bundle THROWS (as a {__TEXT} value with no class does): every model a
+     * response carries must be included in the bundle that receives it.
      *
      * @param {*} data - The data to process (can be any type)
      * @returns {*} The data with ORM objects instantiated
@@ -562,26 +564,36 @@ class Rsx_Js_Model {
                 // Look up the model class in the Manifest registry
                 const ModelClass = Manifest.get_class_by_name(data.__MODEL);
 
-                // If the model class exists and extends Rsx_Js_Model, instantiate it
-                // Dynamic model resolution requires checking class existence - @JS-DEFENSIVE-01-EXCEPTION
-                if (ModelClass && Manifest.js_is_subclass_of(ModelClass, Rsx_Js_Model)) {
-                    // The record's own FIELDS are walked before the instance is built. They
-                    // used to be handed to the constructor exactly as they came off the
-                    // wire, so anything that needs rehydrating inside a record - a declared
-                    // TEXT column's {__TEXT, raw} envelope, a nested {__MODEL} record - was
-                    // left as a plain object and reached templates as one.
-                    const fields = {};
-
-                    for (const key in data) {
-                        if (data.hasOwnProperty(key)) {
-                            fields[key] = key === '__MODEL'
-                                ? data[key]
-                                : Rsx_Js_Model._instantiate_models_recursive(data[key]);
-                        }
-                    }
-
-                    return new ModelClass(fields);
+                // A record whose class this bundle does not carry is refused, never passed
+                // through as a plain object: such an object reads correctly field by field
+                // and fails only where something calls a model method on it, far from the
+                // cause. Dynamic model resolution requires checking class existence -
+                // @JS-DEFENSIVE-01-EXCEPTION
+                if (!ModelClass || !Manifest.js_is_subclass_of(ModelClass, Rsx_Js_Model)) {
+                    shouldnt_happen(
+                        `A '${data.__MODEL}' record arrived from the server, but the bundle that received ` +
+                        `it does not include that model's class. Include the model in the bundle: add its ` +
+                        `file (or the models directory) to the bundle's 'include' list. A record this page ` +
+                        `has no use for as a model should not be in the response at all - return the fields ` +
+                        `the page needs instead of the record.`
+                    );
                 }
+
+                // The record's own FIELDS are walked before the instance is built, so
+                // anything that needs rehydrating inside a record - a declared TEXT column's
+                // {__TEXT, raw} envelope, a nested {__MODEL} record - reaches the constructor
+                // as its class and never as a plain object.
+                const fields = {};
+
+                for (const key in data) {
+                    if (data.hasOwnProperty(key)) {
+                        fields[key] = key === '__MODEL'
+                            ? data[key]
+                            : Rsx_Js_Model._instantiate_models_recursive(data[key]);
+                    }
+                }
+
+                return new ModelClass(fields);
             }
 
             // Recursively process all object properties
