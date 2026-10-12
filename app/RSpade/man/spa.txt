@@ -689,74 +689,111 @@ NAVIGATION
         bar or generated links.
 
 THE NAVIGATION GUARD
-    An editor with unsaved work asks before the user leaves it. The framework's
-    seam is three statics on Rsx - available on every page, SPA or not:
+    A page with changes that would be lost says so, and the BROWSER asks before
+    the user leaves it. The guard is a TOGGLE - three statics on Rsx, available
+    on every page, SPA or not:
 
-        Rsx.set_navigation_guard(async (url) => boolean)
-        Rsx.clear_navigation_guard()
-        Rsx.has_navigation_guard()
+        Rsx.set_navigation_guard()      turn it on  (takes NO argument)
+        Rsx.clear_navigation_guard()    turn it off
+        Rsx.has_navigation_guard()      is it on? (boolean)
 
-    ONE SLOT, NOT A STACK. The last set_navigation_guard() wins, and one
-    clear_navigation_guard() discards the slot however many times it was set.
+    There is no callback and no dialog of the framework's or the application's.
+    One slot, idempotent: turning on a guard that is on, or off one that is off,
+    does nothing. Passing ANY argument to set_navigation_guard() throws:
 
-    TWO MECHANISMS, ONE REGISTRATION:
+        Rsx.set_navigation_guard() takes no argument: the navigation guard is a
+        toggle, not a callback. ...
 
-        SPA navigation - link click, Back/Forward, Spa.dispatch(), Spa.redirect().
-        All four reach Spa.dispatch(), which is the single choke point, so one
-        registration covers them all. dispatch() awaits the callback with the
-        TARGET URL. Resolve exactly true to allow; anything else - false,
-        undefined, a string - blocks. A callback that REJECTS is not caught: the
-        error propagates as an ordinary unhandled error rather than reading as a
-        silent block.
+    WHAT HAPPENS WHILE THE GUARD IS ON
 
-        Leaving the page for real - refresh, tab close, typed URL, external link.
-        The browser's own beforeunload dialog does the asking, and the callback is
-        NOT consulted there. Browsers render their own wording and ignore any
-        supplied string. On a server-rendered Blade page this native dialog is the
-        entire feature.
+        A link click (<a href>)
+            The SPA does not intercept it. The browser navigates for real and
+            raises its native unload dialog. Stay: nothing changed, the guard
+            is still on. Leave: the target arrives as a FULL PAGE LOAD.
 
-    THE APPLICATION OWNS THE DIALOG. The framework shows nothing of its own for
-    SPA navigation and never references Modal. The callback is the prompt:
+        Refresh, tab close, a typed URL, a Back/Forward that leaves the document
+            The same native unload dialog.
 
-        Rsx.set_navigation_guard(async () => Modal.confirm(
-            'Unsaved changes',
-            'You have unsaved changes. Leave without saving?',
-            'Leave',
-            'Stay'
-        ));
+        Back/Forward between two pages of the SPA
+            Nothing unloads, so the browser's unload dialog cannot appear. The
+            SPA raises the browser's native confirm box instead, before
+            anything is dispatched. OK: the guard is turned off and the move is
+            an ordinary in-SPA Back/Forward. Cancel: nothing is dispatched,
+            history is stepped back to the entry the user was on, and the page
+            is exactly as it was, guard still on.
 
-    Modal.confirm() resolves true/false, which is exactly this contract.
+        A Back/Forward that changes only the #fragment
+            Not a departure. It fires spa_hash_change and nobody is asked.
 
-    CLEARED BY THE NAVIGATION IT APPROVED. An approved departure discards the
-    guard, so an editor cannot leave a stale prompt armed for the next page. A
-    BLOCKED navigation leaves it registered - the user is still on the page that
-    had unsaved work.
+        Navigation from CODE - Spa.dispatch(), Spa.redirect()
+            NOT GUARDED. A button handler, a row click, a redirect after a save:
+            the dispatch goes ahead in the SPA with no prompt and turns the
+            guard off. Code that navigates has already decided.
 
-    A blocked navigation logs
+    With the guard OFF none of this applies: links are intercepted and
+    dispatched in the SPA, and nothing asks. Clearing the guard takes effect on
+    the very next click.
 
-        [Rsx] Navigation to <url> was prevented by the navigation guard.
+    THE DIALOGS ARE THE BROWSER'S. The unload dialog's wording is the
+    browser's own and cannot be set by a page. The confirm box carries the same
+    wording,
 
-    which is the one console line to grep for when a dispatch appears to do
-    nothing. A programmatic navigation that must not be asked about passes
-    { skip_navigation_guard: true } to dispatch(); popstate never does, because
-    Back/Forward is always subject to the guard. The one exception is a
-    fragment-only Back/Forward, which leaves the page in place and is not a
-    navigation at all - it fires spa_hash_change and asks nobody.
+        Leave site?
 
-    A REFUSED BACK/FORWARD LEAVES THE HISTORY STACK ALONE. By the time the
-    guard is asked, the browser has already moved to the entry the user was
-    heading for, so the framework steps it back to the one it left: the address
-    is restored, nothing is added or discarded, and Back and Forward afterwards
-    reach the same pages they did before. (Between an entry the SPA wrote and
-    one it did not - an in-page fragment link's - the distance is not knowable;
-    there the previous URL is pushed instead, which restores the address and
-    drops the entries ahead.)
+        Changes you made may not be saved.
 
-    Worked example, complete and current:
+    under a heading and OK / Cancel buttons that are also the browser's and
+    cannot be changed. And a browser raises its unload dialog ONLY ONCE THE
+    USER HAS INTERACTED WITH THE PAGE (a click, a key press): a page nobody has
+    touched unloads without asking, guard or no guard.
+
+    A dispatch to the page already showing (the same path and query - a
+    fragment change, or the same URL) is not a departure and leaves the guard
+    as it is; a same-URL dispatch that reloads the document is then a refresh
+    like any other, and the browser asks.
+
+    A declined Back/Forward leaves the history stack alone: the address is
+    restored, nothing is added or discarded, and Back and Forward afterwards
+    reach the same pages they did before - across one entry or several
+    (history.go(-2)). (Between an entry the SPA wrote and one it did not - an
+    in-page fragment link's - the distance is not knowable; there the previous
+    URL is pushed instead, which restores the address and drops the entries
+    ahead.)
+
+    THE GUARD FOLLOWS THE PAGE'S STATE. On at the first change, off when the
+    change is saved or discarded, off when the page is torn down:
+
+        on_ready() {
+            const form = this.$.find('.Rsx_Form').first().component();
+            form.on('input', () => Rsx.set_navigation_guard());        // changed
+            form.on('submitted', () => Rsx.clear_navigation_guard());  // saved
+        }
+
+        discard_changes() {                 // @click on the Cancel link
+            Rsx.clear_navigation_guard();
+        }
+
+        on_stop() {
+            Rsx.clear_navigation_guard();
+        }
+
+    A guard turned on when the page loads and never turned off asks on EVERY
+    exit, whether or not anything changed. The form's 'input' event fires for
+    an edit the user makes, never for values applied from loaded data, so it is
+    the signal to turn the guard on. The form engine itself never touches the
+    guard: an application opts in, page by page.
+
+    On a server-rendered Blade page the native unload dialog is the whole
+    feature. Never write a beforeunload listener beside the guard:
+    set_navigation_guard() installs the one there is.
+
+    Worked examples, complete and current (the first is the commented one):
         system/app/RSpade/resource/reference_app/app/frontend/contacts/edit/
             Contacts_Edit_Action.js
-
-    It arms the guard when the form fires 'input' and clears it on 'submitted'.
+        system/app/RSpade/resource/reference_app/app/frontend/tasks/edit/
+            Tasks_Edit_Action.js
+        system/app/RSpade/resource/reference_app/app/frontend/projects/edit/
+            Projects_Edit_Action.js
 
 PAGE TITLES
     An action's title is declared ONCE and painted by the layout. There are
@@ -1346,8 +1383,8 @@ SEE ALSO
     rsx:man modals - Modal dialogs in SPA context
     rsx:man form_conventions - the form engine, dirty protection and the page
                                pattern a navigation guard usually protects
-    skill rspade:navigation-guard - warning before the user leaves a page with
-                               unsaved work
+    skill rspade:navigation-guard - having the browser ask before the user
+                               leaves a page with unsaved changes
     rsx:man ajax_error_handling - Error handling patterns
     rsx:man pagedata - Passing server-side data to JavaScript
     rsx:man rsxapp - Global JavaScript runtime object

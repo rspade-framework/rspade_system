@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Back/Forward return a page to where it was scrolled, and a vetoed Back/Forward leaves
- * the history stack as it was (SPA-HISTORY-01..09).
+ * Back/Forward return a page to where it was scrolled, and a Back/Forward the user
+ * declines at the navigation guard's prompt leaves the history stack as it was
+ * (SPA-HISTORY-01..13).
  *
  * Each history entry records where ITS OWN page is scrolled and where it sits in the
  * stack. Only a browser can prove either, so:
@@ -12,10 +13,19 @@
  *   4. a layout that scrolls inside a container is measured and restored on that
  *      container, not on the window
  *   5. Rsx.url_hash_set() keeps the entry's state
- *   6. a vetoed Forward leaves the address, the stack length and both neighbours as
- *      they were: Back still reaches A, Forward still reaches C
- *   7. a vetoed Back does the same
- *   8. the popstate fired by undoing a veto is not treated as a navigation
+ *
+ * and, with the navigation guard on (Rsx.set_navigation_guard()), where a Back/Forward
+ * between two SPA pages raises the browser's confirm box before anything is dispatched:
+ *
+ *   6. the box is a native confirm carrying the browser's unload wording
+ *   7. Cancel on a Forward leaves the address, the stack length and the entry index as
+ *      they were, dispatches nothing, and leaves the guard on
+ *   8. the popstate fired by stepping back is not treated as a navigation, and is not
+ *      asked about
+ *   9. Cancel on a Back does the same
+ *  10. Cancel on a two-step jump (history.go(2)) steps back across both entries
+ *  11. OK turns the guard off and the move is an ordinary in-SPA Back/Forward
+ *  12. afterwards nothing asks, and both neighbours are still reachable
  *
  * Runs against the framework's own /_sys panel. The pages are made tall by a stylesheet
  * rule on .Spa_Action, so the result does not depend on how much each screen shows.
@@ -166,48 +176,114 @@ async function run() {
             'Back restores the container, not the window', boxed_back);
         await boxed.close();
 
-        // ---- A vetoed Back/Forward ------------------------------------------------------
+        // ---- Back/Forward with the navigation guard on ----------------------------------
         const guarded = await open_panel(context, '.Spa_Action { min-height: 5000px; }');
+
+        // Every dialog is recorded and answered as `answer` says.
+        const dialogs = [];
+        let answer = 'dismiss';
+        guarded.on('dialog', async (dialog) => {
+            dialogs.push({ type: dialog.type(), message: dialog.message() });
+            if (answer === 'accept') {
+                await dialog.accept();
+            } else {
+                await dialog.dismiss();
+            }
+        });
+
         await dispatch(guarded, ROUTE_B);
         await dispatch(guarded, ROUTE_C);
         await back(guarded);
+        check(dialogs.length === 0, 'guard off: Back asks nothing', dialogs);
 
         // Stack: [A, B*, C]
         const start = await where(guarded);
+        await guarded.evaluate(() => {
+            window.__document_mark = 'original';
+            Spa.action().__history_probe = 'kept';
+            Rsx.set_navigation_guard();
+        });
 
-        const vetoed_forward = await guarded.evaluate(async () => {
-            let asked = 0;
-            Rsx.set_navigation_guard(async () => { asked++; return false; });
-            const before = window.__dispatches;
-
-            history.forward();
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-
-            return {
-                asked: asked,
+        /**
+         * Make a history move that the user declines, and wait until the browser is back
+         * on the entry it left: the address restored and the restoring step swallowed.
+         */
+        const declined = async (move, home) => {
+            const seen = dialogs.length;
+            const before = await guarded.evaluate(() => window.__dispatches);
+            const asked = guarded.waitForEvent('dialog');
+            await guarded.evaluate(move);
+            await asked;
+            await guarded.waitForFunction(
+                ([path, index]) => location.pathname === path
+                    && history.state && history.state.spa_index === index
+                    && Spa._undoing_vetoed_move === false,
+                [home.path, home.index]
+            );
+            // The restoring step has arrived. Had it been read as a navigation it would
+            // have asked again; give that a full task to show itself before reading.
+            const after = await guarded.evaluate(() => new Promise((resolve) => setTimeout(() => resolve({
                 path: location.pathname,
                 length: history.length,
                 index: history.state && history.state.spa_index,
-                dispatched: window.__dispatches - before,
-                undoing: Spa._undoing_vetoed_move,
-            };
-        });
-        check(vetoed_forward.path === ROUTE_B && vetoed_forward.length === start.length && vetoed_forward.index === start.index,
-            'a vetoed Forward leaves the address and the stack as they were', { start: start, after: vetoed_forward });
-        check(vetoed_forward.asked === 1 && vetoed_forward.dispatched === 0 && vetoed_forward.undoing === false,
-            'the popstate fired by undoing the veto is not a navigation', vetoed_forward);
+                dispatched: window.__dispatches,
+                guarded: Rsx.has_navigation_guard(),
+                probe: Spa.action() ? (Spa.action().__history_probe || null) : null,
+                run_index: Spa._history_index,
+            }), 0)));
+            after.dispatched -= before;
+            after.dialogs = dialogs.slice(seen);
+            return after;
+        };
 
-        const vetoed_back = await guarded.evaluate(async () => {
-            history.back();
-            await new Promise((resolve) => setTimeout(resolve, 1500));
+        const intact = (after, home) => after.path === home.path && after.length === home.length
+            && after.index === home.index && after.run_index === home.index;
+        const untouched = (after) => after.dialogs.length === 1 && after.dispatched === 0
+            && after.guarded === true && after.probe === 'kept';
 
-            return { path: location.pathname, length: history.length, index: history.state && history.state.spa_index };
-        });
-        check(vetoed_back.path === ROUTE_B && vetoed_back.length === start.length && vetoed_back.index === start.index,
-            'a vetoed Back leaves the address and the stack as they were', { start: start, after: vetoed_back });
+        answer = 'dismiss';
+        const declined_forward = await declined(() => history.forward(), start);
 
+        check(declined_forward.dialogs.length === 1 && declined_forward.dialogs[0].type === 'confirm'
+            && declined_forward.dialogs[0].message === 'Leave site?\n\nChanges you made may not be saved.',
+            'guard on: Forward raises the browser confirm box with the unload wording', declined_forward.dialogs);
+        check(intact(declined_forward, start),
+            'a declined Forward leaves the address and the stack as they were', { start: start, after: declined_forward });
+        check(untouched(declined_forward),
+            'a declined Forward dispatches nothing, asks once, and leaves the page and the guard as they were', declined_forward);
+
+        const declined_back = await declined(() => history.back(), start);
+        check(intact(declined_back, start) && untouched(declined_back),
+            'a declined Back does the same', { start: start, after: declined_back });
+
+        // A two-step jump. Stack [A*, B, C]: reached with the guard off, then armed on A.
         await guarded.evaluate(() => Rsx.clear_navigation_guard());
+        await back(guarded);
+        const on_a = await where(guarded);
+        await guarded.evaluate(() => {
+            Spa.action().__history_probe = 'kept';
+            Rsx.set_navigation_guard();
+        });
+        const declined_jump = await declined(() => history.go(2), on_a);
+        check(on_a.path === ROUTE_A && intact(declined_jump, on_a) && untouched(declined_jump),
+            'a declined two-step jump steps back across both entries', { start: on_a, after: declined_jump });
 
+        // OK: the guard is turned off and the move goes ahead in the SPA.
+        answer = 'accept';
+        const seen_before_accept = dialogs.length;
+        await navigate(guarded, () => guarded.evaluate(() => history.forward()));
+        const accepted = await where(guarded);
+        const accepted_state = await guarded.evaluate(() => ({
+            mark: window.__document_mark || null,
+            guarded: Rsx.has_navigation_guard(),
+        }));
+        check(dialogs.length === seen_before_accept + 1 && dialogs[seen_before_accept].type === 'confirm'
+            && accepted.path === ROUTE_B && accepted_state.mark === 'original',
+            'an accepted Forward is dispatched in the SPA', { accepted, accepted_state, dialogs: dialogs.slice(seen_before_accept) });
+        check(accepted_state.guarded === false, 'an accepted Back/Forward turns the guard off', accepted_state);
+
+        // Guard off again: nothing asks, and the stack is whole.
+        const seen_after_accept = dialogs.length;
         await forward(guarded);
         const reaches_c = await where(guarded);
         check(reaches_c.path === ROUTE_C, 'Forward still reaches C', reaches_c);
@@ -215,7 +291,8 @@ async function run() {
         await back(guarded);
         await back(guarded);
         const reaches_a = await where(guarded);
-        check(reaches_a.path === ROUTE_A && reaches_a.length === start.length, 'Back still reaches A, with nothing added to the stack', reaches_a);
+        check(reaches_a.path === ROUTE_A && reaches_a.length === start.length && dialogs.length === seen_after_accept,
+            'Back still reaches A, with nothing added to the stack and nothing asked', { reaches_a, dialogs: dialogs.slice(seen_after_accept) });
         await guarded.close();
     } catch (e) {
         fail('exception: ' + (e && e.message ? e.message : String(e)));

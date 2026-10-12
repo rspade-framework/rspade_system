@@ -1,0 +1,140 @@
+THE NAVIGATION GUARD IS A TOGGLE THE APPLICATION TURNS ON AND OFF, NOT A CALLBACK
+Date: 2026-10-12
+
+IF YOU DO NOTHING: every Rsx.set_navigation_guard(fn) call in your application throws "Rsx.set_navigation_guard() takes no argument" the first time the line runs, so the page that made it has no unsaved-changes protection at all, and any code of yours calling Rsx.navigation_guard_allows() fails with "is not a function".
+
+SUMMARY
+    Category 2: the call shape of Rsx.set_navigation_guard() changed, one
+    public static was removed and one Spa.dispatch() option was removed. It
+    affects an application that warns before unsaved work is lost.
+
+    The guard is a boolean the page turns on and off - "this page has changes
+    that would be lost". There is no callback, and the application shows no
+    dialog: the BROWSER asks.
+
+THE CHANGE
+    Rsx.set_navigation_guard()
+        Takes NO argument and turns the guard on. Passing anything throws.
+
+    Rsx.clear_navigation_guard()
+        Turns it off. Unchanged in shape.
+
+    Rsx.has_navigation_guard()
+        Unchanged.
+
+    Rsx.navigation_guard_allows(url)
+        Removed.
+
+    Spa.dispatch(url, { skip_navigation_guard: true })
+        The option is removed. Navigation from code is never guarded, so there
+        is nothing to skip; the key is ignored.
+
+    While the guard is on:
+
+        a link click            is not intercepted by the SPA; the browser
+                                navigates and raises its native unload dialog.
+                                Leaving is a full page load.
+        refresh, tab close      the same native dialog, as before.
+        Back/Forward in the SPA the browser's native confirm box ("Leave
+                                site? / Changes you made may not be saved.").
+                                Cancel puts the address back and dispatches
+                                nothing; OK turns the guard off and navigates.
+        Spa.dispatch(),         NOT GUARDED: the navigation goes ahead with no
+        Spa.redirect()          prompt and turns the guard off.
+
+    Nothing logs "[Rsx] Navigation to ... was prevented by the navigation
+    guard." any more.
+
+ACTION REQUIRED
+    1. Find your uses:
+
+           grep -rn "set_navigation_guard\|clear_navigation_guard" rsx/
+           grep -rn "navigation_guard_allows\|skip_navigation_guard" rsx/
+           grep -rn "prevented by the navigation guard" rsx/
+
+       No match: nothing to do.
+
+    2. Every Rsx.set_navigation_guard(<function>) becomes
+       Rsx.set_navigation_guard() - and MOVES. The decision that used to be
+       made inside the callback is now made by WHEN you call it.
+
+       A page that registered the guard once at load and decided in its
+       callback,
+
+           on_ready() {
+               Rsx.set_navigation_guard(async () => {
+                   if (!this._is_dirty()) return true;
+                   return Modal.confirm('Unsaved changes', 'Leave?', 'Leave', 'Stay');
+               });
+           }
+
+       must instead turn it ON when the user changes something and OFF when
+       the change is saved or discarded, and in on_stop():
+
+           on_ready() {
+               const form = this.$.find('.Rsx_Form').first().component();
+               form.on('input', () => Rsx.set_navigation_guard());
+               form.on('submitted', () => Rsx.clear_navigation_guard());
+           }
+
+           discard_changes() {             // @click on a Cancel link or button
+               Rsx.clear_navigation_guard();
+           }
+
+           on_stop() {
+               Rsx.clear_navigation_guard();
+           }
+
+       A page that only drops the argument and still calls
+       Rsx.set_navigation_guard() at load PROMPTS ON EVERY EXIT, whether or
+       not anything changed. A screen with no <Rsx_Form> calls
+       set_navigation_guard() from its own change handler (the checkbox's
+       change event, the grid cell's edit) in the same way.
+
+    3. Delete your leave-dialog. The Modal.confirm() (or any other prompt)
+       that lived in the callback has no caller: the browser asks, in its own
+       wording, and neither the wording nor the buttons can be changed.
+
+    4. Delete every { skip_navigation_guard: true } and every call to
+       Rsx.navigation_guard_allows().
+
+    5. Review navigation from CODE. A button handler, a row click or a
+       redirect that calls Spa.dispatch() / Spa.redirect() used to be stopped
+       by the callback; it now leaves at once and turns the guard off. Where
+       such a control must not discard the user's changes silently, test
+       Rsx.has_navigation_guard() in the handler and ask with a dialog of
+       your own before dispatching - or make the control an <a href>, which
+       IS guarded.
+
+    6. A Cancel control that is an <a href> is a guarded link: give it a
+       handler that clears the guard (step 2's discard_changes), or the
+       browser asks about changes the user just chose to throw away.
+
+    The converted reference pages, complete and current:
+
+        system/app/RSpade/resource/reference_app/app/frontend/contacts/edit/
+            Contacts_Edit_Action.js      (the commented example)
+            Contacts_Edit_Action.jqhtml  (the Cancel link's @click)
+        system/app/RSpade/resource/reference_app/app/frontend/tasks/edit/
+            Tasks_Edit_Action.js
+        system/app/RSpade/resource/reference_app/app/frontend/projects/edit/
+            Projects_Edit_Action.js
+
+VERIFICATION
+    The greps in step 1 find no function argument, no navigation_guard_allows
+    and no skip_navigation_guard. Then, on each guarded page in a browser:
+
+        untouched page      a link navigates and a refresh reloads, with no
+                            prompt
+        after one edit      a link raises the browser's "Leave site?" dialog,
+                            and Back raises its confirm box; Cancel in either
+                            leaves the page and what was typed as they were
+        after saving        the page leaves with no prompt
+
+    A browser raises its unload dialog only after the user has interacted
+    with the page, so click or type before testing a refresh.
+
+SEE ALSO
+    rsx:man spa - THE NAVIGATION GUARD
+    skill rspade:navigation-guard
+    rsx:man form_conventions - the form's 'input' and 'submitted' events

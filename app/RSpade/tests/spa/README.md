@@ -5,8 +5,8 @@ Client-side routing for authenticated areas: `Spa` (dispatch, layout chain, hist
 `@route`/`@layout`/`@spa`/`@auth`/`@title` decorators that declare an action.
 
 This concern covers the **page-title ladder** - the seam where a dispatched action's
-title reaches a layout - and the **navigation guard**, the seam that lets a page refuse
-to be left. Everything else in the SPA is either covered elsewhere (decorator transform
+title reaches a layout - and the **navigation guard**, the toggle that has the browser
+ask before a page with unsaved changes is left. Everything else in the SPA is either covered elsewhere (decorator transform
 in `js_transform`, auth gating in `auth_gates`, the dispatcher's auth-rejection surface
 in `dispatch`) or catalogued below as a coverage hole.
 
@@ -25,11 +25,13 @@ in `dispatch`) or catalogued below as a coverage hole.
   - `resolve_page_title(paint, placeholder)` - the ONE way a layout obtains a title:
     synchronous static paint, then the awaited `page_title()` repaint when it differs.
 - `app/RSpade/Core/SPA/Spa_Decorators.js` - `@title` stores `_spa_title` on the class.
-- `app/RSpade/Core/Js/Rsx.js` - the navigation guard: `set_navigation_guard()`,
-  `clear_navigation_guard()`, `has_navigation_guard()`, the `navigation_guard_allows()`
-  seam `Spa.dispatch()` consults, and the lazily-installed `beforeunload` listener.
-- `app/RSpade/Core/SPA/Spa.js` - `dispatch()`'s consult: block + `console.warn` when the
-  answer is not `true`, clear the guard when it is.
+- `app/RSpade/Core/Js/Rsx.js` - the navigation guard: `set_navigation_guard()` (no
+  argument; any argument throws), `clear_navigation_guard()`, `has_navigation_guard()`,
+  `NAVIGATION_GUARD_PROMPT`, and the lazily-installed `beforeunload` listener.
+- `app/RSpade/Core/SPA/Spa.js` - `setup_browser_integration()`: the click handler stands
+  aside while the guard is on, and the popstate handler raises `window.confirm()` and
+  steps history back (`_undo_vetoed_move()`) on Cancel; `dispatch()` turns the guard off
+  when it leaves the page.
 - Consumers in the template app: `rsx/app/frontend/Frontend_Spa_Layout.js`
   (`_update_page_title`, which adds a per-URL session cache as the `placeholder`) and
   `rsx/portal/Portal_Layout.js`.
@@ -46,13 +48,21 @@ in `dispatch`) or catalogued below as a coverage hole.
 
 ## Behavior that defines correctness - the navigation guard
 
-- ONE SLOT: the last `set_navigation_guard()` wins, and one `clear_navigation_guard()`
-  discards it however many times it was set.
-- An answer that is not exactly `true` blocks the dispatch, leaves the guard registered,
-  and logs `prevented by the navigation guard`.
-- `true` allows the dispatch, and the navigation it approved clears the guard.
-- While a guard is registered, leaving the page for real raises the browser's own
-  `beforeunload` dialog; with no guard, nothing is asked.
+- A TOGGLE: `set_navigation_guard()` takes no argument and throws when given one; it is
+  idempotent, and one `clear_navigation_guard()` turns it off.
+- Guard on, link click: not intercepted. The browser offers its `beforeunload` dialog;
+  dismissed, the page, its action and the guard are untouched; accepted, the target
+  arrives as a full document. Clearing the guard restores interception on the next click.
+- Guard on, Back/Forward between SPA pages: a native `confirm` carrying
+  `Leave site?\n\nChanges you made may not be saved.` Dismissed - for Back, Forward and a
+  two-step jump - the address and the stack are as they were, nothing is dispatched and
+  the guard stays on. Accepted, the guard goes off and the move is dispatched in the SPA.
+- A fragment-only Back/Forward is never asked about.
+- `Spa.dispatch()` / `Spa.redirect()` are not guarded: no dialog, in-SPA, guard off
+  afterwards. A dispatch to the page already showing leaves the guard on.
+- Leaving the page for real raises `beforeunload` while the guard is on, and nothing once
+  it has been cleared. Chromium raises it only after a user gesture, so each script
+  clicks before it expects one.
 
 Man page: `php artisan rsx:man spa` (PAGE TITLES, THE NAVIGATION GUARD).
 
@@ -61,4 +71,6 @@ Man page: `php artisan rsx:man spa` (PAGE TITLES, THE NAVIGATION GUARD).
 ```bash
 node app/RSpade/tests/spa/playwright/spa_action_title.js
 node app/RSpade/tests/spa/playwright/navigation_guard.js
+node app/RSpade/tests/spa/playwright/history_scroll_and_veto.js
+node app/RSpade/tests/spa/playwright/fragment_popstate.js
 ```

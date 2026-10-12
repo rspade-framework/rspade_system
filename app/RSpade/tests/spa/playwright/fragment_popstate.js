@@ -9,8 +9,8 @@
  *
  *   1. pushState a fragment, go Back: spa_hash_change fires with the restored hash, and
  *      the SAME action instance is still mounted (a re-dispatch would construct a new one).
- *   2. The navigation guard is not consulted for that move - the user is not leaving the
- *      page - and stays registered.
+ *   2. With the navigation guard on, that move raises no dialog - the user is not
+ *      leaving the page - and the guard stays on.
  *   3. A Back across a PATH change still re-dispatches: a different action is mounted and
  *      spa_hash_change does not fire.
  *   4. An in-page `#at=` anchor link reaches its target on the mounted action - the
@@ -100,21 +100,24 @@ async function run() {
             return;
         }
 
-        // Every spa_hash_change and every guard consult is recorded on window, and the
-        // mounted action is tagged, so each step can ask what happened and to whom.
+        // Every dialog the browser raises is recorded (and dismissed), every
+        // spa_hash_change is recorded on window, and the mounted action is tagged, so
+        // each step can ask what happened and to whom.
+        const dialogs = [];
+        page.on('dialog', async (dialog) => {
+            dialogs.push({ type: dialog.type(), message: dialog.message() });
+            await dialog.dismiss();
+        });
+
         await page.evaluate(() => {
             window.__hash_events = [];
-            window.__guard_consults = 0;
             Rsx.on('spa_hash_change', (data) => window.__hash_events.push(data));
             Spa.action().__fragment_probe = 'original';
         });
 
-        // --- 1 + 2. a fragment-only Back keeps the action and skips the guard ---
+        // --- 1 + 2. a fragment-only Back keeps the action and is not asked about ---
         const fragment_move = await page.evaluate(async () => {
-            Rsx.set_navigation_guard(async () => {
-                window.__guard_consults++;
-                return false;
-            });
+            Rsx.set_navigation_guard();
 
             history.pushState(history.state, '', window.location.pathname + '#panel=open');
 
@@ -127,7 +130,6 @@ async function run() {
                 events: window.__hash_events.slice(),
                 probe: Spa.action() ? Spa.action().__fragment_probe : null,
                 hash: window.location.hash,
-                consults: window.__guard_consults,
                 still_guarded: Rsx.has_navigation_guard(),
             };
             Rsx.clear_navigation_guard();
@@ -146,10 +148,11 @@ async function run() {
             console.log('PASS: Back over a fragment leaves the same action instance mounted');
         }
 
-        if (fragment_move.consults !== 0 || !fragment_move.still_guarded) {
-            fail('a fragment-only move consulted the navigation guard (' + fragment_move.consults + ' times) or cleared it');
+        if (dialogs.length !== 0 || !fragment_move.still_guarded) {
+            fail('a fragment-only move with the guard on raised a dialog or turned the guard off - '
+                + JSON.stringify({ dialogs, still_guarded: fragment_move.still_guarded }));
         } else {
-            console.log('PASS: a fragment-only move does not consult the navigation guard');
+            console.log('PASS: a fragment-only move raises no dialog and leaves the navigation guard on');
         }
 
         // --- 4. an in-page anchor link scrolls without a dispatch ---

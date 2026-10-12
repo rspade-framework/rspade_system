@@ -2,8 +2,9 @@
 
 The title rows live in `playwright/spa_action_title.js` (one browser session over the
 template app's `/contacts` and `/contacts/view/:id`); the guard rows live in
-`playwright/navigation_guard.js` (one session over the framework's own `/_sys` panel, so
-it depends on no application code); the fragment rows live in `playwright/fragment_popstate.js`
+`playwright/navigation_guard.js` (the framework's own `/_sys` panel, so it depends on no
+application code; links, code navigation and real page exits) and the Back/Forward half of
+the guard in `playwright/history_scroll_and_veto.js` (the HISTORY rows); the fragment rows live in `playwright/fragment_popstate.js`
 (same `/_sys` session shape); the ResizeObserver rows live in `playwright/resize_observer_notice.js` (same shape), the rejection-origin rows in `playwright/unhandled_rejection_origin.js` (same shape). The decorator half - `@title` surviving the transform
 as `_spa_title` - is JT-03f in the `js_transform` concern.
 
@@ -17,13 +18,20 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-TITLE-06 | The layout `placeholder` (the template's per-URL session cache) is used ONLY when there is no static title, and is replaced by the live title | playwright | second visit to a dynamic page in one session | cached title painted first, then the live title | planned | 2026-08-18 |
 | SPA-NAV-01 | Layout-chain divergence: navigating between actions sharing an outer layout recreates only the differing part | playwright | settings -> settings sibling | outer layout instance identity preserved | planned | 2026-08-18 |
 | SPA-NAV-02 | `Spa.redirect()` REPLACES history where `Spa.dispatch()` pushes it | playwright | redirect from an action's `on_load()` | one history entry, back button leaves the SPA section | planned | 2026-08-18 |
-| SPA-GUARD-01 | A guard resolving `false` blocks the dispatch, and the block is announced on the console | playwright | `/_sys` -> `/_sys/tasks` with a false guard | URL unchanged; a warning containing `prevented by the navigation guard` | implemented | 2026-09-21 |
-| SPA-GUARD-02 | A BLOCKED navigation leaves the guard registered - only an approved one clears it | playwright | same dispatch | `has_navigation_guard()` still true | implemented | 2026-09-21 |
-| SPA-GUARD-03 | A guard resolving `true` allows the dispatch, and the navigation it approved clears it | playwright | `/_sys` -> `/_sys/tasks` with a true guard | landed on the target; `has_navigation_guard()` false | implemented | 2026-09-21 |
-| SPA-GUARD-04 | ONE SLOT, NOT A STACK: three registrations leave only the last callback, and one clear discards three sets | playwright | three `set_navigation_guard()` + `navigation_guard_allows()`; then three sets + one clear | only the third callback invoked, once; no guard after the single clear | implemented | 2026-09-21 |
-| SPA-GUARD-05 | A real page exit raises the browser's native `beforeunload` dialog while a guard is set, and nothing when none is | playwright | `page.close({runBeforeUnload:true})`, with and without a guard | a `beforeunload` dialog, then no dialog at all | implemented | 2026-09-21 |
+| SPA-GUARD-01 | `set_navigation_guard()` is a toggle with no callback: any argument throws, stating the contract, and turns nothing on | playwright | `set_navigation_guard(fn)`, `(undefined)`, `(true)` | three Errors starting `Rsx.set_navigation_guard() takes no argument`, naming `clear_navigation_guard()` and `rsx:man spa`; guard off | implemented | 2026-10-12 |
+| SPA-GUARD-02 | One slot, idempotent | playwright | three sets, one clear, a second clear | on after the sets, off after one clear and still off | implemented | 2026-10-12 |
+| SPA-GUARD-03 | Guard off: a link click is intercepted and dispatched in the SPA | playwright | click a planted `<a href="/_sys/tasks">` | landed on the target; the document mark survives; no dialog | implemented | 2026-10-12 |
+| SPA-GUARD-04 | Guard on: the link is NOT intercepted - a real navigation starts and the browser offers `beforeunload` | playwright | guard on, click a link, dismiss | a `beforeunload` dialog | implemented | 2026-10-12 |
+| SPA-GUARD-05 | Dismissing it leaves the page, its action instance and the guard exactly as they were | playwright | same | same path, same tagged action, no dispatch, guard on | implemented | 2026-10-12 |
+| SPA-GUARD-06 | Clearing the guard restores interception on the very next click | playwright | `clear_navigation_guard()`, click the link | in-SPA navigation, mark survives, no dialog | implemented | 2026-10-12 |
+| SPA-GUARD-07 | Navigation from code is not guarded: `Spa.dispatch()` goes ahead in the SPA with no dialog and leaves the guard off | playwright | guard on, `Spa.dispatch(target)` | landed, mark survives, no dialog, guard off | implemented | 2026-10-12 |
+| SPA-GUARD-08 | `Spa.redirect()` does the same | playwright | guard on, `Spa.redirect(start)` | landed, mark survives, no dialog, guard off | implemented | 2026-10-12 |
+| SPA-GUARD-09 | A dispatch to the page already showing (a fragment) is not a departure | playwright | guard on, `Spa.dispatch(pathname + "#guard_probe=1")` | hash set, same action instance, no dispatch, no dialog, guard still on | implemented | 2026-10-12 |
+| SPA-GUARD-10 | Guard on, dialog accepted: the target arrives as a full document, whose guard is off | playwright | guard on, click a link, accept | `beforeunload`; target path; the document mark is gone; guard off | implemented | 2026-10-12 |
+| SPA-GUARD-11 | Closing the page raises the native `beforeunload` dialog while the guard is on | playwright | user gesture, guard on, `page.close({runBeforeUnload:true})` | a `beforeunload` dialog | implemented | 2026-10-12 |
+| SPA-GUARD-12 | Once cleared, the installed listener stays silent | playwright | set then clear, close the page | the page closes; no dialog | implemented | 2026-10-12 |
 | SPA-HASH-01 | A Back/Forward that keeps the path and query leaves the SAME action instance mounted and fires `spa_hash_change` once with the restored hash | playwright | `/_sys`, `pushState('#panel=open')`, `history.back()` | the tagged instance survives; one event, `hash === ''` | implemented | 2026-09-24 |
-| SPA-HASH-02 | A fragment-only move is not a navigation: the navigation guard is not consulted and stays registered | playwright | same move with a `false` guard set | zero consults; `has_navigation_guard()` still true | implemented | 2026-09-24 |
+| SPA-HASH-02 | A fragment-only move is not a departure: with the navigation guard on it raises no dialog and leaves the guard on | playwright | same move with the guard on | no dialog; `has_navigation_guard()` still true | implemented | 2026-10-12 |
 | SPA-HASH-03 | A Back across a PATH change still re-dispatches a fresh action and fires no `spa_hash_change` | playwright | `/_sys` -> `/_sys/tasks`, `history.back()` | a new action on `/_sys`; no event | implemented | 2026-09-24 |
 | SPA-HASH-04 | An in-page `#at=` anchor link reaches its target on the MOUNTED action - the browser's native fragment scroll looks for `id="at=..."` and cannot | playwright | a `data-anchor` target appended to the `/_sys` action, `location.hash = 'at=...'` | target focused; same action instance; one `spa_hash_change` | implemented | 2026-09-24 |
 | SPA-RO-01 | The browser's ResizeObserver delivery-overrun notice (both spellings, ErrorEvent with no error object) fires no `unhandled_exception` and leaves SPA navigation enabled | playwright | `/_sys`, `dispatchEvent(new ErrorEvent('error', {message}))` | no event; `Spa._spa_enabled` true | implemented | 2026-09-25 |
@@ -40,9 +48,13 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-HISTORY-04 | The entry's own state follows the page while it is on screen | playwright | scroll to 450 | `history.state.scroll.y` 450 | implemented | 2026-10-11 |
 | SPA-HISTORY-05 | `Rsx.url_hash_set()` keeps the entry state | playwright | set and clear a hash key | run, index and scroll intact | implemented | 2026-10-11 |
 | SPA-HISTORY-06 | A layout that scrolls inside a container is measured and restored on the container | playwright | action root as the scrolling box, at 600 -> B -> Back | container at 600, window at 0 | implemented | 2026-10-11 |
-| SPA-HISTORY-07 | A vetoed Forward leaves the address, the stack length and the entry index as they were | playwright | `[A, B*, C]`, refusing guard, Forward | on B, length and index unchanged | implemented | 2026-10-11 |
-| SPA-HISTORY-08 | The popstate fired by undoing a veto is not a navigation | playwright | same | guard asked once, no dispatch | implemented | 2026-10-11 |
-| SPA-HISTORY-09 | A vetoed Back does the same, and both neighbours are still reachable afterwards | playwright | refusing guard, Back; then clear, Forward, Back, Back | on B; C then A reached, nothing added | implemented | 2026-10-11 |
+| SPA-HISTORY-07 | Guard on: a Back/Forward between SPA pages raises the browser confirm box with the unload wording | playwright | `[A, B*, C]`, guard on, Forward, dismiss | one `confirm`, message `Leave site?\n\nChanges you made may not be saved.` | implemented | 2026-10-12 |
+| SPA-HISTORY-08 | A declined Forward leaves the address, the stack length and the entry index as they were | playwright | same | on B, length and index unchanged, `Spa._history_index` unchanged | implemented | 2026-10-12 |
+| SPA-HISTORY-09 | Nothing is dispatched - neither the move nor the step back - the restoring popstate is not asked about, and the page and the guard are untouched | playwright | same | asked once, no dispatch, same action instance, guard on | implemented | 2026-10-12 |
+| SPA-HISTORY-10 | A declined Back does the same | playwright | guard on, Back, dismiss | as 08 + 09 | implemented | 2026-10-12 |
+| SPA-HISTORY-11 | A declined two-step jump steps back across both entries | playwright | `[A*, B, C]`, guard on, `history.go(2)`, dismiss | on A, as 08 + 09 | implemented | 2026-10-12 |
+| SPA-HISTORY-12 | An accepted Back/Forward turns the guard off and is dispatched in the SPA | playwright | guard on, Forward, accept | one `confirm`; on B; the document mark survives; guard off | implemented | 2026-10-12 |
+| SPA-HISTORY-13 | With the guard off nothing asks, and both neighbours are still reachable | playwright | Back before arming; after: Forward, Back, Back | no dialog; C then A reached, nothing added to the stack | implemented | 2026-10-12 |
 
 ## Notes
 

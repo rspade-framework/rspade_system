@@ -485,10 +485,14 @@ class Rsx {
     }
 
 
-    // The registered navigation guard, or null. ONE slot: set_navigation_guard()
-    // overwrites whatever was there, so the LAST registration wins and there is
-    // never a stack to unwind.
-    static _navigation_guard = null;
+    // The navigation guard: true while the page on screen has changes that would be
+    // lost by leaving it. A toggle - set_navigation_guard() / clear_navigation_guard().
+    static _navigation_guard = false;
+
+    // What the guard asks. It is the text of the confirm box raised for a Back/Forward
+    // between SPA pages, and matches the browser's own unload dialog, whose wording a
+    // page cannot set.
+    static NAVIGATION_GUARD_PROMPT = 'Leave site?\n\nChanges you made may not be saved.';
 
     // Whether the beforeunload listener has been installed (once per page load).
     static _navigation_guard_beforeunload_installed = false;
@@ -517,81 +521,85 @@ class Rsx {
     }
 
     /**
-     * Register the navigation guard: an async callback consulted before the user
-     * leaves the page they are on. The classic use is an editor with unsaved changes.
+     * Turn the navigation guard ON: this page has changes that would be lost by
+     * leaving it. Rsx.clear_navigation_guard() turns it off.
      *
-     * TWO MECHANISMS, one registration:
+     * THE GUARD IS A TOGGLE, AND THE BROWSER DOES THE ASKING. There is no callback and
+     * no dialog of the framework's or the application's. While the guard is on:
      *
-     *  - SPA navigation (link click, Back/Forward, or a programmatic Spa.dispatch() /
-     *    Spa.redirect() - all three reach Spa.dispatch(), which is the single choke
-     *    point: the delegated click handler in Spa.setup_browser_integration() calls
-     *    dispatch(), the popstate listener calls dispatch({_is_popstate: true}), and
-     *    redirect() is dispatch() with history: 'replace'). There, dispatch() awaits
-     *    the callback with the target URL. Resolve EXACTLY true to allow the
-     *    navigation; anything else blocks it, and the framework logs
-     *    "[Rsx] Navigation to <url> was prevented by the navigation guard."
+     *  - A link click (<a href>) is NOT intercepted by the SPA. The browser navigates
+     *    for real and raises its native "Leave site?" dialog. Stay: nothing changed.
+     *    Leave: the target arrives as a full page load.
+     *  - Refresh, tab close, a typed URL, a Back/Forward that leaves the document:
+     *    the same native dialog.
+     *  - Back/Forward between two SPA pages unloads nothing, so the SPA raises the
+     *    browser's native confirm box with the same wording. OK: the guard is cleared
+     *    and the move is an ordinary in-SPA navigation. Cancel: history is stepped
+     *    back to the entry the user was on, and the page is untouched.
+     *  - A Back/Forward that changes only the #fragment is not a departure and is
+     *    never asked about.
+     *  - Navigation from CODE - Spa.dispatch(), Spa.redirect() - is NOT guarded: it
+     *    goes ahead with no prompt and clears the guard. Code that navigates has
+     *    already decided.
      *
-     *  - Leaving the page for real (refresh, tab close, typed URL, external link).
-     *    The browser's own beforeunload dialog does the asking - a page cannot show
-     *    its own UI there - so the callback is NOT invoked in that case. This works
-     *    on any page, SPA or not: on a server-rendered page the native dialog IS the
-     *    whole feature.
+     * The browser raises its unload dialog only once the user has interacted with the
+     * page (a click, a key press), in its own wording; neither can be changed.
      *
-     * THE FRAMEWORK SHOWS NO DIALOG OF ITS OWN for SPA navigation. The callback is
-     * where the application asks - typically `async () => Modal.confirm(...)`, which
-     * resolves true/false and is exactly this contract.
+     * So the guard follows the page's state: on at the first change, off when the
+     * change is saved or discarded, off when the page is torn down.
      *
-     * The guard is CLEARED automatically once a navigation it approved goes ahead, so
-     * an editor that approved a departure cannot leave a stale prompt behind for the
-     * next page. A rejection leaves it registered.
+     *     on_ready() {
+     *         const form = this.$.find('.Rsx_Form').first().component();
+     *         form.on('input', () => Rsx.set_navigation_guard());        // dirty
+     *         form.on('submitted', () => Rsx.clear_navigation_guard());  // saved
+     *     }
      *
-     * A callback that REJECTS is not caught: the error propagates as an ordinary
-     * unhandled error rather than being read as a silent "block".
+     *     on_stop() {
+     *         Rsx.clear_navigation_guard();
+     *     }
      *
-     * @param {function(string): Promise<boolean>} fn - receives the target URL.
+     * A guard turned on at page load and never turned off asks on EVERY exit, changed
+     * or not. One slot, idempotent: turning on a guard that is on does nothing more.
+     * Works on any page, SPA or not - on a server-rendered page the native unload
+     * dialog is the whole feature.
+     *
+     * Takes NO argument. Passing one throws.
      */
-    static set_navigation_guard(fn) {
-        Rsx._navigation_guard = fn;
+    static set_navigation_guard() {
+        if (arguments.length > 0) {
+            throw new Error(
+                'Rsx.set_navigation_guard() takes no argument: the navigation guard is a toggle, not a callback. '
+                + 'Turn it on when the page has unsaved changes and off with Rsx.clear_navigation_guard() when '
+                + 'they are saved or discarded. The browser asks the user; there is no callback. '
+                + 'See rsx:man spa, THE NAVIGATION GUARD.'
+            );
+        }
+        Rsx._navigation_guard = true;
         Rsx._install_navigation_guard_beforeunload();
     }
 
     /**
-     * Clear the navigation guard. ONE call clears it however many times
-     * set_navigation_guard() was called - there is one slot, not a stack.
+     * Turn the navigation guard OFF: nothing on this page would be lost by leaving it.
+     * No prompt is raised and the SPA intercepts link clicks again, from the very next
+     * one. Clearing a guard that is already off does nothing.
      */
     static clear_navigation_guard() {
-        Rsx._navigation_guard = null;
+        Rsx._navigation_guard = false;
     }
 
     /**
-     * Is a navigation guard currently registered?
+     * Is the navigation guard on?
      *
      * @returns {boolean}
      */
     static has_navigation_guard() {
-        return Rsx._navigation_guard !== null;
-    }
-
-    /**
-     * Consult the guard for a target URL. True when there is no guard, or when the
-     * registered callback resolved exactly true. The navigation seam calls this so
-     * it never touches the slot itself.
-     *
-     * @param {string} url
-     * @returns {Promise<boolean>}
-     */
-    static async navigation_guard_allows(url) {
-        if (!Rsx._navigation_guard) {
-            return true;
-        }
-        const answer = await Rsx._navigation_guard(url);
-        return answer === true;
+        return Rsx._navigation_guard;
     }
 
     /**
      * Install, once per page load, the beforeunload listener that raises the browser's
-     * native leave dialog while a guard is registered. Browsers render their own
-     * wording and ignore the supplied string; it is set for the ones that honour it.
+     * native leave dialog while the guard is on. Browsers render their own wording and
+     * ignore the supplied string; it is set for the ones that require a value.
      * Private.
      */
     static _install_navigation_guard_beforeunload() {
@@ -604,7 +612,7 @@ class Rsx {
                 return;
             }
             e.preventDefault();
-            e.returnValue = 'You have unsaved changes. Leave this page?';
+            e.returnValue = Rsx.NAVIGATION_GUARD_PROMPT;
         });
     }
 

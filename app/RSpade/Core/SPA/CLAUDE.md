@@ -66,9 +66,10 @@ between `app_init` and `app_ready`: awaited dispatch to the initial URL). Both r
 unless `window.rsxapp.is_spa`.
 
 `dispatch()` is the single choke point - link clicks, `popstate`, `redirect()` and programmatic
-calls all land here. In order: the navigation-guard consult (`Rsx.has_navigation_guard()` ->
-`Rsx.navigation_guard_allows(url)`, cleared on an approved navigation, bypassed by
-`skip_navigation_guard`); the disabled check (`Spa.disable()` degrades
+calls all land here. In order: the navigation guard is turned OFF when the target is another
+page (`_is_fragment_only_move(location, url)` false - a dispatch is navigation from code, which
+the guard never asks about; the initial load and a confirmed popstate arrive with location
+already on the target, so they touch nothing); the disabled check (`Spa.disable()` degrades
 everything to full page loads, `force` exempts popstate); re-entrancy, which QUEUES a nested
 dispatch as `pending_redirect` and drains it in the `finally` (this is how an `on_load()` redirect
 works); ORM cache reset and the `spa_dispatch_start` trigger; the four hand-offs to the server via
@@ -78,9 +79,19 @@ gate; `_resolve_layout_chain()`; `Rsx.validate_session()` on every navigation af
 
 The one popstate that does NOT reach `dispatch()` is a fragment-only move: when the new location
 keeps the path and query of `_last_committed_url` (`_is_fragment_only_move()`), the handler
-records the URL, fires `spa_hash_change {url, hash}` and returns - no guard consult, no dispatch,
+records the URL, fires `spa_hash_change {url, hash}` and returns - no prompt, no dispatch,
 the action stays mounted. Fragments are not compared, because an application's own
 `replaceState()` write is invisible here and can leave the recorded fragment stale.
+
+**The navigation guard (`Rsx.set_navigation_guard()`, a boolean) is enforced in
+`setup_browser_integration()`, not in `dispatch()`.** The click handler returns without
+`preventDefault()` while it is on, beside the `_spa_enabled` return, so the document unloads and
+`Rsx`'s `beforeunload` listener raises the native dialog. The popstate handler - after the
+`_undoing_vetoed_move` swallow and the fragment-only return - raises `window.confirm(
+Rsx.NAVIGATION_GUARD_PROMPT)`: Cancel calls `_undo_vetoed_move()` (`history.go()` across the
+`spa_run`/`spa_index` distance, its own popstate swallowed) and returns with nothing dispatched;
+OK clears the guard and falls through to the ordinary popstate dispatch. `confirm()` is
+synchronous, which is what lets the answer be known before the handler returns.
 
 `_resolve_layout_chain()` walks `#spa-root` downward comparing each container's own class against
 `[...layouts, action]` - a layout or action is rendered ON its container element, not as a child of

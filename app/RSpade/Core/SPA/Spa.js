@@ -48,7 +48,7 @@ class Spa {
 
     // URL of the page currently showing, captured once a navigation actually
     // completes. It is what a fragment-only Back/Forward is compared against, and the
-    // URL a vetoed Back/Forward falls back to pushing when the browser cannot simply
+    // URL a declined Back/Forward falls back to pushing when the browser cannot simply
     // be stepped back (_undo_vetoed_move()).
     static _last_committed_url = null;
 
@@ -57,13 +57,14 @@ class Spa {
     // the stack, and the run id says which entries were numbered together (an entry
     // the SPA did not write starts a new run when it is first arrived at). Two entries
     // of the same run are therefore exactly (index difference) steps apart, which is
-    // what lets a vetoed Back/Forward step the browser back to where it was. Null
+    // what lets a declined Back/Forward step the browser back to where it was. Null
     // until the first entry is stamped.
     static _history_run = null;
     static _history_index = null;
 
-    // True between a vetoed Back/Forward and the popstate its undoing history.go()
-    // fires, which must not be read as a navigation.
+    // True between a Back/Forward the user declined at the navigation guard's prompt
+    // and the popstate its undoing history.go() fires, which must not be read as a
+    // navigation.
     static _undoing_vetoed_move = false;
 
     // True for a dispatch that is restoring a recorded scroll position (Back/Forward),
@@ -428,6 +429,9 @@ class Spa {
      * - Handles back/forward navigation with scroll restoration
      * - A Back/Forward that changes only the fragment fires spa_hash_change and
      *   leaves the action mounted; any path or query change re-dispatches
+     * - While the navigation guard is on (Rsx.set_navigation_guard()): link clicks are
+     *   left to the browser, whose unload dialog asks; a Back/Forward between SPA
+     *   pages asks with the browser's confirm box before anything is dispatched
      * - Defers to server for edge cases (external links, non-SPA routes, etc.)
      */
     static setup_browser_integration() {
@@ -458,8 +462,8 @@ class Spa {
                 state: e.state
             });
 
-            // The second half of a vetoed move: the guard refused, the browser was
-            // stepped back to the entry it left, and this is that step arriving.
+            // The second half of a declined move: the user answered Cancel, the browser
+            // was stepped back to the entry it left, and this is that step arriving.
             if (Spa._undoing_vetoed_move) {
                 Spa._undoing_vetoed_move = false;
                 return;
@@ -473,7 +477,7 @@ class Spa {
             // dialog, a DataGrid page). Re-dispatching would tear down and rebuild the
             // action to reflect a change only the application can interpret, so the
             // action stays mounted and the application is told instead. The navigation
-            // guard is not consulted: the user is not leaving the page.
+            // guard does not ask: the user is not leaving the page.
             if (Spa._last_committed_url !== null && Spa._is_fragment_only_move(Spa._last_committed_url, url)) {
                 console_debug('Spa', 'Fragment-only popstate, firing spa_hash_change: ' + url);
                 Spa._last_committed_url = url;
@@ -481,6 +485,20 @@ class Spa {
                 Spa._scroll_to_hash_anchor();
                 Rsx.trigger('spa_hash_change', { url: url, hash: window.location.hash });
                 return;
+            }
+
+            // THE NAVIGATION GUARD. A history move between two SPA pages unloads nothing,
+            // so the browser's own unload dialog never appears for it; the browser's
+            // confirm box asks the same question instead, synchronously, before
+            // anything is dispatched. Cancel steps history back to the entry the user
+            // was on and the page is left exactly as it was, guard still on. OK turns
+            // the guard off and the move goes ahead as an ordinary Back/Forward.
+            if (Rsx.has_navigation_guard()) {
+                if (!window.confirm(Rsx.NAVIGATION_GUARD_PROMPT)) {
+                    Spa._undo_vetoed_move();
+                    return;
+                }
+                Rsx.clear_navigation_guard();
             }
 
             // The page still on screen is the one being LEFT, and the browser has
@@ -569,6 +587,15 @@ class Spa {
 
             // Check if target URL matches a Spa route
             if (Spa.match_url_to_route(href)) {
+                // The navigation guard is on: leaving this page has to be confirmed,
+                // and the browser already knows how to ask. The link behaves as an
+                // ordinary link, the document starts to unload and beforeunload raises
+                // the native dialog. Nothing is prevented here.
+                if (Rsx.has_navigation_guard()) {
+                    console_debug('Spa', 'Navigation guard on, letting browser handle: ' + href);
+                    return;
+                }
+
                 // Check if SPA is enabled
                 if (!Spa._spa_enabled) {
                     console_debug('Spa', 'SPA disabled, letting browser handle: ' + href);
@@ -612,9 +639,18 @@ class Spa {
         const from = Spa.parse_url(from_url);
         const to = Spa.parse_url(to_url);
 
-        return from.path === to.path && from.search === to.search;
+        return from.host === to.host && from.path === to.path && from.search === to.search;
     }
 
+
+    /**
+     * Navigate to a URL, replacing the current history entry instead of pushing.
+     * Use for programmatic redirects (e.g., in on_load() when a record should
+     * display at a different URL) so Back button skips the redirecting page.
+     */
+    static async redirect(url, options = {}) {
+        return Spa.dispatch(url, { ...options, history: 'replace' });
+    }
 
     /**
      * Main dispatch method - navigate to a URL
@@ -632,28 +668,17 @@ class Spa {
      * @param {object|null} options.scroll - Scroll position {x, y} to restore (default: null = scroll to top)
      * @param {boolean} options.triggers - Fire before/after dispatch events (default: true)
      * @param {boolean} options.force - Force SPA dispatch even if disabled (used by popstate) (default: false)
-     * @param {boolean} options.skip_navigation_guard - Bypass the registered navigation guard
-     *   (Rsx.set_navigation_guard) for an intentional programmatic navigation (default: false).
-     *   Note: popstate does NOT set this - Back/Forward must always be subject to the guard.
+     *
+     * THE NAVIGATION GUARD DOES NOT GUARD THIS. Navigation from code - a button
+     * handler, a row click, a redirect after a save - goes ahead with no prompt, and a
+     * dispatch that leaves the page turns the guard off (Rsx.clear_navigation_guard()),
+     * so nothing is left armed for the page that follows. The guard asks about what
+     * the USER does to the browser: a link, Back/Forward, refresh, close. A dispatch
+     * to the page already showing (same path and query) is not a departure and leaves
+     * the guard as it is.
      */
-    /**
-     * Navigate to a URL, replacing the current history entry instead of pushing.
-     * Use for programmatic redirects (e.g., in on_load() when a record should
-     * display at a different URL) so Back button skips the redirecting page.
-     */
-    static async redirect(url, options = {}) {
-        return Spa.dispatch(url, { ...options, history: 'replace' });
-    }
-
     static async dispatch(url, options = {}) {
-        if (Rsx.has_navigation_guard() && !options.skip_navigation_guard) {
-            if (!await Rsx.navigation_guard_allows(url)) {
-                console.warn('[Rsx] Navigation to ' + url + ' was prevented by the navigation guard.');
-                if (options._is_popstate) {
-                    Spa._undo_vetoed_move();
-                }
-                return;
-            }
+        if (Rsx.has_navigation_guard() && !Spa._is_fragment_only_move(window.location.href, url)) {
             Rsx.clear_navigation_guard();
         }
 
@@ -861,7 +886,7 @@ class Spa {
                 Error_Screens.unauthorized();
 
                 // The denied URL is what the address bar shows, so it is also what a
-                // vetoed Back/Forward navigation has to restore.
+                // declined Back/Forward navigation has to restore.
                 Spa._last_committed_url = parsed.path + parsed.search + (parsed.hash || '');
                 Spa.is_dispatching = false;
 
@@ -956,8 +981,8 @@ class Spa {
                 Spa._initial_load_complete = true;
             }
 
-            // Record the URL now showing. Used to restore the address bar if a
-            // later Back/Forward navigation is vetoed by the navigation guard. Same URL
+            // Record the URL now showing. Used to restore the address bar if the user
+            // declines a later Back/Forward at the navigation guard's prompt. Same URL
             // construction as the history push/replace above.
             Spa._last_committed_url = parsed.path + parsed.search + (parsed.hash || '');
 
@@ -1407,8 +1432,8 @@ class Spa {
     }
 
     /**
-     * The navigation guard refused a Back/Forward. The browser has already moved to
-     * the target entry, so put it back on the one it left.
+     * The user declined a Back/Forward at the navigation guard's prompt. The browser
+     * has already moved to the target entry, so put it back on the one it left.
      *
      * When both entries belong to the same numbered run, the distance between them is
      * known and history.go() steps back across it: the stack is untouched, and the
