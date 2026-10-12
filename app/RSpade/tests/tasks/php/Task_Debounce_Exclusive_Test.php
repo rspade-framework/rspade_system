@@ -543,13 +543,24 @@ class Task_Debounce_Exclusive_Test extends Rsx_Test_Abstract
             );
         }
 
+        static::__assert_equals(
+            [],
+            TaskConcurrencyAttributes_CodeQualityRule::attribute_problems('fixture', ['Debounce' => [[]]]),
+            'a bare #[Debounce] is a debounce with no delay'
+        );
+        static::__assert_equals(
+            [],
+            TaskConcurrencyAttributes_CodeQualityRule::attribute_problems('fixture', ['Debounce' => [[0]]]),
+            '#[Debounce(0)] says the same'
+        );
+
         static::__assert_array_has_key('Debounce', static::__attributes('combo_debounced'), 'the fixture really declares both');
         static::__assert_array_has_key('Exclusive', static::__attributes('combo_debounced'));
 
         $refused = [
             'a negative delay' => ['Debounce' => [[-1]]],
             'a non-integer delay' => ['Debounce' => [['30']]],
-            'no delay' => ['Debounce' => [[]]],
+            'two debounce arguments' => ['Debounce' => [[30, 60]]],
             'an empty group name' => ['Exclusive' => [['  ']]],
             'a non-string group' => ['Exclusive' => [[7]]],
             'two group names' => ['Exclusive' => [['a', 'b']]],

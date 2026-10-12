@@ -11,7 +11,7 @@ use App\RSpade\Core\Manifest\Manifest;
  * #[Exclusive] and #[Debounce(seconds)] may be declared alone or together on one task
  * method (rsx:man tasks, CONCURRENCY). What the rule refuses is a malformed argument:
  *
- *   - #[Debounce] must carry one non-negative integer number of seconds;
+ *   - #[Debounce] takes nothing (no delay), or one non-negative integer number of seconds;
  *   - #[Exclusive] takes nothing, or one group name as a non-empty string.
  *
  * Cross-file rule: runs once per rsx:check over the whole manifest.
@@ -30,7 +30,7 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function get_description(): string
     {
-        return 'Debounce takes one non-negative integer number of seconds; Exclusive takes nothing or one non-empty group name';
+        return 'Debounce takes nothing or one non-negative integer number of seconds; Exclusive takes nothing or one non-empty group name';
     }
 
     public function get_file_patterns(): array
@@ -105,12 +105,13 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
         $problems = [];
 
         $debounce_args = static::__attr_args($attrs, 'Debounce');
-        if ($debounce_args !== null) {
+        if ($debounce_args !== null && $debounce_args !== []) {
             $delay = $debounce_args[0] ?? null;
             if (count($debounce_args) !== 1 || !is_int($delay) || $delay < 0) {
                 $problems[] = [
-                    "Task {$method_name} #[Debounce] must take one non-negative integer number of seconds.",
-                    'Use e.g. #[Debounce(30)].',
+                    "Task {$method_name} #[Debounce] takes nothing, or one non-negative integer number of seconds.",
+                    'Use #[Debounce] for no delay (a coalesced follow-up is due as soon as the previous run ' .
+                    'finishes), or e.g. #[Debounce(30)] to hold it 30 seconds after the previous run completed.',
                 ];
             }
         }

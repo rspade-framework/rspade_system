@@ -71,6 +71,34 @@ class Task_Debounce_Identity_Test extends Rsx_Test_Abstract
         static::__assert_equals(2, static::__pending_count('debounce_task'));
     }
 
+    /**
+     * The delay is optional. A bare #[Debounce] coalesces exactly like one with a delay, and
+     * its follow-up is due the moment the previous run has completed - nothing holds it back.
+     */
+    public static function test_a_debounce_with_no_delay_coalesces_and_is_due_at_once()
+    {
+        $policy = Task_Concurrency::get_policy(Task_Concurrency_Fixture_Service::class, 'debounce_no_delay_task');
+        static::__assert_equals('debounce', $policy['mode']);
+        static::__assert_equals(0, $policy['delay'], 'no argument is no delay');
+
+        // A run of the identity completed a moment ago: a delay would push the next one out.
+        $done = Task::dispatch('Task_Concurrency_Fixture_Service', 'debounce_no_delay_task', ['k' => 1]);
+        DB::table('_tasks')->where('id', $done)->update([
+            'status_id' => Task_Run_Model::STATUS_COMPLETED,
+            'completed_at' => now()->format('Y-m-d H:i:s.v'),
+        ]);
+
+        $first = Task::dispatch('Task_Concurrency_Fixture_Service', 'debounce_no_delay_task', ['k' => 1]);
+        $again = Task::dispatch('Task_Concurrency_Fixture_Service', 'debounce_no_delay_task', ['k' => 1]);
+
+        static::__assert_equals($first, $again, 'repeat dispatches of the same parameters are one pending run');
+        static::__assert_equals(1, static::__pending_count('debounce_no_delay_task'));
+        static::__assert_true(
+            strtotime((string) DB::table('_tasks')->where('id', $first)->value('scheduled_for')) <= time(),
+            'the pending run is due now, straight after the previous completion'
+        );
+    }
+
     public static function test_an_unmanaged_task_never_coalesces()
     {
         $first = Task::dispatch('Task_Concurrency_Fixture_Service', 'plain_task');

@@ -37,6 +37,15 @@ class Task_Concurrency_Fixture_Service extends Rsx_Service_Abstract
         return null;
     }
 
+    #[Task('Fixture debounce task with no delay (test-only)')]
+    #[Debounce]
+    public static function debounce_no_delay_task(Task_Instance $task, array $params = [])
+    {
+        $task->state(['ran' => 'debounce_no_delay']);
+
+        return null;
+    }
+
     #[Task('Fixture plain unmanaged task (test-only)')]
     public static function plain_task(Task_Instance $task, array $params = [])
     {

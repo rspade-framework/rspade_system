@@ -463,8 +463,16 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
                                          // 30 s after the previous run COMPLETED
 
     Both guarantee, per IDENTITY, AT MOST ONE RUNNING + AT MOST ONE PENDING run - a
-    distributed translation of the JS debounce(). #[Exclusive] has no delay. The
-    identity differs:
+    distributed translation of the JS debounce(). #[Exclusive] has no delay.
+
+    THE DELAY IS OPTIONAL. #[Debounce] with no argument, and #[Debounce(0)], mean no
+    delay: a dispatch made while a run of the same identity is in progress queues one
+    follow-up, and that follow-up is due the moment the running one finishes - it runs
+    as soon as a worker is free and nothing older is ahead of it in the queue. What is
+    left is the coalescing: however many times the identity is dispatched meanwhile,
+    one run follows.
+
+    The identity differs:
 
         #[Exclusive]   the method - class::method, whatever the params (with a group
                        name, also one RUNNING across the group - below)
@@ -485,8 +493,8 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
         #[Debounce(n)] + #[Exclusive('g')]  method + params    group g           n
 
     rsx:check (TASK-CONCURRENCY-01) refuses only a malformed argument: #[Debounce] takes
-    one non-negative integer number of seconds, #[Exclusive] nothing or one group name
-    as a non-empty string.
+    nothing or one non-negative integer number of seconds, #[Exclusive] nothing or one
+    group name as a non-empty string.
 
     AN EXCLUSIVE GROUP serializes several task methods against each other:
 
