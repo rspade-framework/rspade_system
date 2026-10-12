@@ -49,7 +49,9 @@ Test-only fixtures in `tasks/php/`:
 - `Task_Exec_Fixture_Service` - markers recording execution order, every return shape, a
   stoppable loop, throwing and printing tasks.
 - `Task_Concurrency_Fixture_Service` - `#[Exclusive]`, a two-member
-  `#[Exclusive('fixture_group')]` group, `#[Debounce(30)]` and plain tasks.
+  `#[Exclusive('fixture_group')]` group, `#[Debounce(30)]`, `#[Debounce(30)]` beside a bare
+  `#[Exclusive]`, the group `fixture_combo_group` (one `#[Debounce(30)]` member, one plain
+  member) and plain tasks.
 - `Task_Lock_Holder` - another PROCESS holding a named run lock (RsxLocks is re-entrant within a
   process, so "running elsewhere" needs a second one): holds until released, or releases the
   moment a writer queues behind it.
@@ -74,6 +76,11 @@ They exist only while the suite runs (the test trees enter the manifest only the
 - Single-instance identities: coalescing primitives, dispatch coalescing, the run lock held by
   another process for an inline run and a worker claim. (php; `Task_Concurrency_Test`,
   `Task_Debounce_Identity_Test`)
+- `#[Debounce]` and `#[Exclusive]` declared together: a bare `#[Exclusive]` adds nothing; with
+  a group the pending identity is the debounce's and the run lock the group's - enqueue,
+  delay and re-anchor, the worker passing over a busy group, the inline wait, the wait line,
+  schedule ticks, and what `TASK-CONCURRENCY-01` accepts and refuses. (php;
+  `Task_Debounce_Exclusive_Test`)
 - Pools: caps, what each pool claims (scheduled takes dispatched work first), schedule claims
   creating their run rows, coalesced schedule ticks, a claim handed back. (php;
   `Task_Pools_Test`) Admission and spawning (`Task_Spawn_Admission_Test`); the rsx-lockd client

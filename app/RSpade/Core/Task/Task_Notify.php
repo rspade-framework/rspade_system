@@ -82,7 +82,7 @@ class Task_Notify
         // THE WAITERS. A pending run of an #[Exclusive] / #[Debounce] task says what it is
         // waiting for (Task_Waiting), and that answer names the run holding its lock - so it
         // changes when a run on the same lock starts or settles. Those pending runs (one per
-        // identity; one per member method of a group) get their own changed frame, and a
+        // pending identity; for a group, every member's) get their own changed frame, and a
         // single-run view re-reads. Task-table reads again; the frames obey the pool-lock rule
         // above like any other.
         foreach (Task_Concurrency::pending_ids_on_run_lock($row->class, $row->method, (string) $row->params_hash) as $waiter_id) {

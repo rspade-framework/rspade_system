@@ -313,8 +313,9 @@ class Task_Worker_Command extends Command
      * A due #[Schedule]: advance its next_run_at and create its run row, RUNNING under this
      * worker, in one transaction. A schedule whose identity is already running (an on-demand
      * run of an #[Exclusive] task) has this tick coalesced into that run: next_run_at is
-     * advanced and nothing runs. A schedule held back only by ANOTHER task of its exclusive
-     * group is queued as a pending run instead.
+     * advanced and nothing runs. A schedule held back only by ANOTHER identity of its exclusive
+     * group - another member, or for a #[Debounce] member a run of its own method with other
+     * params - is queued as a pending run instead.
      */
     private function claim_due_schedule(array $identity)
     {
@@ -341,11 +342,12 @@ class Task_Worker_Command extends Command
                     'updated_at' => now(),
                 ]);
 
-                // The lock of an exclusive GROUP may be held by a different task of the
-                // group. This tick is then not a repeat of anything running: it is queued as
-                // this method's pending run, which a worker claims once the group is free.
+                // The lock of an exclusive GROUP may be held by a run of a different identity
+                // of the group. This tick is then not a repeat of anything running: it is
+                // queued as this identity's pending run, which a worker claims once the group
+                // is free.
                 if (Task_Concurrency::group_of($schedule->class, $schedule->method) !== null
-                    && !Task_Concurrency::is_method_running($schedule->class, $schedule->method)) {
+                    && !Task_Concurrency::is_identity_running($schedule->class, $schedule->method, $params_hash)) {
                     $queued_id = Task_Concurrency::enqueue_coalesced_without_waiting(
                         $schedule->class,
                         $schedule->method,

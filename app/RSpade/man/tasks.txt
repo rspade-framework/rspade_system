@@ -450,7 +450,7 @@ STARTING A RUN
 
 CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
 
-    Two mutually-exclusive markers; declaring both fails rsx:check (TASK-CONCURRENCY-01):
+    Two markers, declared alone or together (TOGETHER, below):
 
         #[Task('Send pending email')]
         #[Exclusive]                     // at most one instance runs at a time
@@ -472,6 +472,22 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
                        (sha256 of the params' JSON with every object's keys sorted), so
                        two different parameter sets are debounced independently
 
+    A policy really has TWO identities, decided separately: the PENDING identity (what
+    one pending run, the debounce delay and the re-anchor are keyed on) and the RUN-LOCK
+    identity (what "running" is keyed on). They are the same thing for every declaration
+    but a group's:
+
+        declaration                         pending identity   run lock          delay
+        #[Exclusive]                        method             method            none
+        #[Exclusive('g')]                   method             group g           none
+        #[Debounce(n)]                      method + params    method + params   n
+        #[Debounce(n)] + #[Exclusive]       method + params    method + params   n
+        #[Debounce(n)] + #[Exclusive('g')]  method + params    group g           n
+
+    rsx:check (TASK-CONCURRENCY-01) refuses only a malformed argument: #[Debounce] takes
+    one non-negative integer number of seconds, #[Exclusive] nothing or one group name
+    as a non-empty string.
+
     AN EXCLUSIVE GROUP serializes several task methods against each other:
 
         #[Task('Mirror the remote folder tree')]
@@ -488,9 +504,10 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
     were each written as its only writer.
 
         RUNNING   one across the group.
-        PENDING   one per METHOD, exactly as for a bare #[Exclusive]. A push queued while
-                  the mirror runs is never replaced by another member's run; only a
-                  repeat of the same method is coalesced onto it.
+        PENDING   one per METHOD, exactly as for a bare #[Exclusive] (one per method +
+                  params for a member that is also #[Debounce] - TOGETHER, below). A
+                  push queued while the mirror runs is never replaced by another
+                  member's run; only a repeat of the same method is coalesced onto it.
 
     A pending run whose group is busy is PASSED OVER by every worker - it holds no worker
     slot while it waits - and is claimed as soon as the group's lock is free; the worker
@@ -506,12 +523,57 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
     Task_Concurrency::is_group_running('remote_sync') answers whether any task of a
     group is running right now, without acquiring anything.
 
+    TOGETHER: #[Debounce] AND #[Exclusive] ON ONE TASK
+
+    #[Debounce(n)] beside a BARE #[Exclusive] is #[Debounce(n)] alone: the #[Exclusive]
+    adds nothing, and two different parameter sets still run side by side.
+
+    #[Debounce(n)] beside #[Exclusive('group')] composes the two - the debounce decides
+    how runs are QUEUED, the group decides when they RUN:
+
+        #[Task('Sync one client folder to the remote tree')]
+        #[Debounce(60)]
+        #[Exclusive('remote_sync')]
+        public static function sync_client(Task_Instance $task, array $params = []) { ... }
+
+        Task::dispatch('Remote_Service', 'sync_client', ['client_id' => 7]);   // run A
+        Task::dispatch('Remote_Service', 'sync_client', ['client_id' => 7]);   // A again
+        Task::dispatch('Remote_Service', 'sync_client', ['client_id' => 9]);   // run B
+
+        ENQUEUE   the debounce's, per method + params: at most one PENDING run per
+                  parameter set, and a dispatch while one is pending returns its id. A
+                  fresh run is due no sooner than n seconds after that parameter set's
+                  last completion, and a pending run is re-anchored to now + n when a
+                  run of the same parameter set settles.
+        RUNNING   the group's: the run takes the group's run lock, so one task of the
+                  group runs at a time across every member, plain and debounced alike.
+                  A and B above never run together, and neither runs beside mirror or
+                  push.
+
+    A debounced run that is due while another member holds the group stays queued - passed
+    over by every worker, holding no worker slot - and starts when it gets the group's
+    lock, in the queue's order. While A is RUNNING, a dispatch of the same parameter set
+    queues ONE new pending run at the end of the line and further dispatches return it; a
+    dispatch with other params is its own pending run, which also waits for the group. So
+    within one group: one RUNNING, and PENDING one per parameter set for each debounced
+    member plus one per method for each plain member.
+
+    "At most one running per parameter set" needs no lock of its own here - the group's
+    lock already allows one run in the whole group. Which run that is, is read from its
+    row: a schedule tick that finds its OWN parameter set (a schedule's is the empty one)
+    running is coalesced into that run; one held back by anything else in the group - a
+    different member, or the same method with other params - is queued as its pending
+    run. The wait line of a blocked run names the group and the holder; while its delay
+    has not elapsed it reads "scheduled for ..." instead (WHAT A PENDING RUN IS WAITING
+    FOR).
+
     The guarantee holds however the task runs: dispatch() coalesces onto the identity's
     pending run and returns its id; a worker claims a run only while holding the
     identity's run lock (a non-blocking try - a run whose identity is busy is passed over);
     a schedule tick whose identity is already running is coalesced into that run (its
     next_run_at advances and nothing runs); an inline run waits for the run lock. When a
-    run settles, a coalesced pending run is re-anchored to now + the debounce delay. State
+    run settles, a coalesced pending run of the same pending identity is re-anchored to
+    now + the debounce delay. State
     is durable (_tasks rows) and cluster-safe (Task_Lock, a named RsxLocks lock).
 
     IMPORTANT: these guard ONE identity against ITSELF. They do NOT stop a different task

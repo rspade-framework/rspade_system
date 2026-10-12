@@ -12,8 +12,10 @@ use App\RSpade\Core\Task\Task_Instance;
 
 /**
  * Test-only service exercising the concurrency attributes (#[Exclusive], a two-member
- * #[Exclusive('fixture_group')] group, #[Debounce]) and the plain (unmanaged) case. No #[Schedule] - never auto-run by
- * the cron. Methods are trivial and side-effect-free; each reports what ran.
+ * #[Exclusive('fixture_group')] group, #[Debounce], #[Debounce] beside a bare #[Exclusive],
+ * and a second group, 'fixture_combo_group', of one #[Debounce] member and one plain member)
+ * and the plain (unmanaged) case. No #[Schedule] - never auto-run by the cron. Methods are
+ * trivial and side-effect-free; each reports what ran.
  */
 class Task_Concurrency_Fixture_Service extends Rsx_Service_Abstract
 {
@@ -57,6 +59,35 @@ class Task_Concurrency_Fixture_Service extends Rsx_Service_Abstract
     public static function group_beta(Task_Instance $task, array $params = [])
     {
         $task->state(['ran' => 'group_beta']);
+
+        return null;
+    }
+
+    #[Task('Fixture debounce task also declaring a bare exclusive (test-only)')]
+    #[Debounce(30)]
+    #[Exclusive]
+    public static function debounce_exclusive_task(Task_Instance $task, array $params = [])
+    {
+        $task->state(['ran' => 'debounce_exclusive']);
+
+        return null;
+    }
+
+    #[Task('Fixture debounced member of the combo group (test-only)')]
+    #[Debounce(30)]
+    #[Exclusive('fixture_combo_group')]
+    public static function combo_debounced(Task_Instance $task, array $params = [])
+    {
+        $task->state(['ran' => 'combo_debounced']);
+
+        return null;
+    }
+
+    #[Task('Fixture plain member of the combo group (test-only)')]
+    #[Exclusive('fixture_combo_group')]
+    public static function combo_plain(Task_Instance $task, array $params = [])
+    {
+        $task->state(['ran' => 'combo_plain']);
 
         return null;
     }

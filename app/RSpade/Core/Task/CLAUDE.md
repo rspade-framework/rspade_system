@@ -46,12 +46,21 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `force_stop`, `force_kill`, `cancel`, `rerun`), each writing an operator line.
   `Task_Schedule_Model`, `Task_Attachment_Model` (a `#[Blob_Reference]` + `Blob_Referencing`)
   and `Task_Kill_Request_Model` are the side-table models; all are base + shell.
-- `Task_Concurrency.php` — `#[Exclusive]` (identity `class::method`; with a group name,
-  `#[Exclusive('group')]`, the RUN lock is the group's while pending rows stay per method -
-  `group_of()`, `is_group_running()`, `enqueue_coalesced_without_waiting()` for the schedule
-  tick that queues behind another member under the pool lock) / `#[Debounce]`
-  (`class::method::params_hash`): `run_lock_identity()`, `group_members()` (from the
-  manifest's attribute index), `pending_ids_on_run_lock()` (the waiters of one lock),
+- `Task_Concurrency.php` — the policy of a task method, as TWO identities decided
+  separately. The PENDING identity (`identity_key()`: the pending row, the enqueue lock, the
+  delay, the re-anchor) is `class::method` for `#[Exclusive]` and
+  `class::method::params_hash` whenever `#[Debounce]` is declared; the RUN-LOCK identity
+  (`run_lock_identity()`) is the group's whenever `#[Exclusive('group')]` is declared and
+  the pending identity otherwise. The markers may be declared together: `get_policy()`
+  answers `mode` `debounce` whenever `#[Debounce]` is present (a bare `#[Exclusive]` beside
+  it changes nothing) and `group` from `#[Exclusive('group')]` beside either. `group_of()`,
+  `is_group_running()` (the group's lock, asked of the daemon), `is_identity_running()`
+  (a RUNNING row of the pending identity - how a schedule tick tells its own repeat from
+  another identity holding the group), `enqueue_coalesced_without_waiting()` for the
+  schedule tick that queues behind another identity of its group under the pool lock,
+  `group_members()` (from the manifest's attribute index, debounced members included),
+  `pending_ids_on_run_lock()` (the waiters of one lock - for a group, every pending run of
+  every member),
   `params_hash()`, the coalescing enqueue under the identity's
   enqueue lock, `try_acquire_run_lock()` (a worker's non-blocking try), `acquire_run_lock()`
   (an inline run waits), `reschedule_pending_after_completion()`.
@@ -200,6 +209,14 @@ says what is in this DIRECTORY and what must stay true when editing it.
   every NEW reporting call on `Task_Instance` must end in `__reported()`, including its
   early returns; `insert_row()` must never write a default into `timeout`; and none of this
   is licence to add a timeout anywhere else (the no-timeout mandate).
+- **A run takes ONE run lock, the run-lock identity's.** A debounced member of an exclusive
+  group takes the group's lock and no lock of its debounce identity: the group's lock already
+  allows one run in the whole group, and which pending identity is the one running is read
+  from the RUNNING row (`is_identity_running()`). Nothing may add a second run lock for it -
+  two locks per claim would be two tries under the pool lock and an ordering to get wrong.
+  Every branch that asks "which rows are this identity's" goes through the pending identity
+  (`__identity_query()`), and every branch that asks "what excludes this run" through
+  `run_lock_identity()`; neither is inferred from `mode` alone.
 - **What a pending run waits for is DERIVED, never stored.** `Task_Waiting` reads the row,
   the lock daemon and the running rows when asked; no column may be added to cache it, and no
   path may write "blocked by" state onto a run - a dead holder must leave nothing to clean

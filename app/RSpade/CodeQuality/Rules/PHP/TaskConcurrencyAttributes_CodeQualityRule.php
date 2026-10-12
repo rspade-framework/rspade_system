@@ -6,12 +6,13 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
 /**
- * TASK-CONCURRENCY-01 - validates task concurrency attributes.
+ * TASK-CONCURRENCY-01 - validates the arguments of the task concurrency attributes.
  *
- * A task method's concurrency policy is EITHER #[Exclusive] OR #[Debounce(seconds)]
- * OR neither - never both (they are the same mechanism with a 0 vs N delay, so
- * setting both is contradictory). Also validates that #[Debounce] carries a single
- * non-negative integer delay.
+ * #[Exclusive] and #[Debounce(seconds)] may be declared alone or together on one task
+ * method (rsx:man tasks, CONCURRENCY). What the rule refuses is a malformed argument:
+ *
+ *   - #[Debounce] must carry one non-negative integer number of seconds;
+ *   - #[Exclusive] takes nothing, or one group name as a non-empty string.
  *
  * Cross-file rule: runs once per rsx:check over the whole manifest.
  */
@@ -29,7 +30,7 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function get_description(): string
     {
-        return 'A task is Exclusive OR Debounce(seconds) OR neither - never both; Debounce takes one non-negative integer';
+        return 'Debounce takes one non-negative integer number of seconds; Exclusive takes nothing or one non-empty group name';
     }
 
     public function get_file_patterns(): array
@@ -85,48 +86,51 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
                     continue;
                 }
 
-                $has_exclusive = $this->__has_attr($attrs, 'Exclusive');
-                $debounce_args = $this->__attr_args($attrs, 'Debounce');
-                $has_debounce = $debounce_args !== null;
-
-                if ($has_exclusive && $has_debounce) {
-                    $this->__violate(
-                        $base_file,
-                        $method_name,
-                        "Task {$method_name} declares both #[Exclusive] and #[Debounce] - they are mutually exclusive.",
-                        "A task is EITHER #[Exclusive] (run one at a time, no delay) OR #[Debounce(seconds)] " .
-                        "(same, but the coalesced follow-up waits N seconds) OR neither. Remove one."
-                    );
-                    continue;
-                }
-
-                if ($has_debounce) {
-                    $delay = $debounce_args[0] ?? null;
-                    if (!is_int($delay) || $delay < 0) {
-                        $this->__violate(
-                            $base_file,
-                            $method_name,
-                            "Task {$method_name} #[Debounce] must take one non-negative integer number of seconds.",
-                            "Use e.g. #[Debounce(30)]."
-                        );
-                    }
+                foreach (static::attribute_problems($method_name, $attrs) as [$message, $fix]) {
+                    $this->__violate($base_file, $method_name, $message, $fix);
                 }
             }
         }
     }
 
-    private function __has_attr(array $attrs, string $name): bool
+    /**
+     * What is wrong with one method's concurrency attributes, as [message, fix] pairs.
+     * Empty for a method that declares neither, either, or both with well-formed arguments.
+     *
+     * @param array $attrs The method's manifest attribute map (name => instances of args)
+     * @return array<int, array{0: string, 1: string}>
+     */
+    public static function attribute_problems(string $method_name, array $attrs): array
     {
-        foreach ($attrs as $attr_name => $instances) {
-            if ($attr_name === $name || str_ends_with($attr_name, '\\' . $name)) {
-                return true;
+        $problems = [];
+
+        $debounce_args = static::__attr_args($attrs, 'Debounce');
+        if ($debounce_args !== null) {
+            $delay = $debounce_args[0] ?? null;
+            if (count($debounce_args) !== 1 || !is_int($delay) || $delay < 0) {
+                $problems[] = [
+                    "Task {$method_name} #[Debounce] must take one non-negative integer number of seconds.",
+                    'Use e.g. #[Debounce(30)].',
+                ];
             }
         }
 
-        return false;
+        $exclusive_args = static::__attr_args($attrs, 'Exclusive');
+        if ($exclusive_args !== null && $exclusive_args !== []) {
+            $group = $exclusive_args[0] ?? null;
+            if (count($exclusive_args) !== 1 || !is_string($group) || trim($group) === '') {
+                $problems[] = [
+                    "Task {$method_name} #[Exclusive] takes nothing, or one group name as a non-empty string.",
+                    "Use #[Exclusive] for a task serialized against itself, or #[Exclusive('group_name')] to " .
+                    'serialize it against every other task naming the same group.',
+                ];
+            }
+        }
+
+        return $problems;
     }
 
-    private function __attr_args(array $attrs, string $name): ?array
+    private static function __attr_args(array $attrs, string $name): ?array
     {
         foreach ($attrs as $attr_name => $instances) {
             if ($attr_name === $name || str_ends_with($attr_name, '\\' . $name)) {

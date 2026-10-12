@@ -83,6 +83,26 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | task-grp-04 | a worker passes over a busy group and runs everything else, then runs the members one after another | pending alpha, beta and a plain task; the group held elsewhere, then released | first pass: plain completed, alpha and beta still pending; second pass: both completed, beta started after alpha finished | implemented |
 | task-grp-05 | a schedule tick held back by another member is queued, not dropped | a due schedule for beta while the group is held elsewhere | one PENDING run with the schedule id and Scheduled origin; next_run_at advanced; it completes once the group is free | implemented |
 
+## Task_Debounce_Exclusive_Test (php, default isolation, live rsx-lockd) - #[Debounce] and #[Exclusive] declared together
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-combo-01 | a bare #[Exclusive] beside #[Debounce] adds nothing to the policy | debounce_exclusive_task vs debounce_task | identical policy (debounce, 30, no group); pending identity and run-lock identity both class::method::params_hash | implemented |
+| task-combo-02 | ... and coalesces per parameter set | same params twice; other params | same id; a second pending run | implemented |
+| task-combo-03 | ... and runs different params concurrently | another process holds parameter set A; pending A and B; worker | A's lock not acquirable, B's is; A stays PENDING, B COMPLETED | implemented |
+| task-combo-04 | a debounced group member: params pending identity, the group's run lock | combo_debounced, combo_plain | policy (debounce, 30, group); identity_key per params; run_lock_identity = the group's for any params and for the plain member; group_members lists both | implemented |
+| task-combo-05 | the group's lock excludes plain and debounced members alike; a debounced member takes no lock of its own identity | group lock held elsewhere; then taken through the debounced member | neither member acquirable (any params), an outside task is; while the member holds the group, its identity's lock name is free to another process | implemented |
+| task-combo-06 | one pending run per debounce identity within a group | dispatch A, A, B; plain member twice | A coalesces; B separate; plain one per method; pending_ids_on_run_lock = all three from either member | implemented |
+| task-combo-07 | one running + one pending per debounce identity | A set RUNNING; dispatch A twice, then B | is_identity_running true for A only; one new follow-up, returned again; B its own pending run | implemented |
+| task-combo-08 | the delay is honoured and the pending run re-anchored on settle | pending A, B and plain in the past; Task::internal(A); fresh dispatches | A's pending run ~30 s ahead, B's and plain's untouched; group released; a fresh A enqueue ~30 s ahead; a never-run parameter set due now | implemented |
+| task-combo-09 | a worker passes over debounced members while the group is held, then runs them in queue order | pending A, B, plain member, unrelated task; group held elsewhere, then released | first pass: members PENDING with no worker_id / started_at, unrelated COMPLETED; second pass: all COMPLETED, each started after the one before it finished | implemented |
+| task-combo-10 | an inline run of a debounced member waits for the group | Task_Lock_Holder on the group lock releases when it sees a waiter; Task::internal() | the run completed and started after the release | implemented |
+| task-combo-11 | a blocked debounced member's wait line names the group and the holder; scheduled comes first | group held; RUNNING plain member; a due and a not-yet-due pending debounced run | `waiting for exclusive lock "fixture_combo_group" (held by task #N)`; the other `scheduled for ...` | implemented |
+| task-combo-12 | a running debounced member is named as the group's holder | group held; RUNNING combo_debounced A; pending plain member and combo_debounced B | both name the group and A's run id | implemented |
+| task-combo-13 | a schedule tick blocked by another identity of the group is queued | due schedule for combo_debounced; RUNNING run of the same method with other params; group held | one PENDING Scheduled run with the empty parameter set; next_run_at advanced | implemented |
+| task-combo-14 | a schedule tick whose own identity is running is coalesced | due schedule; RUNNING run with the empty parameter set; group held | no run created; next_run_at advanced | implemented |
+| task-combo-15 | TASK-CONCURRENCY-01 accepts the combination and refuses malformed arguments | the fixture methods' manifest attributes; hand-built bad arguments | no problem for any fixture; one each for a negative / non-integer / missing delay and an empty / non-string / second group name | implemented |
+
 ## Task_Pools_Test (php, default isolation) - the pools and what each claims
 
 | ID | Purpose | Input | Expected | Status |
