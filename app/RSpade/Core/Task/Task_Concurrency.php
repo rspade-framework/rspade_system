@@ -21,6 +21,8 @@ use App\RSpade\Core\Task\Task_Run_Model;
  *                           at a time
  *   #[Debounce(seconds)]  - same single-instance guarantee, and the coalesced
  *                           follow-up run fires `seconds` after the prior run COMPLETED.
+ *                           The argument is optional: a bare #[Debounce] has no delay,
+ *                           and its follow-up is due the moment the prior run completes.
  *
  * All mean the SAME invariant, a distributed translation of the JS debounce()
  * (Core/Js/async.js): per IDENTITY, AT MOST ONE RUNNING + AT MOST ONE PENDING execution.

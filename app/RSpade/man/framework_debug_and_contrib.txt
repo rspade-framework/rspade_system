@@ -1451,18 +1451,27 @@ SUBSYSTEM PRIMERS
     are deferred to the unlock) - because pool waits are invisible to the
     deadlock detector.
 
-    COALESCING. #[Exclusive] and #[Debounce(n)] are the same mechanism;
-    exclusive is debounce with a zero delay. The identity is the method for
-    exclusive and the method plus a canonical hash of the params for
-    debounce. The invariant is ONE RUNNING PLUS AT MOST ONE PENDING per
-    identity - the distributed translation of the JavaScript debounce helper.
+    COALESCING. #[Exclusive] and #[Debounce(n)] are the same mechanism, and a
+    policy is TWO identities decided separately. The PENDING identity - the
+    pending row, the enqueue lock, the delay - is the method for exclusive
+    and the method plus a canonical hash of the params whenever #[Debounce]
+    is declared. The RUN-LOCK identity is the group's whenever
+    #[Exclusive('group')] is declared, and the pending identity otherwise.
+    The delay is #[Debounce]'s argument and is optional: a bare #[Debounce]
+    is a zero delay, as #[Exclusive] always is. The invariant is ONE RUNNING
+    PLUS AT MOST ONE PENDING per pending identity, with one running per
+    run-lock identity - the distributed translation of the JavaScript
+    debounce helper.
     On enqueue, a lock named for the identity is taken (WAITING FOREVER), and
     the existing pending run's id is returned instead of inserting a second.
     A worker attempts the run lock NON-BLOCKING, and "not acquired" is an
     answer, not a failure: the run is passed over, and a schedule tick is
     coalesced into the running instance. An inline run waits for the run
     lock. On settle, a coalesced pending run is re-anchored to now plus the
-    delay. Declaring both attributes is a code-quality violation.
+    delay. The two attributes may be declared together: beside
+    #[Exclusive('group')] a debounced task queues per method and params and
+    runs under the group's lock; beside a bare #[Exclusive] it is #[Debounce]
+    alone. TASK-CONCURRENCY-01 refuses only a malformed argument.
 
     THESE GUARD ONE IDENTITY AGAINST ITSELF AND NOTHING ELSE. They do not
     protect a shared table from other writers. Tasks run concurrently and

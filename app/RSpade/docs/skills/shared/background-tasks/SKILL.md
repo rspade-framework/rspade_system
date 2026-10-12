@@ -292,7 +292,8 @@ Each declaration is a `_task_schedules` row (cadence + statistics); **each run o
 |---|---|---|
 | `#[Exclusive]` | `class::method` | at most one running + one pending, whatever the params |
 | `#[Exclusive('group')]` | `class::method`, plus one RUN lock shared by the group | the same per method, and at most one task of the GROUP running at a time |
-| `#[Debounce(30)]` | `class::method` + the params | same, and the coalesced follow-up waits 30 s after the previous run COMPLETED |
+| `#[Debounce]` | `class::method` + the params | at most one running + one pending per PARAMETER SET, no delay: the one queued follow-up is due the moment the running instance finishes |
+| `#[Debounce(30)]` | `class::method` + the params | the same, and the coalesced follow-up waits 30 s after the previous run COMPLETED |
 | `#[Debounce(30)]` + `#[Exclusive]` | `class::method` + the params | exactly `#[Debounce(30)]` alone - the bare `#[Exclusive]` adds nothing |
 | `#[Debounce(30)]` + `#[Exclusive('group')]` | pending: `class::method` + the params; RUN lock: the group's | queued like a debounce (one pending per parameter set, the 30 s delay per parameter set), run like a group member (one task of the group at a time) |
 
