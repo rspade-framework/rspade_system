@@ -19,6 +19,15 @@ Args:
   $preset         (optional) - named preset from rsx.thumbnails.presets. MUTUALLY EXCLUSIVE with
                                $type/$width/$height - passing both throws.
   $alt            (optional) - img alt text; defaults to the attachment's file name.
+  $allow_animated (optional) - true: an ANIMATED image (a GIF, an animated WebP or PNG - the
+                               attachment's is_animated) is shown as the ORIGINAL file, playing,
+                               in place of its still first-frame thumbnail. Default false. Every
+                               other attachment is unaffected. The original is the full upload,
+                               which may be megabytes where a thumbnail is kilobytes, so it is for
+                               a single picture a page presents, not a grid of them. Its box: a
+                               dynamic variant's $width / $height are applied to the image
+                               ('cover' crops to them, 'fit' fits inside them); with $preset the
+                               image is bounded by the host's own CSS (max-width: 100%).
 
 Extra classes go on the invocation as an ordinary HTML attribute - <Attachment_Thumbnail class="me-2"
 $attachment_id=id /> - which jqhtml preserves on the host element; there is no $class arg.
@@ -45,7 +54,19 @@ File_Storage_Model::RENDER_STATUS_*, or 'none' when there is no resident blob):
             preset: this.args.preset,
         }) : null;
     %>
-    <% if (_src) { %>
+    <%
+        // The original, playing, in place of the still: only when the caller asked and the
+        // image really is animated.
+        const _animated = this.args.allow_animated === true && !!_record && !!_record.is_animated;
+        const _fit = this.args.type === 'cover' ? 'cover' : 'fit';
+    %>
+    <% if (_animated && this.args.preset) { %>
+        <img class="Attachment_Thumbnail__img Attachment_Thumbnail__img--animated" src="<%= File_Attachment_Model.inline_url(_record) %>" alt="<%= _alt %>" data-render-status="<%= _status %>" data-attachment-id="<%= int(this.args.attachment_id) %>">
+    <% } else if (_animated && this.args.height) { %>
+        <img class="Attachment_Thumbnail__img Attachment_Thumbnail__img--animated Attachment_Thumbnail__img--<%= _fit %>" src="<%= File_Attachment_Model.inline_url(_record) %>" width="<%= int(this.args.width || 120) %>" height="<%= int(this.args.height) %>" alt="<%= _alt %>" data-render-status="<%= _status %>" data-attachment-id="<%= int(this.args.attachment_id) %>">
+    <% } else if (_animated) { %>
+        <img class="Attachment_Thumbnail__img Attachment_Thumbnail__img--animated" src="<%= File_Attachment_Model.inline_url(_record) %>" width="<%= int(this.args.width || 120) %>" alt="<%= _alt %>" data-render-status="<%= _status %>" data-attachment-id="<%= int(this.args.attachment_id) %>">
+    <% } else if (_src) { %>
         <img class="Attachment_Thumbnail__img" src="<%= _src %>" alt="<%= _alt %>" data-render-status="<%= _status %>" data-attachment-id="<%= int(this.args.attachment_id) %>">
     <% } else { %>
         <%-- No record: deleted, or not visible to this user. A quiet empty box, never an error. --%>

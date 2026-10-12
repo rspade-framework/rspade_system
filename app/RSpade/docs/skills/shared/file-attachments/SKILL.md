@@ -209,6 +209,7 @@ The map lives in `File_Attachment_Model_Abstract` and the derivation is one `#[R
 <Attachment_Thumbnail $attachment_id=doc.file_attachment_id $width=160 />
 <Attachment_Thumbnail $attachment_id=id $type="cover" $width=96 $height=96 />
 <Attachment_Thumbnail $attachment_id=id $preset="profile" />
+<Attachment_Thumbnail $attachment_id=id $width=320 $allow_animated=true />   <%-- an animated GIF plays --%>
 ```
 
 ```javascript

@@ -6,6 +6,17 @@
         max-width: 100%;
     }
 
+    // An animated original shown in place of its still ($allow_animated) carries its box as
+    // width / height attributes. With both, the image fills that box: cropped to it, or
+    // fitted inside it.
+    &__img--cover {
+        object-fit: cover;
+    }
+
+    &__img--fit {
+        object-fit: contain;
+    }
+
     &__placeholder {
         display: block;
         max-width: 100%;

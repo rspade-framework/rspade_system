@@ -2,7 +2,7 @@
  * File_Attachment_Model (JavaScript) - the concrete ORM class over the generated
  * Base_File_Attachment_Model stub.
  *
- * It exists for ONE reason: thumbnail_url() below is THE place a thumbnail URL is spelled in
+ * thumbnail_url() below is THE place a thumbnail URL is spelled in
  * JavaScript. Nothing else in the framework or in app code builds one - not a template, not a
  * controller payload, not a page script. <Attachment_Thumbnail> calls it; everything else calls
  * <Attachment_Thumbnail>.
@@ -47,6 +47,26 @@ class File_Attachment_Model extends Base_File_Attachment_Model {
         }
 
         return Rsx_Portal.internal_url('/_thumbnail/dynamic/' + record.key + '/' + type + '/' + width + '/' + int(options.height) + '?v=' + v);
+    }
+
+    /**
+     * The URL that serves an attachment's ORIGINAL bytes for display in the page (the browser
+     * renders it; nothing is downloaded to disk). What <Attachment_Thumbnail $allow_animated>
+     * shows for an animated image, whose thumbnail is a still.
+     *
+     * The mirror of File_Attachment_Model::get_url() in PHP, and - like thumbnail_url() above -
+     * a route File_Attachment_Controller owns in both realms, spelled here and nowhere else in
+     * JavaScript.
+     *
+     * @param {Object} record  A File_Attachment_Model record (needs .key).
+     * @returns {string}
+     */
+    static inline_url(record) {
+        if (!record || !record.key) {
+            throw new Error('File_Attachment_Model.inline_url() requires an attachment record with a key');
+        }
+
+        return Rsx_Portal.internal_url('/_inline/' + record.key);
     }
 
     /**

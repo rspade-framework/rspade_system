@@ -542,6 +542,16 @@ THE ATTACHMENT_THUMBNAIL COMPONENT
     $height         px; omitted -> a width-only variant.
     $preset         a named preset. MUTUALLY EXCLUSIVE with $type/$width/$height.
     $alt            img alt text; defaults to the attachment's file name.
+    $allow_animated true: an ANIMATED image (a GIF, an animated WebP or PNG - the
+                    attachment's is_animated) is shown as the ORIGINAL file, playing,
+                    in place of its thumbnail. Default false. A thumbnail is always a
+                    still - the first frame - so this is the one way the component
+                    shows motion; every other attachment is unaffected. The original is
+                    the whole upload, megabytes where a thumbnail is kilobytes: use it
+                    for the one picture a page presents, never a grid. A dynamic
+                    variant's $width / $height become the image's box ('cover' crops to
+                    it, 'fit' fits inside it); with $preset the image is bounded by the
+                    host's own CSS.
 
     Extra classes go on the invocation as an ordinary HTML attribute -
     <Attachment_Thumbnail class="me-2" $attachment_id=id /> - which jqhtml preserves
