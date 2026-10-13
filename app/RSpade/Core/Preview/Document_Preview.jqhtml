@@ -11,7 +11,9 @@ viewer an app registers - is instantiated dynamically, once this component is re
 A convertible document (Word, Excel, PowerPoint, ...) has no PDF rendition until the background
 render worker has produced one, so this component also owns the WAITING states: it subscribes to
 its attachment id and swaps from "Preparing preview..." to the real Pdf_Viewer when the render
-lands - no reload, no polling.
+lands - no reload, no polling. The same subscription follows a REPLACED file: the URLs in the
+server's answer carry the attachment's content version, so when the attachment is pointed at
+other bytes the answer differs, the frame repaints and the viewer loads the new URL.
 
 States, in the order the template tests them:
   error_data set       - the record could not be read (deleted, or not visible to this user).

@@ -9,7 +9,9 @@ It matters that this is a component and not a URL string in a payload: an Office
 thumbnail until the background render worker has produced its PDF rendition, so what the browser
 first paints is an extension-icon placeholder. When the render lands, a realtime frame on the
 attachment brings the component back for a fresh record and the picture swaps in place - no reload,
-no polling, and no stale placeholder pinned by a one-year cache header.
+no polling, and no stale placeholder pinned by a one-year cache header. An attachment pointed at
+other bytes (relink_storage()) swaps the same way: the URL carries the record's content version,
+so the refetched record yields another URL.
 
 Args:
   $attachment_id  (required) - the File_Attachment_Model id. Throws if absent.

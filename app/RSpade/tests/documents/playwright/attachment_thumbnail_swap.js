@@ -10,10 +10,11 @@
  * Drives /dev/attachment_thumbnail against the seeded sample_memo.docx:
  *   1. select it -> <Attachment_Thumbnail> and <Document_Preview> mount.
  *   2. Reset to Pending -> the blob goes back to PENDING with NO worker spawned. Assert the img's
- *      data-render-status becomes 2 and its src carries ?v=0 (nothing rendered).
+ *      data-render-status becomes 2 and its src carries the content version of an unrendered
+ *      blob, ?v=<storage id>-0.
  *   3. Render Now -> the render runs inline in that request. WITHOUT RELOADING, assert the img's
- *      data-render-status becomes 3 and its src carries a non-zero ?v=, and that Document_Preview
- *      left its "Preparing preview..." state for a real Pdf_Viewer.
+ *      data-render-status becomes 3 and its src carries ?v=<the same storage id>-<a render time>,
+ *      and that Document_Preview left its "Preparing preview..." state for a real Pdf_Viewer.
  *
  * Step 3 is the assertion with teeth: the page is never navigated, so the only thing that can have
  * changed the DOM is the realtime frame the render emitted on the attachment. If the frame does not
@@ -46,11 +47,14 @@ function read_thumbnail() {
     const img = document.querySelector('.Attachment_Thumbnail__img');
     if (!img) return null;
     const src = img.getAttribute('src') || '';
-    const m = src.match(/[?&]v=(\d+)/);
+    // The content version: <storage id>-<rendered_at unix seconds, or 0>.
+    const m = src.match(/[?&]v=(\d+)-(\d+)$/);
     return {
         status: img.getAttribute('data-render-status'),
         src: src,
-        v: m ? parseInt(m[1], 10) : null,
+        v: m ? m[1] + '-' + m[2] : null,
+        storage_id: m ? parseInt(m[1], 10) : null,
+        rendered: m ? parseInt(m[2], 10) : null,
     };
 }
 
@@ -150,15 +154,15 @@ async function run() {
             const img = document.querySelector('.Attachment_Thumbnail__img');
             if (!img) return false;
             const src = img.getAttribute('src') || '';
-            return img.getAttribute('data-render-status') === '2' && /[?&]v=0(&|$)/.test(src);
+            return img.getAttribute('data-render-status') === '2' && /[?&]v=[1-9]\d*-0$/.test(src);
         }, { timeout: STEP_TIMEOUT_MS }).then(() => true).catch(() => false);
 
+        const placeholder = await page.evaluate(read_thumbnail);
         if (!pending) {
-            const now = await page.evaluate(read_thumbnail);
             fail('the thumbnail did not fall back to the PENDING placeholder - saw '
-                + JSON.stringify(now));
+                + JSON.stringify(placeholder));
         } else {
-            console.log('PASS: reset -> data-render-status=2 with ?v=0 (placeholder)');
+            console.log('PASS: reset -> data-render-status=2 with ?v=' + placeholder.v + ' (placeholder)');
         }
 
         const preparing = await page.waitForFunction(
@@ -179,8 +183,8 @@ async function run() {
             const img = document.querySelector('.Attachment_Thumbnail__img');
             if (!img) return false;
             const src = img.getAttribute('src') || '';
-            const m = src.match(/[?&]v=(\d+)/);
-            if (!m || parseInt(m[1], 10) === 0) return false;
+            const m = src.match(/[?&]v=(\d+)-(\d+)$/);
+            if (!m || parseInt(m[2], 10) === 0) return false;
             return img.getAttribute('data-render-status') === '3';
         }, { timeout: STEP_TIMEOUT_MS }).then(() => true).catch(() => false);
 
@@ -191,6 +195,10 @@ async function run() {
         } else {
             const after = await page.evaluate(read_thumbnail);
             console.log('PASS: render -> data-render-status=3 with v=' + after.v + ', no reload');
+            if (!placeholder || after.storage_id !== placeholder.storage_id) {
+                fail('the render changed the storage id in the version - the blob is the same, only its render time moves: '
+                    + JSON.stringify({ placeholder: placeholder, after: after }));
+            }
         }
 
         const viewer = await page.waitForFunction(

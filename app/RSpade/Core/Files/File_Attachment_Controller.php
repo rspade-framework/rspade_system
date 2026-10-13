@@ -399,6 +399,51 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     }
 
     /**
+     * Decide whether a file response may keep the long-lived cache headers its route gave it.
+     *
+     * THE RULE, for every attachment-addressed route (/_inline, /_download, both thumbnail
+     * routes, /_preview/pdf, /_preview/sheet): the bytes served are always the attachment's
+     * CURRENT bytes, and the response is cacheable only when the request's `v` equals the
+     * attachment's current content version (File_Attachment_Model::content_version()). A
+     * request with no `v`, or with the `v` of bytes since replaced, is answered `no-store`.
+     *
+     * An attachment's key is stable while its bytes are not, so a response cached under a bare
+     * key URL would be shown - and on /_download, handed over - long after the file changed.
+     * Every URL the model's builders produce carries the version, and stops being requested
+     * the moment it is superseded; the only requests that reach here without a current one are
+     * a URL somebody typed, bookmarked or concatenated, and a page still holding a URL from
+     * before the change. Neither may be pinned.
+     *
+     * WHY no-store AND NOT `no-cache` + A VALIDATOR. Revalidation needs a validator that is true
+     * of the ATTACHMENT, and these responses have none: Last-Modified is the mtime of a file in
+     * a content-addressed store, so an attachment relinked to a blob stored EARLIER than the
+     * one it replaced would answer If-Modified-Since with 304 and confirm the stale copy. An
+     * unversioned request therefore pays for the bytes each time, which is the correct price
+     * for a URL that names no version.
+     *
+     * Call it AFTER the blob is resolved: materializing or re-materializing external bytes
+     * changes the version, and the comparison must be against what was actually served. A
+     * response that is already no-store (a placeholder thumbnail) is left exactly as it is.
+     *
+     * @param \Symfony\Component\HttpFoundation\Response $response
+     * @param File_Attachment_Model $attachment
+     * @param array $params The route's params (carries the query string's `v`).
+     * @return \Symfony\Component\HttpFoundation\Response The same response.
+     */
+    public static function apply_content_version_cache_policy($response, File_Attachment_Model $attachment, array $params)
+    {
+        if (!$response instanceof \Symfony\Component\HttpFoundation\Response) {
+            shouldnt_happen('apply_content_version_cache_policy() was handed ' . get_debug_type($response) . ', not a Response');
+        }
+
+        if (!$attachment->is_current_content_version($params['v'] ?? null)) {
+            $response->headers->set('Cache-Control', 'no-store');
+        }
+
+        return $response;
+    }
+
+    /**
      * The 'user' a file.*.authorize gate is handed: the REALM's own identity - the portal user
      * on a portal request, the staff user otherwise - never "whoever is logged in". The same
      * realm-honest rule /_upload (Rsx_File_Upload::accept()) and get_preview_info() follow; a
@@ -482,12 +527,13 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             $headers['Content-Type'] = $attachment->mime_type;
         }
 
-        // Return file with attachment disposition
-        return static::harden_file_response(Response::download(
+        // Return file with attachment disposition. Cacheable only for a request naming the
+        // current content version - see apply_content_version_cache_policy().
+        return static::harden_file_response(static::apply_content_version_cache_policy(Response::download(
             $storage->get_full_path(),
             $attachment->file_name,
             $headers
-        ));
+        ), $attachment, $params));
     }
 
     /**
@@ -560,11 +606,12 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             $headers['Content-Type'] = $attachment->mime_type;
         }
 
-        // Return file with inline disposition
-        return static::harden_file_response(Response::file(
+        // Return file with inline disposition. Cacheable only for a request naming the
+        // current content version - see apply_content_version_cache_policy().
+        return static::harden_file_response(static::apply_content_version_cache_policy(Response::file(
             $storage->get_full_path(),
             $headers
-        ));
+        ), $attachment, $params));
     }
 
     /**
@@ -1004,9 +1051,11 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      *
      * THE RENDER-STATE BRANCH, resolved once per request from the blob:
      *
-     *   NOT_REQUIRED  Nothing to wait for - an image, a PDF, a zip. Exactly the historic path:
-     *                 rasterize the resident blob through the renderer registry (or substitute the
-     *                 extension icon), cache under the real key, serve with a one-year max-age.
+     *   NOT_REQUIRED  Nothing to wait for - an image, a PDF, a zip. Rasterize the resident blob
+     *                 through the renderer registry (or substitute the extension icon), cache
+     *                 under the real key, serve with a one-year max-age - which the two routes
+     *                 keep only for a request naming the attachment's current content version
+     *                 (apply_content_version_cache_policy()).
      *
      *   PENDING /     No real thumbnail exists YET (PENDING) or ever will (FAILED). The extension
      *   FAILED        icon is served as an explicit PLACEHOLDER: Cache-Control: no-store, and
@@ -1204,15 +1253,16 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             $attachment->file_extension
         );
 
-        // Generate and serve
-        return static::harden_file_response(static::__generate_and_serve_thumbnail(
+        // Generate and serve. A real thumbnail is cacheable only for a request naming the
+        // current content version; a placeholder is no-store already and stays so.
+        return static::harden_file_response(static::apply_content_version_cache_policy(static::__generate_and_serve_thumbnail(
             $attachment,
             $type,
             $width,
             $height,
             'preset',
             $cache_filename
-        ));
+        ), $attachment, $params));
     }
 
     /**
@@ -1285,15 +1335,16 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             $attachment->file_extension
         );
 
-        // Generate and serve
-        return static::harden_file_response(static::__generate_and_serve_thumbnail(
+        // Generate and serve. A real thumbnail is cacheable only for a request naming the
+        // current content version; a placeholder is no-store already and stays so.
+        return static::harden_file_response(static::apply_content_version_cache_policy(static::__generate_and_serve_thumbnail(
             $attachment,
             $type,
             $width,
             $height,
             'dynamic',
             $cache_filename
-        ));
+        ), $attachment, $params));
     }
 
     // ============================================================================================

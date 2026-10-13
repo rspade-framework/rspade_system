@@ -17,6 +17,7 @@ use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Imagick_Policy;
 use App\RSpade\Core\Files\Rsx_File_Gates;
+use App\RSpade\Core\Files\Spreadsheet_Rendition;
 use App\RSpade\Core\Files\Svg_Upload_Sanitizer;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
 use App\RSpade\Core\Portal\Portal_Authorizable;
@@ -466,30 +467,59 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     }
 
     /**
-     * The cache-buster appended to this attachment's thumbnail URLs: its blob's rendered_at as a
-     * unix timestamp, or 0 when nothing has rendered.
+     * This attachment's CONTENT VERSION: the token every file URL the framework builds for it
+     * carries as `?v=`, and the value the file routes compare a request's `v` against.
      *
-     * Thumbnails are served max-age=31536000. A convertible document that has not rendered yet
-     * serves an extension-icon placeholder, so WITHOUT a version token the browser would pin that
-     * placeholder for a year and never see the real page-1 raster. rendered_at changes exactly
-     * when the image behind the URL changes, which is precisely what a cache key wants.
+     * Shape: `<file_storage_id>-<rendered_at as unix seconds, or 0>`, and `0-0` for an attachment
+     * with no resident blob (an external attachment whose bytes are not materialized).
      *
-     * @return int Unix seconds, or 0.
+     * WHY THESE TWO INGREDIENTS. An attachment's key is stable and its bytes are not:
+     * relink_storage() repoints it at another blob, and a stale external blob is evicted and
+     * re-materialized. The blob store is content-addressed (File_Storage_Model::store_blob()
+     * finds or creates the row for a hash and never rewrites one in place), so "which bytes" is
+     * exactly "which storage row", and the storage id moves whenever the bytes do. What a route
+     * serves FOR one blob also changes once: a convertible document's thumbnail and rendition do
+     * not exist until the render worker stamps rendered_at (and a re-render stamps it again),
+     * so the second ingredient is what replaces a placeholder with the real picture.
+     *
+     * WHY THE STORAGE ID AND NOT THE HASH. A URL travels - into logs, a Referer header, a pasted
+     * link. A content-hash prefix in it would let its holder test a guess about what the file
+     * contains; a sequential row id says nothing about the bytes.
+     *
+     * The JavaScript mirror is File_Attachment_Model.content_version(record), which produces the
+     * identical string from a fetch() payload.
+     *
+     * @return string
      */
-    protected function __thumbnail_version(): int
+    public function content_version(): string
     {
         if ($this->file_storage_id === null) {
-            return 0;
+            return '0-0';
         }
 
         $rendered_at = File_Storage_Model::where('id', $this->file_storage_id)->value('rendered_at');
-        if ($rendered_at === null || $rendered_at === '') {
-            return 0;
+        $rendered = 0;
+
+        if ($rendered_at !== null && $rendered_at !== '') {
+            $ms = Rsx_Time::to_ms($rendered_at);
+            $rendered = $ms === null ? 0 : intdiv($ms, 1000);
         }
 
-        $ms = Rsx_Time::to_ms($rendered_at);
+        return ((int) $this->file_storage_id) . '-' . $rendered;
+    }
 
-        return $ms === null ? 0 : intdiv($ms, 1000);
+    /**
+     * Whether $version (a request's `v` parameter) names the bytes this attachment has RIGHT
+     * NOW. The file routes ask this after resolving the blob, and give their long-lived cache
+     * headers only on true: a URL with no `v`, or with the `v` of bytes since replaced, is
+     * answered `no-store`.
+     *
+     * @param mixed $version The raw request value; anything but the exact current string is false.
+     * @return bool
+     */
+    public function is_current_content_version($version): bool
+    {
+        return is_string($version) && $version === $this->content_version();
     }
 
     /**
@@ -726,16 +756,25 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     /**
      * Get the inline viewing URL for this file
      *
-     * Every file URL below is a path in the REALM OF THE CURRENT REQUEST: the bare path for
-     * a staff request, CLI or the external API, and the same path under the portal's prefix
-     * for a portal request (Rsx_Portal::internal_url()) - the file routes exist in both
-     * route tables, so a portal page's links are served, and authorized, as portal requests.
+     * EVERY FILE URL BELOW CARRIES `?v=<content_version()>`, and these builders are the only
+     * place a file URL is spelled in PHP. The routes always serve the attachment's current
+     * bytes whatever `v` says; what `v` decides is the cache policy - a request whose `v` is
+     * current gets the route's long-lived headers, and one without it (a URL concatenated from
+     * the key) or with a superseded one is answered `no-store`. So a URL from here is safe to
+     * cache for a year BECAUSE it stops being requested the moment the bytes change.
+     *
+     * Each is a path in the REALM OF THE CURRENT REQUEST: the bare path for a staff request,
+     * CLI or the external API, and the same path under the portal's prefix for a portal
+     * request (Rsx_Portal::internal_url()) - the file routes exist in both route tables, so a
+     * portal page's links are served, and authorized, as portal requests.
+     *
+     * A URL is a snapshot: build it when the payload is built, never store one.
      *
      * @return string
      */
     public function get_url()
     {
-        return Rsx_Portal::internal_url("/_inline/{$this->key}");
+        return Rsx_Portal::internal_url("/_inline/{$this->key}?v=" . $this->content_version());
     }
 
     /**
@@ -745,7 +784,26 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     public function get_download_url()
     {
-        return Rsx_Portal::internal_url("/_download/{$this->key}");
+        return Rsx_Portal::internal_url("/_download/{$this->key}?v=" . $this->content_version());
+    }
+
+    /**
+     * Get the preview-rendition URL for this file: the HTML grid of a spreadsheet
+     * (/_preview/sheet), the PDF rendition of everything else that previews as pages
+     * (/_preview/pdf - a PDF's own bytes, or the rendition the render worker produced for a
+     * convertible document).
+     *
+     * The URL is well-formed for any attachment; whether the route has something to serve is
+     * the render state's answer (get_render_status()), and a file type with no rendition is
+     * answered 415.
+     *
+     * @return string Relative URL
+     */
+    public function get_preview_url()
+    {
+        $route = Spreadsheet_Rendition::handles_mime($this->pipeline_mime()) ? 'sheet' : 'pdf';
+
+        return Rsx_Portal::internal_url("/_preview/{$route}/{$this->key}?v=" . $this->content_version());
     }
 
     /**
@@ -758,10 +816,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     public function get_thumbnail_url($type = 'fit', $width = 400, $height = null)
     {
-        // ?v= is the render cache-buster (see __thumbnail_version). The server ignores it; it
-        // exists so a placeholder served under a one-year max-age is replaced the moment the
-        // document actually renders.
-        $version = $this->__thumbnail_version();
+        $version = $this->content_version();
 
         if ($height === null) {
             return Rsx_Portal::internal_url("/_thumbnail/dynamic/{$this->key}/{$type}/{$width}?v={$version}");
@@ -787,8 +842,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
             throw new Exception("Thumbnail preset '{$preset_name}' not defined in config");
         }
 
-        // ?v= is the render cache-buster - see get_thumbnail_url().
-        return Rsx_Portal::internal_url("/_thumbnail/preset/{$this->key}/{$preset_name}?v=" . $this->__thumbnail_version());
+        return Rsx_Portal::internal_url("/_thumbnail/preset/{$this->key}/{$preset_name}?v=" . $this->content_version());
     }
 
     /**
@@ -1105,9 +1159,12 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * handler_class/handler_ref. Any previously-linked blob becomes garbage for the orphan
      * sweep if unreferenced.
      *
-     * Thumbnail cache self-invalidates: cache filenames derive from file_storage->hash, so
-     * repointing to different content produces different cache keys automatically - no cache
-     * clearing needed.
+     * Nothing needs clearing, on either side of the wire. Server-side cache filenames derive
+     * from file_storage->hash, so different content has different cache keys. Browser-side,
+     * content_version() moves with file_storage_id, so every URL the builders produce for this
+     * attachment changes, the save below publishes the realtime frame that makes mounted
+     * <Attachment_Thumbnail> / <Document_Preview> components refetch and repaint, and a URL
+     * built before the relink is answered no-store from now on.
      *
      * @param File_Storage_Model $storage
      * @return void

@@ -173,6 +173,157 @@ The framework skips the post-`on_load` re-render when `JSON.stringify(this.data)
 
 **Exception**: a component whose docblock declares the **Standalone** tier renders from `this.state` by design - do not "fix" it into `on_load()` conformance.
 
+## A component that works like a jQuery plugin (the Standalone tier, stream shape)
+
+The lifecycle - fetch in `on_load()`, render from `this.data`, refetch and repaint when a realtime frame arrives - is right for almost every screen, because almost every screen shows content that rarely changes. It fails one kind: a view that GROWS BY APPENDING. A terminal showing a task's live output receives a line at a time; rendering it from data would rebuild the entire scrollback for each line, throw away where the reader had scrolled to, and drop any text they had selected.
+
+For that kind of screen the component is written the way a jQuery plugin is written, and the lifecycle is deliberately not used:
+
+| The usual component | The jQuery-plugin shape |
+|---|---|
+| `on_load()` fetches into `this.data` | NO `on_load()`; the component calls its own endpoint when it wants to |
+| the template is a function of `this.data` | the template is STATIC markup, drawn once |
+| `on_ready()` wires what the render produced | `on_ready()` is `$(document).ready()`: everything starts here |
+| a realtime frame -> `refresh()` -> repaint | a realtime frame -> read what is new -> `.append()` it |
+| state the display depends on is `this.data` | all of it is `this.state` (and plain instance fields for element references) |
+| `reload()` when args change | never reloaded; a public method of its own changes what it shows |
+
+**The template** is a shell with named containers and nothing data-driven:
+
+```jqhtml
+<%--
+Log_Tail - the live tail of one log, appended as lines arrive.
+$log_id (required) - which log.
+--%>
+<Define:Log_Tail tag="div">
+    <div class="Log_Tail__toolbar">
+        <button type="button" class="btn btn-sm btn-secondary" $sid="pause">Pause</button>
+        <button type="button" class="btn btn-sm btn-secondary" $sid="clear">Clear</button>
+        <span class="Log_Tail__status" $sid="status"></span>
+    </div>
+    <div class="Log_Tail__empty" $sid="empty">Waiting for output...</div>
+    <div class="Log_Tail__lines" $sid="lines"></div>
+</Define:Log_Tail>
+```
+
+**The class** does its own loading, its own events and its own DOM changes:
+
+```javascript
+/**
+ * Log_Tail - the live tail of one log.
+ *
+ * @tier Standalone - an append-only stream. Lines are APPENDED as they arrive; the history
+ *       is never re-rendered, because that would rebuild the whole scrollback per line and
+ *       lose the reader's place. No on_load(); state in this.state; on_ready() starts it;
+ *       brought up to date by read_new().
+ */
+class Log_Tail extends Component {
+    on_create() {
+        if (!this.args.log_id) {
+            throw new Error('Log_Tail requires $log_id');
+        }
+
+        this.state.last_id = 0;       // the cursor: the newest line already on screen
+        this.state.paused = false;
+        this.state.count = 0;
+
+        // ONE debounce for every read: the first runs at once, reads asked for while one is in
+        // flight coalesce into a single follow-up, and two never overlap.
+        this._read_soon = debounce(() => this.__read(), 250);
+    }
+
+    // The component's $(document).ready(): the static template is on the page, start working.
+    on_ready() {
+        const that = this;
+
+        // Events: namespaced and idempotent, on the template's own elements.
+        this.$sid('pause').off('click.log_tail').on('click.log_tail', function () {
+            that.set_paused(!that.state.paused);
+        });
+        this.$sid('clear').off('click.log_tail').on('click.log_tail', function () {
+            that.$sid('lines').empty();
+            that.$sid('empty').show();
+            that.state.count = 0;
+        });
+
+        // The first read, then one more for every frame. The cursor makes a repeated read
+        // harmless, which is what lets the subscription's resync and the first read overlap.
+        this.read_new();
+        this.subscribe('Log_Line_Topic', { log_id: int(this.args.log_id) }, () => that.read_new());
+    }
+
+    /** Bring the tail up to date. The public, uniquely-named way to make this component look. */
+    read_new() {
+        if (!this.state.paused) {
+            this._read_soon();
+        }
+    }
+
+    set_paused(paused) {
+        this.state.paused = paused;
+        this.$sid('pause').text(paused ? 'Resume' : 'Pause');
+        if (!paused) {
+            this.read_new();           // catch up on what arrived meanwhile
+        }
+    }
+
+    // Its own Ajax: everything after the cursor, appended. Nothing is re-rendered.
+    async __read() {
+        const lines = await Log_Controller.lines_after({ log_id: int(this.args.log_id), after: this.state.last_id });
+
+        if (this._stopped || !lines.length) {
+            return;
+        }
+
+        const $lines = this.$sid('lines');
+        const el = $lines[0];
+        // Follow the output only if the reader is at the bottom; never yank them down.
+        const at_bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+
+        for (const line of lines) {
+            $lines.append($('<div class="Log_Tail__line">').text(line.text));   // .text(): escaped
+            this.state.last_id = line.id;
+        }
+
+        this.state.count += lines.length;
+        this.$sid('empty').hide();
+        this.$sid('status').text(this.state.count + ' lines');
+
+        if (at_bottom) {
+            el.scrollTop = el.scrollHeight;
+        }
+    }
+
+    on_stop() {
+        // Read after an await above: a read that returns after the component is gone must not
+        // touch the page. The subscription stops itself; nothing else here needs releasing.
+        this._stopped = true;
+    }
+}
+```
+
+**The host** treats it as a black box. An action that embeds it keeps its OWN `on_load()` for the page's ordinary data, and must not repaint around the stream:
+
+```javascript
+class Logs_View_Action extends Spa_Action {
+    on_create() {
+        // refresh(), never reload(): reload() re-renders this action, which destroys the
+        // Log_Tail inside it and builds a new, empty one.
+        this.subscribe(Log_Model, this.args.id, () => this.refresh());
+    }
+
+    async on_load() {
+        this.data.log = await Log_Model.fetch(this.args.id);   // the header, the metadata
+    }
+}
+```
+
+If the action's own data changes often enough that `refresh()` would still repaint the region holding the stream, the ACTION is the stream and takes this shape itself - no `on_load()`, a static template, everything from `on_ready()`.
+
+**What you give up, and must therefore do by hand**: the loading state (show and hide your own placeholder, as `$sid="empty"` above), error display for your own Ajax calls, the stale-data protection `on_load()` gets from the framework (the cursor is the stream's answer; a stateful-DOM component uses the stale-while-revalidate contract in the tier's rules), and cleanup of anything the framework did not create. That is the price, and it is why this shape is the last resort and is declared in the docblock: the next reader must know the missing `on_load()` is the design, not an omission.
+
+**Do not reach for it** because a component "has a lot of jQuery", needs one incremental update (that is the Complex tier: `on_load()` plus DOM manipulation afterwards), or to avoid learning the lifecycle. The test is the cost of a re-render: if repainting the view for every change is acceptable, the lifecycle is the right tool.
+
 ## AJAX placement
 
 Component AJAX belongs in `on_load()` (save handlers excepted). **Never re-fetch into `this.data` from an event handler** - call `this.reload()` instead. `reload()` restores `this.data` to the `on_create()` snapshot then re-runs `on_load()` only - **`on_create()` is NOT called again** - which keeps the framework's caching, freezing and re-render heuristics aligned with what the template sees.

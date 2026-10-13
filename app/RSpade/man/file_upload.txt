@@ -471,12 +471,71 @@ FILE ACCESS
     Each attachment has a unique 64-char random hex key. Reach the bytes by
     key, never by path:
 
-        $file->get_url()           // "/_inline/{key}"   - view in browser
-        $file->get_download_url()  // "/_download/{key}" - force download
+        $file->get_url()           // "/_inline/{key}?v=..."   - view in browser
+        $file->get_download_url()  // "/_download/{key}?v=..." - force download
+        $file->get_preview_url()   // "/_preview/pdf/{key}?v=..." - the rendition
+                                   //   (/_preview/sheet/ for a workbook)
+        $file->get_thumbnail_url($type, $width, $height)
+        $file->get_thumbnail_url_preset($name)
 
-    Both URLs are relative and both run the authorization event hooks (see
-    SECURITY HOOKS). The key is minted by File_Attachment_Model::generate_key()
-    from cryptographically secure random bytes, so URLs are not enumerable.
+        File_Attachment_Model.inline_url(record)             // JS twins, over a
+        File_Attachment_Model.download_url(record)           // fetch() record
+        File_Attachment_Model.thumbnail_url(record, {...})
+
+    Every URL is relative and every route runs the authorization event hooks
+    (see SECURITY HOOKS). The key is minted by
+    File_Attachment_Model::generate_key() from cryptographically secure random
+    bytes, so URLs are not enumerable.
+
+    THE CONTENT VERSION (?v=)
+        An attachment's key never changes; its bytes can. relink_storage()
+        points it at another blob, and a stale external blob is evicted and
+        re-materialized (EXTERNAL BYTE RESIDENCY). So every URL a builder
+        produces ends in ?v=<content version>:
+
+            $file->content_version()                        // PHP
+            File_Attachment_Model.content_version(record)   // JS, same string
+
+            <file_storage_id>-<the blob's rendered_at in unix seconds, or 0>
+            0-0   an attachment with no resident blob
+
+        The storage id moves when the attachment points at different bytes
+        (the blob store is content-addressed: different bytes are a different
+        row, identical bytes the same one). rendered_at moves when the picture
+        of the SAME bytes changes - a document's render landing, or a
+        re-render. Nothing else is in it, and deliberately no part of the
+        content hash: a URL travels, and a hash prefix would let whoever holds
+        it test a guess about what the file contains.
+
+        THE ROUTES SERVE THE CURRENT BYTES WHATEVER v SAYS. What v decides is
+        the cache policy, on every attachment-addressed route (/_inline,
+        /_download, both thumbnail routes, /_preview/pdf, /_preview/sheet):
+
+            v is the attachment's current version   the route's long-lived
+                                                    Cache-Control
+            v absent, or not current                Cache-Control: no-store
+
+        So a builder's URL is cached for a year and is simply never requested
+        again once the bytes change - the next payload carries another URL -
+        while a URL somebody typed, bookmarked or concatenated from the key,
+        and a URL a page held from before the change, are answered correctly
+        and never kept. no-store rather than revalidation: these responses have
+        no validator that is true of the ATTACHMENT (Last-Modified is the mtime
+        of a blob in a content-addressed store, and a relink to an older blob
+        would revalidate the stale copy).
+
+        Consequences for application code:
+          - A file URL comes from a builder, in the request that renders it.
+            Never concatenate one from the key, and never store one: it is a
+            snapshot of the bytes at the moment it was built.
+          - A page that should follow the file while it is open mounts
+            <Attachment_Thumbnail> / <Document_Preview>, which refetch on the
+            realtime frame the attachment publishes and move to the new URLs
+            by themselves.
+          - A handler that takes over a download or inline response
+            (serve_download / serve_inline), and a document.preview_rendition
+            TAKEOVER response, own their Cache-Control - the framework leaves
+            them as returned.
 
 FILE SIZE
 
@@ -1014,7 +1073,9 @@ DOWNLOAD AND INLINE VIEWING
 
     Serve the bytes for download or in-browser display. Content-Type is the raw
     sniffed mime (a security choice, see FILE TYPE DETECTION). Cache-Control:
-    public, max-age=31536000.
+    public, max-age=31536000 for a request whose ?v= is the attachment's
+    current content version, no-store for any other (FILE ACCESS, THE CONTENT
+    VERSION) - the bytes served are the attachment's current ones either way.
 
     EVERY FILE-BYTES RESPONSE IS SANDBOXED. /_download, /_inline (a handler's
     serve-takeover included), /_download_zip, the thumbnail routes, the icon route
@@ -1172,13 +1233,17 @@ THUMBNAILS
         upscaling past the source and never past the configured max. Output is
         WebP; results are cached in the filesystem thumbnail cache (there is no
         database thumbnail model). Cache-Control: public, max-age=31536000 for a
-        real raster, and no-store for a placeholder.
+        real raster requested at the attachment's current content version;
+        no-store for a placeholder, and for a request with no ?v= or a
+        superseded one.
 
-        ?v= rides every generated URL: the blob's rendered_at in unix seconds, or
-        0. The SERVER IGNORES IT - it is purely a browser cache key, and it is
-        what makes a year-cached placeholder give way when the render lands.
+        ?v= rides every generated URL: the attachment's content version (FILE
+        ACCESS). It changes when the attachment is pointed at other bytes and
+        when the blob's render lands, which is what makes a placeholder give
+        way to the real raster and a replaced file's picture give way to the
+        new one.
 
-            $file->get_thumbnail_url('cover', 96, 96)    // -> /_thumbnail/... ?v=N
+            $file->get_thumbnail_url('cover', 96, 96)    // -> /_thumbnail/... ?v=41-0
             $file->get_thumbnail_url('fit', 240, 180)
 
     Preset thumbnails (recommended for fixed sizes)
@@ -1195,7 +1260,7 @@ THUMBNAILS
             ]],
 
             echo $file->get_thumbnail_url_preset('profile');
-            // -> /_thumbnail/preset/{key}/profile
+            // -> /_thumbnail/preset/{key}/profile?v=41-0
 
         Default presets ship as profile / gallery / icon_small / icon_large.
         Best practice: create a preset for every fixed-size thumbnail; reserve
@@ -1485,7 +1550,9 @@ EXTERNAL BYTE RESIDENCY (HANDLERS)
               Repoint at a new blob (sets file_storage_id + file_size,
               re-derives mime_type/file_type + dimensions, saves). Does NOT
               touch handler columns. The hash-keyed thumbnail cache
-              self-invalidates (new content -> new hash).
+              self-invalidates (new content -> new hash), content_version()
+              moves so every file URL changes, and the save publishes the
+              realtime frame mounted thumbnails and previews repaint on.
           evict_blob(): void
               Null file_storage_id so the manual orphan sweep can reclaim the
               blob. THROWS unless handler_class is set (bytes must remain

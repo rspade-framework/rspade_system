@@ -703,8 +703,11 @@ SERVER SURFACES
         tmp/renditions/{blob-hash}.pdf - the rendition the background worker
         produced, content-addressed so identical bytes convert once - but ONLY when the
         blob is RENDERED; otherwise it 404s with a body naming the render state (never
-        render_error). Anything else is 415. Served inline with an immutable one-year
-        cache.
+        render_error). Anything else is 415. Served inline; immutable with a one-year
+        cache when the request's ?v= is the attachment's current content version, and
+        no-store for a request with no v or a superseded one (rsx:man file_upload,
+        FILE ACCESS). GET /_preview/sheet/:key, the workbook's HTML grid, follows the
+        same rule.
 
         A RENDERED blob whose rendition file has been LRU-evicted re-queues itself and
         404s for this one request rather than showing an error over a cache eviction -
@@ -720,6 +723,10 @@ SERVER SURFACES
         urls:{rendition, inline, icon}}. render_status_id is the blob's
         File_Storage_Model::RENDER_STATUS_*, or null when there is no resident blob at
         all; urls.rendition is present ONLY when the endpoint would actually serve one.
+        urls.rendition and urls.inline are the model builders' URLs and carry the
+        attachment's content version, so the payload DIFFERS after a relink or a
+        re-render - which is what makes <Document_Preview>'s refresh() repaint, for a
+        PDF and an image as much as for a converted document.
         Gated by file.thumbnail.authorize only (metadata, not full content). No config
         is exported to the client - resolution is server-side.
 

@@ -168,26 +168,29 @@ class Portal_Host_Reach_Test extends Rsx_Test_Abstract
         config(['rsx.portal.url' => '']);
         $app = static::__app_origin();
 
+        // No resident blob, so the content version every file URL carries is 0-0.
         $attachment = new File_Attachment_Model();
         $attachment->key = 'k';
 
         Rsx_Request_Channel::classify(Request::create($app . '/dashboard'));
         static::__assert_equals('/_inline/k', Rsx_Portal::internal_url('/_inline/k'), 'a staff request is unchanged');
-        static::__assert_equals('/_inline/k', $attachment->get_url());
-        static::__assert_equals('/_download/k', $attachment->get_download_url());
+        static::__assert_equals('/_inline/k?v=0-0', $attachment->get_url());
+        static::__assert_equals('/_download/k?v=0-0', $attachment->get_download_url());
 
         Rsx_Request_Channel::classify(Request::create($app . '/_portal/documents'));
         static::__assert_equals('/_portal/_inline/k', Rsx_Portal::internal_url('/_inline/k'), 'a portal request is under the prefix');
-        static::__assert_equals('/_portal/_inline/k', $attachment->get_url());
-        static::__assert_equals('/_portal/_download/k', $attachment->get_download_url());
+        static::__assert_equals('/_portal/_inline/k?v=0-0', $attachment->get_url());
+        static::__assert_equals('/_portal/_download/k?v=0-0', $attachment->get_download_url());
+        static::__assert_equals('/_portal/_preview/pdf/k?v=0-0', $attachment->get_preview_url());
+        static::__assert_equals('/_portal/_thumbnail/dynamic/k/fit/100?v=0-0', $attachment->get_thumbnail_url('fit', 100));
 
         config(['rsx.portal.url' => 'https://' . self::PORTAL_HOST . '/']);
         Rsx_Request_Channel::classify(Request::create('https://' . self::PORTAL_HOST . '/documents'));
-        static::__assert_equals('/_inline/k', $attachment->get_url(), 'at the root of its own host there is no prefix');
+        static::__assert_equals('/_inline/k?v=0-0', $attachment->get_url(), 'at the root of its own host there is no prefix');
 
         config(['rsx.portal.url' => 'https://' . self::PORTAL_HOST . '/x']);
         Rsx_Request_Channel::classify(Request::create('https://' . self::PORTAL_HOST . '/x/documents'));
-        static::__assert_equals('/x/_download/k', $attachment->get_download_url());
+        static::__assert_equals('/x/_download/k?v=0-0', $attachment->get_download_url());
     }
 
     public static function test_the_csp_report_uri_names_the_realms_own_collector()

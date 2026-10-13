@@ -95,6 +95,8 @@ Args: `$attachment_id` (**required** — the component throws without it), `$pag
 - `FAILED` → a failed state. `render_error` is **never** sent to the browser; the operator reads it with `rsx:documents:failed`.
 - `RENDERED` / `NOT_REQUIRED` → `urls.rendition` is present and the viewer loads it.
 
+**The same subscription follows a REPLACED file.** `urls.rendition` and `urls.inline` are the model builders' URLs and carry the attachment's content version (`?v=<storage id>-<rendered_at or 0>`, `rspade:file-attachments` §5), so after `relink_storage()` — or a re-render — `get_preview_info()` answers a different payload, `refresh()` repaints, the viewer loads the new URL and `preview_loaded` reports again. That holds for a PDF and an image exactly as for a converted document. A viewer you register is handed the versioned `url`; pass it on untouched — a URL rebuilt from the key is served `no-store`.
+
 A thumbnail of the same document is `<Attachment_Thumbnail $attachment_id=... />` and follows the identical placeholder-then-swap story — see `rspade:file-attachments` §5 and `rsx:man thumbnails`.
 
 Public methods, delegating to the active viewer (no-ops before it is ready): `set_page(n)`, `get_page()`, `get_pages()`.

@@ -124,6 +124,42 @@ COMPONENT COMPLEXITY TIERS
         If any criterion does not hold, use the Complex tier. Standalone is
         a last resort, not an optimization.
 
+        THE OTHER STANDALONE SHAPE: A LIVE, APPEND-ONLY STREAM.
+        The load-then-render cycle suits a screen whose content rarely
+        changes: a realtime frame refetches it and it repaints. It is the
+        wrong tool for a view that GROWS BY APPENDING - a terminal showing
+        live output, a log tail, a chat transcript, a progress feed.
+        Rendered from data, every new line rebuilds the whole history,
+        loses the reader's scroll position and drops their selection. Such
+        an action or component is Standalone on that ground alone (the
+        three criteria above describe the stateful-DOM shape) and is
+        written the way a jQuery plugin is written:
+
+        - no on_load(); the template is STATIC markup, drawn once, with
+          $sid containers for the code to work on;
+        - on_ready() is the component's $(document).ready(): from it the
+          component makes its own Ajax calls, binds its own events on
+          this.$sid(...) (namespaced, .off() before .on()), and changes
+          the page with .append() / .hide() / .show() / .text();
+        - a realtime frame makes it READ WHAT IS NEW AND APPEND IT, through
+          a uniquely-named public method (read_new()), never refresh() or
+          reload();
+        - it reads from a CURSOR - the id of the newest item already shown
+          - so a repeated or overlapping read is harmless, and every read
+          goes through ONE core debounce(). That cursor is this shape's
+          answer to the caching mandate below, which is written for the
+          stateful-DOM shape;
+        - nothing may re-render it: reload() on it, or a re-render of its
+          parent (a host action calling reload() where refresh() was
+          meant), destroys it and builds an empty one;
+        - cleanup of what the framework did not create goes in on_stop().
+
+        The framework's own instance is Task_Output
+        (system/app/RSpade/Core/Task/ui/Task_Output.js), a task's output in
+        a terminal. A full worked example - template, class, host action -
+        is in skill rspade:jqhtml, reference lifecycle-and-state, "A
+        component that works like a jQuery plugin".
+
         Caching mandate:
         RSpade's goal is that everything appears to load instantly wherever
         possible, via cached paint + revalidation. A Standalone component

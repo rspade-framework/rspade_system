@@ -176,11 +176,19 @@ A tighter app cap: `min()` it against the framework number and render it the sam
 ## 5. Displaying files
 
 ```php
-$attachment->get_url();            // "/_inline/{key}"   - view in browser
-$attachment->get_download_url();   // "/_download/{key}" - forces the download dialog
+$attachment->get_url();            // "/_inline/{key}?v=41-0"   - view in browser
+$attachment->get_download_url();   // "/_download/{key}?v=41-0" - forces the download dialog
+$attachment->get_preview_url();    // "/_preview/pdf/{key}?v=41-0" (/_preview/sheet/ for a workbook)
 ```
 
-Two different routes. There is no `?download=1` query parameter.
+Two different routes for the bytes. There is no `?download=1` query parameter.
+
+**Every file URL carries the attachment's content version, and only a builder's URL is cacheable.** An attachment's key is permanent; its bytes are not (`relink_storage()` repoints it, a stale external blob is re-materialized). `content_version()` is `<file_storage_id>-<the blob's rendered_at in unix seconds, or 0>` (`0-0` with no resident blob) — it moves when the attachment points at different bytes and when a document's render lands — and every builder appends it as `?v=`. The routes **always serve the current bytes whatever `v` says**; `v` decides the cache policy: a request at the current version gets the route's one-year `Cache-Control`, and a request with **no `v` or a superseded one is answered `no-store`**. So:
+
+- **Never concatenate a file URL from the key** (`'/_download/' . $key`). It works, and is downloaded in full on every request.
+- **Never store a URL.** It is a snapshot; build it in the request that renders it.
+- A page that must follow the file while it is open mounts `<Attachment_Thumbnail>` / `<Document_Preview>` — both refetch on the attachment's realtime frame and move to the new URLs by themselves. A plain `<a href>` picks up the new URL on its next payload, and until then the old URL still hands over the new bytes.
+- In JavaScript the builders are `File_Attachment_Model.inline_url(record)`, `.download_url(record)` and `.thumbnail_url(record, {...})` over a `File_Attachment_Model.fetch()` record (`.content_version(record)` is the same string PHP produces).
 
 **The URL builders are realm-aware.** Every file route (`/_inline`, `/_download`, `/_download_zip`, `/_thumbnail/*`, `/_preview/*`, `/_upload`, `/_icon_by_extension`) is declared in both route tables, and the builders rebase through `Rsx_Portal::internal_url()` / `Rsx_Portal.internal_url()`: on a portal request `get_url()` answers `<portal prefix>/_inline/{key}` (`/_portal/_inline/...` by default, the bare path at the root of a portal host of its own), so the bytes are fetched as a PORTAL request and the gates see the portal user. Build the URL in the request that renders it - never concatenate `/_inline/` yourself, and never ship a staff-built URL to a portal page.
 
@@ -239,7 +247,7 @@ Extra classes go on the invocation as an ordinary HTML attribute (`class="me-2"`
 
 **A producer ships `file_attachment_id`, never a URL** — and stops shipping `key`, `thumbnail_url` and render-state fields entirely. The component fetches the record itself through `File_Attachment_Model.fetch_or_null()`, which is **batched**, so a table of forty thumbnails costs one request.
 
-**Why a component and not a URL helper.** A URL is a value; a thumbnail is a live view of a record whose picture may not exist yet. An Office document has no thumbnail until the background worker has rendered it, so what first paints is an extension-icon placeholder; when the render lands, a realtime frame brings the component back for a fresh record and the image swaps in place. Only a component has the lifecycle to subscribe, refetch and repaint. That is why **nothing in an app builds a thumbnail URL** — and why the URLs carry `?v=<rendered_at>`, without which a browser would keep a year-cached placeholder forever. See `rspade:document-preview` and `rsx:man thumbnails`.
+**Why a component and not a URL helper.** A URL is a value; a thumbnail is a live view of a record whose picture may not exist yet. An Office document has no thumbnail until the background worker has rendered it, so what first paints is an extension-icon placeholder; when the render lands, a realtime frame brings the component back for a fresh record and the image swaps in place. Only a component has the lifecycle to subscribe, refetch and repaint. That is why **nothing in an app builds a thumbnail URL** — and why the URLs carry the attachment's content version (`?v=`, above), which is what lets the real raster be cached for a year without a placeholder, or a replaced file's old picture, ever being kept under the same URL. See `rspade:document-preview` and `rsx:man thumbnails`.
 
 The same component works unchanged on **portal** pages (`File_Attachment_Model` ships both `fetch()` and `portal_fetch()`). Your `file.thumbnail.authorize` handler is now load-bearing for the portal realm through `fetch` — **it must answer correctly when `'user'` is a `Portal_User_Model`**, or every portal thumbnail silently becomes an empty box.
 
@@ -258,7 +266,7 @@ on_ready() {
 
 `state` is `loaded` (the picture decoded — the raster, or the type icon of a file with no raster), `preparing` (the extension icon of a render still queued; it reports again after the swap), `failed` (the image would not load, or the icon of a failed render) or `unavailable` (no record). `variant` is `'thumbnail'` or — when `$allow_animated` showed the upload itself — `'original'`, and `natural_width`/`natural_height` are **the served image's**, so they are the upload's own size only under `'original'` (otherwise read the attachment's `width`/`height`). It fires again after every swap and after a `reload()` onto another `$attachment_id`. It is not named `loaded` because that is a reserved jqhtml lifecycle event. The shared state table and guarantee: `rspade:document-preview` (**`preview_loaded`**), `rsx:man thumbnails`.
 
-`File_Attachment_Model.thumbnail_url(record, {type, width, height, preset})` is the single JS builder the component calls. Reach for it directly only when a component genuinely cannot sit at that spot — a widget addressed by attachment **key** rather than id, say — and say why in a comment. Presets live in `config('rsx.thumbnails.presets')` (`profile`, `gallery`, `icon_small`, `icon_large` ship) and **throw** if undefined. `has_thumbnail()` is true iff a renderer is registered for the mime or the blob has rendered.
+`File_Attachment_Model.thumbnail_url(record, {type, width, height, preset})` is the single JS builder the component calls. Reach for it directly only when a component genuinely cannot sit at that spot — a widget addressed by attachment **key** rather than id, say — and say why in a comment; a record holding only a key has no content version (`0-0`), so that picture is served uncacheable. Presets live in `config('rsx.thumbnails.presets')` (`profile`, `gallery`, `icon_small`, `icon_large` ship) and **throw** if undefined. `has_thumbnail()` is true iff a renderer is registered for the mime or the blob has rendered.
 
 ### File-type marks: `<File_Type_Icon>`, never your own extension map
 

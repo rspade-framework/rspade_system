@@ -134,17 +134,20 @@ class Document_Serving_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Drive the dynamic thumbnail endpoint in-process, with a ?v= on the request to prove the
-     * cache-buster is accepted and ignored server-side.
+     * Drive the dynamic thumbnail endpoint in-process the way a URL from the model's builder
+     * reaches it: with the attachment's CURRENT content version as v (the route's params carry
+     * the query string). Pass $version to ask as a URL built at another moment would.
      */
-    private static function __request_thumbnail(File_Attachment_Model $attachment, int $width)
+    private static function __request_thumbnail(File_Attachment_Model $attachment, int $width, ?string $version = null)
     {
-        $request = Request::create("/_thumbnail/dynamic/{$attachment->key}/fit/{$width}?v=12345", 'GET');
+        $version ??= File_Attachment_Model::find($attachment->id)->content_version();
+        $request = Request::create("/_thumbnail/dynamic/{$attachment->key}/fit/{$width}?v={$version}", 'GET');
 
         return File_Attachment_Controller::thumbnail($request, [
             'key' => $attachment->key,
             'type' => 'fit',
             'width' => $width,
+            'v' => $version,
         ]);
     }
 
@@ -266,34 +269,47 @@ class Document_Serving_Test extends Rsx_Test_Abstract
         static::__assert_null(static::__storage($attachment)->rendered_at, 're-queueing clears the stale rendered_at');
     }
 
-    // DOCUMENTS-URL-VERSION: thumbnails are served max-age=31536000, so the URL carries ?v=<rendered_at>
-    // - without it a browser would pin the placeholder for a year. v is 0 before a render and the
-    // rendered_at unix timestamp after; the endpoint accepts the parameter and ignores it.
+    // DOCUMENTS-URL-VERSION: a thumbnail URL carries the attachment's content version,
+    // <storage id>-<rendered_at unix seconds or 0>, so the URL of a queued document's placeholder
+    // and the URL of its real page-1 raster are different URLs. The route serves the current
+    // picture for either, and keeps its one-year max-age only for the one that is current.
     public static function test_thumbnail_url_version_tracks_rendered_at()
     {
         $site_id = static::__site_id();
 
         $attachment = static::__make_attachment($site_id, 'version', 'version.docx');
-        static::__assert_contains('?v=0', $attachment->get_thumbnail_url('fit', 120), 'nothing rendered yet -> v=0');
-
         $storage = static::__storage($attachment);
+
+        $queued_version = $storage->id . '-0';
+        static::__assert_equals($queued_version, $attachment->content_version(), 'nothing rendered yet -> <storage id>-0');
+        static::__assert_contains('?v=' . $queued_version, $attachment->get_thumbnail_url('fit', 120), 'the URL carries it');
+
         static::__install_rendition($storage);
         $storage->render_status_id = File_Storage_Model::RENDER_STATUS_RENDERED;
         $storage->rendered_at = \App\RSpade\Core\Time\Rsx_Time::now_iso();
         $storage->save();
 
-        $expected_v = intdiv(\App\RSpade\Core\Time\Rsx_Time::to_ms($storage->rendered_at), 1000);
+        $rendered_version = $storage->id . '-' . intdiv(\App\RSpade\Core\Time\Rsx_Time::to_ms(static::__storage($attachment)->rendered_at), 1000);
         $url = File_Attachment_Model::find($attachment->id)->get_thumbnail_url('fit', 120);
-        static::__assert_contains("?v={$expected_v}", $url, 'the version is the rendered_at unix timestamp');
+        static::__assert_contains('?v=' . $rendered_version, $url, 'the render moves the version to the rendered_at unix timestamp');
 
         $preset_url = File_Attachment_Model::find($attachment->id)->get_thumbnail_url_preset('icon_small');
-        static::__assert_contains("?v={$expected_v}", $preset_url, 'preset URLs carry the same version');
+        static::__assert_contains('?v=' . $rendered_version, $preset_url, 'preset URLs carry the same version');
 
-        // The route is matched on path params; ?v= is a client-side cache key the server ignores.
         $cache_path = static::__dynamic_cache_path($storage, 'docx', 120);
         static::$created_files[] = $cache_path;
-        $response = static::__request_thumbnail($attachment, 120);
-        static::__assert_equals(200, $response->getStatusCode(), 'the endpoint serves with ?v= present');
+
+        // The URL built after the render: the real raster, kept for a year.
+        $response = static::__request_thumbnail($attachment, 120, $rendered_version);
+        static::__assert_equals(200, $response->getStatusCode(), 'the endpoint serves the current version');
+        static::__assert_contains('max-age=31536000', (string) $response->headers->get('Cache-Control'), 'the current URL is cacheable for a year');
+
+        // The URL a page built while the document was queued: the same real raster, never kept -
+        // a browser must not pin under the placeholder's URL what that URL no longer describes.
+        $response = static::__request_thumbnail($attachment, 120, $queued_version);
+        static::__assert_equals(200, $response->getStatusCode(), 'a superseded version is still served');
+        static::__assert_contains('WEBP', substr($response->getContent() ?: file_get_contents($response->getFile()->getPathname()), 0, 16), 'with the current picture');
+        static::__assert_contains('no-store', (string) $response->headers->get('Cache-Control'), 'and is uncacheable');
     }
 
     // ============================================================================================
@@ -387,13 +403,24 @@ class Document_Serving_Test extends Rsx_Test_Abstract
             'the rendition URL appears once the rendition exists'
         );
 
-        // The rendition is served cacheable for a year, so its URL carries the render time:
-        // a re-render must reach a browser that already holds the earlier copy.
+        // The rendition is served cacheable for a year, so its URL carries the attachment's
+        // content version - the blob and its render time: a re-render must reach a browser
+        // that already holds the earlier copy.
         $first_url = (string) $rendered_info['urls']['rendition'];
         static::__assert_contains(
-            'v=' . strtotime((string) static::__storage($attachment)->rendered_at),
+            '?v=' . $storage->id . '-' . intdiv(\App\RSpade\Core\Time\Rsx_Time::to_ms(static::__storage($attachment)->rendered_at), 1000),
             $first_url,
-            'the URL is versioned by the render time'
+            'the URL is versioned by the blob and its render time'
+        );
+        static::__assert_equals(
+            File_Attachment_Model::find($attachment->id)->get_preview_url(),
+            $first_url,
+            'and is the model builder\'s own URL'
+        );
+        static::__assert_equals(
+            File_Attachment_Model::find($attachment->id)->get_url(),
+            (string) $rendered_info['urls']['inline'],
+            'the inline URL carries the same version'
         );
 
         $storage = static::__storage($attachment);

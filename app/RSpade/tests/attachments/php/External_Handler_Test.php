@@ -127,18 +127,23 @@ class External_Handler_Test extends Rsx_Test_Abstract
         static::__assert_equals(0, Attachment_Fixture_Handler::$fetch_count, 'no fetch until bytes needed');
     }
 
-    // Criterion 2: first byte access materializes; key + URLs stable; no re-materialize.
+    // Criterion 2: first byte access materializes; the key and the URL's path are stable, and the
+    // URL's content version goes from "no resident blob" to the materialized blob's; no
+    // re-materialize.
     public static function test_resolve_storage_materializes_once()
     {
         $a = static::__make_external();
         $key_before = $a->key;
         $url_before = $a->get_download_url();
+        static::__assert_equals('0-0', $a->content_version(), 'no resident blob: the version is 0-0');
+        static::__assert_equals('/_download/' . $key_before . '?v=0-0', $url_before);
 
         $storage = $a->resolve_storage();
         static::__assert_equals(1, Attachment_Fixture_Handler::$fetch_count, 'first resolve materializes');
         static::__assert_not_null($a->file_storage_id, 'blob linked after materialize');
         static::__assert_equals($key_before, $a->key, 'key stable across materialize');
-        static::__assert_equals($url_before, $a->get_download_url(), 'download URL stable');
+        static::__assert_equals($storage->id . '-0', $a->content_version(), 'the version names the materialized blob');
+        static::__assert_equals('/_download/' . $key_before . '?v=' . $storage->id . '-0', $a->get_download_url(), 'the URL is the same path at the new version');
         static::__assert_true(file_exists($storage->get_full_path()), 'blob written to disk');
 
         // Second access does not re-fetch.
@@ -267,5 +272,41 @@ class External_Handler_Test extends Rsx_Test_Abstract
         Attachment_Fixture_Fresh_Handler::$stale = false;
         $a->resolve_storage();
         static::__assert_not_null($a->file_storage_id, 're-materialized fresh bytes');
+    }
+
+    // ATT-CONTENT-VERSION: an eviction and re-materialization moves the content version exactly
+    // when the remote bytes changed. The blob store is content-addressed, so unchanged bytes come
+    // back as the same storage row and the URLs a page already holds stay current; changed bytes
+    // are another row, and a URL built for the old ones is no longer current.
+    public static function test_rematerialization_moves_the_content_version_only_when_the_bytes_changed()
+    {
+        $a = static::__make_external('Attachment_Fixture_Fresh_Handler');
+        $a->resolve_storage();
+        $first = $a->content_version();
+        $first_url = $a->get_url();
+
+        // Stale, but the remote still holds the same bytes.
+        Attachment_Fixture_Fresh_Handler::$stale = true;
+        $a->apply_serve_freshness();
+        static::__assert_equals('0-0', $a->content_version(), 'evicted: no resident blob');
+        Attachment_Fixture_Fresh_Handler::$stale = false;
+        $a->resolve_storage();
+        static::__assert_equals($first, $a->content_version(), 'identical bytes are the same blob: the version did not move');
+        static::__assert_equals($first_url, $a->get_url());
+
+        // Stale, and the remote now holds different bytes.
+        Attachment_Fixture_Fresh_Handler::$stale = true;
+        $a->apply_serve_freshness();
+        Attachment_Fixture_Fresh_Handler::$stale = false;
+        Attachment_Fixture_Handler::$variant = 'b';
+        $a->resolve_storage();
+
+        static::__assert_not_equals($first, $a->content_version(), 'different bytes are another blob: the version moved');
+        static::__assert_equals($a->file_storage_id . '-0', $a->content_version());
+        static::__assert_false($a->is_current_content_version($first), 'a URL built for the old bytes is no longer current');
+        static::__assert_true(
+            $a->is_current_content_version(File_Attachment_Model::find($a->id)->content_version()),
+            'the saved row agrees with the instance that materialized'
+        );
     }
 }

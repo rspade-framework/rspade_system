@@ -149,7 +149,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             'request' => $request,
         ]);
         if ($resolved !== null) {
-            return static::__apply_rendition_resolution($resolved, $attachment);
+            return static::__apply_rendition_resolution($resolved, $attachment, $params);
         }
 
         // Framework rendition pipeline. Route on the PIPELINE mime (extension-first for documents)
@@ -164,14 +164,14 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
                 abort(404, 'File not found on disk');
             }
 
-            return static::__serve_pdf($path, $attachment->file_name);
+            return static::__serve_pdf($path, $attachment->file_name, $attachment, $params);
         }
 
         // Convertible office document + LibreOffice enabled -> cached soffice->PDF rendition.
         if (static::__is_convertible($mime) && config('rsx.libreoffice.enabled', true)) {
             $rendition_path = static::__resolve_rendition($attachment);
 
-            return static::__serve_pdf($rendition_path, static::__pdf_filename($attachment->file_name));
+            return static::__serve_pdf($rendition_path, static::__pdf_filename($attachment->file_name), $attachment, $params);
         }
 
         // No PDF rendition is possible for this file type.
@@ -253,7 +253,8 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             abort(404, 'Spreadsheet preview is being prepared.');
         }
 
-        return Response::file($path, [
+        // Immutable only for a request naming the attachment's current content version.
+        return File_Attachment_Controller::apply_content_version_cache_policy(Response::file($path, [
             'Content-Type' => 'text/html; charset=UTF-8',
             'Content-Disposition' => 'inline; filename="' . static::__sheet_filename($attachment->file_name) . '"',
             'Cache-Control' => 'public, max-age=31536000, immutable',
@@ -262,7 +263,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             // generator, so img-src needs nothing else.
             'Content-Security-Policy' => "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
             'X-Content-Type-Options' => 'nosniff',
-        ]);
+        ]), $attachment, $params);
     }
 
     /**
@@ -282,11 +283,15 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * Apply a non-null result from the document.preview_rendition resolve chain, enforcing its
      * contract. See the class docblock for the full contract.
      *
+     * A TAKEOVER response is the handler's own, cache headers included. A SERVE path is served
+     * under the same content-version cache policy as the framework's renditions.
+     *
      * @param mixed $resolved
      * @param File_Attachment_Model $attachment
+     * @param array $params The route's params (carries the request's `v`).
      * @return \Symfony\Component\HttpFoundation\Response
      */
-    protected static function __apply_rendition_resolution($resolved, File_Attachment_Model $attachment)
+    protected static function __apply_rendition_resolution($resolved, File_Attachment_Model $attachment, array $params)
     {
         // TAKEOVER: the handler produced a full response (stream, redirect, etc).
         if ($resolved instanceof \Symfony\Component\HttpFoundation\Response) {
@@ -301,7 +306,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
                     shouldnt_happen('document.preview_rendition returned a path that does not exist: ' . var_export($path, true));
                 }
 
-                return static::__serve_pdf($path, static::__pdf_filename($attachment->file_name));
+                return static::__serve_pdf($path, static::__pdf_filename($attachment->file_name), $attachment, $params);
             }
 
             // 415: the handler declares this attachment has no rendition.
@@ -397,20 +402,24 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     }
 
     /**
-     * Serve a PDF file inline with immutable long-cache headers (content-addressed renditions never
-     * change for a given URL).
+     * Serve a PDF file inline: immutable and long-cached for a request whose `v` names the
+     * attachment's current content version (that URL never serves different bytes - a relink
+     * or a re-render produces a new one), `no-store` for any other request
+     * (File_Attachment_Controller::apply_content_version_cache_policy()).
      *
      * @param string $path Absolute path to a PDF file.
      * @param string $file_name Display filename for the Content-Disposition header.
+     * @param File_Attachment_Model $attachment The attachment the request addressed.
+     * @param array $params The route's params (carries the request's `v`).
      * @return \Symfony\Component\HttpFoundation\Response
      */
-    protected static function __serve_pdf(string $path, string $file_name)
+    protected static function __serve_pdf(string $path, string $file_name, File_Attachment_Model $attachment, array $params)
     {
-        return File_Attachment_Controller::harden_file_response(Response::file($path, [
+        return File_Attachment_Controller::harden_file_response(File_Attachment_Controller::apply_content_version_cache_policy(Response::file($path, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="' . $file_name . '"',
             'Cache-Control' => 'public, max-age=31536000, immutable',
-        ]));
+        ]), $attachment, $params));
     }
 
     /**
@@ -553,31 +562,27 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // Anything else is null, and Document_Preview renders its preparing / failed / icon state
         // from render_status_id instead. The id is exported raw - the JS enum helpers on
         // File_Storage_Model turn it into a label; a *_label field here would be an alias.
+        //
+        // Both URLs below come from the model's builders, so both carry the attachment's
+        // content version. That is also what makes this payload DIFFER after a relink or a
+        // re-render, which is what Document_Preview's refresh() repaints on.
         $render_status = $attachment->get_render_status();
         $rendition_url = null;
 
-        $is_spreadsheet = Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime());
-
         if ($attachment->pipeline_mime() === 'application/pdf') {
-            $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]));
+            $rendition_url = $attachment->get_preview_url();
         } elseif ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED) {
             $storage = File_Storage_Model::find($attachment->file_storage_id);
 
-            // A rendition is served cacheable for a year, and a re-render replaces the file
-            // behind the same key. `v` is the render time, so a re-rendered document has a
-            // new URL and a browser never shows the copy it cached from the render before.
-            $route_params = ['key' => $attachment->key];
-            if ($storage && $storage->rendered_at) {
-                $route_params['v'] = (string) strtotime((string) $storage->rendered_at);
-            }
-
             // A workbook's rendition is HTML at its own endpoint - see sheet_rendition().
-            if ($is_spreadsheet) {
-                if ($storage && file_exists(static::sheet_rendition_cache_path($storage))) {
-                    $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::sheet_rendition', $route_params));
-                }
-            } elseif ($storage && file_exists(static::rendition_cache_path($storage))) {
-                $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::pdf_rendition', $route_params));
+            $rendition_path = $storage === null ? null : (
+                Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime())
+                    ? static::sheet_rendition_cache_path($storage)
+                    : static::rendition_cache_path($storage)
+            );
+
+            if ($rendition_path !== null && file_exists($rendition_path)) {
+                $rendition_url = $attachment->get_preview_url();
             }
         }
 

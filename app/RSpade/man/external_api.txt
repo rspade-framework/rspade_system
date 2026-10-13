@@ -480,6 +480,16 @@ FILE ENDPOINTS
         /_download_zip/:key      /_preview/pdf/:key
         /_preview/sheet/:key
 
+    USE THE urls FROM THE PAYLOAD AS GIVEN. Each ends in ?v=<content version>,
+    naming the bytes the file had when the payload was built. The routes serve the
+    file's CURRENT bytes whatever v says; a request whose v is still current is
+    answered cacheable for a year, and one with no v (a URL assembled from the
+    key) or an outdated v is answered Cache-Control: no-store. Read urls again
+    from GET /api/v1/files/:key rather than keeping one. An application endpoint
+    that returns file URLs builds them with the model's builders - get_url(),
+    get_download_url(), get_thumbnail_url(), get_preview_url() - never from the
+    key (rsx:man file_upload, FILE ACCESS).
+
     A bad Bearer on one of these is a 401 - it never degrades to anonymous.
     The page Dispatcher establishes the key's identity
     (Rsx_Api_Bearer::authenticate_file_route()) as soon as one of these routes

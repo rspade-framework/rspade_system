@@ -50,8 +50,8 @@ operator commands `rsx:documents:status|failed|rerender`).
 - `app/RSpade/Commands/Documents/Documents_Process_One_Command.php` - the hidden child command.
 - `app/RSpade/Core/Files/File_Attachment_Model.php` - `fetch()` / `portal_fetch()` (the gated ORM
   read behind `File_Attachment_Model.fetch(id)` in JavaScript, with the blob embedded), the create /
-  `relink_storage()` hook that queues a convertible blob, `is_convertible_mime()`, `get_render_status()`, the `?v=`
-  cache-buster on `get_thumbnail_url*()`, and render-aware `has_thumbnail()`.
+  `relink_storage()` hook that queues a convertible blob, `is_convertible_mime()`, `get_render_status()`, the content
+  version (`?v=`) on `get_thumbnail_url*()`, and render-aware `has_thumbnail()`.
 - `app/RSpade/Core/Files/Document_Sandbox.php` - THE one place a document binary's command
   line is built: `mode()` / `is_docker()` / `command()` / `hardening_flags()` /
   `container_name()` / `kill()`, plus `ensure_image()` / `is_framework_image()` (the framework's

@@ -9,7 +9,6 @@ use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Rsx_File_Upload;
-use App\RSpade\Core\Files\Spreadsheet_Rendition;
 use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Session\Session;
 
@@ -56,8 +55,13 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      *
      * DOWNLOADING THE FILE AGAIN. There are no /api/vN download endpoints, because the four
      * routes that already serve file bytes accept your `Authorization: Bearer` header exactly
-     * as they accept a browser cookie. Use them directly, with the `key` from this response
-     * and the absolute URLs echoed back in `urls`:
+     * as they accept a browser cookie. Use the absolute URLs echoed back in `urls`, as given:
+     * each ends in `?v=<version>`, a token naming the bytes the file has at the moment the
+     * payload was built. The routes always serve the file's CURRENT bytes whatever `v` says; a
+     * request whose `v` is still current is answered cacheable for a year, and one with no
+     * `v` (a URL assembled from the key) or an outdated one is answered `Cache-Control:
+     * no-store`. Read `urls` again from GET /api/v1/files/{key} rather than keeping one.
+     *
      *
      *   GET /_download/{key}
      *     The original bytes, Content-Disposition: attachment. Always available.
@@ -114,10 +118,10 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      *   "has_thumbnail": false,
      *   "preview_unavailable": false,
      *   "urls": {
-     *     "download": "https://example.com/_download/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6",
-     *     "inline": "https://example.com/_inline/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6",
-     *     "thumbnail": "https://example.com/_thumbnail/dynamic/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6/fit/400?v=0",
-     *     "preview": "https://example.com/_preview/pdf/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6"
+     *     "download": "https://example.com/_download/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6?v=3187-0",
+     *     "inline": "https://example.com/_inline/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6?v=3187-0",
+     *     "thumbnail": "https://example.com/_thumbnail/dynamic/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6/fit/400?v=3187-0",
+     *     "preview": "https://example.com/_preview/sheet/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6?v=3187-0"
      *   }
      * }
      */
@@ -182,10 +186,10 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      *   "preview_status": "available",
      *   "text_status": "available",
      *   "urls": {
-     *     "download": "https://example.com/_download/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6",
-     *     "inline": "https://example.com/_inline/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6",
-     *     "thumbnail": "https://example.com/_thumbnail/dynamic/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6/fit/400?v=1",
-     *     "preview": "https://example.com/_preview/pdf/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6"
+     *     "download": "https://example.com/_download/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6?v=3187-1791894003",
+     *     "inline": "https://example.com/_inline/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6?v=3187-1791894003",
+     *     "thumbnail": "https://example.com/_thumbnail/dynamic/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6/fit/400?v=3187-1791894003",
+     *     "preview": "https://example.com/_preview/sheet/9f2c41b7ae0d6538c1a7e94b2d3f80516ec7a4d92b18f60c35ae719d4c82b0f6?v=3187-1791894003"
      *   }
      * }
      */
@@ -343,10 +347,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
                 'thumbnail' => static::__absolute($attachment->get_thumbnail_url()),
                 // A workbook previews as an HTML grid at its own route (Spreadsheet_Rendition);
                 // everything else that previews at all is a PDF rendition.
-                'preview' => static::__absolute(
-                    (Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime()) ? '/_preview/sheet/' : '/_preview/pdf/')
-                    . $attachment->key
-                ),
+                'preview' => static::__absolute($attachment->get_preview_url()),
             ],
         ];
     }

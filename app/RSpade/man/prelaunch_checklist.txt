@@ -1760,6 +1760,55 @@ ENTRY 19: BUNDLES SERVED TO VISITORS WHO HAVE NOT SIGNED IN (what a login page
 
 --------------------------------------------------------------------------------
 
+ENTRY 20: FILE URLS BUILT BY HAND (served uncacheable, every request)
+
+    What to audit
+        Every place the application produces a URL for an attachment's bytes -
+        a download link, an inline link, a thumbnail or a preview rendition -
+        and that each one comes from the model's builders:
+
+            PHP   $attachment->get_url(), get_download_url(),
+                  get_thumbnail_url(), get_thumbnail_url_preset(),
+                  get_preview_url()
+            JS    File_Attachment_Model.inline_url(record), download_url(record),
+                  thumbnail_url(record, ...) - or the components
+                  <Attachment_Thumbnail> and <Document_Preview>, which call them
+
+        Find the others:
+
+            grep -rnE "/_(inline|download|thumbnail|preview)/" rsx \
+                --include='*.php' --include='*.js' --include='*.jqhtml'
+
+        and look for a file URL kept in a column, a cache or a setting.
+
+    Why it matters
+        A builder's URL ends in ?v=<the attachment's content version>, which
+        changes whenever the attachment is pointed at different bytes
+        (rsx:man file_upload, THE CONTENT VERSION). The file routes give their
+        year-long cache ONLY to a request whose v is current. A URL
+        concatenated from the key has no v, and a stored one goes out of date
+        the first time the bytes change: both keep working and both are
+        answered Cache-Control: no-store, so the browser downloads the file
+        again on every view. Nothing fails and nothing reports it - a page of
+        thumbnails simply re-fetches every picture, every time.
+
+    Guidelines
+        1. Ship file_attachment_id (or the record) to the page and let the
+           component or the JS builder make the URL; do not ship a URL built
+           on the server into a payload that outlives the request.
+        2. A URL handed to another system (an email, an API response) is built
+           at the moment it is sent, with rsx_absolute_url() around the
+           builder.
+        3. A builder given a record that carries only a key answers the
+           no-blob version; pass the fetched record.
+
+    Dos and don'ts
+        DO    $attachment->get_download_url()
+        DON'T '/_download/' . $attachment->key
+        DON'T store a file URL; store the attachment id
+
+--------------------------------------------------------------------------------
+
 SEE ALSO
     rsx:man bundle_api
     rsx:man login_redirect

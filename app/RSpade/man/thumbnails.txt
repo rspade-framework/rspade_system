@@ -27,7 +27,8 @@ SYNOPSIS
     $attachment->get_thumbnail_url('cover', 200, 200)                  // PHP
     $attachment->get_thumbnail_url_preset('profile')                   // PHP
     File_Attachment_Model.thumbnail_url(record, {type, width, height}) // JS
-    File_Attachment_Model.thumbnail_version(record)                    // JS (the ?v=)
+    $attachment->content_version()                                     // PHP (the ?v=)
+    File_Attachment_Model.content_version(record)                      // JS  (the ?v=)
 
     Artisan Commands
     ----------------
@@ -214,15 +215,26 @@ CACHING BEHAVIOR
 
     ?v= - THE BROWSER'S CACHE KEY
     -----------------------------
-    Real thumbnails are served with max-age=31536000, so a browser that once saw the
-    placeholder would keep showing it for a YEAR after the document rendered. Every
-    thumbnail URL therefore carries ?v=<the blob's rendered_at in unix seconds>, or
-    ?v=0 when nothing has rendered. The SERVER ACCEPTS AND IGNORES v - it is purely a
-    browser cache key, and it is why the swap is visible at all.
+    Real thumbnails are served with max-age=31536000, and the picture behind an
+    attachment's key changes twice in its life: when a document's render lands (the
+    placeholder gives way to page 1), and when the attachment is pointed at other
+    bytes (relink_storage()). Every thumbnail URL therefore carries the attachment's
+    CONTENT VERSION:
+
+        ?v=<file_storage_id>-<the blob's rendered_at in unix seconds, or 0>
+        ?v=0-0    no resident blob
+
+    The route always serves the CURRENT picture, whatever v says. v decides whether
+    the browser may keep it: a real raster requested at the current version is
+    cacheable for a year; a request with no v, or with a version since superseded, is
+    answered no-store - as a placeholder always is. So the URL a page built while a
+    document was queued can never pin the raster under the placeholder's name, and a
+    hand-concatenated URL is never pinned at all.
 
     Both URL builders emit it (PHP get_thumbnail_url*(), JS
     File_Attachment_Model.thumbnail_url()), so any thumbnail rendered through the
-    component has it and no app has to think about it.
+    component has it and no app has to think about it. The definition, and the same
+    rule on the other file routes: rsx:man file_upload, FILE ACCESS.
 
     LRU Eviction
     ------------
@@ -580,6 +592,10 @@ THE ATTACHMENT_THUMBNAIL COMPONENT
     simply persists until the next navigation; there is deliberately no polling
     fallback path.
 
+    The same swap follows a REPLACED FILE: relink_storage() saves the attachment,
+    the save publishes the frame, the refetched record carries another
+    file_storage_id, and the component requests the thumbnail at the new version.
+
     A record that cannot be fetched (deleted, or not visible to this user) paints a
     quiet empty box with data-render-status="unavailable" - never an error.
 
@@ -762,11 +778,12 @@ TROUBLESHOOTING
 
     A Document Rendered, But the Old Icon Is Still on Screen
     -------------------------------------------------------
-    Almost always a hand-built URL that predates <Attachment_Thumbnail>: it has no
-    ?v=, so the browser is serving a year-cached placeholder it fetched earlier.
-    Nothing errors - the picture is simply frozen. Route the thumbnail through the
-    component. Grep for the survivors: get_thumbnail_url, /_thumbnail/, thumbnail_url,
-    avatar_url.
+    Almost always a thumbnail URL held in a payload instead of rendered by
+    <Attachment_Thumbnail>: the server answers that URL with the current picture and
+    no-store, but nothing tells the page to ask again, so the <img> keeps what it
+    drew. Nothing errors - the picture is simply frozen until the next navigation.
+    Route the thumbnail through the component. Grep for the survivors:
+    get_thumbnail_url, /_thumbnail/, thumbnail_url, avatar_url.
 
     If realtime is disabled on the box, the swap is not expected mid-page: the
     placeholder persists until the next navigation, by design (there is no polling).

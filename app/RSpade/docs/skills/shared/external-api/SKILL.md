@@ -157,7 +157,7 @@ $attachment->add_to($record, 'documents');   // add_to = many; attach_to = repla
 
 Worked example: `system/app/RSpade/resource/reference_app/app/api/v1/clients_api_controller.php` (and `tasks_api_controller.php`).
 
-**Downloads need no API endpoint.** `/_download`, `/_inline`, `/_thumbnail/*`, `/_download_zip` and `/_preview/pdf` all accept `Authorization: Bearer`, so an integration fetches bytes with no cookie. A bad Bearer is a 401 there — it never degrades to anonymous.
+**Downloads need no API endpoint.** `/_download`, `/_inline`, `/_thumbnail/*`, `/_download_zip` and `/_preview/pdf` all accept `Authorization: Bearer`, so an integration fetches bytes with no cookie. A bad Bearer is a 401 there — it never degrades to anonymous. **An endpoint that returns file URLs takes them from the model's builders** (`get_download_url()`, `get_url()`, `get_thumbnail_url()`, `get_preview_url()`), never from the key: a builder's URL carries the attachment's content version (`?v=`), and a file URL without the current one is served `Cache-Control: no-store` — so a client uses `urls` as given and re-reads them rather than keeping one.
 
 **Status vocabulary** (`pending` / `available` / `error` / `unsupported`): rendering and extraction are async, so a just-uploaded document reads `pending`. Poll; never assume. `error` is terminal and never auto-retried.
 

@@ -4,6 +4,7 @@ This directory's documentation now lives in the man pages and the skill tier; th
 is a pointer, not a second copy.
 
 - **Uploading / claiming / the upload gate / size ceiling**: `rsx:man file_upload`
+- **File URLs, the content version (`content_version()`, `?v=`) and the cache policy every attachment-addressed route applies through `File_Attachment_Controller::apply_content_version_cache_policy()`**: `rsx:man file_upload`, FILE ACCESS
 - **Deletion, retention, blob release, disposal hooks, the per-blob `file_blob:<hash>` lock (`File_Blob_Locks`)**: `rsx:man file_disposal`
 - **Declared blob references (`#[Blob_Reference]` read by `File_Blob_References`, the `Blob_Referencing` write-side trait, the "Blob References" health row) and the central blob API (`File_Storage_Model::store_blob()` / `store_bytes()` / `read_bytes()` / `read_stream()` / `download_response()` / `inline_response()`)**: `rsx:man file_disposal`
 - **Thumbnails, `<Attachment_Thumbnail>`, the render state machine, the renderer registry**: `rsx:man thumbnails`

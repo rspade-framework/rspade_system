@@ -87,6 +87,15 @@ Related framework capabilities on the file-attachment subsystem:
    `/_icon_by_extension/:ext?style=outline` - declared in both the staff and portal route tables -
    and baked into every bundle for the `<File_Type_Icon>` component.
 
+10. **The content version on every file URL** - an attachment's key is stable and its bytes are
+   not (`relink_storage()`, a re-materialized external blob), so `content_version()` -
+   `<file_storage_id>-<rendered_at unix seconds or 0>`, `0-0` with no resident blob - rides every
+   URL the model's builders produce as `?v=`, in PHP and in JavaScript. The attachment-addressed
+   routes (`/_inline`, `/_download`, both thumbnail routes, `/_preview/pdf`, `/_preview/sheet`)
+   always serve the current bytes and keep their long-lived `Cache-Control` only for a request
+   whose `v` is current; an absent or superseded `v` is answered `no-store`
+   (`File_Attachment_Controller::apply_content_version_cache_policy()`).
+
 ## Source under test
 
 - `system/app/RSpade/Core/Files/File_Attachment_Model.php` (residency APIs, ingest metadata,
@@ -95,7 +104,10 @@ Related framework capabilities on the file-attachment subsystem:
 - `system/app/RSpade/Core/Files/File_Storage_Model.php` (`store_blob`)
 - `system/app/RSpade/Core/Files/File_Attachment_Model_Abstract.php` (`file_type_label_for()`,
   `regenerate_file_type_labels()`, the `save()` derivation)
-- `system/app/RSpade/Core/Files/File_Attachment_Controller.php` (upload gate, serve paths, renderer registry, the icon route)
+- `system/app/RSpade/Core/Files/File_Attachment_Controller.php` (upload gate, serve paths, renderer registry, the icon route, the content-version cache policy)
+- `system/app/RSpade/Core/Files/File_Attachment_Model.js` (the JavaScript URL builders and `content_version()`)
+- `system/app/RSpade/Core/Files/File_Preview_Controller.php` (the rendition routes' cache policy, the URLs in `get_preview_info()`)
+- `system/app/RSpade/Core/Api/Files_Api_Controller.php` (the `urls` of the external API's file payload)
 - `system/app/RSpade/Core/Files/File_Attachment_Icons.php` (the extension map, both icon renditions)
 - `system/app/RSpade/Core/Events/Event_Registry.php` (`has_handlers()` + the test-handler seam)
 - `system/app/RSpade/Core/Files/Rsx_Attachment_Handler_Abstract.php`
@@ -139,6 +151,21 @@ Related framework capabilities on the file-attachment subsystem:
   .png), the two generic fallbacks, the model writing the column on every save and overwriting a
   caller-assigned value, the regeneration walk repairing stale and trashed rows and reporting
   only what it changed, and the label riding toArray() as an ordinary column.
+  Plus the content version (`Attachment_Content_Version_Test`): its shape and its `0-0` case,
+  what moves it (a relink to different bytes, a render, a re-render) and what does not (a rename,
+  a read, a render state with no render time, a relink to identical bytes), every builder
+  carrying it in both realms, the fetch payloads carrying what the browser derives it from, the
+  external API payload's URLs, and each route's cache policy for a current, a superseded and an
+  absent `v` - with the superseded request still receiving the current bytes and a placeholder
+  staying `no-store` even at the current version. `External_Handler_Test` adds the eviction
+  case: a re-materialization moves the version exactly when the remote bytes changed.
+- playwright: `playwright/attachment_content_version_swap.js` runs on `/_sys` with files it
+  uploads itself. It proves PHP and JavaScript produce the same URL for the same record, that a
+  mounted `<Attachment_Thumbnail>` and `<Document_Preview>` (an image and a PDF) move to new
+  URLs after ANOTHER PROCESS relinks the attachments, with no reload, and report
+  `preview_loaded` again, and that the URLs held from before the relink then answer `no-store`
+  with the new bytes while the new ones are long-lived. Requires realtime. Run it with
+  `node system/app/RSpade/tests/attachments/playwright/attachment_content_version_swap.js`.
 - http (not yet implemented): real Content-Type headers on `/_download` / `/_inline`; thumbnail
   endpoints for external attachments over the wire.
 

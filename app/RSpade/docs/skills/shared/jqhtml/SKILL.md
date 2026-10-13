@@ -1,6 +1,6 @@
 ---
 name: jqhtml
-description: "Building jqhtml components in RSX - template syntax (<Define>, interpolation, content()/slots, @click), the six-stage lifecycle (on_create, on_render, on_load, on_loaded, on_ready, on_stop) plus on_attach / on_detach / is_attached for a component entering and leaving the document, the this.args/this.data/this.state triad, component access ($sid, this.sid, this.$), reload/render/redraw/refresh/load, targeted $redrawable redraws, extends= template inheritance and abstract bases, custom events, and the complexity tiers. Use when creating or editing a .jqhtml template or its companion .js class, deciding which lifecycle hook code belongs in, fixing a component that renders stale or empty data, binding handlers that stop working after a render, choosing between reload() and render(), naming a custom event or method, building an abstract base or a datagrid with slot data, or composing a page out of semantic components."
+description: "Building jqhtml components in RSX - template syntax (<Define>, interpolation, content()/slots, @click), the six-stage lifecycle (on_create, on_render, on_load, on_loaded, on_ready, on_stop) plus on_attach / on_detach / is_attached for a component entering and leaving the document, the this.args/this.data/this.state triad, component access ($sid, this.sid, this.$), reload/render/redraw/refresh/load, targeted $redrawable redraws, extends= template inheritance and abstract bases, custom events, and the complexity tiers. Use when creating or editing a .jqhtml template or its companion .js class, deciding which lifecycle hook code belongs in, fixing a component that renders stale or empty data, binding handlers that stop working after a render, choosing between reload() and render(), naming a custom event or method, building an abstract base or a datagrid with slot data, composing a page out of semantic components, or building a screen that is a live, append-only stream (a terminal's output, a log tail, a chat transcript) where re-rendering on every update is too expensive and the component must work like a jQuery plugin with no on_load() (the Standalone tier)."
 ---
 
 # jqhtml Components
@@ -63,8 +63,13 @@ Pick the lowest tier that does the job. Reaching for a higher tier than the comp
 - **NO `on_load()` and no participation in the load pipeline.** One explicit fetch method the component calls itself.
 - **All state lives in `this.state`.** This tier is the sanctioned exception to "render from `this.data`" - do NOT "fix" a declared Standalone component into `on_load()` conformance.
 - **Imperative render into stable shell-template `$sid` containers.** The template renders a shell of empty containers once; JS paints into them. A templateless Standalone component has no `$sid` at all - use in-memory element references, **never data-\* tagging**.
-- **Justified only** when the DOM is so imperative and stateful between renders (drag-and-drop, inline editing, context menus) that a template re-render is unacceptable.
-- **MUST hand-roll stale-while-revalidate**: `Rsx_Storage` session tier, write-through, `deep_equal` skip when nothing changed, and a **UNIQUELY-NAMED public revalidate method** - never override a reserved name like `refresh()`.
+- **Justified only** by one of two shapes, where a template re-render is the wrong tool:
+  - **Stateful imperative DOM** - drag-and-drop, inline editing, context menus: the DOM holds state between renders that a re-render would drop.
+  - **A live, append-only stream** - a terminal's output, a log tail, a chat transcript, a progress feed: the view grows a line at a time, and repainting the whole history for each new line is the overhead. Most pages are not this: a page whose content rarely changes refetches and repaints on a realtime frame, and that is correct.
+- **`on_ready()` is the component's `$(document).ready()`.** From it the component does everything a jQuery plugin would: its own Ajax, its own event binding on `this.$sid(...)` (namespaced and idempotent - `.off('click.ns').on('click.ns', ...)`), and its own changes to the page with `.append()` / `.hide()` / `.show()` / `.text()`. The `.jqhtml` is static markup to be manipulated, not a function of data.
+- **Keeping it current is the component's own job.** A stateful-DOM component **MUST hand-roll stale-while-revalidate**: `Rsx_Storage` session tier, write-through, `deep_equal` skip when nothing changed. A stream reads from a CURSOR (the last id it has shown) so a repeated or overlapping read is harmless, and routes every read through ONE core `debounce()`. Either way the method that brings it up to date is **UNIQUELY NAMED and public** (`read_new()`, `reload_board()`) - never an override of a reserved name like `refresh()` or `reload()`.
+- **Nothing may re-render it.** `reload()` on the component, or a re-render of its PARENT, destroys it and builds a new one from nothing - scrollback, cursor and handlers gone. A host that must react to something calls the component's own method.
+- **Cleanup is `on_stop()`**: observers, timers a library started, anything the framework did not create. A subscription made with `this.subscribe()` stops itself.
 - **The docblock declares the tier**, so the next reader knows the deviation is deliberate.
 
 ```javascript
@@ -75,6 +80,8 @@ Pick the lowest tier that does the job. Reaching for a higher tier than the comp
  *       into the shell $sid containers; revalidate via reload_board().
  */
 ```
+
+The stream shape, worked through in full (template, class, the cursor read, the host action that embeds it): `reference/lifecycle-and-state.md`, "A component that works like a jQuery plugin". The framework's own instance is `system/app/RSpade/Core/Task/ui/Task_Output.js`, a task's output in a terminal.
 
 ## Simple components: JS inside the template
 

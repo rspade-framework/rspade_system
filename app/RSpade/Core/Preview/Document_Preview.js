@@ -46,8 +46,9 @@ class Document_Preview extends Component {
         // load, the canonical placement - is what closes the window in which the render could
         // finish between the fetch and the subscription, stranding "Preparing preview..." on
         // screen forever. refresh() refetches and repaints only when the info actually changed,
-        // which is exactly the PENDING -> RENDERED swap; reload() would tear down a live
-        // Pdf_Viewer on every unrelated frame.
+        // which is exactly the PENDING -> RENDERED swap - and the attachment being pointed at
+        // other bytes, because the URLs in the info carry its content version; reload() would
+        // tear down a live Pdf_Viewer on every unrelated frame.
         this.subscribe(File_Attachment_Model, int(this.args.attachment_id), () => this.refresh());
     }
 
