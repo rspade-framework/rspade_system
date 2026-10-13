@@ -38,7 +38,7 @@ never makes the pool look empty.
 High-performance caching with automatic invalidation when code changes.
 
 ### Key Features
-- **Automatic prefixing**: Uses manifest build key to invalidate on code changes
+- **Automatic prefixing**: Uses the manifest state key (code key + applied migrations) to invalidate on code changes and migrations
 - **Database scoping**: every key is `cache:<Rsx_Connection_Scope::token()>:<sha1>` - the
   same `(database, host)` token `RsxLocks` and `Task_Pool` use - so two
   environments sharing one Redis (the developer database and the test database) share no
@@ -125,12 +125,12 @@ not cache** and belongs on another database.
 ### `_RVC_` - the reduced-volatility key convention
 
 An INTERNAL cache-key convention, not a second API. A key beginning with `_RVC_` is stored on
-database 2 under the ordinary build-key and test-run prefix: a code update still misses it
-cleanly, it is LRU-evicted like everything else, and it simply survives the frequent resets
+database 2 under the ordinary state-key and test-run prefix: a code update or a migration
+still misses it cleanly, it is LRU-evicted like everything else, and it simply survives the frequent resets
 that transaction rollback causes.
 
-**As of the time of writing nothing in PHP uses this feature.** It is kept for reference and
-future implementation, and to reserve database 2, which is written to directly by FPC.
+**Its one user is `Rsx_Schema`'s column map** - a rollback cannot change a table's columns, so
+the map must survive one. Database 2 is also written to directly by FPC.
 
 ### `Rsx_Counter` - transient counters (database 3)
 

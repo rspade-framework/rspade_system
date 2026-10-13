@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Database\Lifecycle;
 use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Support\Facades\Event;
 use App\RSpade\Core\Cache\RsxCache;
+use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Session\Audit_Session;
 
@@ -64,19 +65,22 @@ class Transaction_Rollback_Cache_Reset
     }
 
     /**
-     * Drop every cached view of database state: the volatile cache, the type-ref
-     * registry's process statics (which the cache flush alone cannot reach), and the
-     * audit-session ids this process resolved (a row minted inside the rolled-back
-     * transaction is gone).
+     * Drop every cached view of database state: the volatile cache, this process's copy
+     * of the schema and the state key it is cached under (Rsx_Schema - a rollback can undo
+     * the applied-migrations row the key was computed from), the type-ref registry's
+     * process statics (which the cache flush alone cannot reach), and the audit-session
+     * ids this process resolved (a row minted inside the rolled-back transaction is gone).
      *
-     * Public because the test runner performs the same two calls where no rollback event
-     * fires - it drops and restores the whole test database instead.
+     * Public because the test runner performs the same calls where no rollback event
+     * fires - it drops and restores the whole test database instead, and swaps the
+     * connection every one of these was filled from.
      *
      * @return void
      */
     public static function reset(): void
     {
         RsxCache::clear();
+        Rsx_Schema::reset();
         Type_Ref_Registry::_reset_cached_state();
         Audit_Session::_reset();
     }

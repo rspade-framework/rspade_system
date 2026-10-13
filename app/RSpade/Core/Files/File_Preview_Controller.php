@@ -445,7 +445,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     // ============================================================================================
 
     /**
-     * Stream the pdf.js main module from node_modules. Clients append ?v=build_key for cache-busting.
+     * Stream the pdf.js main module from node_modules. Clients append ?v=code_key (window.rsxapp.code_key) for cache-busting.
      *
      * Route: /_preview/pdfjs.mjs
      *
@@ -461,7 +461,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     }
 
     /**
-     * Stream the pdf.js worker module from node_modules. Clients append ?v=build_key.
+     * Stream the pdf.js worker module from node_modules. Clients append ?v=code_key (window.rsxapp.code_key).
      *
      * Route: /_preview/pdf_worker.mjs
      *

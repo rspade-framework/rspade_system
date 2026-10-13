@@ -5,7 +5,7 @@ NAME
 
 SYNOPSIS
     JavaScript:
-        window.rsxapp.build_key                  // Manifest build hash
+        window.rsxapp.build_key                  // State key: code + applied migrations
         window.rsxapp.user                       // Current user model data
         window.rsxapp.user.resolved_permissions  // Pre-computed user permissions
         window.rsxapp.auth                       // Granted auth-gate check names
@@ -42,8 +42,13 @@ HOW IT WORKS
 OBJECT STRUCTURE
     Core Properties (always present):
 
-        build_key           String. Manifest hash for cache-busting.
-                            Changes when any source file changes.
+        build_key           String. The STATE key, for cache-busting: the
+                            manifest hash combined with the applied migrations.
+                            Changes when any source file changes and when a
+                            migration runs.
+
+        code_key            String. The manifest hash alone - what identifies
+                            the build. Changes only when a source file does.
 
         session_hash        String. Hashed session token. An INGREDIENT of
                             cache_key; also compared directly by the SPA
@@ -161,6 +166,7 @@ EXAMPLE OUTPUT
 
         window.rsxapp = {
             "build_key": "72d8554b3a6a4382d9130707caff4009",
+            "code_key": "1a6bfffb01ab44dc6e4e9d2f7d03bff5",
             "session_hash": "9b8cdc5ebf5a3db1e88d400bafe1af06...",
             "cache_key": "9f85e6a119cf76f4b99c50eb252cd4f3",
             "debug": true,

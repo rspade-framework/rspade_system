@@ -4,15 +4,18 @@ namespace App\RSpade\Tests\TestRunner\Php;
 
 use ReflectionMethod;
 use App\RSpade\Commands\Rsx\Rsx_Test_Command;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Support\Rsx_Fingerprint;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * The RESULT CACHE: a docker run records its per-class records and exit code under the
- * manifest build key AND the selector it ran, and a later run under both replays that
- * record instead of running again. The build key is the hash of every scanned source file,
- * so "same key" means "same code", and the recorded verdict is the verdict that code has.
+ * manifest STATE key (plus the environment fingerprint) AND the selector it ran, and a
+ * later run under both replays that record instead of running again. The state key is the
+ * hash of every scanned source file combined with the applied migrations, so "same key"
+ * means "same code against the same schema", and the recorded verdict is the verdict that
+ * pair has.
  *
  * What is asserted here is the record's contract: a written record reads back whole; a
  * record written under another key is NOT a hit (a renamed or copied file cannot leak a
@@ -46,6 +49,24 @@ class Results_Cache_Test extends Rsx_Test_Abstract
         ensure_directory($dir);
 
         return $dir . '/probe_' . bin2hex(random_bytes(6)) . '.json';
+    }
+
+    public static function test_the_verdict_key_is_the_state_key_plus_the_environment_fingerprint()
+    {
+        $key = static::__invoke_static('current_build_key', []);
+
+        static::__assert_true(
+            str_starts_with($key, Manifest::get_state_key() . '-'),
+            'the verdict is keyed on the state key: a migration moves it, as a code change does'
+        );
+        static::__assert_false(
+            str_starts_with($key, Manifest::get_build_key() . '-'),
+            'and not on the code key, which no migration moves'
+        );
+        static::__assert_equals(
+            Manifest::get_state_key() . '-' . substr(static::__invoke_static('environment_fingerprint', []), 0, 16),
+            $key
+        );
     }
 
     public static function test_a_written_record_reads_back_whole_under_its_key()

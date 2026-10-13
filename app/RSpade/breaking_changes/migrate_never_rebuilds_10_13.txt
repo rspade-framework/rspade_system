@@ -1,0 +1,142 @@
+MIGRATE NEVER REBUILDS: --no-rebuild AND rsx:migrate:check_consistency ARE GONE, AND FIELD LENGTHS ARRIVE IN A SCRIPT OF THEIR OWN
+Date: 2026-10-13
+
+IF YOU DO NOTHING: a deploy script of yours that runs `php artisan migrate --no-rebuild` or `php artisan rsx:migrate:check_consistency` stops at that line on an unknown option or command, with the maintenance window it raised still up; and a page of yours that prints a bundle's /_compiled/ tags by hand instead of calling the bundle's render() throws on every Model.field_length() call.
+
+SUMMARY
+    Category 2: one option and one command an application's deployment calls
+    were removed, one PHP accessor was removed, where the browser gets column
+    lengths from changed, and window.rsxapp.build_key now changes when a
+    migration runs. It affects an application with its own deploy script or CI
+    pipeline, one whose layouts emit bundle tags without render(), and one
+    whose own code reads Manifest::applied_migrations() or keys a cache on the
+    build key.
+
+THE CHANGE
+    A build holds code facts only - which models exist and which table each
+    declares. A table's columns are read from the database at run time and
+    cached. So a build and a migration no longer depend on each other:
+
+    migrate
+        Rebuilds nothing, in any mode. On a sealed production box no file
+        under build/ changes and rsx:prod:verify passes before and after.
+
+        migrate --no-rebuild
+            Removed. Symfony refuses the option:
+            The "--no-rebuild" option does not exist.
+
+        rsx:migrate:check_consistency
+            Removed, along with the "Build Schema" row of rsx:health. There
+            is no schema in a build for the database to disagree with.
+
+    rsx:build
+        Reads no database. It runs with no database host reachable - a CI job
+        or an image build stage needs no database service - and it runs
+        before or after migrate.
+
+    Two keys, where there was one
+        php artisan rsx:manifest:get_build_key   Manifest::get_build_key()
+            The CODE key. Identifies the build (build/build_key, the seal,
+            rsx:prod:verify, the full page cache). A migration does not move
+            it.
+        php artisan rsx:manifest:get_state_key   Manifest::get_state_key()
+            The STATE key: the code key combined with the names of the
+            applied migrations. RsxCache's build-scoped entries,
+            window.rsxapp.build_key and window.rsxapp.cache_key are keyed on
+            it. A migration moves it, and so does a new build.
+
+        window.rsxapp.code_key is the code key, for anything in the browser
+        that wants the build alone.
+
+    Manifest::applied_migrations()
+        Removed. Calling it is a fatal "Call to undefined method".
+
+    Model.field_length() in JavaScript
+        The generated model stubs carry no column lengths. The lengths reach
+        the page in a framework-served script that a bundle's render() emits
+        after the bundle's app script -
+
+            <script src="/_field_lengths/<Bundle>__<hash>.js?v=<state key>" defer></script>
+
+        - and Model.field_length('column') reads what it assigns. Same call,
+        same answers, still synchronous. Where the script was not loaded the
+        call throws, naming the model and the script.
+
+THE FIX
+    Informational - it arrives with the framework. The framework's own
+    recipes, man pages and screens are updated: rsx:man prod (BUILD AND
+    MIGRATE), rsx:man migrations (A MIGRATION NEVER REBUILDS), rsx:man
+    bundle_api (BUNDLE RENDERING).
+
+ACTION REQUIRED
+    1. Deploy scripts, CI pipelines, container entrypoints, runbooks. Find
+       both spellings:
+
+           grep -rnE "no-rebuild|check_consistency" <wherever your deploy lives>
+
+       (`rsx:framework:pull --no-rebuild` is a different command's option and
+       is unchanged - leave it.)
+
+       Remove `--no-rebuild` from every migrate line and delete every
+       rsx:migrate:check_consistency line. The recipe is:
+
+           php artisan rsx:maintenance:enable --reason="deploying <version>"
+           git pull
+           php artisan migrate --dump-rollback
+           php artisan rsx:mode:set prod
+           php artisan rsx:prod:verify
+           php artisan rsx:maintenance:disable
+
+       migrate and the build may run in either order and neither repeats the
+       other. A pipeline that migrated a scratch database only so the build
+       had a schema to read can drop that step and the database service with
+       it. On a box already in a production mode with no build yet, build
+       first: migrate is not a command an unsealed production box runs.
+
+    2. Pages that print bundle tags by hand. A layout or view that writes its
+       own <script src="/_compiled/..."> tags, or assembles them from a
+       compile result, does not load the field-length script:
+
+           grep -rn "_compiled/" rsx --include='*.php' --include='*.jqhtml'
+
+       Replace the hand-written tags with the bundle's own call:
+
+           {!! Frontend_Bundle::render() !!}
+
+    3. Your own PHP that asked the manifest about migrations:
+
+           grep -rn "applied_migrations" rsx
+
+       A caller that wanted "has the schema changed" wants
+       Manifest::get_state_key().
+
+    4. Your own caches keyed on the build key:
+
+           grep -rnE "get_build_key|rsxapp\.build_key|Manifest\.build_key" rsx
+
+       In PHP, a cache whose content depends on the database's rows or
+       columns should be keyed on Manifest::get_state_key() - or simply use
+       RsxCache::get()/set()/remember(), which already are.
+       Manifest::get_build_key() is now right only for what must NOT change
+       when a migration runs.
+
+       In JavaScript, window.rsxapp.build_key (and Manifest.build_key()) now
+       changes after a migration as well as after a deployment: anything you
+       key on it is fetched again once after each migration, and a page left
+       open across one reloads on its next navigation. If something of yours
+       must survive a migration, key it on window.rsxapp.code_key.
+
+VERIFICATION
+    Run your deploy script against a staging box and read it to the end: no
+    line fails on an unknown option or command, and rsx:prod:verify exits 0
+    after the migrate. On a sealed box,
+
+        php artisan rsx:manifest:get_build_key
+        php artisan rsx:manifest:get_state_key
+
+    print two different keys; after a migration that applied something the
+    first is unchanged and the second is not.
+
+    Open an add or edit form on every layout that renders a bundle: the
+    console shows no "field-length script did not load" error, and a text
+    input's maxlength attribute carries its column's length.

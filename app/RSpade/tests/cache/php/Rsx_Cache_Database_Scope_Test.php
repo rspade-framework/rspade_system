@@ -111,12 +111,12 @@ class Rsx_Cache_Database_Scope_Test extends Rsx_Test_Abstract
             'so does the build-scoped namespace, through the same one builder'
         );
 
-        // The build key is still folded into the hashed body - database scoping ADDS a
-        // dimension, it does not replace build scoping.
+        // The state key (code + applied migrations) is still folded into the hashed body -
+        // database scoping ADDS a dimension, it does not replace build scoping.
         static::__assert_contains(
-            Manifest::get_build_key(),
+            Manifest::get_state_key(),
             $transform_build->invoke(null, $key),
-            'a build-scoped key still carries the build key'
+            'a build-scoped key still carries the state key'
         );
 
         // And the token genuinely moves with the connection.

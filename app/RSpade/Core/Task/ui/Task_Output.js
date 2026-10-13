@@ -31,7 +31,8 @@ class Task_Output extends Component {
 
     /**
      * Load xterm.js and its fit addon from the framework's module routes (both realms).
-     * ?v=build_key busts the long cache on a new deployment. The bare import() is deliberate:
+     * ?v=code_key busts the long cache on a new deployment (the code key, so a migration
+     * does not). The bare import() is deliberate:
      * see Pdf_Viewer._load_pdfjs().
      */
     static _load_xterm() {
@@ -39,7 +40,7 @@ class Task_Output extends Component {
             return Task_Output._xterm_promise;
         }
 
-        const version = window.rsxapp && window.rsxapp.build_key ? window.rsxapp.build_key : '';
+        const version = window.rsxapp && window.rsxapp.code_key ? window.rsxapp.code_key : '';
         const module_url = Rsx_Portal.internal_url(Rsx.Route('Rsx_Task_Controller::xterm_module')) + '?v=' + urlencode(version);
         const fit_url = Rsx_Portal.internal_url(Rsx.Route('Rsx_Task_Controller::xterm_fit_module')) + '?v=' + urlencode(version);
 

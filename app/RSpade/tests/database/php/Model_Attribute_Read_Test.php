@@ -32,11 +32,11 @@ use App\RSpade\Tests\Database\Php\System_Column_Fixture_Model;
  * per-instance (which is why parent::getCasts() is deliberately NOT memoized), and two
  * model classes on different tables must never share a cast map.
  *
- * TWO KINDS OF SUBJECT, for one reason. A SCHEMA-DERIVED cast is read out of the manifest's
- * column map, which is built from the live schema at manifest-build time - so a fixture
- * table this class creates at TEST time can never carry one, and the cast half is exercised
- * against framework models on framework tables (users, login_users) and the baseline user
- * the runner seeds. ENUM resolution is declared in PHP and needs no schema at all, so the
+ * TWO KINDS OF SUBJECT, for one reason. A SCHEMA-DERIVED cast is read out of Rsx_Schema's
+ * column map, which is cached under the state key and read from the migrated baseline before
+ * any class runs - so a fixture table this class creates at TEST time with plain DDL does
+ * not carry one, and the cast half is exercised against framework models on framework tables
+ * (users, login_users) and the baseline user the runner seeds. ENUM resolution is declared in PHP and needs no schema at all, so the
  * enum half is exercised against two fixture models on two fixture tables, which is the
  * only way to prove the per-class memos are not shared.
  */

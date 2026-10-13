@@ -161,7 +161,7 @@ class Rsx_Project_Paths
         return self::build_path('manifest_files.php');
     }
 
-    /** The build key every cache consumer compares against. */
+    /** The code key: what names the build on disk (the seal, the full page cache proxy). */
     public static function build_key_file(): string
     {
         return self::build_path('build_key');
@@ -177,6 +177,23 @@ class Rsx_Project_Paths
     public static function bundles_dir(): string
     {
         return self::build_path('bundles');
+    }
+
+    /**
+     * Where each compiled bundle's MODEL LIST lives: one JSON file per bundle, written by
+     * the bundle compiler beside the bundle it describes, naming the models whose JS stubs
+     * the bundle's app script contains. A build output like the bundles themselves - sealed,
+     * and read at request time to serve the bundle's field-length script.
+     */
+    public static function bundle_models_dir(): string
+    {
+        return self::build_path('bundle_models');
+    }
+
+    /** One bundle's model list (see bundle_models_dir()). */
+    public static function bundle_models_file(string $bundle_name): string
+    {
+        return self::bundle_models_dir() . '/' . $bundle_name . '.json';
     }
 
     /** The production seal. */

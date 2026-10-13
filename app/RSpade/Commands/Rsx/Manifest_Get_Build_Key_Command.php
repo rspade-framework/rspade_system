@@ -8,7 +8,7 @@ use Illuminate\Console\Command;
 /**
  * rsx:manifest:get_build_key - print the manifest build key and nothing else.
  *
- * The build key is the hash that identifies the current code state: every scanned source
+ * The build key is the CODE key, the hash that identifies the current code state: every scanned source
  * file contributes to it, so two boxes (or two moments on one box) with the same key are
  * running the same code. Booting the framework builds the manifest when it is absent or
  * stale, which is why this command never has to ask - by the time handle() runs the key

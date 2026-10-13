@@ -360,6 +360,8 @@ class BundleCompiler
             $result['bundle_data'] = $this->config;
         }
 
+        $result['field_length_script'] = $this->_field_length_script_name($result['app_js_bundle_path'] ?? null);
+
         return $result;
     }
 
@@ -550,8 +552,9 @@ class BundleCompiler
         $vendor_css_files = glob($vendor_css_pattern);
         $app_css_files = glob($app_css_pattern);
 
-        // Need at least one app file (JS is typically required)
-        if (!empty($app_js_files)) {
+        // Need at least one app file (JS is typically required), and the model list the
+        // compile wrote beside it: a build without one predates the list and is not usable.
+        if (!empty($app_js_files) && static::read_model_list($this->bundle_name) !== null) {
             $result = [
                 'vendor_js_bundle_path' => !empty($vendor_js_files) ? basename($vendor_js_files[0]) : null,
                 'app_js_bundle_path' => !empty($app_js_files) ? basename($app_js_files[0]) : null,
@@ -575,10 +578,119 @@ class BundleCompiler
                 $result['cdn_css'] = $this->_prepare_cdn_assets($this->cdn_assets['css'], 'css');
             }
 
+            $result['field_length_script'] = $this->_field_length_script_name($result['app_js_bundle_path']);
+
             return $result;
         }
 
         return null;
+    }
+
+    /**
+     * A compiled bundle's MODEL LIST, or null when none has been written.
+     *
+     *   ['bundle' => name, 'app_hash' => the hash in <Bundle>__app.<hash>.js, 'models' => [...]]
+     *
+     * `models` is the PHP model class names whose generated JS stubs are in the bundle's
+     * compiled app script, sorted. It is written by the compile that writes that script
+     * (_write_model_list()), in every mode, so it describes what is really in the output -
+     * after the component shake - and it is what the bundle's field-length script is built
+     * from (Field_Length_Script): a page gets lengths for exactly the models it carries.
+     *
+     * @return array{bundle: string, app_hash: string, models: array<int, string>}|null
+     */
+    public static function read_model_list(string $bundle_name): ?array
+    {
+        $path = Rsx_Project_Paths::bundle_models_file($bundle_name);
+
+        if (!is_file($path)) {
+            return null;
+        }
+
+        $list = json_decode((string) file_get_contents($path), true);
+
+        if (!is_array($list) || !isset($list['app_hash']) || !is_array($list['models'] ?? null)) {
+            throw new RuntimeException(
+                "The bundle model list at {$path} is not readable as a model list. "
+                . 'Rebuild: php artisan rsx:build' . (Rsx::is_development() ? '' : ' --force')
+            );
+        }
+
+        return $list;
+    }
+
+    /**
+     * Write this bundle's model list beside its compiled app script (see read_model_list()).
+     *
+     * @param string $app_hash The hash in the app script's filename
+     * @param array  $js_files Every JS file that went into the app script, absolute paths
+     */
+    protected function _write_model_list(string $app_hash, array $js_files): void
+    {
+        $manifest_files = Manifest::get_full_manifest()['data']['files'] ?? [];
+        $models = [];
+
+        foreach ($js_files as $js_file) {
+            $stub = $manifest_files[Rsx_Project_Paths::key_for($js_file)] ?? null;
+
+            if ($stub === null || empty($stub['is_model_stub'])) {
+                continue;
+            }
+
+            $model_class = $manifest_files[$stub['source_model'] ?? '']['class'] ?? null;
+
+            if ($model_class === null) {
+                shouldnt_happen("Model stub {$js_file} names no source model class in the manifest");
+            }
+
+            $models[$model_class] = true;
+        }
+
+        $models = array_keys($models);
+        sort($models, SORT_STRING);
+
+        $list_dir = Rsx_Project_Paths::bundle_models_dir();
+        if (!is_dir($list_dir)) {
+            Rsx_Project_Paths::assert_build_writable($list_dir, 'bundle model list directory');
+            mkdir($list_dir, 0755, true);
+        }
+
+        file_put_contents_safe(
+            Rsx_Project_Paths::bundle_models_file($this->bundle_name),
+            json_encode([
+                'bundle' => $this->bundle_name,
+                'app_hash' => $app_hash,
+                'models' => $models,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+        );
+    }
+
+    /**
+     * The name of this bundle's field-length script - "<Bundle>__<app hash>.js", the last
+     * segment of its URL - or null when the bundle carries no model and so needs none.
+     *
+     * @param string|null $app_js_file The compiled app script's filename, when there is one
+     */
+    protected function _field_length_script_name(?string $app_js_file): ?string
+    {
+        if ($app_js_file === null) {
+            return null;
+        }
+
+        if (!preg_match('/__app\.([a-f0-9]+)\.js$/', $app_js_file, $matches)) {
+            shouldnt_happen("Compiled app script has no hash in its name: {$app_js_file}");
+        }
+
+        $list = static::read_model_list($this->bundle_name);
+
+        if ($list === null || $list['app_hash'] !== $matches[1]) {
+            shouldnt_happen(
+                "Bundle {$this->bundle_name} has a compiled app script ({$app_js_file}) and no model list "
+                . 'written for it. The two are written by the same compile.'
+            );
+        }
+
+        return $list['models'] === [] ? null : $this->bundle_name . '__' . $matches[1] . '.js';
     }
     /**
     * Process required bundles (jquery, lodash, jqhtml)
@@ -1338,6 +1450,17 @@ class BundleCompiler
 
             if (!$cached || !$this->_is_cache_valid($cached, $type)) {
                 $need_compile[] = $type;
+            }
+        }
+
+        // The model list is written by the app compile and is current exactly when it names
+        // the app script on disk. One that is missing or names another script means the app
+        // output and its list have come apart, and compiling the app type rewrites both.
+        if (!in_array('app', $need_compile, true)) {
+            $list = static::read_model_list($this->bundle_name);
+
+            if ($list === null || $list['app_hash'] !== substr($this->cache_keys['app'], 0, 8)) {
+                $need_compile[] = 'app';
             }
         }
 
@@ -2603,6 +2726,11 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                 $js_file = "{$this->bundle_name}__{$type}.{$hash}.js";
                 file_put_contents_safe("{$bundle_dir}/{$js_file}", $js_content);
                 $outputs["{$type}_js"] = $js_file;
+
+                // The app script's model list, written with the script it describes.
+                if ($type === 'app') {
+                    $this->_write_model_list($hash, $js_files);
+                }
             }
 
             // Compile CSS

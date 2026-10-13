@@ -87,7 +87,10 @@ _type_refs (
 ## Laravel Integration - the dual-alias morph map
 
 `Type_Ref_Registry::register_morph_map()` runs at framework boot
-(`Rsx_Framework_Provider`, right after `Manifest::init()`) and registers EVERY type ref
+(`Rsx_Framework_Provider`, right after `Manifest::init()`) - except in a process that
+PRODUCES THE BUILD (`rsx:build`, its children, `rsx:manifest:build`), which registers on its
+first database statement instead (`register_morph_map_on_first_query()`), so a build runs
+with no database reachable - and registers EVERY type ref
 under **two** aliases pointing at the same FQCN:
 
 ```php

@@ -229,18 +229,14 @@ trees (`app/RSpade/tests`, `app/RSpade/temp`, `rsx/tests`) are indexed only unde
 in argv the way every child does. Without it the image bakes a manifest with no test class in
 it and every worker container pays a cold rebuild before its first test.
 
-**ORDER TRAP 1 - the manifest build comes AFTER provisioning, and it is `--clean`.** The
-model index (and with it every auto-detected datetime/date/boolean CAST) is built by
-introspecting the DEFAULT connection's tables. Provisioning drops and re-migrates
-`rspade_test` in a subprocess whose default database IS `rspade_test`, so a manifest built
-during or before that step indexes an empty database and bakes a model index with NO columns
-- which silently removes every cast in every container. Measured cost of getting it backwards:
-**133 failures across the framework suite**, all of them an ISO datetime string reaching
-MySQL raw. Building last puts the default connection back on the fully migrated `rspade`, and
-`--clean` is what makes it actually rebuild - the manifest is "fresh" by then, so an
-incremental build would keep the empty index.
+**The manifest build is `--clean` and reads no database.** The index holds code facts only
+(which models exist and which table each declares); every auto-detected datetime/date/boolean
+CAST and every column length is read at run time from whatever database the process is
+connected to (`Rsx_Schema`, cached under the state key). So step 2 does not depend on where
+step 1 left the default connection, and `--clean` is there so the image carries a manifest
+built from nothing rather than whatever an earlier layer left.
 
-**ORDER TRAP 2 - wait for mysqld to be GONE before archiving.** The layer that tars
+**ORDER TRAP - wait for mysqld to be GONE before archiving.** The layer that tars
 `/var/lib/mysql` must also be the layer that shut mysqld down, hence one `RUN` per
 provisioning layer: a datadir captured while the server is running (or across two layers)
 forces InnoDB crash recovery in EVERY container started from it. The entrypoint has already
@@ -376,12 +372,13 @@ load a PHP class to answer.
 dropped. Records are appended AS THEY ARRIVE, not at the end, so a run that dies half way
 still leaves every finished class on disk.
 
-## The result cache - one verdict per build key
+## The result cache - one verdict per state key
 
 A full docker run ends with PHP recording the per-class records and the exit code under
 `tmp/test-results/framework_<key>.json`, where the key is
-`Manifest::get_build_key()` (also `php artisan rsx:manifest:get_build_key`: the hash of
-every scanned source file) joined to an ENVIRONMENT FINGERPRINT - a sha1 over the name,
+`Manifest::get_state_key()` (also `php artisan rsx:manifest:get_state_key`: the hash of
+every scanned source file combined with the names of the applied migrations) joined to an
+ENVIRONMENT FINGERPRINT - a sha1 over the name,
 size and mtime of every file under `system/bin`, `system/node_modules` and
 `system/app/RSpade/resource/docker` (`Rsx_Test_Command::ENVIRONMENT_FINGERPRINT_DIRS`),
 because a verdict also depends on the daemons, the node toolchain and the test image, none
@@ -389,10 +386,10 @@ of which the manifest indexes. The walk costs a second or two per full run. The 
 build, the sweep or a single container; if a record exists under it, PHP prints
 "Returning cached test results for build <key> from <file>" and replays the record through
 `report_records()` - the same printer as a live run, so the output and the exit code are
-the live run's. Pass or fail is recorded alike: the verdict belongs to the code, and the
-code has not changed. Only an INFRASTRUCTURE failure (node exit non-zero) records nothing.
+the live run's. Pass or fail is recorded alike: the verdict belongs to the code and the
+schema, and neither has changed. Only an INFRASTRUCTURE failure (node exit non-zero) records nothing.
 
-**The record is keyed by the SELECTOR too** - `<suite>_<build_key>_<selector_key>.json`,
+**The record is keyed by the SELECTOR too** - `<suite>_<state key + fingerprint>_<selector_key>.json`,
 where the selector key hashes the suite plus the normalised (sorted, deduplicated) class
 list. Subsets are cached like everything else, and a subset's verdict replays only for that
 same subset: it can never stand in for the suite. The `--filter` set is deliberately NOT in

@@ -31,8 +31,9 @@ Batch 1 (determinism core):
   - `_save()` - writes the two index halves; no `generated` timestamp in any mode.
 
 Consumers of the file hash (context): `BundleCompiler::_get_cache_key`,
-`Js_Parser`, `Js_Transformer`. Consumer of the manifest hash: the sibling
-`build/build_key` file -> FPC keys, bundle URLs, SSR/cache keys.
+`Js_Parser`, `Js_Transformer`. Consumer of the manifest hash (the CODE key): the sibling
+`build/build_key` file -> the seal, `rsx:prod:verify`, FPC keys, the SSR stamp. The cache-break
+key is the STATE key (`Manifest::get_state_key()`: the code key + the applied migrations).
 
 Batch 2 (seal + guards):
 
@@ -78,6 +79,7 @@ Batch 2 (seal + guards):
 | The views phase: the manifest's Blade views plus resources/views, at the finder's path | php | implemented (View_Precompile_Test) |
 | console_debug strip (pure_funcs in strict prod) | asset | Batch 3 (unit on option builder); full strip proven by E2E grep |
 | enable/disable/verify lifecycle, unseal and repair | cli | implemented (cli/prod_lifecycle.sh) - a REAL round trip on this box; the EXIT trap returns it to development |
+| A REAL migration on the sealed box: nothing rebuilt, state key moves, pages and field lengths follow | cli | implemented (cli/prod_lifecycle.sh steps 4-5, `_lib/prod_probe_migration.sh`, `playwright/sealed_page_probe.js`) |
 | Read-only build/, system/, rsx/ while serving | cli | implemented (cli/prod_readonly.sh) - complete only when the test user is unprivileged; see the script header |
 | Two-checkout determinism | (harness) | Batch 2 acceptance harness, not a discovered test |
 
@@ -94,7 +96,13 @@ Batch 2 (seal + guards):
   `--sequential` is not optional: both classes switch the mode of the SAME box, and
   concurrently they would seal and unseal the build tree underneath each other. Each takes
   minutes - between them they build the box four times - and each restores development
-  mode in an EXIT trap. The scripts stay runnable by hand:
+  mode in an EXIT trap. BOTH APPLY A REAL MIGRATION TO THE DATABASE THE BOX IS CONNECTED TO
+  (the development database): one throwaway table, `_prod_mode_probe_<pid>`, written as a
+  real migration file plus a `.migration_whitelist` entry and removed again - file, entry,
+  table and `_migrations` row - in the same EXIT trap. The lifecycle script also signs in
+  through `/login` as an account of its own (`prod-mode-probe@rspade.test`, a password
+  generated per run), which the trap retires: password scrambled, developer mark cleared,
+  membership disabled. The scripts stay runnable by hand:
   `bash system/app/RSpade/tests/prod_mode/cli/prod_lifecycle.sh`.
 - `rsx:test` REFUSES TO RUN AT ALL in a production mode, pre-boot, naming
   `php artisan rsx:mode:set dev`. The suite is a CI step that runs on a development box

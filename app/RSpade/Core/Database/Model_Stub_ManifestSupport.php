@@ -10,10 +10,15 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * Emit one JavaScript stub per ORM model - enum constants, relationship methods, detail
- * accessors and the field_length() table - so a model has the same surface in both languages.
+ * accessors and the declared text types - so a model has the same surface in both languages.
  *
- * AN ORDINARY SUPPORT MODULE, the same list as every other; it runs after
- * Model_ManifestSupport because the list says so, and it reads that module's column map.
+ * AN ORDINARY SUPPORT MODULE, the same list as every other.
+ *
+ * A STUB IS A FUNCTION OF THE MODEL'S CODE AND NOTHING ELSE. Nothing here asks the database
+ * anything: a model's column lengths, the one schema-derived thing the browser needs, reach
+ * the page in a script of their own (Field_Length_Script) and are answered by the single
+ * Rsx_Js_Model.field_length(). So a build needs no database to generate a stub, and a
+ * migration leaves every stub - and every bundle compiled from one - exactly as it was.
  *
  * WHAT IT WILL NOT DO IS WRITE FOR NOTHING. Three gates, cheapest first: the newest mtime in
  * the model's LINEAGE (and of this generator), the model metadata hash (recomputed only when a lineage file's hash
@@ -112,11 +117,10 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             // alone, a change to the base leaves the stub silently stale - the generator's
             // gate says "unchanged" and the browser keeps the old surface.
             $source_hash = Model_Lineage_Fingerprint::lineage_hash($class_name, $manifest_data);
-            $columns_hash = md5(json_encode($manifest_data['data']['models'][$class_name]['columns'] ?? []));
             // THE GENERATOR IS AN INPUT TOO. A stub is this file's output as much as the
             // model's, so a change to what this file emits must reach every stub, not only
             // the ones whose model happened to move.
-            $inputs_hash = $source_hash . ':' . $columns_hash . ':' . $generator_hash;
+            $inputs_hash = $source_hash . ':' . $generator_hash;
 
             if (file_exists($stub_full_path)) {
                 // The newest mtime anywhere in the lineage, for the same reason.
@@ -127,10 +131,10 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
                 if ($stub_mtime >= $source_mtime) {
                     // THE REFLECTION IS THE EXPENSIVE PART, so it is not run to decide
                     // whether to run it. _get_model_metadata_for_hash() calls
-                    // get_relationships(), reads every public constant and re-reads the
-                    // column map; its answer can only move when a file in the model's
-                    // LINEAGE or its COLUMNS moved, so the stored hash records WHICH inputs it was
-                    // computed for and the reflection is skipped when they are unchanged.
+                    // get_relationships() and reads every public constant; its answer can
+                    // only move when a file in the model's LINEAGE moved, so the stored hash
+                    // records WHICH inputs it was computed for and the reflection is skipped
+                    // when they are unchanged.
                     $stored = $metadata['model_metadata_hash'] ?? null;
                     $stored_inputs = $metadata['model_metadata_inputs'] ?? null;
 
@@ -259,11 +263,6 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         // baked-in `static __REALTIME` line appears/disappears (see _generate_model_stub_content).
         $model_metadata['realtime'] = property_exists($fqcn, 'realtime') && $fqcn::$realtime === true;
 
-        // Get columns from models metadata if available
-        if (isset($manifest_data['data']['models'][$class_name]['columns'])) {
-            $model_metadata['columns'] = $manifest_data['data']['models'][$class_name]['columns'];
-        }
-
         // Public constants the MODEL declares - itself or on its abstract base. A split model
         // is a base carrying every member plus a three-line concrete; "declared directly on
         // this class" would answer nothing for every core model at once.
@@ -349,12 +348,6 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         // Get enums
         $enums = $fqcn::$enums ?? [];
 
-        // Get columns from models metadata if available
-        $columns = [];
-        if (isset($manifest_data['data']['models'][$class_name]['columns'])) {
-            $columns = $manifest_data['data']['models'][$class_name]['columns'];
-        }
-
         // Determine the base class to extend
         // User can configure a custom base class that sits between stubs and Rsx_Js_Model
         $js_model_base_class = config('rsx.js_model_base_class');
@@ -383,8 +376,8 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
 
         // DERIVED PROPERTIES - the model's $appends. These reach the JS record through
         // toArray() with no column behind them, so nothing else in this generator knows about
-        // them: they are absent from $columns, so field_length() answers null for each exactly
-        // as it does for any non-varchar, and they get no enum treatment.
+        // them: field_length() answers null for each exactly as it does for any non-varchar
+        // (the page's field-length data is built from columns), and they get no enum treatment.
         //
         // DECLARED AS @property AND NOT AS A REAL MEMBER, deliberately. The ORM assigns a
         // fetched record's fields onto the instance; a class-level getter would shadow that
@@ -603,37 +596,9 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             }
         }
 
-        // Generate field_length() method for varchar max lengths
-        $varchar_lengths = [];
-        foreach (array_keys($columns) as $col_name) {
-            // A single leading underscore marks a SYSTEM column. toArray() strips those
-            // from every payload, so the client never holds one and can never need its
-            // length; publishing it would only advertise a column that is not there.
-            if (str_starts_with($col_name, '_') && !str_starts_with($col_name, '__')) {
-                continue;
-            }
-
-            // The LENGTH itself is the model's answer, not ours - Model::field_length() is the
-            // one definition, so a stub can never disagree with what the server enforces.
-            $length = $fqcn::field_length($col_name);
-            if ($length !== null) {
-                $varchar_lengths[$col_name] = $length;
-            }
-        }
-
-        $content .= "    /**\n";
-        $content .= "     * Get max length for a varchar/char column.\n";
-        $content .= "     * @param {string} column - Column name\n";
-        $content .= "     * @returns {number|null} Max length for varchar/char columns, null for other types\n";
-        $content .= "     */\n";
-        $content .= "    static field_length(column) {\n";
-        $content .= "        const lengths = " . json_encode($varchar_lengths, JSON_FORCE_OBJECT) . ";\n";
-        $content .= "        return lengths[column] ?? null;\n";
-        $content .= "    }\n\n";
-
-        // The declared TEXT column types, by SIMPLE NAME. Published for the same reason
-        // field_length() is: the model is the one place that knows, and a template or a
-        // form that has to restate it is a second place that can disagree.
+        // The declared TEXT column types, by SIMPLE NAME. Published because the model is the
+        // one place that knows, and a template or a form that has to restate it is a second
+        // place that can disagree.
         //
         // The editor a column needs is derived from this and NOT from the value, because
         // there is no value to ask at the moment it is needed - an add form has null in

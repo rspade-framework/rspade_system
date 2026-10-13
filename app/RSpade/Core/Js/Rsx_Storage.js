@@ -19,7 +19,7 @@
  * - `session_hash` (hashed session identifier, non-reversible)
  * - `user.id` (current user)
  * - `site.id` (current site)
- * - `build_key` (application version)
+ * - `build_key` (application version and applied migrations)
  *
  * This scope is stored in `_rsx_scope_key`. If the scope changes between page loads,
  * all RSpade keys are cleared to prevent stale data from different sessions/users/builds.

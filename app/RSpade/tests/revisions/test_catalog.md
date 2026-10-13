@@ -55,8 +55,9 @@ protecting is that the CALL SITES still exist in a command nobody re-reads, not 
 | RM-02 | the dictionary step runs after the initial user | php | method source | dictionary offset > initial-user offset | implemented | 2026-08-28 |
 | RM-03 | the step is skipped under `--framework-only` | php | method source | guarded by the option check | implemented | 2026-08-28 |
 | RM-04 | the step delegates to Revision_Dictionary and reports only when it built | php | method source | delegation + `[OK] Revision dictionary` + null guard | implemented | 2026-08-28 |
-| RM-05 | both migrate success tails clear the cache | php | both method sources | `RsxCache::clear();` + `[OK] Cache cleared` | implemented | 2026-08-28 |
-| RM-06 | `migrate:restore` clears the cache after cleanup | php | handle() source | clear offset > cleanup offset | implemented | 2026-08-28 |
+| RM-05 | every migrate run purges the schema state before the run and after it, on every exit | php | handle() source | a purge ahead of `run_migrate()` and one in the `finally` around it; the seam delegates to `Rsx_Schema::purge_schema_state()` | implemented | 2026-10-12 |
+| RM-08 | the process's schema copy is dropped before the model steps of a run | php | execute_migrations() source | `Rsx_Schema::reset()` after the table renames, before and after the final hook, ahead of the initial user | implemented | 2026-10-12 |
+| RM-06 | `migrate:restore` purges the schema state after cleanup | php | handle() source | purge offset > cleanup offset | implemented | 2026-10-12 |
 | RM-07 | a real `migrate` run prints the dictionary line on a fresh database | cli | fresh test DB | `[OK] Revision dictionary 1 built` | deferred - a full re-provision to observe one line | 2026-08-28 |
 
 ## Revision_Recording_Test (php)

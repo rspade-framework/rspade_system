@@ -23,49 +23,14 @@ use App\RSpade\Core\Rsx;
  * 
  * Scans for /rsx/{module}/public/ directories and serves files securely
  * with proper cache headers and MIME types
- * 
- * TODO: Unit Tests for Bundle Serving Behavior
- * =============================================
- * When the framework is more complete, create comprehensive unit tests for:
- * 
- * Development Mode (RSX_MODE=development):
- * -------------------------------------------------------------
- * 1. Bundle filenames are predictable: app.(hash).js where hash = substr(sha256(FQCN), 0, 32)
- *    - Example: FrontendBundle -> app.053cded429c46421aea774afff5fbd8b.js
- * 2. Query parameters added for cache-busting: ?v=(manifest-hash)
- *    - Manifest hash is random on each request (bin2hex(random_bytes(16)))
- * 3. Bundles compiled on-demand when requested (compile_bundle_on_demand method)
- * 4. Cache headers set to no-cache: "Cache-Control: no-cache, no-store, must-revalidate"
- * 5. storage/rsx directory cleared on each request EXCEPT during bundle serving
- * 
- * Production Mode (a sealed RSX_MODE=debug/production build):
- * ----------------------------------------------------------
- * 1. Bundle filenames include manifest hash: app.(hash).js where hash = substr(sha256(manifest_hash . '|' . FQCN), 0, 32)
- *    - Changes when manifest OR bundle content changes
- * 2. No query parameters needed (hash in filename handles cache-busting)
- * 3. Bundles pre-compiled via artisan rsx:bundle:compile
- * 4. Aggressive caching: "Cache-Control: public, max-age=31536000, immutable"
- * 5. ETag headers for cache validation
- * 
- * Test Scenarios:
- * ---------------
- * - Verify filename format validation (regex: /^app\.[a-f0-9]{32}\.(js|css)$/)
- * - Test 404 responses for invalid bundle names
- * - Verify correct MIME types (application/javascript, text/css)
- * - Test that bundles regenerate in development when files change
- * - Verify production bundles remain cached between requests
- * - Test security headers (X-Content-Type-Options: nosniff)
- * - Verify /_compiled/ path routing works correctly
- * - Test that non-existent bundles trigger on-demand compilation in debug mode
- * - Verify that compilation errors are logged but don't throw exceptions
- * 
- * Integration Tests:
- * ------------------
- * - Test full page load with bundle URLs in HTML
- * - Verify jQuery loads before other scripts (prioritization)
- * - Test that window.rsxapp data is correctly formatted (pretty in dev, compact in prod)
- * - Verify manifest hash changes trigger new bundle URLs in production
- * - Test that development mode allows immediate visibility of JS/CSS changes
+ *
+ * COMPILED BUNDLE NAMES. A compiled bundle file is {Bundle}__{app|vendor}.{hash8}.{js|css},
+ * where the hash is computed by the compile from the bundle's OWN inputs (its files' paths
+ * and contents, the lockfile hashes, the npm declarations) - not from the manifest's build
+ * key. The name therefore changes exactly when the bundle's content does, and a sealed
+ * build serves it immutable. In development the page appends ?v=<state key> to the URL as
+ * a cache-buster, and a request for a file that is not on disk compiles the named bundle
+ * first (rsx:man bundle_api, BUNDLE RENDERING).
  */
 class AssetHandler
 {

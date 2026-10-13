@@ -2,7 +2,7 @@
 
 ## Domain
 
-`RsxCache` - the redis-backed, build-key-scoped application cache - plus `Rsx_Counter`, the
+`RsxCache` - the redis-backed, state-key-scoped application cache - plus `Rsx_Counter`, the
 transient counter store that deliberately does NOT live in it.
 
 **One value encoding in the cache keyspace.** Everything written by `set()` /
@@ -27,7 +27,8 @@ internal `_RVC_` prefix that routes it to DB 2.
 `FLUSHDB` and `FLUSHALL` outright, so the old `flushDb()` call cleared nothing, silently.
 
 **Every key is scoped on the build AND the database.** A cache key is
-`cache:<Rsx_Connection_Scope::token()>:<sha1 of build key + user key>`, and a counter key is
+`cache:<Rsx_Connection_Scope::token()>:<sha1 of state key + user key>` (the state key is
+`Manifest::get_state_key()`: the code key combined with the applied migrations), and a counter key is
 `counter:<token>:<sha1>` - the same `(database, host)` token `RsxLocks` and
 `Task_Pool` use. So the developer's cache and a test run's cache are disjoint
 keyspaces, and `clear()` MATCHes only the calling scope's prefix (the realtime `rsx_rt:*`

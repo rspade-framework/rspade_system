@@ -2,10 +2,12 @@
 
 namespace App\RSpade\Core\Database;
 
+use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Manifest\Manifest;
 
 /**
- * Database helper for accessing model and table metadata from the manifest
+ * Database helper for accessing model and table metadata: which models and tables exist is
+ * the manifest's model registry, and their columns are the live schema's (Rsx_Schema)
  */
 class ModelHelper
 {
@@ -49,48 +51,45 @@ class ModelHelper
     }
     
     /**
-     * Get full column data for a model by class name
-     * 
+     * Get full column data for a model by class name, read from the live schema (Rsx_Schema)
+     *
      * @param string $model_name Simple class name (e.g., 'User', not 'App\Models\User')
-     * @return array Column metadata array
+     * @return array Column metadata array; empty when the model's table does not exist
      * @throws \RuntimeException if model not found
      */
     public static function get_columns_by_model(string $model_name): array
     {
-        $manifest = Manifest::get_full_manifest();
-        
-        if (!isset($manifest['data']['models'][$model_name])) {
+        if (Manifest::php_model_record($model_name) === null) {
             throw new \RuntimeException("Model not found in manifest: {$model_name}");
         }
-        
-        return $manifest['data']['models'][$model_name]['columns'] ?? [];
+
+        return Rsx_Schema::model_columns($model_name) ?? [];
     }
-    
+
     /**
-     * Get full column data for a database table
-     * 
+     * Get full column data for the model that owns a database table, read from the live
+     * schema (Rsx_Schema)
+     *
      * @param string $table_name Database table name
-     * @return array Column metadata array
-     * @throws \RuntimeException if table not found
+     * @return array Column metadata array; empty when the table does not exist
+     * @throws \RuntimeException if no model owns the table
      */
     public static function get_columns_by_table(string $table_name): array
     {
-        // One lookup through models_by_table, rather than a linear walk of the model
-        // registry per call.
         $model = Manifest::model_for_table($table_name);
 
         if ($model === null) {
             throw new \RuntimeException("Table not found in manifest: {$table_name}");
         }
 
-        return Manifest::$data['data']['models'][$model]['columns'] ?? [];
+        return Rsx_Schema::model_columns($model) ?? [];
     }
-    
+
     /**
      * Get model metadata by class name
      * 
      * @param string $model_name Simple class name
-     * @return array Full model metadata including table, columns, fqcn, etc.
+     * @return array The registry row: fqcn, file, table, class (columns are Rsx_Schema's)
      * @throws \RuntimeException if model not found
      */
     public static function get_model_metadata(string $model_name): array

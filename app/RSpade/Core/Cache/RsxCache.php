@@ -17,8 +17,9 @@ require_once __DIR__ . '/../../helpers.php';
  * Redis-based caching system with LRU eviction
  *
  * Uses Redis database 0 for general caching. EVERY KEY IS SCOPED ON BOTH THE BUILD AND THE
- * DATABASE: the current manifest build key is folded into the hashed key body, so a code
- * change invalidates the cache without anything being cleared, and the redis key itself is
+ * DATABASE: the current STATE key (Manifest::get_state_key() - the code key combined with
+ * the applied migrations) is folded into the hashed key body, so a code change or a
+ * migration invalidates the cache without anything being cleared, and the redis key itself is
  * prefixed 'cache:<Rsx_Connection_Scope::token()>:' - the (database, host) token RsxLocks
  * and the task worker pool already namespace their state under - so a process pointed at
  * another database can neither read nor overwrite this one's entries. See _scope_prefix().
@@ -52,23 +53,27 @@ require_once __DIR__ . '/../../helpers.php';
  *
  * THE TWO FAMILIES, AND WHICH ONE A BUILD MAY USE.
  *
- *   BUILD-SCOPED (get/set/delete) folds Manifest::get_build_key() into the key, so a code
- *   change invalidates the entry with nothing cleared. It is therefore UNUSABLE BEFORE THE
- *   MANIFEST IS READY, and asking for it there is FATAL - by design, an owner ruling: a
- *   silent no-op would let a future author believe a cache was working when every call was
- *   a miss, and the resulting "why is the build slow" is unanswerable from the outside.
+ *   BUILD-SCOPED (get/set/delete) folds Manifest::get_state_key() into the key, so a code
+ *   change OR a migration invalidates the entry with nothing cleared. It is therefore
+ *   UNUSABLE BEFORE THE MANIFEST IS READY, and asking for it there is FATAL - by design, an
+ *   owner ruling: a silent no-op would let a future author believe a cache was working when
+ *   every call was a miss, and the resulting "why is the build slow" is unanswerable from
+ *   the outside. The first call in a process costs the state key's one query (the applied
+ *   migration names); a caller on a path that must not touch the database - boot, the
+ *   asset channel - uses the persistent family instead.
  *
  *   PERSISTENT (get_persistent/set_persistent/delete_persistent) folds NO build key - only
  *   the (database, host) scope prefix - so it works mid-build, which is precisely what it
  *   is for: THE EXPENSIVE BUILD-TIME DERIVATIONS, keyed on an EXPLICIT CONTENT HASH the
  *   caller computes. The caller owns invalidation, and that is the point: the key states
- *   exactly which inputs the answer depends on. Two examples in the tree:
+ *   exactly which inputs the answer depends on. Examples in the tree:
  *
- *     Model_ManifestSupport         '<model lineage hash>__<hash of the applied migrations>'
- *                                   - the column map, which is a function of the model file
- *                                     and of the schema, and of nothing else
- *     Manifest_Indexer      a stat fingerprint of the framework subtrees the
- *                                   manifest never indexes - their class names
+ *     Manifest_Indexer      a stat fingerprint of the framework subtrees the manifest never
+ *                           indexes - their class names
+ *     Opcache_Advisory      the CODE key (Manifest::get_build_key()) - "said once for this
+ *                           build", which a migration must not reset
+ *     Type_Ref_Registry     a fixed key: its one input is the _type_refs table, and the
+ *                           registry rewrites or deletes the entry on every change it makes
  *
  *   A persistent entry has no expiry by default and outlives a BUILD, not a clear(): it
  *   shares the (database, host) scope prefix, so clear() - a rollback, `migrate`, rsx:clean -
@@ -77,12 +82,11 @@ require_once __DIR__ . '/../../helpers.php';
  *   its inputs: a fixed key with changing inputs is a stale answer until the next clear().
  *
  * THE _RVC_ KEY CONVENTION is INTERNAL ONLY - it is a cache-key convention, not a second API.
- * A key beginning with _RVC_ is stored in database 2 under the ordinary build-key and
- * database-scope prefix, so a code update still misses it cleanly and it is LRU-evicted like
- * everything else; it simply survives the otherwise frequent cache resets that transaction
- * rollback causes. As of the time of writing nothing in PHP uses this feature. It is kept
- * here for reference and future implementation, and to reserve database 2, which is written
- * to directly by FPC.
+ * A key beginning with _RVC_ is stored in database 2 under the ordinary state-key and
+ * database-scope prefix, so a code update or a migration still misses it cleanly and it is
+ * LRU-evicted like everything else; it simply survives the otherwise frequent cache resets
+ * that transaction rollback causes. Its one user is Rsx_Schema (the whole database's column
+ * map, which no rollback can change). Database 2 is also written to directly by FPC.
  */
 class RsxCache
 {
@@ -308,7 +312,7 @@ class RsxCache
      * Same as ::get but survives changes in the development environment
      *
      * The developer must call this function during manifest build phase, because
-     * the build key to determine if the build has been updated is not available
+     * the state key to determine if the build has been updated is not available
      * until the manifest rescan is complete.  Calling get() during manifest rescan
      * will throw an exception.
      *
@@ -570,7 +574,7 @@ class RsxCache
      * Clear the reduced-volatility cache - database 2, and ONLY database 2.
      *
      * The rollback flush never calls this; that is the whole point of the RVC database. Its
-     * ONE caller is rsx:clean: discarding build state rotates the build key, which orphans
+     * ONE caller is rsx:clean: discarding build state rotates the code key (and with it the state key), which orphans
      * every _RVC_ key and every FPC entry (fpc:{build_key}:*) at once, and "clean" means the
      * orphans go now rather than whenever LRU gets round to them. Databases 0, 1 and 3 are
      * untouched - rsx:clean clears database 0 through clear() beside this call.
@@ -626,12 +630,13 @@ class RsxCache
         } while ($iterator > 0);
     }
 
-    // Build-scoped key: manifest build key + user key. The (database, host) scope is NOT
-    // folded in here - every entry point runs the result through _make_key_persistent(),
-    // which carries it, so the scope is applied in exactly one place.
+    // Build-scoped key: the STATE key (code + applied migrations) + user key. The
+    // (database, host) scope is NOT folded in here - every entry point runs the result
+    // through _make_key_persistent(), which carries it, so the scope is applied in exactly
+    // one place.
     private static function _transform_key_build(string $key): string
     {
-        return Manifest::get_build_key() . '_' . $key;
+        return Manifest::get_state_key() . '_' . $key;
     }
 
     /**
@@ -648,9 +653,9 @@ class RsxCache
     /**
      * THE PREFIX EVERY KEY THIS CLASS WRITES CARRIES: 'cache:<(database, host) token>:'.
      *
-     * A cache key is abstractly keyed on BOTH the build and the database. The build key
-     * (folded into the hash input by _transform_key_build()) makes a code change invisible
-     * to the old cache; this prefix makes ANOTHER DATABASE's cache invisible to this one.
+     * A cache key is abstractly keyed on BOTH the build and the database. The state key
+     * (folded into the hash input by _transform_key_build()) makes a code change or a
+     * migration invisible to the old cache; this prefix makes ANOTHER DATABASE's cache invisible to this one.
      *
      * The motivating defect: rsx:test runs against rspade_test, and an in-process run
      * spawns artisan children with DB_DATABASE=rspade_test whose 'database.default' is
@@ -748,9 +753,9 @@ class RsxCache
     /**
      * Build-scoped cache with advisory locking
      *
-     * Caches value in Redis with build key prefix. Uses advisory write lock
+     * Caches value in Redis with state key prefix. Uses advisory write lock
      * during cache building to prevent stampede (multiple processes building
-     * same cache simultaneously). Cache survives until manifest rebuild.
+     * same cache simultaneously). Cache survives until a manifest rebuild or a migration.
      *
      * @param string $key Cache key (build-scoped)
      * @param callable $callback Callback to generate value if not cached

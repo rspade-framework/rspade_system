@@ -8,7 +8,6 @@
 namespace App\RSpade\Commands\Database;
 
 use App\RSpade\Commands\Migrate\Maint_Migrate;
-use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Database\Rsx_Data_Wipe;
 use App\RSpade\Core\Files\Rsx_File_Paths;
@@ -234,6 +233,10 @@ class Database_And_Storage_Reset_Command extends Maint_Migrate
 
         $snapshot_taken = false;
 
+        // What is cached about the schema is about to be wrong; purged here, while Redis is
+        // still up, and again once the window is lowered (__lower_maintenance()).
+        $this->purge_schema_state();
+
         try {
             // The real maintenance window, through the real command, so services stop in
             // the real order. Web traffic gets a 503 and automated task runners are
@@ -387,11 +390,6 @@ class Database_And_Storage_Reset_Command extends Maint_Migrate
             $this->info('');
             $this->info('[5/5] Skipping migrate (--no-migrate) - the schema is left dropped.');
 
-            // The build-scoped cache describes a schema that no longer exists. The
-            // migrate path clears it itself; this path has to.
-            RsxCache::clear();
-            $this->info('[OK] Cache cleared');
-
             return false;
         }
 
@@ -423,6 +421,11 @@ class Database_And_Storage_Reset_Command extends Maint_Migrate
         $this->info('');
         $this->info('Leaving maintenance mode...');
         Rsx_Artisan::passthru('rsx:maintenance:disable');
+
+        // Whatever this run left - a fresh schema, an empty database, the snapshot put
+        // back - nothing cached before it or during it describes. Here rather than inside
+        // the window, where Redis is stopped and a purge clears nothing.
+        $this->purge_schema_state();
     }
 
     /**

@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Files;
 
 use Illuminate\Support\Facades\DB;
 use ReflectionClass;
+use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Manifest\Manifest;
 
 /**
@@ -75,16 +76,19 @@ class File_Blob_References
             $concrete = Manifest::model_for_table($table);
             $concrete_fqcn = $concrete !== null ? (Manifest::php_class_metadata($concrete)['fqcn'] ?? null) : null;
             if ($concrete_fqcn === null) {
-                // An ordinary state, not an impossible one: the build maps a model to its
-                // table only once the table exists, so this is a table that has not been
-                // migrated yet, or a build made before the migration that created it.
                 throw new \RuntimeException(
-                    "#[Blob_Reference] on {$row['class']}: this build has no model for table {$table}. "
-                    . "The class exists; the build has not seen its table. Either the table has not been "
-                    . "migrated (php artisan migrate), or the build predates the migration that created it "
-                    . "(rsx:health names this in its 'Build Schema' row) - rebuild with "
-                    . (\App\RSpade\Core\Rsx::is_production() ? 'php artisan rsx:build --force' : 'php artisan rsx:manifest:build --force')
-                    . '.'
+                    "#[Blob_Reference] on {$row['class']}: no concrete model declares table {$table}, "
+                    . 'so there is no model to query it through.'
+                );
+            }
+
+            // An ordinary state, not an impossible one: a table that has not been migrated
+            // yet. Refused here, by name, so disposal never decides what is unreferenced
+            // from a set of tables it could not read.
+            if (!Rsx_Schema::has_table($table)) {
+                throw new \RuntimeException(
+                    "#[Blob_Reference] on {$row['class']}: table {$table} does not exist in the "
+                    . 'connected database. Run `php artisan migrate`.'
                 );
             }
 

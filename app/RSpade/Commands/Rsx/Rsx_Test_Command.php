@@ -103,13 +103,15 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
 
     /**
      * Where a docker run records its outcome, keyed by the code state AND by what was run
-     * (storage/<dir>/<suite>_<build_key>_<selector_key>.json). The build key is the hash of
-     * every scanned source file plus the environment fingerprint, so an identical key means
-     * identical code: the recorded outcome IS the outcome that code would produce again,
+     * (storage/<dir>/<suite>_<build_key>_<selector_key>.json). The key is the manifest STATE
+     * key - the hash of every scanned source file combined with the applied migrations - plus
+     * the environment fingerprint, so an identical key means identical code against an
+     * identical schema: the recorded outcome IS the outcome that code would produce again,
      * pass or fail, and a second run under the same key replays the record instead of
      * re-proving it. The selector key is the suite plus the normalised class list, so a
      * SUBSET's verdict replays only for that same subset and can never stand in for the
-     * suite. Any edit to a scanned file changes the build key and the next run is live.
+     * suite. Any edit to a scanned file, and any migration, changes the state key and the next
+     * run is live.
      * rsx:clean wipes the tmp tree.
      */
     /**
@@ -738,6 +740,17 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // run rebuilds them from the test database on first use.
         \App\RSpade\Core\Database\Lifecycle\Transaction_Rollback_Cache_Reset::reset();
 
+        // THE SCHEMA CACHE IS RE-READ FROM THE BASELINE, NOW. Rsx_Schema caches the column
+        // maps across processes under the state key, which only a migration moves - and a
+        // test creates and drops fixture tables with plain DDL, which moves nothing. Left to
+        // the first reader, the entry would describe whatever tables happened to exist at
+        // that moment, fixture tables included, for every later class and every later run.
+        // Read here, before any class has run, it describes the migrated baseline and
+        // nothing else: a fixture table contributes no schema-derived answer unless the test
+        // that created it says so (Rsx_Schema::forget()).
+        \App\RSpade\Core\Database\Rsx_Schema::forget();
+        \App\RSpade\Core\Database\Rsx_Schema::tables();
+
         // Eloquent's morph map is NOT one of those lazy caches: it is a static registered
         // once at boot, against the DEVELOPMENT database, and nothing re-registers it. Its
         // integer aliases are type-ref ids, and this connection now points at a database
@@ -920,11 +933,10 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // than relying on those keys being blank: whether the developer running the suite
         // happens to have configured credentials is not something the baseline may depend
         // on. (The `--_` convention: no InputOption, stripped pre-boot from argv.)
-        // --no-rebuild: the build on disk is the runner's to manage, and it belongs to the
-        // development database too - a child connected to the TEST database must not
-        // rebuild it because the two differ by a migration not yet applied to the other.
+        // The build on disk is untouched by this: no migrate run rebuilds anything, and
+        // without the datadir snapshot (--_no-snapshot) it regenerates no source either.
         $args = array_merge(
-            ['--force', '--no-rebuild', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG],
+            ['--force', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG],
             Rsx_Project_Paths::child_flags()
         );
 
@@ -1622,7 +1634,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     {
         $suite = $framework_only ? 'framework' : 'application';
 
-        // RESULT CACHE. The build key names the code state and the selector names WHAT was
+        // RESULT CACHE. The state key names the code and schema state and the selector names WHAT was
         // run; a record under both is this exact code's verdict for this exact set of
         // classes, so a subset verdict replays only for the same subset and never stands in
         // for the whole suite. A hit replays through the one printer, so the output is the
@@ -1632,7 +1644,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $cache_path = self::results_cache_path($suite, $build_key, $selector_key);
         $cached = self::read_cached_results($cache_path, $build_key, $selector_key);
         if ($cached !== null) {
-            $this->info('Returning cached test results for build ' . $build_key . ' (manifest build key + environment fingerprint) from ' . $cache_path);
+            $this->info('Returning cached test results for build ' . $build_key . ' (manifest state key + environment fingerprint) from ' . $cache_path);
             $this->line('  ' . count($selected) . ' ' . $suite . ' class(es), recorded ' . $cached['recorded_at']
                 . ' by run ' . $cached['run_dir']
                 . '; no scanned file, script, node package or docker file has changed since. Edit one, or delete the'
@@ -1792,7 +1804,8 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     }
 
     /**
-     * The manifest build key of the code this process booted with.
+     * The verdict cache's key: the manifest state key this process booted with, plus the
+     * environment fingerprint.
      *
      * @return string
      */
@@ -1800,13 +1813,17 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     {
         Manifest::init();
 
-        // The manifest build key covers every SCANNED source file - and nothing else. A
+        // The manifest's keys cover every SCANNED source file - and no other file. A
         // verdict also depends on the tooling the suite runs through (system/bin scripts
         // and daemons), the node toolchain (node_modules) and the test image (the docker
         // resource dir), none of which the manifest indexes. Their fingerprint is folded
         // in, so editing the mail catcher or bumping an npm package moves the key. The
         // walk costs a second or two per full run; a stale verdict costs a false pass.
-        return Manifest::get_build_key() . '-' . substr(self::environment_fingerprint(), 0, 16);
+        //
+        // THE STATE KEY, not the code key: a verdict is also a statement about the schema
+        // the suite ran against, and the applied migrations are the half of that the code
+        // key no longer carries.
+        return Manifest::get_state_key() . '-' . substr(self::environment_fingerprint(), 0, 16);
     }
 
     /**

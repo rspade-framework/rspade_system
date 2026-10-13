@@ -106,7 +106,8 @@ at once and paid for it: `models` carried a verbatim copy of each model's method
 `routes_by_target` was a byte-identical regroup of `routes` (80 KB), every gate list was stored
 three times, and every file record repeated its own path as a value (3.3% of `files`).
 
-- `models[*]` carries `columns` and a `file` reference. No method map.
+- `models[*]` is `['fqcn', 'file', 'table', 'class']`: a `file` reference and the table the
+  model DECLARES. No method map, and no columns - see THE INDEX HOLDS CODE FACTS ONLY.
 - `routes_by_target` / `portal_routes_by_target` are **DERIVED AT LOAD** from `routes` /
   `portal_routes`, grouped on the row's `target`. Never persisted. PHP arrays are
   copy-on-write, so the regroup shares the rows' storage.
@@ -127,6 +128,39 @@ three times, and every file record repeated its own path as a value (3.3% of `fi
   source).
 
 `tests/manifest/php/Index_Reference_Rule_Test` is that rule as an assertion.
+
+## THE INDEX HOLDS CODE FACTS ONLY
+
+**Nothing in the index is read from the database, and building it issues no query.** The
+model registry lists every concrete model the tree declares with the table it names - a
+model whose table does not exist yet is still a model - and there is no record of which
+migrations a database has applied. So the build key (`get_build_key()`, the CODE key) is a
+function of the source tree and the mode alone: `_compute_hash()` hashes the per-file sha1s
+and the derived sections. A generated model stub is a function of the model's lineage and the
+generator and carries no column lengths: those reach a page in the bundle's field-length
+script (`Core/Database/Field_Length_Script.php`).
+
+**A development build issues ZERO database statements, and a build process needs no reachable
+database at all** (`tests/manifest/php/Manifest_Build_No_Database_Test`). The one boot-time
+read - the polymorphic morph map, from `_type_refs` - is registered on the first database
+statement instead in a process that produces the build: `rsx:build`, the children it spawns
+(`Rsx_Build_Context::is_active()`) and `rsx:manifest:build`
+(`Type_Ref_Registry::register_morph_map_on_first_query()`, decided in
+`Rsx_Framework_Provider::boot()`). Every other process registers at boot.
+
+**Columns are `Rsx_Schema`'s** (`Core/Database/Rsx_Schema.php`): one `information_schema`
+query for the whole database, cached under the STATE key. `php_model_columns()`,
+`db_get_tables()`, `db_get_table_columns()` and `db_get_columns_by_type()` keep their names on
+the facade and delegate to it.
+
+**Two keys.** `get_build_key()` names the build: the `build_key` file, the seal,
+`rsx:prod:verify`, the full-page-cache namespace, the SSR stamp. `get_state_key()` is
+`md5(code key . applied migrations)` and is what every cache that depends on the database is
+broken by: the build-scoped `RsxCache` family, `window.rsxapp.build_key` / `cache_key`, the
+development `?v=` on compiled bundle URLs, the `?v=` on a bundle's field-length script. A
+migration moves the second and never the first.
+`tests/manifest/php/Manifest_Model_Registry_Test` and `Manifest_State_Key_Test` are both
+halves as assertions.
 
 ## THE INDEXES A LOOKUP GOES THROUGH
 
@@ -150,7 +184,7 @@ surface; the other four own one phase each and are reached through it.
 
 | File | Owns | Entry points |
 |------|------|--------------|
-| `Manifest.php` | The public API AND every read accessor, implemented here. Boot (`init`, `post_init`), the build loop `_refresh_manifest()` with its restart accounting, and the lookups: `php_find_class`, `php_class_metadata`, `php_get_extending`, `php_is_subclass_of`, `php_get_lineage`, the `js_*` twins, `find_view`, `by_attribute`, `get_with_attribute`, `get_routes`, `db_get_*`, `model_for_table`, `php_model_columns` | everything a caller outside `Core/Manifest/` uses |
+| `Manifest.php` | The public API AND every read accessor, implemented here. Boot (`init`, `post_init`), the build loop `_refresh_manifest()` with its restart accounting, the two keys (`get_build_key`, `get_state_key`), and the lookups: `php_find_class`, `php_class_metadata`, `php_get_extending`, `php_is_subclass_of`, `php_get_lineage`, the `js_*` twins, `find_view`, `by_attribute`, `get_with_attribute`, `get_routes`, `model_for_table`, `php_model_record`, and the column accessors that delegate to `Rsx_Schema` (`db_get_*`, `php_model_columns`) | everything a caller outside `Core/Manifest/` uses |
 | `Manifest_Build.php` | The build SEAM - an instance carrying scan roots, storage root and mode, constructed from config, and owning the pass's `Source_Cache`. What `tests/manifest/` substitutes to build a fixture tree | `Manifest_Build::from_config()` |
 | `Manifest_Scanner.php` | Phases 1-2: directory discovery, per-file change detection, the token parse that produces each file record, `Php_Fixer` with its class-structure delta, and the PHP reflection extract with its derived-cache restore | `_get_rsx_files`, `_has_changed`, `_process_file`, `_run_php_fixer`, `_extract_reflection_for_changed_files` |
 | `Manifest_Indexer.php` | Phases 3-6: the derived indexes (autoloader class map, blade views, attribute index, models-by-table, event handlers, classless files), the duplicate-class detectors, the class-override archive pass, the composer classmap validation, the code-quality pass entry and the VS Code stub | `_build_autoloader_class_map`, `_build_attribute_index`, `_check_unique_base_class_names`, `_run_manifest_time_code_quality_checks`, `_generate_vscode_stubs` |
@@ -170,7 +204,8 @@ The manifest cache contains:
 
 ```php
 [
-    'hash' => '42b9d0efb5c547eec0fb2ca19bf922e0', // the build key: content + mode
+    'hash' => '42b9d0efb5c547eec0fb2ca19bf922e0', // the build (CODE) key: content + mode,
+                                         // nothing from the database
     'mode' => 'development',             // the RSX mode this index was built in; a dev
                                          // boot rebuilds an index recorded under another
     'data' => [
@@ -183,7 +218,7 @@ The manifest cache contains:
         'autoloader_class_map' => [...], // Simple name to FQCNs
         'attribute_index' => [...],      // attribute => declarations
         'blade_views' => [...],          // @rsx_id => path
-        'models' => [...],               // Database model metadata (columns + file)
+        'models' => [...],               // Model registry: class => fqcn, file, table, class
         'models_by_table' => [...],      // table => model class
         'jqhtml' => [...],               // jqhtml component registry
         'routes' => [...],               // pattern => row (routes_by_target is DERIVED)
@@ -392,7 +427,8 @@ the tree under itself - a class override archived, a file auto-renamed. Four rul
 - `get_routes()` - Extract all route definitions from attributes
 
 #### Utility Methods
-- `get_build_key()` - Get manifest hash for cache validation
+- `get_build_key()` - The CODE key: the manifest hash, which names the build (never touches the database)
+- `get_state_key()` / `reset_state_key()` - The CACHE-BREAK key: the code key combined with the applied migrations (one query per process, memoized)
 - `get_stats()` - Get statistics (file counts, build time)
 - `get_autoloader_class_map()` - Get class-to-file mappings
 - `is_built()` - Check if manifest exists
@@ -451,7 +487,7 @@ kinds, both abstract base classes (NOT an interface).
 ### Built-in Support Modules (`config('rsx.manifest_support')`, run in order)
 
 - `Route_ManifestSupport`, `Portal_Route_ManifestSupport`, `Portal_Spa_ManifestSupport`
-- `Model_ManifestSupport` (`Core/Manifest/Modules/`) - database schema extraction
+- `Model_ManifestSupport` (`Core/Manifest/Modules/`) - the model registry (class, file, declared table; no database read)
 - `Jqhtml_ManifestSupport` (`Integrations/Jqhtml/`) - jqhtml component registration
 - `Spa_ManifestSupport`, `Api_Endpoint_ManifestSupport`
 
@@ -519,10 +555,12 @@ over a few thousand in-memory records on the only occasion it runs, which is a c
 
 | Kind | Modules |
 |---|---|
-| **FULL** | `Route`, `Portal_Route`, `Spa`, `Portal_Spa`, `Api_Endpoint`, `Auth`, `Jqhtml`, `Externals`, `Bundle_Alias`, `Email` |
-| **DELTA** | `Model` (includes the model file to reflect on it), `Task_Command` (reads source), and the three STUB GENERATORS `Controller_Stub` / `Model_Stub` / `Auth_Stub` (write generated files) |
+| **FULL** | `Route`, `Portal_Route`, `Spa`, `Portal_Spa`, `Api_Endpoint`, `Auth`, `Jqhtml`, `Externals`, `Bundle_Alias`, `Email`, `Model` |
+| **DELTA** | `Task_Command` (reads source), and the three STUB GENERATORS `Controller_Stub` / `Model_Stub` / `Auth_Stub` (write generated files) |
 
-`Api_Endpoint` and `Email` are the two full modules that touch disk, and for the same reason it is acceptable: each reads source only for the files that are its subject, through the build's `Source_Cache`, so the cost is per matching class and never per file in the tree. `Email` was DELTA until 2026-09-14, when the test-run manifest transition was found to drop every unchanged email from the carried-forward table. `Api_Endpoint` reads docblocks for the API
+`Model` is full although it loads each model class to ask for its declared table: with the
+column maps gone there is no per-row input left to diff on, and the stub generator loads the
+same classes in the same pass. `Api_Endpoint` and `Email` are the two full modules that touch disk, and for the same reason it is acceptable: each reads source only for the files that are its subject, through the build's `Source_Cache`, so the cost is per matching class and never per file in the tree. `Email` was DELTA until 2026-09-14, when the test-run manifest transition was found to drop every unchanged email from the carried-forward table. `Api_Endpoint` reads docblocks for the API
 catalog, but only for files that actually declare an endpoint, and through the build's
 `Source_Cache`. Paying that every build is the deliberate trade against a catalog that can
 silently empty itself.
@@ -562,7 +600,7 @@ There is no `IntegrationRegistry` sweep by `method_exists` any more, and
 **Every generator CONTENT-COMPARES before writing.** A write that changes nothing
 still moves the mtime, and a moved mtime recompiles every bundle carrying the stub.
 The model generator additionally records WHICH INPUTS its metadata hash was computed
-for (`model_metadata_inputs` = model file hash + column-map hash), so the expensive
+for (`model_metadata_inputs` = model lineage hash + generator hash), so the expensive
 reflection behind that hash is not run in order to decide whether to run it.
 `tests/manifest/php/Manifest_Stub_Rewrite_Test` is the mtime assertion.
 
@@ -678,8 +716,8 @@ back a verdict; everything else is the driver's contract, in `rsx:man code_quali
 `rspade:code-quality-rules`.
 
 **A manifest-time RULE or MODULE cannot use the build-scoped `RsxCache`.** Its key is prefixed
-with `Manifest::get_build_key()`, and during a build the manifest is not ready - the accessor
-raises `shouldnt_happen('called before manifest was loaded')`. `RsxCache::get_persistent()` /
+with `Manifest::get_state_key()`, which starts from `get_build_key()`, and during a build the
+manifest is not ready - the accessor raises `shouldnt_happen('called before manifest was loaded')`. `RsxCache::get_persistent()` /
 `set_persistent()` keyed on a CONTENT HASH is the tool; `Manifest_Indexer`'s unindexed-framework
 -class map (keyed on a stat fingerprint, prefix `..._v1_`) is the worked example.
 
@@ -783,9 +821,12 @@ $file_data = $manifest['data']['files']['path/to/file.php'];
 $class_record = $manifest['data']['php_classes']['ClassName'];  // ['file','fqcn','extends','abstract']
 $js_record = $manifest['data']['js_classes']['JsClass'];        // ['file','extends']
 
-// Access models with schema
+// Access the model registry (code facts: fqcn, file, table, class)
 $model = $manifest['data']['models']['User_Model'];
-$columns = $model['columns'];
+$table = $model['table'];
+
+// Columns are NOT in the manifest - they are read from the live schema
+$columns = Manifest::php_model_columns('User_Model');   // delegates to Rsx_Schema
 ```
 
 Use `rsx:manifest:schema_dump` to understand the exact structure before writing direct access code.

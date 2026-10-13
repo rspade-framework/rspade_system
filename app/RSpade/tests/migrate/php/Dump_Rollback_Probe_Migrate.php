@@ -14,8 +14,8 @@ use App\RSpade\Core\Database\Migrate_Dump_Rollback;
  * Maint_Migrate with its outside world replaced, so the --dump-rollback FLOW in handle() runs
  * for real against a scratch database: the mechanism is a Migrate_Dump_Rollback over the
  * scratch connection and a sandbox directory; the migrations are a callback; the maintenance
- * window, the datadir snapshot and the bare run are recorded rather than performed; output is
- * collected.
+ * window, the datadir snapshot run, the bare run and the schema-state purge are recorded
+ * rather than performed; output is collected.
  */
 #[Instantiatable]
 class Dump_Rollback_Probe_Migrate extends Maint_Migrate
@@ -32,6 +32,20 @@ class Dump_Rollback_Probe_Migrate extends Maint_Migrate
     public array $events = [];
 
     public array $lines = [];
+
+    /**
+     * One entry per purge_schema_state() call: how many events had been recorded when it
+     * ran. A purge before anything is 0; one after everything is count($events).
+     *
+     * @var int[]
+     */
+    public array $purges = [];
+
+    /** Whether the datadir snapshot run is the one this box would take. */
+    public bool $snapshot_engaged = false;
+
+    /** What a recorded snapshot or bare run answers: an exit code, or a Throwable to throw. */
+    public $runner_result = 0;
 
     /** When set, the client-program check fails with this message. */
     public ?string $binaries_unusable = null;
@@ -58,16 +72,9 @@ class Dump_Rollback_Probe_Migrate extends Maint_Migrate
         return (bool) ($this->options['framework-only'] ?? false);
     }
 
-    // The build always describes the database here: what migrate does about a build that
-    // does not is Migrate_Build_Sync_Test's subject.
-    protected function applied_migrations_hash(): string
+    protected function purge_schema_state(): void
     {
-        return 'same';
-    }
-
-    protected function build_applied_migrations_hash(): ?string
-    {
-        return 'same';
+        $this->purges[] = count($this->events);
     }
 
     protected function probe_is_rspade_container(): bool
@@ -77,7 +84,7 @@ class Dump_Rollback_Probe_Migrate extends Maint_Migrate
 
     protected function snapshot_protection_engaged(): bool
     {
-        return false;
+        return $this->snapshot_engaged;
     }
 
     protected function count_pending_migrations(): int
@@ -92,11 +99,27 @@ class Dump_Rollback_Probe_Migrate extends Maint_Migrate
         return ($this->migrations)();
     }
 
+    protected function run_with_snapshot(): int
+    {
+        $this->events[] = 'snapshot_run';
+
+        return $this->__runner_answer();
+    }
+
     protected function run_without_snapshot(): int
     {
         $this->events[] = 'bare_run';
 
-        return 0;
+        return $this->__runner_answer();
+    }
+
+    private function __runner_answer(): int
+    {
+        if ($this->runner_result instanceof \Throwable) {
+            throw $this->runner_result;
+        }
+
+        return $this->runner_result;
     }
 
     protected function require_dump_rollback_binaries(): void

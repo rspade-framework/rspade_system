@@ -12,6 +12,7 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Commands\Migrate\Maint_Migrate;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
+use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Database\Rsx_Data_Wipe;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Rsx;
@@ -168,6 +169,10 @@ class Db_Rebuild_Provision_Cache_Snapshot_Command extends Command
         register_shutdown_function(function (): void {
             $this->__recover_live_data_if_needed();
         });
+
+        // What is cached about the schema is about to be wrong; purged here, while Redis is
+        // still up, and again once the window is lowered (__lower_maintenance()).
+        Rsx_Schema::purge_schema_state();
 
         try {
             $this->__step_enter_maintenance();
@@ -389,9 +394,7 @@ class Db_Rebuild_Provision_Cache_Snapshot_Command extends Command
             }
         }
 
-        // --no-rebuild: this migrates a scratch database that is replaced by the live one
-        // again before the command ends, so the build has nothing to catch up with.
-        $exit_code = Rsx_Artisan::passthru('migrate', ['--force', '--no-rebuild', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG]);
+        $exit_code = Rsx_Artisan::passthru('migrate', ['--force', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG]);
         if ($exit_code !== 0) {
             throw new \RuntimeException('The migration run failed (exit ' . $exit_code . '). The cache was NOT written.');
         }
@@ -788,6 +791,11 @@ class Db_Rebuild_Provision_Cache_Snapshot_Command extends Command
         $this->info('');
         $this->info('Leaving maintenance mode...');
         Rsx_Artisan::passthru('rsx:maintenance:disable');
+
+        // The live database is back in place of the one this run built. Nothing cached
+        // while the scratch schema stood describes it. Here rather than inside the window,
+        // where Redis is stopped and a purge clears nothing.
+        Rsx_Schema::purge_schema_state();
     }
 
     /**

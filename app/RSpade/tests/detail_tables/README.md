@@ -10,7 +10,7 @@ eager-embedded relationship that throws on wrong-type access.
 - `app/RSpade/Core/Database/DetailTables/Rsx_Detail_Model_Abstract.php` - detail model base (standard `id` PK, `$parent_model`, derived `$parent_key`, `for_parent()`).
 - `app/RSpade/Core/Database/Models/Rsx_Model_Abstract.php` - `$detail_tables` map, discriminator resolver, magic detail accessor, `toArray()` embed, post-save shell-create.
 - `app/RSpade/Core/Database/Database_BundleIntegration.php` - JS detail accessor + baked discriminator map.
-- `app/RSpade/Core/Manifest/Modules/Model_ManifestSupport.php` - base+detail column spanning.
+- `app/RSpade/Core/Database/Rsx_Schema.php` - base+detail column spanning (`model_columns()`).
 - `app/RSpade/Commands/Rsx/Constants_Regenerate_Command.php` - two-table docblock.
 
 ## Man page

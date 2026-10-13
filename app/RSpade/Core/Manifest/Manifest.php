@@ -493,24 +493,21 @@ class Manifest
     }
 
     /**
-    * Merged column map for a model class, or null when the class is not an indexed model.
+    * Merged column map for a model class, or null when the class is not a model or its
+    * table does not exist in the connected database.
     *
-    * O(1) class-keyed - the same array the JS stub generator consumes, so Class-Table
-    * Inheritance is already spanned (Model_ManifestSupport::__merge_detail_columns() merges a
-    * base model's detail-table columns into its map before this is ever read). Column entries
-    * carry the FULL metadata (type, max_length, nullable, ...), unlike db_get_table_columns()
-    * which flattens each column to its type string.
+    * READ FROM THE LIVE SCHEMA, not from the index: this delegates to Rsx_Schema, the one
+    * reader of column data. Class-Table Inheritance is already spanned (a base model's
+    * detail-table columns are merged into its map). Column entries carry the FULL metadata
+    * (type, max_length, nullable, ...), unlike db_get_table_columns() which flattens each
+    * column to its type string.
     *
     * @param string $class_name Class name (FQCN or simple - normalized either way)
-    * @return array|null column_name => metadata array, or null if not an indexed model
+    * @return array|null column_name => metadata array
     */
     public static function php_model_columns(string $class_name): ?array
     {
-        self::init();
-
-        $class_name = self::_normalize_class_name($class_name);
-
-        return self::$data['data']['models'][$class_name]['columns'] ?? null;
+        return \App\RSpade\Core\Database\Rsx_Schema::model_columns(self::_normalize_class_name($class_name));
     }
 
     /**
@@ -787,6 +784,9 @@ class Manifest
     /**
     * Check if a class name corresponds to a PHP model class (exists in models index)
     *
+    * A CODE fact: the registry lists every concrete model the tree declares, whether or
+    * not its table exists in any database.
+    *
     * This is used by the JS model system to recognize PHP model class names that may
     * appear in JS inheritance chains but don't exist as JS classes in the manifest.
     * PHP models like "Project_Model" generate JS stubs during bundle compilation.
@@ -1051,6 +1051,22 @@ class Manifest
     }
 
     /**
+    * The registry row for a model class - ['fqcn', 'file', 'table', 'class'] - or null when
+    * the class is not a model.
+    *
+    * CODE FACTS ONLY: `table` is what the model declares, and says nothing about whether
+    * that table exists in any database. Columns are Rsx_Schema's.
+    *
+    * @param string $class_name Simple class name
+    */
+    public static function php_model_record(string $class_name): ?array
+    {
+        self::init();
+
+        return self::$data['data']['models'][$class_name] ?? null;
+    }
+
+    /**
     * The model class that owns a table, or null.
     */
     public static function model_for_table(string $table): ?string
@@ -1058,20 +1074,6 @@ class Manifest
         self::init();
 
         return self::$data['data']['models_by_table'][$table] ?? null;
-    }
-
-    /**
-    * The fingerprint of the applied migrations this build was made against
-    * (Rsx_Fingerprint::applied_migrations()), or null for an index that predates the record.
-    *
-    * A build describes ONE database state - its model column maps were read from it - and
-    * this says which. `migrate` compares it with the database afterwards.
-    */
-    public static function applied_migrations(): ?string
-    {
-        self::init();
-
-        return self::$data['data']['applied_migrations'] ?? null;
     }
 
     /**
@@ -1415,6 +1417,22 @@ class Manifest
             // function by exception, and until this finally existed each of them left the
             // system build lock HELD - so the next process to want it waited forever (the
             // lock has no lease and no TTL, by design) on a build that had already failed.
+            $counting_statements = \App\RSpade\Core\Console\Rsx_Internal_Flags::has('--_manifest-report-cold');
+
+            if ($counting_statements) {
+                static::$_build_statements = [];
+
+                // No unlisten exists; the flag in the closure is what ends the collection.
+                app('events')->listen(
+                    \Illuminate\Database\Events\QueryExecuted::class,
+                    static function ($query) use (&$counting_statements): void {
+                        if ($counting_statements) {
+                            static::$_build_statements[] = $query->sql;
+                        }
+                    }
+                );
+            }
+
             try {
                 // zug zug
                 self::_refresh_manifest();
@@ -1434,6 +1452,8 @@ class Manifest
                     console_debug('MANIFEST', 'WARNING: Cache file does not exist after rebuild!', $cache_file);
                 }
             } finally {
+                $counting_statements = false;
+
                 // The build read a great many files through ONE cache; nothing about them
                 // outlives the build.
                 static::build()->release_source_cache();
@@ -1544,6 +1564,15 @@ class Manifest
             register_shutdown_function(static function (): void {
                 fwrite(STDOUT, "\nMANIFEST_COLD_LOADS=" . static::$_cold_load_count . "\n");
                 fwrite(STDOUT, 'MANIFEST_REBUILT=' . (static::$_rebuild_occurred ? '1' : '0') . "\n");
+                fwrite(STDOUT, 'MANIFEST_STATE_KEY_COMPUTATIONS=' . static::$_state_key_computations . "\n");
+
+                if (static::$_build_statements !== null) {
+                    fwrite(STDOUT, 'MANIFEST_BUILD_DB_STATEMENTS=' . count(static::$_build_statements) . "\n");
+
+                    foreach (static::$_build_statements as $statement) {
+                        fwrite(STDOUT, 'MANIFEST_BUILD_DB_STATEMENT: ' . $statement . "\n");
+                    }
+                }
             });
         }
 
@@ -1711,8 +1740,16 @@ class Manifest
     }
 
     /**
-    * Get the build key for cache prefixing
-    * This is the manifest hash that uniquely identifies the current code state
+    * The CODE key: the manifest hash, which identifies the BUILD.
+    *
+    * Every scanned source file and the mode contribute to it and NOTHING from the database
+    * does, so it never touches the database and a migration never moves it. It is what
+    * names the build on disk - the build_key file, the seal, rsx:prod:verify, the full
+    * page cache namespace (which the node proxy reads from that file) and the SSR server
+    * stamp.
+    *
+    * It is NOT the cache-break key. Anything cached that depends on what the database
+    * holds or how it is shaped is keyed on get_state_key().
     *
     * IMPORTANT: This will throw a fatal error if called before the manifest is loaded
     * The manifest must have completed loading (either from cache or scan) before this is available
@@ -1733,6 +1770,99 @@ class Manifest
         }
 
         return static::$data['hash'];
+    }
+
+    /**
+    * State keys this process has computed, keyed "<code key>|<connection scope token>".
+    *
+    * Keyed on the connection scope as well as the code key because a process can be pointed
+    * at another database mid-flight (rsx:test swaps its default connection), and a state
+    * key answered from the previous database would file one database's cache entries under
+    * the other's name.
+    *
+    * @var array<string, string>
+    */
+    private static array $_state_keys = [];
+
+    /**
+    * How many times this process ran the applied-migrations query on behalf of
+    * get_state_key(). The --_manifest-report-cold probe prints it; tests/manifest asserts a
+    * boot is zero.
+    */
+    public static int $_state_key_computations = 0;
+
+    /**
+    * The SQL statements this process issued WHILE BUILDING the manifest, collected only
+    * under the --_manifest-report-cold probe (null otherwise). A build reads no database, so
+    * the probe prints a count of zero; tests/manifest asserts it.
+    *
+    * @var array<int, string>|null
+    */
+    public static ?array $_build_statements = null;
+
+    /**
+    * The CACHE-BREAK key: the code key combined with the migrations applied to the
+    * connected database - md5(get_build_key() . Rsx_Fingerprint::applied_migrations()).
+    *
+    * A cached value that depends on the database (its rows or its shape) is correct for
+    * one code state AND one database state. The code key alone cannot say the second: no
+    * source file changes when a migration runs. So everything that must be discarded when
+    * either moves is keyed here - the build-scoped RsxCache family, Rsx_Schema's column
+    * maps, window.rsxapp.build_key (the "this page is out of date, reload" comparison),
+    * window.rsxapp.cache_key (browser storage scope) and the development ?v= on compiled
+    * bundle URLs.
+    *
+    * COST: one query per process (the applied migration names), on the FIRST call, then a
+    * memo. A process that never asks never pays - booting does not ask, and neither does
+    * serving a compiled asset.
+    *
+    * THE ONE DEGRADED PATH: when the database cannot be reached at all, this answers the
+    * code key alone and logs that it did, for the rest of the process. A request in that
+    * state is already failing; what it still has to do is render an error page, and that
+    * page needs a key. Only the connection failure is answered this way - any other failure
+    * of the query propagates.
+    *
+    * @return string 32 hex characters
+    */
+    public static function get_state_key(): string
+    {
+        $code_key = static::get_build_key();
+        $memo_key = $code_key . '|' . \App\RSpade\Core\Database\Rsx_Connection_Scope::token();
+
+        if (isset(self::$_state_keys[$memo_key])) {
+            return self::$_state_keys[$memo_key];
+        }
+
+        self::$_state_key_computations++;
+
+        try {
+            $applied = \App\RSpade\Core\Support\Rsx_Fingerprint::applied_migrations();
+        } catch (\Illuminate\Database\QueryException $e) {
+            if (!\App\RSpade\Core\Support\Rsx_Fingerprint::is_connection_failure($e)) {
+                throw $e;
+            }
+
+            \Illuminate\Support\Facades\Log::error(
+                '[manifest] the database is unreachable, so the state key is the code key alone '
+                . 'for the rest of this process: ' . $e->getMessage()
+            );
+
+            return self::$_state_keys[$memo_key] = $code_key;
+        }
+
+        return self::$_state_keys[$memo_key] = md5($code_key . $applied);
+    }
+
+    /**
+    * Forget every memoized state key: the next get_state_key() asks the database again.
+    *
+    * For a process that has just changed what is applied (migrate) or been pointed at
+    * another database. Rsx_Schema::reset() calls it, so the column maps and the key they
+    * are cached under are always dropped together.
+    */
+    public static function reset_state_key(): void
+    {
+        self::$_state_keys = [];
     }
 
     // ------------------------------------------------------------------------
@@ -2155,10 +2285,9 @@ class Manifest
             \Illuminate\Support\Facades\Artisan::call('view:clear', [], new \Symfony\Component\Console\Output\NullOutput());
         }
 
-        // Run manifest-time code quality checks (development only)
-        // Skip during migrations - database may not be provisioned yet
+        // Run manifest-time code quality checks (development only, and never from a
+        // migration command).
         if (Rsx::is_development() && $changes && !static::_is_migration_context()) {
-            static::_verify_database_provisioned();
             static::_run_manifest_time_code_quality_checks($files_to_process);
         }
 
@@ -2905,48 +3034,10 @@ class Manifest
     }
 
     /**
-     * Verify database has been provisioned before running code quality checks
+     * The tables that have a model class AND exist in the connected database.
      *
-     * Checks that:
-     * 1. The _migrations table exists (created by Laravel migrate)
-     * 2. At least one migration has been applied
-     *
-     * This prevents confusing code quality errors when the real issue is
-     * that migrations haven't been run yet.
-     */
-    public static function _verify_database_provisioned(): void
-    {
-        $migrations_table = config('database.migrations', 'migrations');
-
-        // Check if migrations table exists
-        if (!\Illuminate\Support\Facades\Schema::hasTable($migrations_table)) {
-            throw new \RuntimeException(
-                "Database not provisioned - migrations table '{$migrations_table}' does not exist.\n\n" .
-                "Run migrations before continuing:\n" .
-                "    php artisan migrate\n\n" .
-                "If this is a fresh installation, you may also need to:\n" .
-                "    1. Create the database\n" .
-                "    2. Configure .env with correct DB_* settings\n" .
-                "    3. Run: php artisan migrate"
-            );
-        }
-
-        // Check if at least one migration has been applied
-        $result = \Illuminate\Support\Facades\DB::select("SELECT COUNT(*) as cnt FROM `{$migrations_table}`");
-        if ($result[0]->cnt === 0) {
-            throw new \RuntimeException(
-                "Database not provisioned - no migrations have been applied.\n\n" .
-                "Run migrations before continuing:\n" .
-                "    php artisan migrate"
-            );
-        }
-    }
-
-    /**
-     * Get list of all database tables from manifest model metadata
-     *
-     * Returns only tables that have been indexed via Model_ManifestSupport
-     * (i.e., tables with corresponding model classes)
+     * The model list is the index's (a code fact); whether a table exists is Rsx_Schema's
+     * (the live schema).
      *
      * @return array Array of table names
      */
@@ -2954,36 +3045,30 @@ class Manifest
     {
         self::init();
 
-        if (!isset(self::$data['data']['models'])) {
-            return [];
-        }
-
         $tables = [];
-        foreach (self::$data['data']['models'] as $model_data) {
-            if (isset($model_data['table'])) {
-                $tables[] = $model_data['table'];
+        foreach (self::$data['data']['models_by_table'] ?? [] as $table => $model) {
+            if (\App\RSpade\Core\Database\Rsx_Schema::has_table($table)) {
+                $tables[] = $table;
             }
         }
 
-        return array_values(array_unique($tables));
+        return $tables;
     }
 
     /**
-     * Get columns for a specific table with their types from manifest
+     * Columns of a model's table with their simplified types, read from the live schema
+     * (Rsx_Schema).
      *
-     * Returns simplified column information extracted during manifest build.
-     * Types are from Model_ManifestSupport::__parse_column_type() which simplifies
-     * MySQL types (e.g., 'bigint', 'varchar(255)' -> 'integer', 'string')
+     * Types are simplified MySQL types (e.g., 'bigint', 'varchar(255)' -> 'integer',
+     * 'string'; tinyint(1) is 'boolean'). The map is the owning MODEL's, so a base model's
+     * table answers with its Class-Table Inheritance detail columns merged in.
      *
      * @param string $table Table name
-     * @return array Associative array of column_name => type, or empty if table not found
+     * @return array Associative array of column_name => type; empty when no model owns the
+     *               table or the table does not exist
      */
     public static function db_get_table_columns(string $table): array
     {
-        self::init();
-
-        // One lookup through models_by_table, rather than a linear walk of the model
-        // registry per call.
         $model = self::model_for_table($table);
 
         if ($model === null) {
@@ -2992,7 +3077,7 @@ class Manifest
 
         $result = [];
 
-        foreach (self::$data['data']['models'][$model]['columns'] ?? [] as $column_name => $column_data) {
+        foreach (\App\RSpade\Core\Database\Rsx_Schema::model_columns($model) ?? [] as $column_name => $column_data) {
             $result[$column_name] = $column_data['type'] ?? 'unknown';
         }
 
@@ -3000,12 +3085,12 @@ class Manifest
     }
 
     /**
-     * Get columns of a specific type for a table from manifest
+     * Columns of a specific simplified type for a model's table (see db_get_table_columns()).
      *
-     * Useful for finding all boolean columns (tinyint), integer columns, etc.
+     * Useful for finding all boolean columns (tinyint(1)), integer columns, etc.
      *
      * @param string $table Table name
-     * @param string $type Type to filter by (from Model_ManifestSupport simplified types)
+     * @param string $type Simplified type to filter by
      * @return array Array of column names matching the type
      */
     public static function db_get_columns_by_type(string $table, string $type): array

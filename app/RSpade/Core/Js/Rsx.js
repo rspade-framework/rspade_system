@@ -84,6 +84,16 @@ class Rsx {
     static __stopped = false;
 
     /**
+     * Column max lengths for the models in this page's bundle - {Model_Name: {column: length}}
+     * for varchar/char columns - or null until the page's field-length script has run.
+     *
+     * Assigned by that script (served at /_field_lengths/<Bundle>__<hash>.js and emitted
+     * after the app bundle, so it runs before anything renders) and read by
+     * Rsx_Js_Model.field_length(), which is the only reader.
+     */
+    static __field_length_data = null;
+
+    /**
      * Framework-reserved hash key naming the element to scroll to.
      *
      * Reserved the same way DataGrid reserves `dg_*`: an application must not
@@ -638,8 +648,8 @@ class Rsx {
      * computed SERVER-side - an md5 of session_hash / user id / site id / build_key
      * (see Rsx_Bundle_Abstract::_compute_cache_key) - and shipped as
      * window.rsxapp.cache_key, so the client never derives scope from session_hash
-     * itself. It changes when the user logs out/swaps, the site changes, or the
-     * application source is updated / redeployed.
+     * itself. It changes when the user logs out/swaps, the site changes, the
+     * application source is updated / redeployed, or a migration runs.
      *
      * @returns {string}
      * @private
@@ -1681,7 +1691,7 @@ class Rsx {
      * Validate current session state against server
      *
      * Called after SPA navigation to detect stale state requiring page refresh:
-     * 1. Codebase updates - build_key changed means new deployment
+     * 1. Codebase updates and migrations - build_key (the server's state key) changed
      * 2. User changes - name, role, permissions updated by admin
      * 3. Session changes - logged out, ACLs modified, session invalidated
      *
@@ -1703,7 +1713,7 @@ class Rsx {
             let needs_refresh = false;
             let refresh_reason = null;
 
-            // Check build_key - codebase was updated
+            // Check build_key - codebase was updated, or a migration ran
             if (server_state.build_key !== client_state.build_key) {
                 needs_refresh = true;
                 refresh_reason = 'codebase_updated';

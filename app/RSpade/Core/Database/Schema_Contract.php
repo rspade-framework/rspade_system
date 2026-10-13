@@ -19,13 +19,13 @@ namespace App\RSpade\Core\Database;
  * what may NOT be altered away, table by table, with the framework code that reads or
  * writes each column named beside it so a finding can say whose code is about to fail.
  *
- * WHY A SECOND CHECK EXISTS AT ALL. rsx:migrate:check_consistency compares the sealed
- * MANIFEST with the database, in production modes only. The manifest's column map is
- * DERIVED from the database at build time, so a column the framework CODE needs but
- * this schema never had is invisible to it - both sides agree, and the framework still
- * throws on the first request that touches the column. This map is the other direction:
- * what the code needs, stated independently of any database, checkable on every box in
- * every mode. Schema_Contract_Health_Checks is the check; this class is the contract.
+ * WHY IT IS A DECLARATION. Everything the framework knows about a table's columns at run
+ * time is READ from the database (Rsx_Schema), so a column the framework CODE needs but
+ * this schema never had is invisible to it - there is nothing to disagree with, and the
+ * framework still throws on the first request that touches the column. This map is the
+ * other direction: what the code needs, stated independently of any database, checkable on
+ * every box in every mode. Schema_Contract_Health_Checks is the check; this class is the
+ * contract.
  *
  * WHAT IS DELIBERATELY NOT HERE:
  *
@@ -38,7 +38,7 @@ namespace App\RSpade\Core\Database;
  *     every query the model issues.
  *   - Column TYPES, nullability and defaults. Presence is what the framework depends on
  *     and what an ALTER realistically removes; a narrowed type is the province of the
- *     SchemaQuality rules and of check_consistency.
+ *     SchemaQuality rules.
  *   - Columns the framework only DECLARES on a model and never reads (users.phone,
  *     user_profiles.title/department/bio). A column nothing reads cannot break
  *     anything by being absent.

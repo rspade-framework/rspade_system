@@ -17,7 +17,8 @@ SYNOPSIS
     Inspect the box:
         php artisan rsx:prod:verify
         php artisan rsx:health [--json]
-        php artisan rsx:migrate:check_consistency
+        php artisan rsx:manifest:get_build_key
+        php artisan rsx:manifest:get_state_key
 
     Take the site down and bring it back:
         php artisan rsx:maintenance:enable --reason="..."
@@ -243,14 +244,17 @@ THE RECOMMENDED DEPLOYMENT
 
         php artisan rsx:maintenance:enable --reason="deploying <version>"
         git pull                       # or however the code arrives
-        php artisan migrate --dump-rollback --no-rebuild
+        php artisan migrate --dump-rollback
         php artisan rsx:mode:set prod  # = rsx:prod:enable = build + seal
         php artisan rsx:prod:verify
         php artisan rsx:maintenance:disable
 
-    --no-rebuild because the next line builds: a migrate that changed the
-    schema otherwise rebuilds and reseals by itself (below), and the recipe
-    would build twice.
+    THE BUILD AND THE MIGRATION ARE INDEPENDENT. Neither reads what the other
+    produces, so the two lines run in either order and neither is ever
+    repeated because of the other (BUILD AND MIGRATE, below). What the order
+    does decide is which of the two the new code waits for: migrating first
+    means the build that is about to be served never runs against a schema
+    older than the one it was written for.
 
     --dump-rollback dumps the database first and restores it if a migration
     fails; the next deploy's migrate recovers whatever an interrupted one left,
@@ -262,73 +266,63 @@ THE RECOMMENDED DEPLOYMENT
     reseal: it rewrites RSX_MODE (a no-op) and runs rsx:build --force. There
     is no separate "refresh" command - the build is the refresh.
 
-    FIRST INSTALL on an empty database is a build and a migrate. The first
-    build has no schema to compile against; the migrate that creates one
-    rebuilds and reseals when it finishes:
+    FIRST INSTALL on an empty database, on a box already in a production
+    mode, is a build and then a migrate - in that order, because migrate is
+    not one of the commands an unsealed production box will run:
 
         php artisan rsx:build --force
         php artisan migrate
 
-  WHY MIGRATE COMES BEFORE THE BUILD
-    The manifest bakes every model's column map in AT BUILD TIME. The
-    database moves AT MIGRATE TIME. Those are two steps and they can be run
-    in either order, so one of the two orderings is always wrong somewhere:
+  BUILD AND MIGRATE
+    A build holds CODE FACTS ONLY - which models exist and which table each
+    declares. A table's columns, their types and their lengths are read from
+    the database at run time and cached. So:
 
-        migrate, then build   The build compiles against the schema the
-                              database now has. Correct at every instant the
-                              site is serving. THIS IS THE RECOMMENDED ORDER.
-        build, then migrate   Between the two steps the served code believes
-                              in columns the tables do not have yet. The
-                              window is the length of the migration, and a
-                              migration that itself writes through a model
-                              fails inside it.
+        rsx:build             reads no database. It produces the same build
+                              whatever the schema is, and runs where no
+                              database is reachable at all.
+        migrate               writes nothing under build/, system/ or rsx/
+                              in a production mode, rebuilds nothing, and
+                              leaves the seal exactly as it was:
+                              rsx:prod:verify passes before and after.
 
-    MIGRATE REPAIRS THE WRONG ORDER ITSELF. A build records the applied
-    migrations it was made against, and a migrate that changed the schema
-    under a build that no longer matches runs rsx:build --force when it
-    finishes, saying why:
+    A sealed production box therefore migrates in place, with the build
+    tree read-only:
 
-        Rebuilding: the schema changed, and the build describes the database
-        as it was before this run.
-           The sealed build is replaced. Requests are refused as unsealed
-           until it completes.
+        php artisan migrate --dump-rollback
 
-    So an operator who only ever types `php artisan migrate` ends with a
-    build that matches the database. It never rebuilds when nothing was
-    migrated, and --no-rebuild turns it off - which the recipe above uses,
-    and which any box whose build must not be regenerated in place needs.
-    If the rebuild fails the migration stays applied: migrate says so, names
-    the command and exits non-zero. Full rules: rsx:man migrations, THE BUILD
-    FOLLOWS THE SCHEMA.
+    and every process answers from the new schema as soon as the migration is
+    recorded. Nothing is restarted and nothing is refused meanwhile, apart
+    from whatever maintenance window the run itself raises.
 
-    After a migrate in a prod mode, rsx:migrate:check_consistency runs
-    automatically and MIGRATE PROPAGATES ITS EXIT CODE. It compares the
-    sealed manifest against the live schema, which matters after
-    --no-rebuild and after a run that migrated nothing:
+    TWO KEYS make that work, and they are worth telling apart:
 
-        [ERROR] N column(s) the manifest declares are missing from the
-        database.
+        the CODE key     php artisan rsx:manifest:get_build_key - the content
+                         of the build. It is the build/build_key file, what
+                         the seal pins, what rsx:prod:verify compares and the
+                         full page cache's namespace. A migration does not
+                         move it.
+        the STATE key    php artisan rsx:manifest:get_state_key - the code
+                         key combined with the names of the applied
+                         migrations. Everything cached whose content depends
+                         on the schema is filed under it: the column map,
+                         the build-scoped RsxCache, the field-length script a
+                         page loads, and window.rsxapp.build_key. A migration
+                         moves it, and so does a new build.
 
-          This build was compiled against a DIFFERENT schema than the one
-          this database has. The manifest bakes every model's columns in at
-          build time; the database moves at migrate time. Code that is being
-          served right now believes those columns exist.
+    So after a migration, pages that were open reload on their next
+    navigation and each browser reads its cached data afresh once - the same
+    thing a deployment of new code does. migrate also clears the full page
+    cache, whose key did not move. Full rules: rsx:man migrations, A
+    MIGRATION NEVER REBUILDS.
 
-          Repair it by rebuilding against the schema you now have:
-
-              php artisan rsx:build --force
-
-          Avoid it next time by migrating BEFORE the build - that is the
-          recommended deployment order - or by leaving off --no-rebuild:
-
-              php artisan migrate
-              php artisan rsx:mode:set prod
-
-          See rsx:man prod.
-
-    A column the DATABASE has and the manifest does not is a [WARNING] and
-    exits 0: the database is merely ahead of the build and nothing served
-    reads that column.
+    CODE AND SCHEMA STILL HAVE TO AGREE. Nothing compares them for you at
+    deploy time: code that reads a column the database does not have yet
+    fails on the request that reads it, exactly as on any platform. Migrate
+    before the new code serves, hold the maintenance window around the pair,
+    and read the "Schema Contract" rows of rsx:health, which check the
+    columns the framework itself needs against the live database in every
+    mode.
 
   DOCUMENTS FROM OUTSIDE THE ORGANISATION
     A site that accepts uploads from people outside the organisation hands
@@ -390,12 +384,11 @@ BUILD ELSEWHERE
     produced, and rsx:prod:verify on the host proves it.
 
   A CI ARTIFACT
-    The build needs a database to compile the manifest against, because the
-    manifest holds every model's column map. A THROWAWAY database is enough -
-    nothing in the build reads a row.
+    The build needs NO DATABASE. Nothing in it reads a schema or a row, and
+    rsx:build runs to completion with no database host reachable, so a CI
+    job needs the code, PHP, node and nothing else:
 
-        # in the CI job, with .env pointing at a scratch MySQL
-        php artisan migrate
+        # in the CI job - no database service
         php artisan rsx:build --force
         tar -czf release.tgz \
             --exclude=./storage --exclude=./tmp \
@@ -403,23 +396,17 @@ BUILD ELSEWHERE
             .
 
     Unpack it on the host, supply the host's own .env, create writable
-    storage/ and tmp/, and run rsx:prod:verify. The host still runs its own
-    migrate against its own database (with maintenance mode up), and
-    check_consistency is what confirms the shipped build matches the schema
-    that migrate left behind.
+    storage/ and tmp/, and run rsx:prod:verify. The host runs its own migrate
+    against its own database (with maintenance mode up). That migrate does
+    not touch the artifact: rsx:prod:verify answers the same before and
+    after it.
 
-    That migrate does NOT rebuild the artifact. A build records the applied
-    migrations it was made against by NAME, the scratch database had every
-    migration applied, and the host's database has the same set once its own
-    migrate finishes - so the two match and nothing is rebuilt (rsx:man
-    migrations, THE BUILD FOLLOWS THE SCHEMA). An artifact built against a
-    database that was NOT fully migrated would be rebuilt in place; pass
-    --no-rebuild to the host's migrate if that must never happen, and read
-    the "Build Schema" row of rsx:health.
+    (An application whose own `rsx.rebuilt` handler reads the database
+    brings that requirement with it; the framework's build has none.)
 
   A CONTAINER IMAGE
-    The same thing inside a build stage: migrate a scratch database, run
-    rsx:build --force, and COPY the code tree plus build/ into the runtime
+    The same thing inside a build stage: run rsx:build --force - no database
+    service in the stage - and COPY the code tree plus build/ into the runtime
     image. storage/ and tmp/ are volumes, not image layers - they are the
     only two trees the runtime user writes.
 
@@ -555,7 +542,8 @@ ADMINISTRATION
         With --url it clears one page. rsx:clean empties the whole FPC
         database (every build's entries) as part of discarding build state,
         and cache:clear delegates to rsx:clean, so both do it too. A new build
-        orphans the previous build's entries by rotating the key.
+        orphans the previous build's entries by rotating the key, and migrate
+        clears the current build's entries itself (its key does not move).
         rsx:man fpc.
 
     rsx:maintenance:enable --reason / rsx:maintenance:disable
@@ -583,9 +571,9 @@ ADMINISTRATION
         is recreated. rsx:health FAILs its Task System row for as long as the
         switch is off. rsx:man tasks, TURNING THE TASK SYSTEM OFF AND ON.
 
-    migrate + rsx:migrate:check_consistency
-        See WHY MIGRATE COMES BEFORE THE BUILD above and rsx:man migrations.
-        check_consistency runs in a prod mode only and refuses elsewhere.
+    migrate
+        Runs in place on a sealed box and rebuilds nothing. See BUILD AND
+        MIGRATE above and rsx:man migrations.
 
     OPcache
         RSpade does not check, require or configure OPcache: whether a host
@@ -596,8 +584,8 @@ ADMINISTRATION
         warning to the Laravel log naming opcache.enable=1 - and, on a sealed
         build, opcache.validate_timestamps=0, because the build is immutable
         and validating timestamps is a stat() per included file per request
-        buying nothing. That line is throttled through the build-key-scoped
-        Redis cache to at most once every six hours per build, best effort: a
+        buying nothing. That line is throttled through the Redis cache, keyed
+        on the code key, to at most once every six hours per build, best effort: a
         Redis outage never blocks the request and never doubles the line, it
         only means the reminder may come round sooner. The CLI never receives
         it - OPcache is correctly off for the CLI SAPI. Reload php-fpm after
@@ -663,19 +651,6 @@ ERRORS
         user, or the read-only posture has been applied to a tree the build
         needs to write.
 
-    "[ERROR] N column(s) the manifest declares are missing from the
-     database."
-        The build and the schema disagree. Rebuild with rsx:build --force,
-        and migrate before the build next time.
-
-    "[ERROR] There is no manifest to check."
-        rsx:migrate:check_consistency on a box with no build. The box cannot
-        serve a request either: rsx:build --force.
-
-    "[ERROR] rsx:migrate:check_consistency runs in a production mode only."
-        A development box rebuilds its manifest from the live schema on the
-        next request, so the comparison is "consistent" by construction.
-
     "Bundle 'X' not compiled for production mode"
         A bundle the manifest knows about has no compiled output. The build
         did not complete, or the tree was modified after it. rsx:build
@@ -688,7 +663,8 @@ SEE ALSO
     rsx:man storage_directories - the three trees, entry by entry
     rsx:man event_hooks - rsx.rebuilt, and writing an application artifact
                        into build/
-    rsx:man migrations - the whitelist, the consistency check, the ordering
+    rsx:man migrations - the whitelist, the state key, what a production-mode
+                       migrate does and never writes
     rsx:man maintenance_mode - the window to hold around a deployment
     rsx:man health - the check inventory and what each row means
     rsx:man prelaunch_checklist - the launch-gating audits, including the

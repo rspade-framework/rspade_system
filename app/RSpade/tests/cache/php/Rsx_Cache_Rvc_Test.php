@@ -154,9 +154,10 @@ class Rsx_Cache_Rvc_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * An _RVC_ key is still BUILD-SCOPED: a code update misses it cleanly rather than serving
-     * a value computed by code that no longer exists. The stored key literally contains the
-     * current build key, so a different build key derives a different - absent - key.
+     * An _RVC_ key is still BUILD-SCOPED: a code update or a migration misses it cleanly
+     * rather than serving a value computed by code, or against a schema, that no longer
+     * exists. The stored key literally contains the current STATE key
+     * (Manifest::get_state_key()), so a different one derives a different - absent - key.
      */
     public static function test_an_rvc_key_is_build_scoped()
     {
@@ -168,16 +169,16 @@ class Rsx_Cache_Rvc_Test extends Rsx_Test_Abstract
         $namespaced = $transform_build->invoke(null, $rvc_key);
 
         static::__assert_contains(
-            Manifest::get_build_key(),
+            Manifest::get_state_key(),
             $namespaced,
-            'an _RVC_ key carries the build key like every other cache key'
+            'an _RVC_ key carries the state key like every other cache key'
         );
 
         // What the NEXT build would look for: the same user key under a different build key.
         $make_persistent = new \ReflectionMethod(RsxCache::class, '_make_key_persistent');
         $next_build_key = $make_persistent->invoke(
             null,
-            str_replace(Manifest::get_build_key(), 'rsxtest_next_build_key', $namespaced)
+            str_replace(Manifest::get_state_key(), 'rsxtest_next_build_key', $namespaced)
         );
 
         $reduced = static::_redis(static::_rvc_db());

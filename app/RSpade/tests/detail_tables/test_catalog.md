@@ -23,8 +23,8 @@ manifest-build time): app suite `Party_Test`, plus `rsx:debug` eval / stub inspe
 | DT-32 | Discriminator immutable; delete base cascades detail | php | implemented | Detail_Write_Test |
 | DT-40 | JS stub has embedded-resolving accessor + map; resolves from the embed | playwright | implemented | rsx:debug eval (Party) |
 | DT-41 | JS wrong-type accessor throws locally | playwright | implemented | rsx:debug eval (Party) |
-| DT-50 | field_length() spans detail columns | cli | implemented | Party stub (base-party-model.js) |
-| DT-51 | Manifest base columns merged with detail (source_table tagged) | php | implemented | Party stub field_length / docblock |
+| DT-50 | field_length() spans detail columns | php | implemented | Field_Length_Test / Field_Length_Script_Test (a CTI base's entry carries its detail columns) |
+| DT-51 | A base model's columns merged with its detail tables' (source_table tagged) | php | implemented | Rsx_Schema::model_columns() / docblock |
 | DT-52 | rsx:constants:regenerate docblock spans both tables with (detail: <table>) | cli | implemented | party_model.php docblock |
-| DT-53 | Same-name base/detail column emits a build warning | cli | planned | code in Model_ManifestSupport; no negative fixture yet |
+| DT-53 | Same-name base/detail column is reported and the base column wins | cli | planned | the collision is named on the SCHEMA console_debug channel by Rsx_Schema; no negative fixture yet |
 | DT-60 | End-to-end: controller writes base+detail atomically; name composed; edit-in-place | php | implemented | Party_Test (app) |

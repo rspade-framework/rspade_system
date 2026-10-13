@@ -138,22 +138,41 @@ terminates at the first ancestor with no manifest entry.
 | db-rel-07 | the walk terminates outside the manifest | climb File_Attachment_Model's extends_fqcn | at least 2 visible ancestors; the last one's parent is Eloquent's Model | implemented |
 
 
+## Rsx_Schema_Test (php, commits DDL and undoes it) - the one reader of live column data
+
+`Rsx_Schema` answers every column question from ONE `information_schema` query, cached under
+the state key. The shape is compared against `SHOW COLUMNS`, the query count is the
+measurement for the lookup order, and the last row performs a real `ALTER TABLE` plus a
+migrations row on the test database.
+
+| ID | Purpose | Input | Expected | Status | Last updated |
+|----|---------|-------|----------|--------|--------------|
+| db-sc-01 | the type simplification, as literals | `tinyint(1)`, `varchar(255)`, `timestamp(3)`, ... | boolean / string / datetime / ...; lengths for varchar and char only | implemented | 2026-10-12 |
+| db-sc-02 | a table is described exactly as `SHOW COLUMNS` describes it | `login_users` | equal maps, in column order; boolean, datetime and string columns present; `field_length()` reads the same map | implemented | 2026-10-12 |
+| db-sc-03 | the accessors agree with each other | `has_table`, `table_columns`, `Manifest::db_get_*` | one map, flattened or filtered | implemented | 2026-10-12 |
+| db-sc-04 | a model whose table does not exist has no columns, and `field_length()` says why | a fixture model nothing creates a table for | null maps; the throw names the table and `php artisan migrate` | implemented | 2026-10-12 |
+| db-sc-05 | a cache hit reads nothing from the schema | forget, read, reset, read | one query on the miss; none from this process's copy; none on the hit | implemented | 2026-10-12 |
+| db-sc-06 | `reset()` drops everything this process derived | a derived memo and the state key memo | both gone | implemented | 2026-10-12 |
+| db-sc-07 | a schema change is seen once the state key moves, and not before | `ALTER TABLE` on a framework table, then a migrations row | invisible after the DDL alone; visible, with its length, after the row | implemented | 2026-10-12 |
+
 ## Field_Length_Test (php, no DB writes) - the ONE column-length definition
 
 `Rsx_Model_Abstract::field_length()` is what both sides read: the server calls it directly,
-and the JS model stub generator bakes its own `field_length()` table from it. The last three
-rows are the round trip - the stub, as an artifact on disk, cannot disagree with the model.
+and the lengths a page's JavaScript reads (`Field_Length_Script`) are its answers. Rows 06-08
+are the round trip - what would be served for every model with a stub cannot disagree with the
+model - and 09 pins that no stub carries a length table of its own.
 
 | ID | Purpose | Input | Expected | Status | Last updated |
 |----|---------|-------|----------|--------|--------------|
 | db-fl-01 | a varchar/char column answers its length | `Login_User_Model::field_length('email')` / `User_Model::field_length('first_name')` | 255 / 100 | implemented | 2026-09-08 |
 | db-fl-02 | every other type answers null - a real answer, not a failure | bigint, datetime, text | null for each | implemented | 2026-09-07 |
 | db-fl-03 | an unknown column throws, naming the model and the column | `'nope_not_a_column'` | RuntimeException containing both | implemented | 2026-09-07 |
-| db-fl-04 | a CTI base model answers for a DETAIL column it does not physically have | the first merged detail column the manifest reports for any model (`source_table` != base table) | the manifest's length, and the column is not in `getColumns()` | implemented (skips where the application declares no CTI model) | 2026-09-08 |
+| db-fl-04 | a CTI base model answers for a DETAIL column it does not physically have | the first merged detail column `Rsx_Schema` reports for any model (`source_table` != base table) | the schema's length, and the column is not in `getColumns()` | implemented (skips where the application declares no CTI model) | 2026-09-08 |
 | db-fl-05 | `Manifest::php_model_columns()` declines a non-model class rather than inventing a map | `'Rsx_Test_Abstract'` | null | implemented | 2026-09-07 |
-| db-fl-06 | every length baked into every generated stub equals the model's answer | all stubs in `tmp/js-model-stubs/` | equal for every column | implemented | 2026-09-07 |
-| db-fl-07 | no publishable column with a length is missing from its stub | same | present in the stub's table | implemented | 2026-09-07 |
-| db-fl-08 | the system-column filter is the ONE deliberate divergence: PHP answers, the stub omits | `_`-prefixed (never `__`) columns | absent from every stub, no throw from PHP | implemented | 2026-09-07 |
+| db-fl-06 | every published length equals the model's answer | `Field_Length_Script::lengths_for_models()` over every model with a stub in `tmp/js-model-stubs/` | equal for every column | implemented | 2026-10-12 |
+| db-fl-07 | no publishable column with a length is missing from what is published | same | present in the model's entry | implemented | 2026-10-12 |
+| db-fl-08 | the system-column filter is the ONE deliberate divergence: PHP answers, the script omits | `_`-prefixed (never `__`) columns | absent from every entry, no throw from PHP | implemented | 2026-10-12 |
+| db-fl-09 | no generated stub declares `field_length` or carries a length table | all stubs in `tmp/js-model-stubs/` | the string is in none of them | implemented | 2026-10-12 |
 
 Note for future authors: db-fl-08 is a latch. No model in this tree declares a `_`-prefixed
 column today, so its second loop currently examines none; it starts proving something the
@@ -170,7 +189,7 @@ answers are.
 | ID | Purpose | Input | Expected | Status | Last updated |
 |----|---------|-------|----------|--------|--------------|
 | db-ar-01 | a datetime attribute is an ISO-8601 UTC string, never a Carbon | `User_Model::find(1)->created_at` | matches `YYYY-MM-DDTHH:MM:SS.sssZ`, not a Carbon | implemented | 2026-09-08 |
-| db-ar-02 | a DATE column keeps its calendar spelling | the first DATE column the manifest reports for any model, set on a bare instance | `'2026-01-15'` as a string | implemented (skips where the application declares no DATE column) | 2026-09-08 |
+| db-ar-02 | a DATE column keeps its calendar spelling | the first DATE column `Rsx_Schema` reports for any model, set on a bare instance | `'2026-01-15'` as a string | implemented (skips where the application declares no DATE column) | 2026-09-08 |
 | db-ar-03 | a TINYINT(1) column is a real bool, not 1/0 | `users.is_enabled` / `is_api_access_enabled`, written and refetched | `=== true` / `=== false` | implemented | 2026-09-08 |
 | db-ar-04 | a type-ref column exposes the simple class name while storing the integer | `created_by_type` | `'User_Model'`, raw value numeric | implemented | 2026-09-07 |
 | db-ar-05 | two model classes on different tables never share a cast map (the memo is keyed per class+table) | `User_Model` vs `Login_User_Model` casts | each table's own columns only; shared column types agree | implemented | 2026-09-08 |
@@ -189,10 +208,11 @@ framework feature ever adds a system column to a real table, this row can move o
 fixture can go.
 
 Note on SUBJECTS (portability): a SCHEMA-DERIVED answer - a cast, a column length - is read out
-of the manifest's column map, which is built from the live schema at MANIFEST-BUILD time. A
-fixture table this concern creates at TEST time can therefore never carry one, so every
+of `Rsx_Schema`'s column map, which is read from the migrated baseline and cached under the
+state key. A fixture table this concern creates at TEST time with plain DDL moves no key and
+is not in it, so every
 schema-derived row above is driven against a framework model on a framework table (`users`,
-`login_users`, `_file_attachments`) or against a subject DERIVED from the manifest and skipped
+`login_users`, `_file_attachments`) or against a subject DERIVED from the model registry and skipped
 when the application has none. ENUM resolution is declared in PHP and needs no schema at all,
 so the enum rows are driven against the two fixture models - which is also the only way to
 prove the per-class memos are not shared.
@@ -204,3 +224,30 @@ prove the per-class memos are not shared.
 | db-ci-01 | a requirement leading with the primary key needs no index | `(id, site_id)`, `(id)` | null | implemented | 2026-09-25 |
 | db-ci-02 | a trailing primary key is dropped from the requirement | `(site_id, id)`; `(user_id, site_id)` | `(site_id)`; untouched | implemented | 2026-09-25 |
 | db-ci-03 | an existing index serves a requirement by its leading columns | `(thread_id)` vs `(thread_id, created_at)`; `(status_id)` vs `(site_id, status_id)` | served; not served | implemented | 2026-09-25 |
+
+## Field_Length_Script_Test (php) - a bundle's field-length script
+
+`Field_Length_Script`, `Field_Length_Controller` and the tag `Rsx_Bundle_Abstract` emits. A
+compiled bundle is staged in a scratch build root (one app script and its model list).
+
+| ID | Purpose | Input | Expected | Status | Last updated |
+|----|---------|-------|----------|--------|--------------|
+| db-fs-01 | every length is the model's own answer, and exactly the publishable varchar columns are present | `Login_User_Model`, `User_Model` | equal to `field_length()`; no bigint/datetime entry | implemented | 2026-10-12 |
+| db-fs-02 | a system column is never published | a fixture table with `name VARCHAR(40)`, `_flag VARCHAR(20)`, `body TEXT` | `{name: 40}` only | implemented | 2026-10-12 |
+| db-fs-03 | a model with no table gets an empty entry | a fixture model nothing creates a table for | `[]`; the body carries `{}` for it | implemented | 2026-10-12 |
+| db-fs-04 | a CTI base model publishes its detail columns | the first merged varchar detail column in the registry | present with its length | implemented (skips where the application declares no CTI model) | 2026-10-12 |
+| db-fs-05 | a name that is not a model fails loud | `Rsx_Test_Abstract` | throws | implemented | 2026-10-12 |
+| db-fs-06 | only the bundle's own app-script name resolves | the staged name; another hash; an unknown bundle; malformed names; the app script deleted | the bundle; null for every other | implemented | 2026-10-12 |
+| db-fs-07 | the script is served with the bundle's models | the staged bundle, `?v=` the state key | 200, `text/javascript`, the assignment of exactly those models' lengths; the cached read is the same bytes | implemented | 2026-10-12 |
+| db-fs-08 | immutable for the current state key only | `?v=` current; another; none | `public, max-age=31536000, immutable`; `no-store`; `no-store` | implemented | 2026-10-12 |
+| db-fs-09 | any other name is a 404 carrying no data | wrong hash, unknown bundle, `x.js`, empty | 404 | implemented | 2026-10-12 |
+| db-fs-10 | the compiler names a script only for a bundle with models | a list with one model; an empty list; no app script | the name; null; null | implemented | 2026-10-12 |
+| db-fs-11 | the tag follows the app script, and a model-less bundle emits none | `__generate_html()` with and without `field_length_script` | one deferred tag after the app script carrying the state key; no tag | implemented | 2026-10-12 |
+
+## Rsx_Schema_Test - the purge (php)
+
+| ID | Purpose | Input | Expected | Status | Last updated |
+|----|---------|-------|----------|--------|--------------|
+| db-sc-08 | the purge discards an entry the key alone would keep | `ALTER TABLE` with the applied migrations unchanged, then `purge_schema_state()` | the column is seen; the state key did not move | implemented | 2026-10-12 |
+| db-sc-09 | the purge clears the build-scoped cache and the page cache | a build-scoped key and a full-page-cache key under the code key | both gone; the process copy dropped | implemented | 2026-10-12 |
+| db-sc-10 | under maintenance the purge drops this process's copy only | maintenance forced | derived values dropped; both cache keys untouched | implemented | 2026-10-12 |

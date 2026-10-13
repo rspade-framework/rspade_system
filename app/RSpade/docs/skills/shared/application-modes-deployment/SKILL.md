@@ -66,12 +66,12 @@ Entry-by-entry: `rsx:man storage_directories`.
 
 ---
 
-## Deploying: the order that matters
+## Deploying
 
 ```bash
 php artisan rsx:maintenance:enable --reason="deploying <version>"
 git pull
-php artisan migrate --dump-rollback --no-rebuild   # dumped first, restored on failure; the next line builds
+php artisan migrate --dump-rollback    # dumped first, restored on failure
 php artisan rsx:mode:set prod          # = a reseal on an already-sealed box
 php artisan rsx:prod:verify
 php artisan rsx:maintenance:disable
@@ -79,9 +79,9 @@ php artisan rsx:maintenance:disable
 
 `--dump-rollback` is what makes an unattended pipeline recoverable: a failed migration is restored from its dump, and the next deploy's migrate recovers anything an interrupted one left before applying the fixed migrations. It needs `storage/` to persist between deploys and nothing else writing to the database during the run (skill `rspade:migrations`; `rsx:man migrations`, DUMP ROLLBACK).
 
-**Migrate BEFORE the build.** The manifest bakes every model's column map in at BUILD time; the database moves at MIGRATE time. Build-then-migrate leaves the served code believing in columns the tables do not have yet, for the length of the migration. **A migrate run in the wrong order repairs itself**: the build records the applied migrations it was made against, and a migrate that changed the schema under it runs `rsx:build --force` when it finishes, saying why (never when nothing was migrated; `--no-rebuild` turns it off, which the recipe above uses because its next line builds). After a prod-mode migrate, `rsx:migrate:check_consistency` runs automatically and **migrate propagates its exit code**, so a mismatch that survives is a failed migrate rather than a footnote.
+**The build and the migration are independent.** A build holds code facts only and reads NO database (it runs in a CI job or an image stage with no database service); a table's columns are read at run time. So `migrate` rebuilds nothing in any mode - on a sealed box no file under `build/` changes and `rsx:prod:verify` passes before and after - and the two lines above run in either order. Migrating first just means the new code never serves against the old schema. **Two keys**: the CODE key (`rsx:manifest:get_build_key`, `build/build_key`, the seal, the FPC namespace) identifies the build and a migration never moves it; the STATE key (`rsx:manifest:get_state_key` = code key + applied migrations) is what every schema-dependent cache and `window.rsxapp.build_key` are keyed on, and a migration moves it - so open pages reload and browser caches refill once, exactly as after a code deploy.
 
-**First install is a build and a migrate** - the first build has no schema to compile against, and the migrate that creates one rebuilds and reseals when it finishes:
+**First install on a box already in a prod mode is a build, then a migrate** - in that order only because `migrate` is not a command an unsealed production box runs:
 
 ```bash
 php artisan rsx:build --force && php artisan migrate
@@ -114,7 +114,7 @@ Building elsewhere (a CI artifact, a container image) works because of determini
 
 ## The seal
 
-`build/prod_seal.json` pins: **build_key, mode, git commit, and a per-asset sha256**. It is written LAST and only on success, so it means "a build completed here". `is_sealed()` is true only when a seal exists AND the current `RSX_MODE` is a prod mode - which is what makes a hand-edited `.env` unable to half-seal a box.
+`build/prod_seal.json` pins: **build_key, mode, git commit, and a per-asset sha256** (the manifest index, `build_key`, every file under `bundles/` and `bundle_models/`). A migration changes none of them. It is written LAST and only on success, so it means "a build completed here". `is_sealed()` is true only when a seal exists AND the current `RSX_MODE` is a prod mode - which is what makes a hand-edited `.env` unable to half-seal a box.
 
 `rsx:prod:verify` is the cluster/CI tool: it recomputes the sha256 of every sealed asset and checks the on-disk build_key against the seal, and reports OPcache posture (advisory). Table out, **exit 0 when the build matches, 1 otherwise** - put it in the deploy health check next to `rsx:health`.
 
@@ -129,8 +129,6 @@ Building elsewhere (a CI artifact, a container image) works because of determini
 | `Refusing to clean a production build tree without --force.` | `rsx:clean` on a sealed box | Almost always you wanted `rsx:build --force`, which cleans as its first step |
 | `... is a build artifact, and only a build may write it.` | Something outside a build context tried to write under `build/` in a prod mode | The guard doing its job. Run the operation through `rsx:build` |
 | `Cannot build - these directories are not writable by this user:` | Preflight, nothing changed | Run the build as the deploy user, or fix the tree's ownership |
-| `[ERROR] N column(s) the manifest declares are missing from the database.` | The build and the schema disagree | `rsx:build --force`; it survives only after `--no-rebuild` or a run that migrated nothing |
-| `[ERROR] rsx:migrate:check_consistency runs in a production mode only.` | Ran in development, where `migrate` rebuilds the manifest itself | Nothing to fix - `rsx:health` "Build Schema" is the check there |
 | verify: asset hash mismatch | Something wrote under `build/` outside the framework (raw `rm`, `cp`, a hand-edited bundle) | `rsx:build --force` |
 | verify: build_key mismatch | The code on disk is not the code that was sealed (a pull without a rebuild) | `rsx:build --force` |
 | `Bundle 'X' not compiled for production mode` | A bundle is missing while sealed | `rsx:build --force` |
@@ -166,7 +164,7 @@ They stop the framework's OWN write paths, and they do not (and cannot) stop som
 
 1. **File hashing branches on `RSX_MODE`**, the single mode switch. In a prod mode the hash covers the file's PROJECT-RELATIVE path plus its CONTENT (sha512) - never the absolute path, never disk timestamps. (Development still uses a fast relative-path + size + mtime hash; it only needs to notice local edits and is deliberately not portable. That hash never reaches build_key, so touching a file never moves the key.)
 2. **The manifest hash excludes per-file mtime/size.** A file contributes its path and its sha1 to the key and nothing else; mtime and size stay in the index's `file_index` for dev change-detection. The prod index carries no `generated` timestamp, so it is byte-stable and build_key is content-derived.
-3. **The MODE is part of build_key.** One tree builds three different artifacts, and the key is what identifies the build to the FPC namespace, the build-scoped `RsxCache` prefix, `window.rsxapp.build_key` and the dev `?v=` cache-buster - so a development build after `rsx:prod:disable` never answers with the sealed build's key. The index records its mode; a development boot that loads an index recorded under another mode discards it and rebuilds in full.
+3. **The MODE is part of build_key.** One tree builds three different artifacts, and the key is what identifies the build to the FPC namespace and - combined with the applied migrations into the state key - to the build-scoped `RsxCache` prefix, `window.rsxapp.build_key` and the dev `?v=` cache-buster - so a development build after `rsx:prod:disable` never answers with the sealed build's key. The index records its mode; a development boot that loads an index recorded under another mode discards it and rebuilds in full.
 4. **Generated-file keys are LOGICAL.** A generated stub is recorded as `tmp/js-stubs/<name>.js` whatever `RSX_TMP_PATH` resolves to, so two boxes with different overrides produce identical indexes and identical build keys.
 5. **Bundle filenames are `{Bundle}__{app|vendor}.{hash8}.{ext}`**, the hash8 deriving from the same relative-path + content inputs plus the committed lockfile hashes and npm declarations. Minified output is reproducible given the pinned, committed `node_modules`.
 

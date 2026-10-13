@@ -38,6 +38,21 @@
 - If Asset Bundle needs directory scanning, include it explicitly by class name
 - Discovery uses `Manifest::php_is_subclass_of()` (NOT filename patterns)
 
+**Model List And Field-Length Script** (`BundleCompiler::read_model_list`, `Core/Database/Field_Length_Script`)
+- The app compile writes `build/bundle_models/<Bundle>.json` beside the app script, in every
+  mode: `{bundle, app_hash, models}` - the PHP model names whose generated JS stubs are in
+  the compiled app script (post-shake), `app_hash` being the hash in `<Bundle>__app.<hash>.js`
+- Same staleness gate as the compiled files: a list that is missing or names another app
+  script makes the app type stale (`_check_bundle_caches`); a sealed build with no list is
+  "not compiled" (`_check_production_cache`); the lists are sealed assets (`Rsx_Prod_Seal`)
+- A stub carries NO column lengths. `compile()` answers `field_length_script`
+  (`<Bundle>__<app hash>.js`, null when the list is empty) and `__generate_html()` emits
+  `<script src="/_field_lengths/<that>?v=<state key>" defer>` AFTER the app script; the route
+  (`Field_Length_Controller`, both realms, public) answers only that exact name, with
+  `Rsx.__field_length_data = {Model: {column: length}}` built from the list and the live
+  schema, cached under the state key
+- So a compiled bundle is a function of code alone: a migration changes no bundle
+
 # Bundle Processor System
 
 ## Architecture

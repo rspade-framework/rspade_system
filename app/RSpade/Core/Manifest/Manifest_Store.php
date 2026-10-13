@@ -967,8 +967,8 @@ class Manifest_Store
      * This is much faster than rsx:clean which wipes all caches including parsed
      * AST data, forcing expensive re-parsing of all PHP/JS files.
      *
-     * Use this after database migrations or schema changes that affect model
-     * metadata without changing the actual source code.
+     * Use this to force a re-index without discarding the parse caches. A migration
+     * needs none: the manifest holds no schema.
      */
     public static function _unlink_cache(): void
     {
@@ -993,11 +993,17 @@ class Manifest_Store
      *     hash the same sections in the same order. Within a section the producers make the
      *     order deterministic (the class maps and the autoloader map are ksorted at build).
      *
+     * NOTHING FROM THE DATABASE ENTERS IT. This is the CODE key (Manifest::get_build_key()):
+     * the model registry holds declarations only, and a generated model stub is a function
+     * of the model's code. What the database holds is the other half of
+     * Manifest::get_state_key().
+     *
      * THE MODE IS PART OF THE KEY. One tree builds three different artifacts - development
      * (unminified, JIT), debug (sealed, unminified) and production (sealed, minified,
      * console_debug stripped) - and the key is what every consumer takes to IDENTIFY the build
-     * it is looking at: the full-page-cache namespace, the build-scoped RsxCache prefix, the
-     * browser storage scope (window.rsxapp.build_key) and the development asset cache-buster.
+     * it is looking at: the seal, the full-page-cache namespace and, through the state key
+     * derived from it, the build-scoped RsxCache prefix, the browser storage scope
+     * (window.rsxapp.build_key) and the development asset cache-buster.
      * Without the mode, a development rebuild after a production seal answered with the
      * seal's key, so two different builds shared every one of those namespaces. Two checkouts
      * built in the SAME mode still produce the same key, which is the cluster contract.

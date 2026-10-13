@@ -692,8 +692,8 @@ class MyNew_CodeQualityRule extends CodeQualityRule_Abstract
   per-file verdict goes in the `Validation_Ledger` (the driver writes it); a derived VALUE goes
   in `RsxCache::get_persistent()`/`set_persistent()` keyed on a content hash. The BUILD-SCOPED
   `RsxCache::get()`/`set()` is unusable at manifest time by construction - its key is prefixed
-  with `Manifest::get_build_key()`, which raises `shouldnt_happen()` before the manifest is
-  ready.
+  with `Manifest::get_state_key()`, which starts from `get_build_key()`, and that raises
+  `shouldnt_happen()` before the manifest is ready.
 
 ## Manifest-Time Checking
 

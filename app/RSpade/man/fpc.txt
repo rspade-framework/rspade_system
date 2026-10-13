@@ -129,7 +129,7 @@ PER-ROUTE TTL
     "immediately" to whoever meets it next, on the wire or in a log.)
 
 WHAT CLEARS AN ENTRY
-    Four things, and nothing else:
+    Five things, and nothing else:
 
     php artisan rsx:fpc:clear [--url=/path | --url=https://host/path]
         The operator lever. With no --url it clears THIS BUILD's entries
@@ -149,6 +149,15 @@ WHAT CLEARS AN ENTRY
         orphans all of them at once, so "clean" means they go now rather than
         whenever LRU gets round to them. `cache:clear` delegates to rsx:clean
         and therefore does the same.
+
+    A migration
+        `php artisan migrate` clears THIS BUILD's entries before it starts and
+        after it ends, and so do migrate:restore,
+        rsx:database_and_storage_reset and
+        rsx:db:rebuild_provision_cache_snapshot. A cached page was rendered
+        against the schema as it was, and the cache's key is the build's code
+        key, which a migration does not move - so nothing else would discard
+        it (rsx:man migrations, A MIGRATION NEVER REBUILDS).
 
     A build-key rotation
         Every new build computes new cache keys, so the old entries are simply

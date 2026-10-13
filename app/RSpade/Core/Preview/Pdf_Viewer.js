@@ -27,7 +27,7 @@ class Pdf_Viewer extends Component {
     /**
      * Lazy-load the pdf.js module from the framework streaming route
      * (File_Preview_Controller::pdfjs / ::pdf_worker), memoized class-wide. The client appends
-     * ?v=build_key so a new deployment busts the long-cache; GlobalWorkerOptions.workerSrc points
+     * ?v=code_key (the code key: a migration leaves it alone) so a new deployment busts the long-cache; GlobalWorkerOptions.workerSrc points
      * at the worker route (same versioned url).
      *
      * The bare `import(url)` is deliberate and it is load-bearing that it stays bare. It used to
@@ -45,7 +45,7 @@ class Pdf_Viewer extends Component {
             return Pdf_Viewer._pdfjs_promise;
         }
 
-        const version = (window.rsxapp && window.rsxapp.build_key) ? window.rsxapp.build_key : '';
+        const version = (window.rsxapp && window.rsxapp.code_key) ? window.rsxapp.code_key : '';
         // Both routes exist in both realms; a portal page asks its own (Rsx_Portal.internal_url).
         const module_url = Rsx_Portal.internal_url(Rsx.Route('File_Preview_Controller::pdfjs')) + '?v=' + urlencode(version);
         const worker_url = Rsx_Portal.internal_url(Rsx.Route('File_Preview_Controller::pdf_worker')) + '?v=' + urlencode(version);

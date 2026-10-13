@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Health;
 
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Cache\RsxCache;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -32,15 +33,19 @@ use App\RSpade\Core\Rsx;
  * or a refused write must never block the request or turn into a second log line, so a
  * failed write simply means the recommendation may be repeated sooner than six hours.
  *
- * THE THROTTLE IS SCOPED TO THE BUILD FOR FREE. RsxCache's build-scoped family folds
- * Manifest::get_build_key() into every key, so a rebuilt box says it once again - which is
- * the right moment to hear it, since a rebuild is when an operator is looking.
+ * THE THROTTLE IS SCOPED TO THE BUILD: the CODE key (Manifest::get_build_key()) is folded
+ * into the key, so a rebuilt box says it once again - which is the right moment to hear it,
+ * since a rebuild is when an operator is looking. It is held in RsxCache's persistent family
+ * with that key stated, not the build-scoped one: this runs at the end of every web boot,
+ * and the build-scoped family is keyed on the state key, whose first use costs a database
+ * query that a request serving a compiled asset must not pay - and a migration is no reason
+ * to repeat advice about OPcache.
  */
 class Opcache_Advisory
 {
     /**
-     * The throttle key. Build-scoped by RsxCache, so "once per six hours" is really
-     * "once per six hours per build key".
+     * The throttle key's fixed part. check() appends the code key, so "once per six hours"
+     * is really "once per six hours per build".
      */
     public const CACHE_KEY = 'opcache_advisory_logged';
 
@@ -65,7 +70,7 @@ class Opcache_Advisory
             return;
         }
 
-        static::_log_once(self::CACHE_KEY);
+        static::_log_once(self::CACHE_KEY . '_' . Manifest::get_build_key());
     }
 
     /**
@@ -115,13 +120,13 @@ class Opcache_Advisory
         // A cache failure is answered as "not stamped yet", which is the safe direction:
         // the worst case is the advice repeating, and the alternative - treating an
         // outage as "already said" - is advice that silently never arrives.
-        if (RsxCache::get($cache_key) !== null) {
+        if (RsxCache::get_persistent($cache_key) !== null) {
             return false;
         }
 
         Log::warning(static::message());
 
-        RsxCache::set($cache_key, time(), self::WINDOW_SECONDS);
+        RsxCache::set_persistent($cache_key, time(), self::WINDOW_SECONDS);
 
         return true;
     }

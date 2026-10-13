@@ -282,13 +282,10 @@ class Bundle_Show_Command extends Command
             }
             
             // Show configuration
-            if (!empty($definition['config']) && count($definition['config']) > 4) {
-                // Only show if there's more than base config (environment, debug, api_url, build_key)
+            if (!empty($definition['config'])) {
+                // Only show what the bundle adds to the base config (debug)
                 $custom_config = array_diff_key($definition['config'], [
-                    'environment' => true,
                     'debug' => true,
-                    'api_url' => true,
-                    'build_key' => true
                 ]);
                 
                 if (!empty($custom_config)) {

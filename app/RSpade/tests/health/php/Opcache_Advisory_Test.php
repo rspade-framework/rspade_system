@@ -10,6 +10,7 @@ namespace App\RSpade\Tests\Health\Php;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Health\Opcache_Advisory;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -20,11 +21,13 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * The window is driven by the stamp itself - never by waiting - because six hours is the
  * cadence of a recommendation and a test that slept for it would be a test nobody runs.
  *
- * THE BUILD-KEY DIMENSION is RsxCache's, not this class's: the build-scoped family folds
- * Manifest::get_build_key() into every key, so a rebuilt box is a different redis key by
- * construction. A distinct key suffix is that same mechanism one level up, which is what
- * the third test drives - a test cannot mint a second build key without rebuilding the
- * manifest under itself.
+ * THE BUILD-KEY DIMENSION is a suffix: check() appends the CODE key
+ * (Manifest::get_build_key()) to the throttle key it hands _log_once(), so a rebuilt box is
+ * a different redis key and a migration is not. The stamp lives in RsxCache's persistent
+ * family for that reason - the build-scoped family is keyed on the state key, which a
+ * migration moves and whose first use costs a query a booting web process must not pay.
+ * The third test drives the suffix directly - a test cannot mint a second build key without
+ * rebuilding the manifest under itself.
  *
  * Runs under the CLI SAPI, so check() is also the CLI assertion: it must write nothing
  * here however this box's OPcache is configured.
@@ -52,7 +55,7 @@ class Opcache_Advisory_Test extends Rsx_Test_Abstract
     private static function __cleanup(): void
     {
         foreach (self::$keys as $key) {
-            RsxCache::delete($key);
+            RsxCache::delete_persistent($key);
         }
 
         self::$keys = [];
@@ -118,7 +121,7 @@ class Opcache_Advisory_Test extends Rsx_Test_Abstract
             );
 
             static::__assert_null(
-                RsxCache::get(self::__key()),
+                RsxCache::get_persistent(self::__key()),
                 'a scope nothing has stamped reads as unstamped'
             );
         } finally {
@@ -132,7 +135,7 @@ class Opcache_Advisory_Test extends Rsx_Test_Abstract
             $key = self::__key();
             Opcache_Advisory::_log_once($key);
 
-            static::__assert_not_null(RsxCache::get($key), 'the stamp is what closes the window');
+            static::__assert_not_null(RsxCache::get_persistent($key), 'the stamp is what closes the window');
             static::__assert_equals(21600, Opcache_Advisory::WINDOW_SECONDS, 'six hours');
         } finally {
             self::__cleanup();
@@ -153,7 +156,7 @@ class Opcache_Advisory_Test extends Rsx_Test_Abstract
 
             static::__assert_count(0, $lines, 'a command never receives the recommendation');
             static::__assert_null(
-                RsxCache::get(Opcache_Advisory::CACHE_KEY),
+                RsxCache::get_persistent(Opcache_Advisory::CACHE_KEY . '_' . Manifest::get_build_key()),
                 'and it does not consume the live window either'
             );
         } finally {

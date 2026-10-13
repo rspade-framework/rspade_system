@@ -1490,10 +1490,9 @@ ENTRY 14: THE SCHEMA CONTRACT, THE HOSTNAME AND THE DOCUMENT SANDBOX (rsx:health
         build it. See rsx:man libreoffice, THE DOCUMENT SANDBOX.
 
     Why it matters
-        Every other schema check compares the software against itself.
-        `rsx:migrate:check_consistency` asks whether the sealed manifest
-        describes the schema this database has - both sides are things the build
-        produced. The Schema Contract row is the only check that reads the
+        Nothing else compares the code with the database before a request does:
+        a build holds no schema, and models read their columns from whatever
+        database they are connected to. The Schema Contract row is the check that reads the
         framework's own assumptions against A DATABASE IT DID NOT BUILD: one
         restored from a backup, migrated through a fork's own migration history,
         edited by hand during an incident, or carried across from a system this

@@ -272,7 +272,16 @@ class Rsx_Framework_Provider extends ServiceProvider
         // simple class name and the type-ref integer id. The integer alias is what lets
         // stock Eloquent morph relations resolve the raw BIGINT discriminator they read;
         // alias order is load-bearing (see Type_Ref_Registry::register_morph_map).
-        \App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry::register_morph_map();
+        //
+        // A process that PRODUCES THE BUILD - rsx:build, every child it spawns, and
+        // rsx:manifest:build - registers on its first database statement instead: a build
+        // reads no database, and registering here would be the one query that stops it
+        // from running where none is reachable.
+        if (\App\RSpade\Core\Prod\Rsx_Build_Context::is_active() || $command === 'rsx:manifest:build') {
+            \App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry::register_morph_map_on_first_query();
+        } else {
+            \App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry::register_morph_map();
+        }
 
         // Flush the volatile cache on EVERY database transaction rollback. A rollback can
         // undo a write the cache already memoized, and a stale memo hands application code
@@ -343,8 +352,8 @@ class Rsx_Framework_Provider extends ServiceProvider
 
         // Recommend OPcache to a web process that has none. LAST in boot(), which is the
         // point where the framework's own system checks belong: the manifest is loaded
-        // (so RsxCache's build-scoped throttle has a build key to fold in and Redis is
-        // reachable), nothing has dispatched yet, and a check that lands here cannot
+        // (so the throttle has the code key to fold into its persistent cache key and
+        // Redis is reachable), nothing has dispatched yet, and a check that lands here cannot
         // change what the request does. Web SAPI only, every mode, silent when OPcache
         // is on. See Opcache_Advisory.
         \App\RSpade\Core\Health\Opcache_Advisory::check();

@@ -6,9 +6,15 @@
 # permission for the user the application runs as. That is only a recommendation worth
 # making if the application actually runs that way, so this script puts the real trees
 # into that state and exercises the things a production box does: serve a page and its
-# compiled bundle, run migrate with nothing pending, run a framework task, report
-# health. Then it proves the stronger property directly - that none of it WROTE
+# compiled bundle, run migrate - with a REAL migration pending - run a framework task,
+# report health. Then it proves the stronger property directly - that none of it WROTE
 # anything into those trees, permissions or no permissions.
+#
+# THE MIGRATION IS REAL. A throwaway, purely additive migration (one new table -
+# tests/_lib/prod_probe_migration.sh) is written into the tree before the write bits come
+# off, and `migrate` applies it against read-only trees: the code key and build/build_key
+# stay as they were, the state key moves, and nothing is written. A read-only build tree
+# is exactly where a migration that rebuilt would fail.
 #
 # WHO THIS TEST RUNS AS. root ignores the write bits, so on a box whose test user is
 # root (this framework's development container is one) the chmod cannot refuse the
@@ -21,7 +27,9 @@
 #
 # THE TREES ARE RESTORED, exactly. Every file and directory mode under the three trees
 # is recorded before the chmod and re-applied in the EXIT trap, together with
-# rsx:prod:disable, on failure and on interrupt alike.
+# rsx:prod:disable, on failure and on interrupt alike. The same trap removes the probe
+# migration's file, puts the migration whitelist back byte for byte, and drops the probe
+# table and its _migrations row from the development database this script runs against.
 
 TEST_NAME="prod_mode/cli prod read-only posture"
 
@@ -37,6 +45,8 @@ SEAL_FILE="$BUILD_ROOT/prod_seal.json"
 LOG="/tmp/rsx_prod_readonly_$$.log"
 MODES="/tmp/rsx_prod_readonly_modes_$$"
 TREES="build system rsx"
+
+. "$SYSTEM_DIR/app/RSpade/tests/_lib/prod_probe_migration.sh"
 
 APP_HOST="$(rsx_env_value APP_URL https://localhost)"
 APP_HOST="${APP_HOST#*://}"
@@ -100,6 +110,9 @@ cleanup() {
     restore_modes
     rm -f "$MODES" /tmp/rsx_prod_ro_body_$$.html /tmp/rsx_prod_ro_step_$$.out /tmp/rsx_prod_ro_probe_$$
 
+    # The source tree before the development rebuild, which must not see the probe file.
+    probe_migration_remove_files
+
     if [ "$(current_mode)" != "development" ]; then
         echo "[TEST] restoring development mode..." >&2
         php artisan rsx:prod:disable >> "$LOG" 2>&1
@@ -107,6 +120,11 @@ cleanup() {
             echo "[TEST] rsx:prod:disable did NOT restore development mode. Log: $LOG" >&2
             echo "[TEST] Run it yourself: php artisan rsx:prod:disable" >&2
         fi
+    fi
+
+    if ! probe_migration_remove_rows; then
+        echo "[TEST] the probe table was NOT removed. Log: $LOG" >&2
+        echo "[TEST] Drop it yourself: DROP TABLE $PROBE_TABLE; and delete the _migrations row '$PROBE_MIGRATION'" >&2
     fi
 
     exit $rc
@@ -156,6 +174,13 @@ note "2. chmod -R a-w build system rsx"
 record_modes
 [ -s "$MODES" ] || fail "recorded no modes - refusing to chmod a tree this script could not restore"
 
+# The pending migration goes in while the tree can still be written, and after the modes
+# were recorded, so the restore never names a file that is gone by then.
+CODE_KEY="$(artisan rsx:manifest:get_build_key | tail -n 1)"
+STATE_KEY_BEFORE="$(artisan rsx:manifest:get_state_key | tail -n 1)"
+[ -n "$CODE_KEY" ] && [ -n "$STATE_KEY_BEFORE" ] || fail "the sealed box printed no code key or no state key"
+probe_migration_create || fail "could not write the probe migration and its whitelist entry"
+
 chmod -R a-w $TREES 2>/dev/null
 
 for sample in "$BUILD_ROOT/prod_seal.json" "$PROJECT_ROOT/system/artisan" "$PROJECT_ROOT/rsx/main.php"; do
@@ -180,7 +205,7 @@ fi
 # 3. Everything a production box does, against read-only trees.
 # ---------------------------------------------------------------------------
 
-note "3. serving, migrate, a framework task and health against read-only trees"
+note "3. serving, a real migration, a framework task and health against read-only trees"
 MARKER="/tmp/rsx_prod_ro_marker_$$"
 : > "$MARKER"
 
@@ -190,7 +215,24 @@ status="$(http_status /login)"
 status="$(http_status "$bundle_path")"
 [ "$status" = "200" ] || fail "the compiled bundle $bundle_path answered $status with the trees read-only"
 
-artisan migrate > /dev/null || fail "migrate exited non-zero with the trees read-only"
+migrate_output="$(artisan migrate)" || fail "migrate exited non-zero applying a real migration with the trees read-only"
+case "$migrate_output" in
+    *"$PROBE_MIGRATION"*) ;;
+    *) fail "the migrate output does not name the probe migration - it was not applied" ;;
+esac
+
+[ "$(artisan rsx:manifest:get_build_key | tail -n 1)" = "$CODE_KEY" ] || fail "the code key moved across the migration"
+[ "$(cat "$BUILD_ROOT/build_key")" = "$CODE_KEY" ] || fail "build/build_key changed across the migration"
+[ "$(artisan rsx:manifest:get_state_key | tail -n 1)" != "$STATE_KEY_BEFORE" ] || fail "the state key did not move across the migration"
+
+case ",$(probe_schema_columns)," in
+    *",$PROBE_COLUMN:$PROBE_COLUMN_LENGTH,"*) ;;
+    *) fail "a fresh process does not see $PROBE_TABLE.$PROBE_COLUMN through Rsx_Schema with the trees read-only" ;;
+esac
+
+status="$(http_status /login)"
+[ "$status" = "200" ] || fail "/login answered $status after the migration with the trees read-only"
+
 artisan rsx:task:run Session_Cleanup_Service cleanup_sessions > /dev/null \
     || fail "a framework task exited non-zero with the trees read-only"
 # The exit code is not asserted - rows unrelated to the trees (hostname, scheduler) are
@@ -214,6 +256,11 @@ fi
 note "4. restoring modes and returning to development"
 restore_modes
 rm -f "$MODES"
+
+probe_migration_remove_files
+probe_migration_remove_rows || fail "could not remove the probe table and its migration row"
+[ "$(artisan rsx:manifest:get_state_key | tail -n 1)" = "$STATE_KEY_BEFORE" ] \
+    || fail "the state key did not return to its original value once the migration was removed"
 
 for sample in "$PROJECT_ROOT/system/artisan" "$PROJECT_ROOT/rsx/main.php"; do
     [ -e "$sample" ] || continue

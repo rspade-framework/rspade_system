@@ -172,7 +172,7 @@ There are exactly three sanctioned homes, and none of them is a directory a rule
 | a derived VALUE that was expensive to compute | `RsxCache::get_persistent()` / `set_persistent()`, keyed on a CONTENT HASH |
 
 **The build-scoped `RsxCache::get()` / `set()` is unusable at manifest time, by construction.**
-Its key is prefixed with `Manifest::get_build_key()`, and during a build the manifest is not
+Its key is prefixed with `Manifest::get_state_key()` (which starts from `get_build_key()`), and during a build the manifest is not
 ready - the accessor raises
 `shouldnt_happen('Manifest::get_build_key() called before manifest was loaded')`. That is an
 owner ruling made visible as a fatal: a build-scoped memo would be a memo of the build that is

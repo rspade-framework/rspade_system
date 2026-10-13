@@ -101,9 +101,11 @@ BUILD TREE (<project>/build)
 
         manifest_index.php   the HOT manifest index (a request loads this one)
         manifest_files.php   file metadata not read at request time
-        build_key            content- and mode-derived manifest hash (the
-                             cache key)
+        build_key            content- and mode-derived manifest hash: the
+                             CODE key, which names the build
         bundles/             compiled CSS/JS bundles, vendor/app split
+        bundle_models/       per bundle, the models its compiled output
+                             carries (what its field-length script lists)
         laravel/             Laravel's own caches: events, services,
                              packages, config (there is no route cache).
                              Reached through the four cache

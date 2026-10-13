@@ -22,20 +22,19 @@ use App\RSpade\Tests\Codegen\Php\Split_Fixture_Model;
  *
  * Without this the property arrives on the fetched record at runtime with no declared surface
  * on Base_*_Model.js at all - no autocomplete, and nothing telling a reader of the stub that it
- * exists. The stub is generated from columns, enums, relationships and constants, and a derived
+ * exists. The stub is generated from enums, relationships and constants, and a derived
  * property is none of those.
  *
- * Two things are asserted and one is asserted NOT to happen: the names are declared as JSDoc
- * @property lines, field_length() keeps answering null for them (they are not columns and never
- * become varchar lengths), and a model with no $appends gains nothing.
+ * Asserted: the names are declared as JSDoc @property lines; a model with no $appends gains
+ * nothing; and a stub carries no column lengths at all (those are the page's field-length
+ * script's, tests/database/php/Field_Length_Script_Test).
  */
 class Model_Stub_Appends_Test extends Rsx_Test_Abstract
 {
     /**
      * The generator is private - it is an implementation of the manifest build, not an API - so
-     * the test reaches it the same way the build does, with a manifest_data array carrying no
-     * columns for the fixture (it has no table, which is also what proves the appended names do
-     * not arrive through the column path).
+     * the test reaches it the same way the build does. The fixtures have no table, and need
+     * none: nothing in a stub is read from the database.
      */
     private static function __generate(string $fqcn, string $class_name, string $stub_class_name): string
     {
@@ -78,10 +77,11 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
         static::__assert_contains('@Instantiatable', $content, 'and the existing markers survive');
     }
 
-    // CODEGEN-APPENDS-NOT-A-COLUMN: a derived property is not a column, so field_length() answers
-    // null for it exactly as it does for any non-varchar - the client can never hold a length
-    // for a value with no column behind it.
-    public static function test_an_appended_property_never_becomes_a_field_length()
+    // CODEGEN-NO-LENGTHS: a stub is a function of the model's CODE. Column lengths are a fact
+    // about the database and reach the page in the bundle's field-length script, answered by the
+    // one Rsx_Js_Model.field_length() every stub inherits - so a stub declares no field_length of
+    // its own and carries no length for anything, a derived property least of all.
+    public static function test_a_stub_declares_no_field_length_and_carries_no_lengths()
     {
         $content = static::__generate(
             Appends_Fixture_Model::class,
@@ -89,11 +89,13 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
             'Base_Appends_Fixture_Model'
         );
 
-        static::__assert_contains('static field_length(column)', $content, 'the stub still declares field_length');
+        static::__assert_false(str_contains($content, 'field_length'), 'the stub declares no field_length of its own');
+        static::__assert_false(str_contains($content, 'lengths'), 'and carries no length table');
         static::__assert_false(
             str_contains($content, '"display_id":'),
-            'and the derived name appears in no length map'
+            'the derived name appears in no map at all'
         );
+        static::__assert_contains("static __MODEL = 'Appends_Fixture_Model';", $content, 'it names its model, which is how the inherited field_length() finds its lengths');
     }
 
     // CODEGEN-APPENDS-NONE: a model that declares no derived properties gains no lines. The
@@ -138,8 +140,7 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
     // CODEGEN-SPLIT-REFLECTS-BASE: a framework model carries every member on an abstract base
     // and ships a three-line concrete an application replaces. The stub is generated for the
     // CONCRETE, so it has to reflect what the BASE declares - the appended property, the
-    // constants, the field_length table - or the split would silently empty every stub in the
-    // framework.
+    // constants - or the split would silently empty every stub in the framework.
     public static function test_the_stub_of_a_split_model_declares_the_bases_members()
     {
         $content = static::__generate(
@@ -159,7 +160,7 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
             'and so do the constants the base declares'
         );
         static::__assert_contains(
-            'static field_length(column)',
+            'static text_type_or_null(column)',
             $content,
             'and the stub is otherwise a normal one'
         );

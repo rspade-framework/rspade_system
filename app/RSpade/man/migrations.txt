@@ -5,7 +5,7 @@ NAME
 
 SYNOPSIS
        php artisan make:migration:safe <name>
-       php artisan migrate [--dump-rollback] [--no-rebuild]
+       php artisan migrate [--dump-rollback]
        php artisan migrate --abandon-dump-rollback
        php artisan migrate:status
        php artisan rsx:db:rebuild_provision_cache_snapshot
@@ -138,15 +138,14 @@ MIGRATION RULES
        bytes that must travel through the file-upload pipeline, a value that must be
        written through an encryption cast.
 
-       THE SECOND HAZARD, for any migration that does write through a model: on a
-       production host THE MANIFEST CAN BE AHEAD OF THE DATABASE. A production build
-       bakes every model's column map in at build time, so a deployment that builds
-       before it migrates is running models that know columns the tables do not have
-       yet. A write through such a model fails on an unknown column, part-way through
-       the run, on the box where a half-applied migration costs the most. Raw SQL
-       against a table name describes the schema AT THAT POINT IN HISTORY and cannot
-       drift. (rsx:migrate:check_consistency reports the same disagreement after a
-       production migrate; see rsx:man prod.)
+       THE SECOND HAZARD, for any migration that does write through a model: THE CODE
+       CAN BE AHEAD OF THE DATABASE. A model is the code as it is deployed - its casts,
+       its hooks, the columns its save() stamps - while a migration runs at one fixed
+       point in the schema's history, possibly several migrations before the columns
+       that code expects exist. A write through the model then fails on an unknown
+       column, part-way through the run, on the box where a half-applied migration
+       costs the most. Raw SQL against a table name describes the schema AT THAT POINT
+       IN HISTORY and cannot drift.
 
        A migration that needs model behaviour anyway says so in its docblock, and the
        rationale owns both hazards:
@@ -423,8 +422,7 @@ MIGRATION WORKFLOW
        1. Creates a database snapshot before running migrations
        2. Runs all pending migrations with validation
        3. Runs schema quality checks
-       4. On success: commits changes, rebuilds when the schema changed (THE BUILD
-          FOLLOWS THE SCHEMA, below), regenerates constants, recompiles bundles
+       4. On success: commits changes, regenerates constants, recompiles bundles
        5. On failure: automatically rolls back to snapshot
 
        Failed migrations restore the database to its pre-migration state. Fix your
@@ -446,10 +444,8 @@ MIGRATION WORKFLOW
        - NO SOURCE FILE IS WRITTEN. Constants and bundles are not regenerated (they
          are source, committed from the development box that authored the migration),
          and a missing .migration_whitelist is skipped rather than created
-       - A run that changed the schema REBUILDS AND RESEALS (rsx:build --force)
-         unless --no-rebuild is given; see THE BUILD FOLLOWS THE SCHEMA below
-       - rsx:migrate:check_consistency runs at the end and ITS EXIT CODE IS THE
-         COMMAND'S (see MANIFEST CONSISTENCY below)
+       - NOTHING IS REBUILT. The sealed build is not touched and stays sealed; see
+         A MIGRATION NEVER REBUILDS below
 
        Ensure migrations are thoroughly tested in development before running in
        debug/production modes.
@@ -504,83 +500,52 @@ MIGRATION WORKFLOW
        completes normally (`rsx:man rsx_git`). Resolving it by hand as TEXT is the
        natural move and the wrong one - it produces a file that is not JSON.
 
-   The Build Follows the Schema
-       A build describes ONE database state: every model's table and column map is
-       read from the live schema when the build is made, and nothing in the source
-       tree changes when a migration runs. So the build RECORDS which state it read -
-       a fingerprint of the NAMES of the applied migrations - and migrate compares the
-       database against that record once it has finished:
+   A Migration Never Rebuilds
+       A build holds CODE FACTS ONLY: which models exist and which table each one
+       declares. Which columns a table has, and the type and length of each, is a fact
+       about the DATABASE, and it is read from the database at run time, cached. So a
+       build and a migration are independent of each other:
 
-           the build matches the database    nothing happens
-           this run migrated nothing         never a rebuild; a mismatch is reported
-                                             with the command that repairs it
-           --no-rebuild                      the same report, no rebuild
-           otherwise                         the build is redone, and migrate says so
+       - `migrate` rebuilds nothing, in any mode. On a sealed box no file under
+         build/ changes, the seal still describes what is on disk and rsx:prod:verify
+         passes before and after.
+       - A build reads no database. It can be made before the migration or after it,
+         on the host or somewhere with no database at all (rsx:man prod).
 
-       The rebuild is the mode's own: in development the manifest is rebuilt (a few
-       seconds; every model's columns are read again), in debug and production the
-       whole build runs and reseals (php artisan rsx:build --force), exactly as an
-       operator would have run it next. While a sealed build is being replaced,
-       requests are refused as unsealed.
+       What a migration moves is the STATE KEY: the build's code key combined with a
+       fingerprint of the NAMES of the applied migrations
+       (php artisan rsx:manifest:get_state_key). Every cache whose content depends on
+       the schema is filed under it - the column map every model reads, the
+       build-scoped RsxCache, the field-length script a page loads - so once a
+       migration is recorded every process computes a new key and reads the schema as
+       it now is. The code key (php artisan rsx:manifest:get_build_key, the build/
+       build_key file) does not move.
 
        The fingerprint is names only - not ids, batches or run times - so two
-       databases that have had the same migrations applied answer the same value, and
-       a build made against one describes the other.
+       databases that have had the same migrations applied answer the same key.
 
-       --no-rebuild is for a run that is followed by a build anyway (the deployment
-       recipe in rsx:man prod), and for any box whose build must not be regenerated in
-       place. Without the rebuild a model does not know the tables and columns just
-       migrated: field_length() and the generated JS models lack the new columns, and
-       a model whose table was just created is not found by table at all.
+       WHAT A USER SEES. window.rsxapp.build_key carries the state key, so a page
+       that was open across a migration reloads on its next navigation, and
+       browser-side caches keyed on it are read afresh once.
 
-       THE DATABASE CANNOT MOVE BACK. A migration is committed before the rebuild
-       starts, so a rebuild that fails leaves a migrated database and an unusable
-       build; migrate says exactly that, names the command, and exits with the
-       build's exit code.
+       THE PURGE. `migrate` discards the cached schema state BEFORE the run starts and
+       AFTER it ends, on every exit path - success, failure, a restored snapshot or
+       dump, nothing pending: the cached column map, the build-scoped cache
+       (RsxCache::clear()) and the full page cache (whose key is the code key, which
+       a migration does not move). migrate:restore, rsx:database_and_storage_reset and
+       rsx:db:rebuild_provision_cache_snapshot do the same. The purge is tidiness, not
+       the mechanism - the moved state key is what makes a stale entry unreachable -
+       and inside a maintenance window, where Redis is stopped, only the migrating
+       process's own copy is dropped.
 
-       The "Build Schema" row of rsx:health asks the same question in every mode and
-       FAILs when the build and the database disagree.
+       A SCHEMA CHANGE MADE OUTSIDE A MIGRATION (a hand-run ALTER) moves no key and is
+       not seen until the caches are discarded: php artisan rsx:clean, or a migration.
+       Make schema changes with migrations.
 
-   Manifest Consistency (production modes)
-       A production build bakes every model's column map into the manifest at BUILD
-       time; the database moves at MIGRATE time. A migrate that changed the schema
-       rebuilds, so the two stay together - but --no-rebuild, a run that migrated
-       nothing and a database changed some other way can all leave them apart, so
-       after a production migrate
-
-           php artisan rsx:migrate:check_consistency
-
-       compares the two and migrate PROPAGATES ITS EXIT CODE - a build that no longer
-       matches its schema is a failed migrate, not a footnote to a successful one.
-
-       It refuses to run outside a production mode (a development migrate has just
-       rebuilt the manifest from the live schema, and the "Build Schema" row of
-       rsx:health is the check there) and refuses when there is no manifest at all.
-
-       The two findings are NOT symmetric:
-
-       - A manifest column MISSING FROM ITS TABLE is an [ERROR] and exits 1. Served
-         code believes that column exists, and the first request touching it is a 500.
-       - A table column UNKNOWN TO THE MANIFEST is a [WARNING] and exits 0. The
-         database is merely ahead of the build; nothing served reads the column.
-
-       Every table is walked and every discrepancy printed before the exit code is
-       decided. Columns are compared BY THEIR SOURCE TABLE, so a class-table-inheritance
-       base model - whose manifest columns span its detail tables - is compared only
-       against its own table, and each detail model is walked as its own row.
-
-       The repair is `php artisan rsx:build --force`; see rsx:man prod.
-
-       IT IS NOT THE SCHEMA CONTRACT CHECK, and the two are complementary. This one
-       compares the MANIFEST with the DATABASE, in production modes only; the manifest's
-       column map is DERIVED from the database at build time, so a column the framework
-       CODE needs and this schema never had is invisible to it - both sides agree and
-       the framework still throws on the first request that touches it. The "Schema
-       Contract" row of rsx:health compares the FRAMEWORK CODE with the DATABASE, in
-       every mode, from a declaration (Core/Database/Schema_Contract) that no database
-       produced. Run check_consistency after a production migrate; run rsx:health
-       against any database the framework did not build itself. See rsx:man health and
-       rsx:man database_schema_architecture.
+       A column the framework's own CODE needs and a database never had is a
+       different question, answered by the "Schema Contract" rows of rsx:health in
+       every mode: a declaration (Core/Database/Schema_Contract) checked against the
+       live database. See rsx:man health and rsx:man database_schema_architecture.
 
    Framework-Only Migrations
        To run only framework migrations (system/database/migrations):
@@ -668,8 +633,7 @@ DUMP ROLLBACK
             connection of its own - one protected migrate per database across every
             host, waiting as long as the other one takes.
          2. Leftovers from an earlier run are settled (below).
-         3. Nothing pending: no dump, no window, nothing touched. In a production
-            mode rsx:migrate:check_consistency still runs and is the exit code.
+         3. Nothing pending: no dump, no window, nothing touched.
          4. The maintenance window is raised (rsx:maintenance:enable: workers
             killed, web 503) unless it is already up. Nothing may write between the
             dump and the end of the run, or a restore would destroy it.
@@ -1001,9 +965,9 @@ POST-MIGRATE STEPS
           tip. Skipped on a --framework-only run, which migrates a schema-only subset
           with none of the application's tables in it.
 
-       5. THE CACHE CLEAR - every successful run, snapshot-protected or bare, ends by
-          clearing the build-scoped cache (and so does php artisan migrate:restore,
-          whose restore leaves the cache describing a schema that no longer exists).
+       5. THE PURGE - every run, snapshot-protected, dump-protected or bare, discards
+          the cached schema state before it starts and after it ends, however it ends
+          (A MIGRATION NEVER REBUILDS, above).
 
 MIGRATION EXAMPLES
 
@@ -1192,9 +1156,8 @@ DEBUGGING
        - "Duplicate column" - Check if column already exists before adding
 
 SEE ALSO
-       rsx:man prod - The deployment order migrate belongs in, the manifest
-                                  consistency check, and what a production-mode
-                                  migrate never writes
+       rsx:man prod - Where migrate sits in a deployment and what a
+                                  production-mode migrate never writes
        rsx:man maintenance_mode - The window rsx:db:rebuild_provision_cache_snapshot and
                                   rsx:database_and_storage_reset raise, and the
                                   disable refusal that protects an interrupted build

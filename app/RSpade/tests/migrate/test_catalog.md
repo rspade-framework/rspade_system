@@ -158,25 +158,6 @@ MNCE-07 and carried here as a constant.
 | PNH-05 | the whole-run total is N+1 (and 2 when nothing is pending) | php | 0,1,2,4,7 staged files | 2,2,3,5,8 | implemented | 2026-09-15 |
 | PNH-06 | a FAILED normalize pass throws and fires nothing | php | stubbed exit code 1 | throw; 0 firings | implemented | 2026-09-15 |
 
-## Check_Consistency_Test (php)
-
-`rsx:migrate:check_consistency` compares the SEALED manifest's column map against the live
-schema after a production migrate, and `migrate` propagates its exit code. Driven against
-real fixture tables in the test database plus a replaced model map in `Manifest::$data`.
-
-| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
-|----|--------------------------|------|-------|----------|--------|--------------|
-| CC-01 | development mode is a fatal refusal naming why | php | dev mode | exit 1; "runs in a production mode only" | implemented | 2026-09-15 |
-| CC-02 | debug is a production mode and the check runs there | php | debug mode | exit 0 | implemented | 2026-09-15 |
-| CC-03 | no manifest index is a fatal refusal naming rsx:build --force | php | build root redirected to an empty dir | exit 1; names the file and the repair | implemented | 2026-09-15 |
-| CC-04 | a detail-table base model passes - merged detail columns are never compared against the base table | php | base model carrying a detail-sourced column | exit 0; the detail column is never named | implemented | 2026-09-15 |
-| CC-05 | a manifest column missing from its table is an ERROR and exits 1, with the two-orderings explainer | php | one extra manifest column | exit 1; names the column, rsx:build --force, migrate, rsx:man prod | implemented | 2026-09-15 |
-| CC-06 | every discrepancy is listed before the verdict | php | two extra manifest columns | both named; verdict counts 2 | implemented | 2026-09-15 |
-| CC-07 | a manifest table missing from the database is an ERROR | php | a model whose table was never created | exit 1; names the table | implemented | 2026-09-15 |
-| CC-08 | a table column unknown to the manifest is a WARNING and exits 0 | php | one extra database column | exit 0; warning names it | implemented | 2026-09-15 |
-| CC-09 | a warning and an error together exit 1 with both reported | php | both at once | exit 1; both named | implemented | 2026-09-15 |
-| CC-E2E-01 | a production `migrate` returns the check's non-zero exit as its own | cli | prod-mode migrate against a mismatched build | exit 1 | deferred (covered by the prod lifecycle bash test, Phase E) | 2026-09-15 |
-
 ## Whitelist_Prod_Mode_Test (php)
 
 `.migration_whitelist` is SOURCE: WRITTEN only in development, CONSULTED in every mode,
@@ -294,18 +275,21 @@ The --dump-rollback flow in `Maint_Migrate::handle()` through `Dump_Rollback_Pro
 | DRB-C-10 | an unusable client program is fatal before anything happens | php | binaries check fails | exit 1; no events; no files; the program named | implemented | 2026-10-07 |
 | DRB-C-09 | --framework-only is refused with the flag | php | both flags | exit 1; nothing | implemented | 2026-10-07 |
 
-## Migrate_Build_Sync_Test (php)
+## Migrate_Purge_Test (php)
 
-`Maint_Migrate::sync_build_with_schema()` through `Build_Sync_Probe_Migrate` (the three
-fingerprints supplied, the rebuild recorded), plus the real fingerprint and the real record.
+`Maint_Migrate::handle()` through `Dump_Rollback_Probe_Migrate` with the purge recorded
+instead of performed: each recorded purge carries how many events had happened by then. No
+run rebuilds anything; what every run does is purge the schema-dependent caches before it
+starts and after it ends (`Rsx_Schema::purge_schema_state()`, asserted in
+`tests/database/php/Rsx_Schema_Test`).
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
-| SYNC-01 | a build that matches the database is left alone | php | build = now | exit 0; no rebuild; no output | implemented | 2026-10-08 |
-| SYNC-02 | a run that migrated rebuilds a stale build and says why | php | before != now != build | one development rebuild; output names the reason and --no-rebuild | implemented | 2026-10-08 |
-| SYNC-03 | a run that migrated nothing never rebuilds | php | before = now, build differs | no rebuild; mismatch reported with the command | implemented | 2026-10-08 |
-| SYNC-04 | --no-rebuild skips the rebuild and reports the stale build | php | suppressed | no rebuild; output names the flag and the command | implemented | 2026-10-08 |
-| SYNC-05 | a failed rebuild is the exit code and says the database moved | php | rebuild exits 3 | exit 3; "were applied and are committed" | implemented | 2026-10-08 |
-| SYNC-06 | an index with no record is a mismatch | php | build hash null | rebuilt | implemented | 2026-10-08 |
-| SYNC-07 | the fingerprint is the sorted applied names | php | the test database | md5 of the sorted names, whatever the row order | implemented | 2026-10-08 |
-| SYNC-08 | the build records the database it was made against | php | the running build | `Manifest::applied_migrations()` equals the live fingerprint | implemented | 2026-10-08 |
+| PURGE-01 | the snapshot runner is purged around on success | php | snapshot engaged, exit 0 | purges at [0, all events] | implemented | 2026-10-12 |
+| PURGE-02 | the snapshot runner is purged around when it fails and rolls back | php | snapshot engaged, exit 1 | same | implemented | 2026-10-12 |
+| PURGE-03 | a runner that throws is still purged after | php | the runner throws | the throw propagates; purges at [0, all events] | implemented | 2026-10-12 |
+| PURGE-04 | the bare runner is purged around on success and on failure | php | exit 0; exit 1 | same | implemented | 2026-10-12 |
+| PURGE-05 | --dump-rollback with nothing pending is purged around | php | 0 pending | no events; two purges | implemented | 2026-10-12 |
+| PURGE-06 | --dump-rollback success is purged after the window is lowered | php | 1 pending, exit 0 | the second purge follows `maintenance_disable` | implemented | 2026-10-12 |
+| PURGE-07 | --dump-rollback failure and restore is purged around | php | 1 pending, exit 1 | same | implemented | 2026-10-12 |
+| PURGE-08 | a refused run and an abandon are purged around | php | both flags; --abandon-dump-rollback | two purges | implemented | 2026-10-12 |

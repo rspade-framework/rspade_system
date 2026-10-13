@@ -1029,7 +1029,7 @@ SESSION VALIDATION
     validates its state against the server by calling Rsx.validate_session().
 
     This detects three types of staleness:
-        1. Codebase updates - build_key changed due to new deployment
+        1. Codebase updates and migrations - build_key changed
         2. User changes - account details modified (name, role, permissions)
         3. Session changes - logged out, ACLs updated, session invalidated
 

@@ -56,3 +56,8 @@
 | SHAKE-08 | A keep entry naming no component is refused | php | `Zz_No_Such_Component` | `RuntimeException` naming it | implemented | 2026-10-08 |
 | SHAKE-09 | A view inherits the bundles of the layout it extends | php | every Blade view | served with what it prints and with every bundle of its parent | implemented | 2026-10-08 |
 | SHAKE-10 | A sealed debug build serves pages and names a removed component on creation | manual | `rsx:mode:set debug`; load /login; create a dropped component | no console errors; the generated message | verified by hand 2026-10-08, not automated (needs a mode switch) | 2026-10-08 |
+| BUNDLE-MODELS-01 | The model list names exactly the models whose stubs are in the compiled app script | php | compile `_Sys_Bundle` | `models` = the sorted `static __MODEL` names in the output; `app_hash` = the app script's | implemented (`Bundle_Model_List_Test`) | 2026-10-12 |
+| BUNDLE-MODELS-02 | The compile result names the bundle's field-length script | php | same | `<Bundle>__<app hash>.js` | implemented | 2026-10-12 |
+| BUNDLE-MODELS-03 | A missing or mismatched list is rewritten by the next compile | php | delete the list; write one naming another hash | the list is back, unchanged | implemented | 2026-10-12 |
+| BUNDLE-MODELS-04 | An unreadable list fails loud | php | `not json` | `RuntimeException` | implemented | 2026-10-12 |
+| BUNDLE-MODELS-05 | The seal covers the model lists | php | staged build root, `Rsx_Prod_Seal::write()` then a changed list | the list is a sealed asset; `verify()` reports the change | implemented | 2026-10-12 |

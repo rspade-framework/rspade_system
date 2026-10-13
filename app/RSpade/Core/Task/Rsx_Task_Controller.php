@@ -274,7 +274,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
 
     /**
      * The xterm.js ES module the Task_Output widget imports on first use (never bundled: most
-     * pages show no console). Clients append ?v=build_key.
+     * pages show no console). Clients append ?v=code_key (window.rsxapp.code_key).
      */
     #[Route('/_task/xterm.mjs', methods: ['GET'])]
     #[Portal_Route('/_task/xterm.mjs', methods: ['GET'])]

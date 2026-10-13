@@ -17,18 +17,17 @@ use Illuminate\Database\Console\Migrations\MigrateCommand;
 use App\Providers\AppServiceProvider;
 use App\RSpade\Core\Database\MigrationValidator;
 use App\RSpade\Core\Database\Migrate_Dump_Rollback;
+use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Database\SqlQueryTransformer;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Table_Rename;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Support\Rsx_Fingerprint;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\SchemaQuality\SchemaQualityChecker;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
-use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Env\Rsx_Initial_User;
 use App\RSpade\Core\Revisions\Revision_Dictionary;
 use App\RSpade\Core\Files\Rsx_File_Paths;
@@ -49,9 +48,11 @@ use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
  * a later run recovers from what an interrupted one left (Migrate_Dump_Rollback). Where the
  * datadir snapshot IS available the flag adds nothing and the snapshot is used.
  *
- * EVERY successful run then settles THE BUILD against the database it just changed
- * (sync_build_with_schema()): a build records the applied migrations it was made against,
- * and one that no longer matches is rebuilt - unless nothing was migrated, or --no-rebuild.
+ * NO RUN REBUILDS ANYTHING. The build holds code facts only; what a migration changes is
+ * read from the database at run time under a key the applied migrations are part of
+ * (Manifest::get_state_key()), so a sealed build is exactly as valid after a migration as
+ * before it. Every run purges the schema-dependent caches before it starts and after it
+ * ends, however it ends (purge_schema_state()).
  *
  * BARE run - anything else, INCLUDING a production-target container and a development
  * run pointed at an external database:
@@ -73,8 +74,7 @@ class Maint_Migrate extends Command
 
     protected $signature = 'migrate {--force} {--seed} {--step} {--path=*} {--framework-only : Run only framework migrations (system/database/migrations)}'
         . ' {--dump-rollback : Dump the database before migrating and restore it if the run fails (production, or wherever the datadir snapshot is unavailable)}'
-        . ' {--abandon-dump-rollback : Accept the database as it stands and discard what an unfinished --dump-rollback run left}'
-        . ' {--no-rebuild : Do not rebuild after migrating, even though the build no longer describes the database}';
+        . ' {--abandon-dump-rollback : Accept the database as it stands and discard what an unfinished --dump-rollback run left}';
 
     protected $description = 'Run migrations with automatic snapshot protection in development mode';
 
@@ -130,10 +130,30 @@ class Maint_Migrate extends Command
             return $this->refuse_development_outside_container();
         }
 
-        // What the database had applied BEFORE this run - the other half of "did this run
-        // migrate anything", asked once everything is settled (sync_build_with_schema()).
-        $this->applied_before = $this->applied_migrations_hash();
+        // BEFORE anything changes: what is cached about the schema as it stands is about to
+        // be wrong. Every way out of this method purges again (the finally below).
+        $this->purge_schema_state();
 
+        try {
+            return $this->run_migrate();
+        } finally {
+            $this->purge_schema_state();
+        }
+    }
+
+    /**
+     * Discard the caches a schema change makes wrong (Rsx_Schema::purge_schema_state()).
+     * Called before the run and after it on every exit path; a seam so the command flow is
+     * testable without clearing this box's caches.
+     */
+    protected function purge_schema_state(): void
+    {
+        Rsx_Schema::purge_schema_state();
+    }
+
+    /** The run itself: settle what an unfinished run left, then one of the three runners. */
+    protected function run_migrate(): int
+    {
         if ($this->dump_rollback_option('abandon-dump-rollback')) {
             return $this->abandon_dump_rollback();
         }
@@ -227,12 +247,6 @@ class Maint_Migrate extends Command
         if ($pending === 0) {
             $this->info('Nothing to migrate - no dump taken.');
 
-            $this->sync_build_with_schema();
-
-            if (Rsx::is_production()) {
-                return $this->call('rsx:migrate:check_consistency');
-            }
-
             return 0;
         }
 
@@ -284,139 +298,10 @@ class Maint_Migrate extends Command
         $dump_rollback->commit();
         $this->info('[OK] Committed; the dump is removed.');
 
-        $rebuild_exit = $this->sync_build_with_schema();
-        if ($rebuild_exit !== 0) {
-            RsxCache::clear();
-
-            return $rebuild_exit;
-        }
-
-        if (Rsx::is_production()) {
-            AppServiceProvider::disable_query_echo();
-            $this->info('');
-            $consistency_check_exit = $this->call('rsx:migrate:check_consistency');
-            RsxCache::clear();
-
-            if ($consistency_check_exit !== 0) {
-                return $consistency_check_exit;
-            }
-        } else {
-            RsxCache::clear();
-        }
-
         $this->info('');
         $this->info('[OK] Migration completed!');
 
         return 0;
-    }
-
-    // -------------------------------------------------------------------------
-    // The build vs the database
-    // -------------------------------------------------------------------------
-
-    /** Rsx_Fingerprint::applied_migrations() as handle() found it, before anything ran. */
-    protected ?string $applied_before = null;
-
-    /**
-     * Settle the build against the database this run leaves behind. Returns 0, or the
-     * failed rebuild's exit code.
-     *
-     * A BUILD DESCRIBES ONE DATABASE STATE. Its model column maps were read from the live
-     * schema, and it records which one as the fingerprint of the applied migrations
-     * (Manifest::applied_migrations()). Nothing in the source tree changes when a migration
-     * runs, so nothing else would ever notice that the description went stale: a model whose
-     * table this run created stays unmapped, a column it added stays unknown to
-     * field_length() and to the generated JS models. So migrate asks, and repairs it:
-     *
-     *   the build matches the database      nothing to do
-     *   this run migrated nothing           NEVER a rebuild - a mismatch is reported, with
-     *                                       the command, and left to the operator
-     *   --no-rebuild                        the same report
-     *   otherwise                           rebuild, saying why
-     *
-     * DEVELOPMENT rebuilds the manifest alone: the index file is dropped and the next
-     * process rebuilds it from the parsed-file caches, which re-reads every model's columns
-     * because the fingerprint they are keyed on has moved. A SEALED mode runs the whole
-     * build (`rsx:build --force`) - a manifest rebuilt beside a stale seal is a drifted box.
-     *
-     * THE DATABASE CANNOT MOVE BACK. By the time this runs the migrations are committed, so
-     * a failed rebuild is reported as exactly that - migrated, not rebuilt, and the command
-     * that finishes the job - and its exit code becomes this command's.
-     */
-    protected function sync_build_with_schema(): int
-    {
-        $applied_now = $this->applied_migrations_hash();
-
-        if ($applied_now === $this->build_applied_migrations_hash()) {
-            return 0;
-        }
-
-        $sealed = Rsx::is_production();
-        $rebuild_command = $sealed ? 'php artisan rsx:build --force' : 'php artisan rsx:manifest:build --force';
-
-        if ($applied_now === $this->applied_before) {
-            $this->warn('[WARNING] The build does not describe this database: it was built against a different set of applied migrations.');
-            $this->line('   Nothing was migrated by this run, so nothing was rebuilt. To rebuild: ' . $rebuild_command);
-
-            return 0;
-        }
-
-        if ($this->rebuild_suppressed()) {
-            $this->warn('[WARNING] --no-rebuild: the build still describes the database as it was BEFORE this run.');
-            $this->line('   Models do not know the tables and columns just migrated until it is rebuilt: ' . $rebuild_command);
-
-            return 0;
-        }
-
-        $this->info('');
-        $this->info('Rebuilding: the schema changed, and the build describes the database as it was before this run.');
-        if ($sealed) {
-            $this->line('   The sealed build is replaced. Requests are refused as unsealed until it completes.');
-        }
-        $this->line('   (--no-rebuild skips this.)');
-
-        $exit_code = $this->rebuild_the_build($sealed);
-
-        if ($exit_code !== 0) {
-            $this->error('');
-            $this->error('[ERROR] The migrations were applied and are committed, but the rebuild failed (exit ' . $exit_code . ').');
-            $this->line('   The database is migrated; the build is not usable until this succeeds: ' . $rebuild_command);
-
-            return $exit_code;
-        }
-
-        $this->info('[OK] Rebuilt.');
-
-        return 0;
-    }
-
-    /** The applied migrations of the connected database, as a fingerprint. */
-    protected function applied_migrations_hash(): string
-    {
-        return Rsx_Fingerprint::applied_migrations();
-    }
-
-    /** The applied migrations the build was made against; null when the index predates the record. */
-    protected function build_applied_migrations_hash(): ?string
-    {
-        return Manifest::applied_migrations();
-    }
-
-    protected function rebuild_suppressed(): bool
-    {
-        return (bool) $this->option('no-rebuild');
-    }
-
-    /** Perform the rebuild in a fresh process; the exit code is the build's. */
-    protected function rebuild_the_build(bool $sealed): int
-    {
-        if ($sealed) {
-            return Rsx_Artisan::passthru('rsx:build', ['--force']);
-        }
-
-        Manifest::_unlink_cache();
-
-        return Rsx_Artisan::passthru('rsx:manifest:build');
     }
 
     /** Pending migrations, counted before anything is touched: every file when no table exists yet. */
@@ -834,38 +719,27 @@ class Maint_Migrate extends Command
 
         $this->commit_snapshot();
 
-        // BEFORE the regeneration below: the bundles it compiles carry the JS model stubs,
-        // which are generated from the build's column maps.
-        $rebuild_exit = $this->sync_build_with_schema();
-        if ($rebuild_exit !== 0) {
-            RsxCache::clear();
-
-            return $rebuild_exit;
-        }
-
         // POST-MIGRATION SOURCE REGENERATION - development only, because the generated
-        // bytes are SOURCE a developer commits, not runtime state. Enum constants and
-        // model docblocks are checked in from the box the migration was authored on; a
-        // deployed application receives them with the code. Nothing here is load-bearing
-        // at runtime (the JS model stubs and field_length() come from the manifest build,
-        // not from this step), so a deployment that never runs it is complete.
+        // bytes are SOURCE a developer commits, not runtime state. The model docblocks
+        // (@property lines, one per column) are checked in from the box the migration was
+        // authored on; a deployed application receives them with the code. Nothing here is
+        // load-bearing at runtime, so a deployment that never runs it is complete.
         if (Rsx::is_development()) {
             $this->info('');
             $this->info('Running post-migration tasks...');
 
-            // Regenerate model constants
+            // This process's view of the schema, before the regeneration reads columns.
+            Rsx_Schema::reset();
+
+            // Regenerate model constants and docblocks
             $this->call('rsx:constants:regenerate');
 
-            // Recompile bundles
+            // Recompile bundles now rather than on the next page load: the regeneration
+            // above may have rewritten model source files.
             $this->newLine();
             $this->info('Recompiling bundles...');
             Rsx_Artisan::passthru('rsx:bundle:compile');
         }
-
-        // The build-scoped cache describes a schema that has just changed underneath it.
-        // Nothing here knows which entries are now wrong, so all of them go.
-        RsxCache::clear();
-        $this->info('[OK] Cache cleared');
 
         $this->info('');
         $this->info('[OK] Migration completed successfully!');
@@ -883,7 +757,6 @@ class Maint_Migrate extends Command
      */
     protected function run_without_snapshot(): int
     {
-        $is_framework_only = $this->is_framework_only_run();
         $reasons = $this->snapshot_skipped_reasons();
 
         $this->warn('[WARNING]  Running WITHOUT snapshot protection - a failed migration will NOT be rolled back.');
@@ -902,44 +775,6 @@ class Maint_Migrate extends Command
             $this->warn('[WARNING]  No snapshot available - database may be in inconsistent state.');
             return 1;
         }
-
-        $rebuild_exit = $this->sync_build_with_schema();
-        if ($rebuild_exit !== 0) {
-            RsxCache::clear();
-
-            return $rebuild_exit;
-        }
-
-        // THE SEALED BUILD VS THE SCHEMA IT SERVES. In a production mode the manifest was
-        // compiled at build time, so once the build has been settled against the schema
-        // above the one question left is whether they agree - which they may not after
-        // --no-rebuild, or when nothing was migrated; the check itself refuses to run
-        // outside a production mode. Its exit code IS this command's exit code: it reports columns the served
-        // code believes in and the database does not have, which is a site that 500s on the
-        // first request that touches one. That is a failed migrate, not a footnote to a
-        // successful one - a warning here is a warning nobody reads in a deploy log.
-        //
-        // A --framework-only run migrates a schema-only subset, so the application's tables
-        // are legitimately absent and every one of them would be reported.
-        if (!$is_framework_only && Rsx::is_production()) {
-            AppServiceProvider::disable_query_echo();
-            $this->info('');
-
-            $consistency_check_exit = $this->call('rsx:migrate:check_consistency');
-
-            if ($consistency_check_exit !== 0) {
-                // The schema change itself succeeded and is committed (DDL auto-commits;
-                // there is no snapshot on this path). The cache still describes the schema
-                // that just moved, so it goes regardless of the verdict.
-                RsxCache::clear();
-
-                return $consistency_check_exit;
-            }
-        }
-
-        // See the note on the snapshot path: the schema moved, so the cache goes.
-        RsxCache::clear();
-        $this->info('[OK] Cache cleared');
 
         $this->info('');
         $this->info('[OK] Migration completed!');
@@ -1139,7 +974,16 @@ class Maint_Migrate extends Command
         // Inside the snapshot window like everything else here, so a failure rolls back.
         $this->apply_type_ref_table_renames();
 
+        // THE SCHEMA IS AT THE TIP, and from here on this run executes current code against
+        // it: the hook's handlers, the initial user, the revision dictionary. Whatever
+        // column map this process read before the migrations ran describes the schema as it
+        // was, so it is dropped - with the state key memo - before any of them asks.
+        Rsx_Schema::reset();
+
         $this->fire_post_normalize_hook();
+
+        // The handlers may have added columns of their own.
+        Rsx_Schema::reset();
 
         // THE INITIAL USER - after the FINAL normalize pass, so the schema is at the tip
         // by construction. This is deliberately NOT a migration: it runs model code and,

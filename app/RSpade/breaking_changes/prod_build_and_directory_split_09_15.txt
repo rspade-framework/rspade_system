@@ -152,16 +152,14 @@ ACTION REQUIRED
            php artisan rsx:prod:verify
            php artisan rsx:maintenance:disable
 
-       MIGRATE COMES BEFORE THE BUILD. The manifest bakes every model's column map in
-       at build time; the database moves at migrate time. If your script builds first,
-       reorder it.
+       The build and the migration are independent - a build holds no schema - so
+       the two lines run in either order (migrate_never_rebuilds_10_13.txt).
 
-       First install on an empty database needs the build twice, because the first one
-       has no schema to compile against:
+       First install on an empty database, on a box already in a production mode, is
+       a build and then a migrate:
 
            php artisan rsx:build --force
            php artisan migrate
-           php artisan rsx:build --force
 
     2. AUDIT EVERY CONFIG AND SCRIPT THAT NAMES A MOVED PATH - backup jobs, rsync
        excludes, nginx and Apache config, Dockerfiles and compose volumes, supervisor
@@ -255,17 +253,9 @@ ACTION REQUIRED
        at the end would leave every mid-history migration looking at a schema no
        developer has ever seen.
 
-    7. EXPECT A PRODUCTION `migrate` TO FAIL WHEN THE BUILD AND THE SCHEMA DISAGREE.
-       `rsx:migrate:check_consistency` runs at the end of a production-mode migrate and
-       `migrate` now PROPAGATES its exit code instead of demoting it to a warning. A
-       manifest column missing from its table is an error and exits 1; a table column
-       unknown to the manifest is a warning and exits 0. The repair is `php artisan
-       rsx:build --force`, and the ordering that avoids it is migrate before the build.
-
-       The same command now REFUSES to run in development (the manifest there is
-       rebuilt from the live schema on the next request, so the answer would be
-       "consistent" by construction) and refuses when there is no manifest at all. If
-       you call it from a script, that script must only call it in a production mode.
+    7. A PRODUCTION `migrate` REBUILDS NOTHING AND CHECKS NOTHING AGAINST THE BUILD.
+       `rsx:migrate:check_consistency` no longer exists; a script that calls it removes
+       the call (migrate_never_rebuilds_10_13.txt).
 
     8. DO NOT RUN `composer install` BY HAND ON AN UNSEALED PRODUCTION BOX. Its
        post-autoload-dump hook spawns a bare `php artisan package:discover`, which is
@@ -315,8 +305,8 @@ ACTION REQUIRED
 
 DEPLOYING
     `rsx:prod:export` is retired, and `rsx:man prod` carries three recipes in its place:
-    building on the host (the recommended one, above), producing a CI artifact against a
-    throwaway database, and baking the build into a container image. All three rely on
+    building on the host (the recommended one, above), producing a CI artifact (no database
+    needed), and baking the build into a container image. All three rely on
     the determinism contract - two byte-identical codebases produce an identical
     build_key and byte-identical bundle filenames whatever path they sit at - and
     `rsx:prod:verify` on the host is what proves the artifact arrived intact.

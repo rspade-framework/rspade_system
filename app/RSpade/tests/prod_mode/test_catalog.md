@@ -118,7 +118,7 @@ manifest and finder, no DB.
 
 ## cli/prod_lifecycle.sh (cli, bash), wrapped by `Prod_Lifecycle_Cli_Test`
 
-The real round trip on the box the test runs on: three builds, roughly four minutes.
+The real round trip on the box the test runs on: three builds, roughly five minutes.
 `Prod_Lifecycle_Cli_Test` runs the script and asserts its exit code and its `PASS:`
 verdict; it is `$explicit_group_only`, so it RUNS ONLY WHEN THE GROUP IS NAMED:
 `php artisan rsx:test --framework --group=prod_mode --sequential`. The script stays
@@ -130,6 +130,15 @@ trap runs `rsx:prod:disable`.
 | LIFE-01 | rsx:prod:enable seals, and says so | cli | development box | exit 0, seal summary with a build key, seal file present | implemented | 2026-09-15 |
 | LIFE-02 | the sealed build serves the page and the bundle the page names | cli | GET /login, GET the scraped /_compiled/ URL | 200, 200 | implemented | 2026-09-15 |
 | LIFE-03 | serving + rsx:health + migrate write NOTHING under build/, system/, rsx/ | cli | marker file, then the three | `find -newer` empty | implemented | 2026-09-15 |
+| LIFE-10 | a signed-in page renders from the sealed, minified bundle | cli | sign in through /login as the probe account; /_sys and the landing page in headless Chromium (`playwright/sealed_page_probe.js`) | 200, no page error, rsxapp.build_key = state key, rsxapp.code_key = code key, `User_Model.field_length('first_name')` a number | implemented | 2026-10-12 |
+| LIFE-11 | a REAL pending migration applies on the sealed box with no rebuild | cli | probe migration (one new table, `_lib/prod_probe_migration.sh`), `migrate` | exit 0, output names the migration and no rebuild wording; `find -newer` over build/ system/ rsx/ empty; every checksum under build/ identical; rsx:prod:verify exit 0 | implemented | 2026-10-12 |
+| LIFE-12 | the migration moves the state key and nothing else | cli | rsx:manifest:get_build_key / get_state_key before and after | code key and build/build_key unchanged; state key changed | implemented | 2026-10-12 |
+| LIFE-13 | a fresh PHP process sees the new table with no rebuild | cli | `Rsx_Schema::table_columns()` in a new process | the probe column at its declared length | implemented | 2026-10-12 |
+| LIFE-14 | the pages render under the new state key and field_length() answers PHP's value | cli | the page probe again; `User_Model::field_length('first_name')` in PHP | no page error; the two numbers equal | implemented | 2026-10-12 |
+| LIFE-15 | the field-length script follows the state key | cli | GET the page's script URL; GET it again with the pre-migration key | 200 `immutable`; `no-store` | implemented | 2026-10-12 |
+| LIFE-16 | the anonymous page is not served from before the migration | cli | GET /login | body carries the new state key | implemented | 2026-10-12 |
+| LIFE-17 | rsx:health gains no FAIL row from the migration | cli | FAIL rows before vs after | no new row | implemented | 2026-10-12 |
+| LIFE-18 | removing the migration costs no build either | cli | drop the table, delete the row, purge; state key; page probe | the original state key; pages render; build/ checksums identical | implemented | 2026-10-12 |
 | LIFE-04 | rsx:build refuses to rebuild a sealed box without --force | cli | rsx:build | non-zero, names --force | implemented | 2026-09-15 |
 | LIFE-05 | rsx:clean refuses to discard a sealed tree without --force | cli | rsx:clean | non-zero, names --force | implemented | 2026-09-15 |
 | LIFE-06 | the seal describes what is on disk | cli | rsx:prod:verify | exit 0 | implemented | 2026-09-15 |
@@ -152,7 +161,7 @@ must not share a box concurrently).
 | RO-01 | every write bit under the three trees is actually gone | cli | chmod -R a-w, stat samples | no `w` in any mode | implemented | 2026-09-15 |
 | RO-02 | an unprivileged process is refused by the OS | cli | setpriv uid 65534 writing into build/ | Permission denied | implemented (skipped when setpriv is absent) | 2026-09-15 |
 | RO-03 | a read-only box still serves the page and the bundle | cli | GET /login, GET the bundle | 200, 200 | implemented | 2026-09-15 |
-| RO-04 | migrate runs with nothing pending against read-only trees | cli | migrate | exit 0 | implemented | 2026-09-15 |
+| RO-04 | a REAL pending migration applies against read-only trees | cli | probe migration written before the chmod, then migrate | exit 0 naming the migration; code key and build/build_key unchanged; state key moved; a fresh process sees the table; /login 200 | implemented | 2026-10-12 |
 | RO-05 | a framework task runs against read-only trees | cli | rsx:task:run Session_Cleanup_Service cleanup_sessions | exit 0 | implemented | 2026-09-15 |
 | RO-06 | rsx:health reports against read-only trees | cli | rsx:health | exit 0 | implemented | 2026-09-15 |
 | RO-07 | none of it wrote into the three trees | cli | marker, then all of the above | `find -newer` empty | implemented | 2026-09-15 |

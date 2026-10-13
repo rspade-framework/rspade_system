@@ -18,9 +18,9 @@ use App\RSpade\Core\Models\User_Model;
  * `schema: rows` and `schema: semantics`. It runs in every mode, because the question
  * it asks - does this database still carry what the framework code reads by name - has
  * the same answer and the same consequence on a laptop and on a deployed box, and
- * nothing else asks it anywhere (rsx:migrate:check_consistency compares the manifest
- * with the database, in production modes only, and the manifest is DERIVED from the
- * database, so it can never see a column the framework needs and the schema never had).
+ * nothing else asks it anywhere (the column maps the framework holds at run time are READ
+ * from the database, so they can never show a column the framework needs and the schema
+ * never had).
  *
  * FAIL is structural: a missing table, a missing required column, a missing unique
  * index, a missing foreign key, a missing required row. Each of those is something the

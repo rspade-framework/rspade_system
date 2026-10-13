@@ -961,7 +961,7 @@ class Spa {
             // Session validation after navigation
             // Validates that client state (window.rsxapp) matches server state.
             // Detects:
-            // 1. Codebase updates (build_key changed) - new deployment
+            // 1. Codebase updates and migrations (build_key changed)
             // 2. User changes (name, role, permissions updated)
             // 3. Session changes (logged out, ACLs modified)
             //

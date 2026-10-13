@@ -15,12 +15,12 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Pins the two seams `migrate` owns on behalf of this subsystem: the post-migrate
- * dictionary build, and the cache clear at the end of a run.
+ * dictionary build, and the schema-state purge around a run.
  *
  * SOURCE-STRUCTURE ASSERTIONS, deliberately - the same technique the migrate concern
  * already uses for `migrate:normalize_schema`'s catch path. Actually running `migrate`
  * from a test means snapshotting and re-migrating the test database to observe two lines
- * of output; what is worth protecting here is not that RsxCache::clear() works (the cache
+ * of output; what is worth protecting here is not that the purge works (the database
  * concern owns that) but that the CALL SITES have not silently disappeared from a command
  * nobody re-reads. A deleted call is exactly the regression these assertions catch and
  * nothing else would.
@@ -85,34 +85,68 @@ class Revision_Migrate_Seam_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * BOTH successful tails clear the cache - the snapshot-protected run and the bare
-     * one. A schema that has just moved leaves the build-scoped cache describing
-     * something that no longer exists.
+     * EVERY migrate run purges the schema-dependent caches before it starts and after it
+     * ends, whichever runner it takes and however that runner ends: the purge sits in
+     * handle(), ahead of the run and in a finally around it. A schema that has just moved
+     * leaves everything cached about it describing something that no longer exists.
      */
-    public static function test_both_migrate_success_paths_clear_the_cache()
+    public static function test_migrate_purges_before_the_run_and_after_it_on_every_exit()
     {
-        foreach (['run_with_snapshot', 'run_without_snapshot'] as $method) {
-            $source = static::__method_source(Maint_Migrate::class, $method);
+        $source = static::__method_source(Maint_Migrate::class, 'handle');
 
-            static::__assert_contains('RsxCache::clear();', $source, $method . '() must clear the cache');
-            static::__assert_contains('[OK] Cache cleared', $source, $method . '() must say so');
-        }
+        $before = strpos($source, '$this->purge_schema_state();');
+        $run = strpos($source, 'return $this->run_migrate();');
+        $finally = strpos($source, '} finally {');
+        $after = strrpos($source, '$this->purge_schema_state();');
+
+        static::__assert_true($before !== false && $run !== false && $finally !== false, 'handle() purges, runs, and has a finally');
+        static::__assert_greater_than($before, $run, 'the first purge is ahead of the run');
+        static::__assert_greater_than($run, $finally, 'the run is inside the try');
+        static::__assert_greater_than($finally, $after, 'the second purge is in the finally');
+
+        static::__assert_contains(
+            'Rsx_Schema::purge_schema_state();',
+            static::__method_source(Maint_Migrate::class, 'purge_schema_state'),
+            'and the purge is the one definition'
+        );
     }
 
     /**
-     * migrate:restore clears it too, and only after the migration mode is cleaned up -
-     * the restore has just replaced the database the cache was populated against.
+     * The model code a run executes after its migrations - the hook's handlers, the initial
+     * user, the dictionary - reads the MIGRATED columns: this process's copy of the schema
+     * is dropped after the schema reaches the tip and before any of them runs.
      */
-    public static function test_restore_clears_the_cache_after_cleanup()
+    public static function test_the_process_schema_copy_is_dropped_before_the_model_steps()
+    {
+        $source = static::__method_source(Maint_Migrate::class, 'execute_migrations');
+
+        $reset = strpos($source, 'Rsx_Schema::reset();');
+        $last_reset = strrpos($source, 'Rsx_Schema::reset();');
+        $renames = strpos($source, '$this->apply_type_ref_table_renames();');
+        $hook = strrpos($source, '$this->fire_post_normalize_hook();');
+        $initial_user = strpos($source, 'create_initial_user_if_needed()');
+
+        static::__assert_true($reset !== false, 'execute_migrations() resets the schema copy');
+        static::__assert_greater_than($renames, $reset, 'after the schema work is done');
+        static::__assert_greater_than($reset, $hook, 'before the final hook fires');
+        static::__assert_greater_than($hook, $last_reset, 'again after the handlers, which may add columns');
+        static::__assert_greater_than($last_reset, $initial_user, 'and before the initial user');
+    }
+
+    /**
+     * migrate:restore purges too, and only after the migration mode is cleaned up - the
+     * restore has just replaced the database everything cached was read from.
+     */
+    public static function test_restore_purges_after_cleanup()
     {
         $source = static::__method_source(Migrate_Restore_Command::class, 'handle');
 
         $cleanup = strpos($source, 'cleanup_migration_mode();');
-        $clear = strpos($source, 'RsxCache::clear();');
+        $purge = strpos($source, '$this->purge_schema_state();');
 
         static::__assert_true($cleanup !== false, 'the restore must clean up migration mode');
-        static::__assert_true($clear !== false, 'the restore must clear the cache');
-        static::__assert_greater_than($cleanup, $clear, 'the cache is cleared after the restore completes');
+        static::__assert_true($purge !== false, 'the restore must purge the schema state');
+        static::__assert_greater_than($cleanup, $purge, 'the purge follows the completed restore');
     }
 
     /**

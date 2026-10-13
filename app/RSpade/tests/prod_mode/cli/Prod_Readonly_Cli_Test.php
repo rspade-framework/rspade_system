@@ -14,9 +14,10 @@ use App\RSpade\Tests\ProdMode\Cli\Prod_Script_Cli_Test_Abstract;
  * under the runner.
  *
  * WHAT THE SCRIPT PROVES. With build/, system/ and rsx/ stripped of every write bit, a
- * sealed box still serves the page and its compiled bundle, runs migrate, runs a framework
- * task and reports health - and then that none of it WROTE into those trees, permissions
- * or no permissions. Run as an unprivileged user it additionally exercises the OS refusal
+ * sealed box still serves the page and its compiled bundle, runs migrate with a REAL
+ * migration pending (the code key holds, the state key moves, a fresh process sees the new
+ * table), runs a framework task and reports health - and then that none of it WROTE into
+ * those trees, permissions or no permissions. Run as an unprivileged user it additionally exercises the OS refusal
  * on every command; run as root (this framework's development container is root) the
  * refusal is proven by an unprivileged probe instead, and the script says which path it
  * took. Every recorded file mode is re-applied afterwards.

@@ -16,7 +16,13 @@ use App\RSpade\Tests\ProdMode\Cli\Prod_Script_Cli_Test_Abstract;
  * WHAT THE SCRIPT PROVES. rsx:prod:enable produces a SEALED build and the site serves
  * from it (the page and the compiled bundle it names both answer 200); a sealed box
  * writes nothing under build/, system/ or rsx/ while it serves, runs rsx:health and runs
- * migrate; rsx:build and rsx:clean both refuse without --force; removing the seal STOPS
+ * migrate; a REAL pending migration then runs on the sealed box and nothing is rebuilt -
+ * every file under build/ keeps its checksum, rsx:prod:verify passes, the code key holds
+ * and the state key moves, a fresh process sees the new table, a signed-in page renders
+ * from the minified bundle with its models answering field_length(), and the page's
+ * field-length script is served under the new state key - and removing the migration
+ * returns the state key with no build step either; rsx:build and rsx:clean both refuse
+ * without --force; removing the seal STOPS
  * the box (500, and rsx:health exits non-zero naming the remedy) rather than letting it
  * quietly rebuild itself; rsx:build --force is the repair; and rsx:prod:disable returns a
  * working development box.
@@ -34,7 +40,7 @@ use App\RSpade\Tests\ProdMode\Cli\Prod_Script_Cli_Test_Abstract;
  * other, and neither one's verdict would mean anything. It is also why they are
  * $explicit_group_only - a bare suite run must not walk into three full builds.
  *
- * Roughly four minutes. That is the lifecycle, not the harness.
+ * Roughly five minutes. That is the lifecycle, not the harness.
  */
 class Prod_Lifecycle_Cli_Test extends Prod_Script_Cli_Test_Abstract
 {

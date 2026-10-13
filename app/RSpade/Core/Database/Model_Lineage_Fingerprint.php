@@ -15,7 +15,7 @@ use App\RSpade\Core\Manifest\Manifest;
  * A core model is a BASE plus a CONCRETE: `abstract class X_Model_Abstract` carries the
  * table, the enums, the constants, the relationships and the detail tables, and
  * `class X_Model extends X_Model_Abstract {}` is the three-line shell an application
- * replaces. Everything the build derives from a model - the JS stub, the column map -
+ * replaces. Everything the build derives from a model - its JS stub above all -
  * therefore comes from the WHOLE LINEAGE, and a key computed from the concrete file alone
  * cannot move when the base moves.
  *

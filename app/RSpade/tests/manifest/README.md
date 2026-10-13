@@ -88,11 +88,27 @@ mode stamp and the development boot's refusal of an index recorded under another
 (`Manifest_Store::index_mode_stale_reason()`). It works at the decision level and against
 the live index swapped in memory; nothing switches the box's mode.
 
-`Manifest_Model_Introspection_Test` counts QUERIES, because that is what the model
-module's fingerprint is for: two consecutive passes over an unchanged tree must issue
-zero `SHOW COLUMNS`. It drives the module directly rather than through a build, because a
-build in a child process cannot be listened to. A `Schema::hasTable` probe DOES survive
-for a model whose table is missing, and that is deliberate - see the test.
+`Manifest_Model_Registry_Test` counts QUERIES, and the count it requires is ZERO: the model
+registry holds code facts only (class, file, declared table), so building it asks the
+database nothing and a model whose table does not exist is registered like any other. It
+drives the module directly rather than through a build, because a build in a child process
+cannot be listened to.
+
+`Manifest_Build_No_Database_Test` is the same statement about the WHOLE build: a cold build of
+the tree in a child, against scratch roots, reports under the `--_manifest-report-cold` probe
+how many statements it issued while building (`MANIFEST_BUILD_DB_STATEMENTS`), and the count
+is zero - the stub generators included, since a model stub carries no column lengths. The
+same class proves the PROCESS needs no database either: `rsx:manifest:build` completes in a
+child pointed at a host nothing answers on, a non-build command against that host still
+fails at boot (the control), and the morph map a build process defers is registered before
+its first statement.
+
+`Manifest_State_Key_Test` is the other key: `get_state_key()` is the code key combined with
+the applied migrations, a real migrations row moves it and leaves the code key alone, it
+costs one query per process and none on a boot or on the asset channel (read out of a child
+through the `MANIFEST_STATE_KEY_COMPUTATIONS` probe line), and an unreachable database
+answers the code key alone. The unreachable database is a connection of the test's own
+pointed at a dead port; the box's database is never touched.
 
 `Manifest_Stub_Rewrite_Test` asserts MTIMES, because that is what the damage is made of:
 a stub write that changes not one byte still recompiles every bundle carrying the stub.

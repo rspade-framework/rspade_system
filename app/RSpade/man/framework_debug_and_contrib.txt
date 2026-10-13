@@ -1896,7 +1896,7 @@ SUBSYSTEM PRIMERS
     SESSION VALIDATION runs fire-and-forget after each navigation, skipped on
     the initial load and on history navigation. It asks a public,
     realm-agnostic endpoint for the caller's own session state and compares
-    the build key, a session hash, the user and the site. THE REFRESH IS
+    the state key, a session hash, the user and the site. THE REFRESH IS
     location.reload(), DELIBERATELY: replacing a URL with itself is a
     FRAGMENT navigation on a hashed URL, which the browser performs without
     fetching the document - so on any hashed URL the refresh silently never

@@ -8,6 +8,7 @@ use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Bundle\Bundle_Include_Pattern;
 use App\RSpade\Core\Csp\Rsx_Csp;
+use App\RSpade\Core\Database\Field_Length_Script;
 use App\RSpade\Core\Debug\Console_Debug_Override;
 use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Manifest\Manifest;
@@ -333,7 +334,6 @@ abstract class Rsx_Bundle_Abstract
         // Base config that all bundles inherit
         $base_config = [
             'debug' => config('app.debug'),
-            'build_key' => Manifest::get_build_key(),
         ];
 
         // Start with base config
@@ -370,7 +370,8 @@ abstract class Rsx_Bundle_Abstract
      * @param string|null $session_hash HMAC session hash (window.rsxapp.session_hash), or null
      * @param int|string|null $user_id  Current user id, or null/empty when anonymous
      * @param int|string|null $site_id  Current site id, or null/empty when unset
-     * @param string $build_key         Manifest build key
+     * @param string $build_key         The state key (Manifest::get_state_key()) - the value
+     *                                  window.rsxapp.build_key carries
      * @return string 32-char md5 hex
      */
     public static function _compute_cache_key(?string $session_hash, $user_id, $site_id, string $build_key): string
@@ -418,13 +419,23 @@ abstract class Rsx_Bundle_Abstract
         }
 
         $html = [];
-        $manifest_hash = Manifest::get_build_key();
+
+        // THE STATE KEY, under the name the page has always read. rsxapp.build_key is what
+        // an open page compares against the server to decide it is out of date
+        // (Rsx.validate_session()) and what scopes its browser storage (cache_key, below),
+        // and both must move when a migration runs as well as when the code does.
+        $manifest_hash = Manifest::get_state_key();
 
         // Consolidate all data into window.rsxapp
         $rsxapp_data = [];
 
         // Add build_key (always included in both dev and production)
         $rsxapp_data['build_key'] = $manifest_hash;
+
+        // The CODE key, for a cache-buster on an asset that is a function of the code alone
+        // (the pdf.js and xterm modules): a migration must not make a browser fetch those
+        // again.
+        $rsxapp_data['code_key'] = Manifest::get_build_key();
 
         // Add session_hash if session exists (hashed for scoping, non-reversible).
         // ONE cookie for the whole site - staff and portal pages hash the same token.
@@ -817,6 +828,15 @@ abstract class Rsx_Bundle_Abstract
             $html[] = '<script src="' . htmlspecialchars($url) . '" defer></script>';
         }
 
+        // The bundle's field-length script: the column max lengths of the models this bundle
+        // carries (Field_Length_Script), read by Rsx_Js_Model.field_length(). AFTER the app
+        // script and deferred like it - deferred scripts run in document order, so Rsx is
+        // defined when this one assigns to it, and both have run before anything renders.
+        // A bundle with no model (a login page) has no such script and emits no tag.
+        if (!empty($compiled['field_length_script'])) {
+            $html[] = '<script src="' . htmlspecialchars(Field_Length_Script::url($compiled['field_length_script'])) . '" defer></script>';
+        }
+
         // Inline JS removed - bundles handle their own initialization
 
         return implode("\n", $html);
@@ -839,10 +859,9 @@ abstract class Rsx_Bundle_Abstract
             // Use the controlled route for compiled assets
             $url = '/_compiled/' . $filename;
 
-            // In development mode, add ?v= parameter for cache-busting
+            // In development mode, add ?v= parameter for cache-busting.
             if (Rsx::is_development()) {
-                $manifest_hash = Manifest::get_build_key();
-                $url .= '?v=' . $manifest_hash;
+                $url .= '?v=' . Manifest::get_state_key();
             }
 
             return $url;

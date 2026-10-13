@@ -27,7 +27,7 @@ the docker image build itself (asserted by running the suite, not by a unit test
 |------|--------------|
 | `bootstrap/rsx_preboot.php` + `bootstrap/rsx_mode.php` | the pre-boot refusal of `rsx:test` in a production mode, and the one pre-boot mode reader it shares with the container gate |
 | `app/RSpade/Core/Testing/Rsx_Test_Abstract.php` | the per-class declarations the runner reads: `$requires_db_reset`, `$explicit_group_only` |
-| `app/RSpade/Commands/Rsx/Rsx_Test_Command.php` | discovery, the singleton flock, the docker gate, the worker count, the queue ordering, worker mode, the output format (`print_class_results` / `print_summary` / `merge_and_report`), the full-suite result cache keyed by the manifest build key (`results_cache_path` / `read_cached_results` / `write_cached_results`, replayed through `report_records`) |
+| `app/RSpade/Commands/Rsx/Rsx_Test_Command.php` | discovery, the singleton flock, the docker gate, the worker count, the queue ordering, worker mode, the output format (`print_class_results` / `print_summary` / `merge_and_report`), the result cache keyed by the manifest state key (`results_cache_path` / `read_cached_results` / `write_cached_results`, replayed through `report_records`) |
 | `bin/rsx-testd/orchestrator.js` | the run: sweep, build, queue, N containers, `results.jsonl`, prune |
 | `bin/rsx-testd/lib/queue_server.js` | the unix-socket work queue, the holder map, and the live per-class line printed as each result arrives |
 | `bin/rsx-lockd/lib/protocol.js` | frame encode/decode and `MAX_FRAME_BYTES` (rsx-lockd's codec, which the queue server requires) |

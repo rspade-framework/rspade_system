@@ -143,8 +143,8 @@ by the stamp, never by waiting.
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
 | HEALTH-OPCACHE-ONCE | the first call writes exactly one line and a second inside the window writes none | php | _log_once(key) twice | true + 1 captured line; false + 0 | implemented | 2026-09-15 |
-| HEALTH-OPCACHE-SCOPE | another scope (another build key) has its own window, and an unstamped scope reads as unstamped | php | two distinct keys | both log; a third key is a cache miss | implemented | 2026-09-15 |
-| HEALTH-OPCACHE-STAMP | the stamp is what closes the window, and the window is six hours | php | _log_once + RsxCache::get | stamp present; WINDOW_SECONDS == 21600 | implemented | 2026-09-15 |
+| HEALTH-OPCACHE-SCOPE | another scope (another code key - check() appends it to the throttle key) has its own window, and an unstamped scope reads as unstamped | php | two distinct keys | both log; a third key is a cache miss | implemented | 2026-09-15 |
+| HEALTH-OPCACHE-STAMP | the stamp is what closes the window, and the window is six hours | php | _log_once + RsxCache::get_persistent | stamp present; WINDOW_SECONDS == 21600 | implemented | 2026-09-15 |
 | HEALTH-OPCACHE-CLI | a CLI process is never advised and never consumes the live window - OPcache is correctly off for the CLI SAPI | php | check() under the suite's cli SAPI | no line; live key unstamped | implemented | 2026-09-15 |
 | HEALTH-OPCACHE-INI | an ini nothing declares reads as OFF, never as enabled | php | _ini_enabled(false/'0'/'1'/'On') | false, false, true, true | implemented | 2026-09-15 |
 | HEALTH-OPCACHE-MSG | the line names the exact setting, says it is a recommendation, and states its own cadence | php | message() | contains opcache.enable=1, 'recommendation', '6 hours' | implemented | 2026-09-15 |

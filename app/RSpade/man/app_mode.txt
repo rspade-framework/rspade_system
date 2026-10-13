@@ -205,15 +205,17 @@ THE SEAL FILE
             "assets": [
                 { "file": "build_key", "sha256": "..." },
                 { "file": "bundles/Frontend__app.<hash>.js", "sha256": "..." },
+                { "file": "bundle_models/Frontend_Bundle.json", "sha256": "..." },
                 { "file": "manifest_index.php", "sha256": "..." }
-                // ... every file under bundles/ ...
+                // ... every file under bundles/ and bundle_models/ ...
             ]
         }
 
     Asset paths are recorded relative to the build root, so the seal is
     self-contained and location-independent. The assets list covers
-    manifest_index.php, manifest_files.php, the build_key file, and every
-    file under bundles/.
+    manifest_index.php, manifest_files.php, the build_key file, every file
+    under bundles/ and every file under bundle_models/ (the list of models
+    each compiled bundle carries; rsx:man bundle_api).
 
     is_sealed() is true ONLY when a seal file exists AND the current RSX_MODE
     is a prod mode. That double condition means a leftover seal in a
@@ -311,9 +313,11 @@ DETERMINISM CONTRACT
 
     3. The MODE is part of build_key. One tree builds three different
        artifacts (development, debug, production), and the key is what
-       identifies the build to the full-page cache, the build-scoped
-       RsxCache prefix, window.rsxapp.build_key and the development asset
-       cache-buster - so the same tree keys differently in each mode, and a
+       identifies the build to the full-page cache and - combined with the
+       applied migrations into the STATE key (rsx:man migrations, A MIGRATION
+       NEVER REBUILDS) - to the build-scoped RsxCache prefix,
+       window.rsxapp.build_key and the development asset cache-buster - so
+       the same tree keys differently in each mode, and a
        development build after rsx:prod:disable never answers with the
        sealed build's key. The index records the mode it was built in, and
        a development boot that loads an index recorded under another mode

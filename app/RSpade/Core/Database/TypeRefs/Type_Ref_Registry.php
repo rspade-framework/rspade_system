@@ -45,7 +45,13 @@ class Type_Ref_Registry
     protected static $map_id_to_class = null;
 
     /**
-     * Cache key for Redis storage (build-scoped - invalidates on manifest rebuild)
+     * Cache key for Redis storage, in RsxCache's PERSISTENT family.
+     *
+     * A fixed key, deliberately outside the state-key scope: the map's one input is the
+     * _type_refs table, every write this registry makes rewrites or deletes the entry, and
+     * RsxCache::clear() (every rollback, every migrate) removes it. The registry loads on
+     * every boot, and a state-key-scoped read here would make every process - one that only
+     * serves a compiled asset included - pay the applied-migrations query.
      */
     protected const CACHE_KEY = 'type_refs_map';
 
@@ -265,6 +271,41 @@ class Type_Ref_Registry
     }
 
     /**
+     * Whether register_morph_map() is still owed to this process (see
+     * register_morph_map_on_first_query()).
+     */
+    protected static bool $morph_map_deferred = false;
+
+    /**
+     * Register the morph map when this process first uses the database, instead of now.
+     *
+     * FOR A PROCESS THAT PRODUCES THE BUILD (Rsx_Framework_Provider decides which). The
+     * build holds code facts only and asks the database nothing, so it runs with no
+     * database reachable at all - a CI job, an image build stage - and the one thing that
+     * stood in the way was this registry reading _type_refs at boot. A build needs no morph
+     * map; anything such a process runs that DOES read a model (an application's
+     * rsx.rebuilt handler) reaches the database through the connection, and the map is
+     * registered immediately before its first statement executes.
+     *
+     * Every other process registers at boot, as register_morph_map() documents.
+     */
+    public static function register_morph_map_on_first_query(): void
+    {
+        static::$morph_map_deferred = true;
+
+        // Resolving the connection object opens no socket; the callback runs before each
+        // statement, and the flag is dropped first so the registry's own reads pass through.
+        DB::connection()->beforeExecuting(static function () {
+            if (!static::$morph_map_deferred) {
+                return;
+            }
+
+            static::$morph_map_deferred = false;
+            static::register_morph_map();
+        });
+    }
+
+    /**
      * Re-read the registry and re-register the morph map, for a process that has just been
      * pointed at a DIFFERENT database.
      *
@@ -315,7 +356,7 @@ class Type_Ref_Registry
     public static function refresh(): void
     {
         // Clear Redis cache
-        RsxCache::delete(static::CACHE_KEY);
+        RsxCache::delete_persistent(static::CACHE_KEY);
         static::$map_class_to_id = null;
         static::$map_id_to_class = null;
         static::$map_class_resolves = [];
@@ -331,7 +372,7 @@ class Type_Ref_Registry
      */
     public static function _reset_cached_state(): void
     {
-        RsxCache::delete(static::CACHE_KEY);
+        RsxCache::delete_persistent(static::CACHE_KEY);
         static::$map_class_to_id = null;
         static::$map_id_to_class = null;
         static::$map_class_resolves = [];
@@ -376,8 +417,8 @@ class Type_Ref_Registry
             return;
         }
 
-        // Try to load from Redis cache first (build-scoped)
-        $cached = RsxCache::get(static::CACHE_KEY);
+        // Try to load from Redis cache first
+        $cached = RsxCache::get_persistent(static::CACHE_KEY);
         if ($cached !== null && is_array($cached)) {
             static::$map_class_to_id = $cached;
             static::$map_id_to_class = array_flip($cached);
@@ -403,8 +444,8 @@ class Type_Ref_Registry
             static::$map_id_to_class[(int) $row->id] = $row->class_name;
         }
 
-        // Cache the map (build-scoped)
-        RsxCache::set(static::CACHE_KEY, static::$map_class_to_id, RsxCache::HOUR);
+        // Cache the map
+        RsxCache::set_persistent(static::CACHE_KEY, static::$map_class_to_id, RsxCache::HOUR);
     }
 
     /**
@@ -443,7 +484,7 @@ class Type_Ref_Registry
         static::$map_id_to_class[$id] = $class_name;
 
         // Update Redis cache
-        RsxCache::set(static::CACHE_KEY, static::$map_class_to_id, RsxCache::HOUR);
+        RsxCache::set_persistent(static::CACHE_KEY, static::$map_class_to_id, RsxCache::HOUR);
 
         // Update Laravel morph map - both aliases, class name first (see register_morph_map).
         $fqcn = static::_resolve_fqcn($class_name);

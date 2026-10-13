@@ -627,8 +627,36 @@ BUNDLE RENDERING
         <link href="/_compiled/Dashboard__app.def456.css" rel="stylesheet">
         <script src="/_compiled/Dashboard__vendor.abc123.js"></script>
         <script src="/_compiled/Dashboard__app.def456.js"></script>
+        <script src="/_field_lengths/Dashboard_Bundle__def456.js?v=<state key>" defer></script>
+
+    The last tag is the bundle's FIELD-LENGTH SCRIPT (below); it is emitted only
+    for a bundle whose compiled output carries at least one model.
 
     Never call from controllers - only from Blade files.
+
+    THE FIELD-LENGTH SCRIPT. A column's max length is a fact about the DATABASE,
+    so it is not compiled into a bundle: the framework serves it, per bundle, as
+    one line of JavaScript -
+
+        Rsx.__field_length_data = {"Contact_Model": {"first_name": 100, ...}, ...};
+
+    - and Model.field_length('column') reads that object, synchronously. It lists
+    exactly the models whose stubs are in the bundle's compiled app script (the
+    compiler records them in build/bundle_models/<Bundle>.json, in every mode; a
+    sealed build's seal covers that file), each varchar/char column with the PHP
+    model's own field_length() answer, single-underscore system columns left out.
+    A model whose table is not in the database yet gets an empty entry.
+
+    The URL names the bundle's own app script hash, so the script is exactly as
+    reachable as the bundle (any other name is a 404), and carries the STATE key
+    as ?v= - it is served immutable for the current key and no-store for any
+    other, and the key moves when a migration runs (rsx:man migrations). A
+    migration therefore changes what the script answers and changes no bundle.
+
+    A PAGE THAT PRINTS A BUNDLE'S TAGS BY HAND GETS NO FIELD LENGTHS. The tag is
+    emitted by render(); a layout that writes its own <script src="/_compiled/...">
+    tags instead does not load the script, and Model.field_length() throws there,
+    naming the script. Render bundles with render().
 
     ON-DEMAND COMPILE. In development a request for a /_compiled/ file that is not
     on disk compiles the named bundle first - but only when the name is a concrete
@@ -823,6 +851,11 @@ JAVASCRIPT STUBS
                 return Ajax.model_fetch('User_Model', id);
             }
         }
+
+    A stub is generated from the model's CODE alone - enums, relationships,
+    declared text types, derived properties. It carries no column lengths:
+    field_length() is one inherited method that reads the page's field-length
+    script (BUNDLE RENDERING, above).
 
     A MODEL STUB FOLLOWS THE CLASS THAT EXTENDS IT. A generated model stub is
     emitted at the include position of the PHP model file, AND behind every JS

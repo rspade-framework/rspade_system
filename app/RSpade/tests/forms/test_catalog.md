@@ -98,3 +98,16 @@ Real keyboard input on a runtime-mounted widget on `/_sys`.
 | forms-code-06 | a full last box takes no more | type `9` | unchanged | implemented |
 | forms-code-07 | Enter with every box full | Enter | not prevented | implemented |
 | forms-code-08 | the input contract | `val('')`, `focus()`, `val('00a42')` | cleared, cursor in box 1, `0042`; `input` carried the value; no `maxlength`, one `one-time-code` | implemented |
+
+## field_length_script.js (playwright) - `Model.field_length()` reads the page's script
+
+`/_sys`, the framework's `User_Model`.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-fl-01 | the page carries one field-length tag, deferred, after the app bundle, naming its hash and the state key | the document's scripts | one tag, in that position | implemented |
+| forms-fl-02 | the script is served immutable and `field_length()` answers what it carries | fetch the tag's URL; `User_Model.field_length('first_name')` | 200, `immutable`; the same number | implemented |
+| forms-fl-03 | no length answers null | `'id'`; a name that is no column | null; null | implemented |
+| forms-fl-04 | a class extending a model answers through it | `class X extends User_Model` | the model's answer | implemented |
+| forms-fl-05 | missing data throws | `Rsx.__field_length_data = null`; `= {}` | a throw naming the model and the script, both times | implemented |
+

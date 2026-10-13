@@ -181,8 +181,8 @@ Never call the internal `_reset_request_state()` / `_snapshot_request_state()` y
   crosses foreign keys that may no longer resolve, soft-deleted rows, children created
   later and uniqueness another row now satisfies - which of those to honour is an
   APPLICATION decision, written against the app's own rules with the history as evidence.
-- **A `_`-prefixed column is invisible everywhere** - stripped by `toArray()`, skipped in
-  the JS stub's `field_length()` map, excluded from every diff. Never give an app-facing
+- **A `_`-prefixed column is invisible everywhere** - stripped by `toArray()`, left out of
+  the field-length script a page loads, excluded from every diff. Never give an app-facing
   column a leading underscore. (`__` is the framework key prefix and is untouched.)
 - **An Ajax BATCH is one transaction PER CALL**, not one for the batch: each call snapshots
   the facade, resets it, runs and restores. A task worker starts a fresh one per task.

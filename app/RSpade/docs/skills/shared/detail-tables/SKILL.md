@@ -110,7 +110,7 @@ DB::transaction(function () use ($party, $params) {
 
 ## 6. Codegen spans both tables
 
-The manifest merges detail columns into the base model's column map, so the base behaves as one logical model:
+Detail columns are merged into the base model's column map when it is read from the schema (`Rsx_Schema`), so the base behaves as one logical model:
 
 - `Model.field_length('first_name')` resolves detail columns - a form binds `$max_length=Party_Model.field_length('first_name')` even though the column lives on a detail.
 - `rsx:constants:regenerate` documents detail columns in the base model's `@property` docblock, each annotated `(detail: <table>)`.

@@ -78,7 +78,7 @@ class Constants_Regenerate_Metadata_Test extends Rsx_Test_Abstract
      * enum column, as [fqcn, detail_tables, enum_column, first_enum_id, first_enum_constant]
      * - or null when it declares none.
      *
-     * A merged detail column is recognised by its source_table tag: the manifest records
+     * A merged detail column is recognised by its source_table tag: Rsx_Schema records
      * which physical table each column came from, and a CTI base model's map carries columns
      * from its detail tables. Deterministic - the model index is walked in sorted order.
      *

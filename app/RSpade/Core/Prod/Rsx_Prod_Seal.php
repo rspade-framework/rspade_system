@@ -17,7 +17,8 @@ use App\RSpade\Core\Rsx;
  * A prod build is compiled ONCE by rsx:build and then treated as IMMUTABLE. The seal
  * is the on-disk record of that build: it pins the build_key, the mode it was built
  * for, and a sha256 of every build artifact (manifest_index.php, manifest_files.php,
- * build_key, and every file under bundles/). It exists so the framework can:
+ * build_key, and every file under bundles/ and bundle_models/). It exists so the
+ * framework can:
  *
  *   - recognize that a production-like mode has a build to serve at all (is_sealed(),
  *     which the manifest gate reads: an unsealed prod box refuses to run);
@@ -233,8 +234,9 @@ class Rsx_Prod_Seal
     // -------------------------------------------------------------------------
 
     /**
-     * Collect the build assets (the two manifest index files, build_key, bundles/*) with a
-     * sha256 each, recorded relative to the build root and sorted by path.
+     * Collect the build assets (the two manifest index files, build_key, bundles/*, and each
+     * bundle's model list under bundle_models/*) with a sha256 each, recorded relative to the
+     * build root and sorted by path.
      */
     protected static function _collect_assets(): array
     {
@@ -258,10 +260,16 @@ class Rsx_Prod_Seal
             $assets[] = self::_asset_entry($root, $build_key);
         }
 
-        $bundles_dir = $root . '/bundles';
-        if (is_dir($bundles_dir)) {
+        // The compiled bundles, and the model list written beside each: a page serves its
+        // field-length script from that list, so it is as much a part of the build as the
+        // bundle it describes.
+        foreach ([Rsx_Project_Paths::bundles_dir(), Rsx_Project_Paths::bundle_models_dir()] as $asset_dir) {
+            if (!is_dir($asset_dir)) {
+                continue;
+            }
+
             $iterator = new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($bundles_dir, RecursiveDirectoryIterator::SKIP_DOTS),
+                new RecursiveDirectoryIterator($asset_dir, RecursiveDirectoryIterator::SKIP_DOTS),
                 RecursiveIteratorIterator::LEAVES_ONLY
             );
             foreach ($iterator as $file) {

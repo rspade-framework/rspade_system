@@ -96,6 +96,7 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
 | A stub is resolved once however many classes extend it | php |
 | A class extending something that is not a registered stub pulls nothing | php |
 | A registered stub missing from disk fails the compile loudly | php |
+| A compiled bundle's model list: exactly the stubs in the output, rewritten when it and the app script come apart, sealed | php |
 | A watch FILE target invalidates the bucket of the bundle that declared it | asset |
 | A watch DIRECTORY target invalidates the same bucket (no regression) | asset |
 | Invalidation round-trips (revert restores the previous artifact + hash) | asset |

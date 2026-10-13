@@ -475,10 +475,11 @@ DOCKER-ACCELERATED TESTING
     longest-first and each class goes to whichever container is free, so a class
     can be preceded by a class it has never followed before.
 
-    A RUN'S VERDICT IS CACHED BY CODE STATE AND BY WHAT IT RAN. A docker run
-    records its verdict - every class's results and the exit code, pass or fail -
-    under the manifest build key (php artisan rsx:manifest:get_build_key, the
-    hash of every scanned source file) joined to a fingerprint of the names,
+    A RUN'S VERDICT IS CACHED BY CODE AND SCHEMA STATE AND BY WHAT IT RAN. A docker
+    run records its verdict - every class's results and the exit code, pass or
+    fail - under the manifest state key (php artisan rsx:manifest:get_state_key:
+    the hash of every scanned source file combined with the names of the applied
+    migrations) joined to a fingerprint of the names,
     sizes and mtimes of every file under system/bin, system/node_modules and the
     docker resource directory (the tooling a verdict also depends on), AND under
     a hash of the SELECTOR: the suite plus the normalised list of classes that
@@ -486,8 +487,8 @@ DOCKER-ACCELERATED TESTING
     test results for build <key> ..." and replays that verdict through the same
     printer, with the same exit code, instead of running again. A SUBSET'S
     VERDICT REPLAYS ONLY FOR THAT SAME SUBSET and can never stand in for the
-    suite. Any edit to a scanned file changes the build key and the next run is
-    live; deleting
+    suite. Any edit to a scanned file, and any migration, changes the state key and
+    the next run is live; deleting
     tmp/test-results/<suite>_<key>_<selector>.json forces one.
     While a live run is in progress one line per finished class streams as it
     completes; the full report follows at the end.
@@ -648,9 +649,11 @@ PRODUCTION MODE
         1. php artisan rsx:test              on a DEVELOPMENT box
         2. php artisan rsx:test --framework  (when the framework itself is
                                               being audited)
-        3. php artisan migrate               schema first - the manifest bakes
-                                              every model's columns in
+        3. php artisan migrate               the schema the new code expects
         4. php artisan rsx:build --force     or rsx:mode:set prod - the seal
+                                              (3 and 4 are independent: either
+                                              order, and neither repeats the
+                                              other - rsx:man prod)
 
     The suite proves the code; the build seals it. Nothing runs the suite after
     step 4, and nothing needs to: the artifact is byte-identical to what step 1

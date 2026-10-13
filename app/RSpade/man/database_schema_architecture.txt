@@ -42,8 +42,8 @@ framework SYSTEM state, not application data.
     - Owned by a framework subsystem, on a table the application otherwise owns
     - Stripped from every payload by Rsx_Model_Abstract::toArray(), so the
       client never receives it
-    - Skipped in the generated JS model stub's field_length() map (the client
-      cannot hold the column, so it can never need its length)
+    - Skipped in the field-length script a page loads (the client cannot
+      hold the column, so it can never need its length)
     - Excluded from every revision diff (rsx:man revisions)
 
   __columnname

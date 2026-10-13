@@ -69,11 +69,6 @@ class ClassExists_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        // Skip Model_ManifestSupport.php - runs during manifest building when models may not be loadable
-        if (str_contains($file_path, 'Model_ManifestSupport.php')) {
-            return;
-        }
-
         // Skip BundleCompiler.php - checks for bundle module classes
         if (str_contains($file_path, 'BundleCompiler.php')) {
             return;

@@ -150,8 +150,8 @@ WRITE
     DELETE - deleting the base cascade-deletes the detail (FK ON DELETE CASCADE).
 
 CODEGEN (spans base + detail as one logical model)
-    - field_length('col') resolves across base AND detail columns (the manifest merges
-      detail columns into the base model's column map). Forms bind
+    - field_length('col') resolves across base AND detail columns (detail columns are
+      merged into the base model's column map when it is read from the schema). Forms bind
       $max_length=Model.field_length('first_name') even though first_name is on a detail.
     - rsx:constants:regenerate documents detail columns in the base model's @property
       docblock, each annotated "(detail: <table>)" - after the base columns, one group
@@ -189,7 +189,7 @@ FILES
     system/app/RSpade/Core/Database/DetailTables/Detail_Tables_Resolver.php
     system/app/RSpade/Core/Database/Models/Rsx_Model_Abstract.php   (accessor, embed, save)
     system/app/RSpade/Core/Database/Database_BundleIntegration.php  (JS stub accessors)
-    system/app/RSpade/Core/Manifest/Modules/Model_ManifestSupport.php (column spanning)
+    system/app/RSpade/Core/Database/Rsx_Schema.php                  (column spanning)
     system/app/RSpade/Commands/Rsx/Constants_Regenerate_Command.php (docblock spanning)
 
 SEE ALSO

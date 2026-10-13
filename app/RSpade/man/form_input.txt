@@ -307,8 +307,9 @@ BUILT-IN INPUTS
             <Text_Input $name="email" $max_length=User_Model.field_length('email') />
             <Text_Input $name="notes" $type="textarea" $rows=5 $max_length=-1 />
 
-        field_length('column') is generated from the database schema and returns
-        null for a non-varchar column. Subclasses (Phone_Text_Input,
+        field_length('column') answers from the page's field-length script (the
+        live schema's lengths for the models in the page's bundle - rsx:man
+        bundle_api) and returns null for a non-varchar column. Subclasses (Phone_Text_Input,
         Currency_Input) are exempt from the requirement - they have intrinsic
         limits.
 

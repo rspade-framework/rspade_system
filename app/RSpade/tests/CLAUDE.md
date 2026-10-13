@@ -92,11 +92,15 @@ names - none has an index to resolve against - so those stay a review question: 
 test names a framework table or a fixture table of its own, a `/_`-prefixed or `/api/` route,
 and a bundle it resolved from the manifest.
 
-**A SCHEMA-DERIVED answer cannot come from a fixture table.** Casts and column lengths are
-read out of the manifest's column map, which is built from the live schema when the manifest
-is built - before any test creates its tables. A test needing one drives a framework model on
-a framework table, or DERIVES its subject from the manifest and skips when the application
-declares none.
+**A SCHEMA-DERIVED answer does not come from a fixture table unless the test says so.** Casts
+and column lengths are read out of `Rsx_Schema`'s column map, which is cached across
+processes under the STATE key - and a table created with plain DDL moves no key. The runner
+reads that map from the migrated baseline before any class runs
+(`Rsx_Test_Command::prepare_test_database()`), so a fixture table contributes nothing: a test
+needing a schema-derived answer drives a framework model on a framework table, or DERIVES its
+subject from the model registry and skips when the application declares none. A test whose
+SUBJECT is a schema change makes it visible itself - `Rsx_Schema::forget()` after the DDL, and
+again after undoing it (`tests/database/php/Rsx_Schema_Test.php` is the worked example).
 
 **A browser test cannot see the test tree at all.** The trees enter the manifest only while
 `rsx:test` runs, and a playwright script drives the ordinary web server - another process,
@@ -266,7 +270,7 @@ failing prints ONE line and the run continues sequentially in this process - nev
 `--sequential` forces that path anywhere. Mechanics: `system/bin/rsx-testd/CLAUDE.md`; the
 gate and the host capabilities the nested daemon needs: `rsx:man testing`.
 
-**A docker run is cached by manifest build key + environment fingerprint + selector**
+**A docker run is cached by manifest state key + environment fingerprint + selector**
 (`tmp/test-results/<suite>_<key>_<selector>.json`; the fingerprint covers
 `system/bin`, `node_modules` and the docker resource dir, the selector the suite and the
 normalised class list): a repeat of the SAME run with no scanned file changed replays the

@@ -7,7 +7,6 @@
 
 namespace App\RSpade\Commands\Migrate;
 
-use App\RSpade\Core\Cache\RsxCache;
 
 /**
  * Restore the database to the pre-migration snapshot after an INTERRUPTED migrate.
@@ -85,10 +84,9 @@ class Migrate_Restore_Command extends Maint_Migrate
 
         $this->cleanup_migration_mode();
 
-        // The database is now at a state the build-scoped cache was never populated
-        // against - it was populated against the half-migrated schema this restore just
-        // threw away. Same reasoning as the two success tails in Maint_Migrate.
-        RsxCache::clear();
+        // The database is now at a state nothing cached describes: what was cached was
+        // read from the half-migrated schema this restore just threw away.
+        $this->purge_schema_state();
         $this->info('[OK] Cache cleared');
 
         $this->info('');

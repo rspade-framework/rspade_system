@@ -31,7 +31,7 @@ SCOPING SYSTEM
     - Different sessions (window.rsxapp.session_hash - hashed, non-reversible)
     - Different users (window.rsxapp.user.id)
     - Different sites (window.rsxapp.site.id)
-    - Different builds (window.rsxapp.build_key)
+    - Different builds and migration states (window.rsxapp.build_key)
 
     The scope suffix is window.rsxapp.cache_key: a single md5 hash computed
     SERVER-side (Rsx_Bundle_Abstract::_compute_cache_key) over the four ingredients
@@ -124,7 +124,7 @@ SCOPE INVALIDATION
 
     - User logs in/out (user ID changes)
     - User switches sites (site ID changes)
-    - Application is updated (build key changes)
+    - Application is updated or a migration runs (build_key changes)
     - Session changes (session cookie changes)
 
     This prevents stale data from one context bleeding into another context.

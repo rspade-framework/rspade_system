@@ -2,8 +2,8 @@
 
 namespace App\RSpade\Core\Support;
 
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use App\RSpade\Core\Database\MigrationPaths;
 
 /**
@@ -28,8 +28,9 @@ use App\RSpade\Core\Database\MigrationPaths;
  *                         applied - "which schema does this DATABASE have". A migration
  *                         file that is present is not a migration that has run, so this,
  *                         never migration_files(), is what a description of the live
- *                         schema is keyed on (the model module's column map) and what a
- *                         build records about the database it was built against.
+ *                         schema is keyed on: it is the database half of
+ *                         Manifest::get_state_key(), under which Rsx_Schema caches the
+ *                         column maps.
  */
 class Rsx_Fingerprint
 {
@@ -94,30 +95,83 @@ class Rsx_Fingerprint
      *
      * NAMES ONLY. Row ids, batch numbers and run times differ between two databases that
      * have had exactly the same migrations applied, and those two databases have the same
-     * schema - so a build made against one describes the other, and their fingerprints must
-     * be equal for anything to be able to say so.
+     * schema - so a cache entry written against one describes the other, and their
+     * fingerprints must be equal for anything to be able to say so.
+     *
+     * ONE QUERY, AND NOT MEMOIZED. It is asked once per process by
+     * Manifest::get_state_key(), which holds the memo and its reset; `migrate` asks it
+     * directly, before and after a run, and must get the database's answer both times.
      *
      * A database with no migrations table is an unmigrated database, which is an ordinary
      * state (a fresh install before its first migrate) and answers the fingerprint of the
-     * empty set.
+     * empty set. That is the ONE failure answered here: the table is not probed for first,
+     * the query is simply run and "no such table" is read as "no migrations". Every other
+     * failure - an unreachable server included - propagates.
      */
     public static function applied_migrations(): string
     {
         $table = config('database.migrations', 'migrations');
 
-        if (!Schema::hasTable($table)) {
+        // Raw SQL: the migrations table has no model, and this is asked before any model
+        // could be.
+        try {
+            $rows = DB::select("SELECT `migration` FROM `{$table}`");
+        } catch (QueryException $e) {
+            if (self::__driver_error_code($e) !== self::MYSQL_NO_SUCH_TABLE) {
+                throw $e;
+            }
+
             return md5('');
         }
 
-        // Raw SQL: this runs mid-build, before any model can be asked, and the migrations
-        // table has none.
-        $names = array_map(
-            fn ($row) => $row->migration,
-            DB::select("SELECT `migration` FROM `{$table}`")
-        );
+        $names = array_map(fn ($row) => $row->migration, $rows);
 
         sort($names, SORT_STRING);
 
         return md5(implode("\n", $names));
+    }
+
+    /** MySQL ER_NO_SUCH_TABLE. */
+    private const MYSQL_NO_SUCH_TABLE = 1146;
+
+    /**
+     * The MySQL client and server error numbers that mean "there is no usable connection":
+     * the server could not be reached, refused the credentials or the database, or dropped
+     * the session. A failed QUERY on a working connection is never one of them.
+     *
+     *   2002 / 2003 / 2005   cannot connect (socket, host, unknown host)
+     *   2006 / 2013          server has gone away / lost connection during query
+     *   1040                 too many connections
+     *   1044 / 1045 / 1049   access denied (database, user) / unknown database
+     */
+    private const MYSQL_CONNECTION_FAILURES = [2002, 2003, 2005, 2006, 2013, 1040, 1044, 1045, 1049];
+
+    /**
+     * Did this query fail because the database could not be reached at all?
+     */
+    public static function is_connection_failure(QueryException $e): bool
+    {
+        return in_array(self::__driver_error_code($e), self::MYSQL_CONNECTION_FAILURES, true);
+    }
+
+    /**
+     * The driver's own error number behind a QueryException, or 0 when it carries none.
+     *
+     * A failed statement reports it in errorInfo[1] (getCode() is then the SQLSTATE string);
+     * a failed CONNECT has no errorInfo and reports it as the PDOException's code.
+     */
+    private static function __driver_error_code(QueryException $e): int
+    {
+        $previous = $e->getPrevious();
+
+        if (!$previous instanceof \PDOException) {
+            return 0;
+        }
+
+        if (isset($previous->errorInfo[1])) {
+            return (int) $previous->errorInfo[1];
+        }
+
+        return (int) $previous->getCode();
     }
 }

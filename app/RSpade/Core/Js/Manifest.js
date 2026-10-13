@@ -352,7 +352,7 @@ class Manifest {
     }
 
     /**
-     * Get the build key from the application configuration
+     * The page's state key (window.rsxapp.build_key): code plus applied migrations
      * @returns {string} The build key or "NOBUILD" if not available
      */
     static build_key() {

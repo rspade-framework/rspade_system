@@ -395,6 +395,46 @@ class Rsx_Js_Model {
     }
 
     /**
+     * The max character length of a varchar/char column, or null for a column of any other
+     * type (and for a name that is no column at all: a derived property has no length).
+     *
+     * ONE definition for every model. The lengths are a fact about the database, so they
+     * are not part of a model's generated stub: the page loads them in a script of its own,
+     * emitted after the bundle, which assigns Rsx.__field_length_data = {Model: {column:
+     * length}} for the models this bundle carries - each length being the PHP model's own
+     * field_length() answer. Synchronous, so a template can pass it straight to an input:
+     *
+     *     <Text_Input $name="title" $max_length=Project_Model.field_length('title') />
+     *
+     * THROWS when the data is not there, or holds nothing for this model - the script did
+     * not load, or this model's stub is not in the page's bundle. Answering null instead
+     * would silently drop every max length on the page.
+     *
+     * @param {string} column - Column name
+     * @returns {number|null}
+     */
+    static field_length(column) {
+        const CurrentClass = this;
+        const model_name = CurrentClass.getModelName();
+        const data = Rsx.__field_length_data;
+
+        if (data === null || !Object.hasOwn(data, model_name)) {
+            throw new Error(
+                `${model_name}.field_length('${column}'): ` +
+                (data === null
+                    ? `the page's field-length script did not load, so no column lengths are available. `
+                    : `the page's field-length script carries no lengths for ${model_name}. `) +
+                `Check that the page's <script src="/_field_lengths/..."> tag (emitted after the app bundle) ` +
+                `is present and answered 200, and that ${model_name} is in this page's bundle.`
+            );
+        }
+
+        const lengths = data[model_name];
+
+        return Object.hasOwn(lengths, column) ? lengths[column] : null;
+    }
+
+    /**
      * Watch this model's record for changes (for NON-component code).
      *
      * Sugar over Rsx_Realtime.watch('Model_Changed_Topic', {model, id}, cb). Inside a

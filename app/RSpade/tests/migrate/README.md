@@ -58,8 +58,6 @@ validation, and schema normalization.
   in development and consulted in every mode; `rsx:constants:regenerate` never rewrites a
   file under `system/` unless this box is a framework-developer box, judged on the RESOLVED
   declaring file rather than the model's own.
-- **A production migrate ends with `rsx:migrate:check_consistency` and RETURNS ITS EXIT
-  CODE.** A sealed build whose column map no longer matches the schema is a failed migrate.
 - **All three normalize call sites route failure to the snapshot restore.** The
   mid-loop call throws inside `execute_migrations()`'s try/catch, which returns a
   non-zero code; the pre- and post-migration calls each wrap the invocation in a
@@ -74,6 +72,11 @@ validation, and schema normalization.
   `Dump_Rollback_Decision_Test` pins the table, `Dump_Rollback_Scratch_Test` the mechanism
   against a scratch database (crashes simulated at each step), `Dump_Rollback_Command_Test`
   the flow in `handle()` through `Dump_Rollback_Probe_Migrate`.
+
+- **No run rebuilds anything, and every run purges.** The build holds code facts only, so a
+  migration leaves it - and a seal - as it was. `handle()` purges the schema-dependent caches
+  before the run and, in a `finally`, after it: whichever runner, however it ended.
+  `Migrate_Purge_Test` drives every path through the same probe with the purge recorded.
 
 ## Testable surface
 
@@ -95,9 +98,6 @@ validation, and schema normalization.
   `Migrate_Normalize_Complete_Event_Test`).
 - **php** (implemented): the whitelist mode policy and the constants-regeneration scope
   (`Whitelist_Prod_Mode_Test`, `Constants_Regenerate_Scope_Test`).
-- **php** (implemented): `rsx:migrate:check_consistency` - the two gates, the asymmetric
-  findings, the walk-everything behaviour, and the detail-table case it used to
-  false-positive on (`Check_Consistency_Test`).
 - **cli / integration** (deferred): end-to-end proof that a normalize failure during
   `php artisan migrate` triggers the physical datadir snapshot restore and leaves no
   orphaned `.migrating` flag or backup dir. Requires a real MySQL datadir + Docker

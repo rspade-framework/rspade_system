@@ -452,7 +452,7 @@ SYSTEM COLUMNS
 
       - stripped from every payload by Rsx_Model_Abstract::toArray(), so the
         client never holds one;
-      - skipped by the generated JS model stub's field_length() map, because
+      - skipped by the field-length script a page loads, because
         the client can never need the length of a column it never receives;
       - excluded from every revision diff, because it is bookkeeping rather
         than data anybody changed.

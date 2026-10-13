@@ -251,13 +251,13 @@ through the file-upload pipeline, a value that must be written through an encryp
 If you are reaching for a model to read a column, resolve an id, compute a value or update
 rows, you have the ordinary case and you convert it.
 
-THERE IS A SECOND HAZARD, and it is the one nobody sees coming. On a production host the
-MANIFEST CAN BE AHEAD OF THE DATABASE: the build bakes every model's column map in at
-build time, and a deploy that builds before it migrates is serving a model that knows
-columns the table does not have yet. A migration writing through that model does not fail
-at a missing class - it fails at an unknown column, halfway through the run, on the box
-where a half-applied migration matters most. Raw SQL against a table name describes the
-schema AT THAT POINT IN HISTORY and cannot drift.
+THERE IS A SECOND HAZARD, and it is the one nobody sees coming. THE CODE CAN BE AHEAD OF
+THE DATABASE: a model is the code as it is deployed - its casts, its hooks, the columns its
+save() stamps - while a migration runs at one fixed point in the schema's history, possibly
+several migrations before the columns that code expects exist. A migration writing through
+that model does not fail at a missing class - it fails at an unknown column, halfway through
+the run, on the box where a half-applied migration matters most. Raw SQL against a table
+name describes the schema AT THAT POINT IN HISTORY and cannot drift.
 
 A migration that genuinely needs model behaviour anyway says so in its docblock, and owns
 both hazards:

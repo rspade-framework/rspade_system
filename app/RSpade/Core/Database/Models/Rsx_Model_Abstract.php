@@ -14,6 +14,7 @@ use App\RSpade\Core\Database\Lifecycle\Model_Lifecycle_Registry;
 use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Realtime\Realtime_Emissions;
@@ -775,14 +776,15 @@ abstract class Rsx_Model_Abstract extends Model
 
     /**
      * The casts implied by the TABLE SCHEMA and the class's type-ref declarations, memoized
-     * per class+table.
+     * per class+table for as long as the schema is (Rsx_Schema holds the memo, so
+     * Rsx_Schema::reset() drops it together with the column maps it was derived from).
      *
      * Eloquent calls getCasts() from hasCast(), which runs on EVERY attribute read. Building
      * this map inline therefore meant four Manifest column-type scans plus a type-ref pass
      * per column per row - the dominant cost of reading a model attribute, measured by a
      * downstream field report at ~21us per read against ~0.1us for a raw array element.
      * Nothing here varies by record or even by instance: it is a function of the schema and
-     * the class, both fixed for the life of the process.
+     * the class.
      *
      * The key is class+table because both inputs vary independently - two models may share a
      * table, and one model may be pointed at a different table.
@@ -795,11 +797,10 @@ abstract class Rsx_Model_Abstract extends Model
      */
     private static function __schema_derived_casts(string $table_name): array
     {
-        static $cache = [];
-
-        $cache_key = static::class . '|' . $table_name;
-        if (isset($cache[$cache_key])) {
-            return $cache[$cache_key];
+        $cache_key = 'casts|' . static::class . '|' . $table_name;
+        $cached = Rsx_Schema::derived($cache_key);
+        if ($cached !== null) {
+            return $cached;
         }
 
         $casts = [];
@@ -853,7 +854,9 @@ abstract class Rsx_Model_Abstract extends Model
             }
         }
 
-        return $cache[$cache_key] = $casts;
+        Rsx_Schema::remember_derived($cache_key, $casts);
+
+        return $casts;
     }
 
     /**
@@ -1457,42 +1460,42 @@ EXAMPLE;
     /**
      * Max character length of a varchar/char column, or null for every other column type.
      *
-     * The ONE definition of "how long may this field be". The JS model stubs bake their
-     * field_length() table from this method, so a server-side length check and the client's
-     * cannot drift, and app code never has to mirror a schema literal in a constant.
+     * The ONE definition of "how long may this field be", read from the live schema
+     * (Rsx_Schema). The lengths a page's JavaScript reads (Field_Length_Script, behind
+     * Rsx_Js_Model.field_length()) are this method's answers, so a server-side length check
+     * and the client's cannot drift, and app code never has to mirror a schema literal in a
+     * constant.
      *
      * Null means "this column has no character limit" (an int, a datetime, a text blob) - it
      * is a real answer, never a lookup failure. A column the model does not have is a coding
      * error and throws, matching the manifest's fail-fast lookups: silently answering null
      * would let a typo'd column name read as "unlimited" and defeat the check being written.
      *
-     * Class-Table Inheritance: the manifest merges a base model's detail-table columns into
-     * its column map, so a base model answers for its detail columns too.
+     * Class-Table Inheritance: a base model's column map has its detail-table columns merged
+     * in, so a base model answers for its detail columns too.
      *
      * @param string $column Column name
      * @return int|null Max length for varchar/char, null for any other type
-     * @throws RuntimeException When the model has no such column (or is not indexed)
+     * @throws RuntimeException When the class is not a registered model, its table does not
+     *                          exist in the connected database, or it has no such column
      */
     public static function field_length(string $column): ?int
     {
         $class_name = Manifest::_normalize_class_name(get_called_class());
 
-        // Memoized per class: this is consulted per column while generating every model's JS
-        // stub, and again on request paths, but the schema cannot change inside one process.
-        static $columns_by_class = [];
-
-        if (!array_key_exists($class_name, $columns_by_class)) {
-            $columns_by_class[$class_name] = Manifest::php_model_columns($class_name);
-        }
-
-        $columns = $columns_by_class[$class_name];
+        // Rsx_Schema memoizes the merged map per class, and drops it on reset().
+        $columns = Rsx_Schema::model_columns($class_name);
 
         if ($columns === null) {
+            $record = Manifest::php_model_record($class_name);
+
+            if ($record === null) {
+                throw new RuntimeException("field_length(): {$class_name} is not a model in the manifest's registry");
+            }
+
             throw new RuntimeException(
-                "field_length(): {$class_name} has no columns in the manifest. The usual cause is an "
-                . "UNMIGRATED DATABASE: the manifest build skips a model whose table does not exist "
-                . "(it logs '[manifest] model {$class_name} skipped: table ... does not exist'). "
-                . 'Run `php artisan migrate`, then rebuild.'
+                "field_length(): table '{$record['table']}' ({$class_name}) does not exist in the "
+                . 'connected database. Run `php artisan migrate`.'
             );
         }
 
@@ -1581,17 +1584,6 @@ EXAMPLE;
      * @var bool
      */
     private static bool $_audit_stamp_resolving = false;
-
-    /**
-     * Per-process memo of "does this table carry audit column set X", keyed by
-     * "{table}|{set}". Only ever grows, and only for tables actually written to.
-     *
-     * The two sets are memoized SEPARATELY because a table can carry one without the other:
-     * every table has the authorship pairs, only a soft-deleting table has the deletion pair.
-     *
-     * @var array<string, bool>
-     */
-    private static array $_audit_columns_present = [];
 
     /**
      * The framework audit authorship columns. Present on every table (the schema-hygiene
@@ -1843,13 +1835,13 @@ EXAMPLE;
     /**
      * Whether this model's table carries the audit authorship pair.
      *
-     * Two tiers, both cheap. The manifest's model metadata is consulted first and is free -
-     * in steady state it answers every call with no query at all. It is only ever trusted
-     * when AFFIRMATIVE; anything else (a table the manifest has not indexed, or a manifest
-     * built before the columns existed) falls through to one authoritative column listing,
-     * memoized for the life of the process. The reverse mistake - trusting a manifest that
-     * claims columns the database does not have - would produce an unknown-column INSERT,
-     * so it is never made.
+     * Two tiers, both cheap. Rsx_Schema's column map is consulted first and is free - in
+     * steady state it answers every call with no query at all. It is only ever trusted when
+     * AFFIRMATIVE; anything else (a table or a column that arrived after this process read
+     * the schema - a migration saving a record into a table it just created) falls through
+     * to one authoritative column listing. The answer is memoized with the schema itself
+     * (Rsx_Schema::derived()), separately per column set: every table has the authorship
+     * pairs, only a soft-deleting table has the deletion pair.
      *
      * @return bool
      */
@@ -1884,22 +1876,23 @@ EXAMPLE;
     private function __table_has_column_set(string $set_name, array $columns): bool
     {
         $table = $this->getTable();
-        $memo_key = $table . '|' . $set_name;
+        $memo_key = 'audit|' . $table . '|' . $set_name;
 
-        if (isset(self::$_audit_columns_present[$memo_key])) {
-            return self::$_audit_columns_present[$memo_key];
+        $memoized = Rsx_Schema::derived($memo_key);
+        if ($memoized !== null) {
+            return $memoized;
         }
 
-        $manifest_columns = Manifest::db_get_table_columns($table);
+        $schema_columns = Rsx_Schema::table_columns($table);
         foreach ($columns as $column) {
-            if (!isset($manifest_columns[$column])) {
-                $manifest_columns = null;
+            if (!isset($schema_columns[$column])) {
+                $schema_columns = null;
                 break;
             }
         }
 
-        if ($manifest_columns !== null) {
-            self::$_audit_columns_present[$memo_key] = true;
+        if ($schema_columns !== null) {
+            Rsx_Schema::remember_derived($memo_key, true);
 
             return true;
         }
@@ -1913,7 +1906,7 @@ EXAMPLE;
             }
         }
 
-        self::$_audit_columns_present[$memo_key] = $present;
+        Rsx_Schema::remember_derived($memo_key, $present);
 
         return $present;
     }

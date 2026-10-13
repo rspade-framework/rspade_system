@@ -13,7 +13,7 @@ use App\RSpade\Core\Session\Session;
  * Spa_Session_Controller - Session validation endpoint for SPA navigation
  *
  * Called after SPA navigation to detect:
- * 1. Codebase updates (build_key changed)
+ * 1. Codebase updates and migrations (build_key, the state key, changed)
  * 2. User account changes (user data changed)
  * 3. Session invalidation (logged out, ACLs changed)
  *
@@ -39,8 +39,9 @@ class Spa_Session_Controller extends Rsx_Controller_Abstract
     #[Portal_Impersonation_Readable]
     public static function get_state(Request $request, array $params = [])
     {
-        // Build key - detects codebase updates
-        $build_key = Manifest::get_build_key();
+        // Build key - detects codebase updates AND migrations: the state key, the same
+        // value the page was rendered with as window.rsxapp.build_key
+        $build_key = Manifest::get_state_key();
 
         // ONE cookie, one session hash. The identity to report still depends on the
         // EXPERIENCE the page belongs to, and the caller passes is_portal (from

@@ -1559,8 +1559,8 @@ function sanitize_rich_text_html(string $html): string
  *   project root and on its bytes - never on the absolute checkout location or
  *   on disk timestamps. Two byte-identical codebases checked out at different
  *   absolute paths therefore produce IDENTICAL hashes, which is what makes the
- *   downstream build_key (and every bundle filename derived from it)
- *   cluster-consistent.
+ *   downstream build_key - and every bundle filename, each a hash of the
+ *   bundle's own inputs - cluster-consistent.
  *
  * @param string $file_path The absolute path to the file
  * @return string A hash string representing the file state
