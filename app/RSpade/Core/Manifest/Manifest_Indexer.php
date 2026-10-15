@@ -242,9 +242,11 @@ class Manifest_Indexer
 
             // Step 1: the hot class record, keyed by simple class name, read off THE ONE
             // grouping. Overrides are settled earlier, by Manifest_Overrides::derive(), which
-            // takes every shadowed framework file out of `files` - so a duplicate that
-            // reaches here is one the override pass declined to settle (a build that marked
-            // its own manifest bad), and it is an error rather than a second detection.
+            // takes every shadowed framework PHP file out of `files` and refuses an
+            // application JS class named like a framework one - so a duplicate that reaches
+            // here is two files on the same side (two application JS classes, say), or a PHP
+            // pair the override pass declined to settle (a build that marked its own manifest
+            // bad). Either is an error.
             foreach ($grouped[$ext] ?? [] as $class_name => $declaring_files) {
                 if (count($declaring_files) > 1) {
                     throw new \RuntimeException(

@@ -58,3 +58,23 @@ The probe is the same runtime-created `<input>` on `/_sys`, typed with the keybo
 | jquery-numeric-time-12 | the colon survives while the field is focused | typing `1:30` without blurring | `1:30` displayed, `.val()` `1.5` at the same instant | implemented |
 | jquery-numeric-time-13 | `decimals` is not the caller's to set in time mode | `{time: true, decimals: 0}`, typing `1:20` | `1.33` - two places either way | implemented |
 | jquery-numeric-time-14 | an empty time box is the empty string | an untouched box | display `''`, `.val()` `''` | implemented |
+
+## button_utils_loader.js (playwright) - the registered busy-state loader
+
+`Button_Utils.set_loader(renderer)` replaces the markup drawn inside an element while it is
+busy; everything else in the busy cycle stays the framework's. The probe is a runtime-created
+`<button>` on `/_sys`; every case leaves the loader unregistered again.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| jquery-loader-01 | the framework spinner is the default | `set_submitting()` with nothing registered | `.Button_Utils__spinner` is the element's content | implemented |
+| jquery-loader-02 | a registered renderer draws the busy state | a renderer returning a string | the renderer is handed the untouched element, and its markup is the content | implemented |
+| jquery-loader-03 | the rest of the cycle is unchanged | the same busy element | `btn--submitting`, inline width/height equal to the pre-swap box, `border-box` | implemented |
+| jquery-loader-04 | idempotence holds with a loader | a second `set_submitting()` under another renderer | content unchanged | implemented |
+| jquery-loader-05 | clear restores whatever the loader was | `clear_submitting()` | original content, class removed, size unlocked | implemented |
+| jquery-loader-06 | both calls chain | the return values | each returns the element it was given | implemented |
+| jquery-loader-07 | a jQuery is accepted | a renderer returning `$('<span>')` | that node is the content, and clear restores the original | implemented |
+| jquery-loader-08 | read at `set_submitting()` time | `click_async()` bound BEFORE `set_loader()` | the later renderer's markup is drawn; content restored on settle | implemented |
+| jquery-loader-09 | `set_loader(null)` restores the framework spinner | null after a renderer | `.Button_Utils__spinner` | implemented |
+| jquery-loader-10 | the argument is validated | a string, an object, `undefined`, `true` | each throws; the spinner stays in force | implemented |
+| jquery-loader-11 | the renderer's return is validated | a renderer returning `undefined` | `set_submitting()` throws; the element is left untouched | implemented |

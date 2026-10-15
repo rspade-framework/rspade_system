@@ -28,7 +28,8 @@ const READONLY_GLOB = 'system/**';
 
 const BANNER_TEXT =
     'RSpade framework file - overwritten on every framework update. ' +
-    'Customize with a class override in rsx/ (rsx:man class_override).';
+    'Customize a PHP class with a class override in rsx/, anything else through the extension points ' +
+    'the framework publishes (rsx:man class_override).';
 
 /** Explorer badge for the system/ directory while the gate is on. */
 class FrameworkFileDecorationProvider implements vscode.FileDecorationProvider {

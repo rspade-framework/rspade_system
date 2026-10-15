@@ -37,13 +37,15 @@ ones that matter there: a pattern that silently matched nothing would compile a 
 without its stylesheets and report no error, and a pattern that silently matched more than
 its form says would publish files nobody listed.
 
-The fifth is OVERRIDE SUBSTITUTION: a framework file the application overrides stays on
-disk under its own name, and a bundle walks the disk. `_add_file()` - the one step a
+The fifth is OVERRIDE SUBSTITUTION: a framework PHP class the application overrides stays
+on disk under its own name, and a bundle walks the disk. `_add_file()` - the one step a
 directory, a pattern and an explicit file all reach - compiles the overriding file in the
-shadowed file's place, once. A shadowed file that leaked through would put two declarations
-of one class or one component into the bundle; one substituted at the wrong position would
-evaluate out of order. Stylesheets are never shadowed: a framework stylesheet compiles beside
-an application stylesheet wrapped in the same class. An overriding MODEL brings the JS class
+shadowed file's place, once, so a bundle whose includes reach the framework file carries the
+override's model stub even when no include names the application directory. A shadowed file
+that leaked through would carry the framework class's stub instead of the override's. Only
+PHP classes are overridable: a framework JS class or template is compiled as found, and
+stylesheets are never shadowed - a framework stylesheet compiles beside an application
+stylesheet wrapped in the same class. An overriding MODEL brings the JS class
 the application declares for it, added right after it, so a bundle naming no application path
 (Core_Bundle, a `/_sys` bundle) still satisfies the model check that refuses a model without
 its own JS class.

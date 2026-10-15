@@ -112,7 +112,8 @@ CLICK OVERRIDE
         Attach an async click handler with automatic button busy-state.
 
         On click the element enters a busy state via Button_Utils: its rendered
-        size is locked, its content is swapped for a CSS-animated loader, and
+        size is locked, its content is swapped for the loader (the framework's
+        CSS spinner, or the one registered with Button_Utils.set_loader()), and
         interaction is blocked with the btn--submitting class (pointer-events:
         none - deliberately NOT the disabled attribute). The handler runs, and
         the busy state clears when the returned promise settles.
@@ -398,9 +399,11 @@ BUTTON BUSY-STATE (Button_Utils)
 
     Button_Utils is the core static class behind .click_async(). It manages the
     "submitting" busy-state on a button or other clickable element: it locks the
-    element's rendered size, stashes the original inner HTML, swaps in a
-    CSS-animated loader, and blocks interaction with the btn--submitting class.
-    It never sets the disabled attribute (that would change form semantics).
+    element's rendered size, stashes the original inner HTML, swaps in the
+    loader, and blocks interaction with the btn--submitting class. It never sets
+    the disabled attribute (that would change form semantics). Every busy state
+    in the framework goes through it - .click_async(), Rsx_Form's submit
+    buttons, and therefore Modal.form()'s.
 
     Most code should use .click_async(), which drives Button_Utils
     automatically. Call the API directly only for busy-states not tied to a
@@ -408,13 +411,15 @@ BUTTON BUSY-STATE (Button_Utils)
 
     Button_Utils.set_submitting($el)
         Enter the busy state. Idempotent - a no-op on an element already
-        submitting. Operates on every matched element.
+        submitting. Operates on every matched element and returns $el, so it
+        chains.
 
             Button_Utils.set_submitting($('.save-btn'));
 
     Button_Utils.clear_submitting($el)
         Leave the busy state: restore the original HTML, remove the class,
-        unlock the size. No-op when the element is not submitting.
+        unlock the size. No-op when the element is not submitting. Returns
+        $el, so it chains.
 
             Button_Utils.clear_submitting($('.save-btn'));
 
@@ -423,6 +428,39 @@ BUTTON BUSY-STATE (Button_Utils)
 
             if (!Button_Utils.is_submitting($btn)) { ... }
 
+    Button_Utils.set_loader(renderer)
+        Register the loader drawn inside every element that enters the busy
+        state from now on. renderer($el) is called once per element, before
+        the element is touched, and returns the markup placed inside it - an
+        HTML string or a jQuery. set_loader(null) restores the framework
+        spinner. Any other argument throws, and so does a renderer that
+        returns anything but a string or a jQuery.
+
+        The renderer is read at set_submitting() time, so one registration
+        made while the application boots applies to every caller:
+        .click_async(), Rsx_Form, Modal.form() and direct calls. It decides
+        ONLY what is drawn: the size lock, the btn--submitting class, the
+        pointer-events block, stashing and restoring the original content,
+        and idempotence are the same with any loader.
+
+        Register it from a static on_app_init() on a class of your own:
+
+            // rsx/theme/button_utils_customizations.js
+            class Button_Utils_Customizations {
+                static on_app_init() {
+                    Button_Utils.set_loader(() =>
+                        '<span class="btn__loader" aria-hidden="true">'
+                        + '<span class="btn__loader-dot"></span>'
+                        + '<span class="btn__loader-dot"></span>'
+                        + '<span class="btn__loader-dot"></span>'
+                        + '</span>');
+                }
+            }
+
+        and style the markup in your theme SCSS. Because the framework swaps
+        the element's content for the loader and locks its size, the
+        stylesheet needs no rule hiding the button's own content.
+
     Where it lives
         app/RSpade/Core/Ui - inside Core_Bundle, which config('rsx.
         required_bundles') pulls into EVERY module bundle, JS and SCSS alike.
@@ -430,11 +468,10 @@ BUTTON BUSY-STATE (Button_Utils)
         whose engine sat in an optional tier is a "Button_Utils is not defined"
         waiting to happen on any bundle that did not pull that tier in.
 
-        THEME IT, DO NOT OVERRIDE IT. A class override moves the class into
-        rsx/, where only the bundles that include that directory can see it -
-        and pages served by a framework-owned bundle (the API reference console)
-        include no rsx/ path at all, so they lose it. An app that overrides it
-        anyway must place the override in a bundle listed in required_bundles.
+        CUSTOMIZE IT THROUGH ITS EXTENSION POINTS. The CSS custom properties
+        below restyle the framework spinner; set_loader() replaces it. A JS
+        class is not overridable (rsx:man class_override): an rsx/ class named
+        Button_Utils fails the manifest build.
 
     Loader theming (downstream apps)
         The loader is styled in the framework's Button_Utils.scss and restyled

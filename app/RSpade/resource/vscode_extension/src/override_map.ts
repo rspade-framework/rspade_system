@@ -1,24 +1,24 @@
 /**
  * The manifest's OVERRIDE MAP, for the editor.
  *
- * An application overrides a framework file by declaring the same name under rsx/
- * (rsx:man class_override). Nothing on disk says so: the framework file stays where it is,
- * under its own name, and is simply never loaded or compiled - the manifest records which
- * application file answers for it instead. Without help, a developer who opens that
- * framework file reads code that does not run.
+ * An application overrides a framework PHP class by declaring the same class name under rsx/
+ * (rsx:man class_override); only PHP classes are overridable. Nothing on disk says so: the
+ * framework file stays where it is, under its own name, and is simply never loaded - the
+ * manifest records which application file answers for it instead. Without help, a developer
+ * who opens that framework file reads code that does not run.
  *
  * This module fetches the map from the IDE bridge (`/_ide/service/overrides`) and:
  *
- *   - badges a shadowed framework file in the explorer and on its editor tab ("OV",
- *     tooltip "Overridden by rsx/...");
+ *   - badges a shadowed framework PHP file in the explorer and on its editor tab ("OV",
+ *     tooltip "PHP class overridden by rsx/...");
  *   - puts a CodeLens on its first line that opens the override, and says so once per
  *     file per session when the file is brought to the front;
- *   - lets every definition provider redirect a location that would land on a shadowed
- *     file to the file that overrides it (effective_location / effective_uri).
+ *   - lets a definition provider that resolves a PHP class redirect a location that would
+ *     land on a shadowed file to the file that overrides it (effective_location).
  *
  * WHEN IT REFRESHES - events only, never a timer: when the bridge comes online, and when a
- * source file under rsx/ is created, changed or deleted (an override appears or goes away
- * only through such a file). The bridge answers from the manifest, which a request brings
+ * PHP file under rsx/ is created, changed or deleted (an override appears or goes away only
+ * through such a file). The bridge answers from the manifest, which a request brings
  * up to date first, so the map it returns reflects the change that triggered the refresh.
  * Refreshes are single-flight: events arriving while one is in progress collapse into ONE
  * follow-up, which is what a burst of saves needs.
@@ -34,9 +34,7 @@ import { IdeBridgeClient, Bridge_Offline_Error } from './ide_bridge_client';
 import { Bridge_Connectivity } from './bridge_connectivity';
 
 export interface Override_Record {
-    /** php | js | jqhtml */
-    kind: string;
-    /** The declared name both files carry. */
+    /** The class name both files declare. */
     name: string;
     /** The application file, relative to the project root (rsx/...). */
     by: string;
@@ -98,7 +96,7 @@ export class Override_Map {
         // A workspace-relative pattern: VS Code applies files.watcherExclude to it, so the
         // extension keeps no exclusion list of its own.
         const watcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(this.rspade_root, 'rsx/**/*.{php,js,jsx,ts,tsx,jqhtml}')
+            new vscode.RelativePattern(this.rspade_root, 'rsx/**/*.php')
         );
         watcher.onDidCreate(() => this.refresh());
         watcher.onDidChange(() => this.refresh());
@@ -167,7 +165,6 @@ export class Override_Map {
 
         for (const [framework_file, record] of Object.entries<any>(response?.overrides ?? {})) {
             next.set(key_of(path.join(this.rspade_root, framework_file)), {
-                kind: String(record.kind),
                 name: String(record.name),
                 by: String(record.by),
                 by_path: path.join(this.rspade_root, String(record.by)),
@@ -221,7 +218,7 @@ export class Override_Map {
 
         void vscode.window
             .showInformationMessage(
-                `This framework file is overridden by ${record.by} - it is never loaded or compiled.`,
+                `This framework PHP class is overridden by ${record.by} - this file is never loaded.`,
                 'Open Override'
             )
             .then(choice => {
@@ -247,7 +244,7 @@ class Override_Decoration_Provider implements vscode.FileDecorationProvider {
         }
 
         // Badge only - no colour, so it composes with the git status colours.
-        return new vscode.FileDecoration('OV', `Overridden by ${record.by}`);
+        return new vscode.FileDecoration('OV', `PHP class overridden by ${record.by}`);
     }
 }
 
@@ -268,7 +265,7 @@ class Override_Code_Lens_Provider implements vscode.CodeLensProvider {
 
         return [
             new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
-                title: `Overridden by ${record.by} - this framework file is never loaded or compiled`,
+                title: `PHP class overridden by ${record.by} - this framework file is never loaded`,
                 command: 'vscode.open',
                 arguments: [vscode.Uri.file(record.by_path)],
             }),
@@ -283,12 +280,6 @@ export function init_override_map(rspade_root: string, output: vscode.OutputChan
         instance = new Override_Map(rspade_root, output);
     }
     return instance;
-}
-
-/** The file that answers for $uri: the override when $uri is shadowed, else $uri itself. */
-export function effective_uri(uri: vscode.Uri): vscode.Uri {
-    const record = instance?.override_for(uri);
-    return record ? vscode.Uri.file(record.by_path) : uri;
 }
 
 /**
@@ -317,9 +308,7 @@ function declaration_line(record: Override_Record): number {
     }
 
     const name = record.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern =
-        record.kind === 'jqhtml' ? new RegExp(`<Define:${name}\\b`) :
-        new RegExp(`\\bclass\\s+${name}\\b`);
+    const pattern = new RegExp(`\\bclass\\s+${name}\\b`);
 
     const lines = source.split('\n');
     for (let i = 0; i < lines.length; i++) {

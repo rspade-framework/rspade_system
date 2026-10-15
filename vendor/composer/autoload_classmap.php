@@ -680,6 +680,7 @@ return array(
     'App\\RSpade\\Core\\Search\\Spreadsheet_Text_Extractor' => $baseDir . '/app/RSpade/Core/Search/Spreadsheet_Text_Extractor.php',
     'App\\RSpade\\Core\\Service\\Rsx_Service_Abstract' => $baseDir . '/app/RSpade/Core/Service/Rsx_Service_Abstract.php',
     'App\\RSpade\\Core\\Session\\Audit_Session' => $baseDir . '/app/RSpade/Core/Session/Audit_Session.php',
+    'App\\RSpade\\Core\\Session\\Ip_Address' => $baseDir . '/app/RSpade/Core/Session/Ip_Address.php',
     'App\\RSpade\\Core\\Session\\Login_History' => $baseDir . '/app/RSpade/Core/Session/Login_History.php',
     'App\\RSpade\\Core\\Session\\Rsx_Csrf' => $baseDir . '/app/RSpade/Core/Session/Rsx_Csrf.php',
     'App\\RSpade\\Core\\Session\\Rsx_Session_Controller' => $baseDir . '/app/RSpade/Core/Session/Rsx_Session_Controller.php',

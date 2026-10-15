@@ -664,9 +664,9 @@ class Rsx_Form extends Component {
     }
 
     /**
-     * The submitting visual: Button_Utils' animated-dots treatment, and the buttons
-     * are inert until the round-trip completes. Button_Utils ships with the framework
-     * (applications override its presentation, never remove it), so it is called
+     * The submitting visual: Button_Utils' busy state (its loader, or the one the
+     * application registered with Button_Utils.set_loader()), and the buttons are
+     * inert until the round-trip completes. Button_Utils is core, so it is called
      * directly - core classes are never existence-checked.
      */
     _set_submitting($btns, submitting) {

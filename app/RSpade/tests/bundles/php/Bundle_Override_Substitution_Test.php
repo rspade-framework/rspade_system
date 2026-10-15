@@ -16,24 +16,28 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * A BUNDLE COMPILES THE OVERRIDE, NEVER THE FILE IT SHADOWS (BundleCompiler::_add_file();
- * rsx:man class_override) - AND EVERY FRAMEWORK STYLESHEET IT INCLUDES, ALWAYS.
+ * rsx:man class_override) - AND EVERY FRAMEWORK STYLESHEET, SCRIPT AND TEMPLATE IT INCLUDES,
+ * ALWAYS.
  *
- * A framework file an application overrides stays on disk under its own name, and a bundle
- * walks the disk. Every include - a directory, a type-filtered pattern, an explicit file -
- * passes through one seam, which substitutes the overriding file in the shadowed file's place.
- * A stylesheet is never an override: an application stylesheet wrapped in the class of a
- * framework component is compiled IN ADDITION to the framework's, wherever its own include
- * puts it.
+ * Only PHP classes are overridable. A framework PHP file an application overrides stays on
+ * disk under its own name, and a bundle walks the disk. Every include - a directory, a
+ * type-filtered pattern, an explicit file - passes through one seam, which substitutes the
+ * overriding file in the shadowed file's place, so the bundle carries the OVERRIDE's model
+ * stub even though none of its includes names the application directory. A JS class, a
+ * template and a stylesheet are never overrides and are compiled as they are found: an
+ * application stylesheet wrapped in the class of a framework component is compiled IN
+ * ADDITION to the framework's, wherever its own include puts it.
  *
  * The end-to-end half is a CHILD BUILD of a fixture tree into a scratch build root (the
  * child-build seam, Core/Manifest/CLAUDE.md), followed by a child compile of a fixture bundle
- * in that same build. Three framework sets each have a JS class and a jqhtml template the
- * application overrides, and a stylesheet the application styles further with a stylesheet
- * of its own wrapped in the same class. The bundle reaches one set by a directory include,
- * one by patterns and one by explicit files, then includes the application directory as
- * well. The compiled output carries the provenance of every input (the `=== path ===`
- * banner of a script, `Compiled from:` of a template, `START:` of a stylesheet), so it answers
- * both what was compiled and in which order.
+ * in that same build. Three framework sets each have a SPLIT MODEL the application overrides
+ * (declaring an enum only the override has, so the stub says whose it is), a JS class and a
+ * template of their own, and a stylesheet the application styles further with a stylesheet of
+ * its own wrapped in the same class. The bundle reaches one set by a directory include, one by
+ * patterns and one by explicit files, and names no application path except its own
+ * stylesheet directory. The compiled output carries the provenance of every input (the
+ * `=== path ===` banner of a script, `Compiled from:` of a template, `START:` of a
+ * stylesheet), so it answers both what was compiled and in which order.
  *
  * THE FIXTURE TREES LIVE UNDER `resource/` DIRECTORIES, which no build descends into: they
  * are scanned only by the child that names them as extra roots.
@@ -82,10 +86,10 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The framework files of one set, path => content. Per set: a base class, the class the
-     * application overrides (extending the base) and a class extending THAT one, named so a
-     * path sort puts it first; the template the application overrides; and three stylesheets
-     * whose paths sort first, styled further by the application, last.
+     * The framework files of one set, path => content. Per set: a split model (an abstract
+     * base carrying the table, and the empty shell the application overrides); a JS class and
+     * a template nothing overrides; and three stylesheets whose paths sort first, styled further
+     * by the application, last.
      *
      * @return array<string,string>
      */
@@ -94,11 +98,14 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
         $root = static::__framework_set_root($set);
         $p = 'Bo_' . static::__pascal($set);
         $marker = 'BO_FRAMEWORK_' . strtoupper($set);
+        $namespace = Rsx_Namespace::from_path("{$root}/{$p}_Model.php");
 
         return [
-            "{$root}/{$p}_Achild.js" => "class {$p}_Achild extends {$p}_Widget {\n    static child_marker() {\n        return '{$marker}_ACHILD';\n    }\n}\n",
-            "{$root}/{$p}_Base.js" => "class {$p}_Base {\n    static base_marker() {\n        return '{$marker}_BASE';\n    }\n}\n",
-            "{$root}/{$p}_Widget.js" => "class {$p}_Widget extends {$p}_Base {\n    static marker() {\n        return '{$marker}_WIDGET';\n    }\n}\n",
+            "{$root}/{$p}_Model_Abstract.php" => "<?php\n\nnamespace {$namespace};\n\n"
+                . "use App\\RSpade\\Core\\Database\\Models\\Rsx_Model_Abstract;\n\n"
+                . "abstract class {$p}_Model_Abstract extends Rsx_Model_Abstract\n{\n    protected \$table = 'bo_{$set}_items';\n}\n",
+            "{$root}/{$p}_Model.php" => "<?php\n\nnamespace {$namespace};\n\nclass {$p}_Model extends {$p}_Model_Abstract\n{\n}\n",
+            "{$root}/{$p}_Widget.js" => "class {$p}_Widget {\n    static marker() {\n        return '{$marker}_WIDGET';\n    }\n}\n",
             "{$root}/{$p}_Panel.jqhtml" => "<Define:{$p}_Panel>\n    <div class=\"{$p}_Panel__body\">{$marker}_PANEL</div>\n</Define:{$p}_Panel>\n",
             "{$root}/{$p}_Aa_First.scss" => ".{$p}_Aa_First {\n    display: block;\n}\n",
             "{$root}/{$p}_Panel.scss" => ".{$p}_Panel {\n    &__framework_marker {\n        display: block;\n    }\n}\n",
@@ -106,19 +113,17 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
         ];
     }
 
-    /** The two framework paths of one set that the application overrides. */
-    private static function __shadowed_paths(string $set): array
+    /** The framework path of one set that the application overrides: the model shell. */
+    private static function __shadowed_path(string $set): string
     {
-        $root = static::__framework_set_root($set);
-        $p = 'Bo_' . static::__pascal($set);
-
-        return ["{$root}/{$p}_Widget.js", "{$root}/{$p}_Panel.jqhtml"];
+        return static::__framework_set_root($set) . '/Bo_' . static::__pascal($set) . '_Model.php';
     }
 
     /**
-     * The application files of one set, path => content - the script and template that
-     * override the framework's, then a stylesheet wrapped in the framework stylesheet's class.
-     * Named after the application's own file convention, never after the framework's files.
+     * The application files of one set, path => content - the model override (extending the
+     * framework base, declaring an enum only it has), then a stylesheet wrapped in the
+     * framework stylesheet's class, in a directory of its own. Named after the application's
+     * own file convention, never after the framework's files.
      *
      * @return array<string,string>
      */
@@ -127,19 +132,24 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
         $root = static::$application_root;
         $p = 'Bo_' . static::__pascal($set);
         $f = 'bo_' . $set;
-        $marker = 'BO_APPLICATION_' . strtoupper($set);
+        $upper = strtoupper($set);
+        $model = "{$root}/models/{$f}_model.php";
+        $namespace = Rsx_Namespace::from_path($model);
+        $base_namespace = Rsx_Namespace::from_path(static::__shadowed_path($set));
 
         return [
-            "{$root}/{$f}_widget.js" => "class {$p}_Widget extends {$p}_Base {\n    static marker() {\n        return '{$marker}_WIDGET';\n    }\n}\n",
-            "{$root}/{$f}_panel.jqhtml" => "<Define:{$p}_Panel>\n    <div class=\"{$p}_Panel__body\">{$marker}_PANEL</div>\n</Define:{$p}_Panel>\n",
-            "{$root}/{$f}_panel.scss" => ".{$p}_Panel {\n    &__application_marker {\n        display: block;\n    }\n}\n",
+            $model => "<?php\n\nnamespace {$namespace};\n\n"
+                . "use {$base_namespace}\\{$p}_Model_Abstract;\n\n"
+                . "class {$p}_Model extends {$p}_Model_Abstract\n{\n    public static \$enums = [\n"
+                . "        'kind_id' => [\n            1 => ['constant' => 'KIND_BO_APPLICATION_{$upper}', 'label' => 'Override'],\n        ],\n    ];\n}\n",
+            "{$root}/styles/{$f}_panel.scss" => ".{$p}_Panel {\n    &__application_marker {\n        display: block;\n    }\n}\n",
         ];
     }
 
     /**
-     * The fixture bundle: the 'dir' set by a directory include, the 'pat' set by three
+     * The fixture bundle: the 'dir' set by a directory include, the 'pat' set by four
      * type-filtered patterns, the 'exp' set by explicit files in authored order - and then the
-     * application directory, which holds every override a second time.
+     * application's STYLESHEET directory only. No include names the application's models.
      */
     private static function __bundle_file(): array
     {
@@ -148,6 +158,7 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
         $dir = static::__framework_set_root('dir');
         $pat = static::__framework_set_root('pat');
         $exp = static::__framework_set_root('exp');
+        $styles = static::$application_root . '/styles';
 
         $php = <<<PHP
         <?php
@@ -163,17 +174,18 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
                 return [
                     'include' => [
                         '{$dir}',
+                        '{$pat}/*.php',
                         '{$pat}/*.js',
                         '{$pat}/*.jqhtml',
                         '{$pat}/*.scss',
-                        '{$exp}/Bo_Exp_Base.js',
+                        '{$exp}/Bo_Exp_Model_Abstract.php',
+                        '{$exp}/Bo_Exp_Model.php',
                         '{$exp}/Bo_Exp_Widget.js',
-                        '{$exp}/Bo_Exp_Achild.js',
                         '{$exp}/Bo_Exp_Panel.jqhtml',
                         '{$exp}/Bo_Exp_Aa_First.scss',
                         '{$exp}/Bo_Exp_Panel.scss',
                         '{$exp}/Bo_Exp_Zz_Last.scss',
-                        __DIR__,
+                        '{$styles}',
                     ],
                 ];
             }
@@ -308,17 +320,17 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
 
     /**
      * A directory include, a pattern include and an explicit include of a shadowed framework
-     * file each compile the application file that overrides it - exactly once, though the
-     * bundle includes the application directory too - and never the framework file. The
-     * override takes the framework file's place: a class after the base it extends and before
-     * the class that extends it. No shadowed path appears anywhere in anything the fixture
-     * build compiled.
+     * PHP file each compile the application class that overrides it - its model stub is in the
+     * bundle exactly once, and it is the override's (it carries the enum only the override
+     * declares) - although no include names the application's model directory. No shadowed
+     * path appears anywhere in anything the fixture build compiled.
      *
-     * The framework stylesheet is compiled in its own place whatever the application declares,
-     * and the application stylesheet wrapped in the same class is compiled too, after it - the
-     * order of the include list.
+     * The framework JS class and template of each set are compiled as found: nothing
+     * overrides them. The framework stylesheet is compiled in its own place whatever the
+     * application declares, and the application stylesheet wrapped in the same class is
+     * compiled too, after it - the order of the include list.
      */
-    public static function test_every_include_kind_compiles_the_override_in_the_shadowed_files_place()
+    public static function test_every_include_kind_compiles_the_php_override_in_the_shadowed_files_place()
     {
         static::__roots();
         static::__remove_everything();
@@ -335,15 +347,14 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
                 $framework_sheet = static::__framework_set_root($set) . '/Bo_' . static::__pascal($set) . '_Panel.scss';
 
                 static::__assert_false(isset($overrides[$framework_sheet]), "{$framework_sheet} is not shadowed by the application stylesheet wrapped in its class");
-
-                foreach (static::__shadowed_paths($set) as $i => $framework_path) {
-                    static::__assert_equals(
-                        $application[$i],
-                        $overrides[$framework_path]['by'] ?? null,
-                        "the fixture build records {$framework_path} as shadowed by {$application[$i]}"
-                    );
-                }
+                static::__assert_equals(
+                    $application[0],
+                    $overrides[static::__shadowed_path($set)]['by'] ?? null,
+                    'the fixture build records ' . static::__shadowed_path($set) . " as shadowed by {$application[0]}"
+                );
             }
+
+            static::__assert_equals(count(static::SETS), count($overrides), 'the model shells are the only shadowed files');
 
             static::__child_ok('rsx:bundle:compile', [static::BUNDLE], 'compiling the fixture bundle');
 
@@ -369,16 +380,19 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
             foreach (static::SETS as $set) {
                 $framework = static::__framework_set_root($set);
                 $p = 'Bo_' . static::__pascal($set);
-                [$widget, $panel, $sheet] = array_keys(static::__application_files($set));
+                $upper = strtoupper($set);
+                $sheet = array_keys(static::__application_files($set))[1];
                 $what = "the '{$set}' set";
 
-                // ---- the script: after its base, before the class extending it ----------
-                $at = static::__position_of($widget, $js_sources, $what);
-                static::__assert_greater_than(static::__position_of("{$framework}/{$p}_Base.js", $js_sources, $what), $at, "{$what}: the override is compiled after the base it extends");
-                static::__assert_less_than(static::__position_of("{$framework}/{$p}_Achild.js", $js_sources, $what), $at, "{$what}: and before the class that extends it");
+                // ---- the model: the override's stub, once ---------------------------------
+                static::__assert_equals(1, substr_count($app_js, "class Base_{$p}_Model "), "{$what}: the model's stub is in the bundle once");
+                static::__assert_contains("KIND_BO_APPLICATION_{$upper}", $app_js, "{$what}: the stub is the override's - it carries the enum only the override declares");
 
-                // ---- the template ------------------------------------------------------
-                static::__position_of($panel, $js_sources, $what);
+                // ---- the script and the template: the framework's, as found ----------------
+                static::__position_of("{$framework}/{$p}_Widget.js", $js_sources, $what);
+                static::__position_of("{$framework}/{$p}_Panel.jqhtml", $js_sources, $what);
+                static::__assert_contains("BO_FRAMEWORK_{$upper}_WIDGET", $app_js, "{$what}: the framework JS class is compiled");
+                static::__assert_contains("BO_FRAMEWORK_{$upper}_PANEL", $app_js, "{$what}: and so is the framework template");
 
                 // ---- the stylesheets: the framework's in its place, the application's after it
                 $at = static::__position_of("{$framework}/{$p}_Panel.scss", $css_sources, $what);
@@ -386,11 +400,6 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
                 static::__assert_less_than(static::__position_of("{$framework}/{$p}_Zz_Last.scss", $css_sources, $what), $at, "{$what}: and precedes the one after it");
                 static::__assert_greater_than($at, static::__position_of($sheet, $css_sources, $what), "{$what}: the application stylesheet wrapped in the same class is compiled too, after the framework's");
                 static::__assert_contains(".{$p}_Panel__framework_marker", $app_css, "{$what}: the framework stylesheet's rules are in the bundle");
-
-                // ---- the content is the application's ---------------------------------
-                $upper = strtoupper($set);
-                static::__assert_contains("BO_APPLICATION_{$upper}_WIDGET", $app_js, "{$what}: the override's script is in the bundle");
-                static::__assert_contains("BO_APPLICATION_{$upper}_PANEL", $app_js, "{$what}: the override's template is in the bundle");
                 static::__assert_contains(".{$p}_Panel__application_marker", $app_css, "{$what}: and so are the application stylesheet's");
             }
 
@@ -398,12 +407,6 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
             static::__assert_not_empty($compiled, 'the fixture build compiled bundles');
 
             foreach ($compiled as $name => $content) {
-                foreach (static::SETS as $set) {
-                    $upper = strtoupper($set);
-                    static::__assert_false(str_contains($content, "BO_FRAMEWORK_{$upper}_WIDGET"), "{$name} carries no shadowed script of the '{$set}' set");
-                    static::__assert_false(str_contains($content, "BO_FRAMEWORK_{$upper}_PANEL"), "{$name} carries no shadowed template of the '{$set}' set");
-                }
-
                 $shadowed = array_values(array_intersect(static::__provenance($content), array_keys($overrides)));
                 static::__assert_equals([], $shadowed, "{$name} was compiled from no shadowed file");
             }
@@ -513,7 +516,7 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
     /**
      * Every module bundle of the build this process runs on (outside the test trees) resolves
      * to a file list with no shadowed path in it. (A tree with no overrides passes trivially; an installed application
-     * that overrides framework components is what this audits.)
+     * that overrides framework classes is what this audits.)
      */
     public static function test_no_bundle_of_this_build_resolves_a_shadowed_file()
     {

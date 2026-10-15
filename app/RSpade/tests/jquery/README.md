@@ -13,7 +13,8 @@ application invokes instead of filtering digits by hand, in its plain and its `t
   `_numeric_read()` / `_numeric_format()`, plus `_numeric_value()` and the hours:minutes
   conversion `_numeric_time_to_decimal()`
 - `system/app/RSpade/Core/Js/Width_Group.js` - the width-group family
-- `system/app/RSpade/Core/Ui/Button_Utils.js` - the busy-state engine behind `.click_async()`
+- `system/app/RSpade/Core/Ui/Button_Utils.js` - the busy-state engine behind `.click_async()`, and
+  `Button_Utils.set_loader()`, the registered loader
 
 ## Behavior defined by
 
@@ -51,6 +52,7 @@ the browser; nothing application-side is involved, and the tests run in any inst
 | `rsx_numeric`: `.` and `:` are mutually exclusive in one value | playwright | implemented (`rsx_numeric_time.js`) |
 | `rsx_numeric`: focus selects the whole value, mouse and keyboard alike | playwright | planned |
 | `rsx_numeric`: an edit mid-string keeps the caret where the user left it | playwright | planned |
+| `Button_Utils.set_loader()`: a registered renderer draws the busy state, the cycle is otherwise unchanged | playwright | implemented (`button_utils_loader.js`) |
 | `.click()` calls `preventDefault()`, `.click_allow_default()` does not | playwright | planned |
 | `.click_async()` busy-state, re-entrancy guard, detached-node settle | playwright | planned |
 | `$.ajax()` to a local URL throws, an external one passes through | playwright | planned |

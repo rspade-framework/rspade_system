@@ -1117,12 +1117,14 @@ class BundleCompiler
     * Add a file to the bundle - THE ONE SEAM every include passes through: a directory walk,
     * a type-filtered pattern (Bundle_Include_Pattern) and an explicit file alike.
     *
-    * A framework file the application overrides (rsx:man class_override) is SUBSTITUTED here
-    * by the file that overrides it, in the framework file's place in the include order - so a
-    * script evaluates and a template registers where the framework's would have. Stylesheets
-    * are never overrides: every framework stylesheet a bundle includes is compiled. The
-    * de-dup below then keys on the overriding file, so a bundle that also includes the
-    * application's file gets it once, wherever it appears first.
+    * A framework PHP class the application overrides (rsx:man class_override) is SUBSTITUTED
+    * here by the file that overrides it, in the framework file's place in the include order -
+    * so a bundle whose includes reach the framework file (Core_Bundle's Core/Models scan, say)
+    * receives the override even when none of its includes covers the override's directory.
+    * Only PHP classes are overridable, so only a PHP file is ever substituted; JS classes,
+    * templates and stylesheets are compiled as they are found. The de-dup below then keys on
+    * the overriding file, so a bundle that also includes the application's file gets it once,
+    * wherever it appears first.
     *
     * An overriding MODEL brings its companion: when the substituted file is a model whose
     * client-side class the application defines (a JS class of the same name extending its
@@ -1187,18 +1189,15 @@ class BundleCompiler
      * the check demands, resolved by the two helpers the check itself uses
      * (_is_js_exposed_model(), _user_js_model_class_file()).
      *
+     * The companion is not a JS override: the framework ships no JS class named after a
+     * model, so the application's class over the generated Base_ stub shadows nothing.
+     *
      * @param string $shadowed absolute path of the shadowed framework file a bundle declared
      * @return string|null absolute path of the companion JS class file
      */
     protected function _override_companion_file(string $shadowed): ?string
     {
-        $override_record = $this->overrides[Rsx_Paths::relative($shadowed)];
-
-        if ($override_record['kind'] !== 'php') {
-            return null;
-        }
-
-        $class_name = $override_record['name'];
+        $class_name = $this->overrides[Rsx_Paths::relative($shadowed)]['name'];
 
         if (!static::_is_js_exposed_model($class_name)) {
             return null;
@@ -1239,8 +1238,8 @@ class BundleCompiler
     *
     * This is the framework resolving a path a bundle declared, not a second declaration: a
     * framework bundle (Core_Bundle, a /_sys bundle) that names a framework directory still
-    * declares only framework paths, and receives the application's component because that
-    * is what an override means. The shadowed file stays on disk, untouched and never compiled.
+    * declares only framework paths, and receives the application's class because that is
+    * what an override means. The shadowed file stays on disk, untouched and never compiled.
     *
     * @param string $normalized absolute path, as rsxrealpath() returns it
     * @return string absolute path of the file to compile

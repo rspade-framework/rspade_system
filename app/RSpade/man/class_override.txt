@@ -2,7 +2,7 @@
 
 ## NAME
 
-class_override - Replace a framework class with an application-specific one
+class_override - Replace a framework PHP class with an application-specific one
 
 ## SYNOPSIS
 
@@ -30,6 +30,11 @@ class name - simple name and fully-qualified name alike - from then on.
 
     php artisan rsx:overrides:list     # every override in force
 
+ONLY PHP CLASSES ARE OVERRIDABLE. A JS class or a jqhtml component declared in
+rsx/ with the name of a framework one fails the manifest build; browser-side
+framework behaviour changes through the extension points the framework
+publishes for it (JAVASCRIPT CLASSES AND TEMPLATES ARE NOT OVERRIDABLE).
+
 ## DESCRIPTION
 
 An application customizes framework behavior without editing system/, and an
@@ -53,9 +58,9 @@ WHICH RECIPE APPLIES IS DECIDED BY THE CLASS, NOT BY PREFERENCE.
     beside a *_Model_Abstract of the same stem. The override EXTENDS that base.
     A copy of the framework file is REFUSED at manifest build.
 
-    Everything else - controllers, services, components, libraries, the
-    permission classes. The override is a COPY under the same class name, and it
-    holds the whole implementation.
+    Every other PHP class - controllers, services, libraries, the permission
+    classes. The override is a COPY under the same class name, and it holds the
+    whole implementation.
 
 The split exists because a copy is frozen the moment it is taken while the
 framework's own class keeps moving. A downstream field report records both halves
@@ -102,7 +107,7 @@ model.
 ## HOW IT WORKS
 
 Every manifest build derives THE OVERRIDE MAP from scratch, over the whole tree.
-A name declared by exactly one rsx/ file and by a framework file is an
+A PHP class name declared by exactly one rsx/ file and by a framework file is an
 override, and every framework file declaring it is shadowed:
 
     Framework file: app/RSpade/Core/Models/User_Model.php
@@ -119,7 +124,7 @@ still a file of the tree: it stays in the build key by path and content, so a
 framework update to it is seen like any other change, and the drift analysis
 reads it where it lies (DRIFT, below).
 
-The PHP half of the map is also written to build/manifest/class_overrides.php,
+The map is also written to build/manifest/class_overrides.php,
 the file the class override loader reads at the start of every process. It is a
 build artifact: a sealed build carries it and the seal covers it.
 
@@ -188,39 +193,73 @@ rsx:man bundle_api, JAVASCRIPT STUBS). The __MODEL name and the Base_*_Model.js
 stub names are the CONCRETE's, unchanged by the split, so nothing moves in
 JavaScript.
 
-## JAVASCRIPT CLASSES AND TEMPLATES
+## JAVASCRIPT CLASSES AND TEMPLATES ARE NOT OVERRIDABLE
 
-The same mechanism covers the two browser-side file kinds that declare a name.
-Each is matched by the NAME IT DECLARES - never by its file name or its
-directory - and each file is its own override:
+An override is a PHP class and nothing else. An rsx/ file that declares the
+name of a framework JS class (.js, .jsx, .ts, .tsx) or of a framework jqhtml
+component (<Define:Name>) is REFUSED at manifest build, naming both files:
 
-    .js       its class name (.js, .jsx, .ts and .tsx alike). An rsx/ JS class
-              with the name of a framework JS class shadows the framework's
-              file.
-    .jqhtml   its component, <Define:Name>. An rsx/ template with the name of a
-              framework template shadows the framework's .jqhtml file.
+    Fatal: JavaScript class 'Button_Utils' is not overridable.
 
-So rsx/theme/components/inputs/code/code_input.jqhtml, declaring
-<Define:Code_Input>, overrides system/app/RSpade/Core/Forms/Code_Input.jqhtml,
-and nothing about the two paths has to agree.
+      Application: rsx/theme/button_utils.js
+      Framework:   app/RSpade/Core/Ui/Button_Utils.js
 
-PER FILE, NOT PER COMPONENT. A jqhtml component is usually three files of one
-name, and an application takes over as many of its class and template as it
-supplies. Overriding only the template leaves the framework's class and
-stylesheet for that component in the build. What you did not override keeps
-arriving with framework updates - and keeps changing under the files you did,
-so a template you copied is yours to keep in step with the framework's class.
+    The application declares a framework JavaScript class name. Only PHP
+    classes are overridable: JavaScript classes and jqhtml components are
+    not. The framework file is not shadowed and the application file is
+    not ignored - two definitions of one name cannot share a bundle - so
+    the build stops.
 
-Two files of one name in rsx/ are refused at manifest build, whatever the kind -
-nothing could choose between them (WHEN THE BUILD REFUSES). Two templates of one
-component name inside the framework are a duplicate, not an override, and stop
-the build ("Duplicate jqhtml component name detected").
+    Rename the application class or component and use it by its own name,
+    or change the behaviour through an extension point the framework
+    publishes for it (a registration call such as Button_Utils.set_loader(),
+    an event hook, a subclass under a name of your own). Behaviour with no
+    extension point needs one: that is a framework change request.
 
-Shadowing and its end work exactly as for PHP: the build prints one line naming
-the framework file and the rsx/ file that shadows it, and deleting the rsx/ file
-makes the framework file live again on the next build. Each file is released on
-its own - removing your template brings the framework's template back and
-leaves your JS class override standing.
+    See: php artisan rsx:man class_override
+
+A jqhtml namesake reads "Fatal: jqhtml component 'Code_Input' is not
+overridable." The match is by the NAME the file declares, never by its file
+name or directory.
+
+WHY. A PHP override replaces a class through a contract the framework keeps on
+its side: the class override loader, the split models whose bases an override
+inherits, and CLASS-OVERRIDE-DRIFT-01 for a copy. A browser-side class or
+template has none of that. Replacing one would put a second, unannounced way of
+changing framework behaviour into every bundle - the framework's own included -
+and a framework release could change the component's internals under an
+application's copy with nothing on either side to say so. So framework UI
+behaviour changes only through what the framework publishes:
+
+    Button_Utils.set_loader(renderer)   the busy-state loader every button,
+                                        form submit and Modal.form() draws
+                                        (rsx:man jquery)
+    Rsx.set_default_spinner('Name')     the application's spinner component
+    Rsx_Form.set_question_handler(fn)   the dialog a form question opens
+                                        (rsx:man form_conventions)
+    CSS custom properties, stylesheets  the look (STYLESHEETS ARE NEVER
+                                        OVERRIDDEN, below)
+    a subclass of your own              class Sql_Code_Input extends Code_Input,
+                                        or <Define:Sql_Code_Input
+                                        extends="Code_Input">, used by its own
+                                        name
+
+A registration made from a static on_app_init() on a class of your own applies
+to every caller. The Button_Utils loader is the worked example:
+
+    // rsx/theme/button_utils_customizations.js
+    class Button_Utils_Customizations {
+        static on_app_init() {
+            Button_Utils.set_loader(() => '<span class="btn__loader"></span>');
+        }
+    }
+
+Two rsx/ files declaring one JS class name, or one component name, are refused
+by the class-map and component-name duplicate checks ("Duplicate js class
+detected", "Duplicate jqhtml component name detected"). The model JS class an
+application writes over a generated stub (rsx/models/user_model.js declaring
+`class User_Model extends Base_User_Model`) is no namesake: the framework ships
+no JS class named after a model (BUNDLES, An overridden model arrives whole).
 
 ## STYLESHEETS ARE NEVER OVERRIDDEN
 
@@ -237,20 +276,22 @@ stylesheet at the same or higher specificity.
 
 ## BUNDLES
 
-Whichever way a bundle reaches a shadowed framework file - a directory include,
-a type pattern or the file named explicitly - it compiles the rsx/ file that
-overrides it instead, in the framework file's place in the include order (a
-script sorts and a template registers where the framework's would have), and
-only once when the bundle also includes the rsx/ file itself. The shadowed file
-is never compiled. Stylesheets are never shadowed, so a bundle compiles every
-framework stylesheet it includes (STYLESHEETS ARE NEVER OVERRIDDEN).
+THE OVERRIDE IS THE CANONICAL CLASS IN EVERY BUNDLE. Whichever way a bundle
+reaches a shadowed framework PHP file - a directory include, a type pattern or
+the file named explicitly - it compiles the rsx/ file that overrides it instead,
+in the framework file's place in the include order, and only once when the
+bundle also includes the rsx/ file itself. So a bundle whose includes would have
+picked up the framework file receives the override in its place EVEN WHEN NONE
+OF ITS INCLUDES COVERS THE OVERRIDE'S DIRECTORY: Core_Bundle's Core/Models
+include carries your model override's generated stub into every bundle. The
+shadowed file is never compiled. JS classes, templates and stylesheets are
+never substituted; a bundle compiles each one it includes as it is found.
 
 That holds for EVERY bundle, the framework's own included: Core_Bundle and the
-/_sys and /apidocs bundles receive your class or template wherever they name
-the framework's. Those bundles still name no rsx/ path
-(CONV-BUNDLE-04 reads what a bundle declares, which is unchanged); the
-substitution happens below the declaration. Overriding a component the panel
-uses (a form input, say) therefore changes it in the panel too.
+/_sys and /apidocs bundles receive your class wherever they name the
+framework's. Those bundles still name no rsx/ path (CONV-BUNDLE-04 reads what a
+bundle declares, which is unchanged); the substitution happens below the
+declaration.
 
     php artisan rsx:bundle:show <Bundle>
 
@@ -266,17 +307,18 @@ model file is substituted, the bundle also receives your JS class, placed
 right after it - so the model's generated stub and your JS class travel
 together, and a bundle that names no rsx/ path compiles. Without a JS class of
 your own, the bundle generates the plain `class User_Model extends
-Base_User_Model {}` as it does for any model.
+Base_User_Model {}` as it does for any model. This is not a JS override: the
+framework ships no User_Model.js, and your JS class shadows nothing.
 
 Core_Bundle includes the framework's models (app/RSpade/Core/Models), and
 every bundle includes Core_Bundle - so an override of a core model reaches
 EVERY bundle, the public ones included: a login page, a portal sign-in page,
 an error page, /_sys and /apidocs. A bundle you narrowed to publish no
 application model still ships that override's ORM definition (the generated
-stub: its enums, relationship names and declared text types) and your JS
-class, to anyone who loads the page. Keep anything that must not be published
-out of the override and out of its JS class; put it on a model or a class
-that only an internal bundle includes.
+stub: its enums, public constants, relationship names and declared text
+types) and your JS class, to anyone who loads the page. Keep anything that must
+not be published out of the override and out of its JS class; put it on a
+model or a class that only an internal bundle includes.
 
 ## WHAT THE BUILD PRINTS
 
@@ -284,7 +326,7 @@ A framework file leaving the live tree is never silent. The build that first
 shadows it prints one line naming the framework file and the rsx/ file that
 shadows it, and stays silent on every build after:
 
-    [Manifest] Override: User_Model - the framework php file
+    [Manifest] Override: User_Model - the framework class file
     app/RSpade/Core/Models/User_Model.php is shadowed by
     rsx/models/user_model.php
 
@@ -300,7 +342,14 @@ and rsx:overrides:list shows every override in force at any time.
 
 The override pass stops the build with a FATAL when an override cannot work, and
 declines to shadow anything in two situations where its own input cannot be
-trusted. Each FATAL names the files involved and, where there is a pattern to
+trusted.
+
+FATAL - A JS CLASS OR TEMPLATE NAMED LIKE A FRAMEWORK ONE
+
+    JavaScript classes and jqhtml components are not overridable; the message
+    and the extension points are under JAVASCRIPT CLASSES AND TEMPLATES ARE NOT
+    OVERRIDABLE. An rsx/ file the index still names but the disk no longer has
+    collides with nothing: it is dropped with the stale-entry line below. Each FATAL names the files involved and, where there is a pattern to
 follow, ends with "See: php artisan rsx:man class_override".
 
 FATAL - THE OVERRIDE EXTENDS THE CLASS IT REPLACES
@@ -365,20 +414,18 @@ FATAL - AN OVERRIDE OF A SPLIT MODEL THAT DOES NOT EXTEND ITS BASE
     "extends nothing" appears in the Override line when the override declares no
     parent at all.
 
-FATAL - TWO APPLICATION FILES DECLARE ONE NAME
+FATAL - TWO APPLICATION FILES DECLARE ONE PHP CLASS
 
-    A PHP class, a JS class or a jqhtml component. Nothing can choose between
-    them, so neither overrides anything:
+    Nothing can choose between them, so neither overrides anything:
 
-        Fatal: Duplicate jqhtml component 'Code_Input' declared by more than
-        one application file:
-          - rsx/theme/components/inputs/code/code_input.jqhtml
-          - rsx/app/frontend/settings/code_input.jqhtml
+        Fatal: Duplicate PHP class 'File_Attachment_Icons' declared by more
+        than one application file:
+          - rsx/lib/file_attachment_icons.php
+          - rsx/lib/icons/file_attachment_icons.php
 
-        Component names (<Define:Code_Input>) must be unique across the
-        application.
-        (When one of them overrides a framework jqhtml file, the override must
-        be exactly one application file - see rsx:man class_override.)
+        Each class name must be unique within the same file type.
+        (When one of them overrides a framework class, the override must be
+        exactly one application file - see rsx:man class_override.)
 
 FATAL - THE CLASS CANNOT BE OVERRIDDEN
 
@@ -459,7 +506,7 @@ DECLINED - THE BUILD ALREADY MARKED ITS OWN MANIFEST BAD
     untrustworthy. It shadows nothing; the two declarations stay in the tree and
     the class maps report the duplicate:
 
-        [Manifest] Override pass: NOT shadowing the framework php file of
+        [Manifest] Override pass: NOT shadowing the framework class file of
         User_Model - this build already marked its manifest bad, so its file
         list is not evidence of anything. The next build decides.
 
@@ -470,20 +517,22 @@ DECLINED - THE BUILD ALREADY MARKED ITS OWN MANIFEST BAD
 
     php artisan rsx:overrides:list [--json]
 
-One row per shadowed framework file, read off the manifest's override map: the kind
-(php, js, jqhtml), the declared name, the application file that overrides it
-and the framework file it shadows, paths relative to the project root. A PHP row also
-carries the drift verdict described below - "current", "N missing" (the members are
-named under the table) or "extends base" for a split model, which has nothing to
-drift; the two browser-side kinds are not analysed. "No class overrides." when there are
-none. Read-only, exit 0, and it works in every mode, sealed builds included. --json
-prints {"overrides": [{kind, name, override_file, framework_file, fqcn, by_fqcn,
-drift: {status: current|missing|extends_base, missing: [...]} | null}]}.
+One row per shadowed framework PHP file, read off the manifest's override map: the
+class name, the application file that overrides it and the framework file it
+shadows, paths relative to the project root, and the drift verdict described
+below - "current", "N missing" (the members are named under the table) or
+"extends base" for a split model, which has nothing to drift. "No class
+overrides." when there are none. Read-only, exit 0, and it works in every mode,
+sealed builds included. --json prints {"overrides": [{name, override_file,
+framework_file, fqcn, by_fqcn, drift: {status: current|missing|extends_base,
+missing: [...]}}]}.
 
 THE EDITOR. The VS Code extension reads the same map through the IDE bridge
-(/_ide/service/overrides). A shadowed framework file is badged in the explorer
-and carries a CodeLens that opens its override, and go-to-definition on the
-class name lands on the override, never on the shadowed file.
+(/_ide/service/overrides, {"overrides": {"system/<framework file>": {name,
+by}}}). A shadowed framework PHP file is badged "OV" in the explorer ("PHP class
+overridden by rsx/...") and carries a CodeLens that opens its override, and
+go-to-definition on the class name lands on the override, never on the shadowed
+file.
 
 ## DRIFT: AN OVERRIDE THAT STOPS CARRYING WHAT UPSTREAM DECLARES
 
@@ -524,10 +573,6 @@ The same analysis as an operator row: WARN, never FAIL, one row per drifting
 override, counting the missing members and pointing at rsx:check. It exists
 because the moment drift appears is a framework pull, which is exactly when
 somebody is looking at rsx:health and not at the linter.
-
-Drift is analysed for PHP classes only. A JS class or template you
-override is listed by rsx:overrides:list with no drift verdict; keeping it in
-step with the framework's version is a manual diff (FRAMEWORK UPDATES).
 
 A SPLIT MODEL HAS NO DRIFT SURFACE AND IS REPORTED ON BY NEITHER. The shadowed
 file declares nothing but `class X extends X_Abstract`, and the override extends
@@ -581,7 +626,7 @@ Split core models, extended:
 Copied classes:
 
     Permission_Abstract's concrete Permission class (changing is_sysadmin -
-    rsx:man sys_panel), UI helper libraries, framework controllers and services.
+    rsx:man sys_panel), PHP helper libraries, framework controllers and services.
 
 ## CREATING AN OVERRIDE
 
@@ -722,9 +767,8 @@ to deal with:
 See rsx:man rsx_upstream for the full update contract.
 
 For a MODEL override there is nothing to compare after an update: the base
-arrived with the pull and the override already inherits it. For a COPY - and
-for every JS class and template you override - see what the
-framework version gained with a plain diff against the file in place:
+arrived with the pull and the override already inherits it. For a COPY, see
+what the framework version gained with a plain diff against the file in place:
 
     diff rsx/lib/file_attachment_icons.php \
          system/app/RSpade/Core/Files/File_Attachment_Icons.php
@@ -740,9 +784,7 @@ Delete the override file:
 The next build derives a map without it, prints "Override removed: the
 framework file app/RSpade/Core/Models/User_Model.php is live again", and the
 framework class answers for its own name from then on. There is nothing to
-restore: the framework file never left. The same holds for a .js or .jqhtml
-override, each judged on its own: the framework file is live again when no
-rsx/ file of the same kind declares its name.
+restore: the framework file never left.
 
 ## HOW REFERENCES KEEP RESOLVING
 
@@ -850,17 +892,20 @@ shell declares anything or a base ships without exactly one concrete.
 
 ## LIMITATIONS
 
+- Only PHP classes are overridable. A JS class or jqhtml component named like a
+  framework one fails the build (JAVASCRIPT CLASSES AND TEMPLATES ARE NOT
+  OVERRIDABLE); change browser-side behaviour through the framework's
+  extension points
 - Only works for files in rsx/ overriding framework files the manifest indexes
-- Both files must declare the same name (class or component)
+- Both files must declare the same class name
 - Cannot override multiple framework classes with one file
 - A core MODEL cannot be overridden by copying - the override must extend
   <Name>_Model_Abstract, and a copy is refused at manifest build
 - The ABSTRACT BASE of a split model is not overridable: an rsx/ class named
   X_Model_Abstract would shadow the base itself, which is the implementation.
   Override the concrete, which is what the shell is for
-- A JS class and a jqhtml template are each overridden by name, file by file
-  (JAVASCRIPT CLASSES AND TEMPLATES above), and every bundle - the framework's
-  own included - compiles the replacement (BUNDLES)
+- Every bundle that reaches the framework file - the framework's own included -
+  compiles the override in its place (BUNDLES)
 - An overridden core model reaches every bundle, public ones included, with
   its generated stub and your JS class together; keep what must not be
   published out of both (BUNDLES, An overridden model arrives whole)
@@ -893,6 +938,14 @@ it is telling you why: a stale-entry line means the rsx/ file it names is not
 where the index thinks it is; a bad-manifest line means an earlier failure in
 the same build has to be fixed first. The map is derived in full on every
 build, so a clean build cannot change the answer.
+
+### "JavaScript class 'X' is not overridable" / "jqhtml component 'X' is not overridable"
+
+Your rsx/ file declares the name of a framework JS class or component. Rename it
+and use it by its own name, or use the framework's extension point for the
+behaviour you want to change (JAVASCRIPT CLASSES AND TEMPLATES ARE NOT
+OVERRIDABLE). A full copy of a framework class kept only to change what it
+draws is what a registration call such as Button_Utils.set_loader() replaces.
 
 ### "Invalid override of the split framework class"
 
@@ -965,6 +1018,7 @@ rsx:man model_fetch - fetch() as a read gate rather than an override
 rsx:man file_upload - Staff_Authorizable, the staff row-visibility seam
 rsx:man portal - Portal_Authorizable, its portal twin
 rsx:man event_hooks - #[OnEvent], behaviour interception without a copy
+rsx:man jquery - Button_Utils.set_loader(), the busy-state loader extension point
 rsx:man breaking_changes - what a change to an overridable class ships with
 rsx:man framework_debug_and_contrib - the build passes, and how to file a framework change
 skill rspade:model-fetch - writing and gating a model's read surface

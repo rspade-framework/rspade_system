@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { workspace_exclude_glob } from './config';
-import { effective_uri } from './override_map';
 
 /**
  * Convention methods that are called automatically by the RSX framework
@@ -246,9 +245,8 @@ export class ConventionMethodDefinitionProvider implements vscode.DefinitionProv
             return undefined;
         }
 
-        // Use the first match (should only be one Rsx.js). An application that overrides
-        // the Rsx class shadows this file: the override is the code that runs.
-        const rsx_file = effective_uri(files[0]);
+        // Use the first match (should only be one Rsx.js).
+        const rsx_file = files[0];
         const rsx_document = await vscode.workspace.openTextDocument(rsx_file);
         const rsx_text = rsx_document.getText();
 

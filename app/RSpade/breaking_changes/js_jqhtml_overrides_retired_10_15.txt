@@ -1,0 +1,123 @@
+ONLY PHP CLASSES ARE OVERRIDABLE: A JS CLASS OR JQHTML COMPONENT NAMED LIKE A FRAMEWORK ONE FAILS THE BUILD
+Date: 2026-10-15
+
+IF YOU DO NOTHING: if your rsx/ declares a JavaScript class or a jqhtml component (<Define:Name>) with the name of a framework one - a full copy of Button_Utils kept to draw your own button loader, say - the manifest build fails with "Fatal: JavaScript class 'Button_Utils' is not overridable." (or "Fatal: jqhtml component '<Name>' is not overridable.") and no page of the application is served until the file is renamed or replaced.
+
+SUMMARY
+    Category 2: the class override contract narrowed. An application overrides a
+    framework PHP class exactly as before. A JavaScript class (.js, .jsx, .ts,
+    .tsx) or a jqhtml component declared in rsx/ with the name of a framework one
+    is no longer an override: it is a manifest-build FATAL naming both files.
+
+    It affects only an application that copied a framework JS class or template
+    into rsx/ under the framework's name. An application with no such file - and
+    every application whose overrides are PHP classes, core models included - has
+    nothing to do.
+
+THE CHANGE
+    A JS or jqhtml override reached into every bundle, the framework's own
+    included, with no contract on the framework side: a framework release could
+    change a component's internals under an application's copy with nothing to
+    say so. Framework UI behaviour now changes only through what the framework
+    publishes - a registration call, an event, CSS custom properties, a
+    stylesheet that adds to the framework's, or a subclass under a name of your
+    own.
+
+    The refusal reads:
+
+        Fatal: JavaScript class 'Button_Utils' is not overridable.
+
+          Application: rsx/theme/button_utils.js
+          Framework:   app/RSpade/Core/Ui/Button_Utils.js
+
+        The application declares a framework JavaScript class name. Only PHP
+        classes are overridable: JavaScript classes and jqhtml components are
+        not. ...
+
+    UNCHANGED:
+        - A PHP class override - shadowing, the FQCN alias, the override taking
+          the framework file's place in every bundle that reaches it (Core_Bundle
+          included), CLASS-OVERRIDE-DRIFT-01, rsx:overrides:list.
+        - The JS class you write for an overridden model (rsx/models/
+          user_model.js declaring `class User_Model extends Base_User_Model`).
+          The framework ships no JS class named after a model, so it shadows
+          nothing; it still travels with the model override into every bundle.
+        - Stylesheets. They were never overrides: one wrapped in a framework
+          component's class is compiled alongside the framework's.
+
+    NEW: Button_Utils.set_loader(renderer). The busy-state loader every
+    .click_async() button, Rsx_Form submit button and Modal.form() button draws
+    can be replaced without a copy of the class (rsx:man jquery, BUTTON
+    BUSY-STATE).
+
+ACTION REQUIRED
+    1. Find your JS and jqhtml overrides - BEFORE you pull, while the framework
+       still lists them:
+
+           php artisan rsx:overrides:list
+
+       Every row whose kind is js or jqhtml is affected; php rows are not.
+
+       After the pull the build names each one itself, one per build, in the
+       refusal above - fix it, reload, and the next is named.
+
+    2. For each one, choose:
+
+       a. RENAME IT and use it by its own name. A component you changed becomes
+          your own component that extends the framework's:
+
+              <Define:Sql_Code_Input extends="Code_Input"> ... </Define:Sql_Code_Input>
+              class Sql_Code_Input extends Code_Input { ... }
+
+          and every place that rendered <Code_Input> and wanted yours renders
+          <Sql_Code_Input>. Framework screens keep the framework's component.
+
+       b. USE THE EXTENSION POINT the framework publishes for what you changed,
+          and delete the copy. The worked example is a full copy of Button_Utils
+          kept only to draw a different loader:
+
+              Delete:  rsx/theme/button_utils.js
+
+              Add:     rsx/theme/button_utils_customizations.js
+
+                  /**
+                   * Button_Utils_Customizations - this application's busy-state loader.
+                   */
+                  class Button_Utils_Customizations {
+                      static on_app_init() {
+                          Button_Utils.set_loader(() =>
+                              '<span class="btn__loader" aria-hidden="true">'
+                              + '<span class="btn__loader-dot"></span>'
+                              + '<span class="btn__loader-dot"></span>'
+                              + '<span class="btn__loader-dot"></span>'
+                              + '</span>');
+                      }
+                  }
+
+          The renderer receives the element entering the busy state and returns
+          the markup placed inside it (a string or a jQuery). It is read every
+          time an element enters the busy state, so this one registration
+          applies to .click_async(), Rsx_Form and Modal.form() alike. The
+          framework still locks the element's size, adds btn--submitting, blocks
+          pointer events, and stashes and restores the original content - so a
+          stylesheet rule of yours that hid the button's own content while busy
+          is now redundant and can go. Keep the styling of your loader markup.
+
+       c. NO EXTENSION POINT FITS: that is a framework change request
+          (rsx:man framework_debug_and_contrib). Until it lands, (a) is the way
+          to keep your behaviour.
+
+    3. Confirm:
+
+           php artisan rsx:overrides:list
+
+       lists PHP classes only, and every page builds.
+
+VERIFICATION
+    - php artisan rsx:debug / renders with no console errors.
+    - A form submit, a .click_async() button and a Modal.form() save each show
+      your loader, keep the button's size, and restore its content afterwards.
+
+SEE ALSO
+    rsx:man class_override - JAVASCRIPT CLASSES AND TEMPLATES ARE NOT OVERRIDABLE
+    rsx:man jquery - BUTTON BUSY-STATE, Button_Utils.set_loader()

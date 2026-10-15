@@ -24,11 +24,13 @@
  * A path given as `@landing` is the page the sign-in redirected to - whatever this
  * application's signed-in home is.
  *
- * AN ANONYMOUS PAGE FIRST, when PROBE_ANON_PATH and PROBE_ANON_MARKER are set: before it
- * signs in, the probe renders PROBE_ANON_PATH as a visitor with no session and checks that
- * it answers 200, reports no error, and that its rendered DOM carries PROBE_ANON_MARKER -
- * the lifecycle's proof that a component an application overrides is what the sealed
- * bundle draws. Whatever session that visit opened is discarded before the sign-in, which
+ * AN ANONYMOUS PAGE FIRST, when PROBE_ANON_PATH, PROBE_ANON_EXPRESSION and PROBE_ANON_MARKER
+ * are set: before it signs in, the probe renders PROBE_ANON_PATH as a visitor with no session
+ * and checks that it answers 200, reports no error, and that the JavaScript expression
+ * PROBE_ANON_EXPRESSION evaluates to PROBE_ANON_MARKER on it - the lifecycle's proof that the
+ * sealed bundle of a page naming no application model compiled the class an application
+ * overrides (Region_Model.PROBE, a constant only the override declares, reaches the page
+ * through the model's generated stub). Whatever session that visit opened is discarded before the sign-in, which
  * starts, as a person's does, with none.
  *
  * FOR EVERY PAGE: the document answers 200; the page reports no error; rsxapp.build_key is
@@ -55,6 +57,7 @@ const [app_host, expected_state_key, expected_code_key, ...paths] = process.argv
 const email = process.env.PROBE_EMAIL || '';
 const password = process.env.PROBE_PASSWORD || '';
 const anon_path = process.env.PROBE_ANON_PATH || '';
+const anon_expression = process.env.PROBE_ANON_EXPRESSION || '';
 const anon_marker = process.env.PROBE_ANON_MARKER || '';
 
 if (!app_host || !expected_state_key || !expected_code_key || paths.length === 0 || !email || !password) {
@@ -232,9 +235,9 @@ async function probe_page(context, path) {
 }
 
 /**
- * Render one page as an anonymous visitor and look for the marker in what it drew.
+ * Render one page as an anonymous visitor and ask it for the marker.
  */
-async function probe_anonymous_page(context, path, marker) {
+async function probe_anonymous_page(context, path, expression, marker) {
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (err) => errors.push(err.message));
@@ -252,8 +255,8 @@ async function probe_anonymous_page(context, path, marker) {
     if (status === 200) {
         await page.waitForLoadState('networkidle', { timeout: 0 });
 
-        const has_marker = await page.evaluate((needle) => document.documentElement.innerHTML.includes(needle), marker);
-        check(has_marker, path + ' (anonymous) rendered the overriding component (marker ' + marker + ')');
+        const answered = await page.evaluate(expression);
+        check(answered === marker, path + ' (anonymous) answers ' + expression + ' with the override\'s marker ' + marker, 'answered ' + JSON.stringify(answered));
         check(errors.length === 0, path + ' (anonymous) reported no error', errors.join(' | '));
     }
 
@@ -287,8 +290,8 @@ async function probe_anonymous_page(context, path, marker) {
             await route.fulfill({ status: answer.status, headers, body: answer.body });
         });
 
-        if (anon_path !== '' && anon_marker !== '') {
-            await probe_anonymous_page(context, anon_path, anon_marker);
+        if (anon_path !== '' && anon_expression !== '' && anon_marker !== '') {
+            await probe_anonymous_page(context, anon_path, anon_expression, anon_marker);
             session_cookie = null;
         }
 

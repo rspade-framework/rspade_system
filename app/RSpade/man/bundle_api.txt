@@ -311,14 +311,15 @@ INCLUDE TYPES
         'rsx/lib/utils.js'
         'rsx/theme/variables.scss'
 
-    Overridden Framework Files
-        Whichever way a bundle reaches a framework file your application
-        overrides (rsx:man class_override) - directory, pattern or explicit
-        file, in any bundle including the framework's own - it compiles
-        your file in that file's place in the include order, once, and
-        never the framework's. Only a PHP class, a JS class or a jqhtml
-        template is overridden: every framework stylesheet a bundle
-        includes is compiled, and a stylesheet of yours that styles the
+    Overridden Framework Classes
+        Whichever way a bundle reaches a framework PHP class your
+        application overrides (rsx:man class_override) - directory, pattern
+        or explicit file, in any bundle including the framework's own - it
+        compiles your file in that file's place in the include order, once,
+        and never the framework's, even when none of the bundle's includes
+        covers your file's directory. Only PHP classes are overridable: a
+        framework JS class, template or stylesheet a bundle includes is
+        compiled as it is found, and a stylesheet of yours that styles the
         same component is compiled alongside it. An overridden MODEL
         brings its client-side class too: when your override has a JS
         class of its own (class User_Model extends Base_User_Model), the

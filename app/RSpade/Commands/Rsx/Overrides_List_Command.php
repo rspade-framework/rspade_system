@@ -18,15 +18,14 @@ use App\RSpade\Core\Naming\Rsx_Paths;
  * An override leaves nothing on disk to look at: the framework file stays where it is, under
  * its own name, and the manifest records that the application file stands in for it
  * (Manifest::overrides(), rsx:man class_override). This is the listing an operator reads
- * instead - one row per shadowed framework file: the kind, the declared name, the application
- * file that overrides it and the framework file it shadows.
+ * instead - one row per shadowed framework PHP file: the class name, the application file that
+ * overrides it and the framework file it shadows. Only PHP classes are overridable.
  *
- * DRIFT, FOR PHP. A copied class is frozen the moment it is taken while the framework file
- * keeps moving, so each PHP row carries Class_Override_Drift's verdict: "current" (the copy
- * declares every public/protected member the framework file declares), "N missing" (and the
- * members are named below the table), or "extends base" for a split class whose override
- * extends its `_Abstract` base and so inherits everything - there is no copy to measure. The
- * js and jqhtml kinds are not analysed.
+ * DRIFT. A copied class is frozen the moment it is taken while the framework file keeps
+ * moving, so each row carries Class_Override_Drift's verdict: "current" (the copy declares
+ * every public/protected member the framework file declares), "N missing" (and the members are
+ * named below the table), or "extends base" for a split class whose override extends its
+ * `_Abstract` base and so inherits everything - there is no copy to measure.
  *
  * Read-only, and it works in every mode: it reads the index, sealed builds included.
  */
@@ -35,7 +34,7 @@ class Overrides_List_Command extends Command
     protected $signature = 'rsx:overrides:list
                             {--json : Output as JSON}';
 
-    protected $description = 'List every class override in force: kind, name, the application file, the framework file it shadows, and PHP drift';
+    protected $description = 'List every PHP class override in force: class, the application file, the framework file it shadows, and drift';
 
     /** Drift verdicts, as they appear in --json. */
     public const DRIFT_CURRENT = 'current';
@@ -60,9 +59,8 @@ class Overrides_List_Command extends Command
 
         $this->newLine();
         $this->table(
-            ['Kind', 'Name', 'Override', 'Shadows framework file', 'Drift'],
+            ['Class', 'Override', 'Shadows framework file', 'Drift'],
             array_map(static fn (array $row) => [
-                $row['kind'],
                 $row['name'],
                 $row['override_file'],
                 $row['framework_file'],
@@ -70,7 +68,7 @@ class Overrides_List_Command extends Command
             ], $rows)
         );
 
-        $drifting = array_filter($rows, static fn (array $row) => ($row['drift']['status'] ?? null) === self::DRIFT_MISSING);
+        $drifting = array_filter($rows, static fn (array $row) => $row['drift']['status'] === self::DRIFT_MISSING);
 
         foreach ($drifting as $row) {
             $this->line('  ' . $row['name'] . ' lacks: ' . implode(', ', $row['drift']['missing']));
@@ -86,12 +84,12 @@ class Overrides_List_Command extends Command
     }
 
     /**
-     * One row per override, ordered by kind then name. Paths are relative to the project root.
+     * One row per override, ordered by class name. Paths are relative to the project root.
      *
      * @return array<int, array{
-     *     kind: string, name: string, override_file: string, framework_file: string,
-     *     fqcn: ?string, by_fqcn: ?string,
-     *     drift: ?array{status: string, missing: array<int, string>}
+     *     name: string, override_file: string, framework_file: string,
+     *     fqcn: string, by_fqcn: string,
+     *     drift: array{status: string, missing: array<int, string>}
      * }>
      */
     public static function rows(): array
@@ -100,19 +98,16 @@ class Overrides_List_Command extends Command
 
         foreach (Manifest::overrides() as $framework_file => $override) {
             $rows[] = [
-                'kind' => $override['kind'],
                 'name' => $override['name'],
                 'override_file' => static::project_relative($override['by']),
                 'framework_file' => static::project_relative($framework_file),
-                'fqcn' => $override['fqcn'] ?? null,
-                'by_fqcn' => $override['by_fqcn'] ?? null,
-                'drift' => $override['kind'] === 'php'
-                    ? static::drift($framework_file, $override['by'], $override['name'])
-                    : null,
+                'fqcn' => $override['fqcn'],
+                'by_fqcn' => $override['by_fqcn'],
+                'drift' => static::drift($framework_file, $override['by'], $override['name']),
             ];
         }
 
-        usort($rows, static fn (array $a, array $b) => [$a['kind'], $a['name'], $a['framework_file']] <=> [$b['kind'], $b['name'], $b['framework_file']]);
+        usort($rows, static fn (array $a, array $b) => [$a['name'], $a['framework_file']] <=> [$b['name'], $b['framework_file']]);
 
         return $rows;
     }
@@ -152,10 +147,9 @@ class Overrides_List_Command extends Command
         ];
     }
 
-    private static function drift_label(?array $drift): string
+    private static function drift_label(array $drift): string
     {
-        return match ($drift['status'] ?? null) {
-            null => '-',
+        return match ($drift['status']) {
             self::DRIFT_CURRENT => 'current',
             self::DRIFT_EXTENDS_BASE => 'extends base',
             self::DRIFT_MISSING => count($drift['missing']) . ' missing',

@@ -10,8 +10,8 @@ TEST_NAME="IDE bridge overrides service"
 #      tokenless request is 401.
 #   2. With the grant it answers 200 and {"success": true, "overrides": {...}} - an OBJECT
 #      even when empty (the extension reads it as a path-keyed map), every key a
-#      project-relative framework path under system/ and every value {kind, name, by} with
-#      `by` under rsx/.
+#      project-relative framework PHP file under system/ and every value {name, by} with
+#      `by` under rsx/ - only PHP classes are overridable, so there is no kind.
 #   3. It is a read service: GET is served.
 #
 # The map this box carries is whatever its rsx/ declares; the template declares no override,
@@ -63,7 +63,9 @@ verdict="$(php -r '
     if (!isset($doc->overrides) || !is_object($doc->overrides)) { echo "overrides is not a JSON object: " . substr($raw, 0, 300); exit; }
     foreach ((array) $doc->overrides as $path => $record) {
         if (!str_starts_with($path, "system/app/RSpade/")) { echo "key is not a project-relative framework path: $path"; exit; }
-        if (!isset($record->kind, $record->name, $record->by)) { echo "entry lacks kind/name/by: $path"; exit; }
+        if (!str_ends_with($path, ".php")) { echo "an overridden file is not a PHP file: $path"; exit; }
+        if (!isset($record->name, $record->by)) { echo "entry lacks name/by: $path"; exit; }
+        if (isset($record->kind)) { echo "entry carries a kind - only PHP is overridable: $path"; exit; }
         if (!str_starts_with($record->by, "rsx/")) { echo "by is not under rsx/: $record->by"; exit; }
     }
     echo "ok";

@@ -45,8 +45,9 @@ both directions, keyed on the file's path:
 - a name declared under `rsx/` may **NOT** start with an underscore;
 - a name declared under `app/RSpade/Sys/` **MUST** start with one.
 
-The `rsx/` direction is not cosmetic. A `_`-prefixed class in `rsx/` that
-matches a framework one is read by the manifest as a **class override**: the
+The `rsx/` direction is not cosmetic. A `_`-prefixed PHP class in `rsx/` that
+matches a framework one is read by the manifest as a **class override** (a JS
+class or component of a framework name fails the manifest build instead): the
 framework's file is shadowed and your copy is served instead - in the panel's
 own bundles too - with nothing reported beyond the build's one-line override
 notice. The panel would look like it had changed on its own. That silent-shadowing failure is why the rule refuses rather than warns.

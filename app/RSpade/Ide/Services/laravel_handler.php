@@ -202,15 +202,16 @@ function handle_php_is_subclass_of_service($data) {
 /**
  * Handle overrides service - the manifest's override map, for the editor.
  *
- * Nothing on disk shows that a framework file is overridden (rsx:man class_override): the
- * framework file stays in place under its own name and the manifest records the fact. The
- * extension reads it here to mark a shadowed framework file and to point at the application
- * file that answers for it.
+ * Nothing on disk shows that a framework PHP class is overridden (rsx:man class_override):
+ * the framework file stays in place under its own name and the manifest records the fact.
+ * The extension reads it here to mark a shadowed framework file and to point at the
+ * application file that answers for it. Only PHP classes are overridable, so every entry is
+ * a PHP file.
  *
  * Read-only; GET. Paths are relative to the project root - the framework file under
  * `system/`, the override under `rsx/`:
  *
- *   {"success": true, "overrides": {"system/app/RSpade/...": {"kind", "name", "by"}}}
+ *   {"success": true, "overrides": {"system/app/RSpade/...": {"name", "by"}}}
  *
  * Direct RPC wrapper around Manifest::overrides().
  */
@@ -220,7 +221,6 @@ function handle_overrides_service() {
 
         foreach (\App\RSpade\Core\Manifest\Manifest::overrides() as $framework_file => $override) {
             $overrides['system/' . $framework_file] = [
-                'kind' => $override['kind'],
                 'name' => $override['name'],
                 'by' => $override['by'],
             ];

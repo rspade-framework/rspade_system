@@ -6,6 +6,15 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.241] - 2026-10-15
+
+### Changed
+- **Only PHP classes are marked as overridden.** The framework overrides PHP classes only - an
+  application JS class or jqhtml component with a framework one's name fails the manifest build -
+  so the override map carries only PHP files: the badge and CodeLens say "PHP class overridden
+  by rsx/...", the map refreshes on PHP files under `rsx/` only, and go-to-definition on a jqhtml
+  component or the `Rsx.js` convention-method jump is never redirected.
+
 ## [0.1.240] - 2026-10-15
 
 ### Changed

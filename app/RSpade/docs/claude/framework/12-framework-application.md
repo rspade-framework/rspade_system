@@ -12,8 +12,9 @@ defect, not a `Sys/` exemption.
 **The `_` prefix is the whole isolation mechanism, both directions** (`NAME-RESERVED-01`,
 critical, manifest-time, keyed on path): every class, JS class, jqhtml component and
 `@rsx_id` declared here carries exactly ONE leading underscore, and `rsx/` may declare none —
-because a `_`-prefixed name in `rsx/` matching one here is read as a CLASS OVERRIDE, which
-shadows the framework file and serves the app's copy - in the panel's own bundles too. Directories
+because a `_`-prefixed PHP class in `rsx/` matching one here is read as a CLASS OVERRIDE, which
+shadows the framework file and serves the app's copy - in the panel's own bundles too (a JS
+class or component of a framework name fails the manifest build instead). Directories
 stay lowercase and bare (the namespace generator PascalCases them).
 
 **A `Sys/` bundle names no `rsx/` path and no app-defined class** (`CONV-BUNDLE-04`,

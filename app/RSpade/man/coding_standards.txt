@@ -44,9 +44,10 @@ NAMING CONVENTIONS
         DECLARATION - two directions, both enforced by NAME-RESERVED-01
         (critical, manifest-time), both keyed on the file's PATH:
         - Code under rsx/ may NOT declare a `_`-prefixed name. A colliding
-          one is read by the manifest as a CLASS OVERRIDE: the framework's
-          file is shadowed and yours is served instead, with nothing
-          reported beyond the build's one-line override notice.
+          PHP class is read by the manifest as a CLASS OVERRIDE: the
+          framework's file is shadowed and yours is served instead, with
+          nothing reported beyond the build's one-line override notice. (A
+          colliding JS class or component fails the manifest build.)
         - Code under app/RSpade/Sys/ MUST declare `_`-prefixed names.
 
         REFERENCE - NAME-RESERVED-02 (critical, manifest-time). Application

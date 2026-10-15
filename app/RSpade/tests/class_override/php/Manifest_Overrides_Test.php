@@ -17,19 +17,21 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * THE OVERRIDE MAP, END TO END (Manifest_Overrides; rsx:man class_override).
  *
- * An application overrides a framework file by declaring its name under rsx/. The framework
- * file stays where it is; the manifest records it as SHADOWED and takes it out of the live
- * index. This class pins that lifecycle through real CHILD BUILDS of a fixture tree into a
- * scratch build root (the child-build seam, Core/Manifest/CLAUDE.md), so the developer's own
- * index is never touched:
+ * An application overrides a framework PHP class by declaring its name under rsx/. The
+ * framework file stays where it is; the manifest records it as SHADOWED and takes it out of
+ * the live index. Only PHP classes are overridable. This class pins that lifecycle through
+ * real CHILD BUILDS of a fixture tree into a scratch build root (the child-build seam,
+ * Core/Manifest/CLAUDE.md), so the developer's own index is never touched:
  *
- *   - adding an override of each of the three kinds (php, js, jqhtml) shadows each
- *     framework file in ONE pass - no build restart - and the map records all three, while
- *     an application stylesheet wrapped in the same class as a framework one shadows nothing;
+ *   - adding a PHP override shadows the framework file in ONE pass - no build restart - and
+ *     the map records it, while an application stylesheet wrapped in the same class as a
+ *     framework one shadows nothing and the framework JS class and template stay live;
  *   - an unchanged rebuild is a no-op with the same build key;
  *   - removing the override returns the framework file to the live tree, reflected;
  *   - nothing in the framework fixture tree is ever written, renamed or archived;
- *   - a FATAL refusal fails the child build (two application templates of one name).
+ *   - an application JS class or jqhtml component named like a framework one FAILS the child
+ *     build, naming both files and saying JS and jqhtml are not overridable;
+ *   - two application files of one JS class or component name fail the child build.
  *
  * A class in a directory the framework never loads - resource/, public/, the vendored
  * reference app at app/RSpade/resource/reference_app/ - is data: an application class of the
@@ -96,8 +98,9 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The application overrides - one of each kind, named after the application's own file
-     * convention, never after the framework's files.
+     * The application side: the PHP override, and a stylesheet wrapped in the class of the
+     * framework component - named after the application's own file convention, never after
+     * the framework's files.
      *
      * @return array<string,string>
      */
@@ -108,8 +111,6 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
         return [
             $php => "<?php\n\nnamespace " . Rsx_Namespace::from_path($php) . ";\n\nclass Mo_Probe_Service\n{\n"
                 . "    public static function label(): string\n    {\n        return 'application';\n    }\n}\n",
-            static::$application_root . '/mo_probe_widget.js' => "class Mo_Probe_Widget {\n    static label() {\n        return 'application';\n    }\n}\n",
-            static::$application_root . '/mo_probe_panel.jqhtml' => "<Define:Mo_Probe_Panel>\n    <div class=\"Mo_Probe_Panel__body\">application</div>\n</Define:Mo_Probe_Panel>\n",
             static::$application_root . '/mo_probe_panel.scss' => ".Mo_Probe_Panel {\n    &__body {\n        color: #222;\n    }\n}\n",
         ];
     }
@@ -231,13 +232,13 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
     // =====================================================================
 
     /**
-     * Add an override of every kind to a tree already built without them: each framework file
-     * is shadowed in one pass, recorded in the map, out of the live index and still indexed -
-     * and nothing in the framework tree is written. An unchanged rebuild is then a no-op with
-     * the same key. Removing the overrides returns every framework file to the live tree,
-     * reflected, again in one pass, again writing nothing.
+     * Add a PHP override to a tree already built without it: the framework file is shadowed
+     * in one pass, recorded in the map, out of the live index and still indexed - and nothing
+     * in the framework tree is written. An unchanged rebuild is then a no-op with the same key.
+     * Removing the override returns the framework file to the live tree, reflected, again in
+     * one pass, again writing nothing.
      */
-    public static function test_an_override_of_each_kind_is_shadowed_and_released_without_touching_the_framework_tree()
+    public static function test_a_php_override_is_shadowed_and_released_without_touching_the_framework_tree()
     {
         static::__roots();
         static::__remove_everything();
@@ -249,33 +250,30 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
             $framework_before = static::__framework_tree_hashes();
             $application = static::__application_files();
 
-            // ---- ADD the three overrides, and a stylesheet beside the framework's ---------
+            // ---- ADD the override, and a stylesheet beside the framework's ---------------
             static::__write($application);
-            static::__build_ok('adding the overrides');
+            static::__build_ok('adding the override');
 
             $index = static::__index();
             $overrides = $index['hot']['data']['overrides'];
             $framework_paths = array_keys(static::__framework_files());
             $application_paths = array_keys($application);
+            $php_framework = $framework_paths[0];
             $framework_stylesheet = $framework_paths[3];
 
-            $expected_kinds = ['php', 'js', 'jqhtml'];
-            foreach (array_slice($framework_paths, 0, 3) as $i => $framework_path) {
-                static::__assert_true(isset($overrides[$framework_path]), "{$framework_path} is recorded as shadowed");
-                static::__assert_equals($expected_kinds[$i], $overrides[$framework_path]['kind'], "{$framework_path} is recorded under its kind");
-                static::__assert_equals($application_paths[$i], $overrides[$framework_path]['by'], "{$framework_path} is shadowed by the application file of its kind");
-                static::__assert_false(isset($index['hot']['data']['files'][$framework_path]), "{$framework_path} is out of the live index");
-                static::__assert_false(isset($index['hot']['data']['shadowed_files']), 'the shadowed records are never in the hot half');
-                static::__assert_true(isset($index['cold'][$framework_path]), "{$framework_path}'s record is kept in the cold half");
-                static::__assert_true(isset($index['hot']['data']['file_index'][$framework_path]), "{$framework_path} is still indexed for change detection");
-            }
+            static::__assert_true(isset($overrides[$php_framework]), "{$php_framework} is recorded as shadowed");
+            static::__assert_equals(['name', 'by', 'fqcn', 'by_fqcn'], array_keys($overrides[$php_framework]), 'the record carries the class and both files, and no kind - only PHP is overridable');
+            static::__assert_equals($application_paths[0], $overrides[$php_framework]['by'], "{$php_framework} is shadowed by the application class");
+            static::__assert_false(isset($index['hot']['data']['files'][$php_framework]), "{$php_framework} is out of the live index");
+            static::__assert_false(isset($index['hot']['data']['shadowed_files']), 'the shadowed records are never in the hot half');
+            static::__assert_true(isset($index['cold'][$php_framework]), "{$php_framework}'s record is kept in the cold half");
+            static::__assert_true(isset($index['hot']['data']['file_index'][$php_framework]), "{$php_framework} is still indexed for change detection");
 
-            static::__assert_equals(3, count($overrides), 'exactly the three overrides are recorded');
+            static::__assert_equals(1, count($overrides), 'exactly the PHP override is recorded');
             static::__assert_false(isset($overrides[$framework_stylesheet]), 'the framework stylesheet is never shadowed');
             static::__assert_true(isset($index['hot']['data']['files'][$framework_stylesheet]) || isset($index['cold'][$framework_stylesheet]), 'it stays in the live index');
-            static::__assert_true(isset($index['hot']['data']['files'][$application_paths[3]]) || isset($index['cold'][$application_paths[3]]), 'beside the application stylesheet');
+            static::__assert_true(isset($index['hot']['data']['files'][$application_paths[1]]) || isset($index['cold'][$application_paths[1]]), 'beside the application stylesheet');
 
-            $php_framework = $framework_paths[0];
             $framework_fqcn = Rsx_Namespace::from_path($php_framework) . '\\Mo_Probe_Service';
             $application_fqcn = Rsx_Namespace::from_path($application_paths[0]) . '\\Mo_Probe_Service';
 
@@ -287,18 +285,19 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
                 'the override loader is handed the php override, and only it'
             );
             static::__assert_equals($application_paths[0], $index['hot']['data']['php_classes']['Mo_Probe_Service']['file'], 'the class map resolves the name to the override');
-            static::__assert_equals($application_paths[2], $index['hot']['data']['jqhtml']['components']['Mo_Probe_Panel']['file'], 'and the component registry to the override template');
+            static::__assert_equals($framework_paths[1], $index['hot']['data']['js_classes']['Mo_Probe_Widget']['file'], 'the framework JS class stays live');
+            static::__assert_equals($framework_paths[2], $index['hot']['data']['jqhtml']['components']['Mo_Probe_Panel']['file'], 'and so does the framework template');
 
-            static::__assert_equals($framework_before, static::__framework_tree_hashes(), 'adding the overrides wrote nothing in the framework tree');
+            static::__assert_equals($framework_before, static::__framework_tree_hashes(), 'adding the override wrote nothing in the framework tree');
 
             // ---- UNCHANGED: a no-op ------------------------------------------------------
             $output = static::__build_ok('rebuilding an unchanged tree');
             static::__assert_contains('Rebuilt: no', $output, 'an unchanged tree with overrides does not rebuild');
             static::__assert_equals($index['build_key'], static::__index()['build_key'], 'and keeps its build key');
 
-            // ---- REMOVE the overrides ----------------------------------------------------
+            // ---- REMOVE the override ------------------------------------------------------
             static::__delete($application_paths);
-            static::__build_ok('removing the overrides');
+            static::__build_ok('removing the override');
 
             $index = static::__index();
 
@@ -314,38 +313,152 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
             static::__assert_true(array_key_exists('abstract', $php_record), 'the framework class was reflected again on its way back');
             static::__assert_true(isset($php_record['public_static_methods']['label']), 'its method map is its own');
             static::__assert_equals($php_framework, $index['hot']['data']['php_classes']['Mo_Probe_Service']['file'], 'the class map resolves the name to the framework class');
-            static::__assert_equals($framework_paths[2], $index['hot']['data']['jqhtml']['components']['Mo_Probe_Panel']['file'], 'and the component registry to the framework template');
 
-            static::__assert_equals($framework_before, static::__framework_tree_hashes(), 'removing the overrides wrote nothing in the framework tree either');
+            static::__assert_equals($framework_before, static::__framework_tree_hashes(), 'removing the override wrote nothing in the framework tree either');
         } finally {
             static::__remove_everything();
         }
     }
 
     /**
-     * Two application templates of one component name are refused, and the refusal fails the
-     * build - nothing can choose between them, and choosing the first silently is how an
-     * application loses the template it edited.
+     * An application JS class with the name of a framework JS class is REFUSED, and so is an
+     * application jqhtml component with the name of a framework component: JS and jqhtml are
+     * not overridable. The refusal fails the build, names both files and points at
+     * rsx:man class_override - neither silently shadowed nor silently ignored, since either
+     * would leave two definitions of one name in a bundle. Each is its own build: the first
+     * refusal stops the build it is in.
      */
-    public static function test_two_application_templates_of_one_name_fail_the_build()
+    public static function test_an_application_js_class_or_component_named_like_a_framework_one_fails_the_build()
     {
         static::__roots();
         static::__remove_everything();
 
         try {
             static::__write(static::__framework_files());
-            static::__write([
-                static::$application_root . '/mo_probe_panel.jqhtml' => "<Define:Mo_Probe_Panel>\n    <div>one</div>\n</Define:Mo_Probe_Panel>\n",
-                static::$application_root . '/second/mo_probe_panel.jqhtml' => "<Define:Mo_Probe_Panel>\n    <div>two</div>\n</Define:Mo_Probe_Panel>\n",
-            ]);
+            static::__build_ok('the framework tree alone');
 
-            [$exit, $output] = static::__build();
+            $framework_paths = array_keys(static::__framework_files());
 
-            static::__assert_true($exit !== 0, "the build fails:\n{$output}");
-            static::__assert_contains("Duplicate jqhtml component 'Mo_Probe_Panel'", $output, 'naming the component');
-            static::__assert_contains(static::$application_root . '/second/mo_probe_panel.jqhtml', $output, 'and both files');
+            $cases = [
+                'JavaScript class' => [
+                    static::$application_root . '/mo_probe_widget.js',
+                    "class Mo_Probe_Widget {\n    static label() {\n        return 'application';\n    }\n}\n",
+                    "Fatal: JavaScript class 'Mo_Probe_Widget' is not overridable.",
+                    $framework_paths[1],
+                ],
+                'jqhtml component' => [
+                    static::$application_root . '/mo_probe_panel.jqhtml',
+                    "<Define:Mo_Probe_Panel>\n    <div class=\"Mo_Probe_Panel__body\">application</div>\n</Define:Mo_Probe_Panel>\n",
+                    "Fatal: jqhtml component 'Mo_Probe_Panel' is not overridable.",
+                    $framework_paths[2],
+                ],
+            ];
+
+            foreach ($cases as $what => [$path, $content, $headline, $framework_path]) {
+                static::__write([$path => $content]);
+
+                [$exit, $output] = static::__build();
+
+                static::__assert_true($exit !== 0, "an application {$what} named like a framework one fails the build:\n{$output}");
+                static::__assert_contains($headline, $output, "the refusal names the {$what}");
+                // The console wraps a long line wherever it falls, so the paths are compared
+                // with every whitespace character removed from both sides.
+                $flat = preg_replace('/\s+/', '', $output);
+                static::__assert_contains($path, $flat, 'and the application file');
+                static::__assert_contains($framework_path, $flat, 'and the framework file');
+                static::__assert_contains('Only PHP', $output, 'and says only PHP classes are overridable');
+                static::__assert_contains('classes are overridable: JavaScript classes and jqhtml components are', $output, 'and that JS and jqhtml are not');
+                static::__assert_contains('rsx:man class_override', $output, 'and where the contract is');
+
+                static::__delete([$path]);
+            }
+
+            // With the application files gone the same tree builds again: nothing was left behind.
+            static::__build_ok('the framework tree once the namesakes are gone');
+            static::__assert_equals([], static::__index()['hot']['data']['overrides'], 'and nothing is recorded as overridden');
         } finally {
             static::__remove_everything();
+        }
+    }
+
+    /**
+     * Two application files declaring one component name, or one JS class name, are refused
+     * by the duplicate detectors and fail the build - nothing can choose between them, and
+     * choosing the first silently is how an application loses the file it edited. Neither
+     * name is a framework one, so this is not the override pass's refusal.
+     */
+    public static function test_two_application_files_of_one_js_class_or_component_name_fail_the_build()
+    {
+        static::__roots();
+        static::__remove_everything();
+
+        try {
+            static::__write(static::__framework_files());
+
+            $cases = [
+                [
+                    [
+                        static::$application_root . '/mo_app_panel.jqhtml' => "<Define:Mo_App_Panel>\n    <div>one</div>\n</Define:Mo_App_Panel>\n",
+                        static::$application_root . '/second/mo_app_panel.jqhtml' => "<Define:Mo_App_Panel>\n    <div>two</div>\n</Define:Mo_App_Panel>\n",
+                    ],
+                    'Duplicate jqhtml component name detected: Mo_App_Panel',
+                ],
+                [
+                    [
+                        static::$application_root . '/mo_app_widget.js' => "class Mo_App_Widget {\n}\n",
+                        static::$application_root . '/second/mo_app_widget.js' => "class Mo_App_Widget {\n}\n",
+                    ],
+                    'Duplicate js class detected: Mo_App_Widget',
+                ],
+            ];
+
+            foreach ($cases as [$files, $headline]) {
+                static::__write($files);
+
+                [$exit, $output] = static::__build();
+
+                static::__assert_true($exit !== 0, "the build fails:\n{$output}");
+                static::__assert_contains($headline, $output, 'naming the name');
+                foreach (array_keys($files) as $path) {
+                    static::__assert_contains($path, $output, "and {$path}");
+                }
+
+                static::__delete(array_keys($files));
+            }
+        } finally {
+            static::__remove_everything();
+        }
+    }
+
+    /**
+     * An application JS class the index still names but the disk no longer has is a stale
+     * entry, not a collision: it is dropped and nothing is refused (a downstream field report,
+     * 2026-08-25, is why the disk is asked before the file list is believed).
+     */
+    public static function test_a_stale_application_js_entry_named_like_a_framework_class_is_dropped_not_refused()
+    {
+        static::__roots();
+
+        $application = static::$application_root . '/mo_gone_widget.js';
+        $saved_data = Manifest::$data;
+        $saved_error_log = ini_get('error_log');
+
+        Manifest::$data = ['data' => ['files' => [
+            static::$framework_root . '/Mo_Gone_Widget.js' => ['extension' => 'js', 'class' => 'Mo_Gone_Widget'],
+            $application => ['extension' => 'js', 'class' => 'Mo_Gone_Widget'],
+        ]]];
+        ini_set('error_log', Rsx_Project_Paths::tmp_path('manifest_overrides_log_' . getmypid() . '.txt'));
+
+        try {
+            $settled = Manifest_Overrides::derive([], []);
+
+            static::__assert_equals([$application], $settled['dropped'], 'the stale entry is dropped');
+            static::__assert_false(isset(Manifest::$data['data']['files'][$application]), 'and leaves the working set');
+            static::__assert_equals([], Manifest::$data['data']['overrides'], 'nothing is shadowed');
+        } finally {
+            ini_set('error_log', $saved_error_log === false ? '' : $saved_error_log);
+            Manifest::$data = $saved_data;
+            @unlink(Rsx_Project_Paths::tmp_path('manifest_overrides_log_' . getmypid() . '.txt'));
         }
     }
 

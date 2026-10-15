@@ -3,17 +3,18 @@
 ## Domain
 
 The class-override system (`rsx:man class_override`) lets an application replace a
-framework file by declaring the same name under `rsx/`: a PHP class, a JS class or a jqhtml
-component. A stylesheet is never an override: an application stylesheet wrapped in a
-framework component's class is compiled alongside the framework's. The framework file is
+framework PHP class by declaring the same simple name under `rsx/`. Only PHP classes are
+overridable: an application JS class or jqhtml component named like a framework one is a
+manifest-build FATAL naming both files. A stylesheet is never an override: an application
+stylesheet wrapped in a framework component's class is compiled alongside the framework's. The framework file is
 never moved, renamed or edited. The manifest derives, in full on every build, ONE record of what is overridden - the
 OVERRIDE MAP (`Core/Manifest/Manifest_Overrides.php`, `Manifest::overrides()`) - and takes
 each SHADOWED framework file out of the live index (`files` -> `shadowed_files`, still in
 `file_index` and in the build key). Every consumer of the index is then correct with no
 override awareness; the few that walk the disk or load by path ask the map.
 
-The derivation also REFUSES (manifest-build FATAL): two application files declaring one
-name; an override that extends the class it overrides; an override of a SPLIT class that does
+The derivation also REFUSES (manifest-build FATAL): an application JS class or jqhtml
+component with a framework one's name; two application files declaring one PHP class name; an override that extends the class it overrides; an override of a SPLIT class that does
 not extend its `_Abstract` base; an override of a class the framework declares before an
 override can answer for it (`Class_Override_Boot_Set`) or that is already declared in the
 building process; an application class named like a framework class in a subtree the manifest
@@ -84,8 +85,8 @@ override could answer for them.
 | Override map: a real twin is shadowed, recorded and announced; refusals (split, extends-self) | php | synthetic file list - `Override_Shadow_Guard_Test` |
 | Guard: index names an rsx/ twin that is not on disk | php | covered - nothing shadowed, entry dropped |
 | Guard: build already marked its manifest bad | php | covered - nothing shadowed |
-| Templates shadowed by declared name, file by file; two application templates refused; stylesheets never shadowed and never refused | php | `Override_Template_Stylesheet_Test` |
-| End to end: add an override of each kind, no restart, unchanged rebuild is a no-op, remove it, nothing in the framework tree written | php (child builds) | `Manifest_Overrides_Test`, child-build seam into a scratch build root |
+| A template or JS class named like a framework one refused by declared name, naming both files; a stale entry dropped; stylesheets never shadowed and never refused | php | `Override_Template_Stylesheet_Test` |
+| End to end: add a PHP override, no restart, unchanged rebuild is a no-op, remove it, nothing in the framework tree written; a JS class or template namesake fails the build; two application files of one JS class or component name fail the build | php (child builds) | `Manifest_Overrides_Test`, child-build seam into a scratch build root |
 | Un-overridable refusals (boot class, unindexed namesake in an unscanned subtree, already declared) and the split-signature rule | php | `Manifest_Overrides_Test`, synthetic file list |
 | Namesakes of classes in framework data directories (`resource/` - the vendored reference app among them - and `public/`) are ordinary application classes: no refusal, no override, the application FQCN alone in the class map | php | `Manifest_Overrides_Test`, child build |
 | Member reader: methods (static/instance), properties, trait adoptions; NOT privates, NOT locals, NOT nested anonymous classes | php | token pass over a fixture - covered |
@@ -94,7 +95,7 @@ override could answer for them.
 | `@CLASS-OVERRIDE-DRIFT-01-EXCEPTION` read off the OVERRIDE file | php | covered - the checker's own file-level check never sees it |
 | Health row: OK with no overrides, OK when an override carries everything, WARN + count when it does not | php | synthetic override map - covered |
 | The override loader and its composer trip-wire | php, cli | `Override_Loader_Test`, `cli/Override_Loader_Cli_Test` |
-| `rsx:overrides:list`: empty, drift verdicts, a jqhtml row, `--json` shape | cli (PHP, in-process `Artisan::call`) | synthetic override map - `cli/Overrides_List_Command_Test` |
+| `rsx:overrides:list`: empty, drift verdicts, project-root paths, `--json` shape | cli (PHP, in-process `Artisan::call`) | synthetic override map - `cli/Overrides_List_Command_Test` |
 | The env update that restores pre-shadowing `.upstream` archives | cli (shell) | `tests/environment_updates/cli/t11` |
 | The IDE bridge `/_ide/service/overrides` read service | http (shell) | `tests/ide/http/ide_overrides_service.sh` |
-| Bundle substitution of a shadowed js/jqhtml; a framework stylesheet compiled beside an application one of the same wrapper class | php (child build + compile) | `tests/bundles/php/Bundle_Override_Substitution_Test` (BUNDLE-OVERRIDE-01..02) |
+| Bundle substitution of a shadowed PHP class through every include kind, and the overridden model's JS-class companion; a framework stylesheet compiled beside an application one of the same wrapper class | php (child build + compile) | `tests/bundles/php/Bundle_Override_Substitution_Test` (BUNDLE-OVERRIDE-01..02) |

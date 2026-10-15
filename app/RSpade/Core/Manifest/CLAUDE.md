@@ -188,7 +188,7 @@ surface; the other four own one phase each and are reached through it.
 | `Manifest_Build.php` | The build SEAM - an instance carrying scan roots, storage root and mode, constructed from config, and owning the pass's `Source_Cache`. What `tests/manifest/` substitutes to build a fixture tree | `Manifest_Build::from_config()` |
 | `Manifest_Scanner.php` | Phases 1-2: directory discovery, per-file change detection, the token parse that produces each file record, `Php_Fixer` with its class-structure delta, and the PHP reflection extract with its derived-cache restore | `_get_rsx_files`, `_has_changed`, `_process_file`, `_run_php_fixer`, `_extract_reflection_for_changed_files` |
 | `Manifest_Indexer.php` | Phases 3-6: the derived indexes (autoloader class map, blade views, attribute index, models-by-table, event handlers, classless files), the duplicate-class detector, the code-quality pass entry and the VS Code stub | `_build_autoloader_class_map`, `_build_attribute_index`, `_collate_files_by_classes`, `_run_manifest_time_code_quality_checks`, `_generate_vscode_stubs` |
-| `Manifest_Overrides.php` | The OVERRIDE MAP (end of Phase 2): which framework files the application shadows, the move of their records out of `files`, and every override refusal | `derive`, `loader_map` |
+| `Manifest_Overrides.php` | The OVERRIDE MAP (end of Phase 2): which framework PHP classes the application shadows, the move of their records out of `files`, every override refusal, and the refusal of an application JS class or component named like a framework one | `derive`, `loader_map` |
 | `Manifest_Store.php` | The index ON DISK: load hot, load cold on demand, derive the load-time indexes, write both halves atomically as compact PHP literals, the build key, validation, the bad-manifest flag | `_load_cached_data`, `_load_cold_files`, `_save`, `_compute_hash`, `_validate_cached_data` |
 | `ManifestSupport_Abstract.php`, `Full_ManifestSupport_Abstract.php`, `Modules/` | The module pipeline (phase 5). One module per index section, in one of two kinds | `process(&$data, $changed, $removed)` / `rebuild(&$data)` |
 | `Class_Override_Drift.php` | The `CLASS-OVERRIDE-DRIFT-01` analysis of an `rsx/` copy against the framework file it shadows | `pairs()`, `analyze_pair()` |
@@ -213,8 +213,8 @@ The manifest cache contains:
         'files' => [...],                // Indexed files (the HOT subset until the cold
                                          // half is merged - see above)
         'file_index' => [...],           // path => [size, mtime], the WHOLE tree
-        'overrides' => [...],            // shadowed framework path => kind, name, by
-                                         // (+ fqcn, by_fqcn for php) - see THE OVERRIDE MAP
+        'overrides' => [...],            // shadowed framework PHP path => name, by,
+                                         // fqcn, by_fqcn - see THE OVERRIDE MAP
         'shadowed_files' => [...],       // the shadowed files' records (cold half; present
                                          // during a build and after a cold load)
         'js_classes' => [...],           // JS class map (the hot class record)
@@ -663,16 +663,19 @@ lock measured a LOAD, not a build** (peak ~46 MB, no rule lines) - discard it.
 
 ## THE OVERRIDE MAP
 
-An application overrides a framework file by declaring its name under `rsx/` (`rsx:man
-class_override`): a PHP class, a JS class or a jqhtml component. **A stylesheet is never an
-override kind** - `scss_wrapper_class` names the class a stylesheet is wrapped in, for the
-scoping rule and the component shaker, and an application stylesheet wrapped in a framework
-component's class is compiled alongside the framework's. **The framework file is never moved,
-renamed or edited.** `Manifest_Overrides::derive()` runs at
-the end of Phase 2 - after Php_Fixer, before Phase 3 loads a class - and derives, IN FULL every
-pass, `data.overrides` (hot, ksorted): shadowed framework path => `kind`, `name`, `by`, plus
-`fqcn` / `by_fqcn` for php. A name declared by exactly one `rsx/` file and by framework files is
-an override; every framework declarer is SHADOWED.
+An application overrides a framework PHP class by declaring its name under `rsx/` (`rsx:man
+class_override`). **Only PHP classes are overridable**: an `rsx/` JS class or jqhtml component
+with the name of a framework one is a manifest-build FATAL naming both files
+(`__refuse_browser_namesakes()`; an entry the disk no longer backs is dropped instead), and two
+`rsx/` files of one JS class or component name are left to the class-map and component-name
+duplicate detectors. **A stylesheet is never an override** - `scss_wrapper_class` names the
+class a stylesheet is wrapped in, for the scoping rule and the component shaker, and an
+application stylesheet wrapped in a framework component's class is compiled alongside the
+framework's. **The framework file is never moved, renamed or edited.**
+`Manifest_Overrides::derive()` runs at the end of Phase 2 - after Php_Fixer, before Phase 3
+loads a class - and derives, IN FULL every pass, `data.overrides` (hot, ksorted): shadowed
+framework path => `name`, `by`, `fqcn`, `by_fqcn`. A PHP class name declared by exactly one
+`rsx/` file and by framework files is an override; every framework declarer is SHADOWED.
 
 **A shadowed record leaves `files`** for `data.shadowed_files` (written to the cold half). Every
 consumer of the live index - class maps, loading and reflection, support modules, rules, bundle
@@ -687,7 +690,7 @@ reports a file ENTERING the shadow as REMOVED (a DELTA module drops what it deri
 one LEAVING it as CHANGED (loaded, reflected and re-derived like a new file); a shadowed file is
 never in the changed set. An override therefore never restarts a build.
 
-**The refusals** (each a manifest-build FATAL): two `rsx/` files declaring one name, any of the three kinds; an
+**The refusals** (each a manifest-build FATAL): an `rsx/` JS class or jqhtml component named like a framework one; two `rsx/` files declaring one PHP class name; an
 override that `extends` its own name; the SPLIT refusal - when the framework file declares nothing
 but `class X extends X_Abstract`, the override must extend that same `X_Abstract` (a copy is a
 second implementation of a class the framework keeps developing, and is refused rather than
@@ -710,14 +713,14 @@ longer backs is dropped and shadows nothing (a downstream field report, 2026-08-
 that has already marked its manifest bad shadows nothing.
 
 **Reads**: `Manifest::overrides()`, `is_shadowed($path)`, `override_for($path)`,
-`shadowed_fqcn_map()`. `Manifest_Overrides::loader_map()` projects the php entries into the map
+`shadowed_fqcn_map()`. `Manifest_Overrides::loader_map()` projects the entries into the map
 `Class_Override_Loader` answers from; `Manifest_Store::_save()` writes it to
 `build/manifest/class_overrides.php`. Contract: `rsx:man class_override`.
 
 ## Class_Override_Drift (the override comparison)
 
 `Core/Manifest/Class_Override_Drift.php` is a plain helper beside the manifest, not part of the
-build. `pairs()` reads the php entries of the override map: the framework file, in place, and the
+build. `pairs()` reads the entries of the override map: the framework file, in place, and the
 `rsx/` file that overrides it. For each pair it compares the members each FILE declares.
 
 **It reads the files, not the manifest's method metadata, and that is forced.** A shadowed

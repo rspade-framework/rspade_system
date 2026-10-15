@@ -31,23 +31,24 @@
 #   7. rsx:build --force reseals and the site serves again.
 #   8. rsx:prod:disable returns the box to development, and a real page renders.
 #
-# CLASS OVERRIDES RIDE THROUGH ALL OF IT. Before anything is built the script writes two
-# real overrides into rsx/ (tests/_lib/prod_probe_overrides.sh): a PHP override of the
-# framework's Region_Model and a template override of the framework's Turnstile_Input, each
-# carrying a marker. The sealed build must serve them and leave system/ alone: no change to
-# system/app, system/config or system/bin, no *.upstream file, both shadowed framework files
-# byte for byte as they were; under system/vendor/composer only the three generated
-# autoloader files the strict build rewrites (autoload_classmap.php, autoload_real.php,
+# A CLASS OVERRIDE RIDES THROUGH ALL OF IT. Before anything is built the script writes a
+# real override into rsx/ (tests/_lib/prod_probe_overrides.sh): a PHP override of the
+# framework's Region_Model carrying a marker as a public constant. (Only PHP classes are
+# overridable; that an application JS class or template of a framework name is refused is
+# tests/class_override's.) The sealed build must serve it and leave system/ alone: no change
+# to system/app, system/config or system/bin, no *.upstream file, the shadowed framework file
+# byte for byte as it was; under system/vendor/composer only the three generated autoloader
+# files the strict build rewrites (autoload_classmap.php, autoload_real.php,
 # autoload_static.php) may differ. On the sealed box the classmap-authoritative process
-# resolves the framework FQCN to the override, rsx:overrides:list names both, /login draws
-# the override's markup with no error, and its compiled bundles carry the override's
-# template and not the framework's. The probes go before the repair rebuild, after which
-# system/ is still untouched, nothing is listed and the bundles carry the framework's
-# template again; and once the box is back in development system/vendor/composer, system/
-# and rsx/ are exactly as the run found them.
+# resolves the framework FQCN to the override, rsx:overrides:list names it, /login - whose
+# bundle names no application model - answers Region_Model.PROBE with the marker and no
+# error, and its compiled bundles carry the override's model stub. The probe goes before the
+# repair rebuild, after which system/ is still untouched, nothing is listed and the bundles
+# no longer carry the marker; and once the box is back in development
+# system/vendor/composer, system/ and rsx/ are exactly as the run found them.
 #
-# THE BOX ENDS IN DEVELOPMENT MODE WITH A WORKING BUILD. The EXIT trap removes the two
-# override probes first, then reads RSX_MODE through the pre-boot resolver and runs
+# THE BOX ENDS IN DEVELOPMENT MODE WITH A WORKING BUILD. The EXIT trap removes the
+# override probe first, then reads RSX_MODE through the pre-boot resolver and runs
 # rsx:prod:disable if anything left the box in a production mode - on a failed assertion,
 # on an interrupt, on anything. The same trap removes the probe migration's file, puts the migration whitelist back byte for byte,
 # drops the probe table and its _migrations row, and retires the account the page probe
@@ -164,7 +165,7 @@ render_pages() {
     [ $rc -eq 0 ] || fail "$2: $(echo "$PAGES_OUTPUT" | grep -m1 '^FAIL:')"
 }
 
-# system/ against the fingerprint taken before the probes were written; fail naming the step.
+# system/ against the fingerprint taken before the override probe was written; fail naming the step.
 #   $1 what this comparison is proving (for the message)
 assert_system_unchanged() {
     system_fingerprint > "$SYSTEM_AFTER"
@@ -174,7 +175,7 @@ assert_system_unchanged() {
 }
 
 # The files under system/vendor/composer that differ from the fingerprint taken before the
-# probes were written, one path per line.
+# override probe was written, one path per line.
 composer_changed_files() {
     composer_fingerprint > "$COMPOSER_AFTER"
     diff "$COMPOSER_BEFORE" "$COMPOSER_AFTER" | sed -n 's/^[<>] [0-9a-f]*  //p' | sort -u
@@ -204,7 +205,7 @@ fetch_login_bundles() {
 restore_development() {
     local rc=$?
 
-    # The source tree first: the development rebuild below must see neither probe.
+    # The source tree first: the development rebuild below must see no probe.
     probe_overrides_remove
     probe_migration_remove_files
 
@@ -247,14 +248,15 @@ fi
 # The account the page probe signs in as (a sealed box has no development grant store).
 probe_account_seed || fail "could not create the page probe's account"
 
-# What the build must leave alone, measured before anything is built, then the two
-# override probes. The page probe renders /login anonymously and looks for the marker.
+# What the build must leave alone, measured before anything is built, then the override
+# probe. The page probe renders /login anonymously and asks it for Region_Model.PROBE.
 system_fingerprint > "$SYSTEM_BEFORE"
 composer_fingerprint > "$COMPOSER_BEFORE"
 RSX_STATUS_BEFORE="$(git status --porcelain -- rsx)"
 
-probe_overrides_create || fail "could not write the override probes"
+probe_overrides_create || fail "could not write the override probe"
 PROBE_ANON_PATH="/login"
+PROBE_ANON_EXPRESSION="Region_Model.PROBE"
 PROBE_ANON_MARKER="$PROBE_OVERRIDE_MARKER"
 
 # ---------------------------------------------------------------------------
@@ -292,14 +294,14 @@ status="$(http_status "$bundle_path")"
 [ "$status" = "200" ] || fail "the compiled bundle $bundle_path answered $status"
 
 # ---------------------------------------------------------------------------
-# 2b. The sealed build serves the overrides and left system/ alone.
+# 2b. The sealed build serves the override and left system/ alone.
 #
 # Nothing under system/ is renamed, archived or edited to make an override work: the build
 # records the framework file as shadowed, and the override loader and the bundle compiler
 # answer with the application's file. The /login render itself is the page probe's (step 4).
 # ---------------------------------------------------------------------------
 
-note "2b. the overrides are served, and system/ is untouched"
+note "2b. the override is served, and system/ is untouched"
 assert_system_unchanged "after the sealed build"
 assert_composer_only_build_files "after the sealed build"
 
@@ -314,12 +316,11 @@ case "${resolution##*|}" in
 esac
 
 listed="$(probe_overrides_listed "$(artisan rsx:overrides:list --json)")" || fail "rsx:overrides:list --json printed no override list"
-[ "$listed" = "$(printf 'jqhtml:Turnstile_Input\nphp:Region_Model')" ] \
-    || fail "rsx:overrides:list on the sealed box lists '$(echo "$listed" | tr '\n' ' ')', not both probes"
+[ "$listed" = "Region_Model" ] \
+    || fail "rsx:overrides:list on the sealed box lists '$(echo "$listed" | tr '\n' ' ')', not the probe"
 
 fetch_login_bundles
-grep -qF "$PROBE_OVERRIDE_MARKER" "$BUNDLES_TEXT" || fail "the sealed /login bundles do not carry the overriding Turnstile_Input template"
-grep -qF "$PROBE_JQHTML_FRAMEWORK_TEXT" "$BUNDLES_TEXT" && fail "the sealed /login bundles still carry the framework's Turnstile_Input template"
+grep -qF "$PROBE_OVERRIDE_MARKER" "$BUNDLES_TEXT" || fail "the sealed /login bundles do not carry the overriding Region_Model's stub"
 
 # ---------------------------------------------------------------------------
 # 3. A sealed box writes NOTHING under build/, system/ or rsx/.
@@ -539,9 +540,10 @@ esac
 # 9. The build is the repair.
 # ---------------------------------------------------------------------------
 
-note "9. the override probes go, and php artisan rsx:build --force reseals"
+note "9. the override probe goes, and php artisan rsx:build --force reseals"
 probe_overrides_remove
 PROBE_ANON_PATH=""
+PROBE_ANON_EXPRESSION=""
 PROBE_ANON_MARKER=""
 
 artisan rsx:build --force > /dev/null || fail "rsx:build --force did not rebuild the unsealed box"
@@ -550,11 +552,11 @@ artisan rsx:build --force > /dev/null || fail "rsx:build --force did not rebuild
 status="$(http_status /login)"
 [ "$status" = "200" ] || fail "/login answered $status after the rebuild"
 
-assert_system_unchanged "after removing the overrides and rebuilding"
-assert_composer_only_build_files "after removing the overrides and rebuilding"
+assert_system_unchanged "after removing the override and rebuilding"
+assert_composer_only_build_files "after removing the override and rebuilding"
 
 listed="$(probe_overrides_listed "$(artisan rsx:overrides:list --json)")" || fail "rsx:overrides:list --json printed no override list"
-[ -z "$listed" ] || fail "rsx:overrides:list still lists '$(echo "$listed" | tr '\n' ' ')' after the probes were removed and the box rebuilt"
+[ -z "$listed" ] || fail "rsx:overrides:list still lists '$(echo "$listed" | tr '\n' ' ')' after the probe was removed and the box rebuilt"
 
 resolution="$(probe_override_resolution)"
 case "$resolution" in
@@ -563,8 +565,7 @@ case "$resolution" in
 esac
 
 fetch_login_bundles
-grep -qF "$PROBE_OVERRIDE_MARKER" "$BUNDLES_TEXT" && fail "the rebuilt /login bundles still carry the removed override's template"
-grep -qF "$PROBE_JQHTML_FRAMEWORK_TEXT" "$BUNDLES_TEXT" || fail "the rebuilt /login bundles do not carry the framework's Turnstile_Input template"
+grep -qF "$PROBE_OVERRIDE_MARKER" "$BUNDLES_TEXT" && fail "the rebuilt /login bundles still carry the removed override's model stub"
 
 # ---------------------------------------------------------------------------
 # 10. Back to development, with assets that work.
@@ -585,7 +586,7 @@ case "$debug_output" in
     *) fail "the development page rendered with console errors" ;;
 esac
 
-# The whole round trip, overrides included, leaves the source trees as it found them; and
+# The whole round trip, override included, leaves the source trees as it found them; and
 # rsx:prod:disable regenerates composer's autoloader byte for byte as it was.
 assert_system_unchanged "back in development"
 [ -z "$(composer_changed_files)" ] \

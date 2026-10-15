@@ -73,10 +73,6 @@ class Class_Override_Drift
         $pairs = [];
 
         foreach (Manifest::overrides() as $framework_file => $override) {
-            if ($override['kind'] !== 'php') {
-                continue;
-            }
-
             $pairs[] = [
                 'class' => $override['name'],
                 'framework_file' => $framework_file,

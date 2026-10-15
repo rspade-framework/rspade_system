@@ -110,8 +110,9 @@ framework and which you do not edit.
 resets hard, so an edit there is destroyed on the next pull with nothing to show
 for it. The extension adds `system/**` to the workspace's `files.readonlyInclude`,
 puts a banner at the top of any framework file you open, and badges the directory
-`FW` in the explorer. Everything you want to change is changed in `rsx/`, with a
-class override. A framework-developer checkout — one whose `.env` carries
+`FW` in the explorer. Everything you want to change is changed in `rsx/`: a PHP
+class with a class override, anything else through an extension point the framework
+publishes. A framework-developer checkout — one whose `.env` carries
 `IS_FRAMEWORK_DEVELOPER=true` — is exempt, because there `system/` is the source
 being written.
 

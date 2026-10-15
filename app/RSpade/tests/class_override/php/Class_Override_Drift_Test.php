@@ -296,7 +296,6 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     {
         return [
             self::FRAMEWORK_FILE => [
-                'kind' => 'php',
                 'name' => self::PROBE_CLASS,
                 'by' => self::OVERRIDE_FILE,
                 'fqcn' => 'Rsx\\Resource\\' . self::PROBE_CLASS,

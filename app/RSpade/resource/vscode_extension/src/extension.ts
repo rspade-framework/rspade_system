@@ -178,8 +178,8 @@ export async function activate(context: vscode.ExtensionContext) {
     const framework_property_guard = new FrameworkPropertyGuard(rspade_root);
     framework_property_guard.activate(context);
 
-    // Framework files an application override shadows: badged, lensed, and never a
-    // definition target. Built before the definition providers, which consult it.
+    // Framework PHP files an application class override shadows: badged, lensed, and never
+    // a definition target. Built before the definition providers, which consult it.
     init_override_map(rspade_root, bridge_output).activate(context, bridge_connectivity);
 
     // Initialize providers

@@ -12,10 +12,10 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * An application overrides a framework TEMPLATE the way it overrides a class: by declaring
- * the same component name (<Define:Name>). The framework's file is SHADOWED - left in place,
- * out of the live index - and is live again the moment the override goes away (the map is
- * derived in full on every build, so there is nothing to undo).
+ * Only PHP classes are overridable. An application TEMPLATE (<Define:Name>) or JS CLASS with
+ * the name of a framework one is REFUSED by the override pass, naming both files - it is
+ * neither shadowed nor ignored, because either would leave two definitions of one name in a
+ * bundle.
  *
  * A STYLESHEET is never an override: an application stylesheet wrapped in the class of a
  * framework component adds to the framework's stylesheet and never shadows it, and two
@@ -23,16 +23,16 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * What is pinned:
  *   - the match is by DECLARED NAME, never by file name or directory;
- *   - each file is its own override - a template override leaves the framework's class and
- *     stylesheet of that name live;
- *   - no stylesheet is ever shadowed, and no stylesheet pair is ever refused;
- *   - the two guards the class kind has (a poisoned index, an override that is not on disk)
- *     hold here too.
+ *   - a template namesake and a JS class namesake each throw, naming both files, and the
+ *     refusal holds in a build that has already marked its manifest bad;
+ *   - an application entry the disk no longer has is stale, collides with nothing and is
+ *     dropped;
+ *   - no stylesheet is ever shadowed, and no stylesheet pair is ever refused.
  *
  * Manifest_Overrides::derive() reads and writes Manifest::$data directly, so every test swaps
  * in a synthetic file list and restores the real one in a finally. Only the APPLICATION files
- * are written to disk (the derivation checks that an override exists), under rsx/resource/,
- * which the manifest never indexes. Pure filesystem + static state.
+ * are written to disk (the derivation asks the disk before it believes the file list), under
+ * rsx/resource/, which the manifest never indexes. Pure filesystem + static state.
  */
 class Override_Template_Stylesheet_Test extends Rsx_Test_Abstract
 {
@@ -49,6 +49,7 @@ class Override_Template_Stylesheet_Test extends Rsx_Test_Abstract
 
     // Deliberately named nothing like the framework's files.
     private const APPLICATION_TEMPLATE = self::APPLICATION_DIR . '/a_template.jqhtml';
+    private const APPLICATION_CLASS = self::APPLICATION_DIR . '/a_script.js';
     private const APPLICATION_STYLESHEET = self::APPLICATION_DIR . '/some_styles.scss';
 
     private static function __write(string ...$files): void
@@ -109,31 +110,57 @@ class Override_Template_Stylesheet_Test extends Rsx_Test_Abstract
     }
 
     // =====================================================================
-    // Shadowing
+    // Templates and JS classes: refused
     // =====================================================================
 
-    public static function test_an_application_template_shadows_the_framework_template_only()
+    /**
+     * An application template with the name of a framework template is refused, naming both
+     * files and saying templates are not overridable.
+     */
+    public static function test_an_application_template_named_like_a_framework_one_is_refused()
     {
         self::__write(self::APPLICATION_TEMPLATE);
 
         try {
-            $outcome = self::__derive(array_merge(
-                self::__entry(self::FRAMEWORK_TEMPLATE),
-                self::__entry(self::FRAMEWORK_CLASS),
-                self::__entry(self::FRAMEWORK_STYLESHEET),
-                self::__entry(self::APPLICATION_TEMPLATE)
-            ));
-
-            static::__assert_equals(
-                [self::FRAMEWORK_TEMPLATE => ['kind' => 'jqhtml', 'name' => self::NAME, 'by' => self::APPLICATION_TEMPLATE]],
-                $outcome['overrides'],
-                'the framework template, and only it, is shadowed by the application template'
+            $error = static::__assert_throws(
+                \RuntimeException::class,
+                static fn () => self::__derive(array_merge(
+                    self::__entry(self::FRAMEWORK_TEMPLATE),
+                    self::__entry(self::FRAMEWORK_CLASS),
+                    self::__entry(self::FRAMEWORK_STYLESHEET),
+                    self::__entry(self::APPLICATION_TEMPLATE)
+                )),
+                "Fatal: jqhtml component '" . self::NAME . "' is not overridable."
             );
-            static::__assert_false(isset($outcome['files'][self::FRAMEWORK_TEMPLATE]), 'it is out of the live index');
-            static::__assert_true(isset($outcome['files'][self::FRAMEWORK_CLASS]), 'the framework class of that name stays live');
-            static::__assert_true(isset($outcome['files'][self::FRAMEWORK_STYLESHEET]), 'and so does its stylesheet');
-            static::__assert_contains(self::FRAMEWORK_TEMPLATE, $outcome['log'], 'the notice names the shadowed file');
-            static::__assert_contains(self::APPLICATION_TEMPLATE, $outcome['log'], 'and the override that shadows it');
+
+            static::__assert_contains(self::APPLICATION_TEMPLATE, $error->getMessage(), 'the refusal names the application template');
+            static::__assert_contains(self::FRAMEWORK_TEMPLATE, $error->getMessage(), 'and the framework template');
+            static::__assert_contains('jqhtml components are', $error->getMessage(), 'and says components are not overridable');
+            static::__assert_contains('rsx:man class_override', $error->getMessage(), 'and where the contract is');
+        } finally {
+            self::__clean();
+        }
+    }
+
+    /**
+     * An application JS class with the name of a framework JS class is refused the same way.
+     */
+    public static function test_an_application_js_class_named_like_a_framework_one_is_refused()
+    {
+        self::__write(self::APPLICATION_CLASS);
+
+        try {
+            $error = static::__assert_throws(
+                \RuntimeException::class,
+                static fn () => self::__derive(array_merge(
+                    self::__entry(self::FRAMEWORK_CLASS),
+                    self::__entry(self::APPLICATION_CLASS)
+                )),
+                "Fatal: JavaScript class '" . self::NAME . "' is not overridable."
+            );
+
+            static::__assert_contains(self::APPLICATION_CLASS, $error->getMessage(), 'the refusal names the application class');
+            static::__assert_contains(self::FRAMEWORK_CLASS, $error->getMessage(), 'and the framework class');
         } finally {
             self::__clean();
         }
@@ -157,8 +184,6 @@ class Override_Template_Stylesheet_Test extends Rsx_Test_Abstract
             static::__assert_equals([], $outcome['overrides'], 'nothing is shadowed');
             static::__assert_true(isset($outcome['files'][self::FRAMEWORK_STYLESHEET]), 'the framework stylesheet stays live');
             static::__assert_true(isset($outcome['files'][self::APPLICATION_STYLESHEET]), 'beside the application stylesheet');
-            static::__assert_null(Manifest_Overrides::kind_of(['extension' => 'scss']), 'a stylesheet has no override kind');
-            static::__assert_false(isset(Manifest_Overrides::NAME_KEYS['scss']), 'and no declared-name key');
         } finally {
             self::__clean();
         }
@@ -176,7 +201,7 @@ class Override_Template_Stylesheet_Test extends Rsx_Test_Abstract
         static::__assert_true(isset($outcome['files'][self::FRAMEWORK_STYLESHEET]));
     }
 
-    public static function test_an_override_that_is_not_on_disk_shadows_nothing()
+    public static function test_a_template_entry_that_is_not_on_disk_collides_with_nothing()
     {
         self::__clean();
 
@@ -191,45 +216,31 @@ class Override_Template_Stylesheet_Test extends Rsx_Test_Abstract
         static::__assert_contains('stale index entry', $outcome['log']);
     }
 
-    public static function test_a_poisoned_build_shadows_nothing()
+    /**
+     * A build that has already marked its manifest bad still refuses a template namesake that
+     * is on disk: the refusal shadows nothing, so the disk check is all it needs.
+     */
+    public static function test_a_poisoned_build_still_refuses_a_template_namesake()
     {
         self::__write(self::APPLICATION_TEMPLATE);
 
         try {
-            $outcome = self::__derive(array_merge(
-                self::__entry(self::FRAMEWORK_TEMPLATE),
-                self::__entry(self::APPLICATION_TEMPLATE)
-            ), true);
-
-            static::__assert_equals([], $outcome['overrides']);
-            static::__assert_true(isset($outcome['files'][self::FRAMEWORK_TEMPLATE]));
-            static::__assert_contains('NOT shadowing', $outcome['log']);
+            static::__assert_throws(
+                \RuntimeException::class,
+                static fn () => self::__derive(array_merge(
+                    self::__entry(self::FRAMEWORK_TEMPLATE),
+                    self::__entry(self::APPLICATION_TEMPLATE)
+                ), true),
+                'is not overridable'
+            );
         } finally {
             self::__clean();
         }
     }
 
     // =====================================================================
-    // Two application declarations of one name
+    // Two application stylesheets of one wrapper class
     // =====================================================================
-
-    /**
-     * Two application templates of one component name are refused - nothing can choose
-     * between them.
-     */
-    public static function test_two_application_templates_of_one_name_are_refused()
-    {
-        $error = static::__assert_throws(
-            \RuntimeException::class,
-            static fn () => self::__derive(array_merge(
-                self::__entry(self::APPLICATION_DIR . '/a_template.jqhtml'),
-                self::__entry(self::APPLICATION_DIR . '/b_template.jqhtml')
-            )),
-            "Duplicate jqhtml component '" . self::NAME . "'"
-        );
-
-        static::__assert_contains(self::APPLICATION_DIR . '/b_template.jqhtml', $error->getMessage(), 'the refusal names both files');
-    }
 
     /**
      * Two application stylesheets wrapped in one class - each styling the same framework

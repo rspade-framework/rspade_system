@@ -29,10 +29,12 @@ DESCRIPTION
     there is nothing worth reporting: the tree is a checkout of somebody
     else's repository, and a modification to it is drift, not work.
 
-    Customize the framework with a CLASS OVERRIDE in rsx/ - a class of the
-    same simple name (rsx:man class_override): a core MODEL EXTENDS its
+    Customize a framework PHP class with a CLASS OVERRIDE in rsx/ - a class
+    of the same simple name (rsx:man class_override): a core MODEL EXTENDS its
     <Name>_Model_Abstract base and declares only what it changes, every other
-    framework class is COPIED. That is the supported path, it survives every
+    framework class is COPIED. Browser-side behaviour (a JS class, a jqhtml
+    component) is not overridable and changes through the extension points the
+    framework publishes. That is the supported path, it survives every
     update, and it is the reason none of this needs a merge.
 
     WHY A SUBMODULE. When system/ was vendored - ordinary tracked files in the

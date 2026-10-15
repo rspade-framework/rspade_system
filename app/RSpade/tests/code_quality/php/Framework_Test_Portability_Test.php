@@ -332,9 +332,7 @@ class Framework_Test_Portability_Test extends Rsx_Test_Abstract
         $names = [];
 
         foreach (Manifest::overrides() as $override) {
-            if ($override['kind'] === 'php') {
-                $names[$override['name']] = true;
-            }
+            $names[$override['name']] = true;
         }
 
         return $names;

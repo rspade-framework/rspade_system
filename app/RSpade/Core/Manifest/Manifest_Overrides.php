@@ -13,30 +13,30 @@ use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Overrides\Class_Override_Boot_Set;
 
 /**
- * Manifest_Overrides - THE OVERRIDE MAP: which framework files the application overrides.
+ * Manifest_Overrides - THE OVERRIDE MAP: which framework PHP classes the application overrides.
  *
- * An application overrides a framework file by declaring, under rsx/, the same name the
- * framework file declares (rsx:man class_override). Three kinds of file declare a name, each
- * under its own key of the file record, and each is overridden FILE BY FILE:
+ * An application overrides a framework PHP class by declaring, under rsx/, a class of the same
+ * simple name (rsx:man class_override). Only PHP classes are overridable:
  *
- *   php     the class (`class`)
- *   js      the JS class (`class`; .js, .jsx, .ts and .tsx alike)
- *   jqhtml  the component (`id`, from <Define:Name>)
+ *   - A JS class (.js, .jsx, .ts, .tsx) or a jqhtml component (<Define:Name>) declared under
+ *     rsx/ with the name of a framework JS class or component is REFUSED - a manifest-build
+ *     FATAL naming both files. It is neither shadowed nor ignored: either silent outcome would
+ *     leave two definitions of one name in a bundle. Browser-side framework behaviour an
+ *     application changes is changed through an extension point the framework publishes for
+ *     it (Button_Utils.set_loader(), an event, a registration call).
+ *   - A stylesheet is never an override and is never overridden: an application stylesheet
+ *     that styles a framework component is compiled alongside the framework's own, after it.
  *
- * A stylesheet is never an override and is never overridden: an application stylesheet that
- * styles a framework component is compiled alongside the framework's own, after it.
- *
- * A name declared by exactly ONE application file and by at least one framework file is an
- * override: every framework file declaring it is SHADOWED by the application file. Nothing on
- * disk moves. The framework file stays where it is, under its own name, and the index records
- * the fact instead:
+ * A class name declared by exactly ONE application file and by at least one framework file is
+ * an override: every framework file declaring it is SHADOWED by the application file. Nothing
+ * on disk moves. The framework file stays where it is, under its own name, and the index
+ * records the fact instead:
  *
  *   data.overrides       (HOT, ksorted) shadowed framework path => [
- *                            'kind'    => php | js | jqhtml,
- *                            'name'    => the declared name,
+ *                            'name'    => the class's simple name,
  *                            'by'      => the application file that overrides it,
- *                            'fqcn'    => the framework class            (php only),
- *                            'by_fqcn' => the application class          (php only),
+ *                            'fqcn'    => the framework class,
+ *                            'by_fqcn' => the application class,
  *                        ]
  *   data.shadowed_files  (COLD) the shadowed files' records, moved OUT of `files`
  *
@@ -53,7 +53,10 @@ use App\RSpade\Core\Overrides\Class_Override_Boot_Set;
  * class - so it can never drift the way a carried-forward section can.
  *
  * WHAT IT REFUSES (each a manifest-build FATAL):
- *   - two application files declaring one name (any kind): nothing can choose between them;
+ *   - an application JS class or jqhtml component with the name of a framework one;
+ *   - two application files declaring one PHP class name: nothing can choose between them
+ *     (two application files declaring one JS class or one component are refused by the
+ *     class-map and component-name duplicate detectors);
  *   - an override that extends the class it overrides;
  *   - an override of a SPLIT class (`X extends X_Abstract`) that does not extend X_Abstract;
  *   - an override of a class the framework declares before an override can answer for it
@@ -72,13 +75,6 @@ use App\RSpade\Core\Overrides\Class_Override_Boot_Set;
  */
 class Manifest_Overrides
 {
-    /** override kind => the record key carrying the name a file of that kind declares. */
-    public const NAME_KEYS = [
-        'php' => 'class',
-        'js' => 'class',
-        'jqhtml' => 'id',
-    ];
-
     /** Every extension a JavaScript class is declared in. */
     public const JS_EXTENSIONS = ['js', 'jsx', 'ts', 'tsx'];
 
@@ -87,24 +83,6 @@ class Manifest_Overrides
 
     /** simple name => FQCN, for the framework application directories outside app/RSpade. */
     private static ?array $__unscanned_application_classes = null;
-
-    /**
-     * The override kind of a file record, or null when the file declares no overridable name.
-     */
-    public static function kind_of(array $record): ?string
-    {
-        $extension = $record['extension'] ?? '';
-
-        if ($extension === 'php' || $extension === 'jqhtml') {
-            return $extension;
-        }
-
-        if (in_array($extension, self::JS_EXTENSIONS, true)) {
-            return 'js';
-        }
-
-        return null;
-    }
 
     /**
      * Derive the override map over the working set, and move every shadowed record out of
@@ -122,17 +100,27 @@ class Manifest_Overrides
     {
         $files = &Manifest::$data['data']['files'];
 
-        // kind => name => side => [paths]
-        $declarers = [];
+        // PHP class name => side => [paths]
+        $php_declarers = [];
+
+        // js | jqhtml => name => side => [paths]
+        $browser_declarers = [];
 
         foreach ($files as $path => $record) {
-            $kind = self::kind_of($record);
+            $extension = $record['extension'] ?? '';
 
-            if ($kind === null) {
+            if ($extension === 'php') {
+                $kind = 'php';
+                $name = $record['class'] ?? null;
+            } elseif ($extension === 'jqhtml') {
+                $kind = 'jqhtml';
+                $name = $record['id'] ?? null;
+            } elseif (in_array($extension, self::JS_EXTENSIONS, true)) {
+                $kind = 'js';
+                $name = $record['class'] ?? null;
+            } else {
                 continue;
             }
-
-            $name = $record[self::NAME_KEYS[$kind]] ?? null;
 
             if (!is_string($name) || $name === '') {
                 continue;
@@ -142,58 +130,56 @@ class Manifest_Overrides
                 ? 'application'
                 : (Rsx_Paths::is_framework($path) ? 'framework' : 'other');
 
-            $declarers[$kind][$name][$side][] = $path;
+            if ($kind === 'php') {
+                $php_declarers[$name][$side][] = $path;
+            } else {
+                $browser_declarers[$kind][$name][$side][] = $path;
+            }
         }
 
+        $dropped = self::__refuse_browser_namesakes($browser_declarers);
+
         $map = [];
-        $dropped = [];
 
-        foreach ($declarers as $kind => $names) {
-            foreach ($names as $name => $sides) {
-                $application = $sides['application'] ?? [];
-                $framework = $sides['framework'] ?? [];
-                $other = $sides['other'] ?? [];
+        foreach ($php_declarers as $name => $sides) {
+            $application = $sides['application'] ?? [];
+            $framework = $sides['framework'] ?? [];
+            $other = $sides['other'] ?? [];
 
-                if (count($application) > 1) {
-                    throw new \RuntimeException(self::__two_application_declarations_message($kind, $name, $application));
-                }
+            if (count($application) > 1) {
+                throw new \RuntimeException(self::__two_application_declarations_message($name, $application));
+            }
 
-                $is_class_kind = ($kind === 'php' || $kind === 'js');
+            if (count($application) === 1 && count($framework) >= 1 && $other === []) {
+                $application_file = $application[0];
 
-                if (count($application) === 1 && count($framework) >= 1 && ($other === [] || !$is_class_kind)) {
-                    $application_file = $application[0];
+                $settled = self::__settle_override($name, $application_file, $framework);
 
-                    $settled = self::__settle_override($kind, $name, $application_file, $framework);
-
-                    if ($settled === 'dropped') {
-                        $dropped[] = $application_file;
-
-                        continue;
-                    }
-
-                    if ($settled === 'declined') {
-                        continue;
-                    }
-
-                    foreach ($framework as $framework_file) {
-                        $map[$framework_file] = self::__record($kind, $name, $application_file, $framework_file);
-                    }
+                if ($settled === 'dropped') {
+                    $dropped[] = $application_file;
 
                     continue;
                 }
 
-                // A class name is unique across the tree; anything else declaring one twice is
-                // a duplicate. (Two framework templates of one name are left to their own
-                // detector.)
-                if ($is_class_kind && count($application) + count($framework) + count($other) > 1) {
-                    $type = $kind === 'php' ? 'PHP' : 'JavaScript';
-
-                    throw new \RuntimeException(
-                        "Fatal: Duplicate {$type} class name '{$name}' found in multiple files:\n"
-                        . '  - ' . implode("\n  - ", array_merge($application, $framework, $other)) . "\n"
-                        . 'Each class name must be unique within the same file type.'
-                    );
+                if ($settled === 'declined') {
+                    continue;
                 }
+
+                foreach ($framework as $framework_file) {
+                    $map[$framework_file] = self::__record($name, $application_file, $framework_file);
+                }
+
+                continue;
+            }
+
+            // A class name is unique across the tree; anything else declaring one twice is
+            // a duplicate.
+            if (count($application) + count($framework) + count($other) > 1) {
+                throw new \RuntimeException(
+                    "Fatal: Duplicate PHP class name '{$name}' found in multiple files:\n"
+                    . '  - ' . implode("\n  - ", array_merge($application, $framework, $other)) . "\n"
+                    . 'Each class name must be unique within the same file type.'
+                );
             }
         }
 
@@ -201,7 +187,7 @@ class Manifest_Overrides
             unset($files[$path]);
         }
 
-        self::__assert_no_unindexed_framework_namesake($declarers['php'] ?? []);
+        self::__assert_no_unindexed_framework_namesake($php_declarers);
         self::__assert_split_bases_never_name_their_shell($changed_files);
 
         ksort($map);
@@ -226,7 +212,7 @@ class Manifest_Overrides
                 // Announced as it happens - a file leaving the live tree is always attributable
                 // to the override that took it out. Silent on every pass after.
                 error_log(
-                    '[Manifest] Override: ' . $record['name'] . ' - the framework ' . $record['kind'] . ' file '
+                    '[Manifest] Override: ' . $record['name'] . ' - the framework class file '
                     . $path . ' is shadowed by ' . $record['by']
                 );
             }
@@ -255,10 +241,6 @@ class Manifest_Overrides
         $map = [];
 
         foreach ($overrides as $path => $record) {
-            if (($record['kind'] ?? null) !== 'php') {
-                continue;
-            }
-
             $map[$record['fqcn']] = [
                 'by_fqcn' => $record['by_fqcn'],
                 'by_file' => $record['by'],
@@ -272,16 +254,89 @@ class Manifest_Overrides
     }
 
     // -----------------------------------------------------------------------
+    // JS and jqhtml: not overridable
+    // -----------------------------------------------------------------------
+
+    /**
+     * Refuse every application JS class and jqhtml component that carries the name of a
+     * framework one. Returns the application entries the index named but the disk no longer
+     * has: those are stale, collide with nothing, and are dropped.
+     *
+     * Two application files of one name with no framework namesake are not this pass's
+     * concern: the JS class map (Manifest_Indexer::_collate_files_by_classes()) and the
+     * component-name check (Manifest_Store::_validate_manifest_data()) refuse those.
+     *
+     * @param array<string, array<string, array<string, array<int,string>>>> $browser_declarers kind => name => side => paths
+     * @return array<int,string>
+     */
+    private static function __refuse_browser_namesakes(array $browser_declarers): array
+    {
+        $dropped = [];
+
+        foreach ($browser_declarers as $kind => $names) {
+            foreach ($names as $name => $sides) {
+                if (empty($sides['application']) || empty($sides['framework'])) {
+                    continue;
+                }
+
+                foreach ($sides['application'] as $application_file) {
+                    // A stale index entry (the file was deleted since the last build) is not
+                    // a collision - a downstream field report, 2026-08-25, is why the disk is
+                    // asked before a name in the file list is believed.
+                    if (!file_exists(base_path($application_file))) {
+                        error_log(
+                            '[Manifest] Override pass: ignoring stale index entry for ' . $name . ' - '
+                            . $application_file . ' is in the file list but not on disk. The entry is dropped.'
+                        );
+
+                        $dropped[] = $application_file;
+
+                        continue;
+                    }
+
+                    throw new \RuntimeException(self::__browser_namesake_message($kind, $name, $application_file, $sides['framework']));
+                }
+            }
+        }
+
+        return $dropped;
+    }
+
+    /**
+     * @param array<int,string> $framework_files
+     */
+    private static function __browser_namesake_message(string $kind, string $name, string $application_file, array $framework_files): string
+    {
+        $what = $kind === 'jqhtml' ? "jqhtml component '{$name}'" : "JavaScript class '{$name}'";
+        $kind_name = $kind === 'jqhtml' ? 'jqhtml component' : 'JavaScript class';
+
+        return "Fatal: {$what} is not overridable.\n\n"
+            . "  Application: {$application_file}\n"
+            . '  Framework:   ' . implode("\n               ", $framework_files) . "\n\n"
+            . "The application declares a framework {$kind_name} name. Only PHP\n"
+            . "classes are overridable: JavaScript classes and jqhtml components are\n"
+            . "not. The framework file is not shadowed and the application file is\n"
+            . "not ignored - two definitions of one name cannot share a bundle - so\n"
+            . "the build stops.\n\n"
+            . "Rename the application class or component and use it by its own name,\n"
+            . "or change the behaviour through an extension point the framework\n"
+            . "publishes for it (a registration call such as Button_Utils.set_loader(),\n"
+            . "an event hook, a subclass under a name of your own). Behaviour with no\n"
+            . "extension point needs one: that is a framework change request.\n\n"
+            . 'See: php artisan rsx:man class_override';
+    }
+
+    // -----------------------------------------------------------------------
     // One override, settled
     // -----------------------------------------------------------------------
 
     /**
-     * Decide one application/framework pair: 'shadow', 'dropped' (the application file is
-     * not on disk) or 'declined' (the build has poisoned its own index). Every refusal throws.
+     * Decide one application/framework PHP pair: 'shadow', 'dropped' (the application file
+     * is not on disk) or 'declined' (the build has poisoned its own index). Every refusal throws.
      *
      * @param array<int,string> $framework_files
      */
-    private static function __settle_override(string $kind, string $name, string $application_file, array $framework_files): string
+    private static function __settle_override(string $name, string $application_file, array $framework_files): string
     {
         // A build that has already poisoned its own manifest (manifest_is_bad) has declared its
         // file list untrustworthy. It shadows nothing: the two declarations stay in the tree,
@@ -289,7 +344,7 @@ class Manifest_Overrides
         // decides.
         if (Manifest::$_manifest_is_bad) {
             error_log(
-                '[Manifest] Override pass: NOT shadowing the framework ' . $kind . ' file of ' . $name
+                '[Manifest] Override pass: NOT shadowing the framework class file of ' . $name
                 . ' - this build already marked its manifest bad, so its file list is not evidence of '
                 . 'anything. The next build decides.'
             );
@@ -312,14 +367,10 @@ class Manifest_Overrides
             return 'dropped';
         }
 
-        if ($kind === 'php' || $kind === 'js') {
-            self::__assert_override_shape($name, $application_file, $framework_files[0]);
-        }
+        self::__assert_override_shape($name, $application_file, $framework_files[0]);
 
-        if ($kind === 'php') {
-            foreach ($framework_files as $framework_file) {
-                self::__assert_overridable($name, $application_file, $framework_file);
-            }
+        foreach ($framework_files as $framework_file) {
+            self::__assert_overridable($name, $application_file, $framework_file);
         }
 
         return 'shadow';
@@ -328,20 +379,18 @@ class Manifest_Overrides
     /**
      * The override map record for one shadowed framework file.
      */
-    private static function __record(string $kind, string $name, string $application_file, string $framework_file): array
+    private static function __record(string $name, string $application_file, string $framework_file): array
     {
-        $record = ['kind' => $kind, 'name' => $name, 'by' => $application_file];
-
-        if ($kind === 'php') {
-            $record['fqcn'] = self::__fqcn(Manifest::$data['data']['files'][$framework_file]);
-            $record['by_fqcn'] = self::__fqcn(Manifest::$data['data']['files'][$application_file]);
-        }
-
-        return $record;
+        return [
+            'name' => $name,
+            'by' => $application_file,
+            'fqcn' => self::__fqcn(Manifest::$data['data']['files'][$framework_file]),
+            'by_fqcn' => self::__fqcn(Manifest::$data['data']['files'][$application_file]),
+        ];
     }
 
     /**
-     * The extends-itself refusal and the SPLIT refusal, for a class kind.
+     * The extends-itself refusal and the SPLIT refusal.
      */
     private static function __assert_override_shape(string $name, string $application_file, string $framework_file): void
     {
@@ -813,23 +862,12 @@ class Manifest_Overrides
     /**
      * @param array<int,string> $application_files
      */
-    private static function __two_application_declarations_message(string $kind, string $name, array $application_files): string
+    private static function __two_application_declarations_message(string $name, array $application_files): string
     {
-        $what = match ($kind) {
-            'php' => "PHP class '{$name}'",
-            'js' => "JavaScript class '{$name}'",
-            'jqhtml' => "jqhtml component '{$name}'",
-        };
-
-        $consequence = match ($kind) {
-            'jqhtml' => "Component names (<Define:{$name}>) must be unique across the application.",
-            default => 'Each class name must be unique within the same file type.',
-        };
-
-        return "Fatal: Duplicate {$what} declared by more than one application file:\n"
+        return "Fatal: Duplicate PHP class '{$name}' declared by more than one application file:\n"
             . '  - ' . implode("\n  - ", $application_files) . "\n\n"
-            . $consequence . "\n"
-            . "(When one of them overrides a framework {$kind} file, the override must be exactly one\n"
+            . "Each class name must be unique within the same file type.\n"
+            . "(When one of them overrides a framework class, the override must be exactly one\n"
             . "application file - see rsx:man class_override.)";
     }
 

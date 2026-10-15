@@ -224,11 +224,12 @@ PHP
 
 # Render the signed-in pages against the keys the box should be serving. Prints the
 # probe's own PASS:/FAIL: lines; exit status is the probe's. When the caller has set
-# PROBE_ANON_PATH and PROBE_ANON_MARKER, that page is rendered anonymously first and must
-# carry the marker (sealed_page_probe.js).
+# PROBE_ANON_PATH, PROBE_ANON_EXPRESSION and PROBE_ANON_MARKER, that page is rendered
+# anonymously first and the expression must answer the marker there (sealed_page_probe.js).
 #   $1 the application host   $2 the expected state key   $3 the expected code key
 probe_pages() {
     PROBE_EMAIL="$PROBE_EMAIL" PROBE_PASSWORD="$PROBE_PASSWORD" \
-        PROBE_ANON_PATH="${PROBE_ANON_PATH:-}" PROBE_ANON_MARKER="${PROBE_ANON_MARKER:-}" \
+        PROBE_ANON_PATH="${PROBE_ANON_PATH:-}" PROBE_ANON_EXPRESSION="${PROBE_ANON_EXPRESSION:-}" \
+        PROBE_ANON_MARKER="${PROBE_ANON_MARKER:-}" \
         node "$PROBE_PAGE_JS" "$1" "$2" "$3" /_sys @landing 2>&1
 }

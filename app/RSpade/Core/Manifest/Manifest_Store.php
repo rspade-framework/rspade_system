@@ -761,9 +761,10 @@ class Manifest_Store
 
         // NOTE: PHP and JS class-name uniqueness is NOT checked here. There is ONE detector,
         // _collate_files_by_classes(), which builds the class maps and throws on a duplicate
-        // naming both files - and the class-override pass runs before it and turns the
-        // legitimate rsx/-over-framework case into a shadowed file. A third copy of the check
-        // here could only ever agree or contradict.
+        // naming both files - and the class-override pass runs before it, turning the
+        // legitimate rsx/-over-framework PHP case into a shadowed file and refusing an rsx/ JS
+        // class named like a framework one. A third copy of the check here could only ever
+        // agree or contradict.
         $blade_ids = [];
         $jqhtml_ids = [];
 
@@ -792,11 +793,10 @@ class Manifest_Store
 
             // Check Jqhtml component ID uniqueness
             //
-            // One declaration in the application and one in the framework is not a
-            // duplicate but an OVERRIDE, and never reaches here: Manifest_Overrides moves the
-            // shadowed framework template out of `files`, and refuses two application
-            // templates of one name itself. What is left to refuse here is two framework
-            // templates nothing can choose between.
+            // One declaration in the application and one in the framework never reaches
+            // here: components are not overridable, and Manifest_Overrides refuses that pair
+            // by name first. What is left to refuse here is two templates of one name on the
+            // same side - two application templates, or two framework templates.
             if ($extension === 'jqhtml' && isset($metadata['id'])) {
                 $id = $metadata['id'];
                 if (isset($jqhtml_ids[$id])) {
@@ -805,10 +805,7 @@ class Manifest_Store
 "Found in:\n" .
 "  - {$jqhtml_ids[$id]}\n" .
 "  - {$file_path}\n\n" .
-"Jqhtml component names (<Define:ComponentName>) must be unique across all files.\n" .
-"(An application component with the name of a FRAMEWORK component is an override,\n" .
-"not a duplicate, and is handled automatically - see rsx:man class_override. These\n" .
-"two are both framework templates.)\n\n" .
+"Jqhtml component names (<Define:ComponentName>) must be unique across all files.\n\n" .
 "To resolve: Add specificity to the component name by prefixing with directory segments.\n" .
 "For example, if a component named 'Card' resides in the 'demo' module directory,\n" .
 "rename it to 'Demo_Card' in the <Define:> tag. Similarly, components in nested directories\n" .

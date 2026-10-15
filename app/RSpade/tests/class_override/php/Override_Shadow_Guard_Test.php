@@ -174,7 +174,6 @@ class Override_Shadow_Guard_Test extends Rsx_Test_Abstract
 
             static::__assert_equals(
                 [self::FRAMEWORK_FILE => [
-                    'kind' => 'php',
                     'name' => self::PROBE_CLASS,
                     'by' => self::RSX_FILE,
                     'fqcn' => 'App\\RSpade\\Temp\\' . self::PROBE_CLASS,

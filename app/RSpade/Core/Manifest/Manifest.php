@@ -314,14 +314,14 @@ class Manifest
     // ========================================
 
     /**
-    * The override map: shadowed framework path => ['kind', 'name', 'by', 'fqcn', 'by_fqcn'].
+    * The override map: shadowed framework PHP file => ['name', 'by', 'fqcn', 'by_fqcn'].
     *
-    * kind is php | js | jqhtml | scss; `by` is the application file that overrides the
-    * framework file; `fqcn` / `by_fqcn` are present for kind php. A shadowed framework file is
-    * in no other part of the live index - get_all() never returns it. Built by
-    * Manifest_Overrides.
+    * Only PHP classes are overridable. `name` is the class's simple name, `by` the application
+    * file that overrides the framework file, `fqcn` / `by_fqcn` the two classes. A shadowed
+    * framework file is in no other part of the live index - get_all() never returns it. Built
+    * by Manifest_Overrides.
     *
-    * @return array<string, array{kind: string, name: string, by: string, fqcn?: string, by_fqcn?: string}>
+    * @return array<string, array{name: string, by: string, fqcn: string, by_fqcn: string}>
     */
     public static function overrides(): array
     {

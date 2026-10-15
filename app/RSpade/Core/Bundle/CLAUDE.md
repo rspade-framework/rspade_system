@@ -34,21 +34,26 @@
 - Matches go through `_add_scanned_files()`, the same per-file step a directory scan uses
 
 **Overridden Files Resolve To Their Override** (`BundleCompiler::_add_file()` / `_effective_path()`)
+- Only PHP classes are overridable, so every path in `Manifest::overrides()` is a PHP file;
+  an application JS class or jqhtml component named like a framework one never reaches a
+  bundle - the manifest build refuses it (`Manifest_Overrides`)
 - `_add_file()` is the ONE seam every include reaches - directory walk, pattern, explicit file.
   A path `Manifest::overrides()` records as SHADOWED (`rsx:man class_override`) is replaced by
-  the `rsx/` file that overrides it, in the shadowed file's place in the include order (a
-  script sorts, a template registers, where the framework's would have); de-dup then keys on
-  the override, so a bundle that also includes the application file gets it once, at its first
-  appearance. Every bundle, `Core_Bundle` and `/_sys` bundles included
-- A stylesheet is never shadowed (the override map has no scss kind), so every framework
-  stylesheet a bundle includes is compiled; an application stylesheet wrapped in the same
-  class is compiled alongside it, where its own include puts it
+  the `rsx/` file that overrides it, in the shadowed file's place in the include order; de-dup
+  then keys on the override, so a bundle that also includes the application file gets it once,
+  at its first appearance. A bundle whose includes reach the framework file receives the
+  override EVEN WHEN NONE OF ITS INCLUDES COVERS THE OVERRIDE'S DIRECTORY. Every bundle,
+  `Core_Bundle` and `/_sys` bundles included
+- JS classes, templates and stylesheets are never substituted: every framework stylesheet a
+  bundle includes is compiled, and an application stylesheet wrapped in the same class is
+  compiled alongside it, where its own include puts it
 - An overriding MODEL brings its companion (`_override_companion_file()`): when the substituted
   file is a JS-exposed model (`_is_js_exposed_model()`) whose JS class the application declares
   (`_user_js_model_class_file()`, the JS class map), `_add_file()` adds that JS file right after
   it - on every substitution, a de-duplicated one included. These are the two helpers the model
   check in `_generate_concrete_model_classes()` uses, so the substitution supplies exactly the
-  file the check would otherwise refuse the bundle for. Consequence: Core_Bundle includes
+  file the check would otherwise refuse the bundle for. The companion is NOT a JS override: the
+  framework ships no JS class named after a model. Consequence: Core_Bundle includes
   `Core/Models`, so an override of a core model reaches EVERY bundle, public ones (login,
   portal sign-in, errors, `/_sys`, `/apidocs`) included - its stub (the ORM definition) and its
   JS class together. A narrowed public bundle still ships them; the application keeps what it

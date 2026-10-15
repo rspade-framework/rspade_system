@@ -80,7 +80,7 @@ Batch 2 (seal + guards):
 | console_debug strip (pure_funcs in strict prod) | asset | Batch 3 (unit on option builder); full strip proven by E2E grep |
 | enable/disable/verify lifecycle, unseal and repair | cli | implemented (cli/prod_lifecycle.sh) - a REAL round trip on this box; the EXIT trap returns it to development |
 | A REAL migration on the sealed box: nothing rebuilt, state key moves, pages and field lengths follow | cli | implemented (cli/prod_lifecycle.sh steps 4-5, `_lib/prod_probe_migration.sh`, `playwright/sealed_page_probe.js`) |
-| Class overrides on a sealed box: system/ untouched, the FQCN resolves to the override under a classmap-authoritative autoloader, the bundle compiles the override's template, and removing it leaves nothing behind | cli | implemented (cli/prod_lifecycle.sh steps 2b, 9, 10, `_lib/prod_probe_overrides.sh`, the anonymous /login check in `playwright/sealed_page_probe.js`) |
+| A PHP class override on a sealed box: system/ untouched, the FQCN resolves to the override under a classmap-authoritative autoloader, a bundle naming no application model compiles the override's stub, and removing it leaves nothing behind | cli | implemented (cli/prod_lifecycle.sh steps 2b, 9, 10, `_lib/prod_probe_overrides.sh`, the anonymous /login check in `playwright/sealed_page_probe.js`) |
 | Read-only build/, system/, rsx/ while serving | cli | implemented (cli/prod_readonly.sh) - complete only when the test user is unprivileged; see the script header |
 | Two-checkout determinism | (harness) | Batch 2 acceptance harness, not a discovered test |
 
@@ -103,11 +103,9 @@ Batch 2 (seal + guards):
   table and `_migrations` row - in the same EXIT trap. The lifecycle script also signs in
   through `/login` as an account of its own (`prod-mode-probe@rspade.test`, a password
   generated per run), which the trap retires: password scrambled, developer mark cleared,
-  membership disabled. It also writes two class-override probes into `rsx/`
-  (`rsx/models/region_model.php` and a `Turnstile_Input.jqhtml` under
-  `rsx/theme/components/prod_probe_override_<pid>/`), which the same trap removes first,
-  together with any `rsx/` file the development import fixer repointed at them while they
-  existed. The scripts stay runnable by hand:
+  membership disabled. It also writes a PHP class-override probe into `rsx/`
+  (`rsx/models/region_model.php`), which the same trap removes first, together with any
+  `rsx/` file the development import fixer repointed at it while it existed. The scripts stay runnable by hand:
   `bash system/app/RSpade/tests/prod_mode/cli/prod_lifecycle.sh`.
 - `rsx:test` REFUSES TO RUN AT ALL in a production mode, pre-boot, naming
   `php artisan rsx:mode:set dev`. The suite is a CI step that runs on a development box
