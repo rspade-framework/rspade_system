@@ -118,7 +118,7 @@ manifest and finder, no DB.
 
 ## cli/prod_lifecycle.sh (cli, bash), wrapped by `Prod_Lifecycle_Cli_Test`
 
-The real round trip on the box the test runs on: three builds, roughly five minutes.
+The real round trip on the box the test runs on: four builds, roughly six minutes.
 `Prod_Lifecycle_Cli_Test` runs the script and asserts its exit code and its `PASS:`
 verdict; it is `$explicit_group_only`, so it RUNS ONLY WHEN THE GROUP IS NAMED:
 `php artisan rsx:test --framework --group=prod_mode --sequential`. The script stays
@@ -139,6 +139,12 @@ trap runs `rsx:prod:disable`.
 | LIFE-16 | the anonymous page is not served from before the migration | cli | GET /login | body carries the new state key | implemented | 2026-10-12 |
 | LIFE-17 | rsx:health gains no FAIL row from the migration | cli | FAIL rows before vs after | no new row | implemented | 2026-10-12 |
 | LIFE-18 | removing the migration costs no build either | cli | drop the table, delete the row, purge; state key; page probe | the original state key; pages render; build/ checksums identical | implemented | 2026-10-12 |
+| LIFE-19 | the sealed build leaves system/ untouched with two overrides present | cli | probe PHP override of Region_Model and probe jqhtml override of Turnstile_Input written to rsx/ before rsx:prod:enable; fingerprint before vs after | git status of system/app, system/config, system/bin unchanged; no `*.upstream`; both shadowed files' sha1 unchanged; under system/vendor/composer only autoload_classmap.php, autoload_real.php, autoload_static.php may differ | implemented | 2026-10-14 |
+| LIFE-20 | the strict production process resolves the framework FQCN to the override | cli | fresh `system/script.php` process: ReflectionClass of `App\RSpade\Core\Models\Region_Model`, its PROBE constant, composer's loader mode | `Rsx\Models\Region_Model`, the marker, a classmap-authoritative loader | implemented | 2026-10-14 |
+| LIFE-21 | rsx:overrides:list names both overrides on the sealed box | cli | `rsx:overrides:list --json` | exactly `jqhtml:Turnstile_Input` and `php:Region_Model` | implemented | 2026-10-14 |
+| LIFE-22 | /login draws the override's template from the sealed bundle | cli | the page probe renders /login anonymously before signing in (three times, with the migration steps); every /_compiled/ script /login names | the marker in the rendered DOM, no page error; the bundles carry the marker and not the framework template's text | implemented | 2026-10-14 |
+| LIFE-23 | removing the overrides and rebuilding leaves nothing behind | cli | remove the probes before `rsx:build --force` | system/ fingerprint unchanged; nothing listed; the FQCN resolves to the framework class; the bundles carry the framework template again | implemented | 2026-10-14 |
+| LIFE-24 | the round trip leaves the trees as it found them | cli | after rsx:prod:disable | system/ fingerprint unchanged; every file under system/vendor/composer byte-identical to the start; `git status -- rsx` as at the start | implemented | 2026-10-14 |
 | LIFE-04 | rsx:build refuses to rebuild a sealed box without --force | cli | rsx:build | non-zero, names --force | implemented | 2026-09-15 |
 | LIFE-05 | rsx:clean refuses to discard a sealed tree without --force | cli | rsx:clean | non-zero, names --force | implemented | 2026-09-15 |
 | LIFE-06 | the seal describes what is on disk | cli | rsx:prod:verify | exit 0 | implemented | 2026-09-15 |

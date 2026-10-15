@@ -100,15 +100,15 @@ class Php_Fixer
      * ancestry. Every one of those is a lookup in one of the maps below.
      *
      *   simple_to_fqcn      simple class name => the FQCN the manifest says it has
+     *                       (an rsx/ declaration wins over a framework one)
+     *   framework_fqcn      simple class name => the FRAMEWORK FQCN, for every name declared
+     *                       under app/RSpade/ - what a framework file's import of it names
      *   simple_to_path      simple class name => the file that declares it
      *   extends             simple class name => its parent's simple name
      *   rsx_classes         set of class names declared under rsx/
-     *   overridden          set of class names declared under rsx/ that ALSO have a
-     *                       framework declaration (.php or an already-archived
-     *                       .php.upstream) - i.e. the class overrides
      *   framework_classes   how many app/RSpade/ classes the index carries (guard 2)
      *
-     * @var array{simple_to_fqcn:array,simple_to_path:array,extends:array,rsx_classes:array,overridden:array,framework_classes:int}|null
+     * @var array{simple_to_fqcn:array,framework_fqcn:array,simple_to_path:array,extends:array,rsx_classes:array,framework_classes:int}|null
      */
     private static ?array $__index = null;
 
@@ -124,19 +124,25 @@ class Php_Fixer
     /**
      * Build the run's class index. Called once by _run_php_fixer() before the file loop.
      *
-     * WHERE B-108 IS DECIDED. When a simple name is declared BOTH under rsx/ and under
-     * app/RSpade/, the rsx/ one wins - deterministically, not by hash order. That pair is
-     * exactly a class override in the moment before the override pass archives the framework
-     * copy, so the rsx/ answer is the one that will still be true a few lines later. The
-     * fixer used to return whichever entry the file map happened to reach first.
+     * A CLASS OVERRIDE (rsx:man class_override) is a simple name declared BOTH under rsx/ and
+     * under app/RSpade/ - the fixer runs over the whole working set, shadowed framework files
+     * included, before the override map is derived. The two trees then read it differently,
+     * deterministically, never by hash order:
+     *
+     *   - an rsx/ file resolves it to the rsx/ class (`simple_to_fqcn`: rsx/ wins);
+     *   - a framework file resolves it to the FRAMEWORK class (`framework_fqcn`), exactly as
+     *     if the override did not exist. The framework name is an alias of the override at
+     *     run time (Class_Override_Loader), so the framework's own import is already right,
+     *     and the fixer never edits a framework file because an application overrides a
+     *     class.
      */
     public static function begin_run(array &$step_2_manifest_data): void
     {
         $simple_to_fqcn = [];
+        $framework_fqcn = [];
         $simple_to_path = [];
         $extends = [];
         $rsx_classes = [];
-        $framework_declared = [];
         $framework_classes = 0;
 
         foreach ($step_2_manifest_data['data']['files'] ?? [] as $manifest_file => $metadata) {
@@ -153,29 +159,17 @@ class Php_Fixer
                 continue;
             }
 
-            // An ARCHIVED framework twin still counts as a framework declaration - that is
-            // what makes an override recognisable on the second and every later build.
-            $extension = $metadata['extension'] ?? null;
-
-            if ($is_framework && $extension === 'php.upstream') {
-                $framework_declared[$class] = true;
-
-                continue;
-            }
-
             if (!str_ends_with($manifest_file, '.php')) {
                 continue;
             }
 
             if ($is_framework) {
-                $framework_declared[$class] = true;
+                $framework_fqcn[$class] = Rsx_Namespace::from_path($manifest_file) . '\\' . $class;
                 $framework_classes++;
             }
 
             // rsx/ WINS, in either iteration order: an rsx/ declaration always overwrites,
-            // and a framework declaration never overwrites one rsx/ already made. That pair
-            // is a class override in the moment before the override pass archives the
-            // framework copy, so the rsx/ answer is the one that stays true.
+            // and a framework declaration never overwrites one rsx/ already made.
             if ($is_rsx) {
                 $rsx_classes[$class] = true;
             } elseif (isset($rsx_classes[$class])) {
@@ -187,19 +181,12 @@ class Php_Fixer
             $extends[$class] = $metadata['extends'] ?? null;
         }
 
-        $overridden = [];
-        foreach (array_keys($rsx_classes) as $class) {
-            if (isset($framework_declared[$class])) {
-                $overridden[$class] = true;
-            }
-        }
-
         self::$__index = [
             'simple_to_fqcn' => $simple_to_fqcn,
+            'framework_fqcn' => $framework_fqcn,
             'simple_to_path' => $simple_to_path,
             'extends' => $extends,
             'rsx_classes' => $rsx_classes,
-            'overridden' => $overridden,
             'framework_classes' => $framework_classes,
         ];
 
@@ -351,12 +338,12 @@ class Php_Fixer
             return false;
         }
 
-        // Determine what fixes to apply based on mode and file location
-        // - Framework developer mode: full fixes on all files
-        // - Non-framework developer mode:
-        //   - rsx/ files: full fixes
-        //   - app/RSpade/ files: ONLY use statement fixes (for class override support)
-        $use_statements_only = !$is_framework_developer && $is_framework_file;
+        // A framework file is fixed only where the framework is authored (framework developer
+        // mode). Everywhere else app/RSpade/ is framework property, and the fixer writes
+        // nothing under it.
+        if ($is_framework_file && !$is_framework_developer) {
+            return false;
+        }
 
         $absolute_path = base_path($file_path);
         $source = Manifest::build()->source_cache();
@@ -383,19 +370,11 @@ class Php_Fixer
         }
 
         // Apply fixes sequentially
-        // For framework files in non-developer mode, only fix use statements
         $modified_content = $original_content;
-
-        if (!$use_statements_only) {
-            $modified_content = self::__fix_namespace($file_path, $modified_content, $step_2_manifest_data);
-        }
-
+        $modified_content = self::__fix_namespace($file_path, $modified_content, $step_2_manifest_data);
         $modified_content = self::__fix_use_statements($file_path, $modified_content, $step_2_manifest_data);
-
-        if (!$use_statements_only) {
-            $modified_content = self::__fix_model_relationships($file_path, $modified_content, $step_2_manifest_data);
-            $modified_content = self::__fix_attribute_namespacing($file_path, $modified_content, $step_2_manifest_data);
-        }
+        $modified_content = self::__fix_model_relationships($file_path, $modified_content, $step_2_manifest_data);
+        $modified_content = self::__fix_attribute_namespacing($file_path, $modified_content, $step_2_manifest_data);
 
         // Save if modified
         if ($modified_content !== $original_content) {
@@ -600,28 +579,17 @@ class Php_Fixer
         }
 
         // Find which of these classes exist in manifest
-        $rsx_classes_to_import = self::__match_classes_files($referenced_classes, $step_2_manifest_data);
+        $rsx_classes_to_import = self::__match_classes_files($referenced_classes, $file_path, $step_2_manifest_data);
 
-        // Framework files in app/RSpade/ do not import Rsx\ classes: in a downstream app the
+        // Framework files in app/RSpade/ never import Rsx\ classes: in a downstream app the
         // Rsx\ namespace tree is the developer's own structure and the autoloader resolves
-        // it by simple name at runtime.
-        //
-        // THE ONE EXCEPTION IS A CLASS OVERRIDE, and it is the exception the delete pass
-        // agrees with (B-108). When a framework class has been re-declared under rsx/, the
-        // framework's own copy is archived and the bare name no longer resolves at COMPILE
-        // time - which is what an inherited type hint needs. So an override's import is
-        // added here, exactly as __decide_use_statement_action() now rewrites rather than
-        // deletes one. Without both halves the two passes fight: one writes the import, the
-        // other strips it, every build.
+        // it by simple name at runtime. An application override of a framework class is no
+        // exception - a framework file resolves the name to the framework class (see
+        // begin_run()), whose name the override loader answers with the application's.
         if ($is_rspade_file) {
-            $overridden = self::__index($step_2_manifest_data)['overridden'];
-
             $rsx_classes_to_import = array_filter(
                 $rsx_classes_to_import,
-                function ($fqcn, $simple_name) use ($overridden) {
-                    return !str_starts_with($fqcn, 'Rsx\\') || isset($overridden[$simple_name]);
-                },
-                ARRAY_FILTER_USE_BOTH
+                fn ($fqcn) => !str_starts_with($fqcn, 'Rsx\\')
             );
         }
 
@@ -1018,23 +986,23 @@ class Php_Fixer
         }
 
         // Look up the correct FQCN for this class in the manifest
-        $correct_fqcn = self::__find_class_fqcn_in_manifest($simple_name, $step_2_manifest_data);
+        $correct_fqcn = self::__find_class_fqcn_in_manifest($simple_name, $file_path, $step_2_manifest_data);
 
         if ($correct_fqcn !== null) {
             // THE MANIFEST KNOWS THIS NAME, SO THE IMPORT IS NEVER DELETED (backlog B-108).
             //
             // It used to be, in framework-developer mode, on the reasoning that the RSX
             // autoloader finds an Rsx\ class without an import. It does - at RUNTIME. What
-            // it cannot do is satisfy PHP's COMPILE-TIME signature-compatibility check,
-            // which does not autoload: a framework file that type-hints an overridden class
-            // in an inherited signature resolves the bare name into its OWN namespace and
-            // the process dies at boot, unrecoverably, before any build can undo the edit.
-            // Observed 2026-09-07 by cloning Core/Files/File_Attachment_Model.php into
-            // rsx/models/: ~50 imports were dropped instead of rewritten.
+            // it cannot do is rescue PHP's signature-compatibility check: with the import
+            // gone, a type in an inherited signature resolves the bare name into the file's
+            // OWN namespace, where no such class exists, and the class fails to link - at
+            // boot, unrecoverably, before any build can undo the edit. Observed 2026-09-07
+            // by cloning Core/Files/File_Attachment_Model.php into rsx/models/: ~50 imports
+            // were dropped instead of rewritten.
             //
             // So the answer is the same in every mode: point the import at the FQCN the
-            // manifest records, which for an overridden class is the rsx/ one (see
-            // begin_run() - rsx/ wins deterministically, not by hash order).
+            // manifest records for this file's tree - for an overridden class, the rsx/ one
+            // from an rsx/ file and the framework one from a framework file (begin_run()).
             if ($use_fqcn === $correct_fqcn) {
                 return false; // Already correct - keep as-is
             }
@@ -1081,9 +1049,15 @@ class Php_Fixer
      * @param array $step_2_manifest_data Manifest data
      * @return string|null FQCN if found in manifest, null otherwise
      */
-    private static function __find_class_fqcn_in_manifest(string $simple_name, array &$step_2_manifest_data): ?string
+    private static function __find_class_fqcn_in_manifest(string $simple_name, string $file_path, array &$step_2_manifest_data): ?string
     {
-        return self::__index($step_2_manifest_data)['simple_to_fqcn'][$simple_name] ?? null;
+        $index = self::__index($step_2_manifest_data);
+
+        if (Rsx_Paths::is_framework($file_path) && isset($index['framework_fqcn'][$simple_name])) {
+            return $index['framework_fqcn'][$simple_name];
+        }
+
+        return $index['simple_to_fqcn'][$simple_name] ?? null;
     }
 
     /**
@@ -1579,14 +1553,15 @@ class Php_Fixer
      * @param array $step_2_manifest_data Manifest data
      * @return array Associative array of class_name => fqcn for classes found
      */
-    private static function __match_classes_files(array $class_names, array &$step_2_manifest_data): array
+    private static function __match_classes_files(array $class_names, string $file_path, array &$step_2_manifest_data): array
     {
-        $simple_to_fqcn = self::__index($step_2_manifest_data)['simple_to_fqcn'];
         $matched_classes = [];
 
         foreach ($class_names as $simple_name) {
-            if (isset($simple_to_fqcn[$simple_name])) {
-                $matched_classes[$simple_name] = $simple_to_fqcn[$simple_name];
+            $fqcn = self::__find_class_fqcn_in_manifest($simple_name, $file_path, $step_2_manifest_data);
+
+            if ($fqcn !== null) {
+                $matched_classes[$simple_name] = $fqcn;
             }
         }
 

@@ -2,8 +2,9 @@
 # t34: the vendored -> submodule CONVERSION records `ignore = dirty` in .gitmodules.
 #
 # `git submodule add` writes path/url/branch and nothing else, so a converted project
-# would inherit git's default (`none`) and report ` M system` on every status forever -
-# system/ is permanently dirty with the build's .php <-> .php.upstream churn. The answer
+# would inherit git's default (`none`) and report ` M system` after every production
+# build - rsx:build re-dumps composer's autoloader into the tracked system/vendor/composer/.
+# The answer
 # operators reach for is a repo-wide `[diff] ignoreSubmodules = all`, which hides the
 # recorded POINTER as well: the framework version then changes with no trace in status,
 # diff or the commit summary (field report, 2026-08-22).

@@ -270,9 +270,10 @@ ACTION REQUIRED
            ls rsx/models/file_attachment_model.php
 
        If that file exists, you hold a FROZEN COPY of a class that kept moving. The
-       manifest serves YOUR copy and archives the framework's beside it as
-       .php.upstream, so everything in this document that lives in the model reached
-       your disk and reaches none of your users.
+       manifest serves YOUR copy and leaves the framework's in place, shadowed and
+       never loaded (php artisan rsx:overrides:list names both files), so everything
+       in this document that lives in the model reached your disk and reaches none of
+       your users.
 
        What your copy is missing, by name:
 
@@ -289,13 +290,18 @@ ACTION REQUIRED
 
            public static function determine_file_type($mime_type)
 
-       Copy them from the framework's own file, which is on your disk in full:
+       Copy them from the framework's own implementation, which is on your disk in
+       full. Every member of the model lives on its abstract base:
 
-           system/app/RSpade/Core/Files/File_Attachment_Model.php
+           system/app/RSpade/Core/Files/File_Attachment_Model_Abstract.php
 
-       (and, while your override is in place, also as
-       system/app/RSpade/Core/Files/File_Attachment_Model.php.upstream - the archived
-       copy of what you replaced).
+       (File_Attachment_Model.php beside it is a three-line shell - see
+       core_model_base_concrete_split_09_09.txt, below.) Both files stay where they
+       are while your override is in force, so a plain diff shows what your copy
+       lacks:
+
+           diff system/app/RSpade/Core/Files/File_Attachment_Model_Abstract.php \
+                rsx/models/file_attachment_model.php
 
        The symptoms of skipping this are worth naming, because none of them is an
        error message: text files keep previewing as a generic extension icon,
@@ -312,8 +318,9 @@ ACTION REQUIRED
            php artisan rsx:check          # CLASS-OVERRIDE-DRIFT-01, high
            php artisan rsx:health         # the "Class Override Drift" row
 
-       Both list every public/protected member the archived upstream declares and
-       your copy does not. Run them after the pull and work the list.
+       Both list every public/protected member the framework file declares and your
+       copy does not (so does php artisan rsx:overrides:list, below its table).
+       Run them after the pull and work the list.
 
        READ core_model_base_concrete_split_09_09.txt BEFORE DOING THIS BY HAND. That
        change makes every core model an abstract base plus an empty shell, and an

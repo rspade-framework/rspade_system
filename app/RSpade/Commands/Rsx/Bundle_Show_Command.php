@@ -174,9 +174,14 @@ class Bundle_Show_Command extends Command
                     $files = $this->get_files_for_pattern($pattern);
                     if (!empty($files)) {
                         foreach ($files as $file) {
+                            // A shadowed framework file is compiled as the application file
+                            // that overrides it (rsx:man class_override); list both.
+                            $effective = $this->effective_file($file);
+                            $listed = $effective === $file ? $file : "{$file} -> {$effective} (override)";
+
                             // Get manifest data for this file
                             $manifest_data = Manifest::get_all();
-                            $file_info = $manifest_data[$file] ?? null;
+                            $file_info = $manifest_data[$effective] ?? null;
 
                             $extra_info = '';
                             if ($file_info) {
@@ -204,7 +209,7 @@ class Bundle_Show_Command extends Command
                                 }
                             }
 
-                            $this->line("    -> {$file}{$extra_info}");
+                            $this->line("    -> {$listed}{$extra_info}");
                         }
                     }
                 }
@@ -333,7 +338,8 @@ class Bundle_Show_Command extends Command
             return $files;
         }
 
-        // A file, or a directory and everything beneath it.
+        // A file, or a directory and everything beneath it. A shadowed framework file is not
+        // in the live index but is still what the pattern names, so it is listed too.
         $files = [];
 
         foreach ($manifest_data as $file_path => $file_info) {
@@ -342,7 +348,26 @@ class Bundle_Show_Command extends Command
             }
         }
 
+        $shadowed = array_filter(
+            array_keys(Manifest::overrides()),
+            static fn (string $file_path) => $file_path === $pattern || str_starts_with($file_path, $pattern . '/')
+        );
+
+        if ($shadowed !== []) {
+            $files = array_merge($files, $shadowed);
+            sort($files);
+        }
+
         return $files;
+    }
+
+    /**
+     * The file a bundle compiles for $file: the application file that overrides it when the
+     * manifest records it as shadowed, else $file itself.
+     */
+    protected function effective_file(string $file): string
+    {
+        return Manifest::override_for($file)['by'] ?? $file;
     }
 
     /**
@@ -359,6 +384,7 @@ class Bundle_Show_Command extends Command
             foreach ($definition['include'] as $pattern) {
                 $files = $this->get_files_for_pattern($pattern);
                 foreach ($files as $file) {
+                    $file = $this->effective_file($file);
                     $file_info = $manifest_data[$file] ?? null;
                     if ($file_info && !empty($file_info['js_stub'])) {
                         $stub_files[$file_info['js_stub']] = $file;

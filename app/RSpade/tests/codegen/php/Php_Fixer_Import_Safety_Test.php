@@ -205,8 +205,11 @@ class Php_Fixer_Import_Safety_Test extends Rsx_Test_Abstract
     public static function test_a_class_in_an_unscanned_test_tree_is_proof_of_existence()
     {
         // A test file living beside the code it tests is indexed by every build; a fixture
-        // class it imports from rsx/tests is indexed only by a test run. An ordinary build
-        // must keep that import rather than delete it - and the next test run re-add it.
+        // class it imports from a test tree (app/RSpade/tests, rsx/tests) is indexed only by a
+        // test run. An ordinary build must keep that import rather than delete it - and the
+        // next test run re-add it. The class asked about is this test's own: it lives under
+        // app/RSpade/tests in every installation.
+        $test_tree_class = (new ReflectionClass(static::class))->getShortName();
         $original = Manifest::build();
         $memo = (new ReflectionClass(Php_Fixer::class))->getProperty('__outside_index_memo');
         $memo->setAccessible(true);
@@ -216,16 +219,16 @@ class Php_Fixer_Import_Safety_Test extends Rsx_Test_Abstract
             $memo->setValue(null, []);
 
             static::__assert_true(
-                (bool) static::__invoke_seam('__class_file_exists_outside_the_index', ['Analytics_Test']),
-                'a class under rsx/tests is found on disk when the build does not scan rsx/tests'
+                (bool) static::__invoke_seam('__class_file_exists_outside_the_index', [$test_tree_class]),
+                'a class under a test tree is found on disk when the build does not scan the test trees'
             );
 
             Manifest::$_build = $original;
             $memo->setValue(null, []);
 
             static::__assert_false(
-                (bool) static::__invoke_seam('__class_file_exists_outside_the_index', ['Analytics_Test']),
-                'a test run indexes rsx/tests, so the manifest answers and the guard does not'
+                (bool) static::__invoke_seam('__class_file_exists_outside_the_index', [$test_tree_class]),
+                'a test run indexes the test trees, so the manifest answers and the guard does not'
             );
         } finally {
             Manifest::$_build = $original;

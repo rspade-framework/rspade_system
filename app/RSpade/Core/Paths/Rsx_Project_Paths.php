@@ -196,6 +196,26 @@ class Rsx_Project_Paths
         return self::bundle_models_dir() . '/' . $bundle_name . '.json';
     }
 
+    /**
+     * The class override map: framework FQCN => the application class that overrides it.
+     * Written by the manifest build, sealed with it, and read BEFORE boot - by the composer
+     * `files` entry app/RSpade/autoload_overrides.php (Class_Override_Loader::boot()), which
+     * has nothing loaded but this class. rsx:man class_override.
+     */
+    public static function class_overrides_file(): string
+    {
+        return self::class_overrides_file_under(self::build_root());
+    }
+
+    /**
+     * class_overrides_file() inside a given build root - the manifest build writes the map
+     * beside the index it is building, which a fixture build places somewhere of its own.
+     */
+    public static function class_overrides_file_under(string $build_root): string
+    {
+        return self::__join(rtrim($build_root, '/'), 'manifest/class_overrides.php');
+    }
+
     /** The production seal. */
     public static function seal_file(): string
     {

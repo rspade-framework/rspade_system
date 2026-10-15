@@ -6,7 +6,7 @@ Bundle definition and compilation: `Rsx_Bundle_Abstract` / `Rsx_Module_Bundle_Ab
 `Rsx_Asset_Bundle_Abstract` and the `BundleCompiler` that turns a definition into the
 `vendor` / `app` JS+CSS artifacts under `build/bundles`.
 
-Four concerns live here.
+Five concerns live here.
 
 The first is CACHE CORRECTNESS: a compiled artifact must be
 invalidated by every input that can change its bytes. The compiler keys each bucket
@@ -37,6 +37,13 @@ ones that matter there: a pattern that silently matched nothing would compile a 
 without its stylesheets and report no error, and a pattern that silently matched more than
 its form says would publish files nobody listed.
 
+The fifth is OVERRIDE SUBSTITUTION: a framework file the application overrides stays on
+disk under its own name, and a bundle walks the disk. `_add_file()` - the one step a
+directory, a pattern and an explicit file all reach - compiles the overriding file in the
+shadowed file's place, once. A shadowed file that leaked through would put two declarations
+of one class, one component or one stylesheet into the bundle; one substituted at the wrong
+position would cascade or evaluate out of order.
+
 ## The argv ceiling
 
 Concatenation is an RPC service rather than a shell command because a shell command could
@@ -66,6 +73,8 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
   - `_process_include_item()` - classifies one `include` entry; a pattern expands here, in
     its own position
   - `_add_scanned_files()` - the per-file step a directory scan and a pattern share
+  - `_add_file()` / `_effective_path()` - the one seam every include reaches; a shadowed
+    framework file is replaced by its override there
 - `system/app/RSpade/Core/Bundle/Bundle_Include_Pattern.php` - the ONE definition of the
   pattern grammar (`is_pattern()`, `parse()`, `expand()`)
 - `system/app/RSpade/Core/Bundle/Cdn_Cache.php` - the mirror store and `_localize_css()`
@@ -121,6 +130,8 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
 | A pattern matching nothing, and a malformed pattern, fail the build naming it | asset |
 | A new file matching a pattern reaches the next compile with nothing else done | asset |
 | A scanned asset bundle may not declare a pattern | asset |
+| A shadowed framework file compiles as its override, once, in its place - by directory, pattern and explicit include | php (child build + compile) |
+| No module bundle of the running build resolves a shadowed file | php |
 | A pattern covers no view in the render-time coverage check | php (planned) |
 | Module bundle cannot include a module bundle | php (planned) |
 | Asset bundle discovered via scan cannot declare directory includes | php (planned) |

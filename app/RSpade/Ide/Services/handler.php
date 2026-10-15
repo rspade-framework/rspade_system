@@ -38,7 +38,9 @@ define('IDE_SYSTEM_PATH', $system_path);                  // Framework root
  *
  * $with_files merges the cold half. Only one thing in this bridge wants it: the per-method
  * `line` fast path in try_resolve_php_class(), and even that falls back to a regex scan of
- * the file when the metadata is absent.
+ * the file when the metadata is absent. The cold half also carries the records of the
+ * framework files an application overrides (the keys of the hot `overrides` map); those are
+ * not part of the live tree and are never merged into `files`.
  *
  * @param bool $with_files Merge the cold half of the files map
  * @return array|null The manifest structure, or null when the index is not built
@@ -73,7 +75,8 @@ function ide_manifest(bool $with_files = false): ?array
 
             if (is_array($cold)) {
                 // The hot entries win: they are the same records.
-                $manifest['data']['files'] = ($manifest['data']['files'] ?? []) + $cold;
+                $manifest['data']['files'] = ($manifest['data']['files'] ?? [])
+                    + array_diff_key($cold, $manifest['data']['overrides'] ?? []);
             }
         }
     }
@@ -436,11 +439,11 @@ function handle_definition_service($data) {
             // nothing while the man page documented them as working.)
             $files_index = $manifest['files'] ?? [];
             if ($type === 'class') {
-                $result = try_resolve_php_class($identifier, $method, ide_php_class_finder($files_index));
+                $result = try_resolve_php_class($identifier, $method, ide_php_class_finder($manifest));
             } elseif ($type === 'view') {
                 $result = try_resolve_view($identifier, ide_view_finder($files_index));
             } else {
-                $result = try_resolve_bundle_alias($identifier, ide_php_class_finder($files_index), $manifest['bundle_aliases'] ?? []);
+                $result = try_resolve_bundle_alias($identifier, ide_php_class_finder($manifest), $manifest['bundle_aliases'] ?? []);
             }
             break;
         case 'jqhtml_template':
@@ -865,20 +868,28 @@ function handle_refactor_service($data) {
 }
 
 /**
- * A finder over the manifest file index for a PHP class by simple name. Returns the file
- * entry with 'file' added, or null. Shared by resolve_class and definition so the two
- * services cannot disagree about where a class lives (the manifest has no separate class
- * table with line numbers - the file index IS the registry).
+ * A finder for a PHP class by simple name. Returns the class's file record with 'file'
+ * added, or null. Shared by resolve_class and definition so the two services cannot disagree
+ * about where a class lives.
+ *
+ * The class map (`php_classes`) decides WHICH file: it names the EFFECTIVE declaration, so a
+ * framework class an application overrides resolves to the application's file, never to the
+ * shadowed framework one. The file record supplies the method line numbers.
+ *
+ * @param array $manifest_data The manifest body ($manifest['data']), cold half merged
  */
-function ide_php_class_finder(array $files) {
-    return function($class_name) use ($files) {
-        foreach ($files as $file_path => $file_data) {
-            if (isset($file_data['class']) && $file_data['class'] === $class_name && str_ends_with($file_path, '.php')) {
-                $file_data['file'] = $file_path;
-                return $file_data;
-            }
+function ide_php_class_finder(array $manifest_data) {
+    $classes = $manifest_data['php_classes'] ?? [];
+    $files = $manifest_data['files'] ?? [];
+
+    return function($class_name) use ($classes, $files) {
+        $file_path = $classes[$class_name]['file'] ?? null;
+
+        if ($file_path === null) {
+            return null;
         }
-        return null;
+
+        return ['file' => $file_path] + ($files[$file_path] ?? []);
     };
 }
 
@@ -1359,7 +1370,7 @@ function handle_resolve_class_service($data) {
     $files = $manifest_data['files'] ?? [];
 
     // The manifest finders are shared with the definition service (one lookup each).
-    $find_php_class = ide_php_class_finder($files);
+    $find_php_class = ide_php_class_finder($manifest_data);
     $find_view = ide_view_finder($files);
 
     // Helper function to convert PascalCase to snake_case

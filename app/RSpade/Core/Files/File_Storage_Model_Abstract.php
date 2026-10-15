@@ -7,7 +7,6 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Blob_Locks;
-use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Search\Search_Index_Model;
 
@@ -278,7 +277,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      * @param callable $reference      fn (File_Storage_Model $storage): mixed - writes the reference.
      * @return static
      */
-    public static function store_blob(string $temp_file_path, callable $reference): File_Storage_Model
+    public static function store_blob(string $temp_file_path, callable $reference): File_Storage_Model_Abstract
     {
         return File_Blob_Locks::reference_scope(function () use ($temp_file_path, $reference) {
             $storage = static::__find_or_create($temp_file_path);
@@ -297,7 +296,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      * @param callable $reference fn (File_Storage_Model $storage): mixed - writes the reference.
      * @return static
      */
-    public static function store_bytes(string $bytes, callable $reference): File_Storage_Model
+    public static function store_bytes(string $bytes, callable $reference): File_Storage_Model_Abstract
     {
         $temp_path = sys_get_temp_dir() . '/rspade_blob_' . random_hash() . '.bin';
 

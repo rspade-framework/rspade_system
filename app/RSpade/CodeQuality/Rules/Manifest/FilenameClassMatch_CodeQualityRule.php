@@ -65,8 +65,8 @@ class FilenameClassMatch_CodeQualityRule extends CodeQualityRule_Abstract
         $is_framework_developer = env('IS_FRAMEWORK_DEVELOPER', false);
 
         foreach ($files as $file => $metadata) {
-            // Skip backup/upstream files
-            if (str_ends_with($file, '.upstream') || str_ends_with($file, '.backup')) {
+            // Skip backup files
+            if (str_ends_with($file, '.backup')) {
                 continue;
             }
 

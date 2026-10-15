@@ -29,6 +29,7 @@ import {
 } from './doc_reference_provider';
 import { AuthCheckHoverProvider } from './auth_check_hover_provider';
 import { FrameworkPropertyGuard } from './framework_property_guard';
+import { init_override_map } from './override_map';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -176,6 +177,10 @@ export async function activate(context: vscode.ExtensionContext) {
     // system/ is framework property unless IS_FRAMEWORK_DEVELOPER=true.
     const framework_property_guard = new FrameworkPropertyGuard(rspade_root);
     framework_property_guard.activate(context);
+
+    // Framework files an application override shadows: badged, lensed, and never a
+    // definition target. Built before the definition providers, which consult it.
+    init_override_map(rspade_root, bridge_output).activate(context, bridge_connectivity);
 
     // Initialize providers
     file_watcher = new RspadeFileWatcher();

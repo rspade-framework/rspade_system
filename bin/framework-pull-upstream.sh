@@ -475,10 +475,10 @@ No application code is touched: everything under system/ is framework-owned." \
     # -- ignore = dirty, recorded in the TRACKED .gitmodules --------------------
     #
     # `git submodule add` writes path/url/branch and nothing else, so a converted
-    # project would inherit the default `none` and report ` M system` on every
-    # status forever: the manifest build renames .php <-> .php.upstream inside
-    # system/ to apply class overrides, and that churn regenerates itself within a
-    # second of any clean. Operators answer that noise with a repo-wide
+    # project would inherit the default `none` and report ` M system` whenever the
+    # box changes a tracked file inside system/ - a production `rsx:build` re-dumps
+    # composer's autoloader into the tracked system/vendor/composer/ on every build.
+    # Operators answer that noise with a repo-wide
     # `[diff] ignoreSubmodules = all` in .git/config, which suppresses submodule
     # reporting ENTIRELY - including the recorded pointer, which IS the framework
     # version and the single most consequential fact in an update commit.

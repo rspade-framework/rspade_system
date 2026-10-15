@@ -13,36 +13,36 @@ use App\RSpade\Core\Manifest\Manifest;
  * Class_Override_Drift - what an application's class override has stopped carrying.
  *
  * THE FAILURE THIS EXISTS TO SEE. An override replaces a framework class wholesale: the
- * framework file is archived to <Name>.php.upstream and the rsx/ copy IS the class from
- * then on. The copy is frozen at the moment it was taken; the framework's own file keeps
- * moving. When the framework later adds a member and CALLS it - from framework code, on a
+ * framework file is shadowed - left in place and never loaded - and the rsx/ copy IS the
+ * class from then on. The copy is frozen at the moment it was taken; the framework's own
+ * file keeps moving with every pull. When the framework later adds a member and CALLS it - from framework code, on a
  * class it believes is its own - the call lands on the application's older copy, which
  * never had that member. A downstream field report records exactly this: core called a
  * member of a class the app had replaced, the copy predated the member, and the result was
  * a 500 on one path and a background queue that silently enqueued nothing on another.
  * Nothing compared the two files, so nothing said a word.
  *
- * WHAT IT COMPARES. Every .php.upstream sidecar the manifest indexes is paired with the
- * active class of the same simple name - which, by construction of the override pass, is
- * the rsx/ file shadowing it. For that pair it answers two questions:
+ * WHAT IT COMPARES. Every PHP entry of the manifest's override map (Manifest::overrides()):
+ * the shadowed framework file, in place under its own name, and the rsx/ file that overrides
+ * it. For that pair it answers two questions:
  *
- *   MISSING - a public or protected member declared upstream and absent from the override.
+ *   MISSING - a public or protected member the framework file declares and the override lacks.
  *             This is the defect: framework code may call it, and it is not there.
- *   ADDED   - a member the override declares and upstream does not. This is the
+ *   ADDED   - a member the override declares and the framework file does not. This is the
  *             application's own work, and the reason the override exists at all. It is
  *             reported as context, never as a problem: a reader deciding whether to
  *             re-clone needs to know what a re-clone has to carry forward.
  *
  * WHY A TOKENIZER AND NOT THE MANIFEST'S METHOD METADATA. The manifest's methods and
- * properties come from REFLECTION, and reflection is unavailable on both sides here: an
- * archived .php.upstream file is never loaded (its class name belongs to the override), so
- * it carries no reflection keys at all, and reflection on the override would report the
+ * properties come from REFLECTION, and reflection is unavailable on both sides here: a
+ * shadowed framework file is never loaded (its class name belongs to the override), so its
+ * class cannot be reflected, and reflection on the override would report the
  * full LINEAGE rather than what the file itself declares - which is the only thing a
  * re-clone can be measured against. A token pass over each file answers the exact question.
  * It is never a regex over the source: a regex cannot tell a declaration from a call, a
  * comment or a string.
  *
- * A SPLIT FRAMEWORK CLASS HAS NO DRIFT SURFACE AND IS SKIPPED. When the archived file
+ * A SPLIT FRAMEWORK CLASS HAS NO DRIFT SURFACE AND IS SKIPPED. When the framework file
  * declares nothing but `class X extends X_Abstract`, every member lives on the base, and an
  * override that extends that same base inherits all of them - including the ones the
  * framework adds tomorrow. There is no frozen copy to measure, so the pair reports nothing
@@ -51,7 +51,7 @@ use App\RSpade\Core\Manifest\Manifest;
  * pass refuses it by name. A clone of a NON-split class is compared in full, as ever.
  *
  * PRIVATE MEMBERS ARE OUT OF SCOPE, deliberately. Framework code cannot call a private
- * member of another class, so a private that only exists upstream cannot break a caller.
+ * member of another class, so a private only the framework file declares cannot break a caller.
  * A `use Some_Trait;` adoption IS in scope: dropping one silently drops every member the
  * trait supplied, which is the same failure with an extra step.
  *
@@ -62,53 +62,25 @@ use App\RSpade\Core\Manifest\Manifest;
 class Class_Override_Drift
 {
     /**
-     * Every archived framework file paired with the application class that shadows it.
+     * Every shadowed framework PHP file paired with the application class that overrides it,
+     * read off the manifest's override map. Both paths are manifest keys (relative to the
+     * framework tree), and the framework file is the real one, in place.
      *
-     * Reads the compiled manifest only. An .upstream entry whose class has no active
-     * counterpart is skipped: that is an orphan the restore pass is about to undo, not a
-     * drifting override.
-     *
-     * @return array<int, array{class: string, upstream_file: string, override_file: string}>
+     * @return array<int, array{class: string, framework_file: string, override_file: string}>
      */
     public static function pairs(): array
     {
-        $files = Manifest::get_all();
-
-        if (empty($files)) {
-            return [];
-        }
-
-        $active = [];
-        foreach ($files as $rel_path => $metadata) {
-            if (($metadata['extension'] ?? '') !== 'php') {
-                continue;
-            }
-            if (empty($metadata['class'])) {
-                continue;
-            }
-
-            $active[$metadata['class']] = $rel_path;
-        }
-
         $pairs = [];
-        foreach ($files as $rel_path => $metadata) {
-            if (($metadata['extension'] ?? '') !== 'php.upstream') {
-                continue;
-            }
-            if (empty($metadata['class'])) {
-                continue;
-            }
 
-            $class_name = $metadata['class'];
-
-            if (!isset($active[$class_name])) {
+        foreach (Manifest::overrides() as $framework_file => $override) {
+            if ($override['kind'] !== 'php') {
                 continue;
             }
 
             $pairs[] = [
-                'class' => $class_name,
-                'upstream_file' => $rel_path,
-                'override_file' => $active[$class_name],
+                'class' => $override['name'],
+                'framework_file' => $framework_file,
+                'override_file' => $override['by'],
             ];
         }
 
@@ -125,18 +97,18 @@ class Class_Override_Drift
      * reported as nothing missing rather than as everything missing - this analysis
      * never invents a defect out of an unreadable file.
      *
-     * @param string $upstream_path Absolute path to the .php.upstream sidecar.
-     * @param string $override_path Absolute path to the application's copy.
-     * @param string $class_name    The simple class name both files declare.
+     * @param string $framework_path Absolute path to the shadowed framework file.
+     * @param string $override_path  Absolute path to the application's copy.
+     * @param string $class_name     The simple class name both files declare.
      * @return array{missing: array, added: array} Member records, ordered as declared.
      */
-    public static function analyze_pair(string $upstream_path, string $override_path, string $class_name): array
+    public static function analyze_pair(string $framework_path, string $override_path, string $class_name): array
     {
-        $upstream_source = @file_get_contents($upstream_path);
+        $framework_source = @file_get_contents($framework_path);
         $override_source = @file_get_contents($override_path);
 
         // A SPLIT FRAMEWORK CLASS IS NOT A CLONE, AND HAS NO DRIFT SURFACE. When the
-        // archived file declares nothing but `class X extends X_Abstract`, every member
+        // framework file declares nothing but `class X extends X_Abstract`, every member
         // lives on the base - and an override that extends that same base INHERITS every
         // one of them, including the ones the framework adds tomorrow. There is no frozen
         // copy here and nothing to compare: reporting the base's members as "missing" from
@@ -145,26 +117,26 @@ class Class_Override_Drift
         //
         // An override of a split class that does NOT extend the base never reaches here -
         // the manifest's override pass refuses it outright.
-        if ($upstream_source !== false && $override_source !== false) {
-            $upstream_parent = static::declared_parent($upstream_source, $class_name);
+        if ($framework_source !== false && $override_source !== false) {
+            $framework_parent = static::declared_parent($framework_source, $class_name);
 
             if (
-                $upstream_parent === $class_name . '_Abstract'
-                && static::declared_parent($override_source, $class_name) === $upstream_parent
+                $framework_parent === $class_name . '_Abstract'
+                && static::declared_parent($override_source, $class_name) === $framework_parent
             ) {
                 return ['missing' => [], 'added' => []];
             }
         }
 
-        $upstream_members = $upstream_source === false
+        $framework_members = $framework_source === false
             ? []
-            : static::declared_members($upstream_source, $class_name);
+            : static::declared_members($framework_source, $class_name);
         $override_members = $override_source === false
             ? []
             : static::declared_members($override_source, $class_name);
 
         $missing = [];
-        foreach ($upstream_members as $key => $member) {
+        foreach ($framework_members as $key => $member) {
             if (!isset($override_members[$key])) {
                 $missing[] = $member;
             }
@@ -172,7 +144,7 @@ class Class_Override_Drift
 
         $added = [];
         foreach ($override_members as $key => $member) {
-            if (!isset($upstream_members[$key])) {
+            if (!isset($framework_members[$key])) {
                 $added[] = $member;
             }
         }
@@ -184,9 +156,9 @@ class Class_Override_Drift
      * Every drifting pair in this build, with its member lists.
      *
      * Pairs with no missing members are omitted: an override that carries everything
-     * upstream declares is not drifting, however much it has added of its own.
+     * the framework file declares is not drifting, however much it has added of its own.
      *
-     * @return array<int, array{class: string, upstream_file: string, override_file: string, missing: array, added: array}>
+     * @return array<int, array{class: string, framework_file: string, override_file: string, missing: array, added: array}>
      */
     public static function analyze_all(): array
     {
@@ -194,7 +166,7 @@ class Class_Override_Drift
 
         foreach (static::pairs() as $pair) {
             $analysis = static::analyze_pair(
-                base_path($pair['upstream_file']),
+                base_path($pair['framework_file']),
                 base_path($pair['override_file']),
                 $pair['class']
             );

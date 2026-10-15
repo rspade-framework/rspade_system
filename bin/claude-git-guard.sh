@@ -2,9 +2,8 @@
 #
 # claude-git-guard.sh - Claude Code PreToolUse hook (Bash matcher) for downstream apps.
 #
-# WHY: on a downstream app, plain git is unsafe. Three processes mutate the working tree
-# during any git operation - the container's fixperms loop (which chmods files inside
-# .git/), the JIT manifest rebuild re-applying the class-override pass to system/, and
+# WHY: on a downstream app, plain git is unsafe. Processes mutate the working tree during
+# any git operation - the container's fixperms loop (which chmods files inside .git/) and
 # concurrent index writers - so a pull carrying framework-update commits races and aborts,
 # and an agent's reflexive fixes (stash, or committing the churn into an app commit) are
 # exactly the history-mixing the framework forbids.
@@ -69,7 +68,7 @@ editor/pager/stdin behavior - that additionally owns the things plain git cannot
     churn can never leak into an app commit;
   * pull / merge / rebase / reset --hard / checkout / stash pop run inside a
     maintenance window with system/ reset to HEAD first, so incoming framework-update
-    commits apply cleanly instead of racing the manifest rebuild;
+    commits apply cleanly and the system/ checkout follows the recorded revision;
   * conflicts inside system/ resolve to the incoming framework version automatically.
 
 Just prefix your command:

@@ -35,8 +35,8 @@ Both models here are a BASE PLUS A SHELL. `File_Attachment_Model_Abstract` and
 relationships, `fetch()`, the hooks - and `File_Attachment_Model.php` /
 `File_Storage_Model.php` beside them are three-line concretes that declare nothing. An
 application customizes one by declaring `class File_Attachment_Model extends
-File_Attachment_Model_Abstract` under `rsx/models/`: the manifest archives the shell as
-`.upstream`, the app's class becomes the model for the whole tree, and it keeps inheriting
+File_Attachment_Model_Abstract` under `rsx/models/`: the manifest shadows the shell (left in
+place, never loaded), the app's class becomes the model for the whole tree, and it keeps inheriting
 everything the framework adds to the base. Edit the ABSTRACT when changing framework
 behaviour - the shell is never where a member goes, and the override pass refuses an app
 class that copies the base instead of extending it. See `rsx:man class_override`.

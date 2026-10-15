@@ -17,7 +17,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * A SINGLE leading underscore before the capital is the framework-application prefix. It is
  * reserved from rsx/ - where a colliding `_`-name would be read as a CLASS OVERRIDE and
- * silently archive the framework's file - and it is REQUIRED under app/RSpade/Sys/.
+ * silently shadow the framework's file - and it is REQUIRED under app/RSpade/Sys/.
  *
  * The Sys tree does not exist yet: direction (b) keys on the path prefix, so these tests
  * write synthetic app/RSpade/Sys/ fixtures and the rule judges them on spelling alone.

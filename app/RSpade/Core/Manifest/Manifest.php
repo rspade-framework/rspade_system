@@ -17,6 +17,7 @@ use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest_Build;
 use App\RSpade\Core\Manifest\Manifest_Indexer;
+use App\RSpade\Core\Manifest\Manifest_Overrides;
 use App\RSpade\Core\Manifest\Manifest_Scanner;
 use App\RSpade\Core\Manifest\Manifest_Store;
 use App\RSpade\Core\Naming\Rsx_Paths;
@@ -198,11 +199,19 @@ class Manifest
 
     /**
     * How many times ONE _refresh_manifest() call may start over before it is a loop rather
-    * than a settling tree. Three is the honest ceiling: an override archive, a restore and a
-    * rename can each legitimately fire once in one build, and a fourth means the passes are
-    * undoing each other.
+    * than a settling tree. The one thing that restarts a build is the code-quality pass
+    * auto-renaming a file to match its class (FilenameClassMatch): the renamed file is a new
+    * path the next pass must index, and that pass can surface one more file to rename.
+    * Three passes is ample for a tree that is settling; a fourth means the rule and the tree
+    * disagree.
     */
     public const MAX_BUILD_RESTARTS = 3;
+
+    /**
+    * How many times the most recent _refresh_manifest() call started over. Read by the
+    * --_manifest-report-restarts internal flag of rsx:manifest:build.
+    */
+    public static int $_last_build_restarts = 0;
 
     // The manifest kernel instance (cached) (???)
     public static ?ManifestKernel $kernel = null;
@@ -234,17 +243,6 @@ class Manifest
 
     // Files that changed in the most recent manifest scan (for incremental code quality checks)
     public static array $_changed_files = [];
-
-    /**
-    * Did the class-override pass RENAME anything on disk during this build?
-    *
-    * Sticky for the whole build (it survives a restart, because the rename is what CAUSED
-    * the restart and the composer classmap is only validated once the tree has settled).
-    * A build that archived, removed or restored nothing cannot have staled composer's
-    * committed classmap, and the ~15k warm stats that validation costs are then work for
-    * nothing.
-    */
-    public static bool $_override_pass_renamed = false;
 
     // Files that LEFT the tree in the most recent manifest scan, accumulated across restarts.
     // The other half of the support modules' diff contract: a module cannot know which of its
@@ -309,6 +307,58 @@ class Manifest
         static::_load_cold_files();
 
         return static::$data['data']['files'] ?? [];
+    }
+
+    // ========================================
+    // Class overrides (rsx:man class_override)
+    // ========================================
+
+    /**
+    * The override map: shadowed framework path => ['kind', 'name', 'by', 'fqcn', 'by_fqcn'].
+    *
+    * kind is php | js | jqhtml | scss; `by` is the application file that overrides the
+    * framework file; `fqcn` / `by_fqcn` are present for kind php. A shadowed framework file is
+    * in no other part of the live index - get_all() never returns it. Built by
+    * Manifest_Overrides.
+    *
+    * @return array<string, array{kind: string, name: string, by: string, fqcn?: string, by_fqcn?: string}>
+    */
+    public static function overrides(): array
+    {
+        static::init();
+
+        return static::$data['data']['overrides'] ?? [];
+    }
+
+    /**
+    * Is this framework file shadowed by an application override? Takes a manifest key
+    * (`app/RSpade/...`) or an absolute path.
+    */
+    public static function is_shadowed(string $path): bool
+    {
+        return static::override_for($path) !== null;
+    }
+
+    /**
+    * The override record for a shadowed framework file, or null when nothing overrides it.
+    * Takes a manifest key (`app/RSpade/...`) or an absolute path.
+    *
+    * @return array{kind: string, name: string, by: string, fqcn?: string, by_fqcn?: string}|null
+    */
+    public static function override_for(string $path): ?array
+    {
+        return static::overrides()[Rsx_Paths::relative($path)] ?? null;
+    }
+
+    /**
+    * framework FQCN => ['by_fqcn', 'by_file', 'file'] for every PHP override - the map
+    * Class_Override_Loader answers from. Paths are relative to the framework tree.
+    *
+    * @return array<string, array{by_fqcn: string, by_file: string, file: string}>
+    */
+    public static function shadowed_fqcn_map(): array
+    {
+        return Manifest_Overrides::loader_map(static::overrides());
     }
 
     /**
@@ -1578,6 +1628,18 @@ class Manifest
 
         \App\RSpade\Core\Autoloader::register();
 
+        // CLASS OVERRIDES (rsx:man class_override). The composer `files` entry registered the
+        // override loader from the build's map before anything booted; the index carries the
+        // same map, and is what this process now trusts. Then:
+        //   - back to the FRONT of the autoload stack: the project-root app-layer composer
+        //     loader and Laravel's alias loader both prepended themselves since;
+        //   - every override aliased NOW, so instanceof, catch and string is_a() against a
+        //     framework name hold before anything has autoloaded it. The RSX autoloader is
+        //     registered above, so an override whose parent is an application class loads.
+        \App\RSpade\Core\Overrides\Class_Override_Loader::set_map(Manifest_Overrides::loader_map(self::$data['data']['overrides'] ?? []));
+        \App\RSpade\Core\Overrides\Class_Override_Loader::register();
+        \App\RSpade\Core\Overrides\Class_Override_Loader::alias_all();
+
         // Load classless PHP files (helper functions, constants, etc.)
         $classless_files = self::$data['data']['classless_php_files'] ?? [];
         foreach ($classless_files as $file_path) {
@@ -1638,7 +1700,7 @@ class Manifest
     *
     * The reason is not decoration: restarts are bounded, and the throw that ends a restart
     * loop can only name the cause if the cause was recorded. Called when a pass changed the
-    * tree under itself - a class override archived, a file auto-renamed.
+    * tree under itself - a file auto-renamed by the code-quality pass.
     */
     public static function flag_needs_restart(string $reason = 'unspecified'): void
     {
@@ -1872,9 +1934,9 @@ class Manifest
     public static function _refresh_manifest()
     {
         $restarts = 0;
+        static::$_last_build_restarts = 0;
         $changed_across_passes = [];
         $removed_across_passes = [];
-        static::$_override_pass_renamed = false;
 
         manifest_start:
 
@@ -1884,8 +1946,8 @@ class Manifest
 
         // THE CHANGE MEMO IS A STATEMENT ABOUT THE PREVIOUS PASS. _has_changed() memoizes
         // "this file matches what the index records", and a pass that rewrote source (the
-        // fixer) or renamed a file (the override archive) has just made every entry in it a
-        // lie. It survived the goto for as long as the goto existed: a file the fixer had
+        // fixer) or renamed a file (the code-quality auto-rename) has just made every entry in
+        // it a lie. It survived the goto for as long as the goto existed: a file the fixer had
         // just rewritten reported UNCHANGED in pass two and its new bytes never reached the
         // index.
         static::$_has_changed_cache = [];
@@ -1897,8 +1959,14 @@ class Manifest
         // split is FOR: the warm path never pays it.)
         static::_load_cold_files();
 
-        // Reset manifest structure, retaining only existing files data
-        $existing_files = static::$data['data']['files'] ?? [];
+        // Reset manifest structure, retaining only existing files data.
+        //
+        // THE SHADOWED FILES REJOIN THE WORKING SET. A framework file an application overrides
+        // is kept out of `files` (Manifest_Overrides), but it is still a file of the tree: it
+        // is change-detected, re-parsed when it changes and dropped when it is deleted exactly
+        // like every other, and the override map is derived afresh over the whole set below.
+        $previously_shadowed = array_keys(static::$data['data']['shadowed_files'] ?? []);
+        $existing_files = (static::$data['data']['files'] ?? []) + (static::$data['data']['shadowed_files'] ?? []);
         // THE MODULE-OWNED SECTIONS ARE CARRIED FORWARD, not reset. A support module updates
         // its own section from the changed and removed sets, which it can only do if the
         // section it is updating is still there. Everything else below is re-derived from the
@@ -2021,10 +2089,11 @@ class Manifest
         // ==================================================================================
         // PHP FIXER INTEGRATION POINT
         // ==================================================================================
-        // CRITICAL: Php_Fixer MUST run BEFORE _check_unique_base_class_names() so that
-        // when a class override is detected and framework files are renamed to .upstream,
-        // all use statements have already been updated to point to the rsx/ location.
-        // This prevents autoloader failures when the manifest restarts.
+        // Php_Fixer runs over the whole working set, shadowed framework files included, and
+        // BEFORE the override map is derived: the map describes the tree as the fixer leaves
+        // it. The fixer never rewrites a framework file because of an override - a framework
+        // import of an overridden class names the framework class, which the override loader
+        // answers with the application's.
         //
         // WHAT PHP_FIXER DOES:
         // 1. Fixes namespaces to match file paths
@@ -2085,34 +2154,49 @@ class Manifest
         }
 
         // ==================================================================================
-        // CLASS OVERRIDE DETECTION
+        // THE OVERRIDE MAP (rsx:man class_override)
         // ==================================================================================
-        // Check for duplicate class names. When rsx/ contains a class that also exists in
-        // app/RSpade/, rename the framework file to .upstream and restart the manifest.
-        // At this point, Php_Fixer has already updated use statements to point to rsx/.
+        // Derived in full over the working set: a name declared by exactly one rsx/ file and
+        // by framework files SHADOWS those framework files. Nothing on disk moves; the shadowed
+        // records leave `files` for `shadowed_files`, so nothing past this point - the class
+        // maps, the loading and reflection phases, the support modules, the rules - ever sees
+        // them. Duplicates and impossible overrides are refused here.
         // ==================================================================================
-        static::_check_unique_base_class_names($changed_across_passes);
+        $settled = Manifest_Overrides::derive($previously_shadowed, $changed_across_passes);
 
-        // If a class override was detected (rsx/ overriding app/RSpade/), restart manifest build
-        if (static::$_needs_manifest_restart) {
-            console_debug('MANIFEST', 'Class override detected, restarting manifest build');
-            static::__count_restart($restarts);
-            goto manifest_start;
+        // The support modules' diff contract, kept across a file entering or leaving the
+        // shadow. A file that ENTERS left the live tree: it is reported REMOVED, so a DELTA
+        // module drops whatever it derived from it. A file that LEAVES rejoined it: it is
+        // reported CHANGED, so it is loaded, reflected and re-derived like a new file. A
+        // shadowed file is never in the changed set, whatever happened to it on disk.
+        $out_of_tree = array_flip(array_merge(array_keys(static::$data['data']['overrides']), $settled['dropped']));
+        $live = function (array $paths) use ($out_of_tree, $settled): array {
+            $paths = array_filter($paths, fn ($path) => !isset($out_of_tree[$path]));
+
+            return array_values(array_unique(array_merge($paths, $settled['leaving'])));
+        };
+
+        $files_to_process = $live($files_to_process);
+        $changed_across_passes = $live($changed_across_passes);
+        static::$_changed_files = $changed_across_passes;
+
+        $removed_across_passes = array_values(array_unique(array_merge(
+            array_diff($removed_across_passes, $settled['leaving']),
+            $settled['entering'],
+            $settled['dropped']
+        )));
+        static::$_removed_files = $removed_across_passes;
+
+        if ($settled['entering'] !== [] || $settled['leaving'] !== [] || $settled['dropped'] !== []) {
+            $changes = true;
         }
 
-        // Override/restore renames are now settled for this rebuild (getting past the
-        // restart check above means neither the restore nor the override pass changed
-        // anything this iteration). Heal composer's committed classmap if any entry now
-        // points at a framework file the override pass renamed to .upstream - otherwise
-        // composer would `include` a missing file on future requests (tolerated at
-        // runtime by Autoloader's scoped warning carve-out, but the on-disk data is
-        // wrong). Rebuild-only cost; idempotent (a clean classmap triggers no dump).
-        // ONLY when this build actually renamed a framework file. Composer's committed
-        // classmap can only have gone stale (or been un-staled) by an archive or a restore,
-        // and validating it costs ~15k warm stats.
-        if (static::$_override_pass_renamed) {
-            static::_validate_composer_classmap();
-        }
+        // Hand the map to the override loader NOW, before Phase 3 loads a single class: an
+        // override that appeared in this rebuild must answer for its framework name from the
+        // first load in this process, and the composer trip-wire must be in place before
+        // anything can ask composer for it. Manifest_Store::_save() writes it to the build for
+        // the processes that follow.
+        \App\RSpade\Core\Overrides\Class_Override_Loader::set_map(Manifest_Overrides::loader_map(static::$data['data']['overrides']));
 
         // Phase 2 complete.  At this point we have a list of all files, and for php and js, their class data
 
@@ -2138,24 +2222,16 @@ class Manifest
         console_debug('MANIFEST', 'Phase 4: Extract Reflection');
         // Extract reflection data for changed PHP files only.
         //
-        // THE ACCUMULATED SET, not this pass's. A restart can happen BEFORE Phase 4 (the
-        // class-override archive fires at the end of Phase 2), so a file re-parsed in pass
-        // one reaches pass two with a record that was rebuilt from tokens and never
-        // reflected - and pass two, seeing it unchanged on disk, would skip it forever. Its
-        // reflection would then be missing from the saved index, which is exactly what
-        // __assert_reflection_carried_forward() refuses to let happen silently.
+        // THE ACCUMULATED SET, not this pass's. A restart re-runs discovery against a tree the
+        // previous pass already indexed, so a file re-parsed in pass one reaches pass two
+        // looking unchanged on disk - and reflecting only pass two's set would ship its record
+        // unreflected, which is exactly what __assert_reflection_carried_forward() refuses to
+        // let happen silently.
         static::_extract_reflection_for_changed_files($changed_across_passes);
 
         // Collate files by classes - MUST be called after reflection extraction
         // so that abstract property is available for subclass filtering
         static::_collate_files_by_classes();
-
-        // Check if a class override was detected and framework file renamed
-        if (static::$_needs_manifest_restart) {
-            console_debug('MANIFEST', 'Class override detected, restarting manifest build');
-            static::__count_restart($restarts);
-            goto manifest_start;
-        }
 
         // Build event handler index from attributes
         static::_build_event_handler_index();
@@ -2297,6 +2373,8 @@ class Manifest
             static::__count_restart($restarts);
             goto manifest_start;
         }
+
+        static::$_last_build_restarts = $restarts;
     }
 
     /**
@@ -2419,7 +2497,7 @@ class Manifest
     {
         $live = [];
 
-        foreach (static::$data['data']['files'] ?? [] as $file => $metadata) {
+        foreach ((static::$data['data']['files'] ?? []) + (static::$data['data']['shadowed_files'] ?? []) as $file => $metadata) {
             if (isset($metadata['hash']) && $metadata['hash'] !== '') {
                 $live[] = $metadata['hash'];
             }
@@ -2615,44 +2693,6 @@ class Manifest
     }
 
     /**
-    * Check for duplicate base class names within the same file type
-    *
-    * This method handles two scenarios:
-    * 1. RESTORE: If a .upstream file exists but no active override exists, restore it
-    * 2. OVERRIDE: When a class exists in both rsx/ and app/RSpade/, rename framework to .upstream
-    *
-    * Throws a fatal error if duplicates exist within the same area (both rsx/ or both app/RSpade/)
-    */
-    public static function _check_unique_base_class_names(array $dirty_files = []): void
-    {
-        Manifest_Indexer::_check_unique_base_class_names($dirty_files);
-    }
-
-    /**
-    * Validate composer's committed classmap against the filesystem and regenerate it
-    * (blocking composer dump-autoload) when the class-override rename/restore pass has
-    * left an entry pointing at a renamed/removed file. Runs in the rebuild pipeline
-    * immediately after the override pass settles. See
-    * Manifest_Indexer::_validate_composer_classmap.
-    */
-    public static function _validate_composer_classmap(): void
-    {
-        Manifest_Indexer::_validate_composer_classmap();
-    }
-
-    /**
-    * Restore orphaned .upstream files when their override no longer exists
-    *
-    * Scans all php.upstream files in the manifest. For each one, checks if a .php file
-    * with the same class name exists. If not, the override was removed and we should
-    * restore the framework file.
-    */
-    public static function _restore_orphaned_upstream_files(): void
-    {
-        Manifest_Scanner::_restore_orphaned_upstream_files();
-    }
-
-    /**
     * Collate files by class names and build inheritance indices
     *
     * This method creates two types of indices for both JavaScript and PHP classes:
@@ -2751,12 +2791,6 @@ class Manifest
     }
 
     /**
-    * Load all PHP files in dependency order
-    * This ensures base classes are loaded before their subclasses
-    * Must be called after Phase 2 (basic metadata extraction) completes
-    * @deprecated Use _load_changed_php_files() for incremental builds
-    */
-    /**
     * Run Php_Fixer on all PHP files in rsx/ and app/RSpade/
     * Called before Phase 2 parsing to ensure all files are fixed
     *
@@ -2789,11 +2823,6 @@ class Manifest
     public static function _run_php_fixer(array $changed_files): array
     {
         return Manifest_Scanner::_run_php_fixer($changed_files);
-    }
-
-    public static function _load_php_files_in_dependency_order(): void
-    {
-        Manifest_Scanner::_load_php_files_in_dependency_order();
     }
 
     // /**

@@ -1,6 +1,6 @@
 ---
 name: git-operations
-description: "Running git in a downstream RSpade app through the php artisan rsx:git proxy - why bare git loses a race it cannot see, what the proxy does per subcommand (pathspec exclusion, commit unstaging, the maintenance cycle, passthrough), how system/ and app-file conflicts are handled, the two append-append files it merges itself (.migration_whitelist by key-union, framework_update_history.dat by line-union), the stash-failed evidence classification and the scratch-worktree escape, the override flags, and troubleshooting a refusal. Use for any git operation on an app checkout, or when git refuses with overwritten-by-merge or stash failed, when system/ is conflicted, or when migrate reports every migration as unauthorized after a merge."
+description: "Running git in a downstream RSpade app through the php artisan rsx:git proxy - why a bare git pull leaves the system/ submodule behind, what the proxy does per subcommand (pathspec exclusion, commit unstaging, the maintenance cycle, passthrough), how system/ and app-file conflicts are handled, the two append-append files it merges itself (.migration_whitelist by key-union, framework_update_history.dat by line-union), the stash-failed evidence classification and the scratch-worktree escape, the override flags, and troubleshooting a refusal. Use for any git operation on an app checkout, or when git refuses with overwritten-by-merge or stash failed, when system/ is conflicted, or when migrate reports every migration as unauthorized after a merge."
 ---
 
 # Git operations on an RSpade app
@@ -9,7 +9,7 @@ description: "Running git in a downstream RSpade app through the php artisan rsx
 
 ## Why it exists
 
-The build keeps class-override churn (`.php` <-> `.php.upstream` renames, use-rewrites) as UNCOMMITTED `system/` modifications and REGENERATES it within a second of any clean. So a bare `git pull` carrying another environment's framework-update commit refuses with *"your local changes would be overwritten by merge"*, and **no amount of cleaning first reliably wins that race**. `rsx:git` owns the tree instead of fighting it.
+`system/` is a git submodule. A bare `git pull` carrying another environment's framework-update commit moves the RECORDED revision and leaves the submodule's checkout where it was - nothing fails, nothing is printed, and the box runs a framework version the project does not claim. `rsx:git` brings the checkout in step after every operation that can move the recorded revision (`rsx:man rsx_git`).
 
 ---
 

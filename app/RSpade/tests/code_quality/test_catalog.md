@@ -306,8 +306,8 @@ the email directories would be actively harmful rather than merely noisy.
 NAME-RESERVED-01 (NameReservedPrefix_CodeQualityRule). A SINGLE leading underscore before the
 capital is the framework-application prefix: reserved from `rsx/`, required under
 `app/RSpade/Sys/`. The rsx/ direction carries the weight - a `_`-name in application code that
-matches a framework one is read by the manifest as a CLASS OVERRIDE, which archives the
-framework's file as `.upstream` and reports nothing. Direction (b) keys on the PATH prefix, so
+matches a framework one is read by the manifest as a CLASS OVERRIDE, which shadows the
+framework's file and reports nothing. Direction (b) keys on the PATH prefix, so
 it is correct before the Sys tree exists; the fixtures are synthetic.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
@@ -445,7 +445,7 @@ spellings would flag the framework's own. That half of the rule lives in `tests/
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
 | FTP-CORE-CONST | framework CORE names no role or permission constant - the mistake that made `rsx:test` itself unrunnable in an application with different roles | php | every `.php` under `app/RSpade` outside `tests/`, comments blanked | 0 hits | implemented | 2026-09-08 |
-| FTP-REFERENCES | every simple name a framework test file references resolves (php / js / jqhtml) to a file OUTSIDE `rsx/` | php | `referenced_simple_names` of every manifest record under `app/RSpade/tests/` | 0 hits; a class OVERRIDE (proved by its `.php.upstream` archive) is not one | implemented | 2026-09-08 |
+| FTP-REFERENCES | every simple name a framework test file references resolves (php / js / jqhtml) to a file OUTSIDE `rsx/` | php | `referenced_simple_names` of every manifest record under `app/RSpade/tests/` | 0 hits; a class OVERRIDE (proved by the manifest's override map) is not one | implemented | 2026-10-14 |
 | FTP-TEST-CONST | no framework test names a role or permission constant | php | every `.php`/`.js`/`.sh` under `tests/`, comments blanked | 0 hits | implemented | 2026-09-08 |
 | FTP-QUOTED | no framework test embeds an application class name as a STRING - it resolves at runtime, so FTP-REFERENCES cannot see it | php | the same files, minus `tests/code_quality` (whose rule fixtures feed application names to a rule as synthetic INPUT) | 0 hits | implemented | 2026-09-08 |
 

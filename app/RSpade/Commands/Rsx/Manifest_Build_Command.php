@@ -166,6 +166,12 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
             $this->line('MANIFEST_PEAK_BYTES=' . memory_get_peak_usage(true));
         }
 
+        // How many times this build started over (Manifest::MAX_BUILD_RESTARTS bounds it).
+        // Framework-internal, for the tests that assert a change settles in one pass.
+        if (\App\RSpade\Core\Console\Rsx_Internal_Flags::has('--_manifest-report-restarts')) {
+            $this->line('MANIFEST_RESTARTS=' . Manifest::$_last_build_restarts);
+        }
+
         // Reset debug options
         Manifest::$_debug_options = [];
 

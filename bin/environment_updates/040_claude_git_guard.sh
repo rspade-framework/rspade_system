@@ -9,10 +9,9 @@
 # inert passthrough, so a redirect there would add a layer and buy nothing.
 #
 # SUPERSEDES the pre-pull guard this file used to install. That guard told the agent to
-# run `rsx:clean` and then pull, which DEADLOCKS on a live box: the class-override churn
-# reappears within ~1s of the clean, before the pull's index write can land. rsx:git fixes
-# the problem the old guard could only announce, so this installer REMOVES both prior
-# spellings of the pull-guard command while registering the new one.
+# run `rsx:clean` and then pull by hand. rsx:git does what that recipe was for, after every
+# operation that needs it, so this installer REMOVES both prior spellings of the pull-guard
+# command while registering the new one.
 #
 # AUGMENT-ONLY: appends our hook entry to hooks.PreToolUse without touching existing hooks
 # (foreign PreToolUse entries are preserved). Self-detecting + idempotent: silent when our

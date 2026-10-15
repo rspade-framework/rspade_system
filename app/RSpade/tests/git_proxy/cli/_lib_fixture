@@ -236,9 +236,9 @@ MAINT
         git -C "$PROJECT" -c protocol.file.allow=always submodule add -q "$FRAMEWORK_BARE" system \
             || fx_fail "fixture: could not add the framework submodule"
     fi
-    # ignore = dirty: the manifest build renames .php <-> .php.upstream inside system/,
-    # and without this every `git status` in the parent reports ` M system` forever for
-    # churn that regenerates itself. Publish writes the same line.
+    # ignore = dirty: a production rsx:build re-dumps composer's autoloader into the
+    # tracked system/vendor/composer/, and without this `git status` in the parent reports
+    # ` M system` after every such build. Publish writes the same line.
     if [ "${1:-}" != "framework_dev" ]; then
         git -C "$PROJECT" config --file "$PROJECT/.gitmodules" submodule.system.ignore dirty
         git -C "$PROJECT/system" checkout -q "$FW_V1"

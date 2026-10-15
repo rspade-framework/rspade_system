@@ -13,7 +13,7 @@ defect, not a `Sys/` exemption.
 critical, manifest-time, keyed on path): every class, JS class, jqhtml component and
 `@rsx_id` declared here carries exactly ONE leading underscore, and `rsx/` may declare none —
 because a `_`-prefixed name in `rsx/` matching one here is read as a CLASS OVERRIDE, which
-silently archives the framework file as `.upstream` and serves the app's copy. Directories
+shadows the framework file and serves the app's copy - in the panel's own bundles too. Directories
 stay lowercase and bare (the namespace generator PascalCases them).
 
 **A `Sys/` bundle names no `rsx/` path and no app-defined class** (`CONV-BUNDLE-04`,

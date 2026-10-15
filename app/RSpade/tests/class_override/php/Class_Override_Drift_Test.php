@@ -25,8 +25,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * These tests pin the comparison. The analyzer is driven over fixture PAIRS that are in no
  * manifest at all, so every member shape can be stated exactly; the health row is driven
- * over a synthetic manifest file list, the way the sibling archive-guard test drives the
- * override pass.
+ * over a synthetic override map, the way the sibling shadow-guard test drives the
+ * derivation.
  *
  * Pure filesystem + static state, no DB.
  */
@@ -37,11 +37,10 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     private const PROBE_CLASS = 'Drift_Probe_Temp';
 
     /**
-     * Both fixtures live under a resource/ directory, which the framework never scans - an
-     * indexed .php.upstream with no active twin is exactly what the restore pass would
-     * rename back into place, and these files are not a real override.
+     * Both fixtures live under a resource/ directory, which the framework never scans: the
+     * pair is not a real override, and declares one class name twice.
      */
-    private const UPSTREAM_FILE = 'rsx/resource/drift_probe_temp.php.upstream';
+    private const FRAMEWORK_FILE = 'rsx/resource/drift_probe_temp_framework.php';
     private const OVERRIDE_FILE = 'rsx/resource/drift_probe_temp_override.php';
 
     // =====================================================================
@@ -71,7 +70,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
 
     private static function __remove_fixtures(): void
     {
-        foreach ([base_path(self::UPSTREAM_FILE), base_path(self::OVERRIDE_FILE)] as $path) {
+        foreach ([base_path(self::FRAMEWORK_FILE), base_path(self::OVERRIDE_FILE)] as $path) {
             if (file_exists($path)) {
                 unlink($path);
             }
@@ -83,16 +82,16 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
      *
      * @return array<int, \App\RSpade\CodeQuality\CodeQuality_Violation>
      */
-    private static function __run_rule(array $upstream_body, array $override_body): array
+    private static function __run_rule(array $framework_body, array $override_body): array
     {
-        $upstream = static::__write(self::UPSTREAM_FILE, $upstream_body);
+        $framework = static::__write(self::FRAMEWORK_FILE, $framework_body);
         $override = static::__write(self::OVERRIDE_FILE, $override_body);
 
         $collector = new ViolationCollector();
         $rule = new ClassOverrideDrift_CodeQualityRule($collector);
 
         try {
-            $rule->evaluate_pair(self::PROBE_CLASS, $upstream, $override);
+            $rule->evaluate_pair(self::PROBE_CLASS, $framework, $override);
         } finally {
             static::__remove_fixtures();
         }
@@ -183,11 +182,11 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
         static::__assert_equals('high', $violation->severity, 'HIGH - loud, but never a build fatal');
         static::__assert_contains('is_convertible_mime', $violation->message, 'the finding names the member');
         static::__assert_contains(self::PROBE_CLASS, $violation->message, 'and the class');
-        static::__assert_contains(self::UPSTREAM_FILE, $violation->message, 'and where the framework copy is');
+        static::__assert_contains(self::FRAMEWORK_FILE, $violation->message, 'and where the framework copy is');
         static::__assert_contains(self::OVERRIDE_FILE, $violation->message, 'and which file must change');
     }
 
-    /** An override that carries everything upstream declares is not drifting. */
+    /** An override that carries everything the framework file declares is not drifting. */
     public static function test_an_override_that_lacks_nothing_reports_nothing()
     {
         $violations = static::__run_rule(
@@ -206,7 +205,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
             ['    public function app_only() {}']
         );
 
-        static::__assert_count(1, $violations, 'a property upstream declares and the override does not');
+        static::__assert_count(1, $violations, 'a property the framework file declares and the override does not');
         static::__assert_contains('$render_states', $violations[0]->message, 'named as a property');
     }
 
@@ -229,7 +228,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     public static function test_the_finding_lists_the_overrides_own_additions()
     {
         $violations = static::__run_rule(
-            ['    public function upstream_only() {}'],
+            ['    public function framework_only() {}'],
             ['    public function display_id() {}', '    protected static $field_meta = [];']
         );
 
@@ -245,7 +244,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     public static function test_an_override_with_no_additions_is_told_it_can_go()
     {
         $violations = static::__run_rule(
-            ['    public function upstream_only() {}'],
+            ['    public function framework_only() {}'],
             []
         );
 
@@ -260,7 +259,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     public static function test_the_exception_marker_on_the_override_suppresses_it()
     {
         $violations = static::__run_rule(
-            ['    public function upstream_only() {}'],
+            ['    public function framework_only() {}'],
             ['    // @CLASS-OVERRIDE-DRIFT-01-EXCEPTION - fixture: deliberate divergence']
         );
 
@@ -272,13 +271,13 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     // =====================================================================
 
     /**
-     * Drive the health check against a synthetic manifest file list, restoring the real one
-     * in a finally exactly as the sibling archive-guard test does.
+     * Drive the health check against a synthetic override map, restoring the real manifest
+     * state in a finally exactly as the sibling shadow-guard test does.
      */
-    private static function __run_health(array $files): array
+    private static function __run_health(array $overrides): array
     {
         $saved_data = Manifest::$data;
-        Manifest::$data = ['data' => ['files' => $files]];
+        Manifest::$data = ['data' => ['files' => [], 'overrides' => $overrides]];
 
         try {
             return Class_Override_Drift_Health_Checks::class_override_drift();
@@ -288,20 +287,20 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * The override map entry for the fixture pair: the framework file, shadowed by the
+     * override.
+     *
      * @return array<string, array>
      */
-    private static function __manifest_pair(): array
+    private static function __override_map(): array
     {
         return [
-            self::UPSTREAM_FILE => [
-                'file' => self::UPSTREAM_FILE,
-                'extension' => 'php.upstream',
-                'class' => self::PROBE_CLASS,
-            ],
-            self::OVERRIDE_FILE => [
-                'file' => self::OVERRIDE_FILE,
-                'extension' => 'php',
-                'class' => self::PROBE_CLASS,
+            self::FRAMEWORK_FILE => [
+                'kind' => 'php',
+                'name' => self::PROBE_CLASS,
+                'by' => self::OVERRIDE_FILE,
+                'fqcn' => 'Rsx\\Resource\\' . self::PROBE_CLASS,
+                'by_fqcn' => 'Rsx\\Resource\\Override\\' . self::PROBE_CLASS,
             ],
         ];
     }
@@ -317,19 +316,19 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     /** A drifting override WARNs and counts what is missing - and never FAILs. */
     public static function test_health_warns_and_counts_a_drifting_override()
     {
-        static::__write(self::UPSTREAM_FILE, [
-            '    public function upstream_only() {}',
+        static::__write(self::FRAMEWORK_FILE, [
+            '    public function framework_only() {}',
             '    public function shared() {}',
         ]);
         static::__write(self::OVERRIDE_FILE, ['    public function shared() {}']);
 
         try {
-            $rows = static::__run_health(static::__manifest_pair());
+            $rows = static::__run_health(static::__override_map());
 
             static::__assert_count(1, $rows, 'one row per drifting override');
             static::__assert_equals('WARN', $rows[0]['status'], 'advisory - rsx:health exits non-zero only on FAIL');
             static::__assert_contains('1 member(s)', $rows[0]['detail'], 'the count is the operator-facing number');
-            static::__assert_contains('upstream_only', $rows[0]['detail'], 'and the member is named');
+            static::__assert_contains('framework_only', $rows[0]['detail'], 'and the member is named');
             static::__assert_contains('rsx:check', $rows[0]['remediation'], 'which points at the full finding');
         } finally {
             static::__remove_fixtures();
@@ -339,16 +338,16 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     /** An override that carries everything is reported as healthy, not omitted. */
     public static function test_health_is_ok_when_an_active_override_carries_everything()
     {
-        static::__write(self::UPSTREAM_FILE, ['    public function shared() {}']);
+        static::__write(self::FRAMEWORK_FILE, ['    public function shared() {}']);
         static::__write(self::OVERRIDE_FILE, [
             '    public function shared() {}',
             '    public function app_only() {}',
         ]);
 
         try {
-            $row = static::__run_health(static::__manifest_pair());
+            $row = static::__run_health(static::__override_map());
 
-            static::__assert_equals('OK', $row['status'], 'carrying everything upstream declares is not drift');
+            static::__assert_equals('OK', $row['status'], 'carrying everything the framework file declares is not drift');
             static::__assert_contains('1 class override(s) active', $row['detail'], 'and the override is still counted');
         } finally {
             static::__remove_fixtures();
@@ -360,7 +359,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     // =====================================================================
 
     /**
-     * THE SPLIT MODEL IS NOT A CLONE. When the archived file declares nothing but
+     * THE SPLIT MODEL IS NOT A CLONE. When the framework file declares nothing but
      * `class X extends X_Abstract`, every member lives on the base - and an override that
      * extends that same base INHERITS every one of them, including the ones the framework
      * adds tomorrow. There is no frozen copy here and nothing to compare, so the analyzer
@@ -368,11 +367,11 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
      * inherits them.
      *
      * (An override of a split class that does NOT extend the base never reaches this code:
-     * the manifest's override pass refuses it outright.)
+     * the manifest's override map refuses it outright.)
      */
     public static function test_a_split_pair_that_shares_the_base_reports_nothing()
     {
-        $upstream = static::__write(self::UPSTREAM_FILE, [], self::PROBE_CLASS . '_Abstract');
+        $framework = static::__write(self::FRAMEWORK_FILE, [], self::PROBE_CLASS . '_Abstract');
         $override = static::__write(
             self::OVERRIDE_FILE,
             ['    public function app_only() {}'],
@@ -380,7 +379,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
         );
 
         try {
-            $analysis = Class_Override_Drift::analyze_pair($upstream, $override, self::PROBE_CLASS);
+            $analysis = Class_Override_Drift::analyze_pair($framework, $override, self::PROBE_CLASS);
 
             static::__assert_count(0, $analysis['missing'], 'the base carries everything; nothing is missing');
             static::__assert_count(
@@ -399,7 +398,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
      */
     public static function test_a_split_pair_is_recognized_through_a_qualified_parent()
     {
-        $upstream = static::__write(self::UPSTREAM_FILE, [], self::PROBE_CLASS . '_Abstract');
+        $framework = static::__write(self::FRAMEWORK_FILE, [], self::PROBE_CLASS . '_Abstract');
         $override = static::__write(
             self::OVERRIDE_FILE,
             [],
@@ -407,7 +406,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
         );
 
         try {
-            $analysis = Class_Override_Drift::analyze_pair($upstream, $override, self::PROBE_CLASS);
+            $analysis = Class_Override_Drift::analyze_pair($framework, $override, self::PROBE_CLASS);
 
             static::__assert_count(0, $analysis['missing'], 'the namespaced spelling names the same base');
         } finally {
@@ -422,7 +421,7 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     public static function test_a_clone_of_a_non_split_class_is_still_compared()
     {
         $violations = static::__run_rule(
-            ['    public function upstream_only() {}'],
+            ['    public function framework_only() {}'],
             ['    public function shared() {}']
         );
 

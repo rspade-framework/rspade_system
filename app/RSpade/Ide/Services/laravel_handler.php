@@ -91,6 +91,10 @@ switch ($service_path) {
         handle_php_is_subclass_of_service($request_data);
         break;
 
+    case 'overrides':
+        handle_overrides_service();
+        break;
+
     case 'resolve_class':
         // TODO: Migrate from handler.php and refactor to use Manifest directly
         error_response('Service not yet migrated to Laravel handler', 501);
@@ -190,6 +194,40 @@ function handle_php_is_subclass_of_service($data) {
     try {
         $is_subclass = \App\RSpade\Core\Manifest\Manifest::php_is_subclass_of($subclass, $superclass);
         json_response(['is_subclass' => $is_subclass]);
+    } catch (\Exception $e) {
+        error_response('Manifest error: ' . $e->getMessage(), 500);
+    }
+}
+
+/**
+ * Handle overrides service - the manifest's override map, for the editor.
+ *
+ * Nothing on disk shows that a framework file is overridden (rsx:man class_override): the
+ * framework file stays in place under its own name and the manifest records the fact. The
+ * extension reads it here to mark a shadowed framework file and to point at the application
+ * file that answers for it.
+ *
+ * Read-only; GET. Paths are relative to the project root - the framework file under
+ * `system/`, the override under `rsx/`:
+ *
+ *   {"success": true, "overrides": {"system/app/RSpade/...": {"kind", "name", "by"}}}
+ *
+ * Direct RPC wrapper around Manifest::overrides().
+ */
+function handle_overrides_service() {
+    try {
+        $overrides = [];
+
+        foreach (\App\RSpade\Core\Manifest\Manifest::overrides() as $framework_file => $override) {
+            $overrides['system/' . $framework_file] = [
+                'kind' => $override['kind'],
+                'name' => $override['name'],
+                'by' => $override['by'],
+            ];
+        }
+
+        // An empty map must still encode as an object, never as [].
+        json_response(['success' => true, 'overrides' => (object) $overrides]);
     } catch (\Exception $e) {
         error_response('Manifest error: ' . $e->getMessage(), 500);
     }

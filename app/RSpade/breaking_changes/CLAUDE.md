@@ -59,11 +59,11 @@ LIKELY to class-override - ships a document whenever it ADDS OR ALTERS MEMBERS t
 override holder should propagate into their copy.**
 
 An override of a NON-MODEL framework class is a copy-and-replace, not a subclass
-(`rsx:man class_override`): the manifest serves the app's file and archives the
-framework's beside it as `.php.upstream`. So every improvement to that class reaches the
+(`rsx:man class_override`): the manifest serves the app's file and leaves the
+framework's in place, shadowed and never loaded. So every improvement to that class reaches the
 holder's DISK and none of their users. The framework already NOTICES this -
 `CLASS-OVERRIDE-DRIFT-01` (`rsx:check`, high) and the `rsx:health` "Class Override Drift"
-row list every public/protected member the archived upstream declares and the override
+row list every public/protected member the shadowed framework file declares and the override
 lacks. **The document is not the detector; it is the explanation.** The lint names the
 members, and only the document says WHAT they are for, WHY the copy needs them, and what
 breaks silently without them.
@@ -89,11 +89,9 @@ call each time:
     Site_Model                 Portal_User_Model
 
 plus **any framework class the reference app itself overrides** - any file in `rsx/`
-whose class also exists under `system/app/RSpade/Core`, which is exactly the set that
-carries a `.php.upstream` sidecar in a working tree. Check it rather than assuming - a
-`.php.upstream` sidecar anywhere under `system/app/RSpade/` is an override in force, and
-comparing the class names in `rsx/models/` against those under `system/app/RSpade/Core/`
-answers the same question on a clean tree.
+whose class also exists under `system/app/RSpade/Core`, which is exactly the set
+`php artisan rsx:overrides:list` prints. Check it rather than assuming - every row it lists
+is an override in force.
 
 The template overrides NONE of them today (the seams - `Staff_Authorizable`,
 `Portal_Authorizable`, `fetch()`, `#[OnEvent]` - are the sanctioned way to attach

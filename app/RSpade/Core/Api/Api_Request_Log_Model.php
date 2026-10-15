@@ -21,7 +21,7 @@ use App\RSpade\Core\Api\Api_Request_Log_Model_Abstract;
  *         // only the members you change
  *     }
  *
- * The manifest archives this file as Api_Request_Log_Model.php.upstream, your class becomes
+ * The manifest shadows this file - it stays in place, never loaded - and your class becomes
  * Api_Request_Log_Model for the whole tree, and it keeps inheriting everything the framework
  * adds to the base from then on - so your override drifts by exactly the members you
  * declared and no others. A member the base marks #[Replaceable] is replaced outright;

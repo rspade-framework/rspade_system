@@ -71,7 +71,7 @@ The Manifest is a compiled cache of all file metadata in the RSX application. It
 | File | What it holds | Who loads it |
 |---|---|---|
 | `build/manifest_index.php` | every derived section; `file_index` (path -> `[size, mtime]`) for the WHOLE tree; the `files` entries whose METHOD MAP is read at request time - models and their ancestors, task services, the generated stubs - plus every record that has no method map at all | `init()`, on every request |
-| `build/manifest_files.php` | every other `files` entry, method maps intact | ONCE per process, on demand |
+| `build/manifest_files.php` | every other `files` entry, method maps intact - plus the records of the framework files an application overrides (`shadowed_files`, told apart on load by the keys of the hot `overrides` map) | ONCE per process, on demand |
 
 **81% of the index was `files`, and 76% of that was method maps.** A served request reads
 almost none of them: `Orm_Controller` and `get_relationships()` read a model's, `Task` and
@@ -187,10 +187,11 @@ surface; the other four own one phase each and are reached through it.
 | `Manifest.php` | The public API AND every read accessor, implemented here. Boot (`init`, `post_init`), the build loop `_refresh_manifest()` with its restart accounting, the two keys (`get_build_key`, `get_state_key`), and the lookups: `php_find_class`, `php_class_metadata`, `php_get_extending`, `php_is_subclass_of`, `php_get_lineage`, the `js_*` twins, `find_view`, `by_attribute`, `get_with_attribute`, `get_routes`, `model_for_table`, `php_model_record`, and the column accessors that delegate to `Rsx_Schema` (`db_get_*`, `php_model_columns`) | everything a caller outside `Core/Manifest/` uses |
 | `Manifest_Build.php` | The build SEAM - an instance carrying scan roots, storage root and mode, constructed from config, and owning the pass's `Source_Cache`. What `tests/manifest/` substitutes to build a fixture tree | `Manifest_Build::from_config()` |
 | `Manifest_Scanner.php` | Phases 1-2: directory discovery, per-file change detection, the token parse that produces each file record, `Php_Fixer` with its class-structure delta, and the PHP reflection extract with its derived-cache restore | `_get_rsx_files`, `_has_changed`, `_process_file`, `_run_php_fixer`, `_extract_reflection_for_changed_files` |
-| `Manifest_Indexer.php` | Phases 3-6: the derived indexes (autoloader class map, blade views, attribute index, models-by-table, event handlers, classless files), the duplicate-class detectors, the class-override archive pass, the composer classmap validation, the code-quality pass entry and the VS Code stub | `_build_autoloader_class_map`, `_build_attribute_index`, `_check_unique_base_class_names`, `_run_manifest_time_code_quality_checks`, `_generate_vscode_stubs` |
+| `Manifest_Indexer.php` | Phases 3-6: the derived indexes (autoloader class map, blade views, attribute index, models-by-table, event handlers, classless files), the duplicate-class detector, the code-quality pass entry and the VS Code stub | `_build_autoloader_class_map`, `_build_attribute_index`, `_collate_files_by_classes`, `_run_manifest_time_code_quality_checks`, `_generate_vscode_stubs` |
+| `Manifest_Overrides.php` | The OVERRIDE MAP (end of Phase 2): which framework files the application shadows, the move of their records out of `files`, and every override refusal | `derive`, `loader_map` |
 | `Manifest_Store.php` | The index ON DISK: load hot, load cold on demand, derive the load-time indexes, write both halves atomically as compact PHP literals, the build key, validation, the bad-manifest flag | `_load_cached_data`, `_load_cold_files`, `_save`, `_compute_hash`, `_validate_cached_data` |
 | `ManifestSupport_Abstract.php`, `Full_ManifestSupport_Abstract.php`, `Modules/` | The module pipeline (phase 5). One module per index section, in one of two kinds | `process(&$data, $changed, $removed)` / `rebuild(&$data)` |
-| `Class_Override_Drift.php` | The `CLASS-OVERRIDE-DRIFT-01` analysis of an `rsx/` copy against its archived `.upstream` | `analyze_pair()` |
+| `Class_Override_Drift.php` | The `CLASS-OVERRIDE-DRIFT-01` analysis of an `rsx/` copy against the framework file it shadows | `pairs()`, `analyze_pair()` |
 
 **Reads live in `Manifest.php`; writes live in the four build classes.** A method that answers
 a question about the indexed tree belongs on the facade with its body; a method that produces
@@ -212,6 +213,10 @@ The manifest cache contains:
         'files' => [...],                // Indexed files (the HOT subset until the cold
                                          // half is merged - see above)
         'file_index' => [...],           // path => [size, mtime], the WHOLE tree
+        'overrides' => [...],            // shadowed framework path => kind, name, by
+                                         // (+ fqcn, by_fqcn for php) - see THE OVERRIDE MAP
+        'shadowed_files' => [...],       // the shadowed files' records (cold half; present
+                                         // during a build and after a cold load)
         'js_classes' => [...],           // JS class map (the hot class record)
         'php_classes' => [...],          // PHP class map (the hot class record)
         'php_subclass_index' => [...],   // parent => every descendant
@@ -254,7 +259,7 @@ map above.
 - **THE TEST TREES ARE NOT IN IT.** `app/RSpade/tests`, `app/RSpade/temp` and `rsx/tests` are appended ONLY while `Rsx_Test_Abstract::suite_is_running()` (the `--_test-run` internal flag `system/artisan` declares pre-boot for `rsx:test` and `Rsx_Artisan` forwards to every child). A fixture is real indexed source - a route, an Ajax surface, an `#[Auth]` naming a check - and a served site must not carry one; the outage that set this rule was a fixture whose `#[Auth]` named an application-only check, which failed the manifest build of every install that scanned it. `rsx/tests` lives inside the `rsx/` root, so it is additionally skipped BY PATH when it is not in the list
 - The transition costs one rebuild in each direction and nothing else: the first ordinary request after a test run drops the fixtures again through the normal add/remove path (measured on this box: 5.7 s for that request, 0.11 s steady)
 - A missing scan path is a FATAL, the three TEST TREES excepted: they are added by the test RUN rather than by the operator, and each is legitimately absent (`app/RSpade/temp` is the framework developer's scratch tree; an application that keeps its suites beside the code they test has no `rsx/tests`). A missing root that came from config stays fatal
-- Excludes filenames via `config('rsx.manifest.excluded_files')` and path segments via `config('rsx.manifest.excluded_dirs')` (vendor, node_modules, storage, .git, public, resource, Core/Manifest)
+- Excludes filenames via `config('rsx.manifest.excluded_files')`, and directories by BASENAME through `Manifest_Scanner::_is_excluded_directory_name()`: hidden, or named in `config('rsx.manifest.excluded_dirs')` (vendor, node_modules, storage, public, resource, ...). The list's `Core/Manifest` entry is a code-quality path segment and matches no basename - `Core/Manifest` IS indexed
 - Returns array of file paths with basic stats (mtime, size)
 
 ### Phase 2: Token Parsing
@@ -280,9 +285,8 @@ map above.
 | 6 stubs | model stubs rewritten unconditionally; per-model `stat` + `sha1_file` + `glob` | content-compared; the sweep is one pass over a set, skipped entirely on a no-change build |
 | 7 `_sweep_derived_caches` | every build, content-hashing every file | when a file was REMOVED, else at most hourly (stamp under `tmp/derived/`). It reclaims DISK, never correctness, so a deferred sweep costs nothing |
 | 7 `view:clear` | every build | only when a `.blade.php` changed or was removed - it exists to stop a stale `@rsx_extends` surviving a rename, and nothing else can create one |
-| 7 override pass | re-adjudicated all 640 class names | acts only on names a dirty file declares; the restore pass gets its `.upstream` entries from the same single pass that builds the active class map |
-| 7 composer classmap | every rebuild (~15k warm stats) | only when the override pass actually renamed something (`Manifest::$_override_pass_renamed`, sticky across restarts) |
-| 7 duplicate-class check | three detectors | ONE: `_collate_files_by_classes()`. The copy in `_validate_manifest_data()` is gone |
+| 2 override map | - | derived IN FULL every pass (one scalar pass over the records - see THE OVERRIDE MAP); the split-signature check reads source only for split pairs this build re-parsed |
+| 7 duplicate-class check | three detectors | the override map refuses a duplicate it sees first; `_collate_files_by_classes()` is the one class-map detector. The copy in `_validate_manifest_data()` is gone |
 | 2 Php_Fixer | five whole-map scans PER FILE; a full pass over the tree on any structural change | one class index per RUN (`Php_Fixer::begin_run()`); a structural change fixes the changed files plus the files that REFERENCE a class in the delta |
 
 **The fixer's memory is its own file.** `Rsx_Project_Paths::php_fixer_structure_file()`
@@ -370,7 +374,9 @@ public static ?Manifest_Build $_build = null; // The build underneath the facade
 ### RESTART SEMANTICS
 
 `_refresh_manifest()` uses a `goto manifest_start` to start the build over when a pass changed
-the tree under itself - a class override archived, a file auto-renamed. Four rules govern it:
+the tree under itself - which is now exactly one thing: the code-quality pass auto-renaming a
+file to match its class (FilenameClassMatch). An override never restarts a build; nothing on
+disk moves. Four rules govern it:
 
 1. **The change memo is cleared at `manifest_start`.** `_has_changed()` memoizes "this file
    matches what the index records", and a pass that rewrote source (the fixer) or renamed a
@@ -383,9 +389,10 @@ the tree under itself - a class override archived, a file auto-renamed. Four rul
    are about the whole build. Overwriting meant a build that restarted could run its quality
    gate over nothing.
 3. **Restarts are BOUNDED at `Manifest::MAX_BUILD_RESTARTS` (3)**, then throw, naming the
-   reason the last restart was requested. Three is the honest ceiling: an override archive, a
-   restore and a rename can each fire once legitimately; a fourth means two passes are undoing
-   each other. `flag_needs_restart($reason)` is what records the reason.
+   reason the last restart was requested. A rename is a new path the next pass indexes, and it
+   can surface one more file to rename; a fourth pass means the rule and the tree disagree.
+   `flag_needs_restart($reason)` is what records the reason; `$_last_build_restarts` is how
+   many the last build took (`rsx:manifest:build --_manifest-report-restarts` prints it).
 4. **The build lock is released in a `finally`.** A code-quality violation, an unparseable
    file or a bounded restart loop all leave `init()` by exception, and each used to leave the
    system build lock HELD - a lock with no lease and no TTL, so the next process to want it
@@ -654,45 +661,70 @@ lock measured a LOAD, not a build** (peak ~46 MB, no rule lines) - discard it.
 **Cause**: Missing `Ajax_Endpoint` attribute or method not public static
 **Solution**: Check method has attribute and correct visibility
 
-## The override pass and the SPLIT refusal
+## THE OVERRIDE MAP
 
-`Manifest_Indexer::_check_unique_base_class_names()` archives the framework twin
-when exactly one `rsx/` file declares the same simple name. Two of its four exits are FATAL.
-The first refuses an `rsx/` class that declares `extends <its own name>`. The second is the
-SPLIT refusal - when the framework file about to be archived declares nothing but
-`class X extends X_Abstract`, the `rsx/` class MUST extend that same `X_Abstract`, and
-anything else (a copy of the framework file, a different parent, no parent) throws
-"Fatal: Invalid override of the split framework class 'X'" naming the override file, the
-parent it declares and the base it must extend. A copy is a second implementation of a class
-the framework keeps developing: every member added to the base afterwards is missing from it
-and core calls those members regardless, which is the failure the split exists to end - so it
-is refused rather than reported. The other two exits stay informational (a stale index entry,
-a poisoned manifest) and archive nothing. Contract: `rsx:man class_override`, section WHEN
-THE BUILD REFUSES.
+An application overrides a framework file by declaring its name under `rsx/` (`rsx:man
+class_override`): a PHP class, a JS class, a jqhtml component or a stylesheet's wrapper class.
+**The framework file is never moved, renamed or edited.** `Manifest_Overrides::derive()` runs at
+the end of Phase 2 - after Php_Fixer, before Phase 3 loads a class - and derives, IN FULL every
+pass, `data.overrides` (hot, ksorted): shadowed framework path => `kind`, `name`, `by`, plus
+`fqcn` / `by_fqcn` for php. A name declared by exactly one `rsx/` file and by framework files is
+an override; every framework declarer is SHADOWED.
 
-## Class_Override_Drift (the sidecar comparison)
+**A shadowed record leaves `files`** for `data.shadowed_files` (written to the cold half). Every
+consumer of the live index - class maps, loading and reflection, support modules, rules, bundle
+and route builders, `get_all()` - is then correct with no override awareness. The file stays a
+file of the tree: in `file_index` (so change detection never sees it as new) and in
+`_compute_hash()` as path + content hash (never mtime - the key stays deterministic). **Each pass
+starts by merging the shadowed records back into the working set**, so change detection,
+re-parsing and removal treat every file alike, and the map is derived afresh.
 
-`Core/Manifest/Class_Override_Drift.php` is a plain helper beside the manifest, not part
-of the build. It pairs every `php.upstream` entry with the active `php` entry of the same
-simple `class` (which, by construction of the override pass, is the rsx/ file shadowing
-it) and compares the members each FILE declares.
+**The support modules' diff contract survives a file crossing the shadow.** `_refresh_manifest()`
+reports a file ENTERING the shadow as REMOVED (a DELTA module drops what it derived from it) and
+one LEAVING it as CHANGED (loaded, reflected and re-derived like a new file); a shadowed file is
+never in the changed set. An override therefore never restarts a build.
 
-**It reads the files, not the manifest's method metadata, and that is forced.**
-`_extract_reflection_data()` runs only for extension `php` — an archived file is never
-loaded, because its class name belongs to the override — so an `.upstream` entry carries
-`class`/`namespace`/`extends`/`static_properties` and no methods at all. And reflection on
-the override would report its whole LINEAGE, when the only thing a re-clone can be measured
-against is what the file itself declares. So `declared_members()` is a `PhpToken` pass over
-each file: public/protected methods, declared properties, and class-body `use Trait;`
+**The refusals** (each a manifest-build FATAL): two `rsx/` files declaring one name, any kind; an
+override that `extends` its own name; the SPLIT refusal - when the framework file declares nothing
+but `class X extends X_Abstract`, the override must extend that same `X_Abstract` (a copy is a
+second implementation of a class the framework keeps developing, and is refused rather than
+reported); an override of a class in `Class_Override_Boot_Set` or already declared in the
+building process (it can never become an alias in that process); an `rsx/` class named like a
+class in an unindexed framework subtree (`_unindexed_framework_classes()`, the test trees
+excepted), in a directory discovery passes over inside a scanned framework root
+(`Manifest_Scanner::_is_excluded_directory_name()`: `resource/`, `public/`, hidden, ...; a file
+another scan root indexes and third-party `vendor/`/`node_modules/` excepted) or in
+`system/app/{Console,Database,Exceptions,Http,Notifications,Providers}`; and a
+split base `X_Abstract` naming its own shell `X` in a method signature (checked for split pairs
+this build re-parsed). Two guards decline instead of refusing: an `rsx/` entry the disk no
+longer backs is dropped and shadows nothing (a downstream field report, 2026-08-25), and a build
+that has already marked its manifest bad shadows nothing.
+
+**Reads**: `Manifest::overrides()`, `is_shadowed($path)`, `override_for($path)`,
+`shadowed_fqcn_map()`. `Manifest_Overrides::loader_map()` projects the php entries into the map
+`Class_Override_Loader` answers from; `Manifest_Store::_save()` writes it to
+`build/manifest/class_overrides.php`. Contract: `rsx:man class_override`.
+
+## Class_Override_Drift (the override comparison)
+
+`Core/Manifest/Class_Override_Drift.php` is a plain helper beside the manifest, not part of the
+build. `pairs()` reads the php entries of the override map: the framework file, in place, and the
+`rsx/` file that overrides it. For each pair it compares the members each FILE declares.
+
+**It reads the files, not the manifest's method metadata, and that is forced.** A shadowed
+framework class is never loaded - its name belongs to the override - so it cannot be reflected,
+and reflection on the override would report its whole LINEAGE, when the only thing a re-clone can
+be measured against is what the file itself declares. So `declared_members()` is a `PhpToken`
+pass over each file: public/protected methods, declared properties, and class-body `use Trait;`
 adoptions, keyed `method:` / `property:` / `trait:` so two files compare directly.
 
-**A SPLIT class is skipped.** When the archived file declares nothing but
+**A SPLIT class is skipped.** When the framework file declares nothing but
 `class X extends X_Abstract` and the override extends that same base, there is no frozen copy
 to measure - the override inherits every member the base has now and every member it gains
 later - so `analyze_pair()` returns an empty result rather than naming the base's members as
 missing. `declared_parent()` is the token reader that decides it (simple name, qualified
 spelling accepted). An override of a split class that does NOT extend the base never reaches
-here: `_check_unique_base_class_names()` refuses it, naming the abstract.
+here: `Manifest_Overrides` refuses it, naming the abstract.
 
 Consumed by `CLASS-OVERRIDE-DRIFT-01` (`CodeQuality/Rules/Convention/`) and by the
 `Class Override Drift` health row. Contract: `rsx:man class_override`, section DRIFT.

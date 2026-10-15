@@ -5,7 +5,6 @@ namespace App\RSpade\Core\Models;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Models\User_Permission_Model;
 use App\RSpade\Core\Realtime\Realtime;
 
 /**
@@ -72,10 +71,10 @@ abstract class User_Permission_Model_Abstract extends Rsx_Model_Abstract
      *
      * @param int $user_id User ID
      * @param int $permission_id Permission constant
-     * @return User_Permission_Model
+     * @return static
      * @throws Rsx_Caller_Exception when the id is not in User_Model::$permission_definitions
      */
-    public static function grant(int $user_id, int $permission_id): User_Permission_Model
+    public static function grant(int $user_id, int $permission_id): User_Permission_Model_Abstract
     {
         static::__assert_known_permission($permission_id);
 
@@ -104,10 +103,10 @@ abstract class User_Permission_Model_Abstract extends Rsx_Model_Abstract
      *
      * @param int $user_id User ID
      * @param int $permission_id Permission constant
-     * @return User_Permission_Model
+     * @return static
      * @throws Rsx_Caller_Exception when the id is not in User_Model::$permission_definitions
      */
-    public static function deny(int $user_id, int $permission_id): User_Permission_Model
+    public static function deny(int $user_id, int $permission_id): User_Permission_Model_Abstract
     {
         static::__assert_known_permission($permission_id);
 

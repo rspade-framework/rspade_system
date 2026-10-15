@@ -46,3 +46,10 @@
 | ENVUPD-120-IDEMPOTENT | a second run is silent on both streams | cli | rerun | empty stdout and stderr, exit 0 | implemented | 2026-09-15 |
 | ENVUPD-120-REAL-DIRECTORY | a REAL directory at either path is reported and left exactly as it is - it may hold the only copy of something | cli | system/storage with a file in it | directory and file intact, stderr names it, exit 0 | implemented | 2026-09-15 |
 | ENVUPD-120-QUIET | quiet mode still removes the link and says nothing | cli | RSPADE_ENV_UPDATE_QUIET=true | link gone, empty stdout | implemented | 2026-09-15 |
+| ENVUPD-130-RESTORE | 130 restores a framework file an override pass archived (missing tracked file + `.php.upstream`) from git, byte-identical, and deletes the archive | cli | scratch git repo standing in for system/ | file restored, archive gone, `git status` clean, one `[env]` line | implemented | 2026-10-14 |
+| ENVUPD-130-BOTH-EXIST | when the tracked file and its archive both exist, the tracked file wins and the stale archive is deleted | cli | `.jqhtml` + `.jqhtml.upstream` | archive gone, tracked content intact | implemented | 2026-10-14 |
+| ENVUPD-130-SCOPE | `vendor/` and `node_modules/` are never touched | cli | `.upstream` files under both | both survive | implemented | 2026-10-14 |
+| ENVUPD-130-UNTRACKED | an archive whose sibling git does not know is reported on stderr and left in place (it may be the only copy) | cli | untracked `.js.upstream` | exit 0, stderr names it, file kept | implemented | 2026-10-14 |
+| ENVUPD-130-IDEMPOTENT | a second run is silent on both streams | cli | rerun | empty stdout and stderr, exit 0 | implemented | 2026-10-14 |
+| ENVUPD-130-MONOREPO | DOWNSTREAM ONLY: IS_FRAMEWORK_DEVELOPER=true touches nothing | cli | monorepo flag, a fresh archive | archive kept, nothing restored | implemented | 2026-10-14 |
+| ENVUPD-130-QUIET | quiet mode still restores and deletes, and prints nothing on stdout | cli | RSPADE_ENV_UPDATE_QUIET=true | work done, empty stdout | implemented | 2026-10-14 |

@@ -6,6 +6,22 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.239] - 2026-10-14
+
+### Added
+- **Overridden framework files are marked.** A framework file that an application class
+  override shadows stays on disk under its own name and is never loaded or compiled, so the
+  extension now says so: an `OV` badge in the explorer and on the editor tab (tooltip
+  "Overridden by rsx/..."), a CodeLens on the first line that opens the override, and a
+  one-time notice when the file is brought to the front. The map comes from the IDE bridge
+  (`/_ide/service/overrides`) and refreshes when the bridge comes online and when a source
+  file under `rsx/` is created, changed or deleted.
+
+### Changed
+- **Go-to-definition never lands on a shadowed framework file.** A jqhtml component found
+  through the jqhtml extension's index, a bridge result, and the convention-method jump to
+  `Rsx.js` are each redirected to the application file that overrides the target.
+
 ## [0.1.238] - 2026-09-25
 
 ### Changed

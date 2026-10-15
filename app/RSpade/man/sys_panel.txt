@@ -491,8 +491,9 @@ THE RESERVED NAMESPACE
     The first direction is the one that matters to an application, and it is
     not cosmetic. A `_`-prefixed class in `rsx/` that matches a framework one
     is read by the manifest as a CLASS OVERRIDE: the framework's file is
-    archived as `.upstream` and the application's copy is served instead, with
-    nothing reported anywhere. The panel would appear to change on its own.
+    shadowed and the application's copy is served instead - the panel's own
+    bundles included - with nothing reported beyond the build's one-line
+    override notice. The panel would appear to change on its own.
 
     DIRECTORIES are the exception - lowercase, never underscore-prefixed,
     because the namespace generator PascalCases directory segments.

@@ -24,17 +24,28 @@ ANY OTHER framework class is COPIED under the same class name:
        rsx/lib/file_attachment_icons.php
     # then change the namespace and customize the copy
 
-Either way the manifest archives the framework file as <Name>.php.upstream and
-serves the rsx/ class under the same simple name from then on.
+Either way the framework file stays exactly where it is, SHADOWED: the manifest
+takes it out of the live index, and the rsx/ class answers for the framework
+class name - simple name and fully-qualified name alike - from then on.
+
+    php artisan rsx:overrides:list     # every override in force
 
 ## DESCRIPTION
 
-An application customizes framework behavior without editing system/. When a
-class of the same simple name exists in both rsx/ and app/RSpade/, the manifest:
+An application customizes framework behavior without editing system/, and an
+override writes nothing under system/ either. When a class of the same simple
+name exists in both rsx/ and app/RSpade/, the manifest:
 
-1. Renames the framework file to .upstream (e.g. User_Model.php.upstream)
-2. Uses the rsx/ version as the authoritative class
-3. Rebuilds to reflect the change
+1. Records the framework file as SHADOWED in its override map. The file is not
+   moved, renamed or edited; it leaves the live index and is never loaded.
+2. Uses the rsx/ version as the authoritative class.
+3. Hands the map to the class override loader, which answers the framework
+   FQCN with the rsx/ class in every process (HOW REFERENCES KEEP RESOLVING).
+
+Unlike Laravel, where replacing a vendor class means a container binding that
+only reaches code resolving through the container, an RSX override replaces the
+class for every reference in the tree: a `use` import, a type hint, an inline
+FQCN, a static call and `new` all reach the application's class.
 
 WHICH RECIPE APPLIES IS DECIDED BY THE CLASS, NOT BY PREFERENCE.
 
@@ -58,22 +69,22 @@ classes an application most often customizes are shaped that way.
 Session is not a model in this sense and is not split: it is a static facade,
 called as Session:: everywhere, and replacing it is not a supported concept.
 
-THE 27 SPLIT CORE MODELS
+THE 28 SPLIT CORE MODELS
 
     Api_Key_Model                         Api_Request_Log_Model
     Country_Model                         Email_Attachment_Model
-    Email_Queue_Model                     Email_Recipient_Model
-    File_Attachment_Model                 File_Storage_Model
-    Flash_Alert_Model                     Login_User_Model
-    Portal_Notification_Model             Portal_Sso_Identity_Model
-    Portal_Two_Factor_Credential_Model    Portal_User_Model
-    Region_Model                          Revision_Model
-    Search_Index_Model                    Site_Model
-    Sms_Queue_Model                       Sms_Recipient_Model
-    Sso_Identity_Model                    Transaction_Model
-    Two_Factor_Credential_Model           User_Model
-    User_Permission_Model                 User_Profile_Model
-    Zip_Download_Request_Model
+    Email_Blocked_Address_Model           Email_Queue_Model
+    Email_Recipient_Model                 File_Attachment_Model
+    File_Storage_Model                    Flash_Alert_Model
+    Login_User_Model                      Portal_Notification_Model
+    Portal_Sso_Identity_Model             Portal_Two_Factor_Credential_Model
+    Portal_User_Model                     Region_Model
+    Revision_Model                        Search_Index_Model
+    Site_Model                            Sms_Queue_Model
+    Sms_Recipient_Model                   Sso_Identity_Model
+    Transaction_Model                     Two_Factor_Credential_Model
+    User_Model                            User_Permission_Model
+    User_Profile_Model                    Zip_Download_Request_Model
 
 Each base sits beside its shell in the same directory - for example
 system/app/RSpade/Core/Models/User_Model_Abstract.php beside
@@ -90,19 +101,33 @@ model.
 
 ## HOW IT WORKS
 
-During manifest build, when duplicate simple class names are detected:
+Every manifest build derives THE OVERRIDE MAP from scratch, over the whole tree.
+A name declared by exactly one rsx/ file and by a framework file is an
+override, and every framework file declaring it is shadowed:
 
     Framework file: app/RSpade/Core/Models/User_Model.php
     Override file:  rsx/models/user_model.php
 
     Result:
-    - app/RSpade/Core/Models/User_Model.php renamed to .upstream
+    - app/RSpade/Core/Models/User_Model.php stays in place, shadowed
     - rsx/models/user_model.php becomes the active class
+    - App\RSpade\Core\Models\User_Model is an alias of Rsx\Models\User_Model
 
-The .upstream file is kept for reference and parsed for class metadata only; it
-is never loaded and never rewritten.
+A shadowed file is out of everything the live index feeds - the class maps,
+routes, the attribute index, the code-quality pass, every bundle - but it is
+still a file of the tree: it stays in the build key by path and content, so a
+framework update to it is seen like any other change, and the drift analysis
+reads it where it lies (DRIFT, below).
 
-FOR A SPLIT MODEL the archived file is the three-line shell, and the base is
+The PHP half of the map is also written to build/manifest/class_overrides.php,
+the file the class override loader reads at the start of every process. It is a
+build artifact: a sealed build carries it and the seal covers it.
+
+Because the map is derived in full every build, there is no state to repair: an
+override added, edited or deleted is reflected by the next build, and an
+override never makes a build restart.
+
+FOR A SPLIT MODEL the shadowed file is the three-line shell, and the base is
 untouched: it stays in the build, it stays framework property, and the override
 keeps inheriting it. Everything the framework adds to the base after the override
 was written is present on the application's class the day it arrives.
@@ -169,13 +194,14 @@ The same mechanism covers the three browser-side file kinds. Each is matched by
 the NAME IT DECLARES - never by its file name or its directory - and each file
 is its own override:
 
-    .js       its class name. An rsx/ JS class with the name of a framework JS
-              class archives the framework's .js file.
+    .js       its class name (.js, .jsx, .ts and .tsx alike). An rsx/ JS class
+              with the name of a framework JS class shadows the framework's
+              file.
     .jqhtml   its component, <Define:Name>. An rsx/ template with the name of a
-              framework template archives the framework's .jqhtml file.
+              framework template shadows the framework's .jqhtml file.
     .scss     the ONE class the whole stylesheet is wrapped in (.Name { ... }).
               An rsx/ stylesheet wrapped in the same class as a framework
-              stylesheet archives the framework's .scss file.
+              stylesheet shadows the framework's .scss file.
 
 So rsx/theme/components/inputs/code/code_input.scss, wrapped in .Code_Input,
 overrides system/app/RSpade/Core/Forms/Code_Input.scss, and nothing about the
@@ -192,41 +218,62 @@ step with the framework's class.
 A stylesheet with no single wrapper class (variables only, or several top-level
 rules) declares no name: it neither overrides nor can be overridden.
 
-Two templates of one component name in the SAME tree - both in rsx/, or both in
-the framework - are a duplicate, not an override, and still stop the build
-("Duplicate jqhtml component name detected").
+Two files of one name in rsx/ are refused at manifest build, whatever the kind -
+nothing could choose between them (WHEN THE BUILD REFUSES). Two templates of one
+component name inside the framework are a duplicate, not an override, and stop
+the build ("Duplicate jqhtml component name detected").
 
-Archiving and restoring work exactly as for PHP: the framework file becomes
-<file>.upstream, the build prints one line naming it and the rsx/ file that
-displaced it, and deleting the rsx/ file brings it back on the next build. Each
-file is released on its own - removing your stylesheet restores the framework's
-stylesheet and leaves your template override standing.
+Shadowing and its end work exactly as for PHP: the build prints one line naming
+the framework file and the rsx/ file that shadows it, and deleting the rsx/ file
+makes the framework file live again on the next build. Each file is released on
+its own - removing your stylesheet brings the framework's stylesheet back and
+leaves your template override standing.
 
-THE FRAMEWORK'S OWN PANEL DOES NOT SEE YOUR FILES. /_sys and /apidocs are built
-from framework paths only and include nothing under rsx/. A Core file you
-override is archived, so it is absent from those two bundles and your
-replacement is not in them either. Overriding a component the panel uses (a form
-input, say) leaves the panel without it.
+## BUNDLES
 
-## WHAT THE BUILD PRINTS WHEN IT ARCHIVES
+Whichever way a bundle reaches a shadowed framework file - a directory include,
+a type pattern or the file named explicitly - it compiles the rsx/ file that
+overrides it instead, in the framework file's place in the include order (a
+stylesheet cascades, a script sorts, where the framework's would have), and only
+once when the bundle also includes the rsx/ file itself. The shadowed file is
+never compiled.
 
-Archiving un-registers a class, so the build never does it silently. Every
-rename prints one line naming the file that left the build and the rsx/ file
-that displaced it:
+That holds for EVERY bundle, the framework's own included: Core_Bundle and the
+/_sys and /apidocs bundles receive your component, template or stylesheet
+wherever they name the framework's. Those bundles still name no rsx/ path
+(CONV-BUNDLE-04 reads what a bundle declares, which is unchanged); the
+substitution happens below the declaration. Overriding a component the panel
+uses (a form input, say) therefore changes it in the panel too.
 
-    [Manifest] Class override: User_Model - archived
-    app/RSpade/Core/Models/User_Model.php to
-    app/RSpade/Core/Models/User_Model.php.upstream, overridden by
+    php artisan rsx:bundle:show <Bundle>
+
+lists a substituted include as "<framework file> -> <rsx file> (override)".
+rsx:man bundle_api has the include rules.
+
+## WHAT THE BUILD PRINTS
+
+A framework file leaving the live tree is never silent. The build that first
+shadows it prints one line naming the framework file and the rsx/ file that
+shadows it, and stays silent on every build after:
+
+    [Manifest] Override: User_Model - the framework php file
+    app/RSpade/Core/Models/User_Model.php is shadowed by
     rsx/models/user_model.php
 
-A class can therefore never disappear without a line naming it. If a framework
-class stops existing and no such line was printed, an override did not do it.
+The build that ends an override prints:
+
+    [Manifest] Override removed: the framework file
+    app/RSpade/Core/Models/User_Model.php is live again
+
+A framework class can therefore never leave the build without a line naming it,
+and rsx:overrides:list shows every override in force at any time.
 
 ## WHEN THE BUILD REFUSES
 
-Four conditions stop the pass. The first two are FATAL - the override is wrong
-and the build says so. The last two are informational: the pass declines to
-archive anything this time and the next build decides.
+The override pass stops the build with a FATAL when an override cannot work, and
+declines to shadow anything in two situations where its own input cannot be
+trusted. Each FATAL names the files involved and, where there is a pattern to
+follow, ends with "See: php artisan rsx:man class_override".
 
 FATAL - THE OVERRIDE EXTENDS THE CLASS IT REPLACES
 
@@ -251,9 +298,9 @@ FATAL - THE OVERRIDE EXTENDS THE CLASS IT REPLACES
                  // only the members this application changes
              }
 
-          The framework archives app/RSpade/Core/Models/User_Model.php as
-          .upstream and your class becomes User_Model for the whole tree, still
-          inheriting everything the framework adds to the base from now on.
+          Your class then overrides User_Model for the whole tree
+          (app/RSpade/Core/Models/User_Model.php is shadowed and never loaded),
+          still inheriting everything the framework adds to the base from now on.
 
     For a non-split class the same failure prints the copy recipe instead.
 
@@ -290,40 +337,134 @@ FATAL - AN OVERRIDE OF A SPLIT MODEL THAT DOES NOT EXTEND ITS BASE
     "extends nothing" appears in the Override line when the override declares no
     parent at all.
 
-INFORMATIONAL - THE rsx/ TWIN IS NOT ON DISK
+FATAL - TWO APPLICATION FILES DECLARE ONE NAME
+
+    Any kind - a PHP class, a JS class, a jqhtml component, a stylesheet wrapper
+    class. Nothing can choose between them, so neither overrides anything:
+
+        Fatal: Duplicate jqhtml component 'Code_Input' declared by more than
+        one application file:
+          - rsx/theme/components/inputs/code/code_input.jqhtml
+          - rsx/app/frontend/settings/code_input.jqhtml
+
+        Component names (<Define:Code_Input>) must be unique across the
+        application.
+        (When one of them overrides a framework jqhtml file, the override must
+        be exactly one application file - see rsx:man class_override.)
+
+FATAL - THE CLASS CANNOT BE OVERRIDDEN
+
+    Some framework classes exist before an override could answer for their
+    name, or are never seen by the override pass at all. An rsx/ class named
+    like one of them is refused:
+
+        Fatal: 'Rsx' cannot be overridden.
+
+          Application class: rsx/lib/rsx.php
+          Framework class:   App\RSpade\Core\Rsx
+
+        App\RSpade\Core\Rsx is declared while the framework boots or while the
+        manifest is being built - before an override could answer for its
+        name - so no application class can replace it.
+
+        Rename the application class. Framework classes that boot the
+        framework or build the manifest, and framework classes in directories
+        the manifest does not index, cannot be replaced by an override.
+
+    The middle paragraph names which of three reasons applies:
+
+    - a BOOT CLASS (Class_Override_Boot_Set): the framework declares it while
+      it boots or while the manifest is being built - the autoloader, the
+      manifest, the paths and naming classes, the kernels, Laravel integration,
+      the service providers and *_BundleIntegration / *_ManifestModule classes,
+      and a measured list of single classes;
+    - a class ALREADY DECLARED in the building process ("... was already
+      declared in this process (as ...) before the override map was settled");
+    - a class in a framework directory the manifest DOES NOT INDEX ("... lives
+      in a framework directory the manifest does not index"): the unscanned
+      app/RSpade subtrees (Commands, Ide, ...), the resource/, public/ and
+      hidden directories inside the scanned ones, and system/app/{Console,
+      Database, Exceptions, Http, Notifications, Providers}. Such a file can
+      never be shadowed, and RSX resolves classes by simple name, so the two
+      cannot coexist either.
+
+FATAL - A SPLIT BASE NAMES ITS OWN SHELL IN A SIGNATURE
+
+    A framework rule the build enforces on the framework itself, reported here
+    because an override is what it protects:
+
+        Fatal: User_Permission_Model_Abstract::grant() names its own
+        overridable class User_Permission_Model in its signature.
+
+    An override of X redeclares methods of X_Abstract. PHP compares a
+    redeclared method's signature with its parent's while the override is
+    still being declared - before the framework name X can be its alias - so a
+    parameter or return type spelled X in the base could never link. The base
+    spells such a type X_Abstract, or `static`. On a released framework this
+    never fires; it exists so the framework cannot ship the defect.
+
+FATAL - TWO FILES DECLARE ONE FQCN
+
+    An override declares its class in the namespace its rsx/ path gives it,
+    never in the framework's. An rsx/ file that keeps the framework namespace
+    is a duplicate of the framework class, not an override of it
+    ("Fatal: Duplicate PHP class name ... Both declare ...").
+
+DECLINED - THE rsx/ FILE IS NOT ON DISK
 
     The index names an override that has since been deleted. The stale entry is
-    dropped, the build restarts, and nothing is renamed:
+    dropped and nothing is shadowed:
 
-        [Manifest] Class override pass: ignoring stale index entry for
-        User_Model - rsx/models/user_model.php is in the file list but not on
-        disk. No framework file was archived; dropping the entry and restarting
-        the build.
+        [Manifest] Override pass: ignoring stale index entry for User_Model -
+        rsx/models/user_model.php is in the file list but not on disk.
+        Nothing is shadowed; the entry is dropped.
 
-INFORMATIONAL - THE BUILD ALREADY MARKED ITS OWN MANIFEST BAD
+DECLINED - THE BUILD ALREADY MARKED ITS OWN MANIFEST BAD
 
-    A build that has hit a manifest-fatal has declared its index untrustworthy,
-    and archiving is the one act in this pass it could not take back. Duplicates
-    are still reported; nothing is renamed:
+    A build that has hit a manifest-fatal has declared its file list
+    untrustworthy. It shadows nothing; the two declarations stay in the tree and
+    the class maps report the duplicate:
 
-        [Manifest] Class override pass: NOT archiving a framework twin of
+        [Manifest] Override pass: NOT shadowing the framework php file of
         User_Model - this build already marked its manifest bad, so its file
-        list is not evidence of anything. The rebuild decides.
+        list is not evidence of anything. The next build decides.
 
-    An override that is genuinely present is archived on the next build, with
+    An override that is genuinely present is shadowed on the next build, with
     the ordinary notice above.
+
+## LISTING THE OVERRIDES IN FORCE
+
+    php artisan rsx:overrides:list [--json]
+
+One row per shadowed framework file, read off the manifest's override map: the kind
+(php, js, jqhtml, scss), the declared name, the application file that overrides it
+and the framework file it shadows, paths relative to the project root. A PHP row also
+carries the drift verdict described below - "current", "N missing" (the members are
+named under the table) or "extends base" for a split model, which has nothing to
+drift; the three asset kinds are not analysed. "No class overrides." when there are
+none. Read-only, exit 0, and it works in every mode, sealed builds included. --json
+prints {"overrides": [{kind, name, override_file, framework_file, fqcn, by_fqcn,
+drift: {status: current|missing|extends_base, missing: [...]} | null}]}.
+
+THE EDITOR. The VS Code extension reads the same map through the IDE bridge
+(/_ide/service/overrides). A shadowed framework file is badged in the explorer
+and carries a CodeLens that opens its override, and go-to-definition on the
+class name lands on the override, never on the shadowed file.
 
 ## DRIFT: AN OVERRIDE THAT STOPS CARRYING WHAT UPSTREAM DECLARES
 
-A COPY is frozen the moment it is taken. The framework file it replaced is
-archived to <Name>.php.upstream and keeps moving with every rsx:framework:pull.
-Nothing in PHP relates the two files afterwards, so when the framework adds a
-member to that class and then CALLS it, the call lands on the application's older
-copy, which never had that member.
+A COPY is frozen the moment it is taken. The framework file it replaced stays in
+place, shadowed, and keeps moving with every rsx:framework:pull. Nothing in PHP
+relates the two files afterwards, so when the framework adds a member to that
+class and then CALLS it, the call lands on the application's older copy, which
+never had that member.
 
     CLASS-OVERRIDE-DRIFT-01 (rsx:check)
 
-Names every PUBLIC or PROTECTED member the archived file declares and the
+The analysis pairs each PHP override with the framework file it shadows, read
+where it lies - so it always compares against the framework code currently
+installed. It names every PUBLIC or PROTECTED member the framework file declares
+and the
 override does not - methods static and instance, declared properties, and
 `use Trait;` adoptions (dropping one drops every member the trait supplied). One
 finding per member, naming the class, the member, both file paths, and the
@@ -350,7 +491,11 @@ override, counting the missing members and pointing at rsx:check. It exists
 because the moment drift appears is a framework pull, which is exactly when
 somebody is looking at rsx:health and not at the linter.
 
-A SPLIT MODEL HAS NO DRIFT SURFACE AND IS REPORTED ON BY NEITHER. The archived
+Drift is analysed for PHP classes only. A JS class, template or stylesheet you
+override is listed by rsx:overrides:list with no drift verdict; keeping it in
+step with the framework's version is a manual diff (FRAMEWORK UPDATES).
+
+A SPLIT MODEL HAS NO DRIFT SURFACE AND IS REPORTED ON BY NEITHER. The shadowed
 file declares nothing but `class X extends X_Abstract`, and the override extends
 that same base, so there is no frozen copy to measure: the pair reports nothing
 rather than naming the base's members as absent from a class that has them. An
@@ -377,7 +522,7 @@ no core-model override at all.
 
 WHEN YOU DO COPY A NON-MODEL CLASS, ENUMERATE THE ADDITIONS IN A BANNER at the
 top of the override - one line per item, in the order they appear. A re-clone
-then becomes mechanical: copy the .upstream file over the override, fix the
+then becomes mechanical: copy the framework file over the override, fix the
 namespace, re-apply the list. Without the banner, every re-clone is a diff of a
 file nobody wrote most of.
 
@@ -425,14 +570,14 @@ RECIPE 1 - A CORE MODEL (extend the base)
 3. For each method: replace it outright when the base marks it #[Replaceable];
    otherwise call parent::<same-method>() inside it (PHP-PARENT-CHAIN-01).
 
-4. Load any page, or run the build directly:
-
-        php artisan rsx:manifest:build
+4. Load any page; the build prints the "Override:" line (WHAT THE BUILD
+   PRINTS).
 
 5. Verify the override is active:
 
-        php artisan tinker --execute="echo Manifest::php_find_class('User_Model');"
-        # Output: rsx/models/user_model.php
+        php artisan rsx:overrides:list
+        # php  User_Model  rsx/models/user_model.php
+        #      system/app/RSpade/Core/Models/User_Model.php  extends base
 
 RECIPE 2 - ANY OTHER FRAMEWORK CLASS (copy it)
 
@@ -528,136 +673,140 @@ ADOPTABLE TRAIT.
 
 ## FRAMEWORK UPDATES
 
-When updating with `php artisan rsx:framework:pull`:
+An override leaves nothing under system/ for `php artisan rsx:framework:pull`
+to deal with:
 
-1. The override artifacts (.upstream files, use-header rewrites in framework
-   files) need no special handling. They live inside system/, which the update
-   discards wholesale - there is nothing to distinguish them from, because
-   nothing under system/ is preserved.
-2. The update resets the submodule hard and checks out the new revision, which
-   removes the .upstream files and the rewritten importers along with every
-   other local difference.
-3. Your rsx/ override remains unchanged (rsx/ is never touched by an update).
-4. On the next manifest build, override detection runs again.
-5. The updated framework file is re-renamed to .upstream and the importers
-   are re-rewritten - and re-recorded in the marker store.
+1. The update replaces system/ with the new revision. The framework file your
+   override shadows arrives in its new version, in place, like every other.
+2. Your rsx/ override remains unchanged (rsx/ is never touched by an update).
+3. The next manifest build derives the override map again and the override is
+   in force exactly as before. A shadowed file that changed moves the build key
+   like any other change.
+4. For a PHP copy, CLASS-OVERRIDE-DRIFT-01 and the "Class Override Drift"
+   health row now compare against the new framework file.
 
-No git operations, cleanup passes, or manual resets are involved; the churn
-is erased and recreated as a matter of course. See rsx:man rsx_upstream for
-the full update contract.
+See rsx:man rsx_upstream for the full update contract.
 
 For a MODEL override there is nothing to compare after an update: the base
-arrived with the pull and the override already inherits it. For a COPY, see what
-the framework version gained:
+arrived with the pull and the override already inherits it. For a COPY - and
+for every JS class, template and stylesheet you override - see what the
+framework version gained with a plain diff against the file in place:
 
     diff rsx/lib/file_attachment_icons.php \
-         system/app/RSpade/Core/Files/File_Attachment_Icons.php.upstream
+         system/app/RSpade/Core/Files/File_Attachment_Icons.php
+
+rsx:overrides:list names the framework file of every override.
 
 ## REMOVING AN OVERRIDE
 
-Delete the override file and rebuild:
+Delete the override file:
 
     rm rsx/models/user_model.php
-    php artisan rsx:manifest:build
 
-The restore pass renames User_Model.php.upstream back to User_Model.php on that
-build - an .upstream file whose class no longer has an override in rsx/ is an
-orphan, and restoring it is the first thing the override pass does. Renaming it
-back by hand works too and is never necessary. The same holds for an archived
-.js, .jqhtml or .scss file, each judged on its own: it comes back when no rsx/
-file of the same kind declares its name.
+The next build derives a map without it, prints "Override removed: the
+framework file app/RSpade/Core/Models/User_Model.php is live again", and the
+framework class answers for its own name from then on. There is nothing to
+restore: the framework file never left. The same holds for a .js, .jqhtml or
+.scss override, each judged on its own: the framework file is live again when no
+rsx/ file of the same kind declares its name.
 
 ## HOW REFERENCES KEEP RESOLVING
 
-An override renames the framework file to .upstream, yet code all over the
-framework still refers to the ORIGINAL framework class - by simple name, by
-`use` import, or (rarely) by inline FQCN. Three cooperating layers keep every
-such reference resolving to your override, plus one scoped tolerance that makes
-the composer layer's transient miss harmless.
+The framework file stays on disk, and code all over the framework still names
+the ORIGINAL class - by simple name, by `use` import, by inline FQCN, in a type
+hint. Every one of those reaches your override, in every mode, sealed builds
+included, through one mechanism: THE CLASS OVERRIDE LOADER.
 
-1. MANIFEST SIMPLE-NAME LOADER + USE-FIXER
+IT IS PREPENDED, AHEAD OF COMPOSER
 
-    RSX enforces unique simple class names, so the manifest indexes classes by
-    simple name and the RSX autoloader (a separately registered spl loader)
-    resolves `User_Model` to whichever file currently defines it - your rsx/
-    class after an override. When it loads that file it also class_alias()es the
-    requested FQCN (e.g. App\RSpade\Core\Models\User_Model) to the actual class
-    (Rsx\Models\User_Model), so the old fully-qualified name keeps working. The
-    manifest's Php_Fixer additionally rewrites `use` statements to point at the
-    rsx/ location before the rename happens, so imports never dangle.
+    Composer maps every framework class twice over (its optimised classmap and
+    the App\ => app/ PSR-4 rule), and the framework file is still there, so
+    composer would load it the moment it was asked. The override loader is
+    therefore registered IN FRONT of composer, from a composer `files` entry
+    (system/app/RSpade/autoload_overrides.php) - the earliest point artisan,
+    the web front controller, system/script.php and every spawned script share.
+    It reads build/manifest/class_overrides.php and is moved back to the front
+    once the framework has booted, behind nothing that prepended itself since.
 
-    IT REWRITES, IN EVERY MODE, AND NEVER DELETES (backlog B-108, fixed
-    2026-09-08). While the fixer runs, BOTH copies of the class are still in the
-    file map - the archive happens later in the same build - and the rsx/ entry
-    wins DETERMINISTICALLY, not by hash order. An import naming the framework
-    FQCN is repointed at the rsx/ FQCN; an import that already names it is left
-    alone. Framework-developer mode is not an exception: it used to DELETE the
-    import instead, on the reasoning that the autoloader finds the class without
-    one. It does - at RUNTIME. What it cannot do is satisfy PHP's compile-time
-    signature-compatibility check, which does not autoload, so a framework file
-    that TYPE-HINTS an overridden class in an inherited signature died at boot
-    with "Could not check compatibility between ...", unrecoverably: no build
-    could run to undo the edit.
+IT ANSWERS EXACT KEYS ONLY
 
-    A framework file therefore MAY carry an `Rsx\` import, but only for a name
-    that overrides a framework class. The re-add pass allows exactly that set,
-    so the delete pass and the re-add pass agree and neither undoes the other on
-    the next build.
+    The loader answers for an exact framework FQCN in the override map and for
+    nothing else: one array lookup, then it declines. Asked for
+    App\RSpade\Core\Models\User_Model, it includes rsx/models/user_model.php and
+    makes the framework FQCN a class_alias() of Rsx\Models\User_Model. Every
+    other class - framework, vendor or application - loads exactly as it would
+    with no override. (The RSX simple-name autoloader stays behind composer:
+    placed in front, it would answer any vendor class whose simple name matches
+    an application class.)
 
-    A SPLIT MODEL's base is never overridden, so its own FQCN
-    (App\RSpade\Core\Models\User_Model_Abstract) is stable and every framework
-    import of it is left alone. The application's file needs no import for it
-    either: the simple-name loader resolves the parent when the class is loaded.
+THE ALIAS EXISTS FROM THE MOMENT YOUR CLASS DOES
 
-2. COMPOSER CLASSMAP + THE REBUILD VALIDATOR/DUMP
+    A run-time type check never autoloads: a framework method typed
+    `User_Model $user` handed an Rsx\Models\User_Model throws a TypeError
+    unless the framework name is ALREADY an alias. So the alias is made twice
+    over: the moment an override's file is included (by any loader), and
+    eagerly for every override when the framework boots. instanceof, catch and
+    is_a() against the framework name hold before anything has asked for it.
 
-    Composer's committed classmap (vendor/composer/autoload_classmap.php) is a
-    static file. The instant an override renames a framework file to .upstream,
-    that classmap is stale: it still maps the framework FQCN to the now-missing
-    .php path. Composer's ClassLoader returns a classmap entry WITHOUT checking
-    the file exists and then bare-`include`s it - a missing-file include is a PHP
-    warning that returns false, after which spl_autoload falls through to the RSX
-    loader in layer 1. So the miss is self-correcting at runtime.
+COMPOSER IS DISARMED, IN MEMORY
 
-    To keep the on-disk data honest, the manifest rebuild - immediately after the
-    override rename/restore pass settles - validates the classmap against the
-    filesystem and, if any entry points at a missing file, runs a blocking
-    `composer dump-autoload` to regenerate it. This is dev/rebuild-only work
-    (sealed prod builds never auto-rebuild, and rsx:build already regenerates
-    the composer autoloader). After the dump, composer no longer maps the stale
-    FQCN and resolution goes cleanly through PSR-4 miss -> layer 1.
+    For each overridden name, composer's live classmap entry is pointed at a
+    trip-wire file (system/app/RSpade/autoload_overrides_tripwire.php), in
+    memory only - nothing under vendor/ is written. Composer is only ever asked
+    for such a name when the loader order has been broken, and then the request
+    throws, naming the class, instead of silently loading the framework file
+    (TROUBLESHOOTING). Including a shadowed framework file by path is refused
+    the same way.
 
-3. RSX FALLBACK LOADER + FQCN ALIASING
+THE SIGNATURE CHECK AUTOLOADS
 
-    When composer declines (or misses), the RSX autoloader takes over: it looks
-    up the simple name in the manifest, requires the real file, and class_alias()es
-    the requested FQCN to it. This is the layer that ultimately makes the old
-    framework FQCN an alias of your override.
+    PHP's signature-compatibility check - run when a class that redeclares an
+    inherited method is declared - DOES autoload the classes the two signatures
+    name. So a framework class whose inherited signature says User_Model, under
+    its own unmodified `use App\RSpade\Core\Models\User_Model` import, links
+    against your override: the check asks for the framework name and the
+    loader answers with the alias. No framework file is ever rewritten to make
+    an override work.
 
-SCOPED INCLUDE-WARNING TOLERANCE (why this is not a fail-loud violation)
+    The one case it cannot serve is a split base naming its OWN shell. Declaring
+    your User_Model, which redeclares a method of User_Model_Abstract, makes the
+    check ask for User_Model while your class is still being declared - before
+    the alias can exist. That is why a framework base spells such a type as
+    X_Abstract or `static`, and why the build refuses a base that does not
+    (WHEN THE BUILD REFUSES). If the same thing happens through some other
+    framework ancestor, the loader throws "... cannot be resolved while ... is
+    still being declared"; spell the type in your override exactly as the
+    framework does.
 
-    Layer 2's "harmless" include warning is only harmless if it stays a warning.
-    Laravel's HandleExceptions promotes warnings to fatal ErrorExceptions, which
-    would abort the autoload mid-flight before layer 3 ever runs. The RSX
-    autoloader therefore installs a scoped error-handler carve-out that swallows
-    EXACTLY the include/include_once warning originating from composer's
-    vendor/composer/ClassLoader.php (identified by the error's file path). Every
-    other warning, every other error level, and warnings from any other file keep
-    their existing fail-loud behavior by delegating to the previous handler. If
-    the RSX loader ALSO cannot resolve the class, PHP's normal "Class not found"
-    fatal still fires - loud and accurate.
+UN-OVERRIDABLE CLASSES, AND WHY
 
-    This is a narrow tolerance for one well-understood, self-correcting composer
-    behavior, not a silent fallback: the RSX fallback+alias layer is the intended
-    resolver, and the only thing suppressed is composer's misleading fatal.
+    An alias can only be made for a name nothing has declared yet. A class the
+    framework declares before the override loader can answer - required by
+    path while the framework boots, or loaded by the manifest build before the
+    override map is settled - can never become one in that process, and a class
+    in a directory the manifest does not index can never be shadowed at all.
+    The build refuses an override of any of them (WHEN THE BUILD REFUSES).
+
+A SPLIT MODEL's base is never overridden, so its own FQCN
+(App\RSpade\Core\Models\User_Model_Abstract) is stable and every framework
+import of it resolves to the framework base. Your file needs no import for it:
+the RSX autoloader resolves the parent by simple name when the class is loaded.
 
 ## HYGIENE INVARIANT
 
-Framework code should prefer `use` imports (which the Php_Fixer maintains) over
-inline `\App\RSpade\...\Class` FQCNs. With the tolerance + validator in place an
-inline FQCN to an overridden class no longer crashes, but imports keep the
-dependency graph legible and grep-able. Inline FQCNs are hygiene debt, not a
-correctness bug.
+NOTHING UNDER system/ IS EVER WRITTEN FOR AN OVERRIDE. Not by the build, not by
+the fixer, not by the loader: the framework file is not renamed, no framework
+import is rewritten, and composer's files are not touched (its classmap is
+disarmed in memory). The override map lives in build/, the override in rsx/. A
+framework file's `use` import, inline FQCN or type hint naming an overridden
+class is correct as written and resolves to your override. A sealed build of a
+tree with overrides leaves system/app and system/config exactly as git checked
+them out, and that is asserted by the framework's production-mode acceptance
+test.
+
+A sealed build does run `composer dump-autoload`, which writes
+system/vendor/composer/ on its own account; that dump knows nothing about
+overrides and is neither caused nor needed by one (rsx:man prod).
 
 A second invariant belongs to the split: a member of a core model is DECLARED ON
 THE BASE. The shell is never where a member goes - the framework's own change to
@@ -667,17 +816,22 @@ shell declares anything or a base ships without exactly one concrete.
 
 ## LIMITATIONS
 
-- Only works for classes in rsx/ overriding app/RSpade/ classes
-- Both files must define the same simple class name
+- Only works for files in rsx/ overriding framework files the manifest indexes
+- Both files must declare the same name (class, component or wrapper class)
 - Cannot override multiple framework classes with one file
 - A core MODEL cannot be overridden by copying - the override must extend
   <Name>_Model_Abstract, and a copy is refused at manifest build
 - The ABSTRACT BASE of a split model is not overridable: an rsx/ class named
-  X_Model_Abstract would archive the base itself, which is the implementation.
+  X_Model_Abstract would shadow the base itself, which is the implementation.
   Override the concrete, which is what the shell is for
 - A JS class, a jqhtml template and a stylesheet are each overridden by name,
-  file by file (JAVASCRIPT CLASSES, TEMPLATES AND STYLESHEETS above); the
-  framework's own /_sys and /apidocs bundles do not pick the replacement up
+  file by file (JAVASCRIPT CLASSES, TEMPLATES AND STYLESHEETS above), and every
+  bundle - the framework's own included - compiles the replacement (BUNDLES)
+- An overridden PHP class is global: the /_sys panel, the framework's commands
+  and every task run your class, exactly as the application does
+- Classes the framework declares while it boots or while the manifest builds,
+  and classes in directories the manifest does not index, cannot be overridden
+  (WHEN THE BUILD REFUSES)
 - Framework ARTISAN COMMANDS are not overridable, by design. An application
   writes no command classes at all (rsx:man task_commands - a named command is
   a #[Command] on a #[Task]), and a Laravel command needs an instance handle()
@@ -688,16 +842,58 @@ shell declares anything or a base ships without exactly one concrete.
 
 ### Override not detected
 
-Ensure class names match exactly. Check with:
+Run php artisan rsx:overrides:list. A missing row means the two files do not
+declare the same name; check them:
 
     grep -r "^class " rsx/models/user_model.php
     grep -r "^class " system/app/RSpade/Core/Models/User_Model.php
+
+If the build printed either of the DECLINED lines under WHEN THE BUILD REFUSES,
+it is telling you why: a stale-entry line means the rsx/ file it names is not
+where the index thinks it is; a bad-manifest line means an earlier failure in
+the same build has to be fixed first. The map is derived in full on every
+build, so a clean build cannot change the answer.
 
 ### "Invalid override of the split framework class"
 
 The override of a core model is a copy, or extends the wrong parent. Rewrite it
 as `class X_Model extends X_Model_Abstract` carrying only the members it changes;
 the message names both the file and the required base. See WHEN THE BUILD REFUSES.
+
+### "'X' cannot be overridden"
+
+The framework class is a boot class, was already declared while the manifest
+was building, or lives in a directory the manifest does not index. No override
+of it can work; rename the application class. If the behaviour you need lives
+in such a class, that is a framework change request (rsx:man
+framework_debug_and_contrib).
+
+### "... is overridden by ..., but composer was asked for it before the class override loader"
+
+The trip-wire. The override loader must be first on the autoload stack, and in
+this process something answered ahead of it: an autoloader registered with
+prepend after the framework booted, or a process that loaded composer's
+ClassLoader without its `files` entries. Composer would have loaded the
+framework class and bypassed your override, so the request throws instead. Find
+the spl_autoload_register(..., true, true) call or the entrypoint that loads
+the class loader by hand.
+
+### "... was already declared as ... before the override could answer for it"
+
+The framework class was declared under its own name before the loader could
+alias it - something required the framework file by path, or loaded it before
+the override map was read. In this process no alias can ever be made. A
+framework file included by path while it is shadowed is refused outright
+("Refusing to include ...: it declares ..., which the application overrides").
+
+### "... cannot be resolved while ... is still being declared"
+
+Your override redeclares a method whose signature in a framework ancestor names
+the very class you override. PHP's signature check autoloads that name while
+your class is still being declared, before it can be the alias (HOW REFERENCES
+KEEP RESOLVING, THE SIGNATURE CHECK AUTOLOADS). A framework split base never
+does this, and the build refuses one that does; for any other ancestor, spell
+the type in your override exactly as the framework does.
 
 ### "must call parent::" after rewriting an override onto the base
 
@@ -710,30 +906,20 @@ framework_debug_and_contrib), not an escape hatch.
 ### Missing methods after overriding a non-model class
 
 A copy replaces the entire class. Copy the missing functionality from the
-.upstream file. If the member exists upstream and not in the copy,
-CLASS-OVERRIDE-DRIFT-01 already named it - see DRIFT above. A model override does
-not have this failure mode: it inherits.
-
-### Framework file not renamed
-
-Read the build output first - if it printed either of the informational lines
-under WHEN THE BUILD REFUSES, it is telling you why. A stale-entry line means the
-rsx/ file it names is not where the index thinks it is; a bad-manifest line means
-an earlier failure in the same build has to be fixed first.
-
-Otherwise, run a clean manifest build:
-
-    php artisan rsx:manifest:build --clean
+framework file it shadows (rsx:overrides:list names it). If the member exists
+upstream and not in the copy, CLASS-OVERRIDE-DRIFT-01 already named it - see
+DRIFT above. A model override does not have this failure mode: it inherits.
 
 ### A framework class disappeared and nothing explains it
 
-It was not this system. Every archive prints a line naming both files; search
-the build output for "Class override:". An absent notice means the file left
-some other way.
+It was not this system. Every shadowing prints a line naming both files; search
+the build output for "Override:", or run rsx:overrides:list. An absent row
+means the class left some other way.
 
 ## SEE ALSO
 
 rsx:man rsx_upstream - Framework update management
+rsx:man bundle_api - how a bundle reaches an overridden file
 rsx:man model - Model documentation, and where a model's members live
 rsx:man model_fetch - fetch() as a read gate rather than an override
 rsx:man file_upload - Staff_Authorizable, the staff row-visibility seam

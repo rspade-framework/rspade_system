@@ -50,9 +50,9 @@ fx_run status --porcelain
 fx_refute_out "rsx:git"
 
 # ---- 4. A DIRTY SUBMODULE is hidden by .gitmodules ignore=dirty, not by the proxy. ---
-# The manifest build renames .php <-> .php.upstream inside system/ constantly; without
-# ignore=dirty every status in every downstream project would report ` M system` forever
-# for churn that regenerates itself. This is git's configuration doing the work - the
+# A production rsx:build re-dumps composer's autoloader into the tracked
+# system/vendor/composer/; without ignore=dirty every status after such a build would
+# report ` M system` for churn the next build rewrites. This is git's configuration doing the work - the
 # proxy has no pathspec tricks any more.
 printf 'churn\n' > "$PROJECT/system/app/RSpade/scratch_churn.php"
 fx_run status --porcelain

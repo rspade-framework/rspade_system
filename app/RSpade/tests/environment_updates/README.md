@@ -42,6 +42,9 @@ Two properties are easy to get wrong and are therefore covered directly:
   quick-start clone line, rewritten to the project's own `origin`. Downstream only, and
   authorized ONLY by byte identity with the pristine copy shipped at
   `system/app/RSpade/resource/starter/README.md`.
+- `system/bin/environment_updates/130_restore_override_archives.sh` - restores the framework
+  files an earlier class-override pass archived as `<file>.upstream` (from git, when
+  missing) and deletes the archives. Downstream only; retirable.
 
 `040_claude_git_guard.sh` is covered by the `git_proxy` concern (it installs the guard
 that redirects a bare `git` to the proxy), and the manifest-build trigger by the
@@ -66,6 +69,7 @@ that redirects a bare `git` to the proxy), and the manifest-build trigger by the
 | `post-update.sh --quiet`: informational gone, problems kept | cli | yes (t5) |
 | Submodule pointer visibility: .gitmodules ignore + the blanket unset (080) | cli | yes (t6) |
 | README clone-line personalization: pristine gate, origin/placeholder, starter no-op (090) | cli | yes (t7) |
+| Override archives: restore a missing tracked file, drop a stale archive, leave vendor/ and an untracked archive alone (130) | cli | yes (t11) |
 | The downstream memory import 060 prepends to `rsx/resource/CLAUDE.md` | cli | no (planned) |
 | The other installers (010 statusline, 050 post-commit, 061 rsx symlink) | cli | no (planned) |
 

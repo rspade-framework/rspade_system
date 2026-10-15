@@ -38,7 +38,6 @@ class ExtensionRegistry
      */
     protected const CORE_EXTENSIONS = [
         'php' => ['priority' => 100],
-        'php.upstream' => ['priority' => 101],  // Framework files renamed during class override
         'js' => ['priority' => 200],
         'jsx' => ['priority' => 200],
         'ts' => ['priority' => 200],

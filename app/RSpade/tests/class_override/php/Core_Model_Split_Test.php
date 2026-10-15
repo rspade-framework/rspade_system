@@ -131,8 +131,8 @@ class Core_Model_Split_Test extends Rsx_Test_Abstract
      * Every concrete model in the tree, framework AND application, fixtures excluded.
      *
      * The application half matters for the one-concrete-per-base assertion: a shell an
-     * application has overridden is archived, so the framework has no concrete for that base
-     * any more and the APPLICATION's class is the one and only concrete. That is the override
+     * application has overridden is shadowed - out of the live index, which php_get_extending()
+     * reads - so the APPLICATION's class is the one and only concrete for that base. That is the override
      * working, not a defect.
      *
      * @return array<string, string>

@@ -21,8 +21,8 @@ use App\RSpade\Core\Rsx;
  *   1. .gitmodules carrying no `ignore` for the submodule. `git submodule add` writes
  *      path/url/branch only, so a project CONVERTED from the old vendored layout inherits
  *      the default `none`, which reports the submodule modified on any working-tree change
- *      inside it. system/ is permanently dirty with build churn (.php <-> .php.upstream
- *      renames applied by the manifest build), so `none` means ` M system` forever.
+ *      inside it. A production rsx:build re-dumps composer's autoloader into the tracked
+ *      system/vendor/composer/, so `none` means ` M system` after every such build.
  *
  *   2. A repo-wide `[diff] ignoreSubmodules` in .git/config - the natural answer to that
  *      noise. The value operators reach for is `all`, which suppresses submodule reporting

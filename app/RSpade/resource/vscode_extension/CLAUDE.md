@@ -109,6 +109,14 @@ Code applies `files.watcherExclude`. Excluding a directory in
 second exclusion list inside the extension.** `fs.existsSync` / `fs.statSync` on
 a single already-known path is not enumeration and needs no such handling.
 
+**Class overrides are read from the bridge too.** `override_map.ts` holds the manifest's
+override map (`/_ide/service/overrides`: shadowed framework file -> the `rsx/` file that
+overrides it), refreshed on bridge reconnect and on `rsx/` source-file events - never on a
+timer. It badges and lenses a shadowed framework file, and every definition provider passes
+its result through `effective_location()` / `effective_uri()` so a jump never lands on code
+that does not run. A provider that finds a location by any route other than the bridge (the
+jqhtml extension's index, `findFiles`) must do the same.
+
 `symlink_redirect_provider.ts` resolves `fs.realpathSync` rather than matching
 known symlink names, so a file opened through ANY in-workspace symlink redirects
 to its real path. `system/rsx/` is the worked example; in this monorepo

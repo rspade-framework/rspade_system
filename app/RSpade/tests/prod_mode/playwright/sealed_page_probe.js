@@ -24,6 +24,13 @@
  * A path given as `@landing` is the page the sign-in redirected to - whatever this
  * application's signed-in home is.
  *
+ * AN ANONYMOUS PAGE FIRST, when PROBE_ANON_PATH and PROBE_ANON_MARKER are set: before it
+ * signs in, the probe renders PROBE_ANON_PATH as a visitor with no session and checks that
+ * it answers 200, reports no error, and that its rendered DOM carries PROBE_ANON_MARKER -
+ * the lifecycle's proof that a component an application overrides is what the sealed
+ * bundle draws. Whatever session that visit opened is discarded before the sign-in, which
+ * starts, as a person's does, with none.
+ *
  * FOR EVERY PAGE: the document answers 200; the page reports no error; rsxapp.build_key is
  * the state key and rsxapp.code_key the code key it was told to expect; and when the page
  * carries a field-length script tag, the tag carries that state key and the script has
@@ -47,6 +54,8 @@ const { chromium } = require(path_module.resolve(__dirname, '../../../../../node
 const [app_host, expected_state_key, expected_code_key, ...paths] = process.argv.slice(2);
 const email = process.env.PROBE_EMAIL || '';
 const password = process.env.PROBE_PASSWORD || '';
+const anon_path = process.env.PROBE_ANON_PATH || '';
+const anon_marker = process.env.PROBE_ANON_MARKER || '';
 
 if (!app_host || !expected_state_key || !expected_code_key || paths.length === 0 || !email || !password) {
     console.log('FAIL: usage - PROBE_EMAIL=.. PROBE_PASSWORD=.. node sealed_page_probe.js <app host> <state key> <code key> <path>...');
@@ -222,13 +231,39 @@ async function probe_page(context, path) {
     await page.close();
 }
 
+/**
+ * Render one page as an anonymous visitor and look for the marker in what it drew.
+ */
+async function probe_anonymous_page(context, path, marker) {
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+    page.on('console', (msg) => {
+        // The realtime socket: see the file header.
+        if (msg.type() === 'error' && !/WebSocket|wss:\/\//.test(msg.text())) {
+            errors.push(msg.text());
+        }
+    });
+
+    const response = await page.goto(ORIGIN + path, { waitUntil: 'load', timeout: 0 });
+    const status = response ? response.status() : 0;
+    check(status === 200, path + ' (anonymous) answered 200', 'answered ' + status);
+
+    if (status === 200) {
+        await page.waitForLoadState('networkidle', { timeout: 0 });
+
+        const has_marker = await page.evaluate((needle) => document.documentElement.innerHTML.includes(needle), marker);
+        check(has_marker, path + ' (anonymous) rendered the overriding component (marker ' + marker + ')');
+        check(errors.length === 0, path + ' (anonymous) reported no error', errors.join(' | '));
+    }
+
+    await page.close();
+}
+
 (async () => {
     let browser = null;
 
     try {
-        const landing = await sign_in();
-        check(true, 'signed in through /login (landed on ' + landing + ')');
-
         browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
         const context = await browser.newContext({ ignoreHTTPSErrors: true });
 
@@ -251,6 +286,14 @@ async function probe_page(context, path) {
 
             await route.fulfill({ status: answer.status, headers, body: answer.body });
         });
+
+        if (anon_path !== '' && anon_marker !== '') {
+            await probe_anonymous_page(context, anon_path, anon_marker);
+            session_cookie = null;
+        }
+
+        const landing = await sign_in();
+        check(true, 'signed in through /login (landed on ' + landing + ')');
 
         for (const path of paths) {
             await probe_page(context, path === '@landing' ? landing : path);

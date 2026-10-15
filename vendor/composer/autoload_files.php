@@ -51,4 +51,5 @@ return array(
     '320163ac6b93aebe3dc25b60a0533d56' => $vendorDir . '/spatie/laravel-ignition/src/helpers.php',
     'b4e3f29b106af37a2bb239f73cdf68c7' => $baseDir . '/app/helpers.php',
     'b7e40b7021511797ece06a57cd5e8bd0' => $baseDir . '/app/RSpade/helpers.php',
+    '3dd2346c0363f34b1d995f1c1b5cad9d' => $baseDir . '/app/RSpade/autoload_overrides.php',
 );

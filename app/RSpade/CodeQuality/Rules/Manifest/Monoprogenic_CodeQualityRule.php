@@ -117,12 +117,6 @@ class Monoprogenic_CodeQualityRule extends CodeQualityRule_Abstract
         // Step 1: Find all classes with Monoprogenic attribute
         $monoprogenic_classes = [];
         foreach ($files as $file => $file_metadata) {
-            // Skip .upstream files - they are framework files overridden by rsx/
-            $extension = $file_metadata['extension'] ?? '';
-            if ($extension === 'php.upstream') {
-                continue;
-            }
-
             if (isset($file_metadata['attributes']['Monoprogenic'])) {
                 $fqcn = $file_metadata['fqcn'] ?? null;
                 if ($fqcn) {
@@ -148,12 +142,6 @@ class Monoprogenic_CodeQualityRule extends CodeQualityRule_Abstract
     {
         // Find all classes that extend from any Monoprogenic class
         foreach ($files as $file => $metadata) {
-            // Skip .upstream files - they are framework files overridden by rsx/
-            $extension = $metadata['extension'] ?? '';
-            if ($extension === 'php.upstream') {
-                continue;
-            }
-
             $fqcn = $metadata['fqcn'] ?? null;
             if (!$fqcn || !class_exists($fqcn)) {
                 continue;

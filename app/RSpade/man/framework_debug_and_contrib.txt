@@ -703,9 +703,8 @@ SUBSYSTEM PRIMERS
     hash. The EXTENSION decides what further parsing happens:
 
         .php            token-parsed for namespace/class/extends/implements;
-                        in non-production the file may be rewritten in place
-                        by the PHP fixer, and is then re-parsed
-        .php.upstream   parsed for class metadata only; never rewritten
+                        in non-production an rsx/ file may be rewritten in
+                        place by the PHP fixer, and is then re-parsed
         .externals.php  indexed, deliberately kept out of every PHP code path
         .blade.php      view id, @rsx_id, sections, @extends
         .js             classes, extends, imports/exports, decorators
@@ -714,17 +713,17 @@ SUBSYSTEM PRIMERS
                         its integration's service provider
 
     THE PHASES. One driver, Manifest::_refresh_manifest(), in Core/Manifest/.
-    It can RESTART itself (a goto to the top) when a class override renames a
-    file out from under it, when it finds a stale index entry, or when a
-    code-quality auto-rename fires.
+    It can RESTART itself (a goto to the top) when a code-quality auto-rename
+    fires - the one act of a build that moves a file.
 
         1  Collect files. Recursive scan, exclusions, change set computed
            from mtime and size into a changed-files list.
         2  Parse tokens. Deleted files dropped; changed files parsed WITHOUT
            being loaded; every class reference normalised to its simple name;
            the PHP fixer rewrites namespaces, use statements and inline
-           FQCNs; then the class-override pass runs and may restart the
-           build; then the composer classmap is validated.
+           FQCNs (in rsx/ only - a framework file is fixed only in the
+           framework's own development tree); then the override map is
+           derived and every shadowed framework file leaves the live index.
         3  Load dependencies. The changed PHP is required, parents before
            children, so that reflection can run in phase 4.
         4  Reflect. Class attributes and PUBLIC STATIC METHOD attributes,
@@ -771,39 +770,45 @@ SUBSYSTEM PRIMERS
     the load-bearing invariant of the framework. A duplicate simple name that
     is not a valid class override is a hard build failure.
 
-    The autoloader also installs a narrow error-handler carve-out: it
-    swallows exactly the E_WARNING raised from composer's own ClassLoader.php
-    when composer bare-includes a classmap entry whose file the override pass
-    renamed away. Everything else delegates to the previously registered
-    handler. Without it Laravel promotes that warning to a fatal mid-autoload
-    and the RSX loader never gets its turn. It is scoped to one file and one
-    warning - not a fallback.
+    One loader sits IN FRONT of composer: the class override loader
+    (Core/Overrides/Class_Override_Loader.php, registered from a composer
+    `files` entry). It answers only the exact framework FQCNs the
+    application overrides, aliasing each to the application's class; every
+    other name falls through to composer and then the RSX autoloader
+    unchanged.
 
     CLASS OVERRIDES. Declare a class of the same simple name in rsx/. A core
     MODEL is a base plus an empty shell, and the override EXTENDS the base
     (class X_Model extends X_Model_Abstract) declaring only what it changes;
     every other framework class is COPIED. Extending the class you are
-    overriding is a hard build error in both shapes. During phase 2 the
-    framework twin is renamed to <file>.php.upstream, dropped from the index,
-    and the build restarts. Every archive prints a line naming the class and
-    both paths, so a class can never leave the build silently. If your rsx/
-    copy disappears, the .upstream file is renamed back.
+    overriding is a hard build error in both shapes. At the end of phase 2
+    the build derives the override map from scratch: the framework file
+    stays exactly where it is, SHADOWED - out of the live index, never
+    loaded, never compiled into a bundle - and the class override loader
+    answers its FQCN with your class. The build that first shadows a file
+    prints a line naming both paths, so a class can never leave the build
+    silently; delete your rsx/ copy and the next build prints that the
+    framework file is live again. php artisan rsx:overrides:list shows every
+    override in force.
 
-    Four refusals exist. Two are FATAL and name the offending file: the rsx/
-    class extends the class it replaces, and an override of a SPLIT model
-    that does not extend that model's base (a copy of the framework file is a
-    second implementation of a class the framework keeps developing - the
-    exact failure the split ends). Two are informational and each prints its
-    own line: the rsx/ twin is not actually on disk (a stale index entry -
-    dropped, build restarts, nothing renamed), and the manifest is already
-    poisoned (its file list is not evidence). That last one exists because a
-    poisoned index once archived brand-new framework classes as twins of
-    deleted rsx/ copies.
+    The same mechanism covers JS classes, jqhtml templates and stylesheets,
+    each matched by the name it declares and overridden file by file, and
+    every bundle - the framework's own included - compiles your file in
+    place of the one it shadows.
 
-    The .upstream churn lives inside system/, so a framework pull discards it
-    and the next build recreates it. It is always-local state; it is never
-    committed. JavaScript has no override mechanism at all - a duplicate JS
-    class name is simply fatal.
+    The refusals are FATAL and name the offending files: the rsx/ class
+    extends the class it replaces; an override of a SPLIT model that does
+    not extend that model's base (a copy of the framework file is a second
+    implementation of a class the framework keeps developing - the exact
+    failure the split ends); two rsx/ files declaring one name; and an
+    override of a class the framework declares before an override can
+    answer, or that lives where the manifest does not index. Two situations
+    decline instead, each with its own line: the rsx/ file is not actually
+    on disk (a stale index entry - dropped, nothing shadowed), and the
+    manifest is already poisoned (its file list is not evidence).
+
+    Nothing under system/ is written for an override, so there is nothing
+    for a framework pull to discard and nothing to commit.
 
     WHEN A REBUILD HAPPENS. Manifest::init() is the only entry point; there
     is no public rebuild(). In DEVELOPMENT it validates the cache and, if

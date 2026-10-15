@@ -76,6 +76,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { IdeBridgeClient } from './ide_bridge_client';
+import { effective_location } from './override_map';
 import {
     Auth_Realm,
     CLASS_NAME_FRAGMENT,
@@ -731,7 +732,8 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
 
         // 5. Return the location
         console.log('[JQHTML Component] Returning location:', component_def.uri.fsPath, 'at position', component_def.position);
-        return new vscode.Location(component_def.uri, component_def.position);
+        // The JQHTML index is the jqhtml extension's own and knows nothing of overrides.
+        return effective_location(new vscode.Location(component_def.uri, component_def.position));
     }
 
     /**
@@ -982,7 +984,7 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
             // Clear any error status on successful navigation
             this.clear_status_bar();
 
-            return new vscode.Location(fileUri, position);
+            return effective_location(new vscode.Location(fileUri, position));
         }
         return undefined;
     }
@@ -1173,10 +1175,10 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
             if (!entry || typeof entry.file !== 'string') {
                 continue;
             }
-            locations.push(new vscode.Location(
+            locations.push(effective_location(new vscode.Location(
                 vscode.Uri.file(path.join(rspade_root, entry.file)),
                 new vscode.Position(Math.max(0, (entry.line ?? 1) - 1), 0)
-            ));
+            )));
         }
 
         if (locations.length === 0) {

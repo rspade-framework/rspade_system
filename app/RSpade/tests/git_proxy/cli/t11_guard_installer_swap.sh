@@ -1,8 +1,8 @@
 #!/bin/bash
 # t11: the environment update that swaps the RETIRED pre-pull guard for the git guard.
-# The old guard told the agent to run rsx:clean and then pull, which deadlocks on a live
-# box (the class-override churn returns before the pull's index write lands), so it must
-# be REMOVED, not left beside the new one. Foreign hooks are never touched.
+# The old guard told the agent to run rsx:clean and then pull by hand - work rsx:git now
+# does itself - so it must be REMOVED, not left beside the new one. Foreign hooks are
+# never touched.
 
 TEST_NAME="git_proxy/cli t11 guard installer swap"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

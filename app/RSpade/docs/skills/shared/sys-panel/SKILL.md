@@ -47,9 +47,9 @@ both directions, keyed on the file's path:
 
 The `rsx/` direction is not cosmetic. A `_`-prefixed class in `rsx/` that
 matches a framework one is read by the manifest as a **class override**: the
-framework's file is archived as `.upstream` and your copy is served instead,
-with nothing reported anywhere. The panel would look like it had changed on its
-own. That silent-shadowing failure is why the rule refuses rather than warns.
+framework's file is shadowed and your copy is served instead - in the panel's
+own bundles too - with nothing reported beyond the build's one-line override
+notice. The panel would look like it had changed on its own. That silent-shadowing failure is why the rule refuses rather than warns.
 
 Fix for either direction: rename. The violation text names the exact new name.
 

@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Manifest;
 
 use App\RSpade\Core\Kernels\ManifestKernel;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Manifest\Manifest_Overrides;
 use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
@@ -187,6 +188,10 @@ class Manifest_Store
     *
     * The hot entries WIN the merge: they are the same records, and a hot entry is what a
     * rebuilding process has already updated in memory.
+    *
+    * The cold file also carries the records of the framework files an application overrides
+    * (Manifest_Overrides). They are told apart by the HOT override map - its keys are exactly
+    * the shadowed paths - and go to `shadowed_files`, never into `files`.
     */
     public static function _load_cold_files(): void
     {
@@ -212,8 +217,12 @@ class Manifest_Store
             return;
         }
 
+        $overrides = Manifest::$data['data']['overrides'] ?? [];
+        $shadowed = array_intersect_key($cold, $overrides);
+
         // '+' keeps the left operand's entries for duplicate keys - the hot half wins.
-        Manifest::$data['data']['files'] = Manifest::$data['data']['files'] + $cold;
+        Manifest::$data['data']['files'] = Manifest::$data['data']['files'] + array_diff_key($cold, $overrides);
+        Manifest::$data['data']['shadowed_files'] = $shadowed;
     }
 
     /**
@@ -315,6 +324,24 @@ class Manifest_Store
             }
         }
 
+        // The framework files an application overrides are files of the tree all the same:
+        // INDEXED (so change detection never mistakes one for a new file), written to the cold
+        // half, and never part of the hot `files` a request reads.
+        ksort(Manifest::$data['data']['shadowed_files']);
+
+        foreach (Manifest::$data['data']['shadowed_files'] as $path => $meta) {
+            if (!$strict_prod) {
+                $file_index[$path] = [$meta['size'] ?? 0, $meta['mtime'] ?? 0];
+            } else {
+                unset($meta['mtime'], $meta['size']);
+            }
+
+            $cold_files[$path] = $meta;
+        }
+
+        ksort($file_index);
+        ksort($cold_files);
+
         Manifest::$data['data']['file_index'] = $file_index;
 
         // SECTION ORDER IS CONTENT, NOT HISTORY. A cold build inserts the derived sections in
@@ -334,7 +361,7 @@ class Manifest_Store
         // The hot payload: every derived section, the file index, and the hot files only.
         $hot = Manifest::$data;
         $hot['data']['files'] = $hot_files;
-        unset($hot['data']['routes_by_target'], $hot['data']['portal_routes_by_target']);
+        unset($hot['data']['routes_by_target'], $hot['data']['portal_routes_by_target'], $hot['data']['shadowed_files']);
 
         $header = "// Generated manifest index - DO NOT EDIT\n"
             . '// Files: ' . count($file_index) . ' (' . count($hot_files) . " hot)\n"
@@ -342,6 +369,14 @@ class Manifest_Store
 
         self::_write_php_literal($cold_file, $cold_files, "// Generated manifest file metadata - DO NOT EDIT\n\n");
         self::_write_php_literal($cache_file, $hot, $header);
+
+        // The class override map, read by every process BEFORE boot (the composer `files`
+        // entry app/RSpade/autoload_overrides.php). Written on every pass, empty included, so
+        // the build always carries one and the seal can pin it.
+        \App\RSpade\Core\Overrides\Class_Override_Loader::write_artifact(
+            Manifest::build()->class_overrides_file_path(),
+            Manifest_Overrides::loader_map(Manifest::$data['data']['overrides'])
+        );
 
         // Build key LAST: a consumer that sees a new key can read both halves.
         file_put_contents_safe(dirname($cache_file) . '/build_key', Manifest::$data['hash']);
@@ -727,7 +762,7 @@ class Manifest_Store
         // NOTE: PHP and JS class-name uniqueness is NOT checked here. There is ONE detector,
         // _collate_files_by_classes(), which builds the class maps and throws on a duplicate
         // naming both files - and the class-override pass runs before it and turns the
-        // legitimate rsx/-over-framework case into an archive. A third copy of the check
+        // legitimate rsx/-over-framework case into a shadowed file. A third copy of the check
         // here could only ever agree or contradict.
         $blade_ids = [];
         $jqhtml_ids = [];
@@ -758,10 +793,10 @@ class Manifest_Store
             // Check Jqhtml component ID uniqueness
             //
             // One declaration in the application and one in the framework is not a
-            // duplicate but an OVERRIDE, and never reaches here: the override pass
-            // (Manifest_Indexer::_override_framework_templates_and_stylesheets()) archives
-            // the framework's template before validation. What is refused is two
-            // declarations nothing can choose between.
+            // duplicate but an OVERRIDE, and never reaches here: Manifest_Overrides moves the
+            // shadowed framework template out of `files`, and refuses two application
+            // templates of one name itself. What is left to refuse here is two framework
+            // templates nothing can choose between.
             if ($extension === 'jqhtml' && isset($metadata['id'])) {
                 $id = $metadata['id'];
                 if (isset($jqhtml_ids[$id])) {
@@ -773,7 +808,7 @@ class Manifest_Store
 "Jqhtml component names (<Define:ComponentName>) must be unique across all files.\n" .
 "(An application component with the name of a FRAMEWORK component is an override,\n" .
 "not a duplicate, and is handled automatically - see rsx:man class_override. These\n" .
-"two are in the same tree.)\n\n" .
+"two are both framework templates.)\n\n" .
 "To resolve: Add specificity to the component name by prefixing with directory segments.\n" .
 "For example, if a component named 'Card' resides in the 'demo' module directory,\n" .
 "rename it to 'Demo_Card' in the <Define:> tag. Similarly, components in nested directories\n" .
@@ -1020,17 +1055,20 @@ class Manifest_Store
     {
         $file_lines = [];
 
-        foreach ($manifest_body['files'] ?? [] as $path => $meta) {
+        // The shadowed framework files are files of the tree: path and content hash, exactly
+        // like every other. Never their records - those carry mtime, which is local disk state.
+        foreach (($manifest_body['files'] ?? []) + ($manifest_body['shadowed_files'] ?? []) as $path => $meta) {
             $file_lines[] = $path . ' ' . (is_array($meta) ? ($meta['hash'] ?? '') : '');
         }
 
         sort($file_lines, SORT_STRING);
 
-        // The derived half. file_index is local disk state by definition; files is already
-        // accounted for above; the by-target indexes are a regroup of routes and are not
-        // persisted at all.
+        // The derived half. file_index is local disk state by definition; files and
+        // shadowed_files are already accounted for above; the by-target indexes are a regroup
+        // of routes and are not persisted at all.
         unset(
             $manifest_body['files'],
+            $manifest_body['shadowed_files'],
             $manifest_body['file_index'],
             $manifest_body['routes_by_target'],
             $manifest_body['portal_routes_by_target']

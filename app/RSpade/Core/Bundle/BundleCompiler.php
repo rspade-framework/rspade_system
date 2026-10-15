@@ -20,6 +20,7 @@ use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Identifier;
+use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
@@ -128,6 +129,12 @@ class BundleCompiler
     * Files already included (deduplication)
     */
     protected array $included_files = [];
+
+    /**
+    * The manifest's override map (shadowed framework path => record), read once per compile.
+    * See _effective_path().
+    */
+    protected ?array $overrides = null;
 
     /**
     * Include paths for route extraction
@@ -1107,7 +1114,14 @@ class BundleCompiler
     }
 
     /**
-    * Add a file to the bundle
+    * Add a file to the bundle - THE ONE SEAM every include passes through: a directory walk,
+    * a type-filtered pattern (Bundle_Include_Pattern) and an explicit file alike.
+    *
+    * A framework file the application overrides (rsx:man class_override) is SUBSTITUTED here
+    * by the file that overrides it, in the framework file's place in the include order - so a
+    * stylesheet cascades and a script evaluates where the framework's would have. The
+    * de-dup below then keys on the overriding file, so a bundle that also includes the
+    * application's file gets it once, wherever it appears first.
     */
     protected function _add_file(string $path): void
     {
@@ -1116,6 +1130,8 @@ class BundleCompiler
         if (!$normalized) {
             return;
         }
+
+        $normalized = $this->_effective_path($normalized);
 
         // Record provenance BEFORE the de-dup return: a file another bundle already claimed
         // is still a contribution of THIS bundle, and dropping that fact would leave a bundle
@@ -1141,6 +1157,48 @@ class BundleCompiler
             $this->bundle_files['all'] = [];
         }
         $this->bundle_files['all'][] = $normalized;
+    }
+
+    /**
+    * The file that answers for $normalized in a bundle: the application file that overrides
+    * it when the manifest records it as SHADOWED, else $normalized itself.
+    *
+    * This is the framework resolving a path a bundle declared, not a second declaration: a
+    * framework bundle (Core_Bundle, a /_sys bundle) that names a framework directory still
+    * declares only framework paths, and receives the application's component because that
+    * is what an override means. The shadowed file stays on disk, untouched and never compiled.
+    *
+    * @param string $normalized absolute path, as rsxrealpath() returns it
+    * @return string absolute path of the file to compile
+    */
+    protected function _effective_path(string $normalized): string
+    {
+        $this->overrides ??= Manifest::overrides();
+
+        if ($this->overrides === []) {
+            return $normalized;
+        }
+
+        $override = $this->overrides[Rsx_Paths::relative($normalized)] ?? null;
+
+        if ($override === null) {
+            return $normalized;
+        }
+
+        $by = rsxrealpath(Rsx_Paths::absolute($override['by']));
+
+        if ($by === false) {
+            throw new RuntimeException(
+                "A bundle includes a framework file whose override is missing from disk.\n\n" .
+                "Bundle: {$this->bundle_name}\n" .
+                'Framework file: ' . Rsx_Paths::relative($normalized) . "\n" .
+                "Overridden by: {$override['by']}\n\n" .
+                "The manifest records the framework file as shadowed by that application file, and\n" .
+                'the application file does not exist. See rsx:man class_override.'
+            );
+        }
+
+        return $by;
     }
 
     /**
@@ -1309,7 +1367,7 @@ class BundleCompiler
         if (is_file($path)) {
             $normalized = rsxrealpath($path);
             if ($normalized) {
-                $this->_register_watch_file($normalized, $buckets);
+                $this->_register_watch_path($normalized, $buckets);
             }
 
             return;
@@ -1352,9 +1410,28 @@ class BundleCompiler
             if ($file->isFile()) {
                 $normalized = rsxrealpath($file->getPathname());
                 if ($normalized) {
-                    $this->_register_watch_file($normalized, $buckets);
+                    $this->_register_watch_path($normalized, $buckets);
                 }
             }
+        }
+    }
+
+    /**
+    * Watch one file, and the file that overrides it when it is shadowed.
+    *
+    * Both, not one or the other: an included shadowed file is compiled as its override
+    * (_effective_path()), so an edit to the override must invalidate the output; the shadowed
+    * file stays watched because a watch target is an input that is NOT compiled from the
+    * include list (a vendor stylesheet importing it by path), where the substitution does
+    * not apply. Over-invalidation costs a rebuild; under-invalidation is a stale artifact.
+    */
+    protected function _register_watch_path(string $normalized, array $buckets): void
+    {
+        $this->_register_watch_file($normalized, $buckets);
+
+        $effective = $this->_effective_path($normalized);
+        if ($effective !== $normalized) {
+            $this->_register_watch_file($effective, $buckets);
         }
     }
 
@@ -3550,6 +3627,9 @@ JS;
             $php_files = $this->_scan_directory_recursive($full_path, 'php');
 
             foreach ($php_files as $file) {
+                // A shadowed controller answers through the class that overrides it.
+                $file = $this->_effective_path($file);
+
                 // Get relative path for manifest lookup
                 $relative = str_replace(base_path() . '/', '', $file);
 

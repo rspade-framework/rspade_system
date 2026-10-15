@@ -33,6 +33,19 @@
 - Malformed, or matching nothing, THROWS naming the pattern; a pattern covers no view
 - Matches go through `_add_scanned_files()`, the same per-file step a directory scan uses
 
+**Overridden Files Resolve To Their Override** (`BundleCompiler::_add_file()` / `_effective_path()`)
+- `_add_file()` is the ONE seam every include reaches - directory walk, pattern, explicit file.
+  A path `Manifest::overrides()` records as SHADOWED (`rsx:man class_override`) is replaced by
+  the `rsx/` file that overrides it, in the shadowed file's place in the include order (a
+  stylesheet cascades, a script sorts, where the framework's would have); de-dup then keys on
+  the override, so a bundle that also includes the application file gets it once, at its first
+  appearance. Every bundle, `Core_Bundle` and `/_sys` bundles included
+- What a bundle DECLARES is unchanged, so CONV-BUNDLE-02/04 (which read `define()`) never see
+  it; everything downstream of the file list (processors, JS ordering, stubs, the shake, routes)
+  receives the override like any application file. A watched shadowed file also watches its
+  override. The shadowed file is never compiled and never edited
+- `tests/bundles/php/Bundle_Override_Substitution_Test` is the contract as an assertion
+
 **Auto-Discovery Rules:**
 - Asset Bundles discovered via directory scan cannot have directory paths in `include`
 - If Asset Bundle needs directory scanning, include it explicitly by class name

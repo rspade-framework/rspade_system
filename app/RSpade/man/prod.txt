@@ -472,7 +472,11 @@ ADMINISTRATION
         composer autoloader (classmap-authoritative in strict production),
         Laravel event/view caches (RSX has no route cache), then the seal.
         Refuses without --force when a seal is already present, because
-        rebuilding replaces what the box is serving right now.
+        rebuilding replaces what the box is serving right now. The composer
+        dump writes into the tracked system/vendor/composer/; class
+        overrides write nothing under system/ - the override map is sealed in build/ and
+        is answered ahead of composer, the authoritative classmap included
+        (rsx:man class_override).
 
     rsx:clean [--force]
         Owns every wipe: quiesces the node daemons, empties build/ and tmp/,

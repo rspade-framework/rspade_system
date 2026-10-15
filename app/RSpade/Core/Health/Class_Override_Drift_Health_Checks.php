@@ -80,7 +80,7 @@ class Class_Override_Drift_Health_Checks
                     . implode(', ', $names) . '. Framework code may call them.',
                 'remediation' => 'php artisan rsx:check (CLASS-OVERRIDE-DRIFT-01) names each one'
                     . ' and what the override adds of its own; then re-clone from '
-                    . $entry['upstream_file'],
+                    . $entry['framework_file'],
             ];
         }
 

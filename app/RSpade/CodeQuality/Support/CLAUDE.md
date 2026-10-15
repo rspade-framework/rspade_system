@@ -83,6 +83,10 @@ discovered and never run. `Rule_Discovery_Depth_Test` writes one and proves it i
 
 `file_for($fqcn)` is what the driver fingerprints a rule by.
 
+A rule file the application OVERRIDES (`Manifest::override_for()`) is never included: its class
+name is answered by the class override loader with the application's class, and `rule_files()`
+maps the FQCN to the override's file - so the override is the rule that runs.
+
 ## Validation_Ledger - the ONE store of "already passed"
 
 See `rsx:man code_quality`, THE VALIDATION LEDGER, for the contract. What is worth repeating

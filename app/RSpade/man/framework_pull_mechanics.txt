@@ -49,11 +49,11 @@ PUBLISHING A RELEASE
 
             ignore = dirty
 
-        which is load-bearing, not tidiness: the manifest build renames
-        .php <-> .php.upstream inside system/ to apply class overrides, and
-        without it every `git status` in every downstream project reports
-        ` M system` forever for churn that regenerates itself. It hides
-        DIRTINESS only - a moved revision still shows.
+        which is load-bearing, not tidiness: a production `rsx:build`
+        re-dumps composer's autoloader into the tracked
+        system/vendor/composer/, and without it `git status` in a downstream
+        project reports ` M system` after every such build, for churn the next
+        build rewrites. It hides DIRTINESS only - a moved revision still shows.
 
         STAGING EXCLUDES system/. The gitlink is staged deliberately, and the
         worktree there is an empty mount point; `git add -A` reading that

@@ -82,14 +82,16 @@ class Framework_Status_Command extends Command
             return 1;
         }
 
-        // A dirty submodule is churn, not drift: the manifest build renames
-        // .php <-> .php.upstream to apply class overrides. Worth mentioning, never a
-        // problem - the next update discards it along with everything else.
+        // A dirty submodule is churn, not drift: a production rsx:build re-dumps composer's
+        // autoloader into the tracked system/vendor/composer/. Worth mentioning, never a
+        // problem - the next update discards it along with everything else. Class
+        // overrides write nothing here; rsx:overrides:list is where they are listed.
         $dirty = $this->__git($system_dir, ['status', '--porcelain']);
         if ($dirty !== null && $dirty !== '') {
             $count = count(array_filter(explode("\n", $dirty)));
-            $this->line('  <fg=yellow>' . $count . ' local change(s) under system/</> - build churn, discarded by the next');
-            $this->line('  update. All of system/ is framework property.');
+            $this->line('  <fg=yellow>' . $count . ' local change(s) under system/</> - discarded by the next update.');
+            $this->line('  All of system/ is framework property (a production build\'s composer dump lands');
+            $this->line('  in system/vendor/composer/; class overrides are listed by rsx:overrides:list).');
             $this->line('');
         }
 

@@ -128,10 +128,11 @@ Edit anything under `system/` and commit as you would any other code:
 
 Notes for forked trees:
 
-- The framework still rewrites some of its own files at rebuild time
-  (Php_Fixer use-header rewrites, class-override `.php.upstream` renames,
-  composer classmap regeneration). This churn is normal and harmless; it
-  is the same machinery that runs in managed mode.
+- A production `rsx:build` re-dumps composer's autoloader into the
+  tracked system/vendor/composer/. That churn is normal and harmless; it
+  is the same build that runs in managed mode. Nothing else rewrites the
+  framework tree - a class override shadows a framework file and leaves
+  it untouched.
 - "What have I changed?" is ordinary git, inside the submodule. There is
   no framework-side verifier and no release inventory - a fork owns the
   tree, and git already knows what it owns:
@@ -241,8 +242,8 @@ The marker exists. If forking was unintentional:
     git -C system fetch origin
     git -C system diff origin/master...HEAD
 
-Shows every divergence from the upstream tip. Build churn (`.php.upstream`
-renames, regenerated use-headers and classmaps) appears alongside your real
+Shows every divergence from the upstream tip. Build churn (the composer
+autoloader a production build regenerates) appears alongside your real
 changes; `git -C system log` separates the two by commit.
 
 ## SEE ALSO

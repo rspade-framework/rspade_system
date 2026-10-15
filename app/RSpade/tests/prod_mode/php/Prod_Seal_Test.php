@@ -23,16 +23,18 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
     protected static $use_database_transactions = false;
 
     /**
-     * Stage a fake build root (the two manifest index files, build_key, one bundle file) and
-     * point Rsx_Prod_Seal at it. Returns the root path.
+     * Stage a fake build root (the two manifest index files, build_key, the class override map,
+     * one bundle file) and point Rsx_Prod_Seal at it. Returns the root path.
      */
     private static function _stage_build_root(): string
     {
         $root = sys_get_temp_dir() . '/rsx_seal_' . bin2hex(random_bytes(8));
         mkdir($root . '/bundles', 0777, true);
+        mkdir($root . '/manifest', 0777, true);
         file_put_contents($root . '/manifest_index.php', "<?php\nreturn ['ok' => true];\n");
         file_put_contents($root . '/manifest_files.php', "<?php\nreturn [];\n");
         file_put_contents($root . '/build_key', "deadbeefcafef00d\n");
+        file_put_contents($root . '/manifest/class_overrides.php', "<?php\nreturn [];\n");
         file_put_contents($root . '/bundles/Foo__app.abc123.js', "console.log(1);\n");
 
         Rsx_Project_Paths::_override(['build' => $root]);
@@ -67,8 +69,12 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
 
             static::__assert_equals('production', $seal['rsx_mode']);
             static::__assert_equals('deadbeefcafef00d', $seal['build_key'], 'build_key comes from the on-disk file');
-            // the two index files + build_key + one bundle file = 4 assets.
-            static::__assert_count(4, $seal['assets'], 'seal records every build asset');
+            // the two index files + build_key + the class override map + one bundle file = 5 assets.
+            static::__assert_count(5, $seal['assets'], 'seal records every build asset');
+            static::__assert_true(
+                in_array('manifest/class_overrides.php', array_column($seal['assets'], 'file'), true),
+                'the class override map is sealed with the build'
+            );
             static::__assert_not_empty($seal['created_at']);
 
             // Read back independently.

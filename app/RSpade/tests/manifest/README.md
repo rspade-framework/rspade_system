@@ -5,7 +5,7 @@ costs in memory.
 
 Query-side behaviour (`Manifest::php_find_class()`, `get_with_attribute()`, the route
 tables) is exercised by the concern that owns the feature - `dispatch` for routes,
-`auth_gates` for the auth index, `class_override` for the override archive. What lives
+`auth_gates` for the auth index, `class_override` for the override map. What lives
 here is the build itself.
 
 ## The seam these tests use

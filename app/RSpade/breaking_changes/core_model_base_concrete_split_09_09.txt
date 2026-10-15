@@ -24,9 +24,9 @@ SUMMARY
             // only what this application changes
         }
 
-    The manifest archives the SHELL as .php.upstream, your class becomes
-    File_Attachment_Model for the whole tree, and it keeps inheriting everything the
-    framework adds to the base from now on.
+    The manifest records the SHELL as shadowed (it stays on disk and is never
+    loaded), your class becomes File_Attachment_Model for the whole tree, and it
+    keeps inheriting everything the framework adds to the base from now on.
 
     A COPY of the framework file is refused at manifest build. That is the whole
     breakage in this document, and it applies to exactly one kind of file: an override
@@ -142,11 +142,12 @@ ACTION REQUIRED
     1. FIND YOUR CORE-MODEL OVERRIDES.
 
            ls rsx/models/
-           ls system/app/RSpade/Core/**/*.php.upstream
+           php artisan rsx:overrides:list
 
        Any file in rsx/models/ whose class name appears in the list of 28 above is an
-       override you must rewrite. A .php.upstream sidecar under system/ names one
-       directly: it is the framework file your copy displaced.
+       override you must rewrite. rsx:overrides:list names every override in force
+       with the framework file it shadows - once the build succeeds; while a copied
+       core model is still refused, the build fails and ls rsx/models/ is the list.
 
        If you have none, this document is finished - there is nothing else to do, and
        the build will not fail.
@@ -323,8 +324,8 @@ A FULL BEFORE AND AFTER
 
     Everything else - $table, every constant and enum, the relationships, fetch(),
     portal_fetch(), the hooks, the disposal machinery - is inherited, and every future
-    framework change to it arrives with the pull instead of sitting in a .upstream file
-    waiting to be noticed.
+    framework change to it arrives with the pull instead of sitting in a framework
+    file your copy shadows, waiting to be noticed.
 
 VERIFICATION
 
@@ -333,18 +334,18 @@ VERIFICATION
            php artisan rsx:manifest:build
 
        No "Invalid override of the split framework class" and no PHP-PARENT-CHAIN-01
-       fatal. The archive notice names the SHELL, which is the file your override now
-       displaces:
+       fatal. The listing names the SHELL as the file your override now shadows, and
+       reports no drift for it:
 
-           [Manifest] Class override: File_Attachment_Model - archived
-           app/RSpade/Core/Files/File_Attachment_Model.php to
-           app/RSpade/Core/Files/File_Attachment_Model.php.upstream, overridden by
-           rsx/models/file_attachment_model.php
+           php artisan rsx:overrides:list
 
-    2. The archived file is three lines. Confirm what you displaced is the shell and
-       not an implementation:
+           | php | File_Attachment_Model | rsx/models/file_attachment_model.php |
+           |     |   system/app/RSpade/Core/Files/File_Attachment_Model.php | extends base |
 
-           cat system/app/RSpade/Core/Files/File_Attachment_Model.php.upstream
+    2. The shadowed file is three lines. Confirm what you shadow is the shell and not
+       an implementation:
+
+           cat system/app/RSpade/Core/Files/File_Attachment_Model.php
 
     3. Lint and health are clean:
 

@@ -131,8 +131,8 @@ signal over inferring from side effects.
   `bash "$CLAUDE_PROJECT_DIR/system/bin/claude-git-guard.sh"`: blocks a bare `git` from the
   Bash tool and redirects to `php artisan rsx:git`. It also REMOVES both spellings of the
   retired pre-pull guard it used to install — that guard told the agent to run `rsx:clean`
-  then pull, a sequence that deadlocks on a live box (the class-override churn returns before
-  the pull's index write lands), which is the problem `rsx:git` actually fixes.
+  and then pull by hand, a sequence `rsx:git` now owns end to end (the `system/` reset and
+  the maintenance window around the whole operation).
 - `050_post_commit_env_update.sh` — installs the `post-commit` hook (RSPADE-POSTCOMMIT-V1,
   augment-only, downstream only) that spawns `post-update.sh` detached after a commit, so the
   environment updates land without waiting for the next build or pull. Never blocks or fails a
@@ -178,9 +178,11 @@ signal over inferring from side effects.
   fixes, both self-detecting: sets `submodule.system.ignore = dirty` in the TRACKED
   `.gitmodules` when it is anything else, and UNSETS a repo-wide
   `diff.ignoreSubmodules` from `.git/config` whatever its value. `dirty` is the only
-  value that shows a moved pointer (a framework update) while hiding the build's
-  permanent `.php` <-> `.php.upstream` churn inside `system/`; `none` reports ` M system`
-  forever, and the blanket `all` operators reach for in response hides the pointer too —
+  value that shows a moved pointer (a framework update) while hiding the working-tree
+  changes a box makes inside `system/` - a production `rsx:build` (and `rsx:prod:disable`)
+  re-dumps composer's autoloader into the tracked `system/vendor/composer/`; `none` reports
+  ` M system` after every such build, and the blanket `all` operators reach for in response
+  hides the pointer too —
   the framework version then lands with no trace in `status`, `diff` or the commit
   summary (field report, 2026-08-22). `bin/publish` already writes `ignore = dirty` into
   the starter and `framework-pull-upstream.sh` sets it during the vendored -> submodule
@@ -233,6 +235,17 @@ signal over inferring from side effects.
   Code reaches both roots through `Rsx_Project_Paths`, which reads the live value. Only a
   SYMLINK is removed; a real directory or file at either path is reported to stderr and
   left alone. Applied-detection is the absence of both paths.
+
+- `130_restore_override_archives.sh` — restores the framework files an earlier class-override
+  pass archived as `<file>.upstream` (downstream only). For every
+  `system/**/*.{php,js,jqhtml,scss}.upstream` outside `vendor/` and `node_modules/`: a MISSING
+  tracked sibling is restored with `git -C system checkout`, then the archive is deleted; when
+  both exist the tracked file wins and the archive is deleted (it is a copy of an older
+  release). An archive whose sibling git does not know is reported on stderr and left in place.
+  An override writes nothing into `system/` (`rsx:man class_override`); the pull,
+  the `rsx:git` submodule sync and `rsx:clean` already reset the tree, so this serves a box
+  that reached the current framework another way. Applied-detection is the absence of any
+  such archive. Retire this slot once the fleet has turned over.
 
 - `100_breaking_changes_manifest_rename.sh` — carries the app's breaking-changes
   fulfillment record across the 2026-09-04 rename

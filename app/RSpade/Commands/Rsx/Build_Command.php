@@ -195,8 +195,13 @@ class Build_Command extends Command
             // so caching Laravel first and dumping the autoloader second would wipe the
             // freshly-built caches. --classmap-authoritative is strict-production only (it
             // forbids composer's filesystem fallback); it covers ONLY the system/ PSR-4
-            // tree, while /rsx classes resolve through the manifest autoloader, so the
-            // class-override pattern is unaffected.
+            // tree, while /rsx classes resolve through the manifest autoloader. The
+            // authoritative classmap DOES list every framework class an application
+            // overrides - the framework file stays in place - and that is safe: the class
+            // override loader is registered in front of composer by a composer `files`
+            // entry, answers those names with the application's classes, and points
+            // composer's own entry for each at a trip-wire in memory (Class_Override_Loader,
+            // rsx:man class_override). Nothing this dump writes knows about overrides.
             $this->line('[5/7] Optimizing composer autoloader...');
             if (!$this->_dump_autoloader()) {
                 return 1;

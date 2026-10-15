@@ -8,6 +8,8 @@
 namespace App\RSpade\Tests\Manifest\Php;
 
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -109,6 +111,37 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
         if (static::$build_root !== '' && is_dir(dirname(static::$build_root))) {
             rmdir_recursive(dirname(static::$build_root));
         }
+    }
+
+    /**
+     * The FQCN of one PHP class this application declares under rsx/, outside its test tree
+     * (which a plain build does not index) - the first by file path, so the choice is
+     * deterministic. Null when the application declares none.
+     */
+    private static function __an_application_class_fqcn(): ?string
+    {
+        $candidates = [];
+
+        foreach (Manifest::$data['data']['php_classes'] ?? [] as $class => $record) {
+            $file = $record['file'] ?? '';
+            $fqcn = $record['fqcn'] ?? '';
+
+            if (!Rsx_Paths::is_application($file) || Rsx_Paths::under_application($file, 'tests')) {
+                continue;
+            }
+
+            if (str_starts_with($fqcn, 'Rsx\\')) {
+                $candidates[$file] = $fqcn;
+            }
+        }
+
+        if ($candidates === []) {
+            return null;
+        }
+
+        ksort($candidates);
+
+        return reset($candidates);
     }
 
     /**
@@ -450,9 +483,19 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
      * index entry must describe the rewritten file - its hash AND its findings - or the next
      * build matches the fingerprint, reuses the entry and re-reports a violation the source
      * no longer contains, on every artisan command.
+     *
+     * The fixer rewrites only a name the application declares, so the FQCN is one this
+     * application's manifest holds - derived, never named, because the suite runs in
+     * applications that declare none of the reference app's classes.
      */
     public static function test_a_fixed_file_is_indexed_as_fixed()
     {
+        $target_fqcn = static::__an_application_class_fqcn();
+
+        if ($target_fqcn === null) {
+            static::__skip('this application declares no PHP class under rsx/ outside its tests');
+        }
+
         static::__make_tree();
 
         try {
@@ -463,13 +506,13 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
             file_put_contents(
                 $absolute,
                 "<?php\n\nnamespace {$namespace};\n\nclass Fixture_Fqcn_Probe\n{\n"
-                . "    public static function target(): string\n    {\n        return \\Rsx\\Models\\Party_Model::class;\n    }\n}\n"
+                . "    public static function target(): string\n    {\n        return \\{$target_fqcn}::class;\n    }\n}\n"
             );
 
             $entry = static::__build()['data']['files'][$relative] ?? null;
 
             static::__assert_false(
-                str_contains(file_get_contents($absolute), '\\Rsx\\Models\\Party_Model'),
+                str_contains(file_get_contents($absolute), '\\' . $target_fqcn),
                 'the fixer rewrote the FQCN'
             );
             static::__assert_not_null($entry, 'the probe is indexed');
@@ -497,7 +540,7 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
             static::__build();
 
             $relative = static::$tree . '/fixture_widget.php';
-            $stale = [['line' => 1, 'fqcn' => '\\Rsx\\Models\\Party_Model', 'message' => 'stale']];
+            $stale = [['line' => 1, 'fqcn' => '\\Rsx\\Models\\Fixture_Stale_Model', 'message' => 'stale']];
             $planted = false;
 
             foreach (['manifest_index.php', 'manifest_files.php'] as $half) {

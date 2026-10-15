@@ -173,6 +173,14 @@ class Manifest_Build
     }
 
     /**
+     * Where this build's class override map lives (Class_Override_Loader reads it pre-boot).
+     */
+    public function class_overrides_file_path(): string
+    {
+        return Rsx_Project_Paths::class_overrides_file_under($this->build_root);
+    }
+
+    /**
      * The build's ONE source cache - the fixer and the code-quality driver share it, so a
      * file read for one is not read again for the other.
      */

@@ -35,6 +35,10 @@ surface (replaced by a narrow `refactor` allowlist).
 
 - **php** (implemented): `Ide_Bridge_Token` create/guards/retired-artifact
   cleanup/idempotency/`current_token`.
+- **http** (`http/ide_overrides_service.sh`): `/_ide/service/overrides` (served by
+  `laravel_handler.php`, a direct wrapper of `Manifest::overrides()`) refuses a tokenless
+  request and answers GET with `{success: true, overrides: {...}}` - always an object,
+  keyed by project-relative framework path, each value `{kind, name, by}`.
 - **http** (`http/ide_bridge_hardening.sh`): a tokenless loopback request is 401,
   a matching `X-Ide-Token` is accepted, the mutating services refuse GET (405),
   git/diff refuses option-shaped and climbing paths.

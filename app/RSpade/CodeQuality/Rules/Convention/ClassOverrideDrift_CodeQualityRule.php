@@ -10,18 +10,18 @@ use App\RSpade\Core\Manifest\Class_Override_Drift;
  * the framework class it replaced still declares.
  *
  * A class override is a COPY, and a copy is frozen the moment it is taken. The framework
- * file it replaced is archived to <Name>.php.upstream and keeps moving with every pull.
+ * file it replaced stays in place, shadowed, and keeps moving with every pull.
  * When the framework then adds a member and CALLS it - core calling into a class it
  * believes is its own - the call lands on the application's older copy. A downstream field
  * report records that exact shape: core called a member of a class the app had replaced,
  * the copy predated the member, and one path answered 500 while another silently enqueued
  * nothing for months. Nothing compared the two files, so nothing said a word.
  *
- * This rule is the comparison. For every archived sidecar it names each public or
- * protected member present upstream and absent from the override, one finding per member,
- * and prints the override's OWN additions alongside as context - because the reader's next
- * move is to re-clone from the sidecar and re-apply exactly those additions, and they have
- * to know what they are.
+ * This rule is the comparison. For every shadowed framework class it names each public or
+ * protected member the framework file declares and the override lacks, one finding per
+ * member, and prints the override's OWN additions alongside as context - because the
+ * reader's next move is to re-clone from the framework file and re-apply exactly those
+ * additions, and they have to know what they are.
  *
  * WHY HIGH AND NOT A BUILD FATAL. The drift is real and it is silent, so it must be loud
  * in rsx:check and visible in rsx:health. But it arrives on a framework PULL, not on
@@ -33,7 +33,7 @@ use App\RSpade\Core\Manifest\Class_Override_Drift;
  * carrying every member and a three-line concrete an application replaces - has no drift
  * surface: an override that extends the base inherits everything, now and after every pull.
  * Such a pair is skipped. That is the pattern this framework asks applications to use, and
- * the manifest's override pass refuses any other shape of it.
+ * the manifest's override map refuses any other shape of it.
  *
  * WHAT IT DOES NOT SEE. A member present in both files whose BODY has diverged is not
  * drift this rule can name - it is a deliberate override in the ordinary case and an
@@ -41,7 +41,8 @@ use App\RSpade\Core\Manifest\Class_Override_Drift;
  * The member list is the part that has a right answer.
  *
  * Suppress on a single override with @CLASS-OVERRIDE-DRIFT-01-EXCEPTION in the override
- * file, which is a statement that the app has deliberately dropped what upstream declares.
+ * file, which is a statement that the app has deliberately dropped what the framework
+ * declares.
  *
  * @see \App\RSpade\Core\Manifest\Class_Override_Drift - the analysis.
  * @see rsx:man class_override
@@ -99,8 +100,9 @@ class ClassOverrideDrift_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Every indexed PHP file plus the archived .upstream twins: drift is the difference
-     * between an override and the framework file it shadows.
+     * The override map, every indexed PHP file (the overrides) and the shadowed framework
+     * records (their content hashes): drift is the difference between an override and the
+     * framework file it shadows, and either side moving changes it.
      *
      * @return array<int,string>
      */
@@ -108,7 +110,8 @@ class ClassOverrideDrift_CodeQualityRule extends CodeQualityRule_Abstract
     {
         return [
             'files:*.php',
-            'files:*.upstream',
+            'overrides',
+            'shadowed_files',
         ];
     }
 
@@ -128,25 +131,25 @@ class ClassOverrideDrift_CodeQualityRule extends CodeQualityRule_Abstract
         foreach (Class_Override_Drift::pairs() as $pair) {
             $this->evaluate_pair(
                 $pair['class'],
-                base_path($pair['upstream_file']),
+                base_path($pair['framework_file']),
                 base_path($pair['override_file'])
             );
         }
     }
 
     /**
-     * Compare ONE override against ONE archived sidecar and report what is missing.
+     * Compare ONE override against the framework file it shadows and report what is missing.
      *
      * This is the testable seam: production supplies the pairs from the manifest, a test
      * supplies two fixture files that are in no manifest at all.
      *
-     * @param string $class_name    The simple class name both files declare.
-     * @param string $upstream_path Absolute path to the .php.upstream sidecar.
-     * @param string $override_path Absolute path to the application's copy.
+     * @param string $class_name     The simple class name both files declare.
+     * @param string $framework_path Absolute path to the shadowed framework file.
+     * @param string $override_path  Absolute path to the application's copy.
      */
-    public function evaluate_pair(string $class_name, string $upstream_path, string $override_path): void
+    public function evaluate_pair(string $class_name, string $framework_path, string $override_path): void
     {
-        $analysis = Class_Override_Drift::analyze_pair($upstream_path, $override_path, $class_name);
+        $analysis = Class_Override_Drift::analyze_pair($framework_path, $override_path, $class_name);
 
         if (empty($analysis['missing'])) {
             return;
@@ -167,23 +170,23 @@ class ClassOverrideDrift_CodeQualityRule extends CodeQualityRule_Abstract
         $snippet = ($class_line > 0 && isset($lines[$class_line - 1])) ? trim($lines[$class_line - 1]) : '';
 
         $context = $this->__additions_context($analysis['added']);
-        $upstream_label = $this->__relative($upstream_path);
+        $framework_label = $this->__relative($framework_path);
         $override_label = $this->__relative($override_path);
 
         foreach ($analysis['missing'] as $member) {
             $label = Class_Override_Drift::describe($member);
 
             $message = "{$class_name} overrides a framework class, and the framework's copy declares "
-                . "{$label} at line {$member['line']} of the archived file. This override does not.\n\n"
-                . "Upstream: {$upstream_label}\n"
-                . "Override: {$override_label}\n\n"
+                . "{$label} at line {$member['line']} of the framework file. This override does not.\n\n"
+                . "Framework: {$framework_label}\n"
+                . "Override:  {$override_label}\n\n"
                 . 'Framework code may call this member on this class - core calling into a class it '
                 . 'believes is its own - and it is not there. That is a fatal at the call site, or, '
                 . 'when the member is a hook the framework only invokes, silence.';
 
-            $suggestion = "Re-clone {$class_name} from the archived file and re-apply this "
+            $suggestion = "Re-clone {$class_name} from the framework file and re-apply this "
                 . "application's own additions:\n\n"
-                . "    cp {$upstream_label} {$override_label}\n\n"
+                . "    cp {$framework_label} {$override_label}\n\n"
                 . 'Then edit the namespace back and put the additions below back in. Enumerate them '
                 . "in a banner at the top of the override so the next re-clone is mechanical.\n\n"
                 . "Better, where the addition is POLICY rather than logic: move it to a seam and drop "

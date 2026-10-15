@@ -20,7 +20,7 @@
 | `rsx:build [--force]` | The ONE build: manifest + bundles in development; clean, build, mirror, compile, cache and SEAL in a production-like mode (where it needs `--force` over an existing seal). Never run it to "make changes live" — development is invisible-build. `rsx:man prod`. |
 | `rsx:clean [--force]` | Discard `build/` and `tmp/` and flush the Redis caches. `--force` required in a production-like mode. **Rarely necessary** — see the invisible-build rule. |
 | `rsx:refactor:rename_php_class` · `:rename_php_class_function` · `:sort_php_class_functions` | The three AST-based editor refactors. |
-| Owned elsewhere | `migrate` · `rsx:app:module:create` · `rsx:search:reindex` · `rsx:maintenance:enable`/`:disable` · `rsx:ajax` |
+| Owned elsewhere | `migrate` · `rsx:app:module:create` · `rsx:search:reindex` · `rsx:maintenance:enable`/`:disable` · `rsx:ajax` · `rsx:overrides:list` (`rsx:man class_override`) |
 
 **Testing — never switch to the production DB, and never mark a failing test as passing.** Tests run against a separate database (`DB_TEST_DATABASE`, default `rspade_test`) and the runner REFUSES when that equals the dev database. **When to run the suite is the conduct fragment's mandate**, not a workflow choice.
 

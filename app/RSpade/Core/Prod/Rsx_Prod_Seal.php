@@ -17,7 +17,8 @@ use App\RSpade\Core\Rsx;
  * A prod build is compiled ONCE by rsx:build and then treated as IMMUTABLE. The seal
  * is the on-disk record of that build: it pins the build_key, the mode it was built
  * for, and a sha256 of every build artifact (manifest_index.php, manifest_files.php,
- * build_key, and every file under bundles/ and bundle_models/). It exists so the
+ * build_key, manifest/class_overrides.php, and every file under bundles/ and
+ * bundle_models/). It exists so the
  * framework can:
  *
  *   - recognize that a production-like mode has a build to serve at all (is_sealed(),
@@ -234,7 +235,8 @@ class Rsx_Prod_Seal
     // -------------------------------------------------------------------------
 
     /**
-     * Collect the build assets (the two manifest index files, build_key, bundles/*, and each
+     * Collect the build assets (the two manifest index files, build_key, the class override
+     * map, bundles/*, and each
      * bundle's model list under bundle_models/*) with a sha256 each, recorded relative to the
      * build root and sorted by path.
      */
@@ -259,6 +261,15 @@ class Rsx_Prod_Seal
         if (is_file($build_key)) {
             $assets[] = self::_asset_entry($root, $build_key);
         }
+
+        // The class override map, which every process reads before boot: it decides which
+        // class a framework class name means, so it is as much the build as the index is.
+        // The manifest build writes it on every pass, empty included.
+        $class_overrides = Rsx_Project_Paths::class_overrides_file();
+        if (!is_file($class_overrides)) {
+            shouldnt_happen('Cannot seal: ' . basename($class_overrides) . ' is missing - run the build pipeline first.');
+        }
+        $assets[] = self::_asset_entry($root, $class_overrides);
 
         // The compiled bundles, and the model list written beside each: a page serves its
         // field-length script from that list, so it is as much a part of the build as the

@@ -8,9 +8,10 @@
 # 1. `.gitmodules` with no `ignore` entry. `git submodule add` writes path/url/branch and
 #    nothing else, so a project CONVERTED from the old vendored layout inherits the
 #    default `none` - which reports the submodule modified on any working-tree change
-#    inside it. system/ is permanently dirty with build churn (the manifest build renames
-#    .php <-> .php.upstream to apply class overrides, and it regenerates within a second
-#    of any clean), so `none` means ` M system` on every status, forever.
+#    inside it. A box does change tracked files inside system/: a production `rsx:build`
+#    (and `rsx:prod:disable`) re-dumps composer's autoloader into the tracked
+#    system/vendor/composer/, so `none` means ` M system` on every status after every
+#    such build.
 #
 # 2. A repo-wide `[diff] ignoreSubmodules = all` in .git/config - the natural answer to
 #    that noise, and the reason this update exists. `all` suppresses submodule reporting

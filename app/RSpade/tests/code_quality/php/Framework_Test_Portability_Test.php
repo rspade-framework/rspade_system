@@ -116,8 +116,8 @@ class Framework_Test_Portability_Test extends Rsx_Test_Abstract
      * declares in must not be under rsx/.
      *
      * A class OVERRIDE is not a violation: when an application replaces a framework class,
-     * the manifest points the name at rsx/ and archives the framework file beside it as
-     * `.php.upstream`. The name is still framework vocabulary, and the archive is the proof.
+     * the manifest points the name at rsx/ and records the framework file it shadows in its
+     * override map. The name is still framework vocabulary, and the map is the proof.
      */
     public static function test_no_framework_test_references_an_application_type()
     {
@@ -321,9 +321,9 @@ class Framework_Test_Portability_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The framework class names an application has OVERRIDDEN, read off the `.php.upstream`
-     * archives the manifest's override pass leaves behind. Such a name is framework
-     * vocabulary that happens to be declared in rsx/ today.
+     * The framework class names an application has OVERRIDDEN, read off the manifest's
+     * override map. Such a name is framework vocabulary that happens to be declared in rsx/
+     * today.
      *
      * @return array<string,true>
      */
@@ -331,17 +331,9 @@ class Framework_Test_Portability_Test extends Rsx_Test_Abstract
     {
         $names = [];
 
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator(base_path('app/RSpade'), \FilesystemIterator::SKIP_DOTS)
-        );
-
-        foreach ($iterator as $entry) {
-            if (!$entry->isFile() || $entry->getExtension() !== 'upstream') {
-                continue;
-            }
-
-            if (preg_match('/^\s*(?:abstract\s+|final\s+)*class\s+([A-Za-z0-9_]+)/m', file_get_contents($entry->getPathname()), $match)) {
-                $names[$match[1]] = true;
+        foreach (Manifest::overrides() as $override) {
+            if ($override['kind'] === 'php') {
+                $names[$override['name']] = true;
             }
         }
 

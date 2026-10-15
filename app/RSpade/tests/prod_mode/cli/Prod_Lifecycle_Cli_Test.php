@@ -25,7 +25,10 @@ use App\RSpade\Tests\ProdMode\Cli\Prod_Script_Cli_Test_Abstract;
  * without --force; removing the seal STOPS
  * the box (500, and rsx:health exits non-zero naming the remedy) rather than letting it
  * quietly rebuild itself; rsx:build --force is the repair; and rsx:prod:disable returns a
- * working development box.
+ * working development box. Two class overrides written into rsx/ ride through the whole
+ * trip: the sealed build serves them (the framework FQCN resolves to the override under a
+ * classmap-authoritative autoloader, /login draws the override's template) while system/
+ * stays byte for byte as it was, and removing them leaves nothing behind.
  *
  * THE BOX ENDS IN DEVELOPMENT MODE. The script's EXIT trap reads RSX_MODE and runs
  * rsx:prod:disable if anything left the box in a production mode - on a failed assertion,
@@ -40,7 +43,7 @@ use App\RSpade\Tests\ProdMode\Cli\Prod_Script_Cli_Test_Abstract;
  * other, and neither one's verdict would mean anything. It is also why they are
  * $explicit_group_only - a bare suite run must not walk into three full builds.
  *
- * Roughly five minutes. That is the lifecycle, not the harness.
+ * Roughly six minutes. That is the lifecycle, not the harness.
  */
 class Prod_Lifecycle_Cli_Test extends Prod_Script_Cli_Test_Abstract
 {

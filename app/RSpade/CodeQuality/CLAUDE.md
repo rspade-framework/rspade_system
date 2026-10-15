@@ -324,10 +324,11 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
    - The failure it exists to see is core calling into a class it believes is its own and
      landing on the application's frozen copy - a 500 at a call site, or silence when the
      member is a hook the framework only invokes
-   - Cross-file (`kind() = KIND_CROSS_FILE`), pairs every `.php.upstream` sidecar with the
-     class shadowing it; the comparison is a `PhpToken` pass
-     (`Core/Manifest/Class_Override_Drift`), never reflection - an archived file carries no
-     reflection metadata and reflection on the override reports the whole lineage
+   - Cross-file (`kind() = KIND_CROSS_FILE`), pairs every php entry of the manifest's override
+     map (`Manifest::overrides()`) - the framework file, in place, and the override; it depends
+     on `overrides`, `shadowed_files` and `files:*.php`. The comparison is a `PhpToken` pass
+     (`Core/Manifest/Class_Override_Drift`), never reflection - a shadowed class is never
+     loaded and reflection on the override reports the whole lineage
    - NOT a manifest-time rule, deliberately: the drift arrives on a framework pull, and
      failing the build would take a running site down for a defect that predates it
    - One finding per missing member; the override's own additions ride along as INFO

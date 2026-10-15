@@ -52,6 +52,7 @@ class ComposerStaticInitfe33f98a750b8c5a51b30c78bd3fab21
         '320163ac6b93aebe3dc25b60a0533d56' => __DIR__ . '/..' . '/spatie/laravel-ignition/src/helpers.php',
         'b4e3f29b106af37a2bb239f73cdf68c7' => __DIR__ . '/../..' . '/app/helpers.php',
         'b7e40b7021511797ece06a57cd5e8bd0' => __DIR__ . '/../..' . '/app/RSpade/helpers.php',
+        '3dd2346c0363f34b1d995f1c1b5cad9d' => __DIR__ . '/../..' . '/app/RSpade/autoload_overrides.php',
     );
 
     public static $prefixLengthsPsr4 = array (
@@ -1142,6 +1143,7 @@ class ComposerStaticInitfe33f98a750b8c5a51b30c78bd3fab21
         'App\\RSpade\\Commands\\Rsx\\Mode_Set_Command' => __DIR__ . '/../..' . '/app/RSpade/Commands/Rsx/Mode_Set_Command.php',
         'App\\RSpade\\Commands\\Rsx\\Module_Create_Command' => __DIR__ . '/../..' . '/app/RSpade/Commands/Rsx/Module_Create_Command.php',
         'App\\RSpade\\Commands\\Rsx\\Module_Feature_Create_Command' => __DIR__ . '/../..' . '/app/RSpade/Commands/Rsx/Module_Feature_Create_Command.php',
+        'App\\RSpade\\Commands\\Rsx\\Overrides_List_Command' => __DIR__ . '/../..' . '/app/RSpade/Commands/Rsx/Overrides_List_Command.php',
         'App\\RSpade\\Commands\\Rsx\\Prod_Disable_Command' => __DIR__ . '/../..' . '/app/RSpade/Commands/Rsx/Prod_Disable_Command.php',
         'App\\RSpade\\Commands\\Rsx\\Prod_Enable_Command' => __DIR__ . '/../..' . '/app/RSpade/Commands/Rsx/Prod_Enable_Command.php',
         'App\\RSpade\\Commands\\Rsx\\Prod_Verify_Command' => __DIR__ . '/../..' . '/app/RSpade/Commands/Rsx/Prod_Verify_Command.php',
@@ -1430,6 +1432,7 @@ class ComposerStaticInitfe33f98a750b8c5a51b30c78bd3fab21
         'App\\RSpade\\Core\\Manifest\\ManifestSupport_Abstract' => __DIR__ . '/../..' . '/app/RSpade/Core/Manifest/ManifestSupport_Abstract.php',
         'App\\RSpade\\Core\\Manifest\\Manifest_Build' => __DIR__ . '/../..' . '/app/RSpade/Core/Manifest/Manifest_Build.php',
         'App\\RSpade\\Core\\Manifest\\Manifest_Indexer' => __DIR__ . '/../..' . '/app/RSpade/Core/Manifest/Manifest_Indexer.php',
+        'App\\RSpade\\Core\\Manifest\\Manifest_Overrides' => __DIR__ . '/../..' . '/app/RSpade/Core/Manifest/Manifest_Overrides.php',
         'App\\RSpade\\Core\\Manifest\\Manifest_Scanner' => __DIR__ . '/../..' . '/app/RSpade/Core/Manifest/Manifest_Scanner.php',
         'App\\RSpade\\Core\\Manifest\\Manifest_Store' => __DIR__ . '/../..' . '/app/RSpade/Core/Manifest/Manifest_Store.php',
         'App\\RSpade\\Core\\Manifest\\Modules\\Blade_ManifestModule' => __DIR__ . '/../..' . '/app/RSpade/Core/Manifest/Modules/Blade_ManifestModule.php',
@@ -1467,6 +1470,8 @@ class ComposerStaticInitfe33f98a750b8c5a51b30c78bd3fab21
         'App\\RSpade\\Core\\Models\\User_Profile_Model_Abstract' => __DIR__ . '/../..' . '/app/RSpade/Core/Models/User_Profile_Model_Abstract.php',
         'App\\RSpade\\Core\\Naming\\Rsx_Identifier' => __DIR__ . '/../..' . '/app/RSpade/Core/Naming/Rsx_Identifier.php',
         'App\\RSpade\\Core\\Naming\\Rsx_Paths' => __DIR__ . '/../..' . '/app/RSpade/Core/Naming/Rsx_Paths.php',
+        'App\\RSpade\\Core\\Overrides\\Class_Override_Boot_Set' => __DIR__ . '/../..' . '/app/RSpade/Core/Overrides/Class_Override_Boot_Set.php',
+        'App\\RSpade\\Core\\Overrides\\Class_Override_Loader' => __DIR__ . '/../..' . '/app/RSpade/Core/Overrides/Class_Override_Loader.php',
         'App\\RSpade\\Core\\PHP\\Filename_ShortName' => __DIR__ . '/../..' . '/app/RSpade/Core/PHP/Filename_ShortName.php',
         'App\\RSpade\\Core\\PHP\\Filename_Suggester' => __DIR__ . '/../..' . '/app/RSpade/Core/PHP/Filename_Suggester.php',
         'App\\RSpade\\Core\\PHP\\Php_Fixer' => __DIR__ . '/../..' . '/app/RSpade/Core/PHP/Php_Fixer.php',

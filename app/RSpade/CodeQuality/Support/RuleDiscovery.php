@@ -105,6 +105,20 @@ class RuleDiscovery
                 continue;
             }
 
+            // A rule the application overrides is never included: its class name is answered
+            // by the override loader with the application's class, which is the rule that runs.
+            $override = \App\RSpade\Core\Manifest\Manifest::override_for($file_path);
+
+            if ($override !== null) {
+                if (!class_exists($fqcn)) {
+                    shouldnt_happen("CodeQuality rule class '{$fqcn}' is overridden by {$override['by']}, but the override did not load");
+                }
+
+                $found[$fqcn] = base_path($override['by']);
+
+                continue;
+            }
+
             require_once $file_path;
 
             if (!class_exists($fqcn)) {

@@ -158,17 +158,14 @@ class Manifest_Scanner
                         function ($file, $key, $iterator) {
                             $basename = $file->getBasename();
 
-                            // Skip hidden files and directories (those starting with .)
+                            // Skip hidden files (those starting with .)
                             if (strpos($basename, '.') === 0) {
                                 return false;
                             }
 
-                            // If it's a directory, check if it should be excluded
+                            // Don't recurse into excluded directories
                             if ($iterator->hasChildren()) {
-                                // Don't recurse into excluded directories
-                                $excluded_dirs = config('rsx.manifest.excluded_dirs', Manifest::EXCLUDED_DIRS);
-
-                                return !in_array($basename, $excluded_dirs);
+                                return !static::_is_excluded_directory_name($basename);
                             }
 
                             // It's a file, check if filename should be excluded
@@ -224,6 +221,22 @@ class Manifest_Scanner
         Manifest::$_get_rsx_files_cache = $files;
 
         return $files;
+    }
+
+    /**
+     * Does discovery pass over a directory of this name, and everything beneath it?
+     *
+     * The ONE answer to "which directories does the manifest exclude": a hidden directory,
+     * and any directory whose name is in config('rsx.manifest.excluded_dirs') (resource,
+     * public, vendor, ...). Matched by BASENAME, at any depth of a scan root.
+     */
+    public static function _is_excluded_directory_name(string $basename): bool
+    {
+        if (str_starts_with($basename, '.')) {
+            return true;
+        }
+
+        return in_array($basename, config('rsx.manifest.excluded_dirs', Manifest::EXCLUDED_DIRS), true);
     }
 
     /**
@@ -428,12 +441,6 @@ class Manifest_Scanner
             $extension = 'externals.php';
         } elseif (str_ends_with($file_path, '.blade.php')) {
             $extension = 'blade.php';
-        } elseif (str_ends_with($file_path, '.php.upstream')) {
-            $extension = 'php.upstream';
-        } elseif (preg_match('/\.(js|jqhtml|scss)\.upstream$/', $file_path, $archived)) {
-            // An archived JS class, template or stylesheet: indexed so the restore pass
-            // can tell whose it is, and under an extension no other code path reads.
-            $extension = $archived[1] . '.upstream';
         }
 
         $data = [
@@ -464,24 +471,6 @@ class Manifest_Scanner
                     $data['mtime'] = $updated_stat['mtime'];
                     $data['size'] = $updated_stat['size'];
                 }
-                break;
-
-            case 'php.upstream':
-                // Parse upstream files to extract class metadata
-                // These are framework files that were renamed when an rsx/ override was created
-                // Php_Fixer only runs on extension 'php', so upstream files are safe
-                $php_metadata = \App\RSpade\Core\PHP\Php_Parser::parse($absolute_path);
-                $data = array_merge($data, $php_metadata);
-                break;
-
-            case 'js.upstream':
-            case 'jqhtml.upstream':
-            case 'scss.upstream':
-                // An archived framework file is parsed for ONE fact - the name it
-                // declares - which is all the restore pass needs. Nothing else the parser
-                // found is kept: under `class`, `id` or `scss_wrapper_class` an archived
-                // file would be read as a live declaration of that name.
-                $data['upstream_name'] = static::__archived_declared_name($extension, $absolute_path);
                 break;
 
             case 'js':
@@ -1037,105 +1026,6 @@ class Manifest_Scanner
         }
     }
 
-    public static function _load_php_files_in_dependency_order(): void
-    {
-        if (!isset(Manifest::$data['data']['files'])) {
-            throw new \RuntimeException(
-                'Fatal: Manifest::load_php_files_in_dependency_order() called but manifest data structure is not initialized. ' .
-"This shouldn't happen - Phase 2 should have populated the files array."
-            );
-        }
-
-        $files = Manifest::$data['data']['files'];
-        $loaded = [];
-        $to_load = [];
-
-        // Build list of files with class information
-        foreach ($files as $file_path => $metadata) {
-            // Check for PHP files by extension
-            if (!isset($metadata['extension']) || $metadata['extension'] !== 'php') {
-                continue;
-            }
-
-            if (!isset($metadata['class'])) {
-                // No class defined, include it immediately
-                $full_path = base_path($file_path);
-                if (file_exists($full_path)) {
-                    include_once $full_path;
-                }
-                continue;
-            }
-
-            $to_load[$file_path] = [
-                'class' => $metadata['class'] ?? null,
-                'extends' => $metadata['extends'] ?? null,
-                'namespace' => $metadata['namespace'] ?? null,
-                'fqcn' => $metadata['fqcn'] ?? null,
-            ];
-        }
-
-        // Load files in dependency order
-        $max_iterations = count($to_load) + 10; // Prevent infinite loop
-        $iteration = 0;
-
-        while (!empty($to_load) && $iteration < $max_iterations) {
-            $iteration++;
-            $loaded_this_round = false;
-
-            foreach ($to_load as $file_path => $info) {
-                // Check if dependencies are met
-                $can_load = true;
-
-                if (!empty($info['extends'])) {
-                    // Check if parent class is already loaded
-                    $parent_loaded = false;
-
-                    // Check if it's a Laravel/PHP built-in class
-                    if (class_exists($info['extends'], false) || interface_exists($info['extends'], false)) {
-                        $parent_loaded = true;
-                    } else {
-                        // Check if parent is in our loaded list
-                        foreach ($loaded as $loaded_info) {
-                            if ($loaded_info['class'] === $info['extends']) {
-                                $parent_loaded = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (!$parent_loaded) {
-                        $can_load = false;
-                    }
-                }
-
-                if ($can_load) {
-                    // Load the file
-                    $full_path = base_path($file_path);
-                    if (file_exists($full_path)) {
-                        include_once $full_path;
-                    }
-
-                    // Mark as loaded
-                    $loaded[$file_path] = $info;
-                    unset($to_load[$file_path]);
-                    $loaded_this_round = true;
-                }
-            }
-
-            // If nothing was loaded this round, we might have circular dependencies
-            // Load remaining files anyway
-            if (!$loaded_this_round && !empty($to_load)) {
-                foreach ($to_load as $file_path => $info) {
-                    $full_path = base_path($file_path);
-                    if (file_exists($full_path)) {
-                        include_once $full_path;
-                    }
-                }
-                break;
-            }
-        }
-    }
-
     // /**
     //  * Extract reflection data for all PHP files
     //  * Must be called after Phase 3 (dependency loading) completes
@@ -1164,12 +1054,6 @@ class Manifest_Scanner
     //     }
     // }
 
-    /**
-    * Load all PHP files in dependency order
-    * This ensures base classes are loaded before their subclasses
-    * Must be called after Phase 2 (basic metadata extraction) completes
-    * @deprecated Use _load_changed_php_files() for incremental builds
-    */
     /**
     * Run Php_Fixer over the files that can actually need fixing.
     *
@@ -1378,144 +1262,4 @@ class Manifest_Scanner
 
         return $delta;
     }
-
-    /**
-    * The name an archived .js / .jqhtml / .scss file declares: its JS class, its
-    * <Define:> component, or the single class its stylesheet is wrapped in. Null when it
-    * declares none.
-    */
-    private static function __archived_declared_name(string $extension, string $absolute_path): ?string
-    {
-        if ($extension === 'js.upstream') {
-            return \App\RSpade\Core\JsParsers\Js_Parser::extract_metadata($absolute_path)['class'] ?? null;
-        }
-
-        $parsed = [];
-
-        if ($extension === 'jqhtml.upstream') {
-            ExtensionRegistry::process_file('jqhtml', $absolute_path, $parsed);
-
-            return ($parsed['id'] ?? null) ?: null;
-        }
-
-        // The stylesheet handler decides what a file is from its NAME, and this one ends
-        // in .upstream - so it is read through a copy that ends in .scss.
-        $readable = Rsx_Project_Paths::tmp_path('archived_stylesheet_' . sha1($absolute_path) . '.scss');
-        copy($absolute_path, $readable);
-
-        try {
-            $parsed = (new \App\RSpade\Integrations\Scss\Scss_ManifestModule())->process($readable, []);
-        } finally {
-            unlink($readable);
-        }
-
-        return ($parsed['scss_wrapper_class'] ?? null) ?: null;
-    }
-
-    /**
-    * Restore orphaned .upstream files when their override no longer exists
-    *
-    * An archived framework file comes back when nothing in the application stands in for
-    * it any more:
-    *
-    *   .php.upstream                  no active .php file declares its class
-    *   .js.upstream                   no application JS file declares its class
-    *   .jqhtml.upstream               no application template declares its component
-    *   .scss.upstream                 no application stylesheet is wrapped in its class
-    *
-    * Each file is released on its own, as it was archived on its own.
-    */
-    public static function _restore_orphaned_upstream_files(): void
-    {
-        // ONE pass, two answers: the active class names, and the .upstream entries. The
-        // second loop used to walk the whole index again looking for the handful of archived
-        // files it is actually about.
-        $active_php_classes = [];
-        $upstream_entries = [];
-        $application_names = [];
-        $archived_assets = [];
-
-        foreach (Manifest::$data['data']['files'] as $file => $metadata) {
-            $extension = $metadata['extension'] ?? null;
-
-            if (in_array($extension, ['js.upstream', 'jqhtml.upstream', 'scss.upstream'], true)) {
-                $archived_assets[$file] = [substr($extension, 0, -strlen('.upstream')), $metadata['upstream_name'] ?? null];
-
-                continue;
-            }
-
-            if (Rsx_Paths::is_application($file)) {
-                if ($extension === 'jqhtml' && !empty($metadata['id'])) {
-                    $application_names['jqhtml'][$metadata['id']] = true;
-                } elseif ($extension === 'scss' && !empty($metadata['scss_wrapper_class'])) {
-                    $application_names['scss'][$metadata['scss_wrapper_class']] = true;
-                } elseif (in_array($extension, ['js', 'jsx', 'ts', 'tsx'], true) && !empty($metadata['class'])) {
-                    $application_names['js'][$metadata['class']] = true;
-                }
-            }
-
-            if ($extension === 'php' && !empty($metadata['class'])) {
-                $active_php_classes[$metadata['class']] = $file;
-
-                continue;
-            }
-
-            if ($extension === 'php.upstream' && !empty($metadata['class'])) {
-                $upstream_entries[$file] = $metadata;
-            }
-        }
-
-        // Check each .upstream file
-        foreach ($upstream_entries as $file => $metadata) {
-
-            $class_name = $metadata['class'];
-
-            // Check if an active .php file with this class exists
-            if (isset($active_php_classes[$class_name])) {
-                // Override still exists - keep .upstream as-is.
-                continue;
-            }
-
-            // No active override - restore this framework file
-            $upstream_path = base_path($file);
-            $restored_path = preg_replace('/\.upstream$/', '', $upstream_path);
-
-            if (file_exists($upstream_path) && !file_exists($restored_path)) {
-                rename($upstream_path, $restored_path);
-                Manifest::$_override_pass_renamed = true;
-                console_debug('MANIFEST', "Class restore: {$class_name} - restored {$file} to .php");
-
-                // Remove the .upstream entry from manifest
-                unset(Manifest::$data['data']['files'][$file]);
-
-                Manifest::flag_needs_restart(
-                    'an orphaned .upstream file was restored: ' . $class_name . ' (' . $file . ')'
-                );
-            }
-        }
-
-        // Archived JS classes, templates and stylesheets: each is kept while an
-        // application file of the SAME KIND still declares its name.
-        foreach ($archived_assets as $file => [$kind, $name]) {
-            if ($name !== null && isset($application_names[$kind][$name])) {
-                continue;
-            }
-
-            $upstream_path = base_path($file);
-            $restored_path = preg_replace('/\.upstream$/', '', $upstream_path);
-
-            if (file_exists($upstream_path) && !file_exists($restored_path)) {
-                rename($upstream_path, $restored_path);
-                Manifest::$_override_pass_renamed = true;
-                error_log('[Manifest] Override released: ' . ($name ?? 'unnamed') . ' - restored ' . $file);
-
-                unset(Manifest::$data['data']['files'][$file]);
-
-                Manifest::flag_needs_restart(
-                    'an orphaned .upstream file was restored: ' . ($name ?? 'unnamed') . ' (' . $file . ')'
-                );
-            }
-        }
-    }
-
 }

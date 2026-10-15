@@ -7,15 +7,12 @@ bare `git` to the proxy.
 
 ## Domain overview
 
-On a live downstream box, three processes mutate the working tree during any git
-operation, and plain git is defended against none of them:
+On a live downstream box, two processes mutate the working tree during any git
+operation, and plain git is defended against neither:
 
 1. the container's `fixperms` loop `chmod`/`chown`s every newly created file, including
    files inside `.git/` (objects, index, lockfiles), racing git's own writes;
-2. the JIT manifest rebuild re-applies the class-override pass (`.php` <->
-   `.php.upstream` renames + autoloader rewrite) on any web request, re-dirtying
-   `system/` within ~1s of any clean;
-3. `.git/index.lock` contention from concurrent status/build processes. This is ONE of
+2. `.git/index.lock` contention from concurrent status/build processes. This is ONE of
    the two causes of the field `fatal: stash failed`: a non-fast-forward merge carrying
    a tracked modified file makes git run an internal `git stash create`, which fails
    silently when it loses the lock race and kills the merge having done no work.
@@ -40,8 +37,8 @@ tree-rewriting ops run quiesced.**
 
 The pull/merge path resets `system/` to pristine for the instant of the merge, and
 "pristine" includes UNTRACKED churn: `reset` and `checkout -- <path>` act on tracked
-paths only, so a class-override sidecar survived the reset and collided with a peer
-box's incoming tracked blob, aborting the pull deterministically on every re-run
+paths only, so an untracked file a build had left under `system/` survived the reset and
+collided with a peer box's incoming tracked blob, aborting the pull deterministically on every re-run
 (2026-08-18). The reset therefore ends with `clean -fdq -- system` - never `-x`, since
 gitignored state (the `.env` symlink, ignored build trees) is not churn.
 

@@ -19,9 +19,9 @@ use App\RSpade\Core\Naming\Rsx_Paths;
  *
  *   (a) A name declared under `rsx/` may NOT start with an underscore. Without this, an
  *       application `_Sys_Layout` would collide with the framework's - and worse, the
- *       manifest's class-override machinery would silently ARCHIVE the framework file as
- *       `.upstream` and serve the app's copy instead. The collision would look like the
- *       framework panel simply changing.
+ *       manifest's class-override machinery would silently SHADOW the framework file and
+ *       serve the app's copy instead. The collision would look like the framework panel
+ *       simply changing.
  *
  *   (b) A name declared under `app/RSpade/Sys/` MUST start with one. The prefix is what
  *       keeps the framework's application out of the namespace an application is free to
@@ -62,8 +62,8 @@ class NameReservedPrefix_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Blocking: a colliding name does not fail, it SHADOWS - the manifest archives the
-     * framework file and serves the application's copy with no error anywhere.
+     * Blocking: a colliding name does not fail, it SHADOWS - the manifest takes the
+     * framework file out of the live index and serves the application's copy with no error anywhere.
      */
     public function get_default_severity(): string
     {
@@ -72,7 +72,7 @@ class NameReservedPrefix_CodeQualityRule extends CodeQualityRule_Abstract
 
     /**
      * Manifest-time, because the failure mode is silent shadowing rather than an error, and
-     * because the very next build is what would archive the framework file.
+     * because the very next build is what would shadow the framework file.
      */
     public function is_called_during_manifest_scan(): bool
     {
@@ -168,8 +168,8 @@ class NameReservedPrefix_CodeQualityRule extends CodeQualityRule_Abstract
                 . "or column is.\n"
                 . "\n"
                 . "This does not merely look wrong: a `_`-prefixed name in rsx/ that matches a framework one is "
-                . "read by the manifest as a CLASS OVERRIDE. The framework's file is renamed to .upstream and "
-                . "yours is served in its place, with nothing reported anywhere.\n"
+                . "read by the manifest as a CLASS OVERRIDE. The framework's file is shadowed and yours is "
+                . "served in its place, with nothing reported anywhere.\n"
                 . "\n"
                 . "FIX: rename '{$name}' to '" . Rsx_Identifier::bare($name) . "' (or to any name of your own that "
                 . "does not begin with an underscore).\n"

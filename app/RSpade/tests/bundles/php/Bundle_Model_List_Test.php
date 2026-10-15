@@ -144,6 +144,8 @@ class Bundle_Model_List_Test extends Rsx_Test_Abstract
             file_put_contents(Rsx_Project_Paths::manifest_index_file(), "<?php\nreturn ['ok' => true];\n");
             file_put_contents(Rsx_Project_Paths::manifest_files_file(), "<?php\nreturn [];\n");
             file_put_contents(Rsx_Project_Paths::build_key_file(), "deadbeefcafef00d\n");
+            ensure_directory(dirname(Rsx_Project_Paths::class_overrides_file()));
+            file_put_contents(Rsx_Project_Paths::class_overrides_file(), "<?php\nreturn [];\n");
             file_put_contents(Rsx_Project_Paths::bundles_dir() . '/Probe__app.abc12345.js', "console.log(1);\n");
             file_put_contents(Rsx_Project_Paths::bundle_models_file('Probe'), '{"bundle":"Probe","app_hash":"abc12345","models":[]}');
 
