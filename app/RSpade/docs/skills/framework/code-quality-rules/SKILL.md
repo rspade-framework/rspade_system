@@ -178,7 +178,7 @@ ready - the accessor raises
 owner ruling made visible as a fatal: a build-scoped memo would be a memo of the build that is
 still being computed. Use `get_persistent()`, key it on a content hash so a stale entry is
 impossible rather than merely unlikely, and version the key prefix when the payload's shape
-changes (`Manifest_unindexed_framework_classes_v1_<fingerprint>` is the worked example;
+changes (`Manifest_unindexed_framework_classes_v2_<fingerprint>` is the worked example;
 JQHTML-IMPL-01 keys on the file's own manifest hash).
 
 **Never a VIOLATION LIST.** Record the clean verdict and recompute the few files that are not

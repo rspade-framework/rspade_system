@@ -47,6 +47,7 @@ alone dies at "Manifest support module must extend ManifestSupport_Abstract".
 | The build as an object | `Core/Manifest/Manifest_Build.php` |
 | The facade and the phase sequence | `Core/Manifest/Manifest.php` (`init`, `_refresh_manifest`) |
 | Discovery and change detection | `Core/Manifest/Manifest_Scanner.php` |
+| The walk of unindexed framework code (excluded directories pruned at any depth) | `Core/Manifest/Manifest_Scanner.php` (`_walk_framework_files()`), `Core/Manifest/Manifest_Indexer.php` (`_unindexed_framework_classes()`) |
 | Persistence, the bad-manifest flag | `Core/Manifest/Manifest_Store.php` |
 | The code-quality pass | `CodeQuality/Manifest_Rule_Driver.php`, `CodeQuality/Support/Source_Cache.php` |
 | A stylesheet's wrapper class | `Integrations/Scss/Scss_ManifestModule.php` (`wrapper_class_of()`) |

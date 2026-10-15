@@ -9,7 +9,6 @@ namespace App\RSpade\Core\Manifest;
 
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\Manifest_Indexer;
-use App\RSpade\Core\Manifest\Manifest_Scanner;
 use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Overrides\Class_Override_Boot_Set;
 
@@ -59,10 +58,10 @@ use App\RSpade\Core\Overrides\Class_Override_Boot_Set;
  *   - an override of a SPLIT class (`X extends X_Abstract`) that does not extend X_Abstract;
  *   - an override of a class the framework declares before an override can answer for it
  *     (Class_Override_Boot_Set), or of one already declared in the building process;
- *   - an application class named like a framework class the manifest never indexes (the
- *     unscanned framework subtrees, and the resource/, public/, ... directories discovery
- *     passes over inside the scanned ones): it could be neither an override nor a distinct
- *     class;
+ *   - an application class named like a framework class the manifest never indexes but the
+ *     framework can load (the unscanned framework subtrees, and system/app/{Console,Http,...};
+ *     never a resource/, public/ or other excluded directory, which holds data): it could be
+ *     neither an override nor a distinct class;
  *   - a split base `X_Abstract` naming its own shell `X` in a method signature, which no
  *     override that redeclares that method can ever link against.
  *
@@ -82,9 +81,6 @@ class Manifest_Overrides
 
     /** Every extension a JavaScript class is declared in. */
     public const JS_EXTENSIONS = ['js', 'jsx', 'ts', 'tsx'];
-
-    /** Directories that hold third-party code, which declares no framework class name. */
-    private const THIRD_PARTY_DIRECTORIES = ['vendor', 'node_modules'];
 
     /** Test-tree namespaces: indexed only while a test run is in progress. */
     private const TEST_TREE_NAMESPACES = ['App\\RSpade\\Tests\\', 'App\\RSpade\\Temp\\'];
@@ -205,7 +201,7 @@ class Manifest_Overrides
             unset($files[$path]);
         }
 
-        self::__assert_no_unindexed_framework_namesake($declarers['php'] ?? [], $files);
+        self::__assert_no_unindexed_framework_namesake($declarers['php'] ?? []);
         self::__assert_split_bases_never_name_their_shell($changed_files);
 
         ksort($map);
@@ -465,16 +461,17 @@ class Manifest_Overrides
 
     /**
      * An application PHP class must not share its simple name with a framework class the
-     * manifest never indexes - the unscanned app/RSpade subtrees (Commands, SchemaQuality, ...),
-     * the directories discovery passes over inside the scanned ones (resource/, public/, ...),
-     * and the framework application directories outside app/RSpade. Such a pair is neither an
-     * override (the framework class is never shadowed) nor two distinct classes (RSX resolves
-     * classes by simple name).
+     * manifest never indexes but the framework can still load - the unscanned app/RSpade
+     * subtrees (Commands, SchemaQuality, ...) and the framework application directories
+     * outside app/RSpade. Such a pair is neither an override (the framework class is never
+     * shadowed) nor two distinct classes (RSX resolves classes by simple name).
+     *
+     * A resource/, public/ or other directory the scanner excludes is data, never loaded
+     * code, so a class declared there is no namesake (Manifest_Scanner::_walk_framework_files()).
      *
      * @param array<string, array<string, array<int,string>>> $php_declarers name => side => paths
-     * @param array<string, array> $files the working set (path => record)
      */
-    private static function __assert_no_unindexed_framework_namesake(array $php_declarers, array $files): void
+    private static function __assert_no_unindexed_framework_namesake(array $php_declarers): void
     {
         $unindexed = null;
 
@@ -484,7 +481,7 @@ class Manifest_Overrides
             }
 
             if ($unindexed === null) {
-                $unindexed = self::__unindexed_framework_classes($files);
+                $unindexed = self::__unindexed_framework_classes();
             }
 
             if (!isset($unindexed[$name])) {
@@ -505,10 +502,9 @@ class Manifest_Overrides
      * simple name => one framework FQCN, for every framework class the manifest does not
      * index outside the test trees.
      *
-     * @param array<string, array> $files the working set (path => record)
      * @return array<string,string>
      */
-    private static function __unindexed_framework_classes(array $files): array
+    private static function __unindexed_framework_classes(): array
     {
         $classes = [];
 
@@ -528,84 +524,7 @@ class Manifest_Overrides
             }
         }
 
-        return $classes + self::__unscanned_application_classes() + self::__excluded_directory_classes($files);
-    }
-
-    /**
-     * simple name => FQCN for every class declared in a directory discovery passes over
-     * inside a scanned framework root - a resource/, public/ or hidden directory, by the
-     * scanner's own rule (Manifest_Scanner::_is_excluded_directory_name()).
-     *
-     * A file the build indexes anyway (a nested scan root) is not unindexed and is skipped,
-     * and so is third-party code (THIRD_PARTY_DIRECTORIES).
-     * Walked on every derivation: the scanned framework roots are a few hundred directories,
-     * and the derivation runs only when the tree changed.
-     *
-     * @param array<string, array> $files the working set (path => record)
-     * @return array<string,string>
-     */
-    private static function __excluded_directory_classes(array $files): array
-    {
-        $classes = [];
-
-        foreach (Manifest::scan_directories() as $root) {
-            if (!Rsx_Paths::is_framework($root . '/') || !is_dir(base_path($root))) {
-                continue;
-            }
-
-            foreach (self::__excluded_directories_under(base_path($root)) as $directory) {
-                if (in_array(basename($directory), self::THIRD_PARTY_DIRECTORIES, true)) {
-                    continue;
-                }
-
-                $iterator = new \RecursiveIteratorIterator(new \RecursiveCallbackFilterIterator(
-                    new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
-                    static fn ($entry) => !$entry->isDir() || !in_array($entry->getBasename(), self::THIRD_PARTY_DIRECTORIES, true)
-                ));
-
-                foreach ($iterator as $file) {
-                    $path = str_replace('\\', '/', $file->getPathname());
-
-                    if ($file->getExtension() !== 'php' || isset($files[Rsx_Paths::relative($path)])) {
-                        continue;
-                    }
-
-                    foreach (Manifest_Scanner::_extract_classes_from_php_file($path) as $simple => $fqcns) {
-                        foreach ($fqcns as $fqcn) {
-                            $classes[$simple] = ltrim($fqcn, '\\');
-                        }
-                    }
-                }
-            }
-        }
-
-        return $classes;
-    }
-
-    /**
-     * The outermost excluded directories beneath $directory (absolute paths).
-     *
-     * @return array<int,string>
-     */
-    private static function __excluded_directories_under(string $directory): array
-    {
-        $excluded = [];
-
-        foreach (new \FilesystemIterator($directory, \FilesystemIterator::SKIP_DOTS) as $entry) {
-            if (!$entry->isDir() || $entry->isLink()) {
-                continue;
-            }
-
-            if (Manifest_Scanner::_is_excluded_directory_name($entry->getBasename())) {
-                $excluded[] = $entry->getPathname();
-
-                continue;
-            }
-
-            array_push($excluded, ...self::__excluded_directories_under($entry->getPathname()));
-        }
-
-        return $excluded;
+        return $classes + self::__unscanned_application_classes();
     }
 
     /**

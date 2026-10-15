@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Manifest;
 
 use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Manifest\Manifest_Scanner;
 use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
@@ -93,6 +94,12 @@ class Manifest_Indexer
     /**
     * simple name => FQCNs, for the app/RSpade/ subtrees this build does not index.
     *
+    * Only code the framework can load takes part: a directory the scanner excludes
+    * (Manifest_Scanner::_is_excluded_directory_name() - resource/, public/, hidden, the
+    * configured excluded_dirs) is pruned at every depth, app/RSpade/resource included, so a
+    * class in the vendored reference app or any other data tree is neither in the autoloader's
+    * map nor a namesake an application class collides with.
+    *
     * Memoized in the PERSISTENT cache under a stat fingerprint of those subtrees - the
     * build-scoped family is unusable here, because this runs mid-build (before a build key
     * exists) and is exactly the kind of expensive content-keyed derivation the persistent
@@ -120,6 +127,12 @@ class Manifest_Indexer
                 continue;
             }
 
+            // app/RSpade/resource is data the framework never loads (the vendored reference
+            // app among it), by the scanner's own rule - at this level as at every other.
+            if (Manifest_Scanner::_is_excluded_directory_name($entry)) {
+                continue;
+            }
+
             $directories[] = $absolute;
         }
 
@@ -136,7 +149,7 @@ class Manifest_Indexer
             . implode('|', array_map(fn ($f) => basename($f) . ':' . filesize($f) . ':' . filemtime($f), $loose))
         );
 
-        $cache_key = 'Manifest_unindexed_framework_classes_v1_' . $fingerprint;
+        $cache_key = 'Manifest_unindexed_framework_classes_v2_' . $fingerprint;
         $cached = RsxCache::get_persistent($cache_key);
 
         if (is_array($cached)) {

@@ -86,7 +86,8 @@ override could answer for them.
 | Guard: build already marked its manifest bad | php | covered - nothing shadowed |
 | Templates shadowed by declared name, file by file; two application templates refused; stylesheets never shadowed and never refused | php | `Override_Template_Stylesheet_Test` |
 | End to end: add an override of each kind, no restart, unchanged rebuild is a no-op, remove it, nothing in the framework tree written | php (child builds) | `Manifest_Overrides_Test`, child-build seam into a scratch build root |
-| Un-overridable refusals (boot class, unindexed namesake - an unscanned subtree or an excluded directory inside a scanned root - already declared) and the split-signature rule | php | `Manifest_Overrides_Test`, synthetic file list |
+| Un-overridable refusals (boot class, unindexed namesake in an unscanned subtree, already declared) and the split-signature rule | php | `Manifest_Overrides_Test`, synthetic file list |
+| Namesakes of classes in framework data directories (`resource/` - the vendored reference app among them - and `public/`) are ordinary application classes: no refusal, no override, the application FQCN alone in the class map | php | `Manifest_Overrides_Test`, child build |
 | Member reader: methods (static/instance), properties, trait adoptions; NOT privates, NOT locals, NOT nested anonymous classes | php | token pass over a fixture - covered |
 | Missing method / property / trait adoption each reported, one finding per member | php | fixture pairs - covered |
 | An override that lacks nothing reports nothing; its own additions are context, not drift | php | covered |

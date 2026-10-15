@@ -31,10 +31,14 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *   - nothing in the framework fixture tree is ever written, renamed or archived;
  *   - a FATAL refusal fails the child build (two application templates of one name).
  *
+ * A class in a directory the framework never loads - resource/, public/, the vendored
+ * reference app at app/RSpade/resource/reference_app/ - is data: an application class of the
+ * same name builds, is no override, and owns its name in the autoloader's class map.
+ *
  * The remaining refusals are decisions over the file list, asserted in-process against a
  * synthetic one: an override of a boot class, of a class in a subtree the manifest never
- * indexes or in a directory it passes over inside a scanned one, of a class already declared
- * in the building process, and a split base naming its own shell in a signature.
+ * indexes, of a class already declared in the building process, and a split base naming its
+ * own shell in a signature.
  *
  * THE FIXTURE TREES LIVE UNDER `resource/` DIRECTORIES, which no build descends into: they
  * are scanned only because the child names them as extra roots. A fixture that is DESIGNED
@@ -51,6 +55,9 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
     /** The application-side fixture root, relative to base_path(). */
     private static string $application_root = '';
 
+    /** A real tree inside app/RSpade/resource, shaped like the vendored reference app. */
+    private static string $template_root = '';
+
     /** The child's scratch build root. */
     private static string $build_root = '';
 
@@ -64,6 +71,7 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
 
         static::$framework_root = 'app/RSpade/temp/resource/' . $tag . '/framework';
         static::$application_root = 'rsx/resource/' . $tag . '/application';
+        static::$template_root = 'app/RSpade/resource/' . $tag . '/reference_app';
         static::$build_root = Rsx_Project_Paths::tmp_path('manifest-overrides/' . getmypid() . '/build');
     }
 
@@ -131,7 +139,7 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
 
     private static function __remove_everything(): void
     {
-        foreach ([dirname(static::$framework_root), dirname(static::$application_root)] as $directory) {
+        foreach ([dirname(static::$framework_root), dirname(static::$application_root), dirname(static::$template_root)] as $directory) {
             if (is_dir(base_path($directory))) {
                 rmdir_recursive(base_path($directory));
             }
@@ -341,6 +349,71 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
         }
     }
 
+    /**
+     * The downstream shape: an application built from the reference app carries every one of
+     * its class names, while the framework ships a REAL copy of that app under
+     * app/RSpade/resource/reference_app/. A class there - or in any resource/ or public/
+     * directory of a framework tree, scanned or not - is data the framework never loads, so
+     * the application namesake builds, is no override, and is the only class the autoloader's
+     * map knows by that name. Covered: the same namespace and name as the application class
+     * (a template controller), a root-namespace class (the shape of Main), a resource/
+     * directory inside a scanned framework root, and a public/ directory inside one.
+     */
+    public static function test_namesakes_in_framework_data_directories_build_as_ordinary_application_classes()
+    {
+        static::__roots();
+        static::__remove_everything();
+
+        try {
+            $controller = static::$application_root . '/api/mo_template_probe_controller.php';
+            $controller_namespace = Rsx_Namespace::from_path($controller);
+
+            $framework = [
+                static::$template_root . '/app/api/mo_template_probe_controller.php' => "<?php\n\nnamespace {$controller_namespace};\n\n"
+                    . "use App\\RSpade\\Core\\Controller\\Rsx_Controller_Abstract;\n\n"
+                    . "class Mo_Template_Probe_Controller extends Rsx_Controller_Abstract\n{\n}\n",
+                static::$template_root . '/mo_template_main.php' => "<?php\n\nnamespace Rsx;\n\nclass Mo_Template_Main\n{\n}\n",
+                dirname(static::$framework_root) . '/excluded/Mo_Excluded_Probe.php' => "<?php\n\nnamespace App\\RSpade\\Temp\\Resource\\Excluded;\n\nclass Mo_Excluded_Probe\n{\n}\n",
+                static::$framework_root . '/public/Mo_Public_Probe.php' => "<?php\n\nnamespace App\\RSpade\\Temp\\Public_Probe;\n\nclass Mo_Public_Probe\n{\n}\n",
+            ];
+
+            $application = [
+                $controller => "<?php\n\nnamespace {$controller_namespace};\n\n"
+                    . "use App\\RSpade\\Core\\Controller\\Rsx_Controller_Abstract;\n\n"
+                    . "class Mo_Template_Probe_Controller extends Rsx_Controller_Abstract\n{\n}\n",
+            ];
+
+            foreach (['mo_template_main' => 'Mo_Template_Main', 'mo_excluded_probe' => 'Mo_Excluded_Probe', 'mo_public_probe' => 'Mo_Public_Probe'] as $file => $class) {
+                $path = static::$application_root . '/' . $file . '.php';
+                $application[$path] = "<?php\n\nnamespace " . Rsx_Namespace::from_path($path) . ";\n\nclass {$class}\n{\n}\n";
+            }
+
+            static::__write($framework + $application);
+
+            foreach (array_keys($framework) as $path) {
+                static::__assert_false(is_link(dirname(base_path($path))), "{$path} is a real file, as the published framework ships it");
+            }
+
+            static::__build_ok('application namesakes of framework data-directory classes');
+
+            $index = static::__index();
+
+            static::__assert_equals([], $index['hot']['data']['overrides'], 'no framework data-directory class is recorded as overridden');
+            static::__assert_equals([], $index['loader'], 'and the override loader is handed nothing');
+
+            foreach ($application as $path => $content) {
+                preg_match('/^class (\w+)/m', $content, $match);
+                $class = $match[1];
+                $fqcn = Rsx_Namespace::from_path($path) . '\\' . $class;
+
+                static::__assert_equals($path, $index['hot']['data']['php_classes'][$class]['file'], "{$class} resolves to the application file");
+                static::__assert_equals([$fqcn], $index['hot']['data']['autoloader_class_map'][$class], "the autoloader's map knows {$class} only as the application class");
+            }
+        } finally {
+            static::__remove_everything();
+        }
+    }
+
     // =====================================================================
     // The refusals, as decisions over a synthetic file list
     // =====================================================================
@@ -431,51 +504,6 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
 
         static::__assert_contains('App\\RSpade\\Commands\\Rsx\\Manifest_Build_Command', $error->getMessage(), 'naming the framework class');
         static::__assert_contains('does not index', $error->getMessage(), 'and why it cannot be shadowed');
-    }
-
-    /**
-     * An application class named like a framework class in a directory discovery passes over
-     * INSIDE a scanned framework root (a resource/ directory, here under the scratch tree the
-     * test run scans) is refused the same way: that class is never indexed, so it can never be
-     * shadowed either.
-     */
-    public static function test_a_namesake_of_a_class_in_an_excluded_framework_directory_is_refused()
-    {
-        static::__roots();
-        $framework = dirname(static::$framework_root) . '/excluded/Mo_Excluded_Probe.php';
-        $application = static::$application_root . '/mo_excluded_probe.php';
-        $framework_fqcn = 'App\\RSpade\\Temp\\Resource\\Mo_Excluded\\Mo_Excluded_Probe';
-
-        static::__assert_true(
-            in_array('app/RSpade/temp', Manifest::scan_directories(), true),
-            'the test run scans the scratch tree, so its resource/ directory is an excluded directory of a scanned framework root'
-        );
-
-        try {
-            static::__write([
-                $framework => "<?php\n\nnamespace App\\RSpade\\Temp\\Resource\\Mo_Excluded;\n\nclass Mo_Excluded_Probe\n{\n}\n",
-                $application => "<?php\n",
-            ]);
-
-            $error = static::__assert_throws(
-                \RuntimeException::class,
-                static fn () => static::__derive(static::__php($application, 'Rsx\\Resource\\Probe\\Mo_Excluded_Probe')),
-                "'Mo_Excluded_Probe' cannot be overridden"
-            );
-
-            static::__assert_contains($framework_fqcn, $error->getMessage(), 'naming the framework class');
-            static::__assert_contains('does not index', $error->getMessage(), 'and why it cannot be shadowed');
-
-            // The same file INDEXED by the build (a nested scan root) is no longer unindexed:
-            // the pair is then an ordinary override, and the framework file is shadowed.
-            static::__derive(array_merge(
-                static::__php($framework, $framework_fqcn),
-                static::__php($application, 'Rsx\\Resource\\Probe\\Mo_Excluded_Probe')
-            ));
-            static::__pass('an indexed file in an excluded directory is overridden, not refused');
-        } finally {
-            static::__remove_everything();
-        }
     }
 
     /**

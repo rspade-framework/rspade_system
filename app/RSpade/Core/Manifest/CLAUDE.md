@@ -280,7 +280,7 @@ map above.
 | Phase | Was | Is |
 |---|---|---|
 | 4 reflection | every PHP file every build, re-reading 1,025 derived JSON files to restore data already in memory | the CHANGED set only; an unchanged record carries its reflection forward and the build ASSERTS it (`__assert_reflection_carried_forward` - a class record with no `abstract` key is a broken index) |
-| 4 class map | `_scan_directory_for_classes()` re-tokenized every framework php file, the scanned ones included | the indexed half comes from the files map; the UNINDEXED framework subtrees (Commands, Database, Http, Ide, ...) are walked only when their stat fingerprint moved, memoized in the PERSISTENT cache |
+| 4 class map | `_scan_directory_for_classes()` re-tokenized every framework php file, the scanned ones included | the indexed half comes from the files map; the UNINDEXED framework subtrees (Commands, Database, Http, Ide, ...) are walked only when their stat fingerprint moved, memoized in the PERSISTENT cache; the walk prunes every directory the scanner excludes (`resource/`, `public/`, ...), so a data tree contributes no class |
 | 5 modules | twelve full O(tree) passes | the diff contract above |
 | 6 stubs | model stubs rewritten unconditionally; per-model `stat` + `sha1_file` + `glob` | content-compared; the sweep is one pass over a set, skipped entirely on a no-change build |
 | 7 `_sweep_derived_caches` | every build, content-hashing every file | when a file was REMOVED, else at most hourly (stamp under `tmp/derived/`). It reclaims DISK, never correctness, so a deferred sweep costs nothing |
@@ -694,12 +694,18 @@ second implementation of a class the framework keeps developing, and is refused 
 reported); an override of a class in `Class_Override_Boot_Set` or already declared in the
 building process (it can never become an alias in that process); an `rsx/` class named like a
 class in an unindexed framework subtree (`_unindexed_framework_classes()`, the test trees
-excepted), in a directory discovery passes over inside a scanned framework root
-(`Manifest_Scanner::_is_excluded_directory_name()`: `resource/`, `public/`, hidden, ...; a file
-another scan root indexes and third-party `vendor/`/`node_modules/` excepted) or in
-`system/app/{Console,Database,Exceptions,Http,Notifications,Providers}`; and a
+excepted) or in `system/app/{Console,Database,Exceptions,Http,Notifications,Providers}`; and a
 split base `X_Abstract` naming its own shell `X` in a method signature (checked for split pairs
-this build re-parsed). Two guards decline instead of refusing: an `rsx/` entry the disk no
+this build re-parsed). **A namesake is refused only for code the framework can load**: every
+walk of unindexed framework code (`_unindexed_framework_classes()`, the
+`system/app/{Console,...}` walk, `Php_Fixer`'s class-exists proof) goes through
+`Manifest_Scanner::_walk_framework_files()`, which prunes every directory
+`_is_excluded_directory_name()` names (`resource/`, `public/`, hidden, the configured
+`excluded_dirs`) plus `vendor/`/`node_modules/`, at any depth - `app/RSpade/resource` itself
+included. A `resource/` or `public/` tree is data, never framework code: the reference app
+vendored at `app/RSpade/resource/reference_app/` shares every class name with an application
+built from it, and those classes are neither namesakes nor entries in the autoloader's map.
+Two guards decline instead of refusing: an `rsx/` entry the disk no
 longer backs is dropped and shadows nothing (a downstream field report, 2026-08-25), and a build
 that has already marked its manifest bad shadows nothing.
 
@@ -754,7 +760,7 @@ back a verdict; everything else is the driver's contract, in `rsx:man code_quali
 with `Manifest::get_state_key()`, which starts from `get_build_key()`, and during a build the
 manifest is not ready - the accessor raises `shouldnt_happen('called before manifest was loaded')`. `RsxCache::get_persistent()` /
 `set_persistent()` keyed on a CONTENT HASH is the tool; `Manifest_Indexer`'s unindexed-framework
--class map (keyed on a stat fingerprint, prefix `..._v1_`) is the worked example.
+-class map (keyed on a stat fingerprint, prefix `..._v2_`) is the worked example.
 
 There is no `code_quality_metadata` in the index any more, and no `on_manifest_file_update`
 hook: a rule that used to compute findings in a pre-pass and store them for its own `check()`

@@ -890,6 +890,12 @@ class Php_Fixer
                 continue;
             }
 
+            // A directory the scanner excludes (resource/, public/, ...) holds data, never a
+            // class the framework loads - at this level as at every depth of the walk.
+            if (\App\RSpade\Core\Manifest\Manifest_Scanner::_is_excluded_directory_name($entry)) {
+                continue;
+            }
+
             // Unscanned zone: does it define the class we were about to declare dead?
             $matches = self::__find_php_file_named($framework_root . '/' . $entry, $simple_name . '.php');
             if ($matches) {
@@ -903,16 +909,14 @@ class Php_Fixer
     /**
     * Recursive filename lookup, first hit wins. Case-insensitive: an rsx/ file is named
     * lowercase_with_underscores while a framework file carries its class's own spelling.
+    * The walk is the manifest's own (Manifest_Scanner::_walk_framework_files()), so a file in
+    * a resource/, public/ or other excluded directory is never evidence that a class exists.
     */
     private static function __find_php_file_named(string $directory, string $filename): bool
     {
         $filename = strtolower($filename);
 
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS)
-        );
-
-        foreach ($iterator as $file) {
+        foreach (\App\RSpade\Core\Manifest\Manifest_Scanner::_walk_framework_files($directory) as $file) {
             if ($file->isFile() && strtolower($file->getFilename()) === $filename) {
                 return true;
             }

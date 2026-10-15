@@ -389,11 +389,17 @@ FATAL - THE CLASS CANNOT BE OVERRIDDEN
       declared in this process (as ...) before the override map was settled");
     - a class in a framework directory the manifest DOES NOT INDEX ("... lives
       in a framework directory the manifest does not index"): the unscanned
-      app/RSpade subtrees (Commands, Ide, ...), the resource/, public/ and
-      hidden directories inside the scanned ones, and system/app/{Console,
+      app/RSpade subtrees (Commands, Ide, ...) and system/app/{Console,
       Database, Exceptions, Http, Notifications, Providers}. Such a file can
       never be shadowed, and RSX resolves classes by simple name, so the two
       cannot coexist either.
+
+    Only code the framework can load counts. A resource/, public/ or hidden
+    directory (or one named in rsx.manifest.excluded_dirs), at any depth of a
+    framework tree, holds data the framework never loads, so a class declared
+    there is no namesake of yours and is not in the class map. The reference
+    application vendored at system/app/RSpade/resource/reference_app/ is such
+    a tree: an application built from it keeps every one of its class names.
 
 FATAL - A SPLIT BASE NAMES ITS OWN SHELL IN A SIGNATURE
 

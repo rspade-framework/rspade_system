@@ -240,6 +240,40 @@ class Manifest_Scanner
     }
 
     /**
+     * Every file beneath $directory that the framework could load: a recursive walk that
+     * never descends into a directory _is_excluded_directory_name() names (resource/,
+     * public/, hidden, the configured excluded_dirs) or into third-party code (vendor/,
+     * node_modules/), at any depth, and never follows a symlinked directory.
+     *
+     * The walk behind every lookup of framework code the manifest does not index - the
+     * unindexed class map (_scan_directory_for_classes) and Php_Fixer's proof that a class
+     * still exists. A resource/ or public/ tree is data, never framework code, so a class
+     * declared there takes part in none of them. $directory itself is walked whatever its
+     * name; a caller iterating candidate roots asks _is_excluded_directory_name() first.
+     *
+     * @return iterable<\SplFileInfo>
+     */
+    public static function _walk_framework_files(string $directory): iterable
+    {
+        return new \RecursiveIteratorIterator(
+            new \RecursiveCallbackFilterIterator(
+                new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
+                static function (\SplFileInfo $entry, $key, \RecursiveDirectoryIterator $iterator): bool {
+                    if (!$iterator->hasChildren()) {
+                        return true;
+                    }
+
+                    $basename = $entry->getBasename();
+
+                    return !static::_is_excluded_directory_name($basename)
+                        && $basename !== 'vendor'
+                        && $basename !== 'node_modules';
+                }
+            )
+        );
+    }
+
+    /**
      * Is this relative path inside one of the given directory trees?
      *
      * @param array<int,string> $trees
@@ -344,23 +378,13 @@ class Manifest_Scanner
     public static function _scan_directory_for_classes(string $directory): array
     {
         $classes = [];
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($directory, \RecursiveDirectoryIterator::SKIP_DOTS)
-        );
 
-        foreach ($iterator as $file) {
-            // Skip non-PHP files
+        foreach (static::_walk_framework_files($directory) as $file) {
             if ($file->getExtension() !== 'php') {
                 continue;
             }
 
-            // Skip vendor directories
-            $path = $file->getPathname();
-            if (strpos($path, '/vendor/') !== false) {
-                continue;
-            }
-
-            foreach (static::_extract_classes_from_php_file($path) as $class_name => $fqcns) {
+            foreach (static::_extract_classes_from_php_file($file->getPathname()) as $class_name => $fqcns) {
                 foreach ($fqcns as $fqcn) {
                     $classes[$class_name][] = $fqcn;
                 }

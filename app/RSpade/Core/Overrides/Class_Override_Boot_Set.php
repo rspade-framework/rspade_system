@@ -23,11 +23,12 @@ namespace App\RSpade\Core\Overrides;
  * prefixes where a whole directory is boot or build machinery, as class-name suffixes for the
  * per-integration boot classes, and as single classes otherwise.
  *
- * Three further kinds of framework class are not overridable either, because the override pass
+ * Two further kinds of framework class are not overridable either, because the override pass
  * never sees them: the framework subtrees the manifest does not scan
- * (Manifest_Indexer::_unindexed_framework_classes() lists their classes), the directories
- * discovery passes over inside the scanned ones (resource/, public/, ...), and the framework
- * application directories outside app/RSpade (unscanned_framework_namespaces()).
+ * (Manifest_Indexer::_unindexed_framework_classes() lists their classes), and the framework
+ * application directories outside app/RSpade (unscanned_framework_namespaces()). A resource/,
+ * public/ or other excluded directory is data the framework never loads, so a class there is
+ * neither.
  *
  * This class is DATA with an accessor. The manifest-build refusals that read it - plus the
  * refusal of any override whose framework class is already declared in the building process -
