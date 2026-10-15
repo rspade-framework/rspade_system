@@ -21,6 +21,12 @@
         text-overflow: ellipsis;
     }
 
+    &__tag {
+        color: var(--rsx-dim);
+        font-family: var(--rsx-mono);
+        font-size: 11.5px;
+    }
+
     &__site {
         color: var(--rsx-dim);
     }

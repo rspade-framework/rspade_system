@@ -29,6 +29,7 @@ use App\RSpade\Core\Models\Email_Attachment_Model;
  * @property string $to_name
  * @property string $subject
  * @property string $email_class
+ * @property string $tag
  * @property array $template_data
  * @property integer $category_id
  * @property string $reply_to
@@ -96,6 +97,7 @@ use App\RSpade\Core\Models\Email_Attachment_Model;
  * @property int $site_id
  * @property int $status_id
  * @property string $subject
+ * @property string $tag
  * @property array $template_data
  * @property string $to_address
  * @property string $to_name
@@ -297,6 +299,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
         $record->to_name = $descriptor['to_name'] ?? null;
         $record->subject = $descriptor['subject'];
         $record->email_class = $descriptor['email_class'];
+        $record->tag = $descriptor['tag'] ?? null;
         $record->template_data = $descriptor['template_data'] ?? [];
         $record->category_id = $descriptor['category_id'];
         $record->reply_to = $descriptor['reply_to'] ?? null;

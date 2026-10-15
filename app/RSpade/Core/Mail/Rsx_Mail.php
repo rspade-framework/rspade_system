@@ -6,6 +6,7 @@ use App\RSpade\Core\Database\Rsx_Result_Set;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Mail\Rsx_Email_Abstract;
+use App\RSpade\Core\Mail\Rsx_Mail_Builder;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Models\Email_Blocked_Address_Model;
@@ -57,9 +58,10 @@ class Rsx_Mail
      *      RECORDED as BLOCKED, never sent - the audit row is the point.
      *   5. Dev-site gate (a second, independent safety layer keyed on hostname), on `to`
      *      AND on every cc/bcc entry.
-     *   6. Freeze subject() and data() into the row. From here the email's own class
+     *   6. Freeze subject(), data() and tag() into the row. From here the email's own class
      *      is never asked anything again: a template that renders next Tuesday renders
-     *      the values the caller had TODAY.
+     *      the values the caller had TODAY. (tag() is read first of all, so an invalid
+     *      one throws before anything is written - Blocked and Suppressed rows carry it too.)
      *   7. Persist attachments into the content-addressed blob store - for a Blocked or
      *      Suppressed row too, so the row is the whole message and a resend sends it whole.
      *   8. Kick the drain.
@@ -72,6 +74,7 @@ class Rsx_Mail
         $site_id = static::__current_site_id();
         $envelope = $email->_envelope();
         $category = $email::category();
+        $tag = static::__read_tag($email);
 
         if ($envelope['to'] === null) {
             throw new \InvalidArgumentException(
@@ -96,6 +99,7 @@ class Rsx_Mail
             'to_name' => $envelope['to']['name'],
             'subject' => $email->subject(),
             'email_class' => $email::view_id(),
+            'tag' => $tag,
             'template_data' => $email->data(),
             'category_id' => $category,
             'reply_to' => $envelope['reply_to']['address'] ?? null,
@@ -192,6 +196,28 @@ class Rsx_Mail
         static::_kick_drain();
 
         return $record;
+    }
+
+    /** The longest tag a queue row stores (_email_queue.tag is VARCHAR(64)). */
+    const TAG_MAX_LENGTH = 64;
+
+    /**
+     * The email's tag() - read once, here, and frozen on the row with everything else.
+     * A value too long for the column THROWS naming the class: truncating it would file
+     * the send under a kind nobody declared.
+     */
+    private static function __read_tag(Rsx_Email_Abstract $email): ?string
+    {
+        $tag = $email->tag();
+
+        if ($tag !== null && mb_strlen($tag) > self::TAG_MAX_LENGTH) {
+            throw new \InvalidArgumentException(
+                get_class($email) . '::tag() returned ' . mb_strlen($tag) . ' characters; a tag is at most '
+                . self::TAG_MAX_LENGTH . " characters ('" . mb_substr($tag, 0, 40) . "...')."
+            );
+        }
+
+        return $tag;
     }
 
     /**
@@ -513,15 +539,31 @@ class Rsx_Mail
             $parts[(string) $attachment->cid] = $attachment;
         }
 
+        return static::_resolve_cid_references(
+            $html,
+            fn (string $cid) => isset($parts[$cid])
+                ? static::_inline_part_data_uri($parts[$cid], $cid)
+                : static::_missing_inline_part_data_uri($cid, 'Inline image not recorded')
+        );
+    }
+
+    /**
+     * Replace every `cid:<id>` reference in an attribute value or a CSS url() with what
+     * $data_uri_for answers for that cid - the ONE cid-to-data: conversion, shared by
+     * displayable_html() (bytes recorded on a row) and preview() (bytes read from the
+     * current sources). Each distinct cid is asked once. Nothing else in the HTML changes.
+     *
+     * @param callable $data_uri_for fn (string $cid): string
+     */
+    private static function _resolve_cid_references(string $html, callable $data_uri_for): string
+    {
         $resolved = [];
 
-        $resolve = static function (string $encoded_cid) use ($parts, &$resolved): string {
+        $resolve = static function (string $encoded_cid) use ($data_uri_for, &$resolved): string {
             $cid = html_entity_decode(rawurldecode($encoded_cid), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
             if (!array_key_exists($cid, $resolved)) {
-                $resolved[$cid] = isset($parts[$cid])
-                    ? static::_inline_part_data_uri($parts[$cid], $cid)
-                    : static::_missing_inline_part_data_uri($cid, 'Inline image not recorded');
+                $resolved[$cid] = $data_uri_for($cid);
             }
 
             return $resolved[$cid];
@@ -564,10 +606,17 @@ class Rsx_Mail
             throw new \RuntimeException("Could not read the blob for email attachment #{$attachment->id} at {$path}.");
         }
 
-        // The type is written into an attribute value, so only a well-formed media type is
-        // passed through; anything else is served as opaque bytes.
-        $mime_type = preg_match('#^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$#i', (string) $attachment->mime_type)
-            ? strtolower((string) $attachment->mime_type)
+        return static::_data_uri($bytes, (string) $attachment->mime_type);
+    }
+
+    /**
+     * Bytes as a data: URI. The type is written into an attribute value, so only a
+     * well-formed media type is passed through; anything else is served as opaque bytes.
+     */
+    private static function _data_uri(string $bytes, string $mime_type): string
+    {
+        $mime_type = preg_match('#^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$#i', $mime_type)
+            ? strtolower($mime_type)
             : 'application/octet-stream';
 
         return 'data:' . $mime_type . ';base64,' . base64_encode($bytes);
@@ -589,6 +638,92 @@ class Rsx_Mail
             . '</svg>';
 
         return 'data:image/svg+xml;base64,' . base64_encode($svg);
+    }
+
+    // =========================================================================
+    // PREVIEWING AN EMAIL THAT HAS NOT BEEN SENT
+    // =========================================================================
+
+    /**
+     * An email instance - typically `Some_Email::sample()` - rendered exactly as a send
+     * would render it, and made displayable, WITHOUT sending, queueing or storing anything.
+     *
+     *   subject  the email's subject()
+     *   html     the send's own body (Rsx_Mail_Builder::compose(): the blade with its
+     *            injected $subject, $branding and $unsubscribe_url, the email stylesheet
+     *            inlined), with every local image - a root-relative src and every
+     *            ->embed() part - as a data: URI of its CURRENT bytes. A remote
+     *            (https://) image is left as written, as a send leaves it.
+     *   text     the plain-text part the send would carry (the email's <Class>_Text blade,
+     *            else derived from the HTML)
+     *
+     * A category that carries an unsubscribe link gets preview_unsubscribe_url() in place
+     * of the signed one: there is no recipient to sign it for.
+     *
+     * Persists NOTHING - no queue row, no attachment row, no blob, no revision - and needs
+     * no recipient. The site block list, the recipient opt-out and the dev-site gate are not
+     * consulted: they decide delivery, and nothing is delivered.
+     *
+     * The HTML is self-contained in the way displayable_html()'s is (data: images, inline
+     * styles), so it is fit for an iframe srcdoc under the framework's default page CSP.
+     * A template naming a cid: nothing was embedded under, or a root-relative image that
+     * resolves to no public asset, THROWS - the send would fail the same way.
+     *
+     * @return array{subject: string, html: string, text: string}
+     */
+    public static function preview(Rsx_Email_Abstract $email): array
+    {
+        $preview = Rsx_Mail_Builder::compose_preview($email);
+        $parts = $preview['parts'];
+
+        $html = static::_resolve_cid_references(
+            $preview['html'],
+            fn (string $cid) => isset($parts[$cid])
+                ? static::_data_uri($parts[$cid]['bytes'], $parts[$cid]['mime_type'])
+                : static::_missing_inline_part_data_uri($cid, 'Inline image not embedded')
+        );
+
+        return [
+            'subject' => $preview['subject'],
+            'html' => $html,
+            'text' => $preview['text'],
+        ];
+    }
+
+    /**
+     * The placeholder a preview's $unsubscribe_url carries: the unsubscribe route with no
+     * recipient and no signature (`?preview=1`). It looks like the real link and goes
+     * nowhere - the route refuses an unsigned request.
+     */
+    public static function preview_unsubscribe_url(): string
+    {
+        return rsx_absolute_url('/_mail/unsubscribe?preview=1');
+    }
+
+    // =========================================================================
+    // THE EMAIL CATALOGUE
+    // =========================================================================
+
+    /**
+     * Every email this install can send: one entry per concrete Rsx_Email_Abstract
+     * descendant, application and framework alike, keyed and sorted by view id.
+     *
+     *     'Welcome_Email' => ['class' => FQCN, 'view_id' => 'Welcome_Email',
+     *                         'category' => 1, 'file' => 'rsx/emails/welcome_email.php']
+     *
+     * This IS the table the manifest bakes (Email_ManifestSupport) - read it here rather
+     * than walking the class index, which would restate the build's rules (abstract bases
+     * skipped, CATEGORY/sample()/template required) and drift the day they change.
+     *
+     * @return array<string, array{class: string, view_id: string, category: int, file: string}>
+     */
+    public static function catalogue(): array
+    {
+        $emails = \App\RSpade\Core\Manifest\Manifest::get_full_manifest()['data']['emails'] ?? [];
+
+        ksort($emails);
+
+        return $emails;
     }
 
     // =========================================================================

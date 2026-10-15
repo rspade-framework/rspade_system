@@ -26,9 +26,9 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  *
  *     data['emails']['Welcome_Email'] = ['class' => ..., 'file' => ..., 'view_id' => ..., 'category' => 1]
  *
- * Discovery happens HERE, once, at build time. Everything downstream - the queue row's
- * email_class, the preview surface, rsx:mail:test - reads a baked table and decides
- * nothing.
+ * Discovery happens HERE, once, at build time. Everything downstream reads the baked
+ * table through Rsx_Mail::catalogue() - the preview surface, rsx:mail:test, an
+ * application's own email catalogue - and decides nothing.
  *
  * Every rule below is a manifest-build FATAL naming the file and the class. A
  * declaration that violates one breaks the build until it is fixed:

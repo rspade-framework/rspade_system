@@ -8,7 +8,9 @@ by their lowercase WORD. State lives in the URL hash under the grid key "mail", 
 the Dashboard's pending-mail tile links here as
 Rsx.Route('_Sys_Email_Action', {}, {mail_f_status: 'pending'}).
 
-Every row links to its detail screen (_Sys_Email_View_Action).
+A row whose email class gave the send a tag (Rsx_Email_Abstract::tag()) shows the
+class and the tag under its subject. Every row links to its detail screen
+(_Sys_Email_View_Action).
 --%>
 <Define:_Sys_Email_DataGrid extends="_Sys_DataGrid_Abstract"
     $grid_key="mail"
@@ -44,7 +46,12 @@ Every row links to its detail screen (_Sys_Email_View_Action).
                     <div class="_Sys_Email_DataGrid__original">for <%= row.dev_original_to %></div>
                 <% } %>
             </td>
-            <td class="_Sys_Email_DataGrid__subject" title="<%= row.error_excerpt || '' %>"><%= row.subject %></td>
+            <td class="_Sys_Email_DataGrid__subject" title="<%= row.error_excerpt || '' %>">
+                <%= row.subject %>
+                <% if (row.tag) { %>
+                    <div class="_Sys_Email_DataGrid__tag"><%= row.email_class %> &middot; <%= row.tag %></div>
+                <% } %>
+            </td>
             <td><_Sys_Status_Badge $status=row.status $title=row.status_reason /></td>
             <td><%= row.category_id__label %></td>
             <td class="_Sys_Email_DataGrid__site">#<%= row.site_id %><% if (row.site_name) { %> <%= row.site_name %><% } %></td>

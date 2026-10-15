@@ -9,9 +9,9 @@ namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
 use App\RSpade\Core\Mail\Rsx_Email_Abstract;
+use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Test_Email;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
-use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Task\Task;
 use Illuminate\Console\Command;
@@ -127,21 +127,15 @@ class Mail_Test_Command extends Command
             return new Rsx_Mail_Test_Email();
         }
 
-        $manifest = Manifest::get_full_manifest();
-        $emails = $manifest['data']['emails'] ?? [];
+        // The email catalogue: every concrete email class the build accepted, which is
+        // exactly the set a sample() can be sent from.
+        $emails = Rsx_Mail::catalogue();
 
         if (!isset($emails[$class_name])) {
             $known = array_keys($emails);
-            sort($known);
 
             $this->error("[ERROR] '{$class_name}' is not an email class.");
             $this->line('Known email classes: ' . ($known === [] ? '(none)' : implode(', ', $known)));
-
-            return null;
-        }
-
-        if (!Manifest::php_is_subclass_of($class_name, Rsx_Email_Abstract::class)) {
-            $this->error("[ERROR] '{$class_name}' does not extend Rsx_Email_Abstract.");
 
             return null;
         }

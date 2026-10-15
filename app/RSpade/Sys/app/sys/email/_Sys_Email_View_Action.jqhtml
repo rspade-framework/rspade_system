@@ -66,6 +66,7 @@ for anything else), and the record. The body tabs keep the hash key "body".
                 <_Sys_Detail_Item $label="Category" $value=_e.category_id__label />
                 <_Sys_Detail_Item $label="Site" $value=_site />
                 <_Sys_Detail_Item $label="Email class" $value=_e.email_class $mono=true />
+                <_Sys_Detail_Item $label="Tag" $value=_e.tag $mono=true />
                 <_Sys_Detail_Item $label="Attempts" $value=_e.attempt_count />
                 <_Sys_Detail_Item $label="Dedupe key" $value=_e.dedupe_key $mono=true />
                 <_Sys_Detail_Item $label="Related" $value=(_e.related_id ? _e.related_type + ':' + _e.related_id : null) $mono=true />

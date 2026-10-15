@@ -1,6 +1,6 @@
 ---
 name: email-and-sms
-description: "Sending mail and SMS in RSpade - writing an email class (Rsx_Email_Abstract in rsx/emails/ with const CATEGORY, subject(), data(), sample()), the fluent to/cc/reply_to/attach/embed/dedupe_key envelope, the queue statuses and the drain's failure policy, the four delivery modes (aiosmtpd | live | suppressed | disabled) and the live-only dev-site recipient gate, the development SMTP catcher and its aiosmtpd greeting, sending through any Laravel mailer (MAIL_MAILER, config/mail.php) including a composer transport package such as Microsoft Graph, rsx:mail:test / rsx:mail:queue / rsx:mail:show / rsx:mail:resend, displaying a stored message with Rsx_Mail::displayable_html() (inline cid: images from the recorded blobs), /_mail/unsubscribe, and the Rsx_Sms mirror. Use when a feature must notify somebody by email or text, when writing or styling an email template, when a queued message did not arrive, when inspecting or resending the mail queue, when building an email-history screen or an inline image shows broken in a stored body, when configuring SMTP or adding a mail transport package, or when hitting EMAIL-TEMPLATE-01, Mail_Transport_Unavailable_Exception, STATUS_SUPPRESSED, \"expected server aiosmtpd\", \"Timed out - email was queued too far in the past\", or \"dev site: no whitelist match and no catchall\"."
+description: "Sending mail and SMS in RSpade - writing an email class (Rsx_Email_Abstract in rsx/emails/ with const CATEGORY, subject(), data(), sample()), the fluent to/cc/reply_to/attach/embed/dedupe_key envelope, the queue statuses and the drain's failure policy, the four delivery modes (aiosmtpd | live | suppressed | disabled) and the live-only dev-site recipient gate, the development SMTP catcher and its aiosmtpd greeting, sending through any Laravel mailer (MAIL_MAILER, config/mail.php) including a composer transport package such as Microsoft Graph, rsx:mail:test / rsx:mail:queue / rsx:mail:show / rsx:mail:resend, displaying a stored message with Rsx_Mail::displayable_html() (inline cid: images from the recorded blobs), previewing an unsent email with Rsx_Mail::preview() and listing every email with Rsx_Mail::catalogue(), telling apart the kinds of message one email class sends with a tag() override (_email_queue.tag, rsx:mail:queue --tag=), /_mail/unsubscribe, and the Rsx_Sms mirror. Use when a feature must notify somebody by email or text, when writing or styling an email template, when a queued message did not arrive, when inspecting or resending the mail queue, when building an email-history or email-catalogue screen, previewing a template, or an inline image shows broken in a stored body, when configuring SMTP or adding a mail transport package, or when hitting EMAIL-TEMPLATE-01, Mail_Transport_Unavailable_Exception, STATUS_SUPPRESSED, \"expected server aiosmtpd\", \"Timed out - email was queued too far in the past\", or \"dev site: no whitelist match and no catchall\"."
 ---
 
 # Email and SMS
@@ -77,6 +77,12 @@ class Welcome_Email extends Rsx_Email_Abstract
 
 **Three manifest-build FATALs**: no `const CATEGORY`, no `static sample()`, or a blade whose `@rsx_id` is not the class basename.
 
+**One optional member, `tag()`**, for a class that sends more than one KIND of message (one notification email for every notification type): override it to return the kind of THIS send, read from the instance's own constructor data. Default null; at most 64 characters (longer throws at `send()`, naming the class); frozen on the row as `_email_queue.tag`, Blocked and Suppressed rows included. It is the only way to tag a send - there is no per-call setter - and it is not `about()`, which names the RECORD a message concerns. Worked example: `system/app/RSpade/resource/reference_app/emails/portal_invitation_email.php`.
+
+```php
+public function tag(): ?string { return $this->notification->type_id__constant; }
+```
+
 **A text part** is optional: a second blade with `@rsx_id('Welcome_Email_Text')` wins; otherwise the text is derived from the HTML.
 
 ---
@@ -99,7 +105,7 @@ class Welcome_Email extends Rsx_Email_Abstract
 
 A recipient object's display name comes from `get_printed_name()`, else `first_name`/`last_name`, else nothing. **A `dedupe_key` already used by this site returns THAT row and enqueues nothing** — a replayed webhook cannot double-mail anybody.
 
-Enqueue order (load-bearing): site (portal-aware) -> dedupe (returns the existing row, any status) -> **site block list** (every category but SECURITY, original addresses: a listed `to` becomes a **BLOCKED** row; a listed cc/bcc is removed and recorded in `withheld_recipients`) -> recipient opt-out (notification/marketing to an opted-out address becomes a **BLOCKED** row) -> dev-site gate (`to` AND every cc/bcc) -> freeze `subject()`/`data()` -> persist attachments (Blocked/Suppressed rows too) -> kick the drain.
+Enqueue order (load-bearing): site (portal-aware) -> dedupe (returns the existing row, any status) -> **site block list** (every category but SECURITY, original addresses: a listed `to` becomes a **BLOCKED** row; a listed cc/bcc is removed and recorded in `withheld_recipients`) -> recipient opt-out (notification/marketing to an opted-out address becomes a **BLOCKED** row) -> dev-site gate (`to` AND every cc/bcc) -> freeze `subject()`/`data()`/`tag()` (tag read and validated first) -> persist attachments (Blocked/Suppressed rows too) -> kick the drain.
 
 **Categories**: `TRANSACTIONAL` (ignores the recipient opt-out), `NOTIFICATION`, `MARKETING`, `SECURITY` (a required notice the RECIPIENT set in motion - the emailed sign-in code, `rsx:man two_factor_codes`: ignores the opt-out AND the site block list, no unsubscribe link; the `.dev.` gate and `rsx.mail.delivery` still apply). SECURITY is never for a notice the site decides to send.
 
@@ -110,6 +116,19 @@ A root-relative `<img src="/img/logo.png">` is embedded as a `cid:` part automat
 ## Displaying a stored message
 
 **`Rsx_Mail::displayable_html($row)` is the ONE way a stored body is shown** - the `/_sys` Email screen and any application email-history screen alike. `rendered_html` names its inline images by `cid:`, which no browser resolves; this rewrites each one to a `data:` URI of the bytes recorded on THAT row's own attachment rows (a visible placeholder when none was recorded - any message built before inline parts were recorded), changes nothing else, and answers null for an unrendered row. It renders under any CSP allowing `img-src data:` (the framework default does; feed it to an iframe as `srcdoc`). **Never hand-roll a cid rewrite**: the cid formula is framework-private and will drift, and reading the live asset off disk answers history with the present. `rsx:mail:show <id> --json` carries it as `displayable_html`. Worked example: `system/app/RSpade/resource/reference_app/app/frontend/system/email_config/system_email_controller.php` (`queue_preview`).
+
+## Previewing an unsent email, and the catalogue
+
+```php
+foreach (Rsx_Mail::catalogue() as $view_id => $entry) { ... }   // ['class' => FQCN, 'view_id', 'category', 'file']
+$preview = Rsx_Mail::preview($entry['class']::sample());        // ['subject', 'html', 'text']
+```
+
+**`Rsx_Mail::catalogue()`** is every concrete email class, framework ones included, keyed and sorted by view id - exactly the table the manifest bakes. Never walk the class index for it: that restates the build's rules (abstract bases skipped, the three FATALs passed). `rsx:mail:test --email=` resolves against it.
+
+**`Rsx_Mail::preview($email)`** renders an INSTANCE through the send's own assembly - the blade with `$subject`/`$branding`/`$unsubscribe_url` injected, the stylesheet inlined, the text part as a send derives it - and makes it displayable: every root-relative image and `->embed()` part becomes a `data:` URI of its CURRENT bytes, so the HTML goes straight into an iframe `srcdoc` under the default CSP. A category with an unsubscribe link gets `Rsx_Mail::preview_unsubscribe_url()` (unsigned, refused by the route). It **persists nothing** (no row, no attachment row, no blob), needs no recipient, and ignores the block list, opt-out and dev gate. A missing asset or an un-embedded `cid:` throws, as the send would. Never hand-render the blade for a preview: it skips the inlining and the image step, so it does not look like what is sent.
+
+Per-email send history is a query on the queue: `_email_queue` is indexed `(site_id, email_class, created_at)` and `(site_id, email_class, tag, created_at)`.
 
 ---
 
@@ -165,7 +184,8 @@ cat "$(ls -t tmp/mail-catcher/new/* | head -1)"
 ```bash
 php artisan rsx:mail:queue                                  # counts per status + oldest pending age
 php artisan rsx:mail:queue --status=failed --recipient=@acme.com --limit=50
-php artisan rsx:mail:show 412                               # every column; bodies by length (--json has them)
+php artisan rsx:mail:queue --tag=new_account                 # rows whose class's tag() said so
+php artisan rsx:mail:show 412                               # every column, tag included; bodies by length (--json has them)
 php artisan rsx:mail:resend 412                             # back to Pending, attempts 0, drain kicked
 ```
 

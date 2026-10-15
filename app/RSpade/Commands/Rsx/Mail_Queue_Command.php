@@ -16,8 +16,8 @@ use Illuminate\Console\Command;
  *
  * TWO QUESTIONS, TWO SHAPES. With no flags this answers "is the queue healthy" with a
  * count per status and the age of the oldest thing still waiting - the numbers that say
- * whether mail is moving. With a --status or --recipient it answers "what happened to
- * that message", listing rows newest first.
+ * whether mail is moving. With a --status, --recipient or --tag it answers
+ * "what happened to that message", listing rows newest first.
  *
  * EVERY SITE. Both shapes read the whole install's queue (the CLI runs as site 0, which
  * owns no mail); the listing names each row's site.
@@ -33,6 +33,7 @@ class Mail_Queue_Command extends Command
     protected $signature = 'rsx:mail:queue
                             {--status= : pending|sending|sent|failed|blocked|suppressed}
                             {--recipient= : Substring of the recipient address (matches the redirected and the original)}
+                            {--tag= : The tag the email class gave the send (Rsx_Email_Abstract::tag()) - exact match}
                             {--limit=25 : How many rows to list}
                             {--json : Machine-readable JSON output}';
 
@@ -52,6 +53,11 @@ class Mail_Queue_Command extends Command
     {
         $status = trim((string) $this->option('status'));
         $recipient = trim((string) $this->option('recipient'));
+        $filters = [
+            'status' => $status,
+            'recipient' => $recipient,
+            'tag' => trim((string) $this->option('tag')),
+        ];
         $json = (bool) $this->option('json');
 
         if ($status !== '' && !isset(self::STATUS_NAMES[strtolower($status)])) {
@@ -63,12 +69,12 @@ class Mail_Queue_Command extends Command
 
         // THE WHOLE INSTALL. The queue is one table for every tenant, and the CLI's own site
         // (0) says nothing about which of them an operator is asking after.
-        return Email_Queue_Model::without_site_scope(function () use ($status, $recipient, $json) {
-            if ($status === '' && $recipient === '') {
+        return Email_Queue_Model::without_site_scope(function () use ($filters, $json) {
+            if (implode('', $filters) === '') {
                 return $this->__summary($json);
             }
 
-            return $this->__listing($status, $recipient, $json);
+            return $this->__listing($filters, $json);
         });
     }
 
@@ -128,9 +134,11 @@ class Mail_Queue_Command extends Command
     /**
      * The rows matching the filters, newest first.
      */
-    private function __listing(string $status, string $recipient, bool $json): int
+    private function __listing(array $filters, bool $json): int
     {
         $limit = max(1, (int) $this->option('limit'));
+        $status = $filters['status'];
+        $recipient = $filters['recipient'];
 
         $query = Email_Queue_Model::query()->orderBy('created_at', 'desc');
 
@@ -148,6 +156,10 @@ class Mail_Queue_Command extends Command
             });
         }
 
+        if ($filters['tag'] !== '') {
+            $query->where('tag', $filters['tag']);
+        }
+
         $records = $query->limit($limit)->get();
 
         $payload = [];
@@ -160,6 +172,8 @@ class Mail_Queue_Command extends Command
                 'block_cause' => $record->block_cause_id === null ? null : $record->block_cause_id__label,
                 'to_address' => $record->to_address,
                 'dev_original_to' => $record->dev_original_to,
+                'email_class' => $record->email_class,
+                'tag' => $record->tag,
                 'subject' => $record->subject,
                 'attempt_count' => (int) $record->attempt_count,
                 'last_attempt_at' => $record->last_attempt_at,
@@ -188,6 +202,7 @@ class Mail_Queue_Command extends Command
                 $row['site_id'],
                 $row['status'],
                 $this->__truncate($row['to_address'], 32),
+                $this->__truncate($row['email_class'] . ($row['tag'] !== null ? ' [' . $row['tag'] . ']' : ''), 40),
                 $this->__truncate((string) $row['subject'], 40),
                 $row['attempt_count'],
                 $row['sent_at'] ?: ($row['last_attempt_at'] ?: '-'),
@@ -196,7 +211,7 @@ class Mail_Queue_Command extends Command
         }
 
         $this->table(
-            ['ID', 'Site', 'Status', 'To', 'Subject', 'Att', 'Sent / last attempt', 'Last error'],
+            ['ID', 'Site', 'Status', 'To', 'Email [tag]', 'Subject', 'Att', 'Sent / last attempt', 'Last error'],
             $rows
         );
 

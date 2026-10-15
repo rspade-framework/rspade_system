@@ -57,9 +57,9 @@ Invariants the tests exist to hold:
 | File | Role |
 |------|------|
 | `Core/Mail/Rsx_Email_Abstract.php` | The email class contract and the fluent envelope |
-| `Core/Mail/Rsx_Mail.php` | Tenant resolution, blocklist, dev-site gate, unsubscribe signature, attachment persistence, drain kick, `displayable_html()` |
+| `Core/Mail/Rsx_Mail.php` | Tenant resolution, blocklist, dev-site gate, the `tag()` read, unsubscribe signature, attachment persistence, drain kick, `displayable_html()`, `preview()`, `catalogue()` |
 | `Core/Mail/Email_ManifestSupport.php` | The build-time email table and its three FATALs |
-| `Core/Mail/Rsx_Mail_Builder.php` | Row -> `Symfony\Component\Mime\Email` |
+| `Core/Mail/Rsx_Mail_Builder.php` | Row -> `Symfony\Component\Mime\Email`; `compose()`, the one body assembly shared with `compose_preview()` |
 | `Core/Mail/Rsx_Mail_Text.php` | The derived plain-text part |
 | `Core/Mail/Rsx_Mail_Transport.php` | The four delivery modes, the Laravel mailer resolution (`make()`, `mailer_config()`, `describe()`), the aiosmtpd banner probe, `$override_for_tests` / `$banner_for_tests`, the `Mail` health rows |
 | `Core/Mail/Mail_Queue_Service.php` | The drain and the daily cleanup |
@@ -83,6 +83,10 @@ Behavior of record: `php artisan rsx:man email`. Config: `rsx:man config_rsx`.
   The framework ships exactly one real email and it is TRANSACTIONAL by design, so it can
   never exercise the opt-out path. The blade also carries an `.email-button` link and an
   optional `cid:` image, so the CSS-inlining and embed paths have something to act on.
+- `php/Mail_Preview_Fixture_Email.{php,blade.php}` - a NOTIFICATION-category email whose
+  blade renders a root-relative image (`/favicon.ico`), an optional `cid:preview_chart`
+  image and an `.email-button`, and whose `tag()` answers its constructor's `$kind` - the
+  preview, catalogue and tag tests' subject.
 - `php/Mail_Transport_Stub.php` - a `TransportInterface` that answers ACCEPT,
   SERVER_ERROR, UNREACHABLE or UNREACHABLE_ONCE, installed through
   `Rsx_Mail_Transport::$override_for_tests`. The drain constructs its own transport, so
@@ -95,7 +99,9 @@ Behavior of record: `php artisan rsx:man email`. Config: `rsx:man config_rsx`.
   and attachments (`Rsx_Email_Enqueue_Test`); MIME structure, CSS inlining, image
   embedding and the inline parts it records as blobs, text derivation and headers
   (`Rsx_Mail_Builder_Test`); a stored body made displayable from the row's own parts
-  (`Rsx_Mail_Displayable_Html_Test`); the drain's three
+  (`Rsx_Mail_Displayable_Html_Test`); the catalogue, and an unsent instance previewed
+  through the send's own assembly, persisting nothing (`Rsx_Mail_Preview_Test`); the
+  `tag()` hook frozen on every row a send writes (`Email_Tag_Test`); the drain's three
   outcomes plus reclaim and cleanup, driven by the stub transport
   (`Mail_Queue_Runner_Test`); the signed unsubscribe round trip (`Mail_Unsubscribe_Test`);
   the build-time FATALs over a synthetic manifest (`Mail_Manifest_Support_Test`);

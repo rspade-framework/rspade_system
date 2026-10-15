@@ -13,9 +13,13 @@ use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
+use App\RSpade\Tests\Mail\Php\Mail_Preview_Fixture_Email;
 
 /**
  * Mail_Queue_Commands_Cli_Test - rsx:mail:queue, rsx:mail:show, rsx:mail:resend.
+ *
+ * The tag an email class gave a send (Rsx_Email_Abstract::tag()) is a listing filter
+ * (--tag) and a line of the row's report, so both are asserted here.
  *
  * These three are what an operator has instead of a database client when mail did not
  * arrive, so what is under test is their ANSWERS: the summary that says whether the queue
@@ -67,6 +71,23 @@ class Mail_Queue_Commands_Cli_Test extends Rsx_Test_Abstract
 
         try {
             return (new Mail_Notification_Fixture_Email($note))->to($address)->send();
+        } finally {
+            config(['rsx.mail.dev_site.domain_whitelist' => $previous]);
+        }
+    }
+
+    /**
+     * Queue one fixture message whose email class tags it $tag.
+     */
+    private static function __queue_tagged(string $tag, string $address): Email_Queue_Model
+    {
+        static::__acting_as_site(self::SITE_ID);
+
+        $previous = config('rsx.mail.dev_site.domain_whitelist');
+        config(['rsx.mail.dev_site.domain_whitelist' => 'example.com']);
+
+        try {
+            return (new Mail_Preview_Fixture_Email('Tagged probe', $tag))->to($address)->send();
         } finally {
             config(['rsx.mail.dev_site.domain_whitelist' => $previous]);
         }
@@ -128,6 +149,28 @@ class Mail_Queue_Commands_Cli_Test extends Rsx_Test_Abstract
         }
     }
 
+    /**
+     * --tag lists exactly the rows whose email class gave the send that tag.
+     */
+    public static function test_a_tag_filter_lists_only_that_tag()
+    {
+        $tag = 'cli_kind_' . uniqid();
+        $tagged = static::__queue_tagged($tag, 'tagged_' . uniqid() . '@example.com');
+        static::__queue_tagged('cli_other_' . uniqid(), 'other_' . uniqid() . '@example.com');
+        static::__queue('Untagged probe', 'untagged_' . uniqid() . '@example.com');
+
+        [$exit_code, $output] = static::__run('rsx:mail:queue', ['--tag' => $tag, '--json' => true]);
+
+        static::__assert_equals(0, $exit_code, 'the listing ran');
+
+        $payload = json_decode(trim($output), true);
+
+        static::__assert_count(1, $payload, 'exactly the one row carrying that tag');
+        static::__assert_equals((int) $tagged->id, $payload[0]['id'], 'and it is the tagged row');
+        static::__assert_equals($tag, $payload[0]['tag'], 'reported with its tag');
+        static::__assert_equals('Mail_Preview_Fixture_Email', $payload[0]['email_class'], 'and its email class');
+    }
+
     public static function test_an_unknown_status_is_refused_with_the_vocabulary()
     {
         [$exit_code, $output] = static::__run('rsx:mail:queue', ['--status' => 'nearly']);
@@ -162,6 +205,27 @@ class Mail_Queue_Commands_Cli_Test extends Rsx_Test_Abstract
             'the bodies are reported by LENGTH so a terminal report stays readable'
         );
         static::__assert_array_has_key('rendered_html', $payload, 'and --json still carries them in full');
+    }
+
+    /**
+     * The tag is part of the row's report, in --json and in the human form.
+     */
+    public static function test_show_prints_the_tag()
+    {
+        $row = static::__queue_tagged('shown_kind', 'shown_tag_' . uniqid() . '@example.com');
+
+        [, $output] = static::__run('rsx:mail:show', ['id' => $row->id, '--json' => true]);
+        $payload = json_decode(trim($output), true);
+
+        static::__assert_equals('shown_kind', $payload['tag'], '--json carries the tag');
+
+        [$exit_code, $output] = static::__run('rsx:mail:show', ['id' => $row->id]);
+
+        static::__assert_equals(0, $exit_code, 'the human report ran');
+        static::__assert_true(
+            (bool) preg_match('/^Tag:\s+shown_kind$/m', $output),
+            'and the human report has a Tag line: ' . $output
+        );
     }
 
     public static function test_show_refuses_an_id_that_does_not_exist()

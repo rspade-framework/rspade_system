@@ -33,7 +33,7 @@ class _Sys_Email_DataGrid extends _Sys_DataGrid_Abstract
     protected static array $sortable_columns = ['id', 'created_at', 'sent_at', 'last_attempt_at', 'attempt_count'];
 
     private const LIST_COLUMNS = [
-        'id', 'site_id', 'to_address', 'to_name', 'dev_original_to', 'subject', 'email_class',
+        'id', 'site_id', 'to_address', 'to_name', 'dev_original_to', 'subject', 'email_class', 'tag',
         'category_id', 'status_id', 'block_cause_id', 'attempt_count', 'last_error', 'last_attempt_at', 'sent_at',
         'created_at',
     ];

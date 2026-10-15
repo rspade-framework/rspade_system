@@ -18,8 +18,11 @@ SYNOPSIS
 
     (new Welcome_Email($user, $url))->to($user)->send();     // -> Email_Queue_Model
 
+    Rsx_Mail::preview(Welcome_Email::sample());              // {subject, html, text}, sends nothing
+    Rsx_Mail::catalogue();                                   // every email class, by view id
+
     php artisan rsx:mail:test you@example.com
-    php artisan rsx:mail:queue [--status=failed] [--recipient=@example.com] [--limit=25]
+    php artisan rsx:mail:queue [--status=failed] [--recipient=@example.com] [--tag=] [--limit=25]
     php artisan rsx:mail:show <id>
     php artisan rsx:mail:resend <id> [--force]
 
@@ -151,7 +154,24 @@ WRITING AN EMAIL
 
     A blade whose @rsx_id does not equal the class basename is the third FATAL.
 
-    FROZEN MEANS FROZEN. subject() and data() are read ONCE, at send(). The drain never
+    ONE OPTIONAL MEMBER, tag(). An email class that carries more than one KIND of message
+    (one notification email for every notification type, an invitation with a new-account
+    and an existing-account shape) overrides it to name the kind of THIS send:
+
+        public function tag(): ?string
+        {
+            return $this->existing_account ? 'existing_account' : 'new_account';
+        }
+
+    The default answers null - an email that is one kind of message declares nothing. The
+    value is application vocabulary (the framework attaches no meaning to it), at most 64
+    characters (longer THROWS at send(), naming the class), and may read the instance's own
+    constructor data. It is the only way a send is tagged: there is no per-call setter, so
+    the kinds an email sends are stated once, in the class. It names what KIND of message
+    this is; about() names the RECORD a message is about, and the two are independent.
+    Worked example: system/app/RSpade/resource/reference_app/emails/portal_invitation_email.php
+
+    FROZEN MEANS FROZEN. subject(), data() and tag() are read ONCE, at send(). The drain never
     asks the class anything again, so a message queued today and sent after a retry
     tomorrow says exactly what the caller meant today.
 
@@ -194,7 +214,8 @@ SENDING
         4. The recipient opt-out (notification and marketing only) - an opted-out address is
            RECORDED as a BLOCKED row, never sent. The audit row is the point.
         5. The dev-site recipient gate (below), on `to` and on every cc/bcc entry.
-        6. Freeze subject() and data() into the row.
+        6. Freeze subject(), data() and tag() into the row (tag() is read and validated
+           first of all, so a Blocked or Suppressed row carries it too).
         7. Persist attachments into the content-addressed blob store - for a Blocked or
            Suppressed row too: the row is always the whole message.
         8. Kick the drain (Task::dispatch), in every context except a test run.
@@ -351,6 +372,59 @@ DISPLAYING A STORED MESSAGE
     references in application code: a hand-derived content id is a framework-private
     formula that will drift, and reading the live asset answers history with the present.
 
+PREVIEWING AN EMAIL THAT HAS NOT BEEN SENT
+
+    Rsx_Mail::preview(Rsx_Email_Abstract $email): array{subject, html, text}
+
+    Renders an email INSTANCE - normally Some_Email::sample() - exactly as a send renders
+    it, and makes it displayable, without sending, queueing or storing anything:
+
+        $preview = Rsx_Mail::preview(Invoice_Email::sample());
+        $preview['subject'];    // the email's subject()
+        $preview['html'];       // the body as a recipient receives it, images as data: URIs
+        $preview['text'];       // the plain-text part the send would carry
+
+    THE SEND'S OWN PIPELINE, NOT A COPY OF IT. The body comes from the same assembly a
+    queued row is built with: the blade with $subject, $branding and $unsubscribe_url
+    injected, and the email stylesheet inlined onto the elements and kept in <head>. The
+    text part is the email's own <Class>_Text blade when it has one, else derived from the
+    HTML - as for a send. A category that carries an unsubscribe link gets
+    Rsx_Mail::preview_unsubscribe_url() in place of the signed one (the unsubscribe route
+    with ?preview=1 and no signature, which the route refuses): there is no recipient to
+    sign it for.
+
+    DISPLAYABLE THE WAY displayable_html() IS. Every root-relative <img src="/..."> and
+    every ->embed() part becomes a data: URI of its CURRENT bytes - there is no history to
+    answer from - so the HTML renders as an iframe srcdoc under the framework's default
+    page CSP. A remote (https://) image is left as written, as a send leaves it. A template
+    naming a cid: nothing was embedded under, or a root-relative image that resolves to no
+    public asset, THROWS - the send would fail the same way.
+
+    PERSISTS NOTHING: no queue row, no attachment row, no blob, no revision. It needs no
+    recipient, and the site block list, the recipient opt-out and the dev-site gate are not
+    consulted - they decide delivery, and nothing is delivered.
+
+THE EMAIL CATALOGUE
+
+    Rsx_Mail::catalogue(): array
+
+    Every email this install can send - one entry per concrete Rsx_Email_Abstract
+    descendant, application and framework emails alike, keyed and sorted by view id:
+
+        'Welcome_Email' => ['class' => 'Rsx\Emails\Welcome_Email', 'view_id' => 'Welcome_Email',
+                            'category' => 1, 'file' => 'rsx/emails/welcome_email.php']
+
+    It IS the table the manifest bakes (an abstract base between Rsx_Email_Abstract and
+    the concrete emails is not listed; every listed class has passed the CATEGORY, sample()
+    and template FATALs). Read it here rather than walking the class index, which would
+    restate those rules. rsx:mail:test --email= resolves against it.
+
+    A catalogue screen is catalogue() for the list, preview($class::sample()) for the
+    template, and the queue's own history for the sends: _email_queue is indexed on
+    (site_id, email_class, created_at) and (site_id, email_class, tag, created_at), so
+    "this email's sends on this site, newest first" - with or without one tag - reads an
+    index rather than the table.
+
 STYLING
 
     ONE STYLESHEET, and one file wins - there is no merge:
@@ -448,8 +522,8 @@ THE QUEUE AND ITS STATUSES
                          Delivery mode is suppressed, or a dev host left no deliverable
                          address. Terminal, and NOT a failure.
 
-    Columns worth knowing: email_class (the class, which is also the view id),
-    attempt_count (a first send IS an attempt), next_attempt_at, last_attempt_at,
+    Columns worth knowing: email_class (the class, which is also the view id), tag (the
+    class's tag() for that send, null when it declares none), attempt_count (a first send IS an attempt), next_attempt_at, last_attempt_at,
     last_error, message_id_header, transport, transport_response, dedupe_key (unique per
     site), dev_original_to, rendered_html, rendered_text, headers, cc, bcc, reply_to,
     related_type/related_id, block_cause_id (Blocked rows only), withheld_recipients (the
@@ -846,7 +920,7 @@ OPERATIONS
         php artisan rsx:mail:test you@example.com [--email=Some_Email] [--json]
 
         Enqueues the framework's own probe (Rsx_Mail_Test_Email) or, with --email, the
-        sample() of any email class the manifest knows, then DRAINS SYNCHRONOUSLY in this
+        sample() of any email class in Rsx_Mail::catalogue(), then DRAINS SYNCHRONOUSLY in this
         process and reads the row back - so the status printed is the status the send
         actually reached, not a detached worker's business. It prints the delivery mode, the
         transport, the queue row, the status, the attempt count, the Message-ID, any last
@@ -862,21 +936,22 @@ OPERATIONS
     one table for the whole install, and the CLI's own site (0) owns no mail.
 
     rsx:mail:queue - what is in the queue right now
-        php artisan rsx:mail:queue [--status=] [--recipient=] [--limit=25] [--json]
+        php artisan rsx:mail:queue [--status=] [--recipient=] [--tag=] [--limit=25] [--json]
 
         With NO flags: the delivery mode, a count per status, and the age of the oldest row
         still Pending - the numbers that say whether mail is moving.
 
         With --status (pending|sending|sent|failed|blocked|suppressed) and/or --recipient
         (a substring, matched against BOTH to_address and dev_original_to, so a message
-        redirected to a dev catchall is still found by who it was really for): the matching
-        rows newest first, up to --limit, each naming its site. An unknown --status is
-        refused with the list.
+        redirected to a dev catchall is still found by who it was really for) and/or --tag
+        (an exact tag() value): the matching rows newest first, up to --limit, each naming
+        its site and its email class with its tag. An unknown --status is refused with the
+        list.
 
     rsx:mail:show - everything one row knows about itself
         php artisan rsx:mail:show <id> [--json]
 
-        Every column except the rendered bodies, which are reported by LENGTH (dumping tens
+        Every column, the tag included, except the rendered bodies, which are reported by LENGTH (dumping tens
         of kilobytes of inlined HTML into a terminal buries the fields somebody opened this
         to read); headers and template data pretty-printed; attachments with file name, MIME
         type, disposition, cid and blob size. --json carries the bodies in full -
@@ -961,7 +1036,8 @@ EXISTING TEMPLATES
     Reference app (rsx/emails/, TRANSACTIONAL unless noted)
         User_Invitation_Email           staff invitation carrying the single-use invite link
         Welcome_Email                   after account creation
-        Portal_Invitation_Email         portal invitation with the registration link
+        Portal_Invitation_Email         portal invitation with the registration link; tag()
+                                        new_account / existing_account
         Portal_Password_Reset_Email     portal password reset link
         Portal_Sign_In_Code_Email       SECURITY - the emailed sign-in code
                                         (rsx.portal.emailed_sign_in_codes)

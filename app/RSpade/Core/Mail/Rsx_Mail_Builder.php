@@ -11,7 +11,9 @@ use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
 use Symfony\Component\Mime\MimeTypes;
 use TijsVerkoyen\CssToInlineStyles\CssToInlineStyles;
+use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Mail\Rsx_Email_Abstract;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Text;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
@@ -37,10 +39,19 @@ use App\RSpade\Integrations\Scss\Scss_BundleProcessor;
  *   embed_local_images() every local <img> becomes a cid: part, recorded as a blob
  *   derive_text()        the text part, derived when no <Class>_Text blade exists
  *
+ * compose() is the first, second and fourth steps as ONE assembly - the blade, the
+ * inlined stylesheet and the text part - and it is shared by the two paths that turn an
+ * email into a body: build() (a queue row, for sending) and compose_preview() (an
+ * unsaved email instance, for Rsx_Mail::preview()). The two differ only in what happens
+ * to a local image afterwards: a send embeds it as a recorded part, a preview collects
+ * its bytes so Rsx_Mail can show it as a data: URI. Both walk the images with the same
+ * _localize_images(), so a preview names exactly the parts a send would embed.
+ *
  * build() runs all four, assembles the Email, and RECORDS the rendered bodies and the
  * headers it added on the row before returning. That write is deliberate: a message
  * that ends up SUPPRESSED or FAILED still carries exactly what would have gone out,
  * which is the only way to answer "what did we almost send them" six months later.
+ * compose_preview() records nothing anywhere.
  */
 class Rsx_Mail_Builder
 {
@@ -49,14 +60,17 @@ class Rsx_Mail_Builder
      */
     public static function build(Email_Queue_Model $row): Email
     {
-        $html = static::render_html($row);
-        $html = static::inline_css($html);
+        $composed = static::compose(
+            (string) $row->email_class,
+            $row->template_data ?? [],
+            (string) $row->subject,
+            static::_unsubscribe_url($row)
+        );
 
         $message = new Email();
 
-        $html = static::embed_local_images($message, $html, $row);
-
-        $text = static::_text_part($row, $html);
+        $html = static::embed_local_images($message, $composed['html'], $row);
+        $text = $composed['text'];
 
         static::_apply_envelope($message, $row);
         $headers = static::_apply_headers($message, $row);
@@ -85,6 +99,115 @@ class Rsx_Mail_Builder
     }
 
     // =========================================================================
+    // PREVIEW
+    // =========================================================================
+
+    /**
+     * An unsaved email instance through the send's own assembly - Rsx_Mail::preview()'s
+     * engine. Persists nothing: no queue row, no attachment row, no blob.
+     *
+     * The body is compose()'s, with the email's own subject() and data() and, for a
+     * category that offers one, Rsx_Mail::preview_unsubscribe_url() standing in for the
+     * signed link (a preview has no recipient to sign it for). Local images are walked
+     * by _localize_images() exactly as a send walks them, so each root-relative src
+     * becomes the cid: the send would embed it under; instead of recording a part, the
+     * asset's CURRENT bytes are collected. Every ->embed() part the email declared is
+     * collected the same way, from its source. A template naming a cid: nothing was
+     * embedded under throws, as the send would.
+     *
+     * The HTML returned still carries cid: references; `parts` holds the bytes behind
+     * each (cid => {bytes, mime_type}). Rsx_Mail::preview() turns them into data: URIs.
+     *
+     * @return array{subject: string, html: string, text: string, parts: array<string, array{bytes: string, mime_type: string}>}
+     */
+    public static function compose_preview(Rsx_Email_Abstract $email): array
+    {
+        $category_id = $email::category();
+        $subject = $email->subject();
+
+        $composed = static::compose(
+            $email::view_id(),
+            $email->data(),
+            $subject,
+            static::category_offers_unsubscribe($category_id) ? Rsx_Mail::preview_unsubscribe_url() : null
+        );
+
+        $parts = [];
+
+        foreach ($email->_envelope()['attachments'] as $spec) {
+            if ((int) $spec['disposition'] === Rsx_Email_Abstract::DISPOSITION_INLINE) {
+                $parts[(string) $spec['cid']] = static::_embed_spec_bytes($spec);
+            }
+        }
+
+        $html = static::_localize_images(
+            $composed['html'],
+            static function (string $cid) use (&$parts) {
+                if (!isset($parts[$cid])) {
+                    throw static::_unembedded_cid_exception($cid);
+                }
+            },
+            static function (string $path, string $cid) use (&$parts) {
+                $bytes = file_get_contents($path);
+
+                if ($bytes === false) {
+                    throw new \RuntimeException("Could not read the email image asset at {$path}.");
+                }
+
+                $parts[$cid] = ['bytes' => $bytes, 'mime_type' => static::_asset_mime_type($path)];
+            }
+        );
+
+        return [
+            'subject' => $subject,
+            'html' => $html,
+            'text' => $composed['text'],
+            'parts' => $parts,
+        ];
+    }
+
+    /**
+     * The bytes and type behind one ->embed() spec, read from its source - a stored
+     * attachment's blob or an absolute path - without storing anything.
+     *
+     * @return array{bytes: string, mime_type: string}
+     */
+    private static function _embed_spec_bytes(array $spec): array
+    {
+        $source = $spec['source'];
+
+        if ($source instanceof File_Attachment_Model) {
+            $storage = $source->file_storage_id === null ? null : File_Storage_Model::find($source->file_storage_id);
+
+            if ($storage === null) {
+                throw new \RuntimeException(
+                    "Cannot embed file attachment #{$source->id} as cid:{$spec['cid']}: its bytes have been released."
+                );
+            }
+
+            return [
+                'bytes' => $storage->read_bytes(),
+                'mime_type' => (string) ($spec['mime'] ?? $source->mime_type),
+            ];
+        }
+
+        if (!is_string($source) || !is_file($source)) {
+            throw new \RuntimeException("Cannot embed '" . (string) $source . "' as cid:{$spec['cid']}: no such file.");
+        }
+
+        $bytes = file_get_contents($source);
+
+        if ($bytes === false) {
+            throw new \RuntimeException("Could not read '{$source}' to embed as cid:{$spec['cid']}.");
+        }
+
+        return [
+            'bytes' => $bytes,
+            'mime_type' => (string) ($spec['mime'] ?? (mime_content_type($source) ?: 'application/octet-stream')),
+        ];
+    }
+
+    // =========================================================================
     // 1. HTML
     // =========================================================================
 
@@ -102,13 +225,65 @@ class Rsx_Mail_Builder
      */
     public static function render_html(Email_Queue_Model $row): string
     {
-        $data = $row->template_data ?? [];
+        $variables = static::_template_variables(
+            $row->template_data ?? [],
+            (string) $row->subject,
+            static::_unsubscribe_url($row)
+        );
 
-        $data['subject'] = $row->subject;
-        $data['branding'] = config('rsx.mail.branding', []);
-        $data['unsubscribe_url'] = static::_unsubscribe_url($row);
+        return rsx_view((string) $row->email_class, $variables)->render();
+    }
 
-        return rsx_view($row->email_class, $data)->render();
+    /**
+     * The ONE assembly of an email's two bodies: the blade rendered with its variables,
+     * the stylesheet inlined, and the text part (the email's own <Class>_Text blade when
+     * it wrote one, else derived from the HTML).
+     *
+     * Shared by build() and compose_preview() - a preview IS the send's rendering, never
+     * a second implementation of it. Local images are still root-relative (or cid:) in
+     * the HTML returned; what becomes of them is the caller's step. The text part does
+     * not depend on that step: an image contributes only its alt text.
+     *
+     * @param string      $view_id         The email's class basename (its blade @rsx_id)
+     * @param array       $template_data   The email's data()
+     * @param string      $subject         The email's subject()
+     * @param string|null $unsubscribe_url Null for a category that offers none
+     * @return array{html: string, text: string}
+     */
+    public static function compose(string $view_id, array $template_data, string $subject, ?string $unsubscribe_url): array
+    {
+        $variables = static::_template_variables($template_data, $subject, $unsubscribe_url);
+
+        $html = static::inline_css(rsx_view($view_id, $variables)->render());
+
+        return [
+            'html' => $html,
+            'text' => static::_text_part($view_id, $variables, $html),
+        ];
+    }
+
+    /**
+     * Whether an email of this category carries an unsubscribe link (and the
+     * List-Unsubscribe headers). A transactional or security email does not: the
+     * recipient cannot opt out of it, so offering to would be a lie.
+     */
+    public static function category_offers_unsubscribe(int $category_id): bool
+    {
+        return $category_id !== Email_Queue_Model::CATEGORY_TRANSACTIONAL
+            && $category_id !== Email_Queue_Model::CATEGORY_SECURITY;
+    }
+
+    /**
+     * The template variables: the frozen data plus the three things every email gets
+     * without asking - its subject, the branding block and the unsubscribe URL.
+     */
+    private static function _template_variables(array $template_data, string $subject, ?string $unsubscribe_url): array
+    {
+        $template_data['subject'] = $subject;
+        $template_data['branding'] = config('rsx.mail.branding', []);
+        $template_data['unsubscribe_url'] = $unsubscribe_url;
+
+        return $template_data;
     }
 
     /**
@@ -116,9 +291,7 @@ class Rsx_Mail_Builder
      */
     private static function _unsubscribe_url(Email_Queue_Model $row): ?string
     {
-        $category_id = (int) $row->category_id;
-
-        if ($category_id === Email_Queue_Model::CATEGORY_TRANSACTIONAL || $category_id === Email_Queue_Model::CATEGORY_SECURITY) {
+        if (!static::category_offers_unsubscribe((int) $row->category_id)) {
             return null;
         }
 
@@ -284,11 +457,47 @@ class Rsx_Mail_Builder
             $inline_attachments[(string) $attachment->cid] = $attachment;
         }
 
-        $embedded = [];
+        return static::_localize_images(
+            $html,
+            static function (string $cid) use ($message, &$inline_attachments) {
+                if (!isset($inline_attachments[$cid])) {
+                    throw static::_unembedded_cid_exception($cid);
+                }
 
-        $result = preg_replace_callback(
+                static::_embed_part($message, $inline_attachments[$cid]);
+            },
+            static function (string $path, string $cid) use ($message, $row, &$inline_attachments) {
+                $inline_attachments[$cid] = static::_record_public_asset(
+                    $row,
+                    $path,
+                    $cid,
+                    $inline_attachments[$cid] ?? null
+                );
+                static::_embed_part($message, $inline_attachments[$cid]);
+            }
+        );
+    }
+
+    /**
+     * Walk every <img> of a composed body - the one image rule both build() and
+     * compose_preview() apply (see embed_local_images() for the three shapes).
+     *
+     *   src="cid:x"      $on_cid('x'), once per distinct cid; the tag is left as written.
+     *   src="/img/a.png" resolved to its public asset LOUDLY (a src that resolves to
+     *                    nothing throws), $on_asset($path, $cid) called once per distinct
+     *                    asset cid, and the src rewritten to cid:<that cid>.
+     *   anything else    left exactly as written.
+     *
+     * @param callable $on_cid   fn (string $cid): void
+     * @param callable $on_asset fn (string $path, string $cid): void
+     */
+    private static function _localize_images(string $html, callable $on_cid, callable $on_asset): string
+    {
+        $seen = [];
+
+        return preg_replace_callback(
             '#<img\b[^>]*>#i',
-            static function ($matches) use ($message, $row, &$inline_attachments, &$embedded) {
+            static function ($matches) use ($on_cid, $on_asset, &$seen) {
                 $tag = $matches[0];
                 $src = static::_tag_attribute($tag, 'src');
 
@@ -301,16 +510,9 @@ class Rsx_Mail_Builder
                 if (str_starts_with($src, 'cid:')) {
                     $cid = substr($src, 4);
 
-                    if (!isset($inline_attachments[$cid])) {
-                        throw new \RuntimeException(
-                            "Email template references <img src=\"cid:{$cid}\"> but nothing was embedded "
-                            . "under that name - the sender must call ->embed('{$cid}', ...)."
-                        );
-                    }
-
-                    if (!isset($embedded[$cid])) {
-                        static::_embed_part($message, $inline_attachments[$cid]);
-                        $embedded[$cid] = true;
+                    if (!isset($seen[$cid])) {
+                        $on_cid($cid);
+                        $seen[$cid] = true;
                     }
 
                     return $tag;
@@ -325,23 +527,26 @@ class Rsx_Mail_Builder
                 $path = static::_resolve_public_asset($src);
                 $cid = static::_cid_for_asset($src);
 
-                if (!isset($embedded[$cid])) {
-                    $inline_attachments[$cid] = static::_record_public_asset(
-                        $row,
-                        $path,
-                        $cid,
-                        $inline_attachments[$cid] ?? null
-                    );
-                    static::_embed_part($message, $inline_attachments[$cid]);
-                    $embedded[$cid] = true;
+                if (!isset($seen[$cid])) {
+                    $on_asset($path, $cid);
+                    $seen[$cid] = true;
                 }
 
                 return str_replace($src, 'cid:' . $cid, $tag);
             },
             $html
         );
+    }
 
-        return $result;
+    /**
+     * The failure for a template that names a cid: nothing was embedded under.
+     */
+    private static function _unembedded_cid_exception(string $cid): \RuntimeException
+    {
+        return new \RuntimeException(
+            "Email template references <img src=\"cid:{$cid}\"> but nothing was embedded "
+            . "under that name - the sender must call ->embed('{$cid}', ...)."
+        );
     }
 
     /**
@@ -369,8 +574,7 @@ class Rsx_Mail_Builder
         string $cid,
         ?Email_Attachment_Model $existing
     ): Email_Attachment_Model {
-        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-        $mime_type = (new MimeTypes())->getMimeTypes($extension)[0] ?? 'application/octet-stream';
+        $mime_type = static::_asset_mime_type($path);
         $file_name = basename($path);
 
         // The part is recorded INSIDE store_blob()'s reference scope, so the blob cannot be
@@ -405,6 +609,16 @@ class Rsx_Mail_Builder
         });
 
         return $part;
+    }
+
+    /**
+     * The MIME type a public asset's extension names.
+     */
+    private static function _asset_mime_type(string $path): string
+    {
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+
+        return (new MimeTypes())->getMimeTypes($extension)[0] ?? 'application/octet-stream';
     }
 
     /**
@@ -446,17 +660,12 @@ class Rsx_Mail_Builder
      * The plain-text part: the email's own text template when it wrote one, else the
      * HTML converted.
      */
-    private static function _text_part(Email_Queue_Model $row, string $html): string
+    private static function _text_part(string $view_id, array $variables, string $html): string
     {
-        $text_view_id = $row->email_class . '_Text';
+        $text_view_id = $view_id . '_Text';
 
         if (static::_view_exists($text_view_id)) {
-            $data = $row->template_data ?? [];
-            $data['subject'] = $row->subject;
-            $data['branding'] = config('rsx.mail.branding', []);
-            $data['unsubscribe_url'] = static::_unsubscribe_url($row);
-
-            return trim(rsx_view($text_view_id, $data)->render());
+            return trim(rsx_view($text_view_id, $variables)->render());
         }
 
         return static::derive_text($html);

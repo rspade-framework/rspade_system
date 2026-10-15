@@ -130,6 +130,28 @@ abstract class Rsx_Email_Abstract
      */
     abstract public static function sample(): static;
 
+    /**
+     * The KIND of message this send carries, for an email class that sends more than one
+     * kind - a notification email carrying every notification type, say. Null (the
+     * default) for an email that is one kind of message.
+     *
+     * Override it to return a short application-defined string (at most 64 characters;
+     * longer THROWS at send()). It may read the instance's own constructor data:
+     *
+     *     public function tag(): ?string { return $this->notification->type_id__constant; }
+     *
+     * Read once at send() and frozen on the queue row as `_email_queue.tag` - on Blocked
+     * and Suppressed rows too - so the history of one kind is answerable without knowing
+     * its template data. The framework attaches no meaning to the value.
+     *
+     * #[Replaceable]: an override answers for itself and calls no parent.
+     */
+    #[Replaceable]
+    public function tag(): ?string
+    {
+        return null;
+    }
+
     // =========================================================================
     // IDENTITY
     // =========================================================================

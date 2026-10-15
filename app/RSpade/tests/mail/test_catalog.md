@@ -240,6 +240,8 @@ arrive, so what is under test is their ANSWERS. Run in-process via `Artisan::cal
 | MAIL-237 | `resend` does nothing to a row the queue already has | cli | a PENDING row | exit 0, "already", row untouched | implemented | 2026-08-31 |
 | MAIL-238 | resending a BLOCKED row requires `--force` - an opt-out is a consent record, not a delivery failure | cli | a Blocked row, with and without `--force` | exit 1 + "unsubscribed" + "--force", row untouched; then exit 0 and PENDING | implemented | 2026-08-31 |
 | MAIL-239 | `resend` refuses an id that does not exist | cli | a missing id | exit 1, the id named | implemented | 2026-08-31 |
+| MAIL-296 | `--tag` lists only the rows whose email class tagged the send that way, each with its class and tag | cli | three rows: the tag, another tag, untagged | exactly the one row, `tag` + `email_class` | implemented | 2026-10-15 |
+| MAIL-297 | `show` prints the tag, in `--json` and as a `Tag:` line | cli | a tagged row | `tag` key; `Tag:` line | implemented | 2026-10-15 |
 | MAIL-273 | `queue` reads EVERY site: run as site 0, the summary counts and the recipient listing includes a second site's row, naming its site | cli | a FAILED row on a new site, `rsx:mail:queue --json` / `--recipient` as site 0 | failed +1; listed with `site_id` | implemented | 2026-09-26 |
 | MAIL-274 | `show` finds another site's row | cli | a row on a new site, `rsx:mail:show <id> --json` as site 0 | exit 0, the row | implemented | 2026-09-26 |
 | MAIL-275 | `resend` resets another site's row (the rules are `Rsx_Mail::resend()`, shared with the /_sys Email screen) | cli | a FAILED row on a new site, `rsx:mail:resend <id>` as site 0 | exit 0; PENDING, 0 attempts | implemented | 2026-09-26 |
@@ -303,3 +305,30 @@ The SITE's ruling that no email reaches an address, in every category; checked a
 | BLK-11 | resend of an opted-out row still needs force | php | block_all row | BLOCKED, then QUEUED with force | implemented | 2026-10-06 |
 | BLK-12 | a SECURITY email reaches a listed address, at enqueue and at the drain | php | listed `to`, a SECURITY fixture email, drain | Pending (no cause), then Sent | implemented | 2026-10-07 |
 | BLK-13 | SECURITY ignores the opt-out, resends to a listed address without force, carries no unsubscribe link | php | block_all + listed, send, mark Sent, resend, render | Pending; RESEND_QUEUED; no /unsubscribe in the HTML | implemented | 2026-10-07 |
+
+## The catalogue and the preview (`php/Rsx_Mail_Preview_Test.php`)
+
+`Rsx_Mail::catalogue()` is the baked email table; `Rsx_Mail::preview()` renders an unsent instance through the send's own assembly and persists nothing.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MAIL-300 | the catalogue IS the baked table, sorted by view id, framework emails included | php | `catalogue()` vs the manifest's `data['emails']` | equal; `Rsx_Mail_Test_Email` present with its class | implemented | 2026-10-15 |
+| MAIL-301 | `rsx:mail:test --email=` resolves through the catalogue | php | a test-tree email class, delivery suppressed | exit 0, that class queued | implemented | 2026-10-15 |
+| MAIL-302 | a preview's body and text are the send's, the unsubscribe link (signed vs placeholder) the only difference | php | one instance with an embed, built by the send path and previewed | displayable HTML equal after swapping the link; text equal; subject | implemented | 2026-10-15 |
+| MAIL-303 | the preview is CSS-inlined and every local image is a data: URI of its current bytes | php | root-relative asset + `->embed()` part | inlined button style, `<style>` in head, no `cid:`, two data: srcs with the right bytes | implemented | 2026-10-15 |
+| MAIL-304 | a transactional preview carries no unsubscribe link | php | `Rsx_Mail_Test_Email::sample()` | no `/_mail/unsubscribe` | implemented | 2026-10-15 |
+| MAIL-305 | a preview needs no recipient and writes no queue, attachment or storage row | php | an instance with no `->to()`, an embed and an asset | counts unchanged | implemented | 2026-10-15 |
+| MAIL-306 | an un-embedded `cid:` throws as the send would | php | a cid image with no `->embed()` | RuntimeException naming `->embed('preview_chart'` | implemented | 2026-10-15 |
+
+## The tag hook (`php/Email_Tag_Test.php`)
+
+`Rsx_Email_Abstract::tag()` is read once at `send()` and frozen on every row the send writes.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MAIL-310 | the default hook answers null and an untagged send stores NULL | php | a fixture with no override | `tag()` null; row `tag` NULL | implemented | 2026-10-15 |
+| MAIL-311 | an overriding email's tag is stored | php | `tag()` = `task_assigned` | row `tag` = `task_assigned` | implemented | 2026-10-15 |
+| MAIL-312 | a Blocked row keeps its tag | php | a listed `to` | Blocked, tag kept | implemented | 2026-10-15 |
+| MAIL-313 | a Suppressed row keeps its tag | php | live mode, dev host, nowhere to send | Suppressed at enqueue, tag kept | implemented | 2026-10-15 |
+| MAIL-314 | 64 characters are stored | php | a 64-character tag | stored whole | implemented | 2026-10-15 |
+| MAIL-315 | longer than 64 throws naming the class and writes nothing | php | a 65-character tag | InvalidArgumentException naming `Mail_Preview_Fixture_Email::tag()`; no row | implemented | 2026-10-15 |
