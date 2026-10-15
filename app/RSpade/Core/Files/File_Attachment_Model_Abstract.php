@@ -25,6 +25,7 @@ use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
+use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
 /**
@@ -70,7 +71,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property string $blob_accessed_at
  * @property string $created_at
  * @property int $created_by_id
- * @property string $created_by_ip_address
+ * @property int $created_by_ip_address_id
  * @property int $created_by_type
  * @property string $deleted_at
  * @property int $deleted_by_id
@@ -179,6 +180,17 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * @var array
      */
     protected $appends = ['is_image', 'is_video', 'is_document', 'can_open_inline'];
+
+    /**
+     * Never sent to a browser. The uploader's address is audit metadata for server code
+     * ($attachment->created_by_ip_address); every viewer of an attachment would otherwise
+     * receive it with the record.
+     *
+     * @var array
+     */
+    protected $neverExport = [
+        'created_by_ip_address_id',
+    ];
 
     /**
      * Enum field definitions
@@ -2693,6 +2705,31 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     {
         return $query->where('fileable_type', $type)
                     ->where('fileable_id', $id);
+    }
+
+    /**
+     * The client address the attachment was uploaded from -
+     * `$attachment->created_by_ip_address`, null when it was created outside a request.
+     * The row stores created_by_ip_address_id; the address lives once in _ip_addresses
+     * (see Ip_Address). Not part of the browser payload ($neverExport).
+     *
+     * @return string|null
+     */
+    public function getCreatedByIpAddressAttribute(): ?string
+    {
+        return Ip_Address::address($this->attributes['created_by_ip_address_id'] ?? null);
+    }
+
+    /**
+     * Assigning `$attachment->created_by_ip_address = $string` records the address in
+     * _ip_addresses and stores its id.
+     *
+     * @param string|null $ip_address
+     * @return void
+     */
+    public function setCreatedByIpAddressAttribute(?string $ip_address): void
+    {
+        $this->attributes['created_by_ip_address_id'] = Ip_Address::id($ip_address);
     }
 
     /**

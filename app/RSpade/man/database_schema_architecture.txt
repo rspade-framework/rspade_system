@@ -244,8 +244,18 @@ _file_attachments
   Managed by: RSpade File attachment API
   Records: Attachment metadata, relationships, dimensions, upload audit
   Schema: key (64-hex), file_storage_id (FK), fileable_type/id (polymorphic),
-          fileable_category, site_id, created_by_ip_address
+          fileable_category, site_id, created_by_ip_address_id (FK _ip_addresses)
   Developer API: Attachment methods, not direct table access
+
+_ip_addresses
+  Purpose: Every recorded client IP address, stored once
+  Managed by: Ip_Address (rsx:man ip_addresses)
+  Records: The address plus geocode fields (city, state, country, latitude,
+           longitude), null until a geocoder fills them
+  Referenced by: _sessions, _login_history, _audit_sessions, _file_attachments,
+                 _api_request_log, _transactions (ON DELETE RESTRICT)
+  Lifecycle: Never deleted
+  Developer API: Ip_Address::describe(), Ip_Address::join()
 
 _flash_alerts
   Purpose: Transient flash message queue

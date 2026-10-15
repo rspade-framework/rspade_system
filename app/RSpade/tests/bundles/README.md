@@ -41,8 +41,9 @@ The fifth is OVERRIDE SUBSTITUTION: a framework file the application overrides s
 disk under its own name, and a bundle walks the disk. `_add_file()` - the one step a
 directory, a pattern and an explicit file all reach - compiles the overriding file in the
 shadowed file's place, once. A shadowed file that leaked through would put two declarations
-of one class, one component or one stylesheet into the bundle; one substituted at the wrong
-position would cascade or evaluate out of order.
+of one class or one component into the bundle; one substituted at the wrong position would
+evaluate out of order. Stylesheets are never shadowed: a framework stylesheet compiles beside
+an application stylesheet wrapped in the same class.
 
 ## The argv ceiling
 

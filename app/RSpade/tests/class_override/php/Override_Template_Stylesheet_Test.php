@@ -12,17 +12,20 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * An application overrides a framework TEMPLATE or STYLESHEET the way it overrides a class:
- * by declaring the same name. The framework's file is SHADOWED - left in place, out of the
- * live index - and is live again the moment the override goes away (the map is derived in
- * full on every build, so there is nothing to undo).
+ * An application overrides a framework TEMPLATE the way it overrides a class: by declaring
+ * the same component name (<Define:Name>). The framework's file is SHADOWED - left in place,
+ * out of the live index - and is live again the moment the override goes away (the map is
+ * derived in full on every build, so there is nothing to undo).
  *
- * A .jqhtml declares a component (<Define:Name>), a .scss the one class it is wrapped in.
+ * A STYLESHEET is never an override: an application stylesheet wrapped in the class of a
+ * framework component adds to the framework's stylesheet and never shadows it, and two
+ * application stylesheets wrapped in one class are not a conflict.
  *
  * What is pinned:
  *   - the match is by DECLARED NAME, never by file name or directory;
  *   - each file is its own override - a template override leaves the framework's class and
- *     stylesheet of that name live, and the reverse;
+ *     stylesheet of that name live;
+ *   - no stylesheet is ever shadowed, and no stylesheet pair is ever refused;
  *   - the two guards the class kind has (a poisoned index, an override that is not on disk)
  *     hold here too.
  *
@@ -137,10 +140,10 @@ class Override_Template_Stylesheet_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A stylesheet has no name of its own - it is identified by the class it is wrapped in.
-     * The application's file here shares neither a name nor a directory with the framework's.
+     * An application stylesheet wrapped in the class of a framework component styles that
+     * component ON TOP of the framework's own stylesheet: both stay in the live index.
      */
-    public static function test_an_application_stylesheet_shadows_the_framework_stylesheet_by_wrapper_class()
+    public static function test_an_application_stylesheet_never_shadows_the_framework_stylesheet()
     {
         self::__write(self::APPLICATION_STYLESHEET);
 
@@ -151,12 +154,11 @@ class Override_Template_Stylesheet_Test extends Rsx_Test_Abstract
                 self::__entry(self::APPLICATION_STYLESHEET)
             ));
 
-            static::__assert_equals(
-                [self::FRAMEWORK_STYLESHEET => ['kind' => 'scss', 'name' => self::NAME, 'by' => self::APPLICATION_STYLESHEET]],
-                $outcome['overrides'],
-                'the framework stylesheet is shadowed'
-            );
-            static::__assert_true(isset($outcome['files'][self::FRAMEWORK_TEMPLATE]), 'the framework template of that name stays live');
+            static::__assert_equals([], $outcome['overrides'], 'nothing is shadowed');
+            static::__assert_true(isset($outcome['files'][self::FRAMEWORK_STYLESHEET]), 'the framework stylesheet stays live');
+            static::__assert_true(isset($outcome['files'][self::APPLICATION_STYLESHEET]), 'beside the application stylesheet');
+            static::__assert_null(Manifest_Overrides::kind_of(['extension' => 'scss']), 'a stylesheet has no override kind');
+            static::__assert_false(isset(Manifest_Overrides::NAME_KEYS['scss']), 'and no declared-name key');
         } finally {
             self::__clean();
         }
@@ -212,25 +214,48 @@ class Override_Template_Stylesheet_Test extends Rsx_Test_Abstract
     // =====================================================================
 
     /**
-     * Two application templates of one component name, or two application stylesheets
-     * wrapped in one class, are refused - nothing can choose between them.
+     * Two application templates of one component name are refused - nothing can choose
+     * between them.
      */
-    public static function test_two_application_declarations_of_one_name_are_refused()
+    public static function test_two_application_templates_of_one_name_are_refused()
     {
-        foreach ([
-            ['jqhtml', 'a_template.jqhtml', 'b_template.jqhtml', "Duplicate jqhtml component '" . self::NAME . "'"],
-            ['scss', 'a_styles.scss', 'b_styles.scss', "Duplicate stylesheet wrapper class '." . self::NAME . "'"],
-        ] as [$extension, $first, $second, $expected]) {
-            $error = static::__assert_throws(
-                \RuntimeException::class,
-                static fn () => self::__derive(array_merge(
-                    self::__entry(self::APPLICATION_DIR . '/' . $first),
-                    self::__entry(self::APPLICATION_DIR . '/' . $second)
-                )),
-                $expected
-            );
+        $error = static::__assert_throws(
+            \RuntimeException::class,
+            static fn () => self::__derive(array_merge(
+                self::__entry(self::APPLICATION_DIR . '/a_template.jqhtml'),
+                self::__entry(self::APPLICATION_DIR . '/b_template.jqhtml')
+            )),
+            "Duplicate jqhtml component '" . self::NAME . "'"
+        );
 
-            static::__assert_contains(self::APPLICATION_DIR . '/' . $second, $error->getMessage(), "the {$extension} refusal names both files");
+        static::__assert_contains(self::APPLICATION_DIR . '/b_template.jqhtml', $error->getMessage(), 'the refusal names both files');
+    }
+
+    /**
+     * Two application stylesheets wrapped in one class - each styling the same framework
+     * component, in different bundles or in one - are not a conflict: there is nothing to
+     * choose between, because neither replaces anything.
+     */
+    public static function test_two_application_stylesheets_of_one_wrapper_class_are_not_refused()
+    {
+        $first = self::APPLICATION_DIR . '/a_styles.scss';
+        $second = self::APPLICATION_DIR . '/b_styles.scss';
+
+        self::__write($first, $second);
+
+        try {
+            $outcome = self::__derive(array_merge(
+                self::__entry(self::FRAMEWORK_STYLESHEET),
+                self::__entry($first),
+                self::__entry($second)
+            ));
+
+            static::__assert_equals([], $outcome['overrides'], 'nothing is shadowed and nothing is refused');
+            foreach ([self::FRAMEWORK_STYLESHEET, $first, $second] as $file) {
+                static::__assert_true(isset($outcome['files'][$file]), "{$file} stays live");
+            }
+        } finally {
+            self::__clean();
         }
     }
 }

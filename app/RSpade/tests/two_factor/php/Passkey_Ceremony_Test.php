@@ -383,7 +383,7 @@ class Passkey_Ceremony_Test extends Rsx_Test_Abstract
 
         $row = static::__row((int) $login_user->id, Login_History::STATUS_PASSKEY_ENROLL_ABANDONED);
         static::__assert_contains('the challenge expired', $row->failure_reason);
-        static::__assert_equals($begun->ip_address, $row->ip_address, 'attributed to the browser that began it');
+        static::__assert_equals($begun->ip_address_id, $row->ip_address_id, 'attributed to the browser that began it');
         static::__assert_null(static::__marker_row(Rsx_Two_Factor::class), 'the marker is gone');
 
         static::__assert_equals(0, Rsx_Two_Factor::record_expired_passkey_enrollments(), 'recorded once');

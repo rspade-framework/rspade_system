@@ -90,7 +90,7 @@ if grep -qi '^Set-Cookie: rsx=' "$headers"; then
     fail "asking for the audit session set a session cookie"
 fi
 rm -f "$headers"
-row="$(sql "SELECT a.session_row_id, a.login_user_id, a.ip_address, u.user_agent, a.session_type_id FROM _audit_sessions a LEFT JOIN _user_agents u ON u.id = a.user_agent_id WHERE a.id = ${anon_id}")"
+row="$(sql "SELECT a.session_row_id, a.login_user_id, i.ip_address, u.user_agent, a.session_type_id FROM _audit_sessions a LEFT JOIN _user_agents u ON u.id = a.user_agent_id LEFT JOIN _ip_addresses i ON i.id = a.ip_address_id WHERE a.id = ${anon_id}")"
 echo "$row" | grep -qE '"session_row_id": *null' || fail "a cookie-less context recorded a session row: $row"
 echo "$row" | grep -qE '"login_user_id": *null' || fail "a cookie-less context recorded an identity: $row"
 echo "$row" | grep -qE '"ip_address": *"[0-9a-f.:]+"' || fail "no client address recorded: $row"

@@ -34,7 +34,7 @@ import { IdeBridgeClient, Bridge_Offline_Error } from './ide_bridge_client';
 import { Bridge_Connectivity } from './bridge_connectivity';
 
 export interface Override_Record {
-    /** php | js | jqhtml | scss */
+    /** php | js | jqhtml */
     kind: string;
     /** The declared name both files carry. */
     name: string;
@@ -98,7 +98,7 @@ export class Override_Map {
         // A workspace-relative pattern: VS Code applies files.watcherExclude to it, so the
         // extension keeps no exclusion list of its own.
         const watcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(this.rspade_root, 'rsx/**/*.{php,js,jsx,ts,tsx,jqhtml,scss}')
+            new vscode.RelativePattern(this.rspade_root, 'rsx/**/*.{php,js,jsx,ts,tsx,jqhtml}')
         );
         watcher.onDidCreate(() => this.refresh());
         watcher.onDidChange(() => this.refresh());
@@ -319,7 +319,6 @@ function declaration_line(record: Override_Record): number {
     const name = record.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const pattern =
         record.kind === 'jqhtml' ? new RegExp(`<Define:${name}\\b`) :
-        record.kind === 'scss' ? new RegExp(`\\.${name}\\b`) :
         new RegExp(`\\bclass\\s+${name}\\b`);
 
     const lines = source.split('\n');

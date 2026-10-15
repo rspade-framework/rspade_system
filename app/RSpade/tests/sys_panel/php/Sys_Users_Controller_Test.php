@@ -237,7 +237,7 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
                 'login_user_id' => $id,
                 'session_token' => 'sys-users-' . uniqid('', true),
                 'csrf_token' => 'sys-users-csrf-' . uniqid('', true),
-                'ip_address' => '203.0.113.7',
+                'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('203.0.113.7'),
                 'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0'),
                 'last_active' => '2026-02-03 04:05:06',
             ], $columns));
@@ -286,7 +286,7 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
             DB::table('_login_history')->insert([
                 'login_user_id' => $id,
                 'email_attempted' => "sys-users-signins-{$tag}@example.com",
-                'ip_address' => $i === 30 ? '198.51.100.30' : '192.0.2.' . $i,
+                'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id($i === 30 ? '198.51.100.30' : '192.0.2.' . $i),
                 'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0'),
                 'status' => 'success',
                 'created_at' => sprintf('2026-03-01 00:00:%02d', $i),
@@ -390,7 +390,7 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
             'site_id' => 1,
             'session_token' => 'sys-users-' . uniqid('', true),
             'csrf_token' => 'sys-users-csrf-' . uniqid('', true),
-            'ip_address' => '203.0.113.9',
+            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('203.0.113.9'),
             'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('sys-users-actions'),
             'last_active' => now(),
         ]);

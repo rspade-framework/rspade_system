@@ -163,7 +163,7 @@ Worked example: `system/app/RSpade/resource/reference_app/app/api/v1/clients_api
 
 ## Request logging
 
-Every request — success and every failure path — writes one `_api_request_log` row: `verb`, `path`, `handler`, `status`, `duration_ms`, `ip`, nullable identity columns, plus **what was exchanged**:
+Every request — success and every failure path — writes one `_api_request_log` row: `verb`, `path`, `handler`, `status`, `duration_ms`, `ip` (`$log->ip`; the row stores an `_ip_addresses` id), nullable identity columns, plus **what was exchanged**:
 
 | Column | Notes |
 |---|---|
@@ -173,7 +173,7 @@ Every request — success and every failure path — writes one `_api_request_lo
 
 `response_error_code IS NULL` is the success predicate. **The body is never stored for an upload** — the test is the request (files present, or a multipart content type), not the endpoint name, so it covers future upload endpoints automatically. Credential-shaped keys (`password`, `secret`, `token`, `authorization`, `api_key`, `credential`, `private_key`) are `[redacted]` at any depth; a bare **`key` is deliberately not redacted** because in this API that is the attachment key you need when tracing an attach. Values cap at 4000 bytes, the whole payload at 25000, both marked `...[truncated]`.
 
-Indexed by key, by `ip`, and by `created_at`. Retention is `config('rsx.api.log_retention_days')` (default 30), pruned by a daily `#[Task]`.
+Indexed by key, by address (`ip_address_id`), and by `created_at`. Retention is `config('rsx.api.log_retention_days')` (default 30), pruned by a daily `#[Task]`.
 
 ## Versioning
 

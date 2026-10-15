@@ -316,7 +316,10 @@ INCLUDE TYPES
         overrides (rsx:man class_override) - directory, pattern or explicit
         file, in any bundle including the framework's own - it compiles
         your file in that file's place in the include order, once, and
-        never the framework's.
+        never the framework's. Only a PHP class, a JS class or a jqhtml
+        template is overridden: every framework stylesheet a bundle
+        includes is compiled, and a stylesheet of yours that styles the
+        same component is compiled alongside it.
 
     Type-Filtered Directories
         One directory, ONE file type, in exactly two forms:

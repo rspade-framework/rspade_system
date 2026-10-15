@@ -1119,7 +1119,8 @@ class BundleCompiler
     *
     * A framework file the application overrides (rsx:man class_override) is SUBSTITUTED here
     * by the file that overrides it, in the framework file's place in the include order - so a
-    * stylesheet cascades and a script evaluates where the framework's would have. The
+    * script evaluates and a template registers where the framework's would have. Stylesheets
+    * are never overrides: every framework stylesheet a bundle includes is compiled. The
     * de-dup below then keys on the overriding file, so a bundle that also includes the
     * application's file gets it once, wherever it appears first.
     */
@@ -1422,8 +1423,7 @@ class BundleCompiler
     * Both, not one or the other: an included shadowed file is compiled as its override
     * (_effective_path()), so an edit to the override must invalidate the output; the shadowed
     * file stays watched because a watch target is an input that is NOT compiled from the
-    * include list (a vendor stylesheet importing it by path), where the substitution does
-    * not apply. Over-invalidation costs a rebuild; under-invalidation is a stale artifact.
+    * include list, where the substitution does not apply. Over-invalidation costs a rebuild; under-invalidation is a stale artifact.
     */
     protected function _register_watch_path(string $normalized, array $buckets): void
     {

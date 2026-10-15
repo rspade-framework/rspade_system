@@ -49,6 +49,7 @@ alone dies at "Manifest support module must extend ManifestSupport_Abstract".
 | Discovery and change detection | `Core/Manifest/Manifest_Scanner.php` |
 | Persistence, the bad-manifest flag | `Core/Manifest/Manifest_Store.php` |
 | The code-quality pass | `CodeQuality/Manifest_Rule_Driver.php`, `CodeQuality/Support/Source_Cache.php` |
+| A stylesheet's wrapper class | `Integrations/Scss/Scss_ManifestModule.php` (`wrapper_class_of()`) |
 
 Man pages: `rsx:man manifest_build`, `rsx:man manifest_api`, `rsx:man code_quality`.
 Colocated: `Core/Manifest/CLAUDE.md`.

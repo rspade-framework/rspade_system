@@ -32,7 +32,8 @@
 | OWN-02 | Single claim: an already-attached row can never be re-claimed | php | attach_to then guard | false | implemented | 2026-08-09 |
 | OWN-03 | Tenant isolation: a row from another site is not claimable | php | session site switched | false | implemented | 2026-08-09 |
 | OWN-04 | No request context -> no IP stamped, no error, no session minted | php | create_from_string in CLI | get_client_ip() null, column NULL | implemented | 2026-08-09 |
-| OWN-05 | created_by_ip_address round-trips a full-length IPv6 address | php | 39-char IPv6 write | value read back intact | implemented | 2026-08-09 |
+| OWN-05 | created_by_ip_address round-trips a full-length IPv6 address through its _ip_addresses id | php | 39-char IPv6 write | value read back intact, row holds the id | implemented | 2026-08-09 |
+| OWN-05b | Neither created_by_ip_address_id nor the address rides toArray() | php | address stamped, toArray() | both keys absent | implemented | 2026-10-15 |
 | OWN-06 | Claim-window sweep soft-deletes an expired unattached upload into RETENTION (blob still pinned) | php | backdated 48h, window 24h | deleted_at set, destroyed_at null, storage row alive | implemented | 2026-08-09 |
 | OWN-07 | Sweep spares attached rows, in-window rows, and handler-backed rows | php | three fixtures, one sweep | none soft-deleted | implemented | 2026-08-09 |
 | OWN-08 | Window of 0 disables the sweep entirely | php | window 0, year-old row | swept 0, row alive | implemented | 2026-08-09 |

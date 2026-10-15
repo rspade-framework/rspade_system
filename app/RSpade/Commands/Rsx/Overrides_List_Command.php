@@ -26,7 +26,7 @@ use App\RSpade\Core\Naming\Rsx_Paths;
  * declares every public/protected member the framework file declares), "N missing" (and the
  * members are named below the table), or "extends base" for a split class whose override
  * extends its `_Abstract` base and so inherits everything - there is no copy to measure. The
- * three asset kinds are not analysed.
+ * js and jqhtml kinds are not analysed.
  *
  * Read-only, and it works in every mode: it reads the index, sealed builds included.
  */

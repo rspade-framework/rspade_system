@@ -188,35 +188,28 @@ rsx:man bundle_api, JAVASCRIPT STUBS). The __MODEL name and the Base_*_Model.js
 stub names are the CONCRETE's, unchanged by the split, so nothing moves in
 JavaScript.
 
-## JAVASCRIPT CLASSES, TEMPLATES AND STYLESHEETS
+## JAVASCRIPT CLASSES AND TEMPLATES
 
-The same mechanism covers the three browser-side file kinds. Each is matched by
-the NAME IT DECLARES - never by its file name or its directory - and each file
-is its own override:
+The same mechanism covers the two browser-side file kinds that declare a name.
+Each is matched by the NAME IT DECLARES - never by its file name or its
+directory - and each file is its own override:
 
     .js       its class name (.js, .jsx, .ts and .tsx alike). An rsx/ JS class
               with the name of a framework JS class shadows the framework's
               file.
     .jqhtml   its component, <Define:Name>. An rsx/ template with the name of a
               framework template shadows the framework's .jqhtml file.
-    .scss     the ONE class the whole stylesheet is wrapped in (.Name { ... }).
-              An rsx/ stylesheet wrapped in the same class as a framework
-              stylesheet shadows the framework's .scss file.
 
-So rsx/theme/components/inputs/code/code_input.scss, wrapped in .Code_Input,
-overrides system/app/RSpade/Core/Forms/Code_Input.scss, and nothing about the
-two paths has to agree.
+So rsx/theme/components/inputs/code/code_input.jqhtml, declaring
+<Define:Code_Input>, overrides system/app/RSpade/Core/Forms/Code_Input.jqhtml,
+and nothing about the two paths has to agree.
 
 PER FILE, NOT PER COMPONENT. A jqhtml component is usually three files of one
-name, and an application takes over as many of them as it supplies. Overriding
-only the template leaves the framework's class and stylesheet for that component
-in the build; overriding only the stylesheet restyles the framework's component.
-What you did not override keeps arriving with framework updates - and keeps
-changing under the files you did, so a template you copied is yours to keep in
-step with the framework's class.
-
-A stylesheet with no single wrapper class (variables only, or several top-level
-rules) declares no name: it neither overrides nor can be overridden.
+name, and an application takes over as many of its class and template as it
+supplies. Overriding only the template leaves the framework's class and
+stylesheet for that component in the build. What you did not override keeps
+arriving with framework updates - and keeps changing under the files you did,
+so a template you copied is yours to keep in step with the framework's class.
 
 Two files of one name in rsx/ are refused at manifest build, whatever the kind -
 nothing could choose between them (WHEN THE BUILD REFUSES). Two templates of one
@@ -226,21 +219,35 @@ the build ("Duplicate jqhtml component name detected").
 Shadowing and its end work exactly as for PHP: the build prints one line naming
 the framework file and the rsx/ file that shadows it, and deleting the rsx/ file
 makes the framework file live again on the next build. Each file is released on
-its own - removing your stylesheet brings the framework's stylesheet back and
-leaves your template override standing.
+its own - removing your template brings the framework's template back and
+leaves your JS class override standing.
+
+## STYLESHEETS ARE NEVER OVERRIDDEN
+
+A framework stylesheet is compiled into every bundle that includes it, whatever
+stylesheets the application has. An rsx/ stylesheet wrapped in the class of a
+framework component - .Rsx_Form { ... } - ADDS to the framework's rules for that
+component: it is compiled alongside the framework stylesheet, in the position its
+own include gives it (an application directory is normally included after the
+framework's), and the cascade decides between them. Any number of rsx/
+stylesheets may be wrapped in one class; none of them shadows anything.
+
+To change a rule the framework stylesheet sets, write the new value in your
+stylesheet at the same or higher specificity.
 
 ## BUNDLES
 
 Whichever way a bundle reaches a shadowed framework file - a directory include,
 a type pattern or the file named explicitly - it compiles the rsx/ file that
 overrides it instead, in the framework file's place in the include order (a
-stylesheet cascades, a script sorts, where the framework's would have), and only
-once when the bundle also includes the rsx/ file itself. The shadowed file is
-never compiled.
+script sorts and a template registers where the framework's would have), and
+only once when the bundle also includes the rsx/ file itself. The shadowed file
+is never compiled. Stylesheets are never shadowed, so a bundle compiles every
+framework stylesheet it includes (STYLESHEETS ARE NEVER OVERRIDDEN).
 
 That holds for EVERY bundle, the framework's own included: Core_Bundle and the
-/_sys and /apidocs bundles receive your component, template or stylesheet
-wherever they name the framework's. Those bundles still name no rsx/ path
+/_sys and /apidocs bundles receive your class or template wherever they name
+the framework's. Those bundles still name no rsx/ path
 (CONV-BUNDLE-04 reads what a bundle declares, which is unchanged); the
 substitution happens below the declaration. Overriding a component the panel
 uses (a form input, say) therefore changes it in the panel too.
@@ -339,8 +346,8 @@ FATAL - AN OVERRIDE OF A SPLIT MODEL THAT DOES NOT EXTEND ITS BASE
 
 FATAL - TWO APPLICATION FILES DECLARE ONE NAME
 
-    Any kind - a PHP class, a JS class, a jqhtml component, a stylesheet wrapper
-    class. Nothing can choose between them, so neither overrides anything:
+    A PHP class, a JS class or a jqhtml component. Nothing can choose between
+    them, so neither overrides anything:
 
         Fatal: Duplicate jqhtml component 'Code_Input' declared by more than
         one application file:
@@ -437,11 +444,11 @@ DECLINED - THE BUILD ALREADY MARKED ITS OWN MANIFEST BAD
     php artisan rsx:overrides:list [--json]
 
 One row per shadowed framework file, read off the manifest's override map: the kind
-(php, js, jqhtml, scss), the declared name, the application file that overrides it
+(php, js, jqhtml), the declared name, the application file that overrides it
 and the framework file it shadows, paths relative to the project root. A PHP row also
 carries the drift verdict described below - "current", "N missing" (the members are
 named under the table) or "extends base" for a split model, which has nothing to
-drift; the three asset kinds are not analysed. "No class overrides." when there are
+drift; the two browser-side kinds are not analysed. "No class overrides." when there are
 none. Read-only, exit 0, and it works in every mode, sealed builds included. --json
 prints {"overrides": [{kind, name, override_file, framework_file, fqcn, by_fqcn,
 drift: {status: current|missing|extends_base, missing: [...]} | null}]}.
@@ -491,7 +498,7 @@ override, counting the missing members and pointing at rsx:check. It exists
 because the moment drift appears is a framework pull, which is exactly when
 somebody is looking at rsx:health and not at the linter.
 
-Drift is analysed for PHP classes only. A JS class, template or stylesheet you
+Drift is analysed for PHP classes only. A JS class or template you
 override is listed by rsx:overrides:list with no drift verdict; keeping it in
 step with the framework's version is a manual diff (FRAMEWORK UPDATES).
 
@@ -689,7 +696,7 @@ See rsx:man rsx_upstream for the full update contract.
 
 For a MODEL override there is nothing to compare after an update: the base
 arrived with the pull and the override already inherits it. For a COPY - and
-for every JS class, template and stylesheet you override - see what the
+for every JS class and template you override - see what the
 framework version gained with a plain diff against the file in place:
 
     diff rsx/lib/file_attachment_icons.php \
@@ -706,8 +713,8 @@ Delete the override file:
 The next build derives a map without it, prints "Override removed: the
 framework file app/RSpade/Core/Models/User_Model.php is live again", and the
 framework class answers for its own name from then on. There is nothing to
-restore: the framework file never left. The same holds for a .js, .jqhtml or
-.scss override, each judged on its own: the framework file is live again when no
+restore: the framework file never left. The same holds for a .js or .jqhtml
+override, each judged on its own: the framework file is live again when no
 rsx/ file of the same kind declares its name.
 
 ## HOW REFERENCES KEEP RESOLVING
@@ -817,16 +824,19 @@ shell declares anything or a base ships without exactly one concrete.
 ## LIMITATIONS
 
 - Only works for files in rsx/ overriding framework files the manifest indexes
-- Both files must declare the same name (class, component or wrapper class)
+- Both files must declare the same name (class or component)
 - Cannot override multiple framework classes with one file
 - A core MODEL cannot be overridden by copying - the override must extend
   <Name>_Model_Abstract, and a copy is refused at manifest build
 - The ABSTRACT BASE of a split model is not overridable: an rsx/ class named
   X_Model_Abstract would shadow the base itself, which is the implementation.
   Override the concrete, which is what the shell is for
-- A JS class, a jqhtml template and a stylesheet are each overridden by name,
-  file by file (JAVASCRIPT CLASSES, TEMPLATES AND STYLESHEETS above), and every
-  bundle - the framework's own included - compiles the replacement (BUNDLES)
+- A JS class and a jqhtml template are each overridden by name, file by file
+  (JAVASCRIPT CLASSES AND TEMPLATES above), and every bundle - the framework's
+  own included - compiles the replacement (BUNDLES)
+- A stylesheet is never an override: an rsx/ stylesheet styling a framework
+  component is compiled alongside the framework's (STYLESHEETS ARE NEVER
+  OVERRIDDEN)
 - An overridden PHP class is global: the /_sys panel, the framework's commands
   and every task run your class, exactly as the application does
 - Classes the framework declares while it boots or while the manifest builds,

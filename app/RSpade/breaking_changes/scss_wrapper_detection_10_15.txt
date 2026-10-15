@@ -1,0 +1,65 @@
+SCSS - A STYLESHEET IS WRAPPED ONLY WHEN ONE BLOCK ENCLOSES THE WHOLE FILE; STYLESHEETS ARE NEVER OVERRIDES
+Date: 2026-10-15
+
+IF YOU DO NOTHING: a stylesheet of yours under rsx/app/ or rsx/theme/components/
+    that has more than one top-level rule - `.My_Component { ... }` followed by
+    `html.rsx-dark .My_Component .x { ... }` or by a rule for some other selector -
+    stops the manifest build with SCSS-SCOPE-01 ("SCSS file must be fully enclosed
+    in a single class rule"), and every page answers 500 until it is fixed. The
+    template's own rsx/theme/components/inputs/select/select_input.scss had this
+    shape; if your copy of it still carries the Tom Select rules (.ts-wrapper,
+    .ts-dropdown), it is one of these files.
+
+SUMMARY
+    Two changes to how the manifest reads a stylesheet.
+
+    1. WRAPPER DETECTION IS EXACT. A stylesheet has a wrapper class only when its
+       first top-level rule is `.Uppercase_Name { ... }` and the brace that rule
+       opens is the one that closes the file - matched by depth, with comments and
+       strings ignored. The detector used to accept any file that BEGAN with such a
+       rule and whose braces balanced overall, so `.A { } .B { }` was read as
+       wrapped in A. A file with several top-level rules now has no wrapper class,
+       and SCSS-SCOPE-01, which requires a wrapper for a stylesheet under rsx/app/
+       and rsx/theme/components/, refuses it at manifest build.
+
+    2. STYLESHEETS ARE NEVER CLASS OVERRIDES. Only a PHP class, a JS class and a
+       jqhtml template replace the framework file of the same name. A framework
+       stylesheet is always compiled into every bundle that includes it, and an
+       application stylesheet wrapped in the same class is compiled beside it and
+       wins through the ordinary cascade. Two application stylesheets wrapped in one
+       class are not an error.
+
+ACTION REQUIRED
+
+    1. Run `php artisan rsx:manifest:build` (or load any page). Every stylesheet
+       SCSS-SCOPE-01 names is one of these files.
+
+    2. For each, choose by what the extra top-level rules style:
+
+       a. Rules about the component itself - nest them inside the wrapper. A
+          dark-mode or state rule keyed on an ancestor uses the parent selector:
+
+              .Rsx_Form {
+                  &__error { ... }
+                  html.rsx-dark & .Rsx_Form__loading { background: rgba(0, 0, 0, 0.6); }
+              }
+
+       b. Rules for a third-party widget or for markup the component does not own -
+          move them to a theme-level stylesheet outside rsx/app/ and
+          rsx/theme/components/ (for example rsx/theme/<widget>.scss), which the
+          application's bundles already include through 'rsx/theme'. The template's
+          Tom Select rules live in rsx/theme/tom_select.scss for this reason:
+          system/app/RSpade/resource/reference_app/theme/tom_select.scss.
+
+    3. If you relied on an application stylesheet REPLACING a framework stylesheet
+       of the same class (possible only in releases from 2026-10-12 to this one),
+       the framework stylesheet is compiled again. Restate whatever you meant to
+       suppress as rules of your own that win in the cascade.
+
+VERIFY
+    The manifest builds; `php artisan rsx:overrides:list` lists no stylesheet;
+    `php artisan rsx:debug /` answers 200 with no console errors.
+
+SEE ALSO
+    rsx:man scss - wrapper detection and the scoping rule
+    rsx:man class_override - STYLESHEETS ARE NEVER OVERRIDDEN

@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Session;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Portal\Portal_Session;
+use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -72,8 +73,8 @@ class Audit_Session
      * The id of the audit session for whoever is acting right now, minting the row if
      * this context has not been seen before.
      *
-     * A WRITER on _audit_sessions (and _user_agents), and on nothing else: it reads the
-     * session accessors, which create no session.
+     * A WRITER on _audit_sessions (and _user_agents, _ip_addresses), and on nothing
+     * else: it reads the session accessors, which create no session.
      *
      * @return int
      */
@@ -106,18 +107,32 @@ class Audit_Session
 
         // One statement finds or creates: a concurrent request with the same context
         // lands on the unique key and both read the same id. The first device seen for
-        // the context is kept.
+        // the context is kept. The tuple hashes the address itself; the row stores the
+        // id of its _ip_addresses row.
         DB::statement(
             'INSERT INTO _audit_sessions
                 (tuple_hash, site_id, login_user_id, portal_user_id, portal_site_id,
-                 impersonator_login_user_id, impersonator_user_id, ip_address, session_row_id,
+                 impersonator_login_user_id, impersonator_user_id, ip_address_id, session_row_id,
                  user_agent_id, device_id, session_type_id)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 last_seen_at = CURRENT_TIMESTAMP(3),
                 device_id = COALESCE(device_id, VALUES(device_id))',
-            array_merge([$hash], $tuple, [$context['device_id'], $context['session_type_id']])
+            [
+                $hash,
+                $context['site_id'],
+                $context['login_user_id'],
+                $context['portal_user_id'],
+                $context['portal_site_id'],
+                $context['impersonator_login_user_id'],
+                $context['impersonator_user_id'],
+                Ip_Address::id($context['ip_address']),
+                $context['session_row_id'],
+                $context['user_agent_id'],
+                $context['device_id'],
+                $context['session_type_id'],
+            ]
         );
 
         $id = (int) DB::getPdo()->lastInsertId();
@@ -196,8 +211,8 @@ class Audit_Session
     }
 
     /**
-     * One audit session as a reader needs it: the recorded context, with the user agent
-     * as a string. Null when there is no such row.
+     * One audit session as a reader needs it: the recorded context, with the address and
+     * the user agent as strings. Null when there is no such row.
      *
      * @param int $audit_session_id
      * @return array|null
@@ -220,7 +235,7 @@ class Audit_Session
             'portal_site_id' => $int($row->portal_site_id),
             'impersonator_login_user_id' => $int($row->impersonator_login_user_id),
             'impersonator_user_id' => $int($row->impersonator_user_id),
-            'ip_address' => $row->ip_address,
+            'ip_address' => Ip_Address::address($int($row->ip_address_id)),
             'user_agent' => self::user_agent_string($int($row->user_agent_id)),
             'session_row_id' => $int($row->session_row_id),
             'device_id' => $int($row->device_id),
@@ -232,7 +247,7 @@ class Audit_Session
 
     /**
      * What a joined audit session answers, by published name: the expression behind each,
-     * over the two aliases join() adds. The names are the keys Session::get_audit_session()
+     * over the three aliases join() adds. The names are the keys Session::get_audit_session()
      * returns; the columns behind them are the framework's and may move.
      */
     private const JOINED_FIELDS = [
@@ -242,7 +257,7 @@ class Audit_Session
         'portal_site_id' => 'audit_session.portal_site_id',
         'impersonator_login_user_id' => 'audit_session.impersonator_login_user_id',
         'impersonator_user_id' => 'audit_session.impersonator_user_id',
-        'ip_address' => 'audit_session.ip_address',
+        'ip_address' => 'audit_ip.ip_address',
         'user_agent' => 'audit_user_agent.user_agent',
         'session_row_id' => 'audit_session.session_row_id',
         'device_id' => 'audit_session.device_id',
@@ -268,8 +283,8 @@ class Audit_Session
      * $column is YOUR column holding a Session::get_audit_session_id() value. The join is
      * a LEFT join, so a row with no audit session is still listed (its audit_* values are
      * null). Every published field is added to the select as `audit_<name>` - the names
-     * are get_audit_session()'s keys, user_agent as the full string. A query that selected
-     * nothing explicitly keeps its own table's columns.
+     * are get_audit_session()'s keys, ip_address and user_agent as strings. A query that
+     * selected nothing explicitly keeps its own table's columns.
      *
      * THIS IS THE WAY TO READ AUDIT SESSIONS IN BULK. The tables behind it are the
      * framework's and are never named in application code: a condition or an ordering on
@@ -297,7 +312,8 @@ class Audit_Session
         }
 
         $query->leftJoin('_audit_sessions as audit_session', 'audit_session.id', '=', $column)
-            ->leftJoin('_user_agents as audit_user_agent', 'audit_user_agent.id', '=', 'audit_session.user_agent_id');
+            ->leftJoin('_user_agents as audit_user_agent', 'audit_user_agent.id', '=', 'audit_session.user_agent_id')
+            ->leftJoin('_ip_addresses as audit_ip', 'audit_ip.id', '=', 'audit_session.ip_address_id');
 
         foreach (self::JOINED_FIELDS as $name => $expression) {
             $query->addSelect($expression . ' as audit_' . $name);

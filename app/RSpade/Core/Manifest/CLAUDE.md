@@ -664,8 +664,11 @@ lock measured a LOAD, not a build** (peak ~46 MB, no rule lines) - discard it.
 ## THE OVERRIDE MAP
 
 An application overrides a framework file by declaring its name under `rsx/` (`rsx:man
-class_override`): a PHP class, a JS class, a jqhtml component or a stylesheet's wrapper class.
-**The framework file is never moved, renamed or edited.** `Manifest_Overrides::derive()` runs at
+class_override`): a PHP class, a JS class or a jqhtml component. **A stylesheet is never an
+override kind** - `scss_wrapper_class` names the class a stylesheet is wrapped in, for the
+scoping rule and the component shaker, and an application stylesheet wrapped in a framework
+component's class is compiled alongside the framework's. **The framework file is never moved,
+renamed or edited.** `Manifest_Overrides::derive()` runs at
 the end of Phase 2 - after Php_Fixer, before Phase 3 loads a class - and derives, IN FULL every
 pass, `data.overrides` (hot, ksorted): shadowed framework path => `kind`, `name`, `by`, plus
 `fqcn` / `by_fqcn` for php. A name declared by exactly one `rsx/` file and by framework files is
@@ -684,7 +687,7 @@ reports a file ENTERING the shadow as REMOVED (a DELTA module drops what it deri
 one LEAVING it as CHANGED (loaded, reflected and re-derived like a new file); a shadowed file is
 never in the changed set. An override therefore never restarts a build.
 
-**The refusals** (each a manifest-build FATAL): two `rsx/` files declaring one name, any kind; an
+**The refusals** (each a manifest-build FATAL): two `rsx/` files declaring one name, any of the three kinds; an
 override that `extends` its own name; the SPLIT refusal - when the framework file declares nothing
 but `class X extends X_Abstract`, the override must extend that same `X_Abstract` (a copy is a
 second implementation of a class the framework keeps developing, and is refused rather than

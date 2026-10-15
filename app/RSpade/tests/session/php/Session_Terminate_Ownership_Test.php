@@ -36,7 +36,7 @@ class Session_Terminate_Ownership_Test extends Rsx_Test_Abstract
             'active'        => 1,
             'site_id'       => 0,
             'version'       => 1,
-            'ip_address'    => '10.0.0.7',
+            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('10.0.0.7'),
             'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('terminate-ownership-test'),
             'login_user_id' => $login_user_id,
             'last_active'   => now(),

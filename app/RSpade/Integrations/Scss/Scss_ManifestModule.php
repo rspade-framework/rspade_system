@@ -212,8 +212,12 @@ class Scss_ManifestModule extends ManifestModule_Abstract
     /**
      * Detect if SCSS file has a single top-level class wrapper
      *
-     * Sets scss_wrapper_class if all rules are contained within a single top-level
-     * class selector (e.g., .Frontend_Dashboard { ... }).
+     * Sets scss_wrapper_class when every rule in the file is contained within one top-level
+     * class selector (e.g., .Frontend_Dashboard { ... }): the file's first top-level selector
+     * is `.Name` (a leading `_` allowed, then a capital), and the brace opened after it closes
+     * at the end of the file, with nothing but whitespace and comments after it. The closing
+     * brace is found by depth, with comments and quoted strings ignored, so a file of several
+     * top-level rules (`.A { } .B { }`) has no wrapper class whatever its brace count.
      *
      * SCSS variable declarations ($var: value;) are allowed outside the wrapper
      * and are stripped before checking. Files containing only variables/comments
@@ -221,40 +225,25 @@ class Scss_ManifestModule extends ManifestModule_Abstract
      *
      * Additionally sets 'id' if the wrapper class matches a Blade view ID,
      * JS class extending Component, or jqhtml template in the manifest.
+     *
+     * @param string $clean_content the file with its comments blanked (FileSanitizer::blank_scss_comments)
      */
     protected function detect_scss_id(string $clean_content, array &$metadata, string $file_path = ''): void
     {
         // Remove SCSS variable declarations ($var: value;) - these are allowed outside wrapper
         // This regex matches: $variable-name: any value until semicolon;
-        $content_without_vars = preg_replace('/\$[a-zA-Z_][\w-]*\s*:[^;]+;/', '', $clean_content);
-
-        // Remove all whitespace and newlines for easier parsing
-        $compact = preg_replace('/\s+/', ' ', trim($content_without_vars));
+        $content_without_vars = trim(preg_replace('/\$[a-zA-Z_][\w-]*\s*:[^;]+;/', '', $clean_content));
 
         // If content is empty after removing variables (only variables and comments),
         // mark as variables-only file - no wrapper needed
-        if (empty($compact)) {
+        if ($content_without_vars === '') {
             $metadata['scss_variables_only'] = true;
             return;
         }
 
-        // Check if content starts with a single class selector and everything is inside it
-        // Pattern: .ClassName { ... everything ... }   (the `_?[A-Z]...` name shape lives in
-        // App\RSpade\Core\Naming\Rsx_Identifier; a leading `_` is the framework prefix)
-        if (!preg_match('/^\.(_?[A-Z][A-Za-z0-9_]+)\s*\{(.*)\}\s*$/', $compact, $matches)) {
-            return;
-        }
+        $class_name = static::wrapper_class_of($clean_content);
 
-        $class_name = $matches[1];
-        $inner_content = $matches[2];
-
-        // Verify there are no other top-level rules by checking for unmatched closing braces
-        // Count opening and closing braces in the inner content
-        $open_braces = substr_count($inner_content, '{');
-        $close_braces = substr_count($inner_content, '}');
-
-        // If braces are balanced, everything is contained within the main selector
-        if ($open_braces !== $close_braces) {
+        if ($class_name === null) {
             return;
         }
 
@@ -320,5 +309,71 @@ class Scss_ManifestModule extends ManifestModule_Abstract
         if ($found_match && !$scss_id_already_exists) {
             $metadata['id'] = $class_name;
         }
+    }
+
+    /**
+     * The class a stylesheet is wrapped in, or null.
+     *
+     * Comments are blanked and variable declarations ($var: value;) removed first. The file
+     * is wrapped when it then opens with `.Name {` (the `_?[A-Z]...` name shape lives in
+     * App\RSpade\Core\Naming\Rsx_Identifier; a leading `_` is the framework prefix) and the
+     * brace opened there is closed - matched by depth, quoted strings and unquoted url(...)
+     * tokens stepped over - by the last non-whitespace character of the file.
+     */
+    public static function wrapper_class_of(string $scss): ?string
+    {
+        $content = trim(preg_replace('/\$[a-zA-Z_][\w-]*\s*:[^;]+;/', '', FileSanitizer::blank_scss_comments($scss)));
+
+        if (!preg_match('/^\.(_?[A-Z][A-Za-z0-9_]+)\s*\{/', $content, $matches)) {
+            return null;
+        }
+
+        $length = strlen($content);
+        $depth = 0;
+        $quote = null;
+
+        for ($i = strlen($matches[0]) - 1; $i < $length; $i++) {
+            $char = $content[$i];
+
+            if ($quote !== null) {
+                if ($char === '\\') {
+                    $i++;
+                } elseif ($char === $quote) {
+                    $quote = null;
+                }
+
+                continue;
+            }
+
+            if ($char === '"' || $char === "'") {
+                $quote = $char;
+
+                continue;
+            }
+
+            if (($char === 'u' || $char === 'U') && strncasecmp(substr($content, $i, 4), 'url(', 4) === 0) {
+                $close = strpos($content, ')', $i);
+
+                if ($close === false) {
+                    return null;
+                }
+
+                $i = $close;
+
+                continue;
+            }
+
+            if ($char === '{') {
+                $depth++;
+            } elseif ($char === '}') {
+                $depth--;
+
+                if ($depth === 0) {
+                    return $i === $length - 1 ? $matches[1] : null;
+                }
+            }
+        }
+
+        return null;
     }
 }

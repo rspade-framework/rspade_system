@@ -273,7 +273,7 @@ COLOURS - RUNTIME TOKENS, NOT SCSS VARIABLES
 
     A widget whose own stylesheet hardcodes colours and offers no custom
     properties has to be re-pointed rule by rule. The worked example is
-    system/app/RSpade/resource/reference_app/theme/components/inputs/select/select_input.scss,
+    system/app/RSpade/resource/reference_app/theme/tom_select.scss,
     which maps a prebuilt third-party stylesheet onto these same tokens so
     one set of rules serves both themes.
 
@@ -452,8 +452,14 @@ HOW IT WORKS
     a single class rule by:
     1. Removing comments
     2. Stripping SCSS variable declarations ($var: value;)
-    3. Checking if remaining content matches pattern: .ClassName { ... }
-    4. Verifying bracket balance (all content inside the wrapper)
+    3. Checking that the remaining content opens with .ClassName {
+    4. Finding the brace that closes it - matched by depth, with braces
+       inside comments and quoted strings ignored - and requiring it to
+       be the last thing in the file
+
+    So a file of several top-level rules (.A { ... } followed by
+    html.x .A { ... }, or by .B { ... }) has no wrapper class, however
+    its braces happen to balance.
 
     A code quality rule then validates:
     1. The wrapper class exists (or file is variables-only)

@@ -117,9 +117,10 @@ MODELS
             fileable_order     Optional sort order within a category
             fileable_meta      JSON blob for unstructured metadata
             site_id            Tenant scope
-            created_by_ip_address
-                               Client IP recorded at creation (audit only;
-                               NULL outside a request context). Gates nothing.
+            created_by_ip_address_id
+                               Client IP recorded at creation, an
+                               _ip_addresses id (audit only; NULL outside a
+                               request context). Gates nothing.
             blob_accessed_at   Touched (<=1/day) when bytes are served/read
             created_at / updated_at / created_by_id / created_by_type /
             updated_by_id / updated_by_type
@@ -307,12 +308,15 @@ THE CLAIM WINDOW
 
     AUDIT METADATA
 
-    created_by_ip_address (VARCHAR(45), nullable) records the client IP at
-    creation - resolved by Session::get_client_ip() ($request->ip(), forwarded
-    headers believed only from trusted proxies - rsx:man session) and null outside a request context (CLI, tasks, imports). For
-    an anonymous upload it is the only datum the framework can honestly record;
-    anything richer (which user, which tenant workflow) is the app's job. It is
-    NEVER consulted for authorization.
+    $attachment->created_by_ip_address (PHP) is the client IP at creation -
+    resolved by Session::get_client_ip() ($request->ip(), forwarded headers
+    believed only from trusted proxies - rsx:man session) and null outside a
+    request context (CLI, tasks, imports). The row stores
+    created_by_ip_address_id (rsx:man ip_addresses); neither the id nor the
+    address is in the payload fetch() sends to a browser. For an anonymous
+    upload it is the only datum the framework can honestly record; anything
+    richer (which user, which tenant workflow) is the app's job. It is NEVER
+    consulted for authorization.
 
     Model helper methods (on every model via Rsx_Model_Abstract):
 

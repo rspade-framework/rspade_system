@@ -49,19 +49,33 @@ class _Sys_User_Signins_DataGrid extends _Sys_DataGrid_Abstract
 
     protected static function __build_query(array $params)
     {
+        // The address is joined for ordering; the search reaches it through a subquery.
         $query = DB::table('_login_history')
-            ->where('login_user_id', (int) ($params['login_user_id'] ?? 0));
+            ->select('_login_history.*')
+            ->leftJoin('_ip_addresses as ip', 'ip.id', '=', '_login_history.ip_address_id')
+            ->where('_login_history.login_user_id', (int) ($params['login_user_id'] ?? 0));
 
         $search = trim((string) ($params['filter'] ?? ''));
         if ($search !== '') {
             $like = '%' . addcslashes($search, '%_\\') . '%';
             $query->where(function ($where) use ($like) {
-                $where->where('ip_address', 'like', $like)
-                    ->orWhereIn('user_agent_id', fn ($agents) => $agents->select('id')->from('_user_agents')->where('user_agent', 'like', $like));
+                $where->whereIn('_login_history.ip_address_id', fn ($addresses) => $addresses->select('id')->from('_ip_addresses')->where('ip_address', 'like', $like))
+                    ->orWhereIn('_login_history.user_agent_id', fn ($agents) => $agents->select('id')->from('_user_agents')->where('user_agent', 'like', $like));
             });
         }
 
         return $query;
+    }
+
+    /**
+     * Sort keys are present_record()'s names; the address is the joined row's.
+     *
+     * @param string $key
+     * @return string
+     */
+    protected static function __map_sort_column(string $key): string
+    {
+        return $key === 'ip_address' ? 'ip.ip_address' : '_login_history.' . $key;
     }
 
     protected static function __transform_records(array $records, array $params): array

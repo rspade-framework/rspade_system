@@ -172,7 +172,9 @@ THE TABLES
                             stamp matrix the audit columns use
         source_id           web / ajax / api / task / cli / test
         endpoint            what the unit was serving
-        ip                  the caller's IP, null off a real request
+        ip                  the caller's IP, null off a real request - read
+                            as $transaction->ip; the row stores
+                            ip_address_id (rsx:man ip_addresses)
         audit_session_id    the acting context - identity, tenant,
                             impersonators, address, session row, user agent -
                             as a permanent _audit_sessions row (rsx:man

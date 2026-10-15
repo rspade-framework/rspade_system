@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Revisions;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Revisions\Revision_Model;
+use App\RSpade\Core\Session\Ip_Address;
 
 /**
  * Transaction_Model_Abstract - one row per RUN that produced at least one recorded revision.
@@ -55,7 +56,7 @@ use App\RSpade\Core\Revisions\Revision_Model;
  * @property string $description
  * @property string $endpoint
  * @property int $id
- * @property string $ip
+ * @property int $ip_address_id
  * @property int $revision_count
  * @property int $site_id
  * @property int $source_id
@@ -172,5 +173,29 @@ abstract class Transaction_Model_Abstract extends Rsx_Model_Abstract
     public function actor()
     {
         return $this->morphTo('actor', 'actor_type', 'actor_id');
+    }
+
+    /**
+     * The client address of the run - `$transaction->ip`, null off a request (a task, a
+     * CLI run). The row stores ip_address_id; the address lives once in _ip_addresses
+     * (see Ip_Address).
+     *
+     * @return string|null
+     */
+    public function getIpAttribute(): ?string
+    {
+        return Ip_Address::address($this->attributes['ip_address_id'] ?? null);
+    }
+
+    /**
+     * Assigning `$transaction->ip = $string` records the address in _ip_addresses and stores
+     * its id.
+     *
+     * @param string|null $ip
+     * @return void
+     */
+    public function setIpAttribute(?string $ip): void
+    {
+        $this->attributes['ip_address_id'] = Ip_Address::id($ip);
     }
 }

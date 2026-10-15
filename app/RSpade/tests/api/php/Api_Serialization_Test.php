@@ -55,7 +55,8 @@ class Api_Serialization_Test extends Rsx_Test_Abstract
 
     public static function test_model_serialization_redacts_never_export_columns()
     {
-        // The _sessions model declares $neverExport = [session_token, csrf_token, ip_address].
+        // The _sessions model declares $neverExport = [session_token, csrf_token, ip_address_id];
+        // the address itself is an accessor and is never serialized.
         $session = new Session();
         $session->session_token = 'secret-token';
         $session->csrf_token = 'secret-csrf';
@@ -66,7 +67,8 @@ class Api_Serialization_Test extends Rsx_Test_Abstract
 
         static::__assert_false(array_key_exists('session_token', $array), 'session_token redacted');
         static::__assert_false(array_key_exists('csrf_token', $array), 'csrf_token redacted');
-        static::__assert_false(array_key_exists('ip_address', $array), 'ip_address redacted');
+        static::__assert_false(array_key_exists('ip_address_id', $array), 'ip_address_id redacted');
+        static::__assert_false(array_key_exists('ip_address', $array), 'ip_address not serialized');
         static::__assert_equals('Session', $array['__MODEL']);
     }
 

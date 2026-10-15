@@ -13,6 +13,7 @@ use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Database\Rsx_Schema;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Session\Audit_Session;
+use App\RSpade\Core\Session\Ip_Address;
 
 /**
  * Transaction_Rollback_Cache_Reset
@@ -69,7 +70,8 @@ class Transaction_Rollback_Cache_Reset
      * of the schema and the state key it is cached under (Rsx_Schema - a rollback can undo
      * the applied-migrations row the key was computed from), the type-ref registry's
      * process statics (which the cache flush alone cannot reach), and the audit-session
-     * ids this process resolved (a row minted inside the rolled-back transaction is gone).
+     * and IP-address ids this process resolved (a row minted inside the rolled-back
+     * transaction is gone).
      *
      * Public because the test runner performs the same calls where no rollback event
      * fires - it drops and restores the whole test database instead, and swaps the
@@ -83,5 +85,6 @@ class Transaction_Rollback_Cache_Reset
         Rsx_Schema::reset();
         Type_Ref_Registry::_reset_cached_state();
         Audit_Session::_reset();
+        Ip_Address::_reset();
     }
 }

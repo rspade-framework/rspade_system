@@ -37,7 +37,7 @@ class Api_Cleanup_Test extends Rsx_Test_Abstract
             'handler'     => null,
             'status'      => 200,
             'duration_ms' => 1,
-            'ip'          => self::MARK_IP,
+            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id(self::MARK_IP),
             'created_at'  => $when,
             'updated_at'  => $when,
         ]);
@@ -45,7 +45,7 @@ class Api_Cleanup_Test extends Rsx_Test_Abstract
 
     private static function __marked_count(): int
     {
-        return DB::table('_api_request_log')->where('ip', self::MARK_IP)->count();
+        return DB::table('_api_request_log')->where('ip_address_id', \App\RSpade\Core\Session\Ip_Address::id(self::MARK_IP))->count();
     }
 
 

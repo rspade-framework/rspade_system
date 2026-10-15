@@ -218,7 +218,6 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
         $session->portal_user_id = $portal_user->id;
         $session->session_token = bin2hex(random_bytes(32));
         $session->csrf_token = bin2hex(random_bytes(32));
-        $session->ip_address = 'CLI';
         $session->user_agent = 'site-declaration-test';
         $session->last_active = now();
         $session->save();

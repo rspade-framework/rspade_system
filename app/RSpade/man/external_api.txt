@@ -1492,7 +1492,8 @@ REQUEST LOGGING
 
         verb, path, handler (Class::method or null when unmatched),
         status, duration_ms, ip, and nullable api_key_id / user_id / site_id
-        (null where unknown, e.g. a 401 before the key resolved).
+        (null where unknown, e.g. a 401 before the key resolved). ip is read
+        as $log->ip; the row stores ip_address_id (rsx:man ip_addresses).
 
     WHAT WAS EXCHANGED is recorded alongside what was called:
 
@@ -1535,7 +1536,8 @@ REQUEST LOGGING
     an anonymous caller cannot make the log hold its payload. A JSON body that
     does not parse cannot be redacted, so it is stored as the marker
     "[unparseable JSON body, N bytes, not stored]", never as its text. Indexes cover the three
-    ways the table is read: by key, by ip, and by created_at (date range).
+    ways the table is read: by key, by address (ip_address_id), and by
+    created_at (date range).
 
     RETENTION. config('rsx.api.log_retention_days') (default 30) is consumed by
     Api_Cleanup_Service::cleanup_request_log - a #[Task] #[Exclusive]

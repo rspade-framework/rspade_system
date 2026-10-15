@@ -8,6 +8,7 @@ use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Database\Rsx_Page_Query;
 use App\RSpade\Core\Session\Audit_Session;
+use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\User_Agent;
 
@@ -117,7 +118,7 @@ class Login_History
         DB::table('_login_history')->insert([
             'login_user_id' => $login_user_id,
             'email_attempted' => $email,
-            'ip_address' => self::_get_client_ip(),
+            'ip_address_id' => Ip_Address::id(Session::get_client_ip()),
             'user_agent_id' => Audit_Session::user_agent_id(self::_get_user_agent()),
             'status' => self::STATUS_SUCCESS,
             'failure_reason' => null,
@@ -155,7 +156,7 @@ class Login_History
         DB::table('_login_history')->insert([
             'login_user_id' => $login_user_id,
             'email_attempted' => $email,
-            'ip_address' => (string) ($client_context['ip_address'] ?? 'CLI'),
+            'ip_address_id' => Ip_Address::id($client_context['ip_address'] ?? null),
             'user_agent_id' => Audit_Session::user_agent_id($client_context['user_agent'] ?? null),
             'status' => $status,
             'failure_reason' => $reason === null ? null : mb_substr($reason, 0, 255),
@@ -165,14 +166,14 @@ class Login_History
 
     /**
      * The client a history row is attributed to: {ip_address, user_agent}, read the way every
-     * row written here reads them ('CLI' outside a request).
+     * row written here reads them (ip_address null outside a request).
      *
      * @return array
      */
     public static function client_context(): array
     {
         return [
-            'ip_address' => self::_get_client_ip(),
+            'ip_address' => Session::get_client_ip(),
             'user_agent' => self::_get_user_agent(),
         ];
     }
@@ -199,7 +200,8 @@ class Login_History
         ?string $reason = null,
         ?int $login_user_id = null
     ): void {
-        $ip_address = self::_get_client_ip();
+        // The per-IP counter of a caller with no client (CLI) is keyed 'CLI'.
+        $ip_address = Session::get_client_ip() ?? 'CLI';
         $window_seconds = self::_failure_window_seconds();
 
         Rsx_Counter::increment(self::_email_counter_key($email), $window_seconds);
@@ -295,10 +297,10 @@ class Login_History
      * present_record() calls the values; the columns are the framework's business.
      */
     private const LIST_PAGE_SORTABLE = [
-        'created_at' => 'created_at',
-        'email' => 'email_attempted',
-        'ip_address' => 'ip_address',
-        'status' => 'status',
+        'created_at' => '_login_history.created_at',
+        'email' => '_login_history.email_attempted',
+        'ip_address' => 'ip.ip_address',
+        'status' => '_login_history.status',
     ];
 
     private const LIST_PAGE_MAX_LIMIT = 200;
@@ -350,16 +352,19 @@ class Login_History
             ['login_user_id']
         );
 
+        // The address is joined for ordering; the filter reaches it through a subquery.
         $matching = DB::table('_login_history')
-            ->where('login_user_id', Rsx_Page_Query::require_id($query, 'login_user_id', $reader));
+            ->select('_login_history.*')
+            ->leftJoin('_ip_addresses as ip', 'ip.id', '=', '_login_history.ip_address_id')
+            ->where('_login_history.login_user_id', Rsx_Page_Query::require_id($query, 'login_user_id', $reader));
 
         if ($parsed['filter'] !== '') {
             $like = Rsx_Page_Query::like($parsed['filter']);
 
             $matching->where(function ($where) use ($like) {
-                $where->where('email_attempted', 'like', $like)
-                    ->orWhere('ip_address', 'like', $like)
-                    ->orWhereIn('user_agent_id', fn ($agents) => $agents->select('id')->from('_user_agents')->where('user_agent', 'like', $like));
+                $where->where('_login_history.email_attempted', 'like', $like)
+                    ->orWhereIn('_login_history.ip_address_id', fn ($addresses) => $addresses->select('id')->from('_ip_addresses')->where('ip_address', 'like', $like))
+                    ->orWhereIn('_login_history.user_agent_id', fn ($agents) => $agents->select('id')->from('_user_agents')->where('user_agent', 'like', $like));
             });
         }
 
@@ -368,7 +373,7 @@ class Login_History
         // id breaks ties, so two rows that sort equal keep one order from page to page.
         $rows = $matching
             ->orderBy($parsed['sort_column'], $parsed['order'])
-            ->orderBy('id', $parsed['order'])
+            ->orderBy('_login_history.id', $parsed['order'])
             ->offset($parsed['offset'])
             ->limit($parsed['limit'])
             ->get()
@@ -397,7 +402,7 @@ class Login_History
         return [
             'id' => $record->id,
             'email' => $record->email_attempted,
-            'ip_address' => $record->ip_address,
+            'ip_address' => Ip_Address::address($record->ip_address_id === null ? null : (int) $record->ip_address_id),
             'user_agent' => $user_agent,
             'user_agent_parsed' => User_Agent::parse($user_agent),
             'location' => self::_format_location($record),
@@ -446,26 +451,12 @@ class Login_History
     }
 
     /**
-     * The client IP for a history row (Session::get_client_ip()); 'CLI' outside a request.
-     *
-     * @return string
-     */
-    private static function _get_client_ip(): string
-    {
-        return Session::get_client_ip() ?? 'CLI';
-    }
-
-    /**
-     * Get user agent string
+     * The client's user agent, or null when there is none (a command-line process has no client).
      *
      * @return string|null
      */
     private static function _get_user_agent(): ?string
     {
-        if (php_sapi_name() === 'cli') {
-            return 'CLI';
-        }
-
         $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? null;
         return $user_agent ?: null;
     }

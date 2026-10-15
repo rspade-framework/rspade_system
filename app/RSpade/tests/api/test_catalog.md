@@ -78,7 +78,7 @@ paths there are inert literals that resolve to nothing.
 | CLEAN-CONFIG | the configured retention window is honored | php | window=7, 10d/1d | 10d deleted, 1d kept | implemented | 2026-07-23 |
 | CLEAN-CHUNK | a backlog beyond one chunk fully clears | php | 12 old rows, chunk 5 | all deleted | implemented | 2026-07-23 |
 | SER-MODEL-LABEL | model serializes with __MODEL + enum __label | php | User_Model role 100 | __MODEL, role_id__label=Developer | implemented | 2026-07-23 |
-| SER-REDACT | neverExport columns are stripped | php | Session model | session_token/csrf_token/ip_address absent | implemented | 2026-07-23 |
+| SER-REDACT | neverExport columns are stripped | php | Session model | session_token/csrf_token/ip_address_id absent, ip_address not serialized | implemented | 2026-07-23 |
 | SER-ARRAY | an array of models recurses | php | [User, User] | two __MODEL arrays | implemented | 2026-07-23 |
 | SER-COLLECTION | a Collection becomes an ordered array | php | collect([User,User]) | array of 2 | implemented | 2026-07-23 |
 | SER-NESTED | a model nested in an array is serialized | php | {meta, record} | scalar + serialized model | implemented | 2026-07-23 |

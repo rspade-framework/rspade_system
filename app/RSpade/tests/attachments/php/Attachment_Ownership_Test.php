@@ -156,9 +156,10 @@ class Attachment_Ownership_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The column itself round-trips a real address (the stamp value under a web request). The
-     * request-context branch of Session::get_client_ip() keys on php_sapi_name(), which the CLI
-     * harness cannot fake, so the write path is exercised directly here.
+     * The address round-trips through the accessor pair (the stamp value under a web request):
+     * the row stores an _ip_addresses id and reads the address back. The request-context branch
+     * of Session::get_client_ip() keys on php_sapi_name(), which the CLI harness cannot fake, so
+     * the write path is exercised directly here.
      */
     public static function test_ip_column_persists_an_address()
     {
@@ -169,8 +170,29 @@ class Attachment_Ownership_Test extends Rsx_Test_Abstract
         static::__assert_equals(
             '2001:db8:85a3:8d3:1319:8a2e:370:7348',
             File_Attachment_Model::find($attachment->id)->created_by_ip_address,
-            'a full-length IPv6 address survives the VARCHAR(45) column'
+            'a full-length IPv6 address survives the round trip'
         );
+        static::__assert_equals(
+            \App\RSpade\Core\Session\Ip_Address::id('2001:db8:85a3:8d3:1319:8a2e:370:7348'),
+            (int) $attachment->getAttributes()['created_by_ip_address_id'],
+            'the row stores the id of the address'
+        );
+    }
+
+    /**
+     * The uploader's address is server-side audit metadata: neither the id nor the address
+     * rides the model's payload to a browser.
+     */
+    public static function test_ip_is_not_in_the_payload()
+    {
+        $attachment = static::__make();
+        $attachment->created_by_ip_address = '203.0.113.44';
+        $attachment->save();
+
+        $array = File_Attachment_Model::find($attachment->id)->toArray();
+
+        static::__assert_false(array_key_exists('created_by_ip_address_id', $array), 'the id is never exported');
+        static::__assert_false(array_key_exists('created_by_ip_address', $array), 'the address is not appended');
     }
 
     // --- the claim-window sweep ------------------------------------------------------------------

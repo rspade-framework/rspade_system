@@ -1,0 +1,138 @@
+IP_ADDRESSES(1)                  RSpade Manual                  IP_ADDRESSES(1)
+
+NAME
+    ip_addresses - client IP addresses stored once, with their geocode
+
+SYNOPSIS
+    use App\RSpade\Core\Session\Ip_Address;
+
+    Ip_Address::id(?string $ip): ?int          // record (or find) an address
+    Ip_Address::address(?int $id): ?string     // the address behind an id
+    Ip_Address::describe(int $id): ?array      // address + geocode fields
+    Ip_Address::join($query, string $column, string $prefix)
+    Ip_Address::column(string $prefix, string $name): string
+
+DESCRIPTION
+    Every client IP address the framework records is stored ONCE, in the
+    system table _ip_addresses, and every table that records where something
+    came from holds the id of that row:
+
+        _sessions.ip_address_id                    the address that created
+                                                   the session row
+        _login_history.ip_address_id               a recorded sign-in
+        _audit_sessions.ip_address_id              an acting context
+        _file_attachments.created_by_ip_address_id an upload
+        _api_request_log.ip_address_id             an external API call
+        _transactions.ip_address_id                a unit of work
+
+    The framework's own answers give the address back as a string, so code
+    reading them never sees the id: `ip_address` in
+    Session::get_sessions_for_user(), get_current_session_info(),
+    Portal_Session::get_sessions_for_user(), Login_History and
+    Session::get_audit_session(); audit_ip_address from Audit_Session::join();
+    and the model properties $session->ip_address,
+    $attachment->created_by_ip_address, $log->ip (Api_Request_Log_Model) and
+    $transaction->ip (Transaction_Model). Assigning one of those properties
+    records the address and stores its id.
+
+    No address is null everywhere: a command, a task or any other process
+    with no request records none.
+
+    _ip_addresses is a system table (rsx:man database_schema_architecture):
+    application code never names it. It reads an address through this class.
+
+THE TABLE
+    _ip_addresses
+        id            BIGINT
+        ip_address    VARCHAR(45), unique - the address as the request
+                      presented it (Session::get_client_ip())
+        city          VARCHAR(100), null
+        state         VARCHAR(100), null
+        country       VARCHAR(100), null
+        latitude      DOUBLE, null
+        longitude     DOUBLE, null
+
+    Rows are never deleted. A row is where its address's geocode lives, and
+    the audit sessions that reference it are permanent (rsx:man session,
+    AUDIT SESSIONS). Every referencing column is a foreign key with ON DELETE
+    RESTRICT.
+
+GEOCODING
+    The geocode fields exist so an address is located once and every record
+    that names it shares the answer. THE FRAMEWORK DOES NOT SHIP A GEOCODER
+    YET: today every city, state, country, latitude and longitude is null. A
+    resolver that fills them is coming; when it lands, describe() and join()
+    answer its results with no change to their shape, so code written against
+    them now needs no change then.
+
+API
+    Ip_Address::id(?string $ip): ?int
+        The id of an address, recording it on first sight. Null for no
+        address: null, '' and 'CLI'. One statement finds or creates, so two
+        requests presenting the same new address at once both get the same
+        id. Memoized for the process, so a request that records an address
+        many times asks the database once.
+
+        A table of your own that records a bare address stores this id in a
+        nullable BIGINT column (with an index) - not the string.
+
+    Ip_Address::address(?int $id): ?string
+        The address behind an id; null for a null id or an id with no row.
+        Memoized for the process.
+
+    Ip_Address::describe(int $id): ?array
+        One address with what is known about it, or null for no such row:
+
+            ['ip_address' => '203.0.113.7', 'city' => null, 'state' => null,
+             'country' => null, 'latitude' => null, 'longitude' => null]
+
+        latitude and longitude are floats when set.
+
+    Ip_Address::join($query, string $column, string $prefix)
+        Join the address onto a query of your own, so a list can show, search
+        and sort by an address and where it is:
+
+            $query = Visit_Log_Model::query();
+            Ip_Address::join($query, 'visit_logs.ip_address_id', 'visitor');
+
+            $query->where(Ip_Address::column('visitor', 'ip_address'), 'like', $like)
+                  ->orderBy(Ip_Address::column('visitor', 'country'));
+
+            foreach ($query->limit(25)->get() as $log) {
+                $log->visitor_ip_address;
+                $log->visitor_city;
+                $log->visitor_country;
+            }
+
+        $column is YOUR qualified column ('table.column') holding an
+        Ip_Address::id() value; anything else throws. $prefix is a plain
+        identifier naming this join: it is the table alias and the prefix of
+        every selected field, so one query may join several addresses under
+        different prefixes. A LEFT join, so a row with no address is still
+        listed with null values. Every describe() key is selected as
+        <prefix>_<name>; a query that selected nothing explicitly keeps its
+        own table's columns. Works on an Eloquent builder and a query
+        builder. Once per prefix per query. Returns the same query.
+
+    Ip_Address::column(string $prefix, string $name): string
+        The expression for one joined field, for where() / orderBy() /
+        groupBy(). $name is a describe() key; anything else throws.
+
+    The FIELD NAMES are the contract; the table behind them is not.
+
+    An audit session already carries its address: Audit_Session::join()
+    answers it as audit_ip_address (rsx:man session).
+
+NOT HERE
+    The login throttle and the failed-login counters (Login_Throttle,
+    Login_History::record_failure()) are keyed on the address string in the
+    cache and never touch _ip_addresses.
+
+SEE ALSO
+    rsx:man session                      - AUDIT SESSIONS, Audit_Session::join(),
+                                           the session listings
+    skill rspade:audit-session           - recording and joining audit sessions
+    rsx:man database_schema_architecture - system tables and their readers
+    rsx:man file_upload                  - created_by_ip_address on an attachment
+    rsx:man external_api                 - REQUEST LOGGING
+    rsx:man revisions                    - the _transactions row

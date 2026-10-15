@@ -37,9 +37,12 @@
 - `_add_file()` is the ONE seam every include reaches - directory walk, pattern, explicit file.
   A path `Manifest::overrides()` records as SHADOWED (`rsx:man class_override`) is replaced by
   the `rsx/` file that overrides it, in the shadowed file's place in the include order (a
-  stylesheet cascades, a script sorts, where the framework's would have); de-dup then keys on
+  script sorts, a template registers, where the framework's would have); de-dup then keys on
   the override, so a bundle that also includes the application file gets it once, at its first
   appearance. Every bundle, `Core_Bundle` and `/_sys` bundles included
+- A stylesheet is never shadowed (the override map has no scss kind), so every framework
+  stylesheet a bundle includes is compiled; an application stylesheet wrapped in the same
+  class is compiled alongside it, where its own include puts it
 - What a bundle DECLARES is unchanged, so CONV-BUNDLE-02/04 (which read `define()`) never see
   it; everything downstream of the file list (processors, JS ordering, stubs, the shake, routes)
   receives the override like any application file. A watched shadowed file also watches its

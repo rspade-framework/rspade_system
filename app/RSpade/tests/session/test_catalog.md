@@ -71,7 +71,7 @@ nothing.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| sess-clirow-01 | first get_session_id() mints a real row | fresh CLI | row exists, TYPE_CLI, ip/ua 'CLI', active, tokens minted | implemented |
+| sess-clirow-01 | first get_session_id() mints a real row | fresh CLI | row exists, TYPE_CLI, no ip/ua, active, tokens minted | implemented |
 | sess-clirow-02 | the process holds ONE session | two calls | same id, one row | implemented |
 | sess-clirow-03 | get_session() returns that same row | mint then get_session() | ids match | implemented |
 | sess-clirow-04 | has_session() true once minted | mint | false before, true after | implemented |
@@ -249,6 +249,19 @@ Self-seeding. Moves a real session's clocks back against the shipped defaults (3
 | sess-audit-13 | column() names an audit field for where() and orderBy(); an unknown field or an unqualified column is refused | filter on ip_address, sort on first_seen_at; bad names | 1 match; InvalidArgumentException | implemented |
 | sess-audit-14 | join() on an Eloquent query still answers the caller's models | Transaction_Model query | a Transaction_Model with audit_login_user_id and its own description | implemented |
 | sess-audit-09 | a recorded unit of work carries the audit session | Revision::transaction_id() in a unit of work | _transactions.audit_session_id is the current id | implemented |
+
+## Ip_Address_Test (php) - client addresses stored once in _ip_addresses
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-ip-01 | an address is one row however often it is resolved | resolve twice, reset, resolve; a second address | same id each time; different id; one row | implemented |
+| sess-ip-02 | resolving is memoized until _reset() | resolve, delete the row, resolve; reset; resolve | memo answers the old id; a new id after reset | implemented |
+| sess-ip-03 | no address is null | null, '', 'CLI'; address(null/0) | null; no 'CLI' row | implemented |
+| sess-ip-04 | a full-length IPv6 address is kept whole | 39-character IPv6 | read back intact | implemented |
+| sess-ip-05 | describe() answers the address and every geocode field, null until located | fresh row; row with geocode set | null geocode; the stored values | implemented |
+| sess-ip-06 | join() adds describe()'s fields as <prefix>_<name>, keeps the query's columns, lists a row with no address | two _login_history rows, one located | fields set / null; names equal describe()'s keys | implemented |
+| sess-ip-07 | column() names a joined field for where()/orderBy(); bad field, prefix or column refused | filter on ip_address, sort on country | 1 match; InvalidArgumentException | implemented |
+| sess-ip-08 | a row minted in a rolled-back transaction is not answered again | begin, resolve, roll back, resolve | row gone, then minted again | implemented |
 
 ## http/audit_session.sh (http - live server)
 

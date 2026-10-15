@@ -10,6 +10,7 @@ namespace App\RSpade\Tests\Session\Php;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Session\Audit_Session;
+use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -72,7 +73,7 @@ class Audit_Session_Test extends Rsx_Test_Abstract
         $row = static::__row(Session::get_audit_session_id());
 
         static::__assert_null($row->session_row_id, 'no session row is recorded for a CLI process');
-        static::__assert_null($row->ip_address);
+        static::__assert_null($row->ip_address_id);
         static::__assert_null($row->user_agent_id);
         static::__assert_equals($had_session, Session::has_session(), 'asking created no session');
     }
@@ -199,13 +200,13 @@ class Audit_Session_Test extends Rsx_Test_Abstract
 
         $audit_session_id = Session::get_audit_session_id();
         $agent_id = Audit_Session::user_agent_id('audit-join/1.0');
-        DB::statement("UPDATE _audit_sessions SET user_agent_id = ?, ip_address = '203.0.113.9' WHERE id = ?", [$agent_id, $audit_session_id]);
+        DB::statement('UPDATE _audit_sessions SET user_agent_id = ?, ip_address_id = ? WHERE id = ?', [$agent_id, Ip_Address::id('203.0.113.9'), $audit_session_id]);
 
         $attributed = DB::table('_login_history')->insertGetId([
-            'login_user_id' => $audit_session_id, 'email_attempted' => 'join@rspade.test', 'ip_address' => '10.0.0.1', 'status' => 'success',
+            'login_user_id' => $audit_session_id, 'email_attempted' => 'join@rspade.test', 'ip_address_id' => Ip_Address::id('10.0.0.1'), 'status' => 'success',
         ]);
         $unattributed = DB::table('_login_history')->insertGetId([
-            'login_user_id' => 0, 'email_attempted' => 'join-none@rspade.test', 'ip_address' => '10.0.0.2', 'status' => 'success',
+            'login_user_id' => 0, 'email_attempted' => 'join-none@rspade.test', 'ip_address_id' => Ip_Address::id('10.0.0.2'), 'status' => 'success',
         ]);
 
         // Any column holding an audit session id will do; login_user_id stands in for one.
@@ -244,11 +245,11 @@ class Audit_Session_Test extends Rsx_Test_Abstract
         Session::impersonate(1, 510, 610);
 
         $audit_session_id = Session::get_audit_session_id();
-        DB::statement("UPDATE _audit_sessions SET ip_address = '198.51.100.7' WHERE id = ?", [$audit_session_id]);
+        DB::statement('UPDATE _audit_sessions SET ip_address_id = ? WHERE id = ?', [Ip_Address::id('198.51.100.7'), $audit_session_id]);
 
         DB::table('_login_history')->insert([
-            ['login_user_id' => $audit_session_id, 'email_attempted' => 'col-a@rspade.test', 'ip_address' => 'x', 'status' => 'success'],
-            ['login_user_id' => 0, 'email_attempted' => 'col-b@rspade.test', 'ip_address' => 'x', 'status' => 'success'],
+            ['login_user_id' => $audit_session_id, 'email_attempted' => 'col-a@rspade.test', 'ip_address_id' => Ip_Address::id('x'), 'status' => 'success'],
+            ['login_user_id' => 0, 'email_attempted' => 'col-b@rspade.test', 'ip_address_id' => Ip_Address::id('x'), 'status' => 'success'],
         ]);
 
         $query = DB::table('_login_history')->whereIn('email_attempted', ['col-a@rspade.test', 'col-b@rspade.test']);

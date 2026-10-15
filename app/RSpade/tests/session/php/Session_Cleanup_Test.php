@@ -48,7 +48,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'site_id'       => 0,
             'type_id'       => $overrides['type_id'] ?? Session::TYPE_WEB,
             'version'       => 1,
-            'ip_address'    => '10.0.0.9',
+            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('10.0.0.9'),
             'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id($overrides['user_agent'] ?? 'test-browser'),
             'login_user_id' => $overrides['login_user_id'] ?? null,
             'portal_user_id' => $overrides['portal_user_id'] ?? null,
@@ -69,7 +69,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         return (int) DB::table('_login_history')->insertGetId([
             'login_user_id' => 4242,
             'email_attempted' => 'prune_' . uniqid() . '@example.com',
-            'ip_address' => '10.0.0.11',
+            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('10.0.0.11'),
             'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test-browser'),
             'status' => 'success',
             'failure_reason' => null,
@@ -98,7 +98,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'active'        => 1,
             'site_id'       => 0,
             'version'       => 1,
-            'ip_address'    => '127.0.0.1',
+            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('127.0.0.1'),
             'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test'),
             'last_active'   => now(),
             'created_at'    => now(),
@@ -121,7 +121,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'active'        => 0,
             'site_id'       => 0,
             'version'       => 1,
-            'ip_address'    => '127.0.0.1',
+            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('127.0.0.1'),
             'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test'),
             'last_active'   => now(),
             'created_at'    => now(),
@@ -527,7 +527,7 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         DB::table('_session_devices')->insert(['user_agent_id' => $by_device]);
         DB::table('_login_history')->insert([
             'email_attempted' => 'sweep@rspade.test',
-            'ip_address' => '127.0.0.1',
+            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('127.0.0.1'),
             'user_agent_id' => $by_login,
             'status' => 'success',
         ]);

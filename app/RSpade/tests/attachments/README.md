@@ -38,7 +38,8 @@ Related framework capabilities on the file-attachment subsystem:
    `can_user_assign_this_file()` keeps two structural checks - not already attached (single
    claim) + site match - and defers WHO may claim to the app's own authorization; the old
    session comparison read the STAFF facade unconditionally, so a portal upload matched only by
-   accident. `created_by_ip_address` (VARCHAR(45), NULL outside a request) is audit metadata,
+   accident. `created_by_ip_address` (an accessor over `created_by_ip_address_id` into
+   `_ip_addresses`, NULL outside a request, never in the browser payload) is audit metadata,
    never a guard. The bound the session stamp implied is now explicit: an unattached upload is
    claimable for `rsx.attachments.unattached_claim_window_hours` (24), after which
    `File_Disposal_Service::sweep_unclaimed_uploads` (every 6 hours) SOFT-deletes it into the

@@ -14,6 +14,7 @@ use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Audit_Session;
+use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Rsx_Session_Cookie;
 use App\RSpade\Core\Session\User_Agent;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -114,8 +115,8 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property int $portal_site_id
  * @property string $session_token
  * @property string $csrf_token
- * @property string $ip_address
- * @property string $user_agent
+ * @property string|null $ip_address
+ * @property string|null $user_agent
  * @property \Carbon\Carbon $last_active
  * @property int $version
  * @property \Carbon\Carbon $created_at
@@ -135,7 +136,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property string $impersonation_started_at
  * @property int $impersonator_login_user_id
  * @property int $impersonator_user_id
- * @property string $ip_address
+ * @property int $ip_address_id
  * @property string $last_active
  * @property string $last_page_view_at
  * @property string $login_at
@@ -341,7 +342,7 @@ class Session extends Rsx_System_Model_Abstract
     protected $neverExport = [
         'session_token',
         'csrf_token',
-        'ip_address',
+        'ip_address_id',
     ];
 
     /**
@@ -442,6 +443,7 @@ class Session extends Rsx_System_Model_Abstract
         // The API identity tier, the loader flags and every resolved cache.
         self::_reset_api_identity();
         Audit_Session::_reset();
+        Ip_Address::_reset();
 
         // Per-request overrides a test may have set on its way through. Narrow on purpose.
         self::$_request_site_id_override = null;
@@ -620,7 +622,7 @@ class Session extends Rsx_System_Model_Abstract
             $session = new static();
             $session->session_token = self::$_session_token;
             $session->csrf_token = $csrf_token;
-            $session->ip_address = self::__get_client_ip();
+            $session->ip_address = self::get_client_ip();
             $session->user_agent = $_SERVER['HTTP_USER_AGENT'] ?? null;
             $session->last_active = now();
             $session->active = true;
@@ -699,7 +701,7 @@ class Session extends Rsx_System_Model_Abstract
         $new = new static();
         $new->session_token = bin2hex(random_bytes(32));
         $new->csrf_token = bin2hex(random_bytes(32));
-        $new->ip_address = self::__get_client_ip();
+        $new->ip_address = self::get_client_ip();
         $new->user_agent = $_SERVER['HTTP_USER_AGENT'] ?? null;
         $new->last_active = now();
         $new->active = true;
@@ -816,7 +818,7 @@ class Session extends Rsx_System_Model_Abstract
      *     and whatever follows) has a genuine parent row to point at;
      *   - a real token, minted and never transmitted - there is no response to put
      *     a cookie on and no header is emitted (see _set_cookie);
-     *   - ip_address 'CLI', the existing convention for "no request created this";
+     *   - no ip_address and no user_agent: no request created this row;
      *   - TYPE_CLI, so retention can tell a command's throwaway row apart from a
      *     browser's (rsx.sessions.cli_timeout_minutes);
      *   - seeded from the CLI identity overrides in force at mint time, and kept in
@@ -844,7 +846,7 @@ class Session extends Rsx_System_Model_Abstract
         $session = new static();
         $session->session_token = self::$_session_token;
         $session->csrf_token = bin2hex(random_bytes(32));
-        $session->ip_address = self::__get_client_ip();
+        $session->ip_address = self::get_client_ip();
         $session->last_active = now();
         $session->active = true;
         $session->site_id = self::$_cli_site_id ?? 0;
@@ -1076,16 +1078,6 @@ class Session extends Rsx_System_Model_Abstract
         }
 
         return request()->ip() ?? '0.0.0.0';
-    }
-
-    /**
-     * Get client IP address for a session row, handling proxies
-     * In CLI mode: returns "CLI" (the column is NOT NULL and records what created the row)
-     * @return string
-     */
-    private static function __get_client_ip(): string
-    {
-        return self::get_client_ip() ?? 'CLI';
     }
 
     /**
@@ -1379,7 +1371,7 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     // =========================================================================
-    // AUDIT ATTRIBUTION (_audit_sessions, _user_agents)
+    // AUDIT ATTRIBUTION (_audit_sessions, _user_agents, _ip_addresses)
     // =========================================================================
 
     /**
@@ -1445,6 +1437,30 @@ class Session extends Rsx_System_Model_Abstract
     public function setUserAgentAttribute(?string $user_agent): void
     {
         $this->attributes['user_agent_id'] = Audit_Session::user_agent_id($user_agent);
+    }
+
+    /**
+     * The client address that created this row - `$session->ip_address`, null for a
+     * command's row. The row stores ip_address_id; the address lives once in
+     * _ip_addresses (see Ip_Address).
+     *
+     * @return string|null
+     */
+    public function getIpAddressAttribute(): ?string
+    {
+        return Ip_Address::address($this->attributes['ip_address_id'] ?? null);
+    }
+
+    /**
+     * Assigning `$session->ip_address = $string` records the address in _ip_addresses and
+     * stores its id.
+     *
+     * @param string|null $ip_address
+     * @return void
+     */
+    public function setIpAddressAttribute(?string $ip_address): void
+    {
+        $this->attributes['ip_address_id'] = Ip_Address::id($ip_address);
     }
 
     /**

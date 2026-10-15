@@ -169,7 +169,7 @@ CLI MODE
 
         - type_id = Session::TYPE_CLI, so retention can tell a command's
           throwaway row from a browser's (GARBAGE COLLECTION below)
-        - ip_address = "CLI", user_agent = "CLI" (what created the row)
+        - no ip_address and no user_agent: no request created the row
         - a real session_token + csrf_token, minted and NEVER transmitted:
           there is no response, so no cookie and no header are emitted
         - seeded from whatever identity is declared at that moment, and kept
@@ -189,7 +189,7 @@ CLI MODE
 
     Still true in CLI:
         - no cookie operations, no HTTP headers
-        - get_client_ip() returns null (no request); the row records "CLI"
+        - get_client_ip() returns null (no request); the row records no address
         - nothing is loaded from a cookie, so init() has nothing to resume
 
     Usage in CLI:
@@ -1709,9 +1709,9 @@ AUDIT SESSIONS
 
         The names are the contract. The tables and columns behind them are
         not: where a value is stored can change between releases (the address
-        could move to a table of its own, as user-agent strings already have),
-        and get_audit_session() and join() are what keep answering when it
-        does. They are the only supported ways to read an audit session.
+        and the user-agent string already live in tables of their own), and
+        get_audit_session() and join() are what keep answering when it does.
+        They are the only supported ways to read an audit session.
 
     The framework attributes its own lane: every recorded unit of work carries
     _transactions.audit_session_id (rsx:man revisions).
@@ -1732,6 +1732,18 @@ AUDIT SESSIONS
         names any more is deleted by Session_Cleanup_Service::
         cleanup_user_agents, weekly (Sunday 02:00), once it has gone a day
         without being presented. One an audit session names is kept for good.
+
+    Client addresses:
+        Each distinct client IP address is stored once in _ip_addresses, and
+        _sessions, _login_history, _audit_sessions, _file_attachments,
+        _api_request_log and _transactions hold its id. The address comes back
+        as a string wherever the framework answers one - `ip_address` in the
+        session listings, Login_History and get_audit_session(),
+        `$session->ip_address` on a Session row. Rows are never deleted: each
+        carries geocode fields (city, state, country, latitude, longitude)
+        that a geocoder will fill, and every record naming the address shares
+        them. Reading an address of your own, and joining one onto a query:
+        rsx:man ip_addresses.
 
     get_audit_session_id() fails loudly, like every other framework write: a
     database that cannot record the audit session cannot record the audit row
@@ -2384,28 +2396,22 @@ USER AGENT PARSING
         - For comprehensive parsing, use a dedicated library like WhichBrowser
         - Location fields are placeholders for future geo-IP integration
 
-LOCATION GEOLOCATION (FUTURE)
-    The login_history and session info structures include location fields
-    that are currently null. These are placeholders for future integration
-    with an IP geolocation service.
+LOCATION (GEOCODING)
+    Where an address is located is recorded once per address, on its
+    _ip_addresses row: city, state, country, latitude, longitude
+    (rsx:man ip_addresses). The framework does not ship a geocoder yet, so
+    those fields are null today; a resolver that fills them is coming, and
+    Ip_Address::describe() and Ip_Address::join() answer its results when it
+    lands.
 
-    Fields reserved:
-        - location_city: City name
-        - location_region: State/province
-        - location_country: ISO country code (2 characters)
-
-    When implemented, the system will:
-        - Look up IP address on login/session creation
-        - Cache results to avoid repeated lookups
-        - Populate location fields automatically
-
-    Candidate services for future integration:
-        - MaxMind GeoIP2 (local database, most accurate)
-        - ip-api.com (free tier available)
-        - ipinfo.io (generous free tier)
+    The `location` key of a login-history record (Login_History) is read from
+    _login_history.location_city / location_region / location_country, which
+    nothing populates; it answers null.
 
 SEE ALSO
     skill rspade:audit-session - recording, reading and joining audit sessions
+    rsx:man ip_addresses      - client addresses stored once; the geocode
+                                fields; Ip_Address::join()
     rsx:man auth              - identity model (login_users + users), the RsxAuth
                                 facade, invitations
     rsx:man two_factor        - second factors: TOTP, passkeys, recovery codes,

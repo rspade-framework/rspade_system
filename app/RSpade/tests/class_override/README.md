@@ -3,9 +3,10 @@
 ## Domain
 
 The class-override system (`rsx:man class_override`) lets an application replace a
-framework file by declaring the same name under `rsx/`: a PHP class, a JS class, a jqhtml
-component or a stylesheet's wrapper class. The framework file is never moved, renamed or
-edited. The manifest derives, in full on every build, ONE record of what is overridden - the
+framework file by declaring the same name under `rsx/`: a PHP class, a JS class or a jqhtml
+component. A stylesheet is never an override: an application stylesheet wrapped in a
+framework component's class is compiled alongside the framework's. The framework file is
+never moved, renamed or edited. The manifest derives, in full on every build, ONE record of what is overridden - the
 OVERRIDE MAP (`Core/Manifest/Manifest_Overrides.php`, `Manifest::overrides()`) - and takes
 each SHADOWED framework file out of the live index (`files` -> `shadowed_files`, still in
 `file_index` and in the build key). Every consumer of the index is then correct with no
@@ -83,7 +84,7 @@ override could answer for them.
 | Override map: a real twin is shadowed, recorded and announced; refusals (split, extends-self) | php | synthetic file list - `Override_Shadow_Guard_Test` |
 | Guard: index names an rsx/ twin that is not on disk | php | covered - nothing shadowed, entry dropped |
 | Guard: build already marked its manifest bad | php | covered - nothing shadowed |
-| Templates and stylesheets shadowed by declared name, file by file; two application declarations refused | php | `Override_Template_Stylesheet_Test` |
+| Templates shadowed by declared name, file by file; two application templates refused; stylesheets never shadowed and never refused | php | `Override_Template_Stylesheet_Test` |
 | End to end: add an override of each kind, no restart, unchanged rebuild is a no-op, remove it, nothing in the framework tree written | php (child builds) | `Manifest_Overrides_Test`, child-build seam into a scratch build root |
 | Un-overridable refusals (boot class, unindexed namesake - an unscanned subtree or an excluded directory inside a scanned root - already declared) and the split-signature rule | php | `Manifest_Overrides_Test`, synthetic file list |
 | Member reader: methods (static/instance), properties, trait adoptions; NOT privates, NOT locals, NOT nested anonymous classes | php | token pass over a fixture - covered |
@@ -95,4 +96,4 @@ override could answer for them.
 | `rsx:overrides:list`: empty, drift verdicts, a jqhtml row, `--json` shape | cli (PHP, in-process `Artisan::call`) | synthetic override map - `cli/Overrides_List_Command_Test` |
 | The env update that restores pre-shadowing `.upstream` archives | cli (shell) | `tests/environment_updates/cli/t11` |
 | The IDE bridge `/_ide/service/overrides` read service | http (shell) | `tests/ide/http/ide_overrides_service.sh` |
-| Bundle substitution of a shadowed js/jqhtml/scss | php (child build + compile) | `tests/bundles/php/Bundle_Override_Substitution_Test` (BUNDLE-OVERRIDE-01..02) |
+| Bundle substitution of a shadowed js/jqhtml; a framework stylesheet compiled beside an application one of the same wrapper class | php (child build + compile) | `tests/bundles/php/Bundle_Override_Substitution_Test` (BUNDLE-OVERRIDE-01..02) |

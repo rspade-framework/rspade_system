@@ -23,8 +23,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * scratch build root (the child-build seam, Core/Manifest/CLAUDE.md), so the developer's own
  * index is never touched:
  *
- *   - adding an override of each of the four kinds (php, js, jqhtml, scss) shadows each
- *     framework file in ONE pass - no build restart - and the map records all four;
+ *   - adding an override of each of the three kinds (php, js, jqhtml) shadows each
+ *     framework file in ONE pass - no build restart - and the map records all three, while
+ *     an application stylesheet wrapped in the same class as a framework one shadows nothing;
  *   - an unchanged rebuild is a no-op with the same build key;
  *   - removing the override returns the framework file to the live tree, reflected;
  *   - nothing in the framework fixture tree is ever written, renamed or archived;
@@ -240,7 +241,7 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
             $framework_before = static::__framework_tree_hashes();
             $application = static::__application_files();
 
-            // ---- ADD the four overrides --------------------------------------------------
+            // ---- ADD the three overrides, and a stylesheet beside the framework's ---------
             static::__write($application);
             static::__build_ok('adding the overrides');
 
@@ -248,9 +249,10 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
             $overrides = $index['hot']['data']['overrides'];
             $framework_paths = array_keys(static::__framework_files());
             $application_paths = array_keys($application);
+            $framework_stylesheet = $framework_paths[3];
 
-            $expected_kinds = ['php', 'js', 'jqhtml', 'scss'];
-            foreach ($framework_paths as $i => $framework_path) {
+            $expected_kinds = ['php', 'js', 'jqhtml'];
+            foreach (array_slice($framework_paths, 0, 3) as $i => $framework_path) {
                 static::__assert_true(isset($overrides[$framework_path]), "{$framework_path} is recorded as shadowed");
                 static::__assert_equals($expected_kinds[$i], $overrides[$framework_path]['kind'], "{$framework_path} is recorded under its kind");
                 static::__assert_equals($application_paths[$i], $overrides[$framework_path]['by'], "{$framework_path} is shadowed by the application file of its kind");
@@ -260,7 +262,10 @@ class Manifest_Overrides_Test extends Rsx_Test_Abstract
                 static::__assert_true(isset($index['hot']['data']['file_index'][$framework_path]), "{$framework_path} is still indexed for change detection");
             }
 
-            static::__assert_equals(4, count($overrides), 'exactly the four overrides are recorded');
+            static::__assert_equals(3, count($overrides), 'exactly the three overrides are recorded');
+            static::__assert_false(isset($overrides[$framework_stylesheet]), 'the framework stylesheet is never shadowed');
+            static::__assert_true(isset($index['hot']['data']['files'][$framework_stylesheet]) || isset($index['cold'][$framework_stylesheet]), 'it stays in the live index');
+            static::__assert_true(isset($index['hot']['data']['files'][$application_paths[3]]) || isset($index['cold'][$application_paths[3]]), 'beside the application stylesheet');
 
             $php_framework = $framework_paths[0];
             $framework_fqcn = Rsx_Namespace::from_path($php_framework) . '\\Mo_Probe_Service';

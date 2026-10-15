@@ -17,13 +17,15 @@ use App\RSpade\Core\Overrides\Class_Override_Boot_Set;
  * Manifest_Overrides - THE OVERRIDE MAP: which framework files the application overrides.
  *
  * An application overrides a framework file by declaring, under rsx/, the same name the
- * framework file declares (rsx:man class_override). Four kinds of file declare a name, each
+ * framework file declares (rsx:man class_override). Three kinds of file declare a name, each
  * under its own key of the file record, and each is overridden FILE BY FILE:
  *
  *   php     the class (`class`)
  *   js      the JS class (`class`; .js, .jsx, .ts and .tsx alike)
  *   jqhtml  the component (`id`, from <Define:Name>)
- *   scss    the single class the stylesheet is wrapped in (`scss_wrapper_class`)
+ *
+ * A stylesheet is never an override and is never overridden: an application stylesheet that
+ * styles a framework component is compiled alongside the framework's own, after it.
  *
  * A name declared by exactly ONE application file and by at least one framework file is an
  * override: every framework file declaring it is SHADOWED by the application file. Nothing on
@@ -31,7 +33,7 @@ use App\RSpade\Core\Overrides\Class_Override_Boot_Set;
  * the fact instead:
  *
  *   data.overrides       (HOT, ksorted) shadowed framework path => [
- *                            'kind'    => php | js | jqhtml | scss,
+ *                            'kind'    => php | js | jqhtml,
  *                            'name'    => the declared name,
  *                            'by'      => the application file that overrides it,
  *                            'fqcn'    => the framework class            (php only),
@@ -76,7 +78,6 @@ class Manifest_Overrides
         'php' => 'class',
         'js' => 'class',
         'jqhtml' => 'id',
-        'scss' => 'scss_wrapper_class',
     ];
 
     /** Every extension a JavaScript class is declared in. */
@@ -98,7 +99,7 @@ class Manifest_Overrides
     {
         $extension = $record['extension'] ?? '';
 
-        if ($extension === 'php' || $extension === 'jqhtml' || $extension === 'scss') {
+        if ($extension === 'php' || $extension === 'jqhtml') {
             return $extension;
         }
 
@@ -186,8 +187,8 @@ class Manifest_Overrides
                 }
 
                 // A class name is unique across the tree; anything else declaring one twice is
-                // a duplicate. (Two framework templates or stylesheets of one name are left to
-                // their own detectors.)
+                // a duplicate. (Two framework templates of one name are left to their own
+                // detector.)
                 if ($is_class_kind && count($application) + count($framework) + count($other) > 1) {
                     $type = $kind === 'php' ? 'PHP' : 'JavaScript';
 
@@ -899,13 +900,10 @@ class Manifest_Overrides
             'php' => "PHP class '{$name}'",
             'js' => "JavaScript class '{$name}'",
             'jqhtml' => "jqhtml component '{$name}'",
-            'scss' => "stylesheet wrapper class '.{$name}'",
         };
 
         $consequence = match ($kind) {
             'jqhtml' => "Component names (<Define:{$name}>) must be unique across the application.",
-            'scss' => "Each stylesheet is wrapped in the one class of the component it styles, and two\n"
-                . "stylesheets claiming one component cannot both be its look.",
             default => 'Each class name must be unique within the same file type.',
         };
 

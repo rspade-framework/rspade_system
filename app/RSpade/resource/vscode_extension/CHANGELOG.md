@@ -6,6 +6,13 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.240] - 2026-10-15
+
+### Changed
+- **Stylesheets are never marked as overridden.** The framework never lets an application
+  stylesheet shadow a framework one, so the override map carries only PHP, JavaScript and
+  jqhtml files, and a stylesheet edit under `rsx/` no longer refreshes it.
+
 ## [0.1.239] - 2026-10-14
 
 ### Added

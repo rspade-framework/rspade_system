@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Api;
 
 use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
+use App\RSpade\Core\Session\Ip_Address;
 
 /**
  * Api_Request_Log_Model_Abstract - one row per external API request (_api_request_log).
@@ -79,7 +80,7 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * @property int $duration_ms
  * @property string $handler
  * @property int $id
- * @property string $ip
+ * @property int $ip_address_id
  * @property string $path
  * @property string $request_body
  * @property int $response_bytes
@@ -120,4 +121,27 @@ abstract class Api_Request_Log_Model_Abstract extends Rsx_System_Model_Abstract
      * @var bool
      */
     public static $realtime_silent = true;
+
+    /**
+     * The client address of the API call - `$log->ip`, null when none was recorded. The
+     * row stores ip_address_id; the address lives once in _ip_addresses (see Ip_Address).
+     *
+     * @return string|null
+     */
+    public function getIpAttribute(): ?string
+    {
+        return Ip_Address::address($this->attributes['ip_address_id'] ?? null);
+    }
+
+    /**
+     * Assigning `$log->ip = $string` records the address in _ip_addresses and stores
+     * its id.
+     *
+     * @param string|null $ip
+     * @return void
+     */
+    public function setIpAttribute(?string $ip): void
+    {
+        $this->attributes['ip_address_id'] = Ip_Address::id($ip);
+    }
 }

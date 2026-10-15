@@ -47,7 +47,7 @@ class Login_History_List_Page_Test extends Rsx_Test_Abstract
             DB::table('_login_history')->insert([
                 'login_user_id' => $login_user_id,
                 'email_attempted' => $email,
-                'ip_address' => $ip_address,
+                'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id($ip_address),
                 'user_agent_id' => Audit_Session::user_agent_id($user_agent),
                 'status' => $status,
                 'created_at' => now()->subMinutes(10)->addSeconds($index),

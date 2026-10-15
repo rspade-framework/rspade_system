@@ -40,7 +40,7 @@ Migration for your own table: `audit_session_id BIGINT NULL` with an index. Noth
 
 ## Reading it back
 
-**Never query `_audit_sessions` or `_user_agents`.** They are the framework's tables (every `_`-prefixed table is - `rsx:man database_schema_architecture`), and **their columns are not a contract**: where a value is stored can change between releases - the IP address could move into a table of its own tomorrow, the way user-agent strings already did. Two calls are guaranteed to keep answering, and they are the only supported ways to get the data:
+**Never query `_audit_sessions`, `_user_agents` or `_ip_addresses`.** They are the framework's tables (every `_`-prefixed table is - `rsx:man database_schema_architecture`), and **their columns are not a contract**: where a value is stored can change between releases - the IP address and the user-agent string already live in tables of their own, and the audit row holds only their ids. Two calls are guaranteed to keep answering, and they are the only supported ways to get the data:
 
 ### One audit session
 
@@ -92,6 +92,8 @@ foreach ($query->limit(25)->get() as $log) {
 - **`Audit_Session::column($name)`** - the expression for one field, for `where()` / `orderBy()` / `groupBy()`. `$name` is a `get_audit_session()` key; anything else throws.
 
 **The field names are the contract; the tables and columns behind them are not.** Code written against `audit_<name>` and `column()` keeps working when the storage moves. Code that names `_audit_sessions.ip_address` does not.
+
+A table of your own that records a bare client address (not a whole acting context) stores `Ip_Address::id($ip)` and reads it back with `Ip_Address::join($query, 'table.column', 'prefix')` or `describe()` - `rsx:man ip_addresses`.
 
 ## Grouping what was done
 

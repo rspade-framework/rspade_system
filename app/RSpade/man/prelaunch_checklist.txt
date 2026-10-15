@@ -853,9 +853,9 @@ ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and t
         $request->ip(): REMOTE_ADDR, unless the peer is a TRUSTED PROXY - loopback,
         plus config('rsx.http.trusted_proxies') (empty by default) - in which case
         X-Forwarded-For is walked right to left past the trusted hops. X-Real-IP is
-        not read. Load one page and look at the address the framework recorded (a
-        `_sessions` row's ip_address, or a deliberate failed login and its "Login
-        failure" log line).
+        not read. Load one page and look at the address the framework recorded (the
+        `ip_address` of your session in Session::get_current_session_info(), or a
+        deliberate failed login and its "Login failure" log line).
 
     Why it matters
         The throttle is keyed on the client IP, so a deployment where every request
