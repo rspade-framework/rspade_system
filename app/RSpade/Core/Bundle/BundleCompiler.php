@@ -1123,16 +1123,22 @@ class BundleCompiler
     * are never overrides: every framework stylesheet a bundle includes is compiled. The
     * de-dup below then keys on the overriding file, so a bundle that also includes the
     * application's file gets it once, wherever it appears first.
+    *
+    * An overriding MODEL brings its companion: when the substituted file is a model whose
+    * client-side class the application defines (a JS class of the same name extending its
+    * Base_ stub), that JS file is added right after it, through this same method. A bundle
+    * therefore receives the override whole - PHP stub and JS class together - whether or not
+    * it includes any application directory (_override_companion_file()).
     */
     protected function _add_file(string $path): void
     {
-        $normalized = rsxrealpath($path);
+        $declared = rsxrealpath($path);
 
-        if (!$normalized) {
+        if (!$declared) {
             return;
         }
 
-        $normalized = $this->_effective_path($normalized);
+        $normalized = $this->_effective_path($declared);
 
         // Record provenance BEFORE the de-dup return: a file another bundle already claimed
         // is still a contribution of THIS bundle, and dropping that fact would leave a bundle
@@ -1148,16 +1154,83 @@ class BundleCompiler
         }
 
         // Deduplicate
-        if (isset($this->included_files[$normalized])) {
-            return;
-        }
-        $this->included_files[$normalized] = true;
+        if (!isset($this->included_files[$normalized])) {
+            $this->included_files[$normalized] = true;
 
-        // Add to main files (will be split into vendor/app later)
-        if (!isset($this->bundle_files['all'])) {
-            $this->bundle_files['all'] = [];
+            // Add to main files (will be split into vendor/app later)
+            if (!isset($this->bundle_files['all'])) {
+                $this->bundle_files['all'] = [];
+            }
+            $this->bundle_files['all'][] = $normalized;
         }
-        $this->bundle_files['all'][] = $normalized;
+
+        // The companion follows every substitution, a de-duplicated one included: whether the
+        // bundle reached the overriding file first by its own include or through the shadowed
+        // framework path, the substitution is what obliges the bundle to carry the JS class.
+        if ($normalized !== $declared) {
+            $companion = $this->_override_companion_file($declared);
+
+            if ($companion !== null) {
+                $this->_add_file($companion);
+            }
+        }
+    }
+
+    /**
+     * The application JS class an overriding file brings into every bundle it is substituted
+     * into, or null when it brings none.
+     *
+     * A substituted override that is a model exposed to JavaScript - the models
+     * _generate_concrete_model_classes() builds a client-side class for - and whose JS class
+     * the application defines brings that JS class's file. The model check refuses a bundle
+     * carrying such a model without its JS class, so the substitution supplies the one file
+     * the check demands, resolved by the two helpers the check itself uses
+     * (_is_js_exposed_model(), _user_js_model_class_file()).
+     *
+     * @param string $shadowed absolute path of the shadowed framework file a bundle declared
+     * @return string|null absolute path of the companion JS class file
+     */
+    protected function _override_companion_file(string $shadowed): ?string
+    {
+        $override_record = $this->overrides[Rsx_Paths::relative($shadowed)];
+
+        if ($override_record['kind'] !== 'php') {
+            return null;
+        }
+
+        $class_name = $override_record['name'];
+
+        if (!static::_is_js_exposed_model($class_name)) {
+            return null;
+        }
+
+        $js_file = static::_user_js_model_class_file($class_name);
+
+        return $js_file === null ? null : Rsx_Paths::absolute($js_file);
+    }
+
+    /**
+     * Is this PHP class a model that gets a client-side class - a concrete subclass of
+     * Rsx_Model_Abstract that is not a system model?
+     */
+    protected static function _is_js_exposed_model(string $class_name): bool
+    {
+        return Manifest::php_is_subclass_of($class_name, 'Rsx_Model_Abstract')
+            && !Manifest::php_is_subclass_of($class_name, 'Rsx_System_Model_Abstract')
+            && !Manifest::php_is_abstract($class_name);
+    }
+
+    /**
+     * The manifest key of the hand-written JS class named after a model, or null when the
+     * model has none.
+     *
+     * Read from the JS class map, which holds the classes the tree DECLARES: a generated stub
+     * (Base_<Model>, a controller's Ajax stub) is never in it, and neither is a shadowed
+     * framework file - so the answer is the one JS class that answers for the name.
+     */
+    protected static function _user_js_model_class_file(string $model_name): ?string
+    {
+        return Manifest::get_full_manifest()['data']['js_classes'][$model_name]['file'] ?? null;
     }
 
     /**
@@ -2045,18 +2118,8 @@ class BundleCompiler
 
             $class_name = $manifest_files[$relative]['class'];
 
-            // Check if this class is a subclass of Rsx_Model_Abstract
-            if (!Manifest::php_is_subclass_of($class_name, 'Rsx_Model_Abstract')) {
-                continue;
-            }
-
-            // Skip system models (internal framework models not exposed to JavaScript)
-            if (Manifest::php_is_subclass_of($class_name, 'Rsx_System_Model_Abstract')) {
-                continue;
-            }
-
-            // Skip abstract model classes - only concrete models get JS stubs
-            if (Manifest::php_is_abstract($class_name)) {
+            // Concrete, non-system models only - system models are not exposed to JavaScript
+            if (!static::_is_js_exposed_model($class_name)) {
                 continue;
             }
 
@@ -2077,16 +2140,7 @@ class BundleCompiler
             $expected_base_class = 'Base_' . $model_name;
 
             // Check if user has defined a JS class with this model name
-            $user_js_class_path = null;
-            foreach ($manifest_files as $file_path => $meta) {
-                if (isset($meta['class']) && $meta['class'] === $model_name && isset($meta['extension']) && $meta['extension'] === 'js') {
-                    // Make sure it's not a generated stub
-                    if (!isset($meta['is_model_stub']) && !isset($meta['is_stub'])) {
-                        $user_js_class_path = $file_path;
-                        break;
-                    }
-                }
-            }
+            $user_js_class_path = static::_user_js_model_class_file($model_name);
 
             if ($user_js_class_path) {
                 // User has defined a JS class for this model - validate it
@@ -2105,8 +2159,7 @@ class BundleCompiler
                 }
 
                 // Validate it extends the Base_ class directly
-                $user_meta = $manifest_files[$user_js_class_path] ?? [];
-                $user_extends = $user_meta['extends'] ?? null;
+                $user_extends = $manifest['data']['js_classes'][$model_name]['extends'] ?? null;
 
                 if ($user_extends !== $expected_base_class) {
                     throw new RuntimeException(

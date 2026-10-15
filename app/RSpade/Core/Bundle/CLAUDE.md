@@ -43,6 +43,16 @@
 - A stylesheet is never shadowed (the override map has no scss kind), so every framework
   stylesheet a bundle includes is compiled; an application stylesheet wrapped in the same
   class is compiled alongside it, where its own include puts it
+- An overriding MODEL brings its companion (`_override_companion_file()`): when the substituted
+  file is a JS-exposed model (`_is_js_exposed_model()`) whose JS class the application declares
+  (`_user_js_model_class_file()`, the JS class map), `_add_file()` adds that JS file right after
+  it - on every substitution, a de-duplicated one included. These are the two helpers the model
+  check in `_generate_concrete_model_classes()` uses, so the substitution supplies exactly the
+  file the check would otherwise refuse the bundle for. Consequence: Core_Bundle includes
+  `Core/Models`, so an override of a core model reaches EVERY bundle, public ones (login,
+  portal sign-in, errors, `/_sys`, `/apidocs`) included - its stub (the ORM definition) and its
+  JS class together. A narrowed public bundle still ships them; the application keeps what it
+  must not publish out of the override and its JS class (`rsx:man class_override`, BUNDLES)
 - What a bundle DECLARES is unchanged, so CONV-BUNDLE-02/04 (which read `define()`) never see
   it; everything downstream of the file list (processors, JS ordering, stubs, the shake, routes)
   receives the override like any application file. A watched shadowed file also watches its

@@ -319,7 +319,13 @@ INCLUDE TYPES
         never the framework's. Only a PHP class, a JS class or a jqhtml
         template is overridden: every framework stylesheet a bundle
         includes is compiled, and a stylesheet of yours that styles the
-        same component is compiled alongside it.
+        same component is compiled alongside it. An overridden MODEL
+        brings its client-side class too: when your override has a JS
+        class of its own (class User_Model extends Base_User_Model), the
+        bundle receives that file right after the model, so every bundle
+        that includes the framework's models - through Core_Bundle, every
+        bundle there is - carries your override's stub and JS class
+        together (rsx:man class_override, BUNDLES).
 
     Type-Filtered Directories
         One directory, ONE file type, in exactly two forms:

@@ -257,6 +257,27 @@ uses (a form input, say) therefore changes it in the panel too.
 lists a substituted include as "<framework file> -> <rsx file> (override)".
 rsx:man bundle_api has the include rules.
 
+### An overridden model arrives whole
+
+An override of a core model that has a client-side class of your own
+(rsx/models/user_model.js declaring `class User_Model extends
+Base_User_Model`) reaches a bundle as BOTH halves: wherever the framework's
+model file is substituted, the bundle also receives your JS class, placed
+right after it - so the model's generated stub and your JS class travel
+together, and a bundle that names no rsx/ path compiles. Without a JS class of
+your own, the bundle generates the plain `class User_Model extends
+Base_User_Model {}` as it does for any model.
+
+Core_Bundle includes the framework's models (app/RSpade/Core/Models), and
+every bundle includes Core_Bundle - so an override of a core model reaches
+EVERY bundle, the public ones included: a login page, a portal sign-in page,
+an error page, /_sys and /apidocs. A bundle you narrowed to publish no
+application model still ships that override's ORM definition (the generated
+stub: its enums, relationship names and declared text types) and your JS
+class, to anyone who loads the page. Keep anything that must not be published
+out of the override and out of its JS class; put it on a model or a class
+that only an internal bundle includes.
+
 ## WHAT THE BUILD PRINTS
 
 A framework file leaving the live tree is never silent. The build that first
@@ -840,6 +861,9 @@ shell declares anything or a base ships without exactly one concrete.
 - A JS class and a jqhtml template are each overridden by name, file by file
   (JAVASCRIPT CLASSES AND TEMPLATES above), and every bundle - the framework's
   own included - compiles the replacement (BUNDLES)
+- An overridden core model reaches every bundle, public ones included, with
+  its generated stub and your JS class together; keep what must not be
+  published out of both (BUNDLES, An overridden model arrives whole)
 - A stylesheet is never an override: an rsx/ stylesheet styling a framework
   component is compiled alongside the framework's (STYLESHEETS ARE NEVER
   OVERRIDDEN)

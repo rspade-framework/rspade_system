@@ -413,6 +413,104 @@ class Bundle_Override_Substitution_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * AN OVERRIDDEN MODEL REACHES A BUNDLE WHOLE: PHP STUB AND JS CLASS TOGETHER.
+     *
+     * A split framework model (`Bo_Gadget_Model_Abstract` + shell `Bo_Gadget_Model`), included
+     * by a framework-side bundle that names only the framework model directory - the shape of
+     * Core_Bundle, and of a /_sys bundle that may name no application path. The application
+     * overrides the model (`class Bo_Gadget_Model extends Bo_Gadget_Model_Abstract`, declaring
+     * an enum the stub carries) and gives it a client-side class
+     * (`class Bo_Gadget_Model extends Base_Bo_Gadget_Model`). The bundle compiles - the model
+     * check would refuse it if the substitution brought the PHP file alone - and carries the
+     * override's stub and the application's JS class exactly once, the JS class after the stub
+     * it extends, and no generated stand-in for it. A second bundle that also includes the
+     * application's model directory gets the same, each once.
+     */
+    public static function test_an_overridden_model_brings_its_js_class_into_a_bundle_naming_no_application_path()
+    {
+        static::__roots();
+        static::__remove_everything();
+
+        $framework_models = static::$framework_root . '/model';
+        $application_models = static::$application_root . '/models';
+        $application_js = "{$application_models}/bo_gadget_model.js";
+        $bundles = [
+            'Bo_Framework_Model_Bundle' => static::$framework_root . '/Bo_Framework_Model_Bundle.php',
+            'Bo_Application_Model_Bundle' => static::$application_root . '/bo_application_model_bundle.php',
+        ];
+
+        $base_namespace = Rsx_Namespace::from_path("{$framework_models}/Bo_Gadget_Model_Abstract.php");
+        $override_namespace = Rsx_Namespace::from_path("{$application_models}/bo_gadget_model.php");
+        $bundle_php = static function (string $path, string $class, array $includes): string {
+            $namespace = Rsx_Namespace::from_path($path);
+            $lines = implode('', array_map(static fn ($include) => "                    '{$include}',\n", $includes));
+
+            return "<?php\n\nnamespace {$namespace};\n\nuse App\\RSpade\\Core\\Bundle\\Rsx_Module_Bundle_Abstract;\n\n"
+                . "class {$class} extends Rsx_Module_Bundle_Abstract\n{\n    public static function define(): array\n    {\n"
+                . "        return [\n            'include' => [\n{$lines}            ],\n        ];\n    }\n}\n";
+        };
+
+        try {
+            static::__write([
+                "{$framework_models}/Bo_Gadget_Model_Abstract.php" => "<?php\n\nnamespace {$base_namespace};\n\n"
+                    . "use App\\RSpade\\Core\\Database\\Models\\Rsx_Model_Abstract;\n\n"
+                    . "abstract class Bo_Gadget_Model_Abstract extends Rsx_Model_Abstract\n{\n    protected \$table = 'bo_gadgets';\n}\n",
+                "{$framework_models}/Bo_Gadget_Model.php" => "<?php\n\nnamespace {$base_namespace};\n\n"
+                    . "class Bo_Gadget_Model extends Bo_Gadget_Model_Abstract\n{\n}\n",
+                "{$application_models}/bo_gadget_model.php" => "<?php\n\nnamespace {$override_namespace};\n\n"
+                    . "use {$base_namespace}\\Bo_Gadget_Model_Abstract;\n\n"
+                    . "class Bo_Gadget_Model extends Bo_Gadget_Model_Abstract\n{\n    public static \$enums = [\n"
+                    . "        'kind_id' => [\n            1 => ['constant' => 'KIND_BO_APPLICATION_OVERRIDE', 'label' => 'Override'],\n        ],\n    ];\n}\n",
+                $application_js => "class Bo_Gadget_Model extends Base_Bo_Gadget_Model {\n    static marker() {\n        return 'BO_APPLICATION_GADGET_JS';\n    }\n}\n",
+                $bundles['Bo_Framework_Model_Bundle'] => $bundle_php($bundles['Bo_Framework_Model_Bundle'], 'Bo_Framework_Model_Bundle', [$framework_models]),
+                $bundles['Bo_Application_Model_Bundle'] => $bundle_php($bundles['Bo_Application_Model_Bundle'], 'Bo_Application_Model_Bundle', [$framework_models, $application_models]),
+            ]);
+
+            static::__child_ok('rsx:manifest:build', [], 'the fixture build');
+
+            $overrides = (include static::$build_root . '/manifest_index.php')['data']['overrides'];
+            static::__assert_equals(
+                "{$application_models}/bo_gadget_model.php",
+                $overrides["{$framework_models}/Bo_Gadget_Model.php"]['by'] ?? null,
+                'the fixture build records the framework model shell as shadowed by the application model'
+            );
+
+            foreach (array_keys($bundles) as $bundle) {
+                static::__child_ok('rsx:bundle:compile', [$bundle], "compiling {$bundle}");
+
+                $app_js = null;
+                foreach (static::__compiled_files() as $name => $content) {
+                    if (str_starts_with($name, $bundle . '__app.') && str_ends_with($name, '.js')) {
+                        $app_js = $content;
+                    }
+                }
+
+                static::__assert_not_null($app_js, "{$bundle} compiled an app script");
+
+                static::__position_of($application_js, static::__provenance($app_js), $bundle);
+                static::__assert_equals(1, substr_count($app_js, 'BO_APPLICATION_GADGET_JS'), "{$bundle}: the application's JS class is in the bundle once");
+                static::__assert_equals(1, substr_count($app_js, 'class Base_Bo_Gadget_Model '), "{$bundle}: the model's stub is in the bundle once");
+                static::__assert_contains('KIND_BO_APPLICATION_OVERRIDE', $app_js, "{$bundle}: the stub is the override's - it carries the enum only the override declares");
+                static::__assert_false(
+                    str_contains($app_js, 'class Bo_Gadget_Model extends Base_Bo_Gadget_Model {}'),
+                    "{$bundle}: no generated class stands in for the application's JS class"
+                );
+                static::__assert_less_than(
+                    strpos($app_js, 'BO_APPLICATION_GADGET_JS'),
+                    strpos($app_js, 'class Base_Bo_Gadget_Model '),
+                    "{$bundle}: the stub is compiled before the JS class that extends it"
+                );
+                static::__assert_false(
+                    in_array("{$framework_models}/Bo_Gadget_Model.php", static::__provenance($app_js), true),
+                    "{$bundle}: the shadowed framework shell contributes nothing"
+                );
+            }
+        } finally {
+            static::__remove_everything();
+        }
+    }
+
+    /**
      * Every module bundle of the build this process runs on (outside the test trees) resolves
      * to a file list with no shadowed path in it. (A tree with no overrides passes trivially; an installed application
      * that overrides framework components is what this audits.)

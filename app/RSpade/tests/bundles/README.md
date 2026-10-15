@@ -43,7 +43,10 @@ directory, a pattern and an explicit file all reach - compiles the overriding fi
 shadowed file's place, once. A shadowed file that leaked through would put two declarations
 of one class or one component into the bundle; one substituted at the wrong position would
 evaluate out of order. Stylesheets are never shadowed: a framework stylesheet compiles beside
-an application stylesheet wrapped in the same class.
+an application stylesheet wrapped in the same class. An overriding MODEL brings the JS class
+the application declares for it, added right after it, so a bundle naming no application path
+(Core_Bundle, a `/_sys` bundle) still satisfies the model check that refuses a model without
+its own JS class.
 
 ## The argv ceiling
 
@@ -75,7 +78,8 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
     its own position
   - `_add_scanned_files()` - the per-file step a directory scan and a pattern share
   - `_add_file()` / `_effective_path()` - the one seam every include reaches; a shadowed
-    framework file is replaced by its override there
+    framework file is replaced by its override there, and an overriding model brings its
+    application JS class (`_override_companion_file()`)
 - `system/app/RSpade/Core/Bundle/Bundle_Include_Pattern.php` - the ONE definition of the
   pattern grammar (`is_pattern()`, `parse()`, `expand()`)
 - `system/app/RSpade/Core/Bundle/Cdn_Cache.php` - the mirror store and `_localize_css()`
@@ -133,6 +137,7 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
 | A scanned asset bundle may not declare a pattern | asset |
 | A shadowed framework file compiles as its override, once, in its place - by directory, pattern and explicit include | php (child build + compile) |
 | No module bundle of the running build resolves a shadowed file | php |
+| An overridden model brings its application JS class into a bundle naming no application path, once, after its stub | php (child build + compile) |
 | A pattern covers no view in the render-time coverage check | php (planned) |
 | Module bundle cannot include a module bundle | php (planned) |
 | Asset bundle discovered via scan cannot declare directory includes | php (planned) |
