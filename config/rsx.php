@@ -2571,9 +2571,13 @@ return [
     |
     */
     'datetime' => [
-        // Default timezone (IANA identifier) when user has no preference
-        // Resolution order: login_users.timezone → this default → 'America/Chicago'
-        'default_timezone' => env('RSX_DEFAULT_TIMEZONE', 'America/Chicago'),
+        // The server's timezone (IANA identifier). Every process still runs in UTC - PHP
+        // and the MySQL session both - and this zone is consulted in three places only:
+        //   - #[Schedule] wall-clock times ("daily at 2am" is 2am in this zone)
+        //   - the timezone a new site record gets when none was assigned
+        //   - the last display tier: login_users.timezone -> sites.timezone -> this
+        // Blank or absent means UTC; an unknown identifier throws.
+        'server_timezone' => env('RSX_SERVER_TIMEZONE') ?: 'UTC',
 
         // Time dropdown interval in minutes (for Schedule_Input component)
         'time_interval' => 15,

@@ -14,6 +14,7 @@ use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * The #[Schedule] reconciliation in rsx:task:process
@@ -21,8 +22,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * _task_schedules - one row per declared schedule - in line with the manifest.
  *
  *   - REGISTER : a declaration with no row gets one, next_run_at its next cadence;
- *   - CHANGE   : a row whose cron_expression differs is re-registered IN PLACE - the new
- *                expression and a recomputed next_run_at, the run statistics kept;
+ *   - CHANGE   : a row whose cron_expression or timezone differs is re-registered IN
+ *                PLACE - the new expression or server timezone and a recomputed
+ *                next_run_at, the run statistics kept;
  *   - MATCH    : a matching row is left untouched;
  *   - REMOVE   : a row the manifest no longer declares is deleted; its past runs keep their
  *                rows, schedule_id cleared;
@@ -111,12 +113,40 @@ class Task_Schedule_Reconcile_Test extends Rsx_Test_Abstract
         static::__assert_equals($before->next_run_at, $after->next_run_at, 'next_run_at is not moved');
     }
 
+    public static function test_a_changed_server_timezone_is_reregistered_in_place()
+    {
+        $def = static::__first_scheduled_def();
+        Artisan::call('rsx:task:process');
+        $before = static::__schedule_for($def['class'], $def['method']);
+        static::__assert_equals(Rsx_Time::get_server_timezone(), $before->timezone, 'the row records the zone it was computed in');
+
+        $zone = $before->timezone === 'America/Chicago' ? 'Asia/Tokyo' : 'America/Chicago';
+        $original = config('rsx.datetime.server_timezone');
+        config(['rsx.datetime.server_timezone' => $zone]);
+        try {
+            $parser = new Cron_Parser($def['cron_expression'], $zone);
+            $earliest = $parser->get_next_run_time();
+            Artisan::call('rsx:task:process');
+            $latest = $parser->get_next_run_time();
+
+            $after = static::__schedule_for($def['class'], $def['method']);
+            static::__assert_equals((int) $before->id, (int) $after->id, 'the same row');
+            static::__assert_equals($zone, $after->timezone, 'the new zone is recorded');
+            $next = strtotime($after->next_run_at);
+            static::__assert_true($next >= $earliest && $next <= $latest, "next_run_at {$after->next_run_at} is recomputed on the {$zone} wall clock");
+        } finally {
+            config(['rsx.datetime.server_timezone' => $original]);
+            Artisan::call('rsx:task:process');
+        }
+    }
+
     public static function test_a_schedule_no_longer_declared_is_removed_and_its_runs_kept()
     {
         $schedule_id = DB::table('_task_schedules')->insertGetId([
             'class' => 'App\\Nowhere\\Ghost_Reconcile_Probe_Service',
             'method' => 'ghost',
             'cron_expression' => '0 3 * * *',
+            'timezone' => 'UTC',
             'next_run_at' => date('Y-m-d H:i:s', time() + 86400),
             'created_at' => now(),
             'updated_at' => now(),

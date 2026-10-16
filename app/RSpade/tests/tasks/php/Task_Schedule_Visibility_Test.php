@@ -37,6 +37,7 @@ class Task_Schedule_Visibility_Test extends Rsx_Test_Abstract
             'class' => Task_Exec_Fixture_Service::class,
             'method' => $method,
             'cron_expression' => '0 3 * * *',
+            'timezone' => 'UTC',
             'next_run_at' => now()->addHour(),
             'last_error' => $failures > 0 ? $last_error : null,
             'last_error_at' => $failures > 0 ? now() : null,

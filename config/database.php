@@ -58,6 +58,9 @@ return [
             'prefix_indexes' => true,
             'strict' => true,
             'engine' => null,
+            // The session clock is UTC whatever the host's own zone: TIMESTAMP columns,
+            // CURRENT_TIMESTAMP defaults and NOW() then agree with the UTC strings PHP writes.
+            'timezone' => '+00:00',
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
@@ -83,6 +86,9 @@ return [
             'prefix_indexes' => true,
             'strict' => true,
             'engine' => null,
+            // The session clock is UTC whatever the host's own zone: TIMESTAMP columns,
+            // CURRENT_TIMESTAMP defaults and NOW() then agree with the UTC strings PHP writes.
+            'timezone' => '+00:00',
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],

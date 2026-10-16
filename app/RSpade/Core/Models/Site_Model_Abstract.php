@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Models;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Time\Rsx_Time;
 /**
  * Site model representing a workspace/organization
  *
@@ -95,10 +96,20 @@ abstract class Site_Model_Abstract extends Rsx_Model_Abstract
      * For the same reason the Default site can never be DISABLED: sites.is_enabled is
      * framework-enforced (a disabled site signs nobody in and ends its live sessions - see
      * User_Model::is_active()), and the infrastructure scope must not be switchable off.
+     *
+     * A new site that was not given a timezone takes the server's
+     * (Rsx_Time::get_server_timezone(), RSX_SERVER_TIMEZONE). The column's own database
+     * default only covers a row inserted beneath the model.
      */
     protected static function booted()
     {
         parent::booted();
+
+        static::creating(function ($model) {
+            if (empty($model->timezone)) {
+                $model->timezone = Rsx_Time::get_server_timezone();
+            }
+        });
 
         static::saving(function ($model) {
             if ($model->id === 0 && !$model->is_enabled) {

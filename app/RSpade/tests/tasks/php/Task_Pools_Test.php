@@ -56,6 +56,7 @@ class Task_Pools_Test extends Rsx_Test_Abstract
             'class' => $class,
             'method' => $method,
             'cron_expression' => self::SLOW_CRON,
+            'timezone' => 'UTC',
             'next_run_at' => date('Y-m-d H:i:s', time() - 3600) . '.000',
             'created_at' => now(),
             'updated_at' => now(),

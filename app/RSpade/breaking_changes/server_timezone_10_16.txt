@@ -1,0 +1,55 @@
+RSX_DEFAULT_TIMEZONE IS NOW RSX_SERVER_TIMEZONE, AND IT DEFAULTS TO UTC
+Date: 2026-10-16
+
+IF YOU DO NOTHING: an RSX_DEFAULT_TIMEZONE line in your .env, a 'datetime.default_timezone' key in rsx/resource/config/rsx.php, or a config('rsx.datetime.default_timezone') call in your code is no longer read - the call answers null - and a user with no timezone of their own, on a site with none, sees times in UTC instead of America/Chicago.
+
+SUMMARY
+    Category 2: one configuration key renamed, with a new default and two new
+    uses. config('rsx.datetime.default_timezone') (RSX_DEFAULT_TIMEZONE, default
+    America/Chicago) is replaced by config('rsx.datetime.server_timezone')
+    (RSX_SERVER_TIMEZONE, default UTC), read through
+    Rsx_Time::get_server_timezone().
+
+    It is the server's zone and is used in three places:
+        - #[Schedule] wall-clock times are read in it ('daily at 2am' with
+          America/Chicago is 2am Chicago time; unset, it is 2am UTC as before);
+        - a site created through Site_Model without a timezone gets it;
+        - it is the last display fallback (user -> site -> this).
+
+    An application that never set the old key and whose sites all carry a
+    timezone (every site row has one - the column is NOT NULL) sees no change.
+
+THE CHANGE
+    Also part of this release, needing nothing from you:
+        - every MySQL connection sets its session time_zone to +00:00, so
+          TIMESTAMP columns, CURRENT_TIMESTAMP defaults and NOW() are UTC even on
+          a host whose clock is not;
+        - laravel.log timestamps are written in the host operating system's zone
+          (TZ, /etc/localtime, /etc/timezone; UTC when none is set), so the log
+          agrees with `date`; on a UTC host nothing changes.
+
+ACTION REQUIRED
+    1. Find the old key:
+
+           grep -rn "default_timezone\|RSX_DEFAULT_TIMEZONE" rsx/ .env
+
+    2. In .env, rename RSX_DEFAULT_TIMEZONE to RSX_SERVER_TIMEZONE. Before you
+       keep its value, decide: it now ALSO moves every #[Schedule] onto that
+       wall clock. To keep schedules in UTC and display in your old zone, set
+       the zone on your sites (sites.timezone) instead and leave
+       RSX_SERVER_TIMEZONE blank.
+
+    3. In rsx/resource/config/rsx.php, rename 'default_timezone' under
+       'datetime' to 'server_timezone', with the same consideration.
+
+    4. Replace config('rsx.datetime.default_timezone') in your code with
+       Rsx_Time::get_server_timezone().
+
+VERIFICATION
+    - php artisan rsx:tasks:list shows each schedule's next run where you
+      expect it (re-registered on the first tick after the zone changed).
+    - A user with no timezone of their own sees times in the expected zone.
+
+SEE ALSO
+    rsx:man time - SERVER TIMEZONE
+    rsx:man tasks - SCHEDULES AND TIMEZONES

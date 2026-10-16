@@ -716,14 +716,27 @@ SCHEDULES
         'hourly'                       'daily' / 'daily at 2am' / 'daily at 14:30'
         'weekly' / 'weekly on monday at 9:30am'                'monthly'
 
+    SCHEDULES AND TIMEZONES. An expression is read on the wall clock of the SERVER
+    TIMEZONE - RSX_SERVER_TIMEZONE in .env, UTC when unset (rsx:man time, SERVER TIMEZONE)
+    - so 'daily at 2am' with America/Chicago configured runs at 2am Chicago time, and with
+    nothing configured at 2am UTC. Daylight saving follows cron's rule for a FIXED-TIME
+    schedule (neither the minute nor the hour field begins with an asterisk - 'daily at
+    2am', '30 1 * * *'): a wall time skipped by the spring-forward jump runs at the first
+    minute after the jump (2:30am runs at 3:00am), and a wall time repeated by the
+    fall-back jump runs once, at its first occurrence. A schedule with an asterisk in the
+    minute or hour field ('every 5 minutes', 'hourly') runs on real elapsed time and
+    neither transition affects it.
+
     Each declaration is one _task_schedules row (Task_Schedule_Model): its class, method,
-    cron expression, next_run_at, and its run statistics - last_task_id, last_success_at,
+    cron expression, the timezone its next run was computed in, next_run_at, and its run
+    statistics - last_task_id, last_success_at,
     last_error_at, last_error, consecutive_failures. EACH RUN of a schedule is a run row of
     its own (origin Scheduled, schedule_id set), so a schedule has a full run history.
 
     rsx:task:process reconciles the table every tick: a new declaration is registered at
-    its next cadence; a changed expression is re-registered with next_run_at recomputed
-    (statistics kept), so an old cadence never lingers; a removed declaration's row is
+    its next cadence; a changed expression - or a changed RSX_SERVER_TIMEZONE - is
+    re-registered with next_run_at recomputed (statistics kept), so an old cadence or an
+    old wall clock never lingers; a removed declaration's row is
     deleted (its past runs keep their rows, schedule_id cleared). A scheduled-pool worker
     advances next_run_at BEFORE running, so the cadence holds across a slow or crashed run.
 
@@ -745,7 +758,7 @@ SCHEDULES
     claims the run at that moment recomputes the following one from the cron expression,
     as after any scheduled run, so the regular cadence resumes by itself. Reconciliation
     never moves it: the tick rewrites next_run_at only for a declaration whose expression
-    changed, and under --force-scheduled. A moment in the past is due now; a moment that
+    or timezone changed, and under --force-scheduled. A moment in the past is due now; a moment that
     comes due while an #[Exclusive] task is still running is coalesced into that run like
     any tick. A declaration the tick has not registered yet is registered by the call.
 

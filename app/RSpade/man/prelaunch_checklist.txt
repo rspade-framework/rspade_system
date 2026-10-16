@@ -1809,6 +1809,41 @@ ENTRY 20: FILE URLS BUILT BY HAND (served uncacheable, every request)
 
 --------------------------------------------------------------------------------
 
+ENTRY 21: THE SERVER TIMEZONE (when "daily at 2am" runs, and the display fallback)
+
+    What to audit
+        What RSX_SERVER_TIMEZONE is set to in the production .env, and whether
+        that is the clock your #[Schedule] times were written for:
+
+            php artisan rsx:tasks:list
+
+        lists every schedule with its next run. Then check that every site has
+        the timezone its users expect (sites.timezone), and what the host's own
+        zone is (`date`; in a container, the container's).
+
+    Why it matters
+        Every process runs in UTC. RSX_SERVER_TIMEZONE (blank = UTC) is the
+        wall clock #[Schedule] times are read on, the zone a new site gets when
+        created without one, and the zone a user with no preference of their
+        own sees when their site has none. Left blank, a nightly job written as
+        'daily at 2am' runs at 2am UTC - the middle of a US business evening -
+        and nothing reports it. Separately, laravel.log is stamped in the
+        host's own zone, which on a cloud image is usually UTC.
+
+    Guidelines
+        1. Set RSX_SERVER_TIMEZONE to the zone your schedules mean, or leave it
+           blank and write the schedules in UTC - a decision, not a default.
+        2. A fixed-time schedule between 1am and 3am meets daylight saving:
+           a skipped time runs right after the spring-forward jump, a repeated
+           time runs once (rsx:man tasks, SCHEDULES AND TIMEZONES).
+        3. Set the host's zone if you want the log in local time.
+
+    Dos and don'ts
+        DO    RSX_SERVER_TIMEZONE=America/Chicago, for schedules meant in Chicago
+        DON'T assume a schedule's time is local because the host's clock is
+
+--------------------------------------------------------------------------------
+
 SEE ALSO
     rsx:man bundle_api
     rsx:man login_redirect

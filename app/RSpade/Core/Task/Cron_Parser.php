@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Task;
 
 use DateTime;
 use DateTimeZone;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Cron_Parser
@@ -32,23 +33,51 @@ use DateTimeZone;
  *   "daily at 14:30"              -> "30 14 * * *"
  *   "weekly" / "weekly on monday at 9:30am" -> "0 0 * * 0" / "30 9 * * 1"
  *   "monthly"                     -> "0 0 1 * *"
+ *
+ * TIMEZONE: the expression is read on the wall clock of the server timezone
+ * (Rsx_Time::get_server_timezone(), RSX_SERVER_TIMEZONE, UTC when unset), so "daily at
+ * 2am" with America/Chicago configured is 2am Chicago time. Run times are returned as
+ * UNIX timestamps, so nothing downstream ever sees a local time.
+ *
+ * DAYLIGHT SAVING follows cron's rule for a FIXED-TIME job (neither the minute nor the
+ * hour field begins with an asterisk):
+ *   - a wall time skipped by a forward jump runs at the first instant after the jump
+ *     (2:30am on the spring-forward day runs at 3:00am);
+ *   - a wall time repeated by a backward jump runs once, at its first occurrence.
+ * A job with an asterisk in the minute or hour field ("every 5 minutes", "hourly") runs
+ * on real elapsed time and is unaffected by either transition.
  */
 #[Instantiatable]
 class Cron_Parser
 {
     private array $parts;
     private string $expression;
+    private DateTimeZone $timezone;
+
+    /**
+     * True when neither the minute nor the hour field begins with an asterisk - the jobs
+     * the daylight-saving rule in the class docblock applies to.
+     */
+    private bool $fixed_time;
 
     /**
      * Parse a cron expression
      *
      * @param string $expression Cron expression (minute hour day month weekday)
+     * @param string|null $timezone IANA zone whose wall clock the expression is read on;
+     *                              null = the server timezone
      * @throws \InvalidArgumentException If expression is invalid
      */
-    public function __construct(string $expression)
+    public function __construct(string $expression, ?string $timezone = null)
     {
         $this->expression = $expression;
-        $this->parts = $this->parse(self::_normalize_expression($expression));
+        $this->timezone = new DateTimeZone($timezone ?? Rsx_Time::get_server_timezone());
+
+        $cron = self::_normalize_expression($expression);
+        $this->parts = $this->parse($cron);
+
+        $fields = preg_split('/\s+/', trim($cron));
+        $this->fixed_time = !str_starts_with($fields[0], '*') && !str_starts_with($fields[1], '*');
     }
 
     /**
@@ -281,6 +310,9 @@ class Cron_Parser
     /**
      * Calculate next run time from a given timestamp
      *
+     * Walks forward one REAL minute at a time (never wall-clock arithmetic, which would
+     * step over a repeated hour) and reads each minute on the timezone's wall clock.
+     *
      * @param int|null $from_timestamp Start time (default: current time)
      * @return int Next run timestamp
      */
@@ -290,23 +322,48 @@ class Cron_Parser
             $from_timestamp = time();
         }
 
-        // Start from the next minute (cron runs at most once per minute)
-        $current = new DateTime('@' . $from_timestamp);
-        $current->setTimezone(new DateTimeZone(date_default_timezone_get()));
-        $current->modify('+1 minute');
-        $current->setTime((int) $current->format('H'), (int) $current->format('i'), 0);
+        // Start from the next whole minute (cron runs at most once per minute)
+        $timestamp = (intdiv($from_timestamp, 60) + 1) * 60;
+
+        $zoned = new DateTime('@' . $timestamp);
+        $zoned->setTimezone($this->timezone);
+        $wall = new DateTime('@0');
+
+        $zoned->setTimestamp($timestamp - 60);
+        $previous_wall = $timestamp - 60 + $zoned->getOffset();
 
         // Try up to 4 years in the future (should be more than enough)
         $max_iterations = 60 * 24 * 365 * 4;
-        $iterations = 0;
 
-        while ($iterations < $max_iterations) {
-            if ($this->matches($current)) {
-                return $current->getTimestamp();
+        for ($iterations = 0; $iterations < $max_iterations; $iterations++, $timestamp += 60) {
+            $zoned->setTimestamp($timestamp);
+            $wall_seconds = $timestamp + $zoned->getOffset();
+
+            if ($this->fixed_time) {
+                // A forward jump: the wall minutes between the previous minute and this one
+                // never happened, and one that matches runs now, right after the jump.
+                for ($skipped = $previous_wall + 60; $skipped < $wall_seconds; $skipped += 60) {
+                    if ($this->matches($wall->setTimestamp($skipped))) {
+                        return $timestamp;
+                    }
+                }
+            }
+            $previous_wall = $wall_seconds;
+
+            if (!$this->matches($wall->setTimestamp($wall_seconds))) {
+                continue;
             }
 
-            $current->modify('+1 minute');
-            $iterations++;
+            // A backward jump: this wall time already happened once, and a fixed-time job
+            // ran then. PHP resolves an ambiguous wall time to its first occurrence.
+            if ($this->fixed_time) {
+                $first = new DateTime($wall->format('Y-m-d H:i:s'), $this->timezone);
+                if ($first->getTimestamp() < $timestamp) {
+                    continue;
+                }
+            }
+
+            return $timestamp;
         }
 
         throw new \RuntimeException("Could not calculate next run time for cron expression: {$this->expression}");
@@ -347,6 +404,16 @@ class Cron_Parser
         } catch (\InvalidArgumentException $e) {
             return false;
         }
+    }
+
+    /**
+     * The IANA timezone the expression is read in.
+     *
+     * @return string
+     */
+    public function get_timezone(): string
+    {
+        return $this->timezone->getName();
     }
 
     /**

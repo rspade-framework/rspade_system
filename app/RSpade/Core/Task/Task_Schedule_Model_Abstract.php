@@ -44,6 +44,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * @property int $last_task_id
  * @property string $method
  * @property string $next_run_at
+ * @property string $timezone
  * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type

@@ -160,7 +160,7 @@ const server_now = Rsx_Time.now();  // Synced with server, corrects for clock sk
 
 Stored in `login_users.timezone` (IANA format, e.g., `America/Chicago`).
 
-**Resolution chain**: `login_users.timezone` -> `sites.timezone` -> `config('rsx.datetime.default_timezone')` -> `'America/Chicago'`. A PORTAL request has no user tier (portal accounts carry no timezone column) and starts at the site.
+**Resolution chain**: `login_users.timezone` -> `sites.timezone` -> the server timezone (`Rsx_Time::get_server_timezone()`: `RSX_SERVER_TIMEZONE`, UTC when unset). **Every process runs in UTC regardless** - PHP and the MySQL session both - and the server zone is read only for that fallback, `#[Schedule]` wall-clock times and a new site's default zone; log timestamps alone use the host OS zone (`get_system_timezone()`). A PORTAL request has no user tier (portal accounts carry no timezone column) and starts at the site.
 
 ```php
 // Get the resolved timezone for the current viewer

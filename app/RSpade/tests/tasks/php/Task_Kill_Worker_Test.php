@@ -254,6 +254,7 @@ class Task_Kill_Worker_Test extends Rsx_Test_Abstract
             'class' => Task_Exec_Fixture_Service::class,
             'method' => 'marker_a',
             'cron_expression' => 'daily at 3am',
+            'timezone' => 'UTC',
             'next_run_at' => now()->addDay(),
             'created_at' => now(),
             'updated_at' => now(),

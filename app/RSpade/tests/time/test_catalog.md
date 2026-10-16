@@ -42,6 +42,19 @@ Type: php. Last updated: 2026-09-01.
 | time-tz-10 | set_timezone returns per-field validation errors | missing / unknown zone | AjaxFormErrorException carrying details['timezone'] | implemented |
 
 
+## Server_Timezone_Test (php, DB)
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| time-srv-01 | the process clock is UTC | - | PHP default zone UTC; MySQL session +00:00 | implemented |
+| time-srv-02 | the server timezone is the configured zone; blank/null is UTC | config set / '' / null | the zone; UTC; UTC | implemented |
+| time-srv-03 | an unknown server timezone throws naming the key | 'Central' | RuntimeException mentioning RSX_SERVER_TIMEZONE | implemented |
+| time-srv-04 | a new site without a timezone takes the server timezone | site saved with no zone | sites.timezone = server zone | implemented |
+| time-srv-05 | a new site given a timezone keeps it | site saved with Europe/Berlin | Europe/Berlin | implemented |
+| time-srv-06 | the system timezone reads TZ first, then the host files | TZ set / ':'-prefixed / unset | the TZ zone; a known zone | implemented |
+| time-srv-07 | the log tap stamps records in the system timezone | TZ=America/Chicago; tap a logger | logger timezone America/Chicago | implemented |
+| time-srv-08 | every log channel taps System_Timezone_Log_Tap | config('logging.channels') | each but 'null' lists the tap | implemented |
+
 ## Planned
 
 | ID | Purpose | Type | Reason | Status |

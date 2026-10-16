@@ -281,8 +281,8 @@ TIMEZONE INITIALIZATION
        User timezone is resolved in order:
            1. login_users.timezone (user's preference)
            2. sites.timezone (site's default timezone)
-           3. config('rsx.datetime.default_timezone')
-           4. 'America/Chicago' (hardcoded fallback)
+           3. the server timezone (Rsx_Time::get_server_timezone(), see
+              SERVER TIMEZONE below)
 
        On a PORTAL request tier 1 does not exist: portal_users has no timezone
        column, so resolution starts at the SITE - and the site is the PORTAL's
@@ -322,13 +322,12 @@ TIMEZONE PREFERENCE
 
    Reading
        Rsx_Time::get_user_timezone()
-           The RESOLVED zone for this request (the four-tier chain above). This
+           The RESOLVED zone for this request (the three-tier chain above). This
            is what every formatter uses when no explicit timezone is passed.
 
        Rsx_Time::get_site_timezone()
            The SITE's zone, skipping the user tier entirely:
-           sites.timezone -> config('rsx.datetime.default_timezone') ->
-           'America/Chicago'. Use it for anything that belongs to the tenant
+           sites.timezone -> the server timezone. Use it for anything that belongs to the tenant
            rather than to the viewer (a scheduled report's day boundary, a
            site-wide business-hours calculation). The site is resolved by the
            EXPERIENCE of the request, exactly as get_user_timezone() resolves it.
@@ -575,13 +574,40 @@ ERROR HANDLING
 CONFIGURATION
        system/config/rsx.php:
            'datetime' => [
-               'default_timezone' => env('RSX_DEFAULT_TIMEZONE', 'America/Chicago'),
+               'server_timezone' => env('RSX_SERVER_TIMEZONE') ?: 'UTC',
            ],
 
        User timezone stored in login_users.timezone column (staff only - a portal
        account has no personal timezone), with login_users.timezone_auto
        (default 1) governing the browser auto-set. See TIMEZONE PREFERENCE.
-       Site timezone stored in sites.timezone column (default: 'America/Chicago').
+       Site timezone stored in sites.timezone column; a site created through
+       the model without one takes the server timezone (the column's own
+       database default, 'America/Chicago', covers only a row inserted beneath
+       the model).
+
+SERVER TIMEZONE
+       Every RSpade process RUNS in UTC, whatever the host's clock is set to:
+       PHP's default zone is UTC (config/app.php) and every MySQL connection
+       sets its session time_zone to +00:00, so TIMESTAMP columns,
+       CURRENT_TIMESTAMP defaults and NOW() agree with the UTC strings PHP
+       writes. Nothing an application stores or sends is in any other zone.
+
+       RSX_SERVER_TIMEZONE in .env names the server's zone (an IANA
+       identifier; blank or absent = UTC; an unknown one throws). It is
+       read through Rsx_Time::get_server_timezone() and used in three places:
+
+           #[Schedule]     wall-clock times are read in it - "daily at 2am"
+                           with America/Chicago is 2am Chicago time
+                           (rsx:man tasks, SCHEDULES AND TIMEZONES)
+           new sites       Site_Model fills sites.timezone with it when a new
+                           record was not given one
+           display         the last tier of the resolution chain above
+
+       Rsx_Time::get_system_timezone() is a different thing: the OPERATING
+       SYSTEM's zone (TZ, the /etc/localtime link, /etc/timezone; UTC when
+       none is set). Only log timestamps use it - laravel.log is stamped in the
+       host's own clock, so it agrees with `date` and the host's other logs.
+       In a container, that is the container's zone.
 
 MODEL CASTING
        Model date/datetime columns are automatically cast to strings via custom

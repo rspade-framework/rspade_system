@@ -157,6 +157,18 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | task-recon-03 | a matching schedule is untouched | two ticks | same id and next_run_at | implemented |
 | task-recon-04 | an undeclared schedule is removed; its runs are kept | ghost schedule + run | schedule gone; run kept, schedule_id null | implemented |
 | task-recon-05 | --force-scheduled makes every schedule due now | tick with the flag | every next_run_at <= now | implemented |
+| task-recon-06 | a changed server timezone is re-registered in place | config zone switched; tick | same id, timezone recorded, next_run_at on the new wall clock | implemented |
+
+## Cron_Parser_Timezone_Test (php, no DB) - the wall clock and daylight saving
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| cron-tz-01 | an expression is read on the zone's wall clock | 'daily at 2am' in Chicago and in UTC | 02:00 CDT; 02:00 UTC | implemented |
+| cron-tz-02 | the zone defaults to the server timezone; an explicit zone wins | config zone set / blank | get_timezone() answers each | implemented |
+| cron-tz-03 | an unknown zone throws | 'Mars/Olympus_Mons' | exception | implemented |
+| cron-tz-04 | a fixed time skipped by spring-forward runs right after the jump | 2am / 2:30am on 2026-03-08 | 03:00 CDT; next day 02:00 | implemented |
+| cron-tz-05 | a fixed time repeated by fall-back runs once | 1:30am on 2026-11-01 | 01:30 CDT, then 2026-11-02 01:30 CST | implemented |
+| cron-tz-06 | a wildcard job runs on real elapsed time | every 5 minutes / hourly across both jumps | 01:00 CST three minutes on; no extra 3am run | implemented |
 
 ## Task_Schedule_Visibility_Test (php, default isolation) - a failing schedule must be visible
 

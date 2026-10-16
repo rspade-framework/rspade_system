@@ -389,6 +389,7 @@ class Task_System_Switch_Test extends Rsx_Test_Abstract
             'class' => self::FIX,
             'method' => 'marker_a',
             'cron_expression' => '* * * * *',
+            'timezone' => 'UTC',
             'next_run_at' => $overdue,
             'created_at' => now(),
             'updated_at' => now(),

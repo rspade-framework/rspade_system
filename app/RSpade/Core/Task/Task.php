@@ -315,9 +315,9 @@ class Task
         // declaration that tick has not registered yet is registered here.
         $now = now()->format('Y-m-d H:i:s.v');
         DB::statement(
-            'INSERT INTO _task_schedules (class, method, cron_expression, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+            'INSERT INTO _task_schedules (class, method, cron_expression, timezone, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
             . ' ON DUPLICATE KEY UPDATE next_run_at = VALUES(next_run_at), updated_at = VALUES(updated_at)',
-            [$service_class, $rsx_task, $cron_expression, $next_run_at, $now, $now]
+            [$service_class, $rsx_task, $cron_expression, Rsx_Time::get_server_timezone(), $next_run_at, $now, $now]
         );
 
         return Rsx_Time::to_iso($next_run_at);

@@ -10,6 +10,7 @@ namespace App\RSpade\Commands\Rsx;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Task\Cron_Parser;
+use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Kill_Request_Model;
@@ -466,9 +467,11 @@ class Task_Process_Command extends Command
     /**
      * Reconcile _task_schedules against the manifest's #[Schedule] declarations.
      *
-     * A new declaration is registered with next_run_at at its next cadence; a declaration whose
-     * cron expression changed is re-registered with next_run_at recomputed from the new
-     * expression (a stale next_run_at from the old one never lingers) - its statistics are kept;
+     * A new declaration is registered with next_run_at at its next cadence, read in the server
+     * timezone (Rsx_Time::get_server_timezone()), which the row records; a declaration whose
+     * cron expression or timezone changed is re-registered with next_run_at recomputed (a stale
+     * next_run_at from the old expression or the old wall clock never lingers) - its statistics
+     * are kept;
      * a schedule no longer declared is deleted (its past runs keep their rows, schedule_id
      * cleared).
      *
@@ -478,6 +481,7 @@ class Task_Process_Command extends Command
     {
         $seen = [];
         $now = now()->format('Y-m-d H:i:s.v');
+        $timezone = Rsx_Time::get_server_timezone();
 
         foreach (Task::get_scheduled_tasks() as $task_def) {
             $class = $task_def['class'];
@@ -486,7 +490,7 @@ class Task_Process_Command extends Command
             $seen[$class . '::' . $method] = true;
 
             $existing = DB::table('_task_schedules')->where('class', $class)->where('method', $method)->first();
-            $next_run_at = $force_all ? $now : date('Y-m-d H:i:s', (new Cron_Parser($cron_expression))->get_next_run_time());
+            $next_run_at = $force_all ? $now : date('Y-m-d H:i:s', (new Cron_Parser($cron_expression, $timezone))->get_next_run_time());
 
             if ($existing === null) {
                 $this->info("[SCHEDULED] Registering new scheduled task {$class}::{$method} ({$cron_expression})");
@@ -494,6 +498,7 @@ class Task_Process_Command extends Command
                     'class' => $class,
                     'method' => $method,
                     'cron_expression' => $cron_expression,
+                    'timezone' => $timezone,
                     'next_run_at' => $next_run_at,
                     'created_at' => $now,
                     'updated_at' => $now,
@@ -501,10 +506,11 @@ class Task_Process_Command extends Command
                 continue;
             }
 
-            if ($existing->cron_expression !== $cron_expression) {
-                $this->info("[SCHEDULED] Schedule changed for {$class}::{$method}, re-registering ({$cron_expression})");
+            if ($existing->cron_expression !== $cron_expression || $existing->timezone !== $timezone) {
+                $this->info("[SCHEDULED] Schedule changed for {$class}::{$method}, re-registering ({$cron_expression}, {$timezone})");
                 DB::table('_task_schedules')->where('id', $existing->id)->update([
                     'cron_expression' => $cron_expression,
+                    'timezone' => $timezone,
                     'next_run_at' => $next_run_at,
                     'updated_at' => $now,
                 ]);

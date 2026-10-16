@@ -267,6 +267,8 @@ public static function drain(Task_Instance $task, array $params = []) { ... }
 
 Standard cron works (`'0 3 * * *'`), but **prefer the phrases**: `'every minute'`, `'every 5 minutes'`, `'hourly'`, `'daily at 2am'`, `'weekly on monday at 9:30am'`, `'monthly'`. **Why: a cron step token is `*` followed by `/`, which terminates a block comment and corrupts the file.**
 
+**The wall clock is the SERVER TIMEZONE** - `RSX_SERVER_TIMEZONE` in `.env`, UTC when unset - so `'daily at 2am'` with `America/Chicago` configured runs at 2am Chicago time. Daylight saving follows cron: a fixed-time schedule (no `*` leading the minute or hour field) whose wall time the spring-forward jump skips runs right after the jump, and one the fall-back jump repeats runs once; `'every 5 minutes'`/`'hourly'` run on real elapsed time. Changing the zone re-registers every schedule on the next tick (`rsx:man tasks`, SCHEDULES AND TIMEZONES).
+
 **Setting the next run explicitly** - one run is moved, the cadence resumes by itself after it, and the tick's reconciliation leaves it alone:
 
 ```php

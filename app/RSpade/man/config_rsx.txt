@@ -912,19 +912,21 @@ MAIL AND SMS
 
 DATETIME
     'datetime' => [
-        'default_timezone' => env('RSX_DEFAULT_TIMEZONE', 'America/Chicago'),
+        'server_timezone' => env('RSX_SERVER_TIMEZONE') ?: 'UTC',
         'time_interval' => 15,       # Schedule_Input dropdown minutes
         'default_duration' => 60,    # Schedule_Input new-event minutes
     ]
 
-    Timezone resolution: login_users.timezone (staff user preference) ->
-    sites.timezone (the tenant's own default) -> default_timezone above ->
-    hardcoded America/Chicago. A PORTAL request has no user tier - portal
-    accounts carry no timezone column - so it starts at the site.
+    server_timezone is the server's zone (IANA; blank = UTC; unknown throws).
+    Processes still run in UTC; it is read only for #[Schedule] wall-clock
+    times, the timezone of a new site created without one, and the last
+    display fallback.
 
-    default_timezone is therefore the LAST-RESORT default, reached only when
-    neither the user nor the site declares one. login_users.timezone_auto
-    (default 1) lets the browser set tier 1 on the first signed-in page load.
+    Timezone resolution: login_users.timezone (staff user preference) ->
+    sites.timezone (the tenant's own default) -> server_timezone. A PORTAL
+    request has no user tier - portal accounts carry no timezone column - so
+    it starts at the site. login_users.timezone_auto (default 1) lets the
+    browser set tier 1 on the first signed-in page load.
     See: php artisan rsx:man time
 
 DEPENDENCIES

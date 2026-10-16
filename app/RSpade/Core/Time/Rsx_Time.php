@@ -296,9 +296,9 @@ class Rsx_Time
             }
         }
 
-        // Config default
+        // The server's zone
         if ($timezone === null) {
-            $timezone = config('rsx.datetime.default_timezone', 'America/Chicago');
+            $timezone = static::get_server_timezone();
         }
 
         // Cache the result
@@ -411,7 +411,7 @@ class Rsx_Time
 
     /**
      * Get the current site's timezone (ignoring user preference)
-     * Resolution: site default → config default → America/Chicago
+     * Resolution: sites.timezone -> get_server_timezone()
      *
      * @return string IANA timezone identifier
      */
@@ -422,7 +422,77 @@ class Rsx_Time
             return $site->timezone;
         }
 
-        return config('rsx.datetime.default_timezone', 'America/Chicago');
+        return static::get_server_timezone();
+    }
+
+    /**
+     * The server's timezone: config('rsx.datetime.server_timezone'), from
+     * RSX_SERVER_TIMEZONE, UTC when unset.
+     *
+     * Every process still RUNS in UTC (PHP's default zone and the MySQL session both);
+     * this is the zone a #[Schedule] wall-clock time is read in, the zone a new site
+     * record gets when none was assigned, and the zone times are displayed in when
+     * neither the user nor the site names one.
+     *
+     * @return string IANA timezone identifier
+     * @throws \RuntimeException When the configured identifier is not a known zone
+     */
+    public static function get_server_timezone(): string
+    {
+        $timezone = (string) config('rsx.datetime.server_timezone');
+        if ($timezone === '') {
+            $timezone = 'UTC';
+        }
+
+        if (!in_array($timezone, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
+            throw new \RuntimeException(
+                "RSX_SERVER_TIMEZONE is '{$timezone}', which is not an IANA timezone identifier "
+                . "(e.g. America/Chicago). Correct it in .env, or leave it blank for UTC."
+            );
+        }
+
+        return $timezone;
+    }
+
+    /**
+     * The operating system's own timezone - what `date` prints on this host - read from
+     * the TZ environment variable, then the /etc/localtime link, then /etc/timezone.
+     * A host with none of them configured is UTC, which is the C library's own default.
+     *
+     * Only the log timestamps use it (System_Timezone_Log_Tap), so a log reads in the
+     * same clock as the host's other logs. Application time never does.
+     *
+     * @return string IANA timezone identifier
+     */
+    public static function get_system_timezone(): string
+    {
+        $known = \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC);
+
+        $tz = (string) getenv('TZ');
+        $tz = ltrim($tz, ':');
+        if ($tz !== '' && in_array($tz, $known, true)) {
+            return $tz;
+        }
+
+        if (is_link('/etc/localtime')) {
+            $target = (string) readlink('/etc/localtime');
+            $position = strpos($target, 'zoneinfo/');
+            if ($position !== false) {
+                $name = substr($target, $position + strlen('zoneinfo/'));
+                if (in_array($name, $known, true)) {
+                    return $name;
+                }
+            }
+        }
+
+        if (is_readable('/etc/timezone')) {
+            $name = trim((string) file_get_contents('/etc/timezone'));
+            if (in_array($name, $known, true)) {
+                return $name;
+            }
+        }
+
+        return 'UTC';
     }
 
     /**

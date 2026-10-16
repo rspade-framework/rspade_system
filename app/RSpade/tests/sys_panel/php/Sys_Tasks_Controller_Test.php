@@ -164,7 +164,7 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
 
         $threshold = (int) config('rsx.tasks.failing_schedule_warn_after');
         DB::table('_task_schedules')->insert([
-            'class' => $exclusive['class'], 'method' => $exclusive['method'], 'cron_expression' => $exclusive['cron_expression'],
+            'class' => $exclusive['class'], 'method' => $exclusive['method'], 'cron_expression' => $exclusive['cron_expression'], 'timezone' => 'UTC',
             'next_run_at' => '2030-01-01 00:00:00.000', 'consecutive_failures' => $threshold, 'last_error' => "first line\nsecond line",
             'last_error_at' => now(), 'created_at' => now(), 'updated_at' => now(),
         ]);

@@ -164,6 +164,7 @@ class Task_Exclusive_Group_Test extends Rsx_Test_Abstract
             'class' => self::SERVICE,
             'method' => 'group_beta',
             'cron_expression' => 'daily at 3am',
+            'timezone' => 'UTC',
             'next_run_at' => date('Y-m-d H:i:s', time() - 60) . '.000',
             'created_at' => now(),
             'updated_at' => now(),

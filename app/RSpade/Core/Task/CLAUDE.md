@@ -109,7 +109,7 @@ says what is in this DIRECTORY and what must stay true when editing it.
   HERE rather than in `Commands/` because Laravel's `load()` instantiates every command
   class in that directory through the container, and this one takes constructor arguments.
   Contract: `rsx:man task_commands`.
-- `Cron_Parser.php` — normalizes both 5-field cron and the plain-English `#[Schedule]` phrases.
+- `Cron_Parser.php` — normalizes both 5-field cron and the plain-English `#[Schedule]` phrases, and reads them on the server timezone's wall clock (`Rsx_Time::get_server_timezone()`), walking REAL minutes with cron's DST rule for fixed-time jobs. `_task_schedules.timezone` records the zone a row's `next_run_at` was computed in; reconciliation re-registers a row whose zone differs from the configured one.
 - `Task_Health_Checks.php` — `rsx:health` rows: Task System (FAIL while off; INFO under the
   maintenance flag), Task Worker Pools, Task Scheduler Liveness (INFO while off), Task
   Schedule Failures.
