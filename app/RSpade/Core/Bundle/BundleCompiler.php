@@ -2872,12 +2872,15 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                 $js_content = $this->_compile_js_files($js_files, $string_obfuscation);
 
                 // Minify JS in strict production only (strips sourcemaps + console_debug
-                // call sites; debug keeps readable code). Policy: Manifest::_should_minify().
+                // call sites, and console.log call sites from the APP output - the vendor
+                // output keeps its own; debug keeps readable code).
+                // Policy: Manifest::_should_minify().
                 if (Manifest::_should_minify()) {
                     $js_content = Minifier::minify_js(
                         $js_content,
                         "{$this->bundle_name}__{$type}.js",
-                        Manifest::_should_strip_console_debug()
+                        Manifest::_should_strip_console_debug(),
+                        $type === 'app'
                     );
                 }
 

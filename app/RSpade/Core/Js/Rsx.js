@@ -33,7 +33,8 @@
  * Rsx.on('app_ready', () => console.log('App initialized'));
  * Rsx.trigger('custom_event', {data: 'value'});
  *
- * // Environment detection
+ * // Environment detection (window.rsxapp.mode): is_dev() = development only,
+ * // is_debug() = debug only, is_prod() = debug or production
  * if (Rsx.is_dev()) { console.log('Development mode'); }
  *
  * // Route generation
@@ -434,14 +435,21 @@ class Rsx {
         Core_Log.log(type, message);
     }
 
-    // Returns true if the app is being run in dev mode
-    // This should affect caching and some debug checks
+    // The application mode, read from window.rsxapp.mode ('development' | 'debug' | 'production').
+    // True only in development mode.
     static is_dev() {
-        return window.rsxapp.debug;
+        return window.rsxapp.mode === 'development';
     }
 
+    // True only in debug mode: the sealed, production-like build that keeps sourcemaps and
+    // console_debug().
+    static is_debug() {
+        return window.rsxapp.mode === 'debug';
+    }
+
+    // True in either sealed build, debug or production - every mode but development.
     static is_prod() {
-        return !window.rsxapp.debug;
+        return window.rsxapp.mode !== 'development';
     }
 
     // Returns true when running inside the SSR Node server

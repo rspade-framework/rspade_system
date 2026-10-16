@@ -6,8 +6,8 @@
  *   2. in a sealed build the component shows nothing and takes no room
  *   3. the hidden __turnstile field carries the 'inactive' sentinel in both
  *
- * The sealed build is simulated by clearing window.rsxapp.debug, the one fact the component
- * reads. Skips when this environment has Turnstile enabled, where there is no inactive state.
+ * The sealed build is simulated by setting window.rsxapp.mode to 'production', the one fact
+ * the component reads (through Rsx.is_dev() / Rsx.is_prod()). Skips when this environment has Turnstile enabled, where there is no inactive state.
  *
  * Runs on the framework's own /_sys panel; self-contained, so a bare
  * `node inactive_display.js` runs it.
@@ -103,15 +103,15 @@ async function run() {
             };
 
             const out = {};
-            const was_debug = window.rsxapp.debug;
+            const was_mode = window.rsxapp.mode;
 
-            window.rsxapp.debug = true;
+            window.rsxapp.mode = 'development';
             out.development = await mount();
 
-            window.rsxapp.debug = false;
+            window.rsxapp.mode = 'production';
             out.sealed = await mount();
 
-            window.rsxapp.debug = was_debug;
+            window.rsxapp.mode = was_mode;
             return out;
         });
 

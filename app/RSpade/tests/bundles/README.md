@@ -97,6 +97,8 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
 - `system/app/RSpade/Integrations/Scss/resource/scss-service.js` - the `scss` subsystem of the
   node service (sass, the sourcemap path cleanup, and the production autoprefixer/cssnano
   pass)
+- `system/app/RSpade/Core/Bundle/Rsx_Bundle_Abstract.php` - the `window.rsxapp` payload (`mode`)
+- `system/app/RSpade/Core/Js/Rsx.js` - `Rsx.is_dev()` / `is_debug()` / `is_prod()`
 - `system/app/RSpade/Core/JsParsers/Rsx_Node_Service.php` - the ONE node daemon both clients
   reach through (`request()`, `ping()`); its lifecycle is the `js_transform` concern
 
@@ -140,6 +142,7 @@ reproduce it - CONCAT-04 builds the oversized list deliberately.
 | A shadowed framework file compiles as its override, once, in its place - by directory, pattern and explicit include | php (child build + compile) |
 | No module bundle of the running build resolves a shadowed file | php |
 | An overridden model brings its application JS class into a bundle naming no application path, once, after its stub | php (child build + compile) |
+| `window.rsxapp.mode` names the mode; `Rsx.is_dev()` / `is_debug()` / `is_prod()` answer from it | playwright |
 | A pattern covers no view in the render-time coverage check | php (planned) |
 | Module bundle cannot include a module bundle | php (planned) |
 | Asset bundle discovered via scan cannot declare directory includes | php (planned) |

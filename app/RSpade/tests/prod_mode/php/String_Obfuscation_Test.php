@@ -311,6 +311,7 @@ class String_Obfuscation_Test extends Rsx_Test_Abstract
             $original['literal_data']
         );
         static::__assert_equals(['spaced key name' => 1, 'singlekey' => 2], $original['keys']);
+        static::__assert_equals("<div>\n                <span>NAME</span>\n        </div>|wide      gap", $original['indented']);
         static::__assert_equals('greeting template NAME closing words here', $original['template']);
         static::__assert_equals("first line words\nsecond line words", $original['multiline_template']);
         static::__assert_equals(['t' => 'tplwordNAMEtplafter', 'plain' => 'tplplain'], $original['template_data']);
@@ -398,6 +399,11 @@ class String_Obfuscation_Test extends Rsx_Test_Abstract
         static::__assert_true((bool) preg_match('/`\$\{_\$\$\([0-9,]+\)\}\$\{name\}\$\{_\$\$\([0-9,]+\)\}`/', $class_out), 'the template quasis were not rewritten as substitutions');
         static::__assert_equals(substr_count(file_get_contents($files['class']), "\n"), substr_count($class_out, "\n"), 'the rewritten class file changed its line count');
 
+        // A run of three or more identical consecutive indexes (indentation's empty words) is
+        // spread from one repeat call; a run of five empty words between 'wide' and 'gap'.
+        static::__assert_true((bool) preg_match('/_\$\$\([0-9]+,\.\.\._\$\$R\([0-9]+,5\),[0-9]+\)/', $class_out), "the run of empty words in 'wide      gap' was not spread from _\$\$R()");
+        static::__assert_true((bool) preg_match('/\.\.\._\$\$R\([0-9]+,1[0-9]\)/', $class_out), 'the template indentation run was not spread from _$$R()');
+
         $stub_out = $run['copies'][$files['model_stub']] ?? static::__fail('the model stub was not rewritten');
         static::__assert_contains("static __MODEL = 'Obf_Fixture_Model';", $stub_out);
         static::__assert_true((bool) preg_match('/data\[1\] = \{"constant":_\$\$\([0-9]+\),"label":_\$\$\([0-9,]+\)\};/', $stub_out), 'the model stub enum data values were not converted');
@@ -469,6 +475,7 @@ class String_Obfuscation_Test extends Rsx_Test_Abstract
         static::__assert_equals([$files['model_stub'], $files['class'], $files['template']], array_column(array_slice($run['entries'], 3), 'source'));
         static::__assert_contains('var _$$SC = [', $run['helper']);
         static::__assert_contains('function _$$(', $run['helper']);
+        static::__assert_contains('function _$$R(', $run['helper']);
         static::__assert_equals(1, substr_count($run['obfuscated'], 'var _$$SC'), 'the dictionary was emitted more than once');
 
         // With the class file first in output order, the helper precedes it instead.
@@ -566,6 +573,14 @@ class String_Obfuscation_Test extends Rsx_Test_Abstract
             RuntimeException::class,
             fn () => static::__pipeline($with_other, static::__eligible($files)),
             "bundle Fixture_Bundle already uses the identifier '_\$\$SC' in its app"
+        );
+
+        $other_repeat = static::__scratch_file('collide_repeat.js', "function _\$\$R() {}\n");
+        $with_repeat = ['other' => $other_repeat] + $files;
+        static::__assert_throws(
+            RuntimeException::class,
+            fn () => static::__pipeline($with_repeat, static::__eligible($files)),
+            "bundle Fixture_Bundle already uses the identifier '_\$\$R' in its app"
         );
 
         $vendor = static::__scratch_file('collide_vendor.js', "window._\$\$=function(){};\n");

@@ -17,9 +17,11 @@ const cssnano = require('cssnano');
  * Minify JavaScript content using Terser
  * Strips sourcemaps, preserves license comments, produces minimal output.
  * When stripConsoleDebug is true, console_debug() calls are dropped via Terser
- * pure_funcs (strict production only - the PHP caller decides, this file never does).
+ * pure_funcs; when stripConsoleLog is true, console.log() calls are dropped the same
+ * way (strict production only, and console.log for the app output only - the PHP caller
+ * decides, this file never does).
  */
-async function minifyJs(content, filename, stripConsoleDebug = false) {
+async function minifyJs(content, filename, stripConsoleDebug = false, stripConsoleLog = false) {
     try {
         // Extract all license comments BEFORE minification
         // These can be lost when Terser transforms/inlines IIFEs
@@ -48,7 +50,7 @@ async function minifyJs(content, filename, stripConsoleDebug = false) {
         // concern's Js_Minify_Names_Test.
         const compressOptions = {
             dead_code: true,
-            drop_console: false,  // Keep console.log for now
+            drop_console: false,  // console.error / warn / info always survive
             drop_debugger: true,
             passes: 2,
             keep_classnames: true,
@@ -61,8 +63,19 @@ async function minifyJs(content, filename, stripConsoleDebug = false) {
         // uses) AND the Debugger.console_debug(...) member form the helper delegates
         // to and that framework code (Ajax, Browser) calls directly. The two function
         // DEFINITIONS survive as harmless dead code - only invocations are the goal.
+        const pureFuncs = [];
         if (stripConsoleDebug) {
-            compressOptions.pure_funcs = ['console_debug', 'Debugger.console_debug'];
+            pureFuncs.push('console_debug', 'Debugger.console_debug');
+        }
+
+        // Strip console.log call sites from the app output. pure_funcs (not drop_console,
+        // which would also take console.error / warn / info) drops a call whose value is
+        // unused and keeps any side-effecting argument: console.log(n++) still increments.
+        if (stripConsoleLog) {
+            pureFuncs.push('console.log');
+        }
+        if (pureFuncs.length > 0) {
+            compressOptions.pure_funcs = pureFuncs;
         }
 
         const result = await terserMinify(cleanContent, {
@@ -71,7 +84,7 @@ async function minifyJs(content, filename, stripConsoleDebug = false) {
                 // Don't mangle these. `_$$` and `_$$SC` are the string-obfuscation globals
                 // (string-obfuscation-service.js): reserving them keeps a mangled local
                 // from ever shadowing them inside a class method.
-                reserved: ['$', 'jQuery', '_', 'Rsx', 'rsxapp', '_$$', '_$$SC'],
+                reserved: ['$', 'jQuery', '_', 'Rsx', 'rsxapp', '_$$', '_$$SC', '_$$R'],
                 keep_classnames: true,
                 keep_fnames: true
             },
@@ -177,7 +190,7 @@ async function minifyCss(content, filename) {
 
 module.exports = {
     /**
-     * {files: [{type:'js'|'css', content, filename, strip_console_debug}, ...]}
+     * {files: [{type:'js'|'css', content, filename, strip_console_debug, strip_console_log}, ...]}
      *   -> {results: {<filename>: <minify result>}}
      */
     async minify(request) {
@@ -188,9 +201,10 @@ module.exports = {
             const content = file.content;
             const filename = file.filename || 'unknown';
             const stripConsoleDebug = file.strip_console_debug === true;
+            const stripConsoleLog = file.strip_console_log === true;
 
             if (type === 'js') {
-                results[filename] = await minifyJs(content, filename, stripConsoleDebug);
+                results[filename] = await minifyJs(content, filename, stripConsoleDebug, stripConsoleLog);
             } else if (type === 'css') {
                 results[filename] = await minifyCss(content, filename);
             } else {

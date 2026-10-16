@@ -28,6 +28,12 @@ class Fixture_Strings {
         return leading + '|' + trailing + '|' + doubled + '|' + both + '|' + ' padonly ';
     }
 
+    static indented(name) {
+        return `<div>
+                <span>${name}</span>
+        </div>` + '|' + 'wide      gap';
+    }
+
     static single_word() {
         const lonely = 'loneword';
         return lonely;

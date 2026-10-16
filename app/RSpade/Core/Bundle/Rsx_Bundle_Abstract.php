@@ -445,6 +445,9 @@ abstract class Rsx_Bundle_Abstract
             : null;
 
         // Add runtime data
+        // The application mode, read in JS through Rsx.is_dev() / is_debug() / is_prod()
+        // ('development' | 'debug' | 'production', the validated Rsx::get_mode() value)
+        $rsxapp_data['mode'] = Rsx::get_mode();
         $rsxapp_data['debug'] = Rsx::is_development();
         // Use portal-specific methods when in portal context
         $is_portal = Rsx_Portal::is_portal_request();

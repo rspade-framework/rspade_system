@@ -48,7 +48,8 @@ DESCRIPTION
         behaves reliably and securely. The only major differences in a
         sealed build are that it skips the environment checks and dynamic
         source rebuilds (slightly faster), minifies JS (and, in strict
-        production, obfuscates the app bundle's strings), drops from each
+        production, obfuscates the app bundle's strings and drops its
+        console.log calls), drops from each
         bundle the jqhtml components nothing it serves names (the component
         shake, rsx:man bundle_api), and suppresses diagnostic dumps on
         errors. Every other feature - CSP enforcement
@@ -88,10 +89,22 @@ MODE COMPARISON
       (the component shake; removed names carried only in debug)
     Inline sourcemaps survive   Yes          Yes          No
     console_debug() in browser  Yes          Yes          No (stripped)
+    console.log() in app bundle Yes          Yes          No (stripped)
+      (vendor bundle keeps its console.log calls)
     Debug block in window.rsxapp Yes         Yes          No
+    window.rsxapp.mode          development  debug        production
+    Rsx.is_dev() (JS)           true         false        false
+    Rsx.is_debug() (JS)         false        true         false
+    Rsx.is_prod() (JS)          false        true         true
     CDN assets                  Mirrored     Mirrored     Mirrored
     Sealed / immutable build    No           Yes          Yes
     Error if artifacts missing  No           Yes          Yes
+
+    In the browser the mode is window.rsxapp.mode, read through the three
+    Rsx helpers above - the JS twins of Rsx::is_development(),
+    Rsx::is_debug() and Rsx::is_production() (which is likewise true in
+    both sealed builds). Strict production alone is
+    Rsx.is_prod() && !Rsx.is_debug().
 
     Note the two things that are NOT true of any mode: nothing merges the
     per-bundle JS/CSS into a single file (bundles are always the vendor/app
@@ -276,6 +289,14 @@ STRICT PRODUCTION
             2. The console_debug config block is omitted from
                window.rsxapp, so even a call site that survived (there are
                none in app bundles) would no-op at runtime.
+        - console.log() call sites are STRIPPED from each bundle's APP
+          output by the minifier itself (Terser pure_funcs 'console.log',
+          the minify RPC's strip_console_log flag, set for the app output
+          only). A dropped call keeps any side-effecting argument -
+          console.log(n++) still increments - and a call whose return value
+          is used survives. console.error / warn / info are untouched, and
+          the VENDOR output keeps its console.log calls. There is no runtime
+          check: the calls are simply absent from the shipped file.
 
 STRING OBFUSCATION
     A strict-production step on each bundle's APP JavaScript, run on the
@@ -341,23 +362,27 @@ STRING OBFUSCATION
     list - identical input gives byte-identical output (the DETERMINISM
     CONTRACT holds), any change to the word set gives a fresh order.
 
-    Runtime. A generated helper file declares two true globals at the top
-    level of the classic app script, so every later script sees them and
-    Terser never renames them:
+    Runtime. A generated helper file declares three true globals at the
+    top level of the classic app script, so every later script sees them
+    and Terser never renames them:
 
         var _$$SC = [ ...words ];      the dictionary
         function _$$(...indexes)       the indexed words joined by ' '
+        function _$$R(index, count)    `count` copies of one index
 
     It is concatenated DIRECTLY BEFORE the first eligible file in output
     order, so the dictionary exists before any converted string can run.
     Each converted string becomes a call: 'Save your changes' -> _$$(3,55,27).
+    A run of three or more identical consecutive indexes - typically the
+    empty words a template's indentation splits into - is spread from one
+    repeat call: _$$(6,..._$$R(12,40),9).
     A rewritten file keeps every other byte and its line count. When
     nothing in the bundle converts, no helper is emitted and no file
     changes.
 
-    Collisions. An identifier _$$SC or _$$ already present in any of a
+    Collisions. An identifier _$$SC, _$$ or _$$R already present in any of a
     bundle's app files or in its vendor JavaScript FAILS the build, naming
-    the bundle, the identifier and the file. Both names are reserved: never
+    the bundle, the identifier and the file. All three names are reserved: never
     declare them.
 
     Source: Core/Bundle/resource/string-obfuscation-service.js (the whole

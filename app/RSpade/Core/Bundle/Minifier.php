@@ -23,11 +23,14 @@ class Minifier
      * @param bool $strip_console_debug When true, Terser drops console_debug() call
      *                                   sites via pure_funcs (strict production only;
      *                                   driven by Manifest::_should_strip_console_debug()).
+     * @param bool $strip_console_log When true, Terser drops console.log() call sites via
+     *                                 pure_funcs, keeping side-effecting arguments; the
+     *                                 compiler sets it for a bundle's APP output only.
      * @return string Minified content
      */
-    public static function minify_js(string $content, string $filename = 'bundle.js', bool $strip_console_debug = false): string
+    public static function minify_js(string $content, string $filename = 'bundle.js', bool $strip_console_debug = false, bool $strip_console_log = false): string
     {
-        return static::_minify_via_rpc($content, 'js', $filename, $strip_console_debug);
+        return static::_minify_via_rpc($content, 'js', $filename, $strip_console_debug, $strip_console_log);
     }
 
     /**
@@ -36,7 +39,7 @@ class Minifier
      * The strict-production pass BundleCompiler runs on the app files just before they are
      * concatenated, when config('rsx.production.obfuscate_strings') is on. The CALLER chooses
      * the files; the whole transform - scope, the qualification rules, the bundle-wide
-     * seeded dictionary, the rewrite and the generated `_$$SC` / `_$$` helper file - lives in
+     * seeded dictionary, the rewrite and the generated `_$$SC` / `_$$` / `_$$R` helper file - lives in
      * the `string_obfuscation` node subsystem (resource/string-obfuscation-service.js), which
      * writes its output into $output_dir. This method only carries the request.
      *
@@ -51,7 +54,7 @@ class Minifier
      * @return array {helper_path: ?string, files: [path => rewritten copy], eligible,
      *               rewritten, converted, words}; helper_path is null and files empty when
      *               nothing converted
-     * @throws RuntimeException On a parse failure or when `_$$SC` / `_$$` is already in use
+     * @throws RuntimeException On a parse failure or when `_$$SC`, `_$$` or `_$$R` is already in use
      */
     public static function obfuscate_strings(array $eligible, array $others, string $vendor_path, string $bundle_name, string $output_dir): array
     {
@@ -92,7 +95,7 @@ class Minifier
     /**
      * Minify content via RPC server
      */
-    protected static function _minify_via_rpc(string $content, string $type, string $filename, bool $strip_console_debug = false): string
+    protected static function _minify_via_rpc(string $content, string $type, string $filename, bool $strip_console_debug = false, bool $strip_console_log = false): string
     {
         // NO TIMEOUT anywhere on this path - Rsx_Node_Service::request() connects with none.
         // This call site once carried a 30s connect budget whose own comment gave the reason
@@ -104,7 +107,8 @@ class Minifier
                     'type' => $type,
                     'content' => $content,
                     'filename' => $filename,
-                    'strip_console_debug' => $strip_console_debug
+                    'strip_console_debug' => $strip_console_debug,
+                    'strip_console_log' => $strip_console_log,
                 ]
             ]
         ]);

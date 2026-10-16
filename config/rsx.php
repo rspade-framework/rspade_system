@@ -641,10 +641,11 @@ return [
         // string there that is an object-literal value or array-literal
         // element, split into words and rebuilt at run time from a seeded,
         // deterministic dictionary: the global `_$$SC` array and the printer
-        // `_$$(...indexes)`, declared by a generated file concatenated
-        // directly before the first such file. Every other file, vendor
-        // JavaScript and CSS are never touched. A build fails if either name
-        // is already in use.
+        // `_$$(...indexes)` (with `_$$R(index, count)` spreading a run of one
+        // repeated index), declared by a generated file concatenated directly
+        // before the first such file. Every other file, vendor JavaScript and
+        // CSS are never touched. A build fails if any of the three names is
+        // already in use.
         //
         // It deters casual reading of the shipped file and nothing more -
         // rendered text is in the DOM and the dictionary is readable - so rules

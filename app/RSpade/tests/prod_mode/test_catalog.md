@@ -242,6 +242,8 @@ Real node/Terser RPC round-trip; server force-restarted before, stopped after.
 |----|--------------------------|------|-------|----------|--------|--------------|
 | CON-01 | strip flag adds pure_funcs -> console_debug( call site removed | asset | minify with strip=true | call site gone, side-effect code kept | implemented | 2026-07-15 |
 | CON-01b | no strip flag (debug builds) keeps console_debug( | asset | minify with strip=false | call site retained | implemented | 2026-07-15 |
+| CON-02 | strip_console_log (the app output) adds console.log to pure_funcs -> every console.log( call site removed; console.error / console.warn and their arguments kept; a side-effecting argument (`console.log(n++)`) keeps its effect | asset | minify with strip_console_log=true | no `console.log`, error/warn markers present, increment present | implemented | 2026-10-16 |
+| CON-02b | no strip_console_log (the vendor output) keeps console.log( | asset | minify with strip_console_log=false | call site and argument retained | implemented | 2026-10-16 |
 
 ## String_Obfuscation_Test (asset)
 
@@ -268,7 +270,8 @@ value. The sealed-build half is a grep in `cli/prod_lifecycle.sh` step 2b (the s
 | OBF-05 | The helper file sits directly before the first eligible file, once; eligible entries are their copies, attributed to their originals | asset | bundle order (model stub first), and a reordering (class file first) | helper immediately before the first eligible entry in each | implemented | 2026-10-16 |
 | OBF-06 | Determinism: same input byte-identical; a changed input round-trips with a different dictionary | asset | fixtures, fixtures + one added method | identical; changed values equal its original; helper differs | implemented | 2026-10-16 |
 | OBF-07 | Nothing to convert -> no helper, list unchanged | asset | no eligible file; an eligible class holding only a field initializer, a parameter default and a single word | list identical, `helper_path` null | implemented | 2026-10-16 |
-| OBF-08 | `_$$` / `_$$SC` already in an eligible file, another app file or the vendor output fails, naming bundle and identifier | asset | eligible `function _$$`, non-eligible `var _$$SC`, vendor `window._$$=` | RuntimeException with the bundle and identifier | implemented | 2026-10-16 |
+| OBF-08 | `_$$` / `_$$SC` / `_$$R` already in an eligible file, another app file or the vendor output fails, naming bundle and identifier | asset | eligible `function _$$`, non-eligible `var _$$SC` and `function _$$R`, vendor `window._$$=` | RuntimeException with the bundle and identifier | implemented | 2026-10-16 |
+| OBF-03c | A run of three or more identical consecutive indexes is spread from `_$$R(index, count)` | asset | template indentation, `'wide      gap'` | `..._$$R(n,5)` and an indentation run of 10+; values reproduced byte for byte (OBF-02) | implemented | 2026-10-16 |
 | OBF-09 | A strict-production sealed build serves the dictionary | cli | `prod_lifecycle.sh` step 2b, /login scripts | contains `_$$SC=[` | implemented | 2026-10-16 |
 
 ## Bundle emission order (`php/Bundle_Emission_Order_Test.php`)

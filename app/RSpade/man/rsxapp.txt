@@ -60,7 +60,15 @@ OBJECT STRUCTURE
                             id + site id + build_key (Rsx.scope_key() returns it
                             verbatim), so the client never derives scope itself.
 
-        debug               Boolean. True in non-production environments.
+        mode                String. The application mode: 'development',
+                            'debug' or 'production' (RSX_MODE, rsx:man
+                            app_mode). Read it through Rsx.is_dev() (true
+                            only in development), Rsx.is_debug() (true only
+                            in debug) and Rsx.is_prod() (true in debug AND
+                            production - every sealed build).
+
+        debug               Boolean. True in development mode only - the
+                            same fact as Rsx.is_dev().
 
         current_controller  String. PHP controller handling this request.
 
@@ -169,6 +177,7 @@ EXAMPLE OUTPUT
             "code_key": "1a6bfffb01ab44dc6e4e9d2f7d03bff5",
             "session_hash": "9b8cdc5ebf5a3db1e88d400bafe1af06...",
             "cache_key": "9f85e6a119cf76f4b99c50eb252cd4f3",
+            "mode": "development",
             "debug": true,
             "current_controller": "Frontend_Spa_Controller",
             "current_action": "index",
@@ -205,6 +214,11 @@ EXAMPLE OUTPUT
         };
 
 COMMON USAGE PATTERNS
+    Branch on the application mode (reads rsxapp.mode):
+        if (Rsx.is_dev()) { ... }     // development only
+        if (Rsx.is_debug()) { ... }   // the sealed debug build only
+        if (Rsx.is_prod()) { ... }    // debug or production
+
     Check authentication:
         if (window.rsxapp.is_auth) {
             // User is logged in

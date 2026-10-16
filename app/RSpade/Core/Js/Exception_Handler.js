@@ -2,7 +2,7 @@
  * Exception_Handler
  *
  * Centralized exception display logic for unhandled exceptions.
- * Decides whether to show exception in SPA layout (debug mode) or as flash alert.
+ * Decides whether to show exception in SPA layout (development mode) or as flash alert.
  *
  * Architecture:
  * - window error/unhandledrejection → Rsx._handle_unhandled_exception()
@@ -10,12 +10,12 @@
  * - Rsx disables SPA navigation
  * - Rsx calls Exception_Handler.display_unhandled_exception()
  * - Exception_Handler checks conditions and shows either:
- *   a) Debug error box in layout (if SPA, debug mode, action loading)
+ *   a) Debug error box in layout (if SPA, development mode, action loading)
  *   b) Flash alert (when layout unavailable)
  *
  * Display Conditions for Layout Debug UI:
  * 1. Must be in SPA mode (window.rsxapp.is_spa)
- * 2. Must be in debug mode (window.rsxapp.debug)
+ * 2. Must be in development mode (Rsx.is_dev())
  * 3. Spa.layout must exist with show_debug_exception() method
  * 4. Spa.layout.action must exist
  * 5. Action must still be loading (Spa.layout._action_is_loading === true)
@@ -111,7 +111,7 @@ class Exception_Handler {
      * Decision tree:
      * 1. If developer suppressed display → do nothing
      * 2. Log to console if from global handler (not already logged by catcher)
-     * 3. If in SPA, debug mode, layout exists, action not ready → show in layout
+     * 3. If in SPA, development mode, layout exists, action not ready → show in layout
      * 4. Otherwise → show flash alert
      *
      * @param {Error|string} exception - The exception to display
@@ -167,8 +167,8 @@ class Exception_Handler {
             return false;
         }
 
-        // Must be in debug mode
-        if (!window.rsxapp.debug) {
+        // Must be in development mode
+        if (!Rsx.is_dev()) {
             return false;
         }
 
@@ -232,9 +232,9 @@ class Exception_Handler {
         if (now - Exception_Handler._last_exception_flash >= 1000) {
             Exception_Handler._last_exception_flash = now;
 
-            // Truncate long messages in debug mode, show generic message in production
+            // Truncate long messages in development mode, show a generic message otherwise
             let message;
-            if (window.rsxapp && window.rsxapp.debug) {
+            if (Rsx.is_dev()) {
                 message = error_text.length > 300
                     ? error_text.substring(0, 300) + '...'
                     : error_text;

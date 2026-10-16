@@ -48,15 +48,17 @@
  *     contract) and any change to the word set gives a fresh order. Phase 2 rewrites each
  *     eligible file against that one dictionary.
  *
- *   RUNTIME - a generated HELPER FILE declares two true globals at the top level of the
+ *   RUNTIME - a generated HELPER FILE declares three true globals at the top level of the
  *     classic app script:
  *       var _$$SC = [ ...words ];               the dictionary
  *       function _$$(...indexes) { ... }         the indexed words joined by ' '
- *     and each converted string becomes `_$$(3,55,27)`. The caller concatenates the helper
+ *       function _$$R(index, count) { ... }      `count` copies of one index
+ *     and each converted string becomes `_$$(3,55,27)`; a run of three or more identical
+ *     consecutive indexes is spread from one repeat call, `_$$(3,..._$$R(8,12),27)`. The caller concatenates the helper
  *     file DIRECTLY BEFORE the first eligible file, so every converted string runs after the
  *     dictionary exists. Top-level declarations in a non-module script are properties of the
  *     global object, Terser never renames a top-level name (toplevel mangling is off), and
- *     the minify subsystem reserves both names from local mangling, so no minified local can
+ *     the minify subsystem reserves all three names from local mangling, so no minified local can
  *     shadow them. When nothing converts, no helper is written and no file is rewritten.
  *
  *   OUTPUT - rewritten copies are written to the caller's scratch directory (cleared first);
@@ -65,7 +67,7 @@
  *     lines keeps its line breaks after the call, so the file's line count - and the line
  *     numbers of its inline sourcemap - do not move.
  *
- *   COLLISIONS - an identifier `_$$SC` or `_$$` already present in an eligible file (any
+ *   COLLISIONS - an identifier `_$$SC`, `_$$` or `_$$R` already present in an eligible file (any
  *     Identifier node), in any other app file of the bundle or in its vendor output (a token
  *     scan - those files are never parsed) fails the build, naming the bundle, the identifier
  *     and the file.
@@ -82,7 +84,11 @@ const babel_parser = require('@babel/parser');
 
 const DICTIONARY_NAME = '_$$SC';
 const PRINTER_NAME = '_$$';
-const RESERVED_NAMES = [DICTIONARY_NAME, PRINTER_NAME];
+const REPEAT_NAME = '_$$R';
+const RESERVED_NAMES = [DICTIONARY_NAME, PRINTER_NAME, REPEAT_NAME];
+
+// A run of this many identical consecutive indexes or more is emitted as one repeat call.
+const REPEAT_MIN_RUN = 3;
 
 const FUNCTION_TYPES = new Set(['FunctionExpression', 'FunctionDeclaration', 'ArrowFunctionExpression']);
 const CLASS_TYPES = new Set(['ClassDeclaration', 'ClassExpression']);
@@ -271,8 +277,8 @@ function collision_error(bundle, name, where, label) {
 
 /** Token scan of a file that is never parsed (non-eligible app files, vendor output). */
 function assert_no_token_collision(content, bundle, where, label) {
-    // Longest name first, so `_$$SC` is reported as itself rather than as `_$$`.
-    for (const name of [DICTIONARY_NAME, PRINTER_NAME]) {
+    // Each name is matched as a whole token, so `_$$SC` and `_$$R` never report as `_$$`.
+    for (const name of RESERVED_NAMES) {
         const escaped = name.replace(/\$/g, '\\$');
         const pattern = new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`);
         if (pattern.test(content)) {
@@ -375,7 +381,7 @@ function apply_edits(content, edits, index) {
     let cursor = 0;
 
     for (const edit of edits) {
-        let call = `${PRINTER_NAME}(${edit.value.split(' ').map((w) => index.get(w)).join(',')})`;
+        let call = `${PRINTER_NAME}(${printer_arguments(edit.value.split(' ').map((w) => index.get(w)))})`;
 
         // Line breaks the original source spanned (a multi-line template, a `\`-continued
         // string) follow the call, so the file keeps its line count.
@@ -400,9 +406,38 @@ function apply_edits(content, edits, index) {
     return parts.join('');
 }
 
+/**
+ * The printer's argument list for a string's word indexes: a run of REPEAT_MIN_RUN or more
+ * identical consecutive indexes (indentation inside a template splits into a long run of
+ * empty words) is spread from one repeat call, `...${REPEAT_NAME}(n,count)`.
+ */
+function printer_arguments(indexes) {
+    const parts = [];
+
+    for (let i = 0; i < indexes.length;) {
+        let run = 1;
+        while (i + run < indexes.length && indexes[i + run] === indexes[i]) {
+            run++;
+        }
+
+        if (run >= REPEAT_MIN_RUN) {
+            parts.push(`...${REPEAT_NAME}(${indexes[i]},${run})`);
+        } else {
+            for (let k = 0; k < run; k++) {
+                parts.push(String(indexes[i]));
+            }
+        }
+
+        i += run;
+    }
+
+    return parts.join(',');
+}
+
 function helper_source(words) {
     return `var ${DICTIONARY_NAME} = [${words.map((w) => JSON.stringify(w)).join(',')}];\n` +
-        `function ${PRINTER_NAME}(...i) { return i.map(function (n) { return ${DICTIONARY_NAME}[n]; }).join(' '); }\n`;
+        `function ${PRINTER_NAME}(...i) { return i.map(function (n) { return ${DICTIONARY_NAME}[n]; }).join(' '); }\n` +
+        `function ${REPEAT_NAME}(n, c) { return Array(c).fill(n); }\n`;
 }
 
 /**
