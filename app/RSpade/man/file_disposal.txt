@@ -224,7 +224,7 @@ SCHEDULED TASKS (File_Disposal_Service)
         same site), so the window is what keeps an abandoned key from lingering
         indefinitely. See rsx:man file_upload (THE CLAIM WINDOW).
 
-    run_daily_disposal   #[Schedule('0 2 * * *')]
+    run_daily_disposal   #[Schedule('maintenance')]  (the maintenance window, rsx:man tasks)
         (a) DESTROY pass: attachments with deleted_at older than the retention window
             and destroyed_at NULL -> destroy.hold gate -> destroyed action -> stamp
             destroyed_at. Does not run at all when the retention is 0.
@@ -234,7 +234,7 @@ SCHEDULED TASKS (File_Disposal_Service)
             rendition + thumbnail caches; the search-index row cascades on the storage
             delete). Runs under every retention setting.
 
-    run_monthly_deep_sweep   #[Schedule('0 2 * * 0')] + first-Sunday guard
+    run_monthly_deep_sweep   #[Schedule('maintenance weekly on sunday')] + first-Sunday guard
         Classic cron cannot express "first Sunday", so it fires every Sunday and
         returns early unless the day-of-month is 1..7. Full reconciliation, no time
         window: (a) release every storage blob no declared reference pins;

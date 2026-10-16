@@ -32,8 +32,8 @@ class Api_Cleanup_Service extends Rsx_Service_Abstract
      * @return null
      */
     #[Task('Clean up old API request log records')]
-    #[Exclusive]
-    #[Schedule('daily at 3am')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance')]
     public static function cleanup_request_log(Task_Instance $task, array $params = [])
     {
         $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);

@@ -112,10 +112,13 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
      * Delete whole SMS queue rows past the retention window.
      */
     #[Task('Clean up old SMS queue records')]
-    #[Schedule('daily at 3am')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance')]
     public static function cleanup(Task_Instance $task, array $params = [])
     {
         $days = $params['days'] ?? config('rsx.sms.retention_days', 30);
+
+        $task->status("Deleting SMS records older than {$days} days");
 
         // Every site's rows age out on the same clock: retention is install policy.
         $deleted = Sms_Queue_Model::without_site_scope(fn () => Sms_Queue_Model::cleanup_old($days));

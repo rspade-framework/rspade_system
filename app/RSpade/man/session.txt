@@ -1730,7 +1730,7 @@ AUDIT SESSIONS
 
         A string that no session, device, login-history row or audit session
         names any more is deleted by Session_Cleanup_Service::
-        cleanup_user_agents, weekly (Sunday 02:00), once it has gone a day
+        cleanup_user_agents, weekly (Sunday, in the maintenance window), once it has gone a day
         without being presented. One an audit session names is kept for good.
 
     Client addresses:

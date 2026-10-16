@@ -45,8 +45,8 @@ class Revision_Cleanup_Service extends Rsx_Service_Abstract
      * @return null
      */
     #[Task('Prune revision history past its retention window')]
-    #[Exclusive]
-    #[Schedule('daily at 3am')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance')]
     public static function cleanup_revisions(Task_Instance $task, array $params = [])
     {
         $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);

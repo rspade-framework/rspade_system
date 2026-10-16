@@ -291,10 +291,13 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
      * and prune the development catcher's Maildir on the same schedule.
      */
     #[Task('Clean up old email queue records')]
-    #[Schedule('daily at 3am')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance')]
     public static function cleanup(Task_Instance $task, array $params = [])
     {
         $days = $params['days'] ?? config('rsx.mail.retention_days', 30);
+
+        $task->status("Deleting email records older than {$days} days");
 
         // Every site's rows age out on the same clock: retention is install policy.
         $deleted = Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::cleanup_old($days));
@@ -302,6 +305,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
             ? "Deleted {$deleted} email record(s) older than {$days} days."
             : "No email records are older than {$days} days; nothing deleted.");
 
+        $task->status('Pruning the development mail catcher');
         $pruned = static::_prune_catcher_maildir((int) $days);
 
         if ($pruned > 0) {

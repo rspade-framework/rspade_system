@@ -1,0 +1,85 @@
+MAINTENANCE TASKS RUN IN ONE WINDOW: #[Schedule('maintenance')] + #[Exclusive('maintenance')]
+Date: 2026-10-16
+
+IF YOU DO NOTHING: every daily or weekly cleanup task in your rsx/services/ keeps its hard-coded hour ('daily at 3am', '0 2 * * 0'), runs outside the install's maintenance window, ignores rsx.tasks.maintenance_hour when the operator moves it, and can run at the same time as the framework's own maintenance tasks.
+
+SUMMARY
+    Category 2: a task convention. The framework's housekeeping - retention purges,
+    disposal sweeps, log rotation, the mail/SMS/API/revision cleanups - now runs in
+    ONE daily window that opens at rsx.tasks.maintenance_hour (default 2, i.e. 2am,
+    on the RSX_SERVER_TIMEZONE wall clock), one task at a time. An application's own
+    maintenance tasks are expected to join it.
+
+    A maintenance task is anything that runs once a day or less. Hourly and faster
+    tasks are not affected and keep their own schedules.
+
+THE CHANGE
+    New schedule phrases, resolved through rsx.tasks.maintenance_hour:
+
+        'maintenance'                    daily, at the window
+        'maintenance weekly on <day>'    weekly, at the window
+        'maintenance monthly'            the 1st of the month, at the window
+
+    #[Exclusive('maintenance')] puts a task in the window's exclusive group: one
+    maintenance task runs at a time, across every pool and host, and none overlaps its
+    own next run. Changing rsx.tasks.maintenance_hour re-registers every maintenance
+    schedule on the next scheduler tick.
+
+    The framework tasks now in the window: Mail_Queue_Service::cleanup,
+    Sms_Queue_Service::cleanup, File_Disposal_Service::run_daily_disposal and
+    ::run_monthly_deep_sweep (weekly on Sunday, first-Sunday guard unchanged),
+    Api_Cleanup_Service::cleanup_request_log, Revision_Cleanup_Service::cleanup_revisions,
+    Session_Cleanup_Service::cleanup_user_agents (weekly on Sunday) and
+    ::end_stale_impersonations, Log_Maintenance_Service::rotate (previously midnight).
+
+ACTION REQUIRED
+    1. Find your scheduled tasks:
+
+           grep -rn "#\[Schedule(" rsx/
+
+       Every one that runs once a day or less is a maintenance task.
+
+    2. Convert each one. Replace its schedule and its exclusivity marker:
+
+           Before:
+               #[Task('Purge expired exports')]
+               #[Exclusive]
+               #[Schedule('daily at 3am')]
+
+           After:
+               #[Task('Purge expired exports')]
+               #[Exclusive('maintenance')]
+               #[Schedule('maintenance')]
+
+       A weekly task becomes 'maintenance weekly on sunday' (or its day); a monthly
+       one 'maintenance monthly'. A task with no #[Exclusive] gains
+       #[Exclusive('maintenance')]. A task that also declares #[Debounce] keeps it.
+
+       A task whose hour is a real requirement - an export a partner collects at
+       06:00 - is not housekeeping: leave it on its own schedule.
+
+    3. Make each one report what it does. A maintenance run is read the next
+       morning by somebody who did not watch it:
+           - $task->status('...') before each phase;
+           - $task->progress_count($done, $total) over a counted backlog;
+           - $task->heartbeat() and $task->is_stop_requested() on every item;
+           - a $task->stdout() line naming what changed, or that nothing was due;
+           - a $task->summary() at the end.
+       The worked example is rsx:man tasks, THE MAINTENANCE WINDOW; framework
+       examples: Revision_Cleanup_Service::cleanup_revisions,
+       Api_Cleanup_Service::cleanup_request_log.
+
+    4. If 2am is the wrong window for this install, set it once in
+       rsx/resource/config/rsx.php:
+
+           'tasks' => ['maintenance_hour' => 4],
+
+VERIFICATION
+    - php artisan rsx:tasks:list shows every maintenance task's next run at the
+      window's hour (after one scheduler tick).
+    - The morning after, /_sys/tasks shows each maintenance run with a status,
+      output and a summary saying what it did.
+
+SEE ALSO
+    rsx:man tasks - THE MAINTENANCE WINDOW
+    skill rspade:background-tasks - Maintenance tasks

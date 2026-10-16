@@ -37,6 +37,7 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * @property int $created_by_id
  * @property int $created_by_type
  * @property string $cron_expression
+ * @property string $cron_resolved
  * @property int $id
  * @property string $last_error
  * @property string $last_error_at

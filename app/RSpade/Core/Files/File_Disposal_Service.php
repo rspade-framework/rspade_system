@@ -227,7 +227,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     // -------------------------------------------------------------------------
 
     /**
-     * DAILY disposal (02:00). Two batched, keyset-paginated passes (bounded memory):
+     * DAILY disposal, in the maintenance window. Two batched, keyset-paginated passes (bounded memory):
      *   (a) DESTROY: attachments whose retention window has elapsed (deleted_at < now -
      *       deleted_retention_days, destroyed_at still NULL) go through the destroy.hold gate
      *       + the file.attachment.destroyed action, then get stamped destroyed_at (a permanent
@@ -242,8 +242,8 @@ class File_Disposal_Service extends Rsx_Service_Abstract
      * is the ONLY place the retention period is read.
      */
     #[Task('Dispose of attachments past their retention window and release orphaned blobs')]
-    #[Exclusive]
-    #[Schedule('0 2 * * *')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance')]
     public static function run_daily_disposal(Task_Instance $task, array $params = [])
     {
         // Retention is install policy and the blob store is shared, so every pass below walks
@@ -379,8 +379,9 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * MONTHLY deep orphan sweep (first Sunday, 02:00). Classic cron cannot express "first
-     * Sunday", so this fires every Sunday (0 2 * * 0) and guards on day-of-month <= 7. Full
+     * MONTHLY deep orphan sweep (first Sunday, in the maintenance window). Classic cron cannot
+     * express "first Sunday", so this fires every Sunday ('maintenance weekly on sunday') and
+     * guards on day-of-month <= 7. Full
      * reconciliation with no time window, three keyset/streaming passes:
      *   (a) DB: every _file_storage row with a retention-aware refcount of 0 -> release.
      *   (b) DISK: stream-walk blob_root(); unlink files older than the age guard that have no
@@ -392,8 +393,8 @@ class File_Disposal_Service extends Rsx_Service_Abstract
      * A ['force' => true] param bypasses the first-Sunday guard (tests / manual invocation).
      */
     #[Task('Monthly deep file sweep: reconcile blob refcounts + disk, sweep stale unassigned uploads')]
-    #[Exclusive]
-    #[Schedule('0 2 * * 0')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance weekly on sunday')]
     public static function run_monthly_deep_sweep(Task_Instance $task, array $params = [])
     {
         // Every site's attachments, for the reason run_daily_disposal() gives.

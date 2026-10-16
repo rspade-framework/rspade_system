@@ -240,8 +240,8 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      * @return null
      */
     #[Task('Delete user-agent strings no session, device, login or audit record names (weekly)')]
-    #[Exclusive]
-    #[Schedule('0 2 * * 0')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance weekly on sunday')]
     public static function cleanup_user_agents(Task_Instance $task, array $params = [])
     {
         $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);
@@ -402,8 +402,8 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      * @return null
      */
     #[Task('End impersonations older than rsx.sessions.impersonation_max_days (runs daily)')]
-    #[Exclusive]
-    #[Schedule('daily at 3am')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance')]
     public static function end_stale_impersonations(Task_Instance $task, array $params = [])
     {
         $days = config('rsx.sessions.impersonation_max_days');
@@ -419,6 +419,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         }
 
         $cutoff = now()->subDays($days);
+        $task->status("Ending impersonations older than {$days} day(s)");
 
         $staff = Session::whereNotNull('impersonator_login_user_id')
             ->where('active', true)

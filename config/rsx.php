@@ -1550,6 +1550,13 @@ return [
         // from its start instead, and not under this one. 0 = no silence limit.
         'silent_timeout' => 1800,  // 30 minutes
 
+        // THE MAINTENANCE WINDOW: the hour (0-23, on the RSX_SERVER_TIMEZONE wall clock) at
+        // which every #[Schedule('maintenance')] task runs - the framework's retention
+        // purges, disposal sweeps and log rotation, and an application's own. They declare
+        // #[Exclusive('maintenance')] as well, so they run one after another from this hour.
+        // Changing it re-registers those schedules on the next tick. See rsx:man tasks.
+        'maintenance_hour' => 2,
+
         // How long a FORCE STOP waits for the task to stop on its own before its worker is
         // killed (Task_Run_Model::force_stop(), when the caller names no grace). Owner-set: it is
         // the window a cooperative task gets to finish cleanly, not a bound on any operation -

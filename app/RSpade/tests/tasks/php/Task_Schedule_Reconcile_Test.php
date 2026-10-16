@@ -22,9 +22,10 @@ use App\RSpade\Core\Time\Rsx_Time;
  * _task_schedules - one row per declared schedule - in line with the manifest.
  *
  *   - REGISTER : a declaration with no row gets one, next_run_at its next cadence;
- *   - CHANGE   : a row whose cron_expression or timezone differs is re-registered IN
- *                PLACE - the new expression or server timezone and a recomputed
- *                next_run_at, the run statistics kept;
+ *   - CHANGE   : a row whose cron_expression, resolution (cron_resolved - a moved
+ *                rsx.tasks.maintenance_hour) or timezone differs is re-registered IN
+ *                PLACE with a recomputed next_run_at, the run statistics kept; a row
+ *                with no resolution recorded yet has it recorded and keeps next_run_at;
  *   - MATCH    : a matching row is left untouched;
  *   - REMOVE   : a row the manifest no longer declares is deleted; its past runs keep their
  *                rows, schedule_id cleared;
@@ -138,6 +139,55 @@ class Task_Schedule_Reconcile_Test extends Rsx_Test_Abstract
             config(['rsx.datetime.server_timezone' => $original]);
             Artisan::call('rsx:task:process');
         }
+    }
+
+    public static function test_a_moved_maintenance_hour_is_reregistered_in_place()
+    {
+        $maintenance = null;
+        foreach (Task::get_scheduled_tasks() as $def) {
+            if ($def['cron_expression'] === 'maintenance') {
+                $maintenance = $def;
+                break;
+            }
+        }
+        if ($maintenance === null) {
+            static::__skip("No #[Schedule('maintenance')] task in the manifest");
+        }
+
+        Artisan::call('rsx:task:process');
+        $before = static::__schedule_for($maintenance['class'], $maintenance['method']);
+        static::__assert_equals((new Cron_Parser('maintenance'))->get_cron_expression(), $before->cron_resolved, 'the row records its resolution');
+
+        $original = config('rsx.tasks.maintenance_hour');
+        $hour = $original === 5 ? 6 : 5;
+        config(['rsx.tasks.maintenance_hour' => $hour]);
+        try {
+            Artisan::call('rsx:task:process');
+
+            $after = static::__schedule_for($maintenance['class'], $maintenance['method']);
+            static::__assert_equals((int) $before->id, (int) $after->id, 'the same row');
+            static::__assert_equals('maintenance', $after->cron_expression, 'the declaration is unchanged');
+            static::__assert_equals("0 {$hour} * * *", $after->cron_resolved, 'the new resolution is recorded');
+            $next = (new \DateTime('@' . strtotime($after->next_run_at)))->setTimezone(new \DateTimeZone($after->timezone));
+            static::__assert_equals(sprintf('%02d:00', $hour), $next->format('H:i'), 'next_run_at moved to the new hour');
+        } finally {
+            config(['rsx.tasks.maintenance_hour' => $original]);
+            Artisan::call('rsx:task:process');
+        }
+    }
+
+    public static function test_a_row_with_no_resolution_recorded_has_it_recorded_and_keeps_its_next_run()
+    {
+        $def = static::__first_scheduled_def();
+        Artisan::call('rsx:task:process');
+        $before = static::__schedule_for($def['class'], $def['method']);
+
+        DB::table('_task_schedules')->where('id', $before->id)->update(['cron_resolved' => null]);
+        Artisan::call('rsx:task:process');
+
+        $after = static::__schedule_for($def['class'], $def['method']);
+        static::__assert_equals((new Cron_Parser($def['cron_expression']))->get_cron_expression(), $after->cron_resolved);
+        static::__assert_equals($before->next_run_at, $after->next_run_at, 'next_run_at is not moved');
     }
 
     public static function test_a_schedule_no_longer_declared_is_removed_and_its_runs_kept()

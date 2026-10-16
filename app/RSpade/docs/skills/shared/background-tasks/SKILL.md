@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: "Writing, running and watching RSpade background tasks - #[Task] service methods, the Task_Instance reporting API (status(), progress(), progress_count(), eta(), state(), queue_push()/queue_pop()/queue_remove()/queue_clear()/queue_depth(), message(), stdout()/stderr(), attach_file()/attach_bytes(), summary(), heartbeat(), flush(), run_again_in()), the return contract (null/true/0 = success, an integer = return code), Task::dispatch / Task::internal and the Task_Run_Model run row, #[Schedule] recurrence and Task::set_next_run(), the silence limit (rsx.tasks.silent_timeout - a task that stops reporting is killed after 30 minutes), what a pending run is waiting for (Task_Waiting, Rsx_Task.waiting_text), #[Exclusive]/#[Debounce] identities, the on_demand/scheduled/kill worker pools, lifecycle control (request_stop, force_stop, force_kill, cancel, rerun, rsx:tasks:stop), the deny-by-default task gates (Task_Gates, task.view.authorize, task.view.scope, task.control.authorize), Rsx_Task in JS, and the widgets Task_Status_Badge, Task_Report, Task_Report_Browser and Task_Output. Use when adding a scheduled job, a queued background job, a cleanup/import/report task, making a long task stoppable (is_stop_requested), reporting progress, showing a user the progress or output of a task they started, letting users stop or rerun their runs, or debugging a task that 'returned an array' and failed, a widget that says Unavailable, a run stuck Pending, or a long task killed with 'no report for Ns'."
+description: "Writing, running and watching RSpade background tasks - #[Task] service methods, the Task_Instance reporting API (status(), progress(), progress_count(), eta(), state(), queue_push()/queue_pop()/queue_remove()/queue_clear()/queue_depth(), message(), stdout()/stderr(), attach_file()/attach_bytes(), summary(), heartbeat(), flush(), run_again_in()), the return contract (null/true/0 = success, an integer = return code), Task::dispatch / Task::internal and the Task_Run_Model run row, #[Schedule] recurrence and Task::set_next_run(), maintenance tasks (#[Schedule('maintenance')] + #[Exclusive('maintenance')] in the rsx.tasks.maintenance_hour window), the silence limit (rsx.tasks.silent_timeout - a task that stops reporting is killed after 30 minutes), what a pending run is waiting for (Task_Waiting, Rsx_Task.waiting_text), #[Exclusive]/#[Debounce] identities, the on_demand/scheduled/kill worker pools, lifecycle control (request_stop, force_stop, force_kill, cancel, rerun, rsx:tasks:stop), the deny-by-default task gates (Task_Gates, task.view.authorize, task.view.scope, task.control.authorize), Rsx_Task in JS, and the widgets Task_Status_Badge, Task_Report, Task_Report_Browser and Task_Output. Use when adding a scheduled job, a nightly or weekly cleanup / retention / maintenance task, a queued background job, a cleanup/import/report task, making a long task stoppable (is_stop_requested), reporting progress, showing a user the progress or output of a task they started, letting users stop or rerun their runs, or debugging a task that 'returned an array' and failed, a widget that says Unavailable, a run stuck Pending, or a long task killed with 'no report for Ns'."
 ---
 
 # Background Tasks
@@ -266,6 +266,39 @@ public static function drain(Task_Instance $task, array $params = []) { ... }
 ```
 
 Standard cron works (`'0 3 * * *'`), but **prefer the phrases**: `'every minute'`, `'every 5 minutes'`, `'hourly'`, `'daily at 2am'`, `'weekly on monday at 9:30am'`, `'monthly'`. **Why: a cron step token is `*` followed by `/`, which terminates a block comment and corrupts the file.**
+
+### Maintenance tasks
+
+Housekeeping that runs **once a day or less** - a retention purge, a cleanup, a disposal sweep, a nightly rebuild - is a MAINTENANCE task, and every one is built the same three ways:
+
+1. **Scheduled in the window**: `#[Schedule('maintenance')]` (daily), `'maintenance weekly on sunday'`, `'maintenance monthly'` (the 1st). The window opens at the top of `rsx.tasks.maintenance_hour` (default `2`) on the server timezone's clock, so the operator moves every heavy job at once. Never hard-code `'daily at 3am'`.
+2. **`#[Exclusive('maintenance')]`**: the window's tasks run one at a time across pools and hosts, and none overlaps its own next run (it replaces a bare `#[Exclusive]`).
+3. **Says what it is doing**: `status()` before each phase, `progress_count()` over a counted backlog, `heartbeat()` + `is_stop_requested()` on every item, a `stdout()` line naming what changed - or that nothing was due - and a `summary()`. A run read the next morning must explain itself.
+
+```php
+#[Task('Purge export files older than the retention window')]
+#[Exclusive('maintenance')]
+#[Schedule('maintenance')]
+public static function purge_exports(Task_Instance $task, array $params = [])
+{
+    $days = (int) config('exports.retention_days');
+    $task->status("Deleting exports older than {$days} days");
+    $deleted = 0;
+    foreach (Export_Model::where('created_at', '<', now()->subDays($days))->result_set() as $export) {
+        if ($task->is_stop_requested()) {
+            break;
+        }
+        $export->delete();
+        $deleted++;
+        $task->heartbeat();
+    }
+    $task->stdout($deleted > 0 ? "Deleted {$deleted} export(s)." : 'No export is old enough; nothing deleted.');
+    $task->summary("Deleted {$deleted} exports older than {$days} days.");
+    return null;
+}
+```
+
+Hourly and faster sweeps are not maintenance tasks and keep their own cadence. Changing `rsx.tasks.maintenance_hour` re-registers every maintenance schedule on the next tick. Framework examples: `Revision_Cleanup_Service::cleanup_revisions`, `Api_Cleanup_Service::cleanup_request_log`.
 
 **The wall clock is the SERVER TIMEZONE** - `RSX_SERVER_TIMEZONE` in `.env`, UTC when unset - so `'daily at 2am'` with `America/Chicago` configured runs at 2am Chicago time. Daylight saving follows cron: a fixed-time schedule (no `*` leading the minute or hour field) whose wall time the spring-forward jump skips runs right after the jump, and one the fall-back jump repeats runs once; `'every 5 minutes'`/`'hourly'` run on real elapsed time. Changing the zone re-registers every schedule on the next tick (`rsx:man tasks`, SCHEDULES AND TIMEZONES).
 

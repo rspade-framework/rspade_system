@@ -664,7 +664,7 @@ THE STALE-MESSAGE WINDOW
 
     THERE IS NO SMS EQUIVALENT and there must not be - see rsx:man sms.
 
-    RETENTION. Mail_Queue_Service::cleanup, #[Schedule('daily at 3am')], deletes whole rows
+    RETENTION. Mail_Queue_Service::cleanup, in the maintenance window (rsx:man tasks), deletes whole rows
     (every terminal status) older than rsx.mail.retention_days - 30 by default; attachments
     follow by FK cascade, and the blobs themselves remain File_Disposal_Service's business.
     The same task prunes the development catcher's Maildir on the same window when one

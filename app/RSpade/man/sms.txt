@@ -145,7 +145,7 @@ QUEUE PROCESSING
     declared site says nothing about which messages are due. Each row keeps the
     site_id it was queued under.
 
-    Retention: Sms_Queue_Service::cleanup, #[Schedule('daily at 3am')], deletes
+    Retention: Sms_Queue_Service::cleanup, in the maintenance window, deletes
     whole rows in a terminal status older than rsx.sms.retention_days (30).
 
 DEV SITE SMS SAFETY

@@ -469,8 +469,8 @@ RETENTION
     data whose value shows up years later, so the framework does not decide to
     throw any of it away; an operator who wants a window sets one.
 
-    Revision_Cleanup_Service::cleanup_revisions is #[Task] #[Exclusive]
-    #[Schedule('daily at 3am')]. It deletes only _transactions rows past the
+    Revision_Cleanup_Service::cleanup_revisions is a #[Task] in the maintenance
+    window (rsx:man tasks). It deletes only _transactions rows past the
     window, in chunks; _revisions goes with them by FK cascade, so there is one
     statement, no orphans, and no second sweep that could be interrupted
     between the two halves.

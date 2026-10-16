@@ -14,6 +14,7 @@ use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
+use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Lock;
@@ -315,9 +316,9 @@ class Task
         // declaration that tick has not registered yet is registered here.
         $now = now()->format('Y-m-d H:i:s.v');
         DB::statement(
-            'INSERT INTO _task_schedules (class, method, cron_expression, timezone, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO _task_schedules (class, method, cron_expression, cron_resolved, timezone, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
             . ' ON DUPLICATE KEY UPDATE next_run_at = VALUES(next_run_at), updated_at = VALUES(updated_at)',
-            [$service_class, $rsx_task, $cron_expression, Rsx_Time::get_server_timezone(), $next_run_at, $now, $now]
+            [$service_class, $rsx_task, $cron_expression, (new Cron_Parser($cron_expression))->get_cron_expression(), Rsx_Time::get_server_timezone(), $next_run_at, $now, $now]
         );
 
         return Rsx_Time::to_iso($next_run_at);

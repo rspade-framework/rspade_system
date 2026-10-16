@@ -20,22 +20,23 @@ use App\RSpade\Core\Task\Task_Instance;
 class Log_Maintenance_Service extends Rsx_Service_Abstract
 {
     /**
-     * Rotate storage/logs once a day.
+     * Rotate storage/logs once a day, in the maintenance window.
      *
-     * Midnight because a generation number is meant to read as a day count: a
-     * rotation at a fixed daily boundary makes `laravel.log.3` mean "three days
-     * ago" rather than "three runs ago".
+     * Once a day at a fixed hour because a generation number is meant to read as a
+     * day count: a rotation at a fixed daily boundary makes `laravel.log.3` mean
+     * "three days ago" rather than "three runs ago".
      *
-     * #[Exclusive] because a slow run (a very large log being gzipped) overlapping
-     * its own next tick would shift generations twice for one day.
+     * #[Exclusive('maintenance')] runs it one at a time with the window's other
+     * tasks, and so never overlapping its own next run either - which would shift
+     * generations twice for one day.
      *
      * @param Task_Instance $task Task instance for logging
      * @param array $params Task parameters (unused)
      * @return array The Rsx_Logrotate report, plus a 'skipped' key when disabled
      */
     #[Task('Rotate, compress and prune storage/logs')]
-    #[Exclusive]
-    #[Schedule('daily at 12:00am')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance')]
     public static function rotate(Task_Instance $task, array $params = [])
     {
         if (!config('rsx.logging.rotation.enabled')) {

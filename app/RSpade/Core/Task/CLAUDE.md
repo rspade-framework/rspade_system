@@ -109,7 +109,7 @@ says what is in this DIRECTORY and what must stay true when editing it.
   HERE rather than in `Commands/` because Laravel's `load()` instantiates every command
   class in that directory through the container, and this one takes constructor arguments.
   Contract: `rsx:man task_commands`.
-- `Cron_Parser.php` — normalizes both 5-field cron and the plain-English `#[Schedule]` phrases, and reads them on the server timezone's wall clock (`Rsx_Time::get_server_timezone()`), walking REAL minutes with cron's DST rule for fixed-time jobs. `_task_schedules.timezone` records the zone a row's `next_run_at` was computed in; reconciliation re-registers a row whose zone differs from the configured one.
+- `Cron_Parser.php` — normalizes both 5-field cron and the plain-English `#[Schedule]` phrases, and reads them on the server timezone's wall clock (`Rsx_Time::get_server_timezone()`), walking REAL minutes with cron's DST rule for fixed-time jobs. `_task_schedules.timezone` records the zone a row's `next_run_at` was computed in and `cron_resolved` the five-field expression it resolved to (`'maintenance'` resolves through `rsx.tasks.maintenance_hour`, `Cron_Parser::maintenance_hour()`); reconciliation re-registers a row whose zone or resolution differs, and only records a NULL resolution. Every framework task running daily or less is `#[Schedule('maintenance...')]` + `#[Exclusive('maintenance')]` - `Maintenance_Window_Test` holds that line.
 - `Task_Health_Checks.php` — `rsx:health` rows: Task System (FAIL while off; INFO under the
   maintenance flag), Task Worker Pools, Task Scheduler Liveness (INFO while off), Task
   Schedule Failures.

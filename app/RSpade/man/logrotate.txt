@@ -28,7 +28,7 @@ DESCRIPTION
 
         Rsx_Logrotate            pure and static; takes a directory and two numbers,
                                  reports what it did, reads no config
-        Log_Maintenance_Service  the nightly #[Schedule('daily at 12:00am')] task
+        Log_Maintenance_Service  the nightly #[Schedule('maintenance')] task
         rsx:logrotate            the same rotation on demand
 
 CONFIG
@@ -145,13 +145,15 @@ THE TASK
     disk is not a per-application decision.
 
         #[Task('Rotate, compress and prune storage/logs')]
-        #[Exclusive]
-        #[Schedule('daily at 12:00am')]
+        #[Exclusive('maintenance')]
+        #[Schedule('maintenance')]
 
-    Midnight because a generation number is meant to read as a day count: rotating at a
+    Once a day at the maintenance window's fixed hour (rsx:man tasks, THE MAINTENANCE
+    WINDOW) because a generation number is meant to read as a day count: rotating at a
     fixed daily boundary makes laravel.log.3 mean "three days ago" rather than "three runs
-    ago". #[Exclusive] because a slow run - a very large log being gzipped - overlapping
-    its own next tick would shift generations twice for one day.
+    ago". #[Exclusive('maintenance')] runs it one at a time with the window's other tasks,
+    so a slow run - a very large log being gzipped - never overlaps its own next run and
+    shifts generations twice for one day.
 
     With rotation disabled the task succeeds silently, its state report reading
     {"skipped": "disabled"}: the operator turned it off and does not need to be told
@@ -200,7 +202,7 @@ TROUBLESHOOTING
 
     The nightly sweep never runs
         `php artisan rsx:tasks:list` should show a Log_Maintenance_Service::rotate schedule
-        with a next run at the coming midnight, and /_sys/tasks (Schedules tab) its last
+        with a next run at the coming maintenance window (rsx.tasks.maintenance_hour), and /_sys/tasks (Schedules tab) its last
         run. If there is no schedule, the scheduler has not reconciled yet - that happens
         on the next `rsx:task:process` tick, which is the cron entry.
 

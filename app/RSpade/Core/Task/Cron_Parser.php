@@ -34,6 +34,15 @@ use App\RSpade\Core\Time\Rsx_Time;
  *   "weekly" / "weekly on monday at 9:30am" -> "0 0 * * 0" / "30 9 * * 1"
  *   "monthly"                     -> "0 0 1 * *"
  *
+ * THE MAINTENANCE WINDOW. "maintenance" runs a task once a day at the top of the hour
+ * rsx.tasks.maintenance_hour names (default 2, i.e. 2am), so every heavy housekeeping
+ * task an install runs shares one off-peak slot that the operator moves in one place:
+ *   "maintenance"                       -> "0 H * * *"
+ *   "maintenance weekly on sunday"      -> "0 H * * 0"
+ *   "maintenance monthly"               -> "0 H 1 * *"
+ * A maintenance task also declares #[Exclusive('maintenance')], so the window's tasks
+ * run one at a time (rsx:man tasks, THE MAINTENANCE WINDOW).
+ *
  * TIMEZONE: the expression is read on the wall clock of the server timezone
  * (Rsx_Time::get_server_timezone(), RSX_SERVER_TIMEZONE, UTC when unset), so "daily at
  * 2am" with America/Chicago configured is 2am Chicago time. Run times are returned as
@@ -119,6 +128,18 @@ class Cron_Parser
             return $shortcuts[$text];
         }
 
+        // "maintenance" / "maintenance weekly on <day>" / "maintenance monthly"
+        if (preg_match('/^maintenance(?:\s+(weekly\s+on\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)|monthly))?$/', $text, $m)) {
+            $hour = self::maintenance_hour();
+            if (empty($m[1])) {
+                return "0 {$hour} * * *";
+            }
+            if ($m[1] === 'monthly') {
+                return "0 {$hour} 1 * *";
+            }
+            return "0 {$hour} * * " . self::_parse_weekday($m[2]);
+        }
+
         // "every N minutes" / "every N hours"
         if (preg_match('/^every\s+(\d+)\s+(minutes?|mins?|hours?|hrs?)$/', $text, $m)) {
             $n = (int) $m[1];
@@ -153,8 +174,30 @@ class Cron_Parser
         throw new \InvalidArgumentException(
             "Unrecognized schedule expression: '{$expression}'. Use standard cron " .
             "(e.g. '0 2 * * *') or a phrase like 'every 5 minutes', 'every 6 hours', " .
-            "'hourly', 'daily at 2am', 'weekly on monday at 9:30am', 'monthly'."
+            "'hourly', 'daily at 2am', 'weekly on monday at 9:30am', 'monthly', 'maintenance', " .
+            "'maintenance weekly on sunday', 'maintenance monthly'."
         );
+    }
+
+    /**
+     * The hour the maintenance window opens: rsx.tasks.maintenance_hour, read on the
+     * server timezone's wall clock like every other schedule.
+     *
+     * @return int 0-23
+     * @throws \InvalidArgumentException When the setting is not a whole hour 0-23
+     */
+    public static function maintenance_hour(): int
+    {
+        $hour = config('rsx.tasks.maintenance_hour');
+
+        if (!is_int($hour) || $hour < 0 || $hour > 23) {
+            throw new \InvalidArgumentException(
+                'rsx.tasks.maintenance_hour must be a whole hour 0-23 (the start of the maintenance window), got '
+                . var_export($hour, true)
+            );
+        }
+
+        return $hour;
     }
 
     /**

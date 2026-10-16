@@ -1540,8 +1540,8 @@ REQUEST LOGGING
     created_at (date range).
 
     RETENTION. config('rsx.api.log_retention_days') (default 30) is consumed by
-    Api_Cleanup_Service::cleanup_request_log - a #[Task] #[Exclusive]
-    #[Schedule('daily at 3am')] that chunk-deletes rows older than the window.
+    Api_Cleanup_Service::cleanup_request_log - a #[Task] in the maintenance window
+    (rsx:man tasks) that chunk-deletes rows older than the window.
     This is a config value, not an env var (application behavior, not a
     deployment fact).
 

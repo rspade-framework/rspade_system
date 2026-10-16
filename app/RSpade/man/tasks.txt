@@ -715,6 +715,7 @@ SCHEDULES
         'every minute'                 'every 5 minutes'        'every 6 hours'
         'hourly'                       'daily' / 'daily at 2am' / 'daily at 14:30'
         'weekly' / 'weekly on monday at 9:30am'                'monthly'
+        'maintenance' / 'maintenance weekly on sunday' / 'maintenance monthly'
 
     SCHEDULES AND TIMEZONES. An expression is read on the wall clock of the SERVER
     TIMEZONE - RSX_SERVER_TIMEZONE in .env, UTC when unset (rsx:man time, SERVER TIMEZONE)
@@ -727,15 +728,56 @@ SCHEDULES
     minute or hour field ('every 5 minutes', 'hourly') runs on real elapsed time and
     neither transition affects it.
 
+    THE MAINTENANCE WINDOW. Housekeeping that runs once a day or less - retention purges,
+    disposal sweeps, log rotation, an application's own nightly cleanup - runs in ONE
+    window, so an install has a single predictable off-peak slot and the operator moves it
+    in one place. A maintenance task is constructed three ways, all required:
+
+        1. It is scheduled in the window: #[Schedule('maintenance')] (daily),
+           'maintenance weekly on <day>' or 'maintenance monthly' (the 1st). The window
+           opens at the top of rsx.tasks.maintenance_hour (default 2, i.e. 2am) on the
+           server timezone's wall clock. Never a hard-coded 'daily at 3am'.
+        2. It declares #[Exclusive('maintenance')], so the window's tasks run one at a
+           time, in any pool and on any host, and none overlaps its own next run.
+        3. It says what it is doing, for whoever reads the run later: status() before
+           each phase, progress_count() over a measurable backlog, a stdout() line for
+           what it changed (or that it found nothing to do), heartbeat() and
+           is_stop_requested() on every item of a loop, and a summary() at the end.
+
+        #[Task('Purge export files older than the retention window')]
+        #[Exclusive('maintenance')]
+        #[Schedule('maintenance')]
+        public static function purge_exports(Task_Instance $task, array $params = [])
+        {
+            $days = (int) config('exports.retention_days');
+            $task->status("Deleting exports older than {$days} days");
+            $deleted = 0;
+            foreach (Export_Model::where('created_at', '<', now()->subDays($days))->result_set() as $export) {
+                if ($task->is_stop_requested()) {
+                    break;
+                }
+                $export->delete();
+                $deleted++;
+                $task->heartbeat();
+            }
+            $task->stdout($deleted > 0 ? "Deleted {$deleted} export(s)." : 'No export is old enough; nothing deleted.');
+            $task->summary("Deleted {$deleted} exports older than {$days} days.");
+            return null;
+        }
+
+    Every framework task that runs daily or less often is built this way. Hourly and
+    faster sweeps keep their own cadence and are not maintenance tasks. Changing
+    rsx.tasks.maintenance_hour re-registers every maintenance schedule on the next tick.
+
     Each declaration is one _task_schedules row (Task_Schedule_Model): its class, method,
-    cron expression, the timezone its next run was computed in, next_run_at, and its run
-    statistics - last_task_id, last_success_at,
+    cron expression, the standard expression it resolved to (cron_resolved), the timezone
+    its next run was computed in, next_run_at, and its run statistics - last_task_id, last_success_at,
     last_error_at, last_error, consecutive_failures. EACH RUN of a schedule is a run row of
     its own (origin Scheduled, schedule_id set), so a schedule has a full run history.
 
     rsx:task:process reconciles the table every tick: a new declaration is registered at
-    its next cadence; a changed expression - or a changed RSX_SERVER_TIMEZONE - is
-    re-registered with next_run_at recomputed (statistics kept), so an old cadence or an
+    its next cadence; a changed expression - or a changed RSX_SERVER_TIMEZONE or
+    rsx.tasks.maintenance_hour - is re-registered with next_run_at recomputed (statistics kept), so an old cadence or an
     old wall clock never lingers; a removed declaration's row is
     deleted (its past runs keep their rows, schedule_id cleared). A scheduled-pool worker
     advances next_run_at BEFORE running, so the cadence holds across a slow or crashed run.
@@ -758,7 +800,7 @@ SCHEDULES
     claims the run at that moment recomputes the following one from the cron expression,
     as after any scheduled run, so the regular cadence resumes by itself. Reconciliation
     never moves it: the tick rewrites next_run_at only for a declaration whose expression
-    or timezone changed, and under --force-scheduled. A moment in the past is due now; a moment that
+    resolution or timezone changed, and under --force-scheduled. A moment in the past is due now; a moment that
     comes due while an #[Exclusive] task is still running is coalesced into that run like
     any tick. A declaration the tick has not registered yet is registered by the call.
 

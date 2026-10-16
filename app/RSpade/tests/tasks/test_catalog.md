@@ -158,6 +158,18 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | task-recon-04 | an undeclared schedule is removed; its runs are kept | ghost schedule + run | schedule gone; run kept, schedule_id null | implemented |
 | task-recon-05 | --force-scheduled makes every schedule due now | tick with the flag | every next_run_at <= now | implemented |
 | task-recon-06 | a changed server timezone is re-registered in place | config zone switched; tick | same id, timezone recorded, next_run_at on the new wall clock | implemented |
+| task-recon-07 | a moved maintenance hour is re-registered in place | rsx.tasks.maintenance_hour switched; tick | same id, cron_resolved '0 H * * *', next run at H:00 | implemented |
+| task-recon-08 | a row with no resolution recorded has it recorded, next run kept | cron_resolved nulled; tick | cron_resolved filled, next_run_at unchanged | implemented |
+
+## Maintenance_Window_Test (php, no DB) - the maintenance window
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| maint-01 | the window opens at 2am by default | 'maintenance' | '0 2 * * *' | implemented |
+| maint-02 | the phrases resolve through the configured hour | hour 4; daily / weekly on a day / monthly | '0 4 * * *', '0 4 * * 0', '0 4 * * 3', '0 4 1 * *' | implemented |
+| maint-03 | an invalid hour throws naming the setting | 24, -1, '2', null | InvalidArgumentException naming rsx.tasks.maintenance_hour | implemented |
+| maint-04 | an unknown maintenance phrase throws | 'maintenance fortnightly' | exception | implemented |
+| maint-05 | every framework task running daily or less is in the window | the manifest's framework schedules | 'maintenance...' phrase and #[Exclusive('maintenance')] | implemented |
 
 ## Cron_Parser_Timezone_Test (php, no DB) - the wall clock and daylight saving
 

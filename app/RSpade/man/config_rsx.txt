@@ -730,6 +730,7 @@ TASK SYSTEM
             'kill' => ['max_workers' => 10],
         ],
         'silent_timeout' => 1800,              # 30 min WITHOUT A REPORT
+        'maintenance_hour' => 2,               # the maintenance window opens 2am
         'stop_grace_seconds' => 60,
         'failing_schedule_warn_after' => 3,
         'retry' => ['base_seconds' => 600, 'attempts' => 5],
@@ -750,6 +751,11 @@ TASK SYSTEM
     so a long task must report as it goes, on every item. 0 = no silence limit;
     an inline run is never killed for time; a run dispatched with an explicit
     'timeout' option is under that hard limit instead.
+    maintenance_hour (0-23, on the RSX_SERVER_TIMEZONE wall clock) is when every
+    #[Schedule('maintenance')] task runs; they also declare
+    #[Exclusive('maintenance')] and so run one after another from that hour.
+    Changing it re-registers them on the next tick (rsx:man tasks, THE
+    MAINTENANCE WINDOW).
     stop_grace_seconds is the default grace of Task_Run_Model::force_stop() -
     the window a cooperative task gets to finish, owner-set, not a bound on any
     operation. 'retry' paces the re-run of a dispatched run whose worker died or
