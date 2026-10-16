@@ -322,6 +322,10 @@ listed="$(probe_overrides_listed "$(artisan rsx:overrides:list --json)")" || fai
 fetch_login_bundles
 grep -qF "$PROBE_OVERRIDE_MARKER" "$BUNDLES_TEXT" || fail "the sealed /login bundles do not carry the overriding Region_Model's stub"
 
+# Strict production obfuscates the app bundle's strings (rsx.production.obfuscate_strings,
+# on by default): the minified app script carries the _$$SC dictionary.
+grep -qF '_$$SC=[' "$BUNDLES_TEXT" || fail "the strict-production /login bundles carry no _\$\$SC string dictionary"
+
 # ---------------------------------------------------------------------------
 # 3. A sealed box writes NOTHING under build/, system/ or rsx/.
 #

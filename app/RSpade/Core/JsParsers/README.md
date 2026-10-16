@@ -86,6 +86,7 @@ They cannot drift, because there is no second list.
 | `parser` | `Core/JsParsers/resource/parser-service.js` | `Js_Parser` | `parse` |
 | `babel` | `Core/JsParsers/resource/babel-service.js` | `Js_Transformer` | `transform` |
 | `minify` | `Core/Bundle/resource/minify-service.js` | `Minifier` | `minify` (js and css) |
+| `string_obfuscation` | `Core/Bundle/resource/string-obfuscation-service.js` | `Minifier::obfuscate_strings()` | `obfuscate` (strict-production app JS) |
 | `concat` | `Core/Bundle/resource/concat-service.js` | `Concatenator` | `concat` (js and css) |
 | `jqhtml` | `Integrations/Jqhtml/resource/jqhtml-service.js` | `JqhtmlWebpackCompiler` | `compile` |
 | `sanitize` | `CodeQuality/Support/resource/sanitize-service.js` | `FileSanitizer` | `sanitize` |

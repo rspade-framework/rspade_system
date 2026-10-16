@@ -243,6 +243,34 @@ Real node/Terser RPC round-trip; server force-restarted before, stopped after.
 | CON-01 | strip flag adds pure_funcs -> console_debug( call site removed | asset | minify with strip=true | call site gone, side-effect code kept | implemented | 2026-07-15 |
 | CON-01b | no strip flag (debug builds) keeps console_debug( | asset | minify with strip=false | call site retained | implemented | 2026-07-15 |
 
+## String_Obfuscation_Test (asset)
+
+The strict-production string obfuscation pass through the `BundleCompiler` seams the compile
+calls - `_string_obfuscation_eligible()` (which files, from the manifest's classification),
+`_obfuscate_sources()` (the real `string_obfuscation` node subsystem over the original sources,
+then babel over each copy of a babel-transformed file) and `_concat_entries()` (helper
+placement, copy substitution) - and the real babel and concat daemons. Fixtures in
+`resource/`: a non-class file (`string_obfuscation_plain.js`, holds `__collect()` and a
+decorator), a controller-stub shape, a model-stub shape (both copied into tmp, where babel
+skips them), a decorated ES6 class file, and a `.jqhtml` template compiled by the real jqhtml
+compiler. The original, obfuscated and obfuscated+minified concatenations
+are evaluated in a node vm by `resource/string_obfuscation_eval.js` and compared value for
+value. The sealed-build half is a grep in `cli/prod_lifecycle.sh` step 2b (the strict-prod
+/login scripts carry `_$$SC=[`).
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| OBF-01 | Eligibility is the manifest's classification: JS class index file, `is_model_stub` record, concrete model classes file, compiled template | asset | the fixtures + a concrete-models file, a class record the index does not point at, an unknown file | exactly model stub, concrete, class file, template - in output order | implemented | 2026-10-16 |
+| OBF-02 | Every converted value is reproduced byte for byte, before and after Terser - the globals survive minification | asset | the five-file concatenation: inner-space strings (leading/trailing/double spaces), object values and array elements incl. '' and nested, qualifying key, template quasis, multi-line template, model-stub enum data, template output, instance field, decorated method + decorator argument | original == obfuscated == minified `__collect()` values | implemented | 2026-10-16 |
+| OBF-03 | Only qualifying strings inside function bodies of eligible files convert | asset | the rewritten copies | class file (pre-babel copy) converted: (a)/(b) strings, computed key, template parts, nested arrow, getter, directive-method body, decorated method body, top-level function body; literal: decorator argument, single word, edge-spaces-only string, single-word key, tagged template, 'use strict', static/instance field initializers, static block, parameter default, top-level code; line count kept. Model stub: enum data values converted, `static __MODEL` literal. Template: render strings converted, top-level `name` literal | implemented | 2026-10-16 |
+| OBF-03b | The pass reads the SOURCE and babel runs on its output | asset | the decorated class file's final (babel) read file | instance field initializer literal in babel's `_defineProperty(this, ...)`; babel helper string ("attempted to call addInitializer ...") literal; decorator argument literal; method strings converted; `_applyDecs` present | implemented | 2026-10-16 |
+| OBF-04 | A non-eligible file is never rewritten | asset | non-class file, controller stub | no copy; controller stub verbatim; the non-class file reads its ordinary cached babel transform | implemented | 2026-10-16 |
+| OBF-05 | The helper file sits directly before the first eligible file, once; eligible entries are their copies, attributed to their originals | asset | bundle order (model stub first), and a reordering (class file first) | helper immediately before the first eligible entry in each | implemented | 2026-10-16 |
+| OBF-06 | Determinism: same input byte-identical; a changed input round-trips with a different dictionary | asset | fixtures, fixtures + one added method | identical; changed values equal its original; helper differs | implemented | 2026-10-16 |
+| OBF-07 | Nothing to convert -> no helper, list unchanged | asset | no eligible file; an eligible class holding only a field initializer, a parameter default and a single word | list identical, `helper_path` null | implemented | 2026-10-16 |
+| OBF-08 | `_$$` / `_$$SC` already in an eligible file, another app file or the vendor output fails, naming bundle and identifier | asset | eligible `function _$$`, non-eligible `var _$$SC`, vendor `window._$$=` | RuntimeException with the bundle and identifier | implemented | 2026-10-16 |
+| OBF-09 | A strict-production sealed build serves the dictionary | cli | `prod_lifecycle.sh` step 2b, /login scripts | contains `_$$SC=[` | implemented | 2026-10-16 |
+
 ## Bundle emission order (`php/Bundle_Emission_Order_Test.php`)
 
 The bundle is resolved from the manifest - an application module bundle that has been

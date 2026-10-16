@@ -68,7 +68,10 @@ async function minifyJs(content, filename, stripConsoleDebug = false) {
         const result = await terserMinify(cleanContent, {
             compress: compressOptions,
             mangle: {
-                reserved: ['$', 'jQuery', '_', 'Rsx', 'rsxapp'],  // Don't mangle these
+                // Don't mangle these. `_$$` and `_$$SC` are the string-obfuscation globals
+                // (string-obfuscation-service.js): reserving them keeps a mangled local
+                // from ever shadowing them inside a class method.
+                reserved: ['$', 'jQuery', '_', 'Rsx', 'rsxapp', '_$$', '_$$SC'],
                 keep_classnames: true,
                 keep_fnames: true
             },

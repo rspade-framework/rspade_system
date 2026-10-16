@@ -1,0 +1,5 @@
+<Define:Obf_Fixture_Card class="card">
+    <h3 title="card heading tooltip"><%= this.args.title %></h3>
+    <p>A paragraph of template prose.</p>
+    <% if (this.args.flag) { %><span>flagged words here</span><% } %>
+</Define:Obf_Fixture_Card>

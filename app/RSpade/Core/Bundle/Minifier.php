@@ -31,6 +31,53 @@ class Minifier
     }
 
     /**
+     * Obfuscate the strings of the eligible files of a bundle's APP JavaScript.
+     *
+     * The strict-production pass BundleCompiler runs on the app files just before they are
+     * concatenated, when config('rsx.production.obfuscate_strings') is on. The CALLER chooses
+     * the files; the whole transform - scope, the qualification rules, the bundle-wide
+     * seeded dictionary, the rewrite and the generated `_$$SC` / `_$$` helper file - lives in
+     * the `string_obfuscation` node subsystem (resource/string-obfuscation-service.js), which
+     * writes its output into $output_dir. This method only carries the request.
+     *
+     * @param array $eligible Paths of the files to transform, in output order (the files
+     *                        actually concatenated - a babel copy where there is one)
+     * @param array $others Every other app file of the bundle (scanned for collisions only)
+     * @param string $vendor_path The bundle's vendor output, scanned for collisions only
+     *                            (absent = nothing to scan)
+     * @param string $bundle_name Named in a failure
+     * @param string $output_dir Scratch directory for the helper and the rewritten copies
+     *                           (cleared first)
+     * @return array {helper_path: ?string, files: [path => rewritten copy], eligible,
+     *               rewritten, converted, words}; helper_path is null and files empty when
+     *               nothing converted
+     * @throws RuntimeException On a parse failure or when `_$$SC` / `_$$` is already in use
+     */
+    public static function obfuscate_strings(array $eligible, array $others, string $vendor_path, string $bundle_name, string $output_dir): array
+    {
+        $result = Rsx_Node_Service::request('string_obfuscation.obfuscate', [
+            'eligible' => array_values($eligible),
+            'others' => array_values($others),
+            'vendor_path' => $vendor_path,
+            'bundle' => $bundle_name,
+            'output_dir' => $output_dir,
+        ]);
+
+        if (($result['status'] ?? null) === 'error') {
+            throw new RuntimeException("String obfuscation failed for {$bundle_name}: {$result['error']['message']}");
+        }
+
+        if (($result['status'] ?? null) !== 'success' || !array_key_exists('helper_path', $result)) {
+            throw new RuntimeException("Invalid response from the string_obfuscation RPC: " . json_encode($result));
+        }
+
+        $result['files'] = (array) ($result['files'] ?? []);
+        unset($result['status']);
+
+        return $result;
+    }
+
+    /**
      * Minify CSS content
      *
      * @param string $content CSS content to minify

@@ -12,6 +12,7 @@
         "parser": "app/RSpade/Core/JsParsers/resource/parser-service.js",
         "babel": "app/RSpade/Core/JsParsers/resource/babel-service.js",
         "minify": "app/RSpade/Core/Bundle/resource/minify-service.js",
+        "string_obfuscation": "app/RSpade/Core/Bundle/resource/string-obfuscation-service.js",
         "concat": "app/RSpade/Core/Bundle/resource/concat-service.js",
         "jqhtml": "app/RSpade/Integrations/Jqhtml/resource/jqhtml-service.js",
         "sanitize": "app/RSpade/CodeQuality/Support/resource/sanitize-service.js",

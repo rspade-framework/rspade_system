@@ -115,6 +115,25 @@ class Js_Transformer
     }
 
     /**
+     * Transform a DERIVED copy of a source file, uncached.
+     *
+     * For a file whose bytes were produced from a source file (the strict-production string
+     * obfuscation pass rewrites a source into a copy): the transform reads the copy, takes its
+     * helper-prefix identity from the ORIGINAL path - so the generated names are exactly those
+     * the original's own transform would carry - and never touches the transform cache, whose
+     * entries are keyed by the original file and must only ever hold the original's bytes.
+     *
+     * @param string $copy_path The derived file to transform
+     * @param string $original_path The source file it was derived from
+     * @param string $target Target environment (modern, es6, es5)
+     * @return string Transformed JavaScript code
+     */
+    public static function transform_derived_copy(string $copy_path, string $original_path, string $target = 'modern'): string
+    {
+        return static::_transform_without_cache($copy_path, $target, $original_path);
+    }
+
+    /**
      * Transform without using cache
      *
      * @param string $file_path Path to file to transform

@@ -47,7 +47,8 @@ DESCRIPTION
         that development mode runs on a production environment and still
         behaves reliably and securely. The only major differences in a
         sealed build are that it skips the environment checks and dynamic
-        source rebuilds (slightly faster), minifies JS, drops from each
+        source rebuilds (slightly faster), minifies JS (and, in strict
+        production, obfuscates the app bundle's strings), drops from each
         bundle the jqhtml components nothing it serves names (the component
         shake, rsx:man bundle_api), and suppresses diagnostic dumps on
         errors. Every other feature - CSP enforcement
@@ -81,6 +82,8 @@ MODE COMPARISON
     Auto manifest rebuild       Yes          No           No
     Auto bundle JIT compile     Yes          No           No
     Minified output             No           No           Yes
+    App strings obfuscated      No           No           Yes
+      (rsx.production.obfuscate_strings, default on)
     Unnamed components dropped  No           Yes          Yes
       (the component shake; removed names carried only in debug)
     Inline sourcemaps survive   Yes          Yes          No
@@ -262,6 +265,8 @@ STRICT PRODUCTION
         - Inline sourcemaps are GONE (minification strips the
           sourceMappingURL comments - the "no minify, no maps" truth stated
           above, run forward).
+        - App strings are OBFUSCATED (config rsx.production.obfuscate_strings,
+          default true; see STRING OBFUSCATION below).
         - console_debug() is neutralized two ways at once:
             1. Call sites are STRIPPED from the compiled output. The minify
                RPC request carries a strip flag (driven by
@@ -271,6 +276,95 @@ STRICT PRODUCTION
             2. The console_debug config block is omitted from
                window.rsxapp, so even a call site that survived (there are
                none in app bundles) would no-op at runtime.
+
+STRING OBFUSCATION
+    A strict-production step on each bundle's APP JavaScript, run on the
+    ORIGINAL SOURCE of each eligible file, before babel; the rewritten copy is
+    then babel-transformed where the file is transformed at all, concatenated
+    and minified - never the vendor file, never CSS, never a debug or
+    development build. Switch: config('rsx.production.obfuscate_strings'),
+    default true.
+
+    It deters CASUAL READING of the shipped file and nothing more. Rendered
+    text still lands in the DOM, and the dictionary is readable by anyone
+    who looks, so business rules and secrets stay server-side - always.
+
+    Eligible files. The MANIFEST draws the boundary, file by file:
+
+        - ES6 class files: a JS file the manifest's JS class index names as
+          the file declaring its class;
+        - generated MODEL stubs (Base_<Model>) and the generated concrete
+          model classes (class X_Model extends Base_X_Model {});
+        - compiled jqhtml templates.
+
+    Nothing else is touched: JS files that declare no class, controller/Ajax
+    and auth stubs, npm shims, the generated config, manifest, route and
+    runner files, CDN and vendor code. Because the pass reads the source, a
+    class field is still a field when it is judged (babel later lowers an
+    instance field into the constructor), and babel's own injected helpers
+    are never touched. A rewritten copy is transformed uncached: the babel
+    transform cache only ever holds a source file's own bytes.
+
+    Scope within an eligible file. Only strings lexically inside a FUNCTION
+    BODY: methods, getters, setters, constructors, plain functions, arrows
+    and template render functions, nested to any depth. The nearest
+    enclosing boundary decides, so these stay literal: the top-level
+    statements of the file, class field initializers (instance and static,
+    e.g. static __MODEL = 'Project_Model'), static blocks, decorators and
+    their arguments, member names, extends expressions and parameter lists
+    (defaults included).
+
+    Which strings, within that scope:
+
+        (a) a string with an INNER space - a U+0020 with a non-space
+            character before it and after it ('Save changes', '  a b ');
+            leading and trailing spaces ride along once an inner one exists;
+        (b) EVERY string that is a value in an object literal or an element
+            of an array literal (nested literals included), whatever its
+            length - a single word and '' included.
+
+    A non-computed object KEY converts only under (a), and then becomes a
+    computed key ({[_$$(4,9)]: 1}). A template literal's static parts
+    convert under (a) part by part, each rewritten as a ${...} substitution
+    so the template evaluates to the identical string; a template that is
+    itself an object value or array element converts every non-empty part.
+    Never touched: directive prologues ('use strict'), tagged templates,
+    import sources. A single word in a function that is not literal data
+    ('id', 'click') stays literal.
+
+    Words and dictionary. A converted string is split on exactly one space;
+    a word is everything between single spaces (punctuation, tabs and
+    newlines included), and leading, trailing or doubled spaces produce
+    empty words, so joining with ' ' reproduces the original byte for byte.
+    The words of EVERY eligible file in the bundle form ONE dictionary:
+    sorted, then shuffled by a PRNG seeded with the sha256 of the sorted
+    list - identical input gives byte-identical output (the DETERMINISM
+    CONTRACT holds), any change to the word set gives a fresh order.
+
+    Runtime. A generated helper file declares two true globals at the top
+    level of the classic app script, so every later script sees them and
+    Terser never renames them:
+
+        var _$$SC = [ ...words ];      the dictionary
+        function _$$(...indexes)       the indexed words joined by ' '
+
+    It is concatenated DIRECTLY BEFORE the first eligible file in output
+    order, so the dictionary exists before any converted string can run.
+    Each converted string becomes a call: 'Save your changes' -> _$$(3,55,27).
+    A rewritten file keeps every other byte and its line count. When
+    nothing in the bundle converts, no helper is emitted and no file
+    changes.
+
+    Collisions. An identifier _$$SC or _$$ already present in any of a
+    bundle's app files or in its vendor JavaScript FAILS the build, naming
+    the bundle, the identifier and the file. Both names are reserved: never
+    declare them.
+
+    Source: Core/Bundle/resource/string-obfuscation-service.js (the whole
+    transform), called once per app compile through
+    Minifier::obfuscate_strings(); BundleCompiler::_string_obfuscation_eligible()
+    selects the files and _obfuscate_sources() babel-transforms the copies
+    (Js_Transformer::transform_derived_copy()).
 
 ENVIRONMENT VALIDATION
     There is none, and there is nothing to validate. app.env and app.debug

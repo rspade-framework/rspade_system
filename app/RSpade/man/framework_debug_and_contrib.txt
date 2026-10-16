@@ -1788,6 +1788,9 @@ SUBSYSTEM PRIMERS
 
         auto-rebuild            development only
         minify                  strict production only
+        obfuscate app strings   strict production only, on the eligible
+                                app files' sources before babel, when
+                                rsx.production.obfuscate_strings is on
         inline sourcemaps       the logical inverse of minify
         cache external assets   any production-like mode
         strip console_debug     strict production only
@@ -1823,7 +1826,8 @@ SUBSYSTEM PRIMERS
       Core/JsParsers/README.md, Integrations/Jqhtml/CLAUDE.md.
       Source: Core/Bundle/ (Rsx_Bundle_Abstract, Rsx_Module_Bundle_Abstract,
       Rsx_Asset_Bundle_Abstract, BundleCompiler, Minifier, Cdn_Cache,
-      resource/concat-service.js, resource/minify-service.js),
+      resource/concat-service.js, resource/minify-service.js,
+      resource/string-obfuscation-service.js),
       Core/JsParsers/ (Rsx_Node_Service, Js_Parser, Js_Transformer,
       resource/node-service.js, resource/node-service-modules.json,
       resource/parser-service.js, resource/babel-service.js,

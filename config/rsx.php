@@ -626,6 +626,34 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Strict Production Build
+    |--------------------------------------------------------------------------
+    |
+    | Steps that run only where the build minifies (strict production; never
+    | debug or development - Manifest::_should_minify()).
+    |
+    */
+    'production' => [
+        // String obfuscation of each bundle's APP JavaScript. The files the
+        // manifest scopes it to - ES6 class files, generated model stubs and
+        // concrete model classes, compiled jqhtml templates - have, in their
+        // source before babel, the strings inside their function bodies that carry an inner space, and every
+        // string there that is an object-literal value or array-literal
+        // element, split into words and rebuilt at run time from a seeded,
+        // deterministic dictionary: the global `_$$SC` array and the printer
+        // `_$$(...indexes)`, declared by a generated file concatenated
+        // directly before the first such file. Every other file, vendor
+        // JavaScript and CSS are never touched. A build fails if either name
+        // is already in use.
+        //
+        // It deters casual reading of the shipped file and nothing more -
+        // rendered text is in the DOM and the dictionary is readable - so rules
+        // and secrets stay server-side. See rsx:man app_mode (STRING OBFUSCATION).
+        'obfuscate_strings' => true,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Development Credentials
     |--------------------------------------------------------------------------
     |

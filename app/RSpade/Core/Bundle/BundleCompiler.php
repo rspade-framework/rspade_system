@@ -2624,6 +2624,14 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
     }
 
     /**
+     * The 8-character hash in a compiled output's filename ({Bundle}__{type}.{hash}.{ext}).
+     */
+    protected function _output_hash(string $type): string
+    {
+        return isset($this->cache_keys[$type]) ? substr($this->cache_keys[$type], 0, 8) : substr(md5($this->bundle_name . '_' . $type), 0, 8);
+    }
+
+    /**
     * Compile final output files
     *
     * THIS IS THE ONLY PLACE where we organize files by extension.
@@ -2724,7 +2732,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
             }
 
             // Use the cache key hash for filenames
-            $hash = isset($this->cache_keys[$type]) ? substr($this->cache_keys[$type], 0, 8) : substr(md5($this->bundle_name . '_' . $type), 0, 8);
+            $hash = $this->_output_hash($type);
 
             // Clean old files for this type only
             $old_files = glob("{$bundle_dir}/{$this->bundle_name}__{$type}.*");
@@ -2747,6 +2755,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
 
             // Add framework code to app JS
             // Note: JS stubs are already added before dependency ordering above
+            $concrete_models_file = null;
             if ($type === 'app') {
                 // Add NPM import declarations at the very beginning
                 if (!empty($this->npm_includes)) {
@@ -2840,7 +2849,27 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                 // CDN assets are served separately via /_vendor/ URLs, not merged into bundle
                 // This avoids complex concatenation issues with third-party code
 
-                $js_content = $this->_compile_js_files($js_files);
+                // Strict production obfuscates the strings of the app files the manifest
+                // scopes it to (rsx.production.obfuscate_strings; rsx:man app_mode), on the
+                // files themselves, before they are concatenated. The vendor output -
+                // compiled earlier in this loop, or cached on disk - is read only for the
+                // reserved-name collision check.
+                $string_obfuscation = null;
+                if ($type === 'app' && Manifest::_should_minify() && config('rsx.production.obfuscate_strings')) {
+                    $manifest_data = Manifest::get_full_manifest()['data'];
+                    $string_obfuscation = [
+                        'eligible' => static::_string_obfuscation_eligible(
+                            $js_files,
+                            $manifest_data['files'] ?? [],
+                            $manifest_data['js_classes'] ?? [],
+                            $this->jqhtml_compiled_files,
+                            $concrete_models_file
+                        ),
+                        'vendor_path' => "{$bundle_dir}/{$this->bundle_name}__vendor.{$this->_output_hash('vendor')}.js",
+                    ];
+                }
+
+                $js_content = $this->_compile_js_files($js_files, $string_obfuscation);
 
                 // Minify JS in strict production only (strips sourcemaps + console_debug
                 // call sites; debug keeps readable code). Policy: Manifest::_should_minify().
@@ -3184,7 +3213,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
     /**
     * Compile JS files
     */
-    protected function _compile_js_files(array $files): string
+    protected function _compile_js_files(array $files, ?array $string_obfuscation = null): string
     {
         // If we have config, write it to a temp file first
         $files_to_concat = [];
@@ -3204,18 +3233,30 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         // Transform JavaScript files if Babel is enabled and decorators are used
         $babel_enabled = config('rsx.javascript.babel.transform_enabled', true);
         $decorators_enabled = config('rsx.javascript.decorators', true);
+        $babel_active = $babel_enabled && $decorators_enabled;
 
-        if ($babel_enabled && $decorators_enabled) {
+        // Strict production: the eligible files' ORIGINAL sources are obfuscated first, and
+        // each rewritten copy is babel-transformed itself where its file is transformed at
+        // all (rsx.production.obfuscate_strings; rsx:man app_mode). Those files skip the
+        // cached transform below - their bytes are not the source's bytes.
+        $obfuscation = null;
+        if ($string_obfuscation !== null) {
+            $obfuscation = static::_obfuscate_sources(
+                $files,
+                $string_obfuscation['eligible'],
+                $string_obfuscation['vendor_path'],
+                $this->bundle_name,
+                $babel_active
+            );
+        }
+
+        if ($babel_active) {
             // Use the JavaScript Transformer to transpile files with decorators
             // IMPORTANT: We populate $babel_file_mapping but DON'T modify $files array
             // This preserves dependency sort order - we substitute babel versions during concat
 
             foreach ($files as $file) {
-                // Skip temp files, already processed files, and CDN cache files
-                // CDN files are third-party production code - don't transform them
-                if (Rsx_Project_Paths::is_under_tmp($file) ||
-                    Rsx_Project_Paths::is_under_build($file) ||
-                    str_contains($file, '.cdn-cache/')) {
+                if (!static::_is_babel_candidate($file) || isset($obfuscation['read_paths'][$file])) {
                     continue;
                 }
 
@@ -3236,13 +3277,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                     $this->babel_file_mapping[$file] = $temp_file;
                     console_debug('BUNDLE', 'Transformed ' . str_replace(base_path() . '/', '', $file));
                 } catch (Exception $e) {
-                    // FAIL LOUD - Never allow untransformed decorators through
-                    throw new RuntimeException(
-                        'JavaScript transformation failed for ' . str_replace(base_path() . '/', '', $file) .
-"\nDecorators require Babel transformation to work in browsers.\n" .
-'Error: ' . $e->getMessage() . "\n" .
-'Fix: cd ' . base_path('app/RSpade/Core/JavaScript/resource') . ' && npm install'
-                    );
+                    throw static::_babel_failure($file, $e);
                 }
             }
         }
@@ -3259,17 +3294,20 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         // the Concatenator docblock for the incident.
         $output_file = Rsx_Project_Paths::tmp_path('bundle_output_' . $this->bundle_name . '.js');
 
-        $concat_files = [];
-        foreach ($files_to_concat as $file) {
-            // Read the babel-transformed version where there is one, but attribute the
-            // content to the developer's own file in the banner and the sourcemap.
-            $concat_files[] = [
-                'path' => $this->babel_file_mapping[$file] ?? $file,
-                'source' => isset($this->babel_file_mapping[$file]) ? $file : null,
-            ];
-        }
+        // Read the obfuscated or babel-transformed version where there is one, but attribute
+        // the content to the developer's own file in the banner and the sourcemap.
+        $concat_files = static::_concat_entries(
+            $files_to_concat,
+            ($obfuscation['read_paths'] ?? []) + $this->babel_file_mapping,
+            $obfuscation === null ? [] : $string_obfuscation['eligible'],
+            $obfuscation['helper_path'] ?? null
+        );
 
         $concat_result = Concatenator::concat_js($concat_files, $output_file);
+
+        foreach ($obfuscation['scratch_files'] ?? [] as $scratch_file) {
+            @unlink($scratch_file);
+        }
 
         console_debug('BUNDLE', 'concat-js: ' . $concat_result['files'] . ' files -> '
             . $output_file . ' (' . round($concat_result['bytes'] / 1024, 2) . ' KB, '
@@ -3295,6 +3333,188 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         @unlink($output_file);
 
         return $js;
+    }
+
+    /**
+    * The app files the strict-production string obfuscation pass transforms
+    * (rsx.production.obfuscate_strings; rsx:man app_mode, STRING OBFUSCATION).
+    *
+    * Eligible, each identified by where the build itself records it - never by reading the
+    * file:
+    *   - ES6 class SOURCE files: the file the manifest's JS class index (`js_classes`) names
+    *     for the class its file record declares;
+    *   - generated MODEL stubs (Base_<Model>): manifest records flagged `is_model_stub`;
+    *   - the generated concrete model classes file (class X_Model extends Base_X_Model {});
+    *   - compiled jqhtml templates: the files the dependency ordering set aside as compiled
+    *     template output.
+    * Everything else stays untouched: non-class files, controller/Ajax and auth stubs, npm
+    * shims, the generated manifest/route/config/runner files, CDN and vendor code.
+    *
+    * @param array $js_files The app JS files in output order (original paths, never babel copies)
+    * @param array $manifest_files The manifest's `files` section
+    * @param array $js_classes The manifest's JS class index
+    * @param array $jqhtml_compiled_files Compiled template outputs in this bundle
+    * @param string|null $concrete_models_file The generated concrete model classes file, if any
+    * @return array The eligible paths, in output order
+    */
+    public static function _string_obfuscation_eligible(
+        array $js_files,
+        array $manifest_files,
+        array $js_classes,
+        array $jqhtml_compiled_files,
+        ?string $concrete_models_file
+    ): array {
+        $jqhtml = array_flip($jqhtml_compiled_files);
+        $eligible = [];
+
+        foreach ($js_files as $file) {
+            if (isset($jqhtml[$file]) || ($concrete_models_file !== null && $file === $concrete_models_file)) {
+                $eligible[] = $file;
+                continue;
+            }
+
+            // The manifest key: tmp/... for a generated file, the base-relative path otherwise.
+            $key = str_replace(base_path() . '/', '', Rsx_Project_Paths::key_for($file));
+            $record = $manifest_files[$key] ?? null;
+
+            if ($record === null) {
+                continue;
+            }
+
+            if (!empty($record['is_model_stub'])) {
+                $eligible[] = $file;
+                continue;
+            }
+
+            $class = $record['class'] ?? null;
+            if ($class !== null && ($js_classes[$class]['file'] ?? null) === $key) {
+                $eligible[] = $file;
+            }
+        }
+
+        return $eligible;
+    }
+
+    /**
+    * Whether the bundle babel-transforms a file: everything except the tmp and build trees
+    * (generated stubs, compiled templates, generated glue) and the CDN mirror (third-party
+    * production code).
+    */
+    public static function _is_babel_candidate(string $file): bool
+    {
+        return !Rsx_Project_Paths::is_under_tmp($file)
+            && !Rsx_Project_Paths::is_under_build($file)
+            && !str_contains($file, '.cdn-cache/');
+    }
+
+    /**
+    * FAIL LOUD - never allow untransformed decorators through.
+    */
+    protected static function _babel_failure(string $file, \Throwable $e): RuntimeException
+    {
+        return new RuntimeException(
+            'JavaScript transformation failed for ' . str_replace(base_path() . '/', '', $file) .
+            "\nDecorators require Babel transformation to work in browsers.\n" .
+            'Error: ' . $e->getMessage() . "\n" .
+            'Fix: cd ' . base_path('app/RSpade/Core/JavaScript/resource') . ' && npm install'
+        );
+    }
+
+    /**
+    * Run the string obfuscation pass over the ORIGINAL sources of the eligible files.
+    *
+    * The eligible files (in output order) are transformed by Minifier::obfuscate_strings();
+    * every other file is scanned for the reserved names only. A rewritten copy whose file the
+    * bundle babel-transforms (_is_babel_candidate(), when $babel is on) is then
+    * babel-transformed ITSELF, through Js_Transformer::transform_derived_copy() with the
+    * original path as its identity - the uncached transform, so the copy's bytes are never
+    * served from, nor written into, the transform cache under the original file's key. The
+    * copy file is overwritten with the transformed code.
+    *
+    * @param array $files The app JS files in output order (original paths)
+    * @param array $eligible Eligible original paths (_string_obfuscation_eligible())
+    * @param string $vendor_path The bundle's vendor output (collision scan only)
+    * @param string $bundle_name Names the scratch directory and any failure
+    * @param bool $babel Whether the bundle babel-transforms its files
+    * @return array{read_paths: array, helper_path: ?string, scratch_files: array, result: array}
+    *   read_paths maps each rewritten original to the file to concatenate in its place;
+    *   helper_path is null (and read_paths empty) when nothing converted
+    */
+    public static function _obfuscate_sources(array $files, array $eligible, string $vendor_path, string $bundle_name, bool $babel): array
+    {
+        $eligible_set = array_flip($eligible);
+        $eligible_paths = [];
+        $other_paths = [];
+
+        foreach ($files as $file) {
+            if (isset($eligible_set[$file])) {
+                $eligible_paths[] = $file;
+            } else {
+                $other_paths[] = $file;
+            }
+        }
+
+        $result = Minifier::obfuscate_strings(
+            $eligible_paths,
+            $other_paths,
+            $vendor_path,
+            $bundle_name,
+            Rsx_Project_Paths::tmp_path('string_obfuscation_' . $bundle_name)
+        );
+
+        if ($result['helper_path'] === null) {
+            return ['read_paths' => [], 'helper_path' => null, 'scratch_files' => [], 'result' => $result];
+        }
+
+        foreach ($result['files'] as $original => $copy) {
+            if ($babel && static::_is_babel_candidate($original)) {
+                try {
+                    $transformed = \App\RSpade\Core\JsParsers\Js_Transformer::transform_derived_copy($copy, $original);
+                } catch (Exception $e) {
+                    throw static::_babel_failure($original, $e);
+                }
+                file_put_contents_safe($copy, $transformed);
+            }
+        }
+
+        return [
+            'read_paths' => $result['files'],
+            'helper_path' => $result['helper_path'],
+            'scratch_files' => array_merge([$result['helper_path']], array_values($result['files'])),
+            'result' => $result,
+        ];
+    }
+
+    /**
+    * The concatenation list: each file read from its substitute where it has one (an
+    * obfuscated copy, a babel transform) and attributed to itself, and - when the string
+    * obfuscation pass produced a dictionary - the generated helper file inserted DIRECTLY
+    * BEFORE the first eligible file.
+    *
+    * @param array $files Files in output order
+    * @param array $read_paths [original => file to read]
+    * @param array $eligible Eligible original paths (only used to place the helper)
+    * @param string|null $helper_path The generated dictionary file, or null for none
+    * @return array [['path' => read path, 'source' => original|null], ...]
+    */
+    public static function _concat_entries(array $files, array $read_paths, array $eligible = [], ?string $helper_path = null): array
+    {
+        $eligible_set = array_flip($eligible);
+        $entries = [];
+
+        foreach ($files as $file) {
+            if ($helper_path !== null && isset($eligible_set[$file])) {
+                $entries[] = ['path' => $helper_path, 'source' => null];
+                $helper_path = null;
+            }
+
+            $entries[] = [
+                'path' => $read_paths[$file] ?? $file,
+                'source' => isset($read_paths[$file]) ? $file : null,
+            ];
+        }
+
+        return $entries;
     }
 
     /**

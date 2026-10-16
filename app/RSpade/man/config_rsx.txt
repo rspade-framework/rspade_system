@@ -66,6 +66,20 @@ APPLICATION MODE
     or production. Drives minification, sourcemaps, console_debug stripping,
     and sealed-build behavior. See: php artisan rsx:man app_mode
 
+    'production' => [
+        'obfuscate_strings' => true,
+    ]
+
+    obfuscate_strings    Strict production only (where the build minifies):
+                         run the string obfuscation pass over the app files
+                         the manifest scopes it to (ES6 class files, model
+                         stubs, compiled jqhtml templates), on their source
+                         before babel - qualifying strings inside their
+                         function bodies are rebuilt at run time from the
+                         global _$$SC dictionary through _$$(...). Deters
+                         casual reading only. Full rules: rsx:man app_mode
+                         (STRING OBFUSCATION). Not an .env key.
+
 EXTERNAL API
     'api' => [
         'log_retention_days' => 30,
@@ -125,7 +139,9 @@ MANIFEST AND BUNDLE PIPELINE
                          resource, Core/Manifest, playwright, _archive.
 
     NOTE: minification and sourcemaps are decided by application MODE
-    (Manifest::_should_minify() etc.), NOT by any config key here.
+    (Manifest::_should_minify() etc.), NOT by any config key here. The one
+    switch inside minification is production.obfuscate_strings (APPLICATION
+    MODE above).
 
 ROUTING AND DISPATCH
     'routing' => [
