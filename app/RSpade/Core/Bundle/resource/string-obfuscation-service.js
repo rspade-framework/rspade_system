@@ -311,9 +311,14 @@ function collect_edits(content, bundle, label) {
     }
 
     const candidates = [];
+    const logging = [];
     const parents = walk(ast, (node) => {
         if (node.type === 'Identifier' && RESERVED_NAMES.includes(node.name)) {
             throw collision_error(bundle, node.name, 'app', label);
+        }
+        if (node.type === 'ExpressionStatement' && node.expression.type === 'CallExpression'
+            && is_logging_callee(node.expression.callee)) {
+            logging.push(node);
         }
         if ((node.type === 'Literal' && typeof node.value === 'string') || node.type === 'TemplateLiteral') {
             candidates.push(node);
@@ -369,11 +374,133 @@ function collect_edits(content, bundle, label) {
         }
     }
 
-    edits.sort((x, y) => x.start - y.start);
-    return edits;
+    return fold_logging_statements(edits, logging, content);
+}
+
+/**
+ * LOGGING STATEMENTS - a `console.log(...)` or `console_debug(...)` call that is a whole
+ * statement is removed here, BEFORE the words are collected, so the text it would have
+ * logged never reaches the dictionary. The minifier drops the same calls from every
+ * strict-production app file; doing it first in the eligible files keeps their text out of
+ * `_$$SC` and leaves no stray printer call behind. A call whose value is used is not a
+ * statement and is left for the minifier, as is any other console method.
+ *
+ * An argument that may have an effect is kept, so `console.log(counter++)` still counts:
+ * the statement becomes `void (counter++);`, and a string inside a kept argument converts as
+ * anywhere else. A statement with nothing to keep becomes `;`, which is a valid statement
+ * in every position a statement can sit (an unbraced if body included). Line breaks the
+ * removed text spanned follow the replacement, so the file keeps its line count.
+ */
+function is_logging_callee(callee) {
+    if (callee.type === 'Identifier') {
+        return callee.name === 'console_debug';
+    }
+    return callee.type === 'MemberExpression' && !callee.computed
+        && callee.object.type === 'Identifier' && callee.object.name === 'console'
+        && callee.property.type === 'Identifier' && callee.property.name === 'log';
+}
+
+/**
+ * The parts of a removed call's argument that must still be evaluated: every sub-expression
+ * that may have an effect, with the strings and plain values around it dropped. Text being
+ * assembled for the log - a concatenation, a template, an array or object of values - is
+ * looked through; anything that may run code (a call, an assignment, a property read that a
+ * getter could answer) is kept whole.
+ */
+function effects(node) {
+    switch (node.type) {
+        case 'Literal':
+        case 'Identifier':
+        case 'ThisExpression':
+        case 'FunctionExpression':
+        case 'ArrowFunctionExpression':
+            return [];
+        case 'TemplateLiteral':
+            return node.expressions.flatMap(effects);
+        case 'BinaryExpression':
+            return [...effects(node.left), ...effects(node.right)];
+        case 'UnaryExpression':
+            return node.operator === 'delete' ? [node] : effects(node.argument);
+        case 'ArrayExpression':
+            return node.elements.some((element) => element && element.type === 'SpreadElement')
+                ? [node]
+                : node.elements.filter(Boolean).flatMap(effects);
+        case 'ObjectExpression':
+            return node.properties.every((prop) => prop.type === 'Property' && !prop.computed)
+                ? node.properties.flatMap((prop) => effects(prop.value))
+                : [node];
+        default:
+            return [node];
+    }
+}
+
+function count_newlines(text) {
+    return (text.match(/\n/g) || []).length;
+}
+
+function fold_logging_statements(edits, logging, content) {
+    // An outer logging statement swallows a nested one (a console.log inside a callback
+    // argument that is itself dropped).
+    const statements = logging
+        .sort((x, y) => x.start - y.start)
+        .filter((node, i, all) => !all.some((other) => other !== node && other.start <= node.start && node.end <= other.end));
+
+    if (statements.length === 0) {
+        return edits.sort((x, y) => x.start - y.start);
+    }
+
+    const inside = (edit, node) => edit.start >= node.start && edit.end <= node.end;
+    const kept_edits = edits.filter((edit) => !statements.some((node) => inside(edit, node)));
+
+    for (const node of statements) {
+        const kept = node.expression.arguments.flatMap(effects);
+        const inner = kept.map((arg) => ({
+            start: arg.start,
+            end: arg.end,
+            spread: arg.type === 'SpreadElement',
+            edits: edits.filter((edit) => inside(edit, arg)).sort((x, y) => x.start - y.start)
+        }));
+
+        kept_edits.push({ start: node.start, end: node.end, kind: 'strip', kept: inner });
+    }
+
+    return kept_edits.sort((x, y) => x.start - y.start);
 }
 
 const IDENTIFIER_PART = /[A-Za-z0-9_$\u0080-￿]/;
+
+/** Every string edit, those inside a kept argument of a removed logging statement included. */
+function string_edits(edits) {
+    const out = [];
+    for (const edit of edits) {
+        if (edit.kind === 'strip') {
+            for (const arg of edit.kept) {
+                out.push(...arg.edits);
+            }
+        } else {
+            out.push(edit);
+        }
+    }
+    return out;
+}
+
+/** The replacement for a removed logging statement: its kept arguments, or an empty statement. */
+function strip_replacement(content, edit, index) {
+    let kept_newlines = 0;
+    const parts = edit.kept.map((arg) => {
+        const shifted = arg.edits.map((inner) => ({ ...inner, start: inner.start - arg.start, end: inner.end - arg.start }));
+        const source = apply_edits(content.slice(arg.start, arg.end), shifted, index);
+        kept_newlines += count_newlines(source);
+        return arg.spread ? `[${source}]` : source;
+    });
+
+    // `void (...)` rather than `(...)`: a statement opening with a parenthesis would join onto
+    // a previous line that ends without a semicolon and call it.
+    const statement = parts.length === 0 ? ';' : `void (${parts.join(', ')});`;
+    const dropped_newlines = count_newlines(content.slice(edit.start, edit.end)) - kept_newlines;
+
+    return statement + '\n'.repeat(Math.max(0, dropped_newlines));
+}
 
 /** Phase 2 for one file: splice each edit's printer call in by source position. */
 function apply_edits(content, edits, index) {
@@ -381,6 +508,12 @@ function apply_edits(content, edits, index) {
     let cursor = 0;
 
     for (const edit of edits) {
+        if (edit.kind === 'strip') {
+            parts.push(content.slice(cursor, edit.start), strip_replacement(content, edit, index));
+            cursor = edit.end;
+            continue;
+        }
+
         let call = `${PRINTER_NAME}(${printer_arguments(edit.value.split(' ').map((w) => index.get(w)))})`;
 
         // Line breaks the original source spanned (a multi-line template, a `\`-continued
@@ -463,23 +596,20 @@ function transform(eligible, others, vendor_content, bundle) {
     const word_set = new Set();
     let converted = 0;
     for (const edits of per_file) {
-        converted += edits.length;
-        for (const edit of edits) {
+        for (const edit of string_edits(edits)) {
+            converted++;
             for (const word of edit.value.split(' ')) {
                 word_set.add(word);
             }
         }
     }
 
-    if (converted === 0) {
-        return { helper: null, outputs: eligible.map(() => null), converted: 0, words: 0 };
-    }
-
-    // Phase 2: one dictionary, every file rewritten against it.
+    // Phase 2: one dictionary, every file rewritten against it. A file whose only edits are
+    // removed logging statements is still rewritten, with no helper needed for it.
     const { words, index } = build_dictionary(word_set);
     const outputs = eligible.map((file, i) => (per_file[i].length === 0 ? null : apply_edits(file.content, per_file[i], index)));
 
-    return { helper: helper_source(words), outputs, converted, words: words.length };
+    return { helper: converted === 0 ? null : helper_source(words), outputs, converted, words: converted === 0 ? 0 : words.length };
 }
 
 /**

@@ -34,6 +34,15 @@ class Fixture_Strings {
         </div>` + '|' + 'wide      gap';
     }
 
+    static logging(flag) {
+        let n = 0
+        console.log('logged secret phrase', n++)
+        if (flag) console.log('conditional secret phrase')
+        console_debug('CHANNEL', 'channel secret phrase')
+        console.log(n++)
+        return n;
+    }
+
     static single_word() {
         const lonely = 'loneword';
         return lonely;

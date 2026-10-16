@@ -311,6 +311,7 @@ class String_Obfuscation_Test extends Rsx_Test_Abstract
             $original['literal_data']
         );
         static::__assert_equals(['spaced key name' => 1, 'singlekey' => 2], $original['keys']);
+        static::__assert_equals(2, $original['logging'], 'the side effects inside the logging calls did not run');
         static::__assert_equals("<div>\n                <span>NAME</span>\n        </div>|wide      gap", $original['indented']);
         static::__assert_equals('greeting template NAME closing words here', $original['template']);
         static::__assert_equals("first line words\nsecond line words", $original['multiline_template']);
@@ -398,6 +399,15 @@ class String_Obfuscation_Test extends Rsx_Test_Abstract
         static::__assert_true((bool) preg_match('/const inner = \(\) => _\$\$\([0-9,]+\);/', $class_out), 'the nested arrow was not converted');
         static::__assert_true((bool) preg_match('/`\$\{_\$\$\([0-9,]+\)\}\$\{name\}\$\{_\$\$\([0-9,]+\)\}`/', $class_out), 'the template quasis were not rewritten as substitutions');
         static::__assert_equals(substr_count(file_get_contents($files['class']), "\n"), substr_count($class_out, "\n"), 'the rewritten class file changed its line count');
+
+        // Logging statements are removed before words are collected: their text never reaches
+        // the dictionary, an argument with an effect is kept, and the line count holds.
+        foreach (['secret', 'CHANNEL'] as $logged_word) {
+            static::__assert_false(str_contains($run['helper'], $logged_word), "logged text '{$logged_word}' reached the dictionary");
+        }
+        static::__assert_false(str_contains($class_out, 'console.log(') || str_contains($class_out, 'console_debug('), 'a logging statement survived in the rewritten class file');
+        static::__assert_contains('void (n++);', $class_out);
+        static::__assert_contains('if (flag) ;', $class_out);
 
         // A run of three or more identical consecutive indexes (indentation's empty words) is
         // spread from one repeat call; a run of five empty words between 'wide' and 'gap'.

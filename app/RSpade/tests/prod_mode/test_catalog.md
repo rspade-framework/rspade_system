@@ -272,6 +272,7 @@ value. The sealed-build half is a grep in `cli/prod_lifecycle.sh` step 2b (the s
 | OBF-07 | Nothing to convert -> no helper, list unchanged | asset | no eligible file; an eligible class holding only a field initializer, a parameter default and a single word | list identical, `helper_path` null | implemented | 2026-10-16 |
 | OBF-08 | `_$$` / `_$$SC` / `_$$R` already in an eligible file, another app file or the vendor output fails, naming bundle and identifier | asset | eligible `function _$$`, non-eligible `var _$$SC` and `function _$$R`, vendor `window._$$=` | RuntimeException with the bundle and identifier | implemented | 2026-10-16 |
 | OBF-03c | A run of three or more identical consecutive indexes is spread from `_$$R(index, count)` | asset | template indentation, `'wide      gap'` | `..._$$R(n,5)` and an indentation run of 10+; values reproduced byte for byte (OBF-02) | implemented | 2026-10-16 |
+| OBF-03d | `console.log` / `console_debug` statements are removed before words are collected | asset | a method logging literals, a conditional log, a console_debug, a log of `n++` | logged text absent from `_$$SC`; no logging call in the copy; `void (n++);` and `if (flag) ;` remain; the method still returns 2 (OBF-02) | implemented | 2026-10-16 |
 | OBF-09 | A strict-production sealed build serves the dictionary | cli | `prod_lifecycle.sh` step 2b, /login scripts | contains `_$$SC=[` | implemented | 2026-10-16 |
 
 ## Bundle emission order (`php/Bundle_Emission_Order_Test.php`)

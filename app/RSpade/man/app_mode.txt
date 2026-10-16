@@ -335,6 +335,17 @@ STRING OBFUSCATION
     their arguments, member names, extends expressions and parameter lists
     (defaults included).
 
+    Logging first. Before any word is collected, a console.log(...) or
+    console_debug(...) call that is a whole statement is REMOVED from the
+    eligible file - anywhere in it - so the text it would have logged never
+    reaches the dictionary and no printer call is left where the minifier
+    would later have dropped the log. An argument that may have an effect is
+    kept (console.log(n++) becomes void (n++);, and a string inside a kept
+    argument converts like any other); a statement with nothing to keep
+    becomes ;. A call whose value is used, and every other console method,
+    is left alone. The minifier still strips console.log and console_debug
+    from every app file, eligible or not.
+
     Which strings, within that scope:
 
         (a) a string with an INNER space - a U+0020 with a non-space

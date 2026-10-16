@@ -35,6 +35,7 @@ function __collect() {
         qualifying: Fixture_Strings.qualifying(),
         spaces: Fixture_Strings.spaces(),
         indented: Fixture_Strings.indented('NAME'),
+        logging: Fixture_Strings.logging(true),
         single_word: Fixture_Strings.single_word(),
         literal_data: Fixture_Strings.literal_data(),
         keys: Fixture_Strings.keys(),
