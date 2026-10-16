@@ -197,6 +197,23 @@ class Rsx_Project_Paths
     }
 
     /**
+     * Where each compiled bundle type's OUTPUT RECORD lives: one JSON file per bundle and
+     * type (vendor, app), written by the compile that wrote the outputs, naming the hash and
+     * every file it wrote. The compiler's cache is valid only while every recorded file is
+     * still on disk, so a deleted .css or .js recompiles instead of being served missing.
+     */
+    public static function bundle_outputs_dir(): string
+    {
+        return self::build_path('bundle_outputs');
+    }
+
+    /** One bundle type's output record (see bundle_outputs_dir()). */
+    public static function bundle_outputs_file(string $bundle_name, string $type): string
+    {
+        return self::bundle_outputs_dir() . '/' . $bundle_name . '__' . $type . '.json';
+    }
+
+    /**
      * The class override map: framework FQCN => the application class that overrides it.
      * Written by the manifest build, sealed with it, and read BEFORE boot - by the composer
      * `files` entry app/RSpade/autoload_overrides.php (Class_Override_Loader::boot()), which

@@ -16,7 +16,7 @@ use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
-use App\RSpade\Core\Task\Task_Lock;
+use App\RSpade\Core\Task\Task_Lock_Set;
 use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
@@ -131,7 +131,7 @@ class Task_Runner
      * A scheduled run updates its schedule's statistics. A pool worker calls this under its
      * pool lock (THE RULE: task-table writes only; frames are deferred).
      */
-    public static function settle(Task_Instance $instance, Task_Run_Outcome $outcome, ?Task_Lock $run_lock = null): void
+    public static function settle(Task_Instance $instance, Task_Run_Outcome $outcome, ?Task_Lock_Set $run_lock = null): void
     {
         if (!$outcome->success) {
             $instance->stderr('Task failed: ' . $outcome->error);

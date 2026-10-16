@@ -100,7 +100,7 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | task-combo-11 | a blocked debounced member's wait line names the group and the holder; scheduled comes first | group held; RUNNING plain member; a due and a not-yet-due pending debounced run | `waiting for exclusive lock "fixture_combo_group" (held by task #N)`; the other `scheduled for ...` | implemented |
 | task-combo-12 | a running debounced member is named as the group's holder | group held; RUNNING combo_debounced A; pending plain member and combo_debounced B | both name the group and A's run id | implemented |
 | task-combo-13 | a schedule tick blocked by another identity of the group is queued | due schedule for combo_debounced; RUNNING run of the same method with other params; group held | one PENDING Scheduled run with the empty parameter set; next_run_at advanced | implemented |
-| task-combo-14 | a schedule tick whose own identity is running is coalesced | due schedule; RUNNING run with the empty parameter set; group held | no run created; next_run_at advanced | implemented |
+| task-combo-14 | a schedule tick whose own identity is running is queued as its follow-up and debounced | due schedule; RUNNING run with the empty parameter set (on demand); group held | one PENDING run with the schedule_id; next_run_at advanced; a dispatch joins it; the running run's settle re-anchors it to now + the delay | implemented |
 | task-combo-15 | TASK-CONCURRENCY-01 accepts the combination and refuses malformed arguments | the fixture methods' manifest attributes; hand-built bad arguments | no problem for any fixture; one each for a negative / non-integer / missing delay and an empty / non-string / second group name | implemented |
 
 ## Task_Pools_Test (php, default isolation) - the pools and what each claims
@@ -113,7 +113,7 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | task-pools-04 | the scheduled pool runs due dispatched work before a due schedule; the schedule's run is its own row | due schedule + pending run; scheduled worker | B then A; pool_id Scheduled; origin Scheduled run; next_run_at = next cadence; last_task_id / last_success_at | implemented |
 | task-pools-05 | the on_demand pool never runs a schedule | due schedule + pending run; on_demand worker | B only; schedule still due | implemented |
 | task-pools-06 | a worker claims each due pending run once; not-yet-due and cancelled runs wait | due, future, cancelled rows; both pools' workers | A ran once; future PENDING; cancelled CANCELLED | implemented |
-| task-pools-07 | a due schedule whose identity is running is coalesced | holder holds the exclusive identity; scheduled worker | no run row; next_run_at advanced | implemented |
+| task-pools-07 | a due schedule whose identity is running is queued as its follow-up | holder holds the exclusive identity; scheduled worker; then again with it free | one PENDING Scheduled run, next_run_at advanced; it COMPLETES once the identity is free | implemented |
 | task-pools-08 | a claim lost before the run is handed back | release_unrun_claim() via reflection | dispatched -> PENDING, worker columns cleared; scheduled -> deleted; settled -> untouched | implemented |
 | task-pools-09 | two workers racing the same pending row: the guarded claim lets exactly one win | concurrent claims | one claim affects the row | deferred (the read and the guarded write cannot be interleaved in-process; the guard is the WHERE status_id = PENDING of claim_pending_run) |
 
@@ -530,3 +530,15 @@ Children are real `php artisan` processes on the test database: a task being sto
 | task-d-13 | the Task System health row reads INFO under the maintenance flag | php | needs the real flag raised; the branch is one read of Framework_Maintenance::is_active_on_disk() | deferred |
 | task-d-14 | a web request blocked in Task::internal() while the system is off, ended by the web server, leaves its run queued | http | needs a served fixture route and a php-fpm request limit; the dead-waiter case is task-switch-10 | deferred |
 | task-debounce-nodelay-01 | the debounce delay is optional: a bare `#[Debounce]` has delay 0, coalesces repeat dispatches, and its pending run is due at once after a completion | php | `debounce_no_delay_task` dispatched twice straight after a completed run of the same identity | policy delay 0; one pending run, same id both times; `scheduled_for` not in the future | implemented | 2026-10-12 |
+
+## Task_Multiple_Locks_Test (php, default isolation, live rsx-lockd) - several #[Exclusive('group')] on one task
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-multi-01 | every group is read from the repeated attribute | `lock_a_and_b` | groups `[fixture_lock_a, fixture_lock_b]`; two run-lock identities | implemented |
+| task-multi-02 | the locks are taken all at once or not at all | a held elsewhere; then both free | pair refused and b NOT left held; a b-only run can take b; with both free both are held and both released together | implemented |
+| task-multi-03 | a younger run with a free lock goes ahead; the older runs in the next window | overdue pair + younger b-only; a held; worker twice | b-only COMPLETED while the pair waits; pair COMPLETED once both are free | implemented |
+| task-multi-04 | a waiting run names every held lock | a and b held, then only a | `waiting for exclusive locks "fixture_lock_a", "fixture_lock_b"`, then `waiting for exclusive lock "fixture_lock_a"` | implemented |
+| task-multi-05 | an inline run takes every lock | `Task::internal()` of the pair | COMPLETED; both locks free after | implemented |
+| task-multi-06 | a due debounced run waits for its lock and a call does not move it | overdue debounced run; group held; second dispatch | same id, scheduled_for unchanged; COMPLETED once the group is free | implemented |
+| task-multi-07 | TASK-CONCURRENCY-01 accepts repeated groups and refuses a repeated #[Debounce] | attribute maps | none / none / one / one problems | implemented |

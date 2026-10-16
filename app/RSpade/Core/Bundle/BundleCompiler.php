@@ -559,6 +559,21 @@ class BundleCompiler
         $vendor_css_files = glob($vendor_css_pattern);
         $app_css_files = glob($app_css_pattern);
 
+        // A sealed build never recompiles, so an output its record names and the disk does
+        // not have is a damaged build: say so, rather than serve the page without it.
+        foreach (['vendor', 'app'] as $type) {
+            $record_path = Rsx_Project_Paths::bundle_outputs_file($this->bundle_name, $type);
+            $record = is_file($record_path) ? json_decode((string) file_get_contents($record_path), true) : null;
+            foreach ((is_array($record) ? ($record['files'] ?? []) : []) as $file) {
+                if (!is_file("{$bundle_dir}/{$file}")) {
+                    throw new RuntimeException(
+                        "The sealed build is missing {$file}, an output of {$this->bundle_name} it records. "
+                        . 'Rebuild: php artisan rsx:build --force'
+                    );
+                }
+            }
+        }
+
         // Need at least one app file (JS is typically required), and the model list the
         // compile wrote beside it: a build without one predates the list and is not usable.
         if (!empty($app_js_files) && static::read_model_list($this->bundle_name) !== null) {
@@ -1713,49 +1728,49 @@ class BundleCompiler
     }
 
     /**
-    * Get cached bundle if exists
+    * The cached compile of one bundle type for this cache key, or null when there is none.
+    *
+    * Read from the type's OUTPUT RECORD (_write_output_record()), never from which files
+    * happen to be on disk: a bundle type legitimately has no .css when it bundles no
+    * stylesheet, so only the record can say that a missing .css was deleted rather than
+    * never written. No record, or a record for another hash, is no cache.
     */
     protected function _get_cached_bundle(string $cache_key, string $type): ?array
     {
-        $bundle_dir = Rsx_Project_Paths::bundles_dir();
-        // The cache key is used as part of the filename hash
-        // Look for files with the specific type and hash
         $short_key = substr($cache_key, 0, 8);
-        $js_file = "{$bundle_dir}/{$this->bundle_name}__{$type}.{$short_key}.js";
-        $css_file = "{$bundle_dir}/{$this->bundle_name}__{$type}.{$short_key}.css";
+        $record_path = Rsx_Project_Paths::bundle_outputs_file($this->bundle_name, $type);
 
-        $files = [];
-        if (file_exists($js_file)) {
-            $files[] = $js_file;
-        }
-        if (file_exists($css_file)) {
-            $files[] = $css_file;
-        }
-
-        if (empty($files)) {
-            console_debug('BUNDLE', "No cached files found for {$type} with hash {$short_key}");
+        $record = is_file($record_path) ? json_decode((string) file_get_contents($record_path), true) : null;
+        if (!is_array($record) || ($record['hash'] ?? null) !== $short_key || !is_array($record['files'] ?? null)) {
+            console_debug('BUNDLE', "No output record for {$type} with hash {$short_key}");
 
             return null;
         }
 
-        console_debug('BUNDLE', "Found cached files for {$type} with hash {$short_key}");
+        $bundle_dir = Rsx_Project_Paths::bundles_dir();
+        $files = array_map(fn ($file) => "{$bundle_dir}/{$file}", $record['files']);
+
+        console_debug('BUNDLE', "Found the output record for {$type} with hash {$short_key}");
 
         return ['files' => $files, 'key' => $cache_key];
     }
 
     /**
-    * Check if cache is still valid
+    * A cached compile is valid while every file its output record names is on disk. A
+    * missing one - deleted by hand, by a partial copy, by anything but rsx:clean -
+    * recompiles the type rather than serving the page without it.
     */
     protected function _is_cache_valid(array $cached, string $type): bool
     {
-        // In production, if files exist, they're valid
+        // A sealed build never recompiles; a missing artifact fails loud where it is served.
         if ($this->is_production) {
             return true;
         }
 
-        // Check if all cached files still exist
         foreach ($cached['files'] as $file) {
             if (!file_exists($file)) {
+                console_debug('BUNDLE', "Recorded output {$file} is missing; recompiling {$type}");
+
                 return false;
             }
         }
@@ -2925,9 +2940,43 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                 file_put_contents_safe("{$bundle_dir}/{$css_file}", $css_content);
                 $outputs["{$type}_css"] = $css_file;
             }
+
+            $this->_write_output_record($type, $hash, array_values(array_filter([
+                $outputs["{$type}_js"] ?? null,
+                $outputs["{$type}_css"] ?? null,
+            ])));
         }
 
         return $outputs;
+    }
+
+    /**
+     * Record which files a compile of one bundle type wrote (see
+     * Rsx_Project_Paths::bundle_outputs_dir()). Written after the outputs, so a compile
+     * that dies part-way leaves the previous record - naming a hash that no longer
+     * matches - and the next request compiles again.
+     *
+     * @param string $type  vendor or app
+     * @param string $hash  The hash in the output filenames
+     * @param array  $files The output filenames written, relative to the bundles directory
+     */
+    protected function _write_output_record(string $type, string $hash, array $files): void
+    {
+        $record_dir = Rsx_Project_Paths::bundle_outputs_dir();
+        if (!is_dir($record_dir)) {
+            Rsx_Project_Paths::assert_build_writable($record_dir, 'bundle output record directory');
+            mkdir($record_dir, 0755, true);
+        }
+
+        file_put_contents_safe(
+            Rsx_Project_Paths::bundle_outputs_file($this->bundle_name, $type),
+            json_encode([
+                'bundle' => $this->bundle_name,
+                'type' => $type,
+                'hash' => $hash,
+                'files' => $files,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+        );
     }
 
     /**

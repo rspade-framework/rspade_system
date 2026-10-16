@@ -223,15 +223,16 @@ THE SEAL FILE
                 { "file": "bundles/Frontend__app.<hash>.js", "sha256": "..." },
                 { "file": "bundle_models/Frontend_Bundle.json", "sha256": "..." },
                 { "file": "manifest_index.php", "sha256": "..." }
-                // ... every file under bundles/ and bundle_models/ ...
+                // ... every file under bundles/, bundle_models/ and bundle_outputs/ ...
             ]
         }
 
     Asset paths are recorded relative to the build root, so the seal is
     self-contained and location-independent. The assets list covers
     manifest_index.php, manifest_files.php, the build_key file, every file
-    under bundles/ and every file under bundle_models/ (the list of models
-    each compiled bundle carries; rsx:man bundle_api).
+    under bundles/, every file under bundle_models/ (the list of models
+    each compiled bundle carries; rsx:man bundle_api) and every file under
+    bundle_outputs/ (the files each compiled bundle type wrote).
 
     is_sealed() is true ONLY when a seal file exists AND the current RSX_MODE
     is a prod mode. That double condition means a leftover seal in a

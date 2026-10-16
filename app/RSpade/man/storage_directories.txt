@@ -106,6 +106,9 @@ BUILD TREE (<project>/build)
         bundles/             compiled CSS/JS bundles, vendor/app split
         bundle_models/       per bundle, the models its compiled output
                              carries (what its field-length script lists)
+        bundle_outputs/      per bundle and type, the files its last compile
+                             wrote: a recorded file gone from disk recompiles
+                             (development) or fails loud (sealed)
         laravel/             Laravel's own caches: events, services,
                              packages, config (there is no route cache).
                              Reached through the four cache

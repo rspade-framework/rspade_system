@@ -271,10 +271,10 @@ class Rsx_Prod_Seal
         }
         $assets[] = self::_asset_entry($root, $class_overrides);
 
-        // The compiled bundles, and the model list written beside each: a page serves its
-        // field-length script from that list, so it is as much a part of the build as the
-        // bundle it describes.
-        foreach ([Rsx_Project_Paths::bundles_dir(), Rsx_Project_Paths::bundle_models_dir()] as $asset_dir) {
+        // The compiled bundles, the model list written beside each (a page serves its
+        // field-length script from that list) and each bundle type's output record: all part
+        // of the build as much as the bundle they describe.
+        foreach ([Rsx_Project_Paths::bundles_dir(), Rsx_Project_Paths::bundle_models_dir(), Rsx_Project_Paths::bundle_outputs_dir()] as $asset_dir) {
             if (!is_dir($asset_dir)) {
                 continue;
             }

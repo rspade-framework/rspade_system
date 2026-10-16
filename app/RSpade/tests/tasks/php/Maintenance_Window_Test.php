@@ -95,9 +95,8 @@ class Maintenance_Window_Test extends Rsx_Test_Abstract
                 str_starts_with(strtolower($declaration['cron_expression']), 'maintenance'),
                 "{$name} runs daily or less often, so it is scheduled in the maintenance window, not '{$declaration['cron_expression']}'"
             );
-            static::__assert_equals(
-                'maintenance',
-                Task_Concurrency::group_of($class, $declaration['method']),
+            static::__assert_true(
+                in_array('maintenance', Task_Concurrency::groups_of($class, $declaration['method']), true),
                 "{$name} declares #[Exclusive('maintenance')]"
             );
             $checked++;

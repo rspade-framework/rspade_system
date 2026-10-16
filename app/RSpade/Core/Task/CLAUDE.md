@@ -49,21 +49,24 @@ says what is in this DIRECTORY and what must stay true when editing it.
 - `Task_Concurrency.php` — the policy of a task method, as TWO identities decided
   separately. The PENDING identity (`identity_key()`: the pending row, the enqueue lock, the
   delay, the re-anchor) is `class::method` for `#[Exclusive]` and
-  `class::method::params_hash` whenever `#[Debounce]` is declared; the RUN-LOCK identity
-  (`run_lock_identity()`) is the group's whenever `#[Exclusive('group')]` is declared and
-  the pending identity otherwise. The markers may be declared together: `get_policy()`
-  answers `mode` `debounce` whenever `#[Debounce]` is present (a bare `#[Exclusive]` beside
-  it changes nothing) and `group` from `#[Exclusive('group')]` beside either. `group_of()`,
-  `is_group_running()` (the group's lock, asked of the daemon), `is_identity_running()`
-  (a RUNNING row of the pending identity - how a schedule tick tells its own repeat from
-  another identity holding the group), `enqueue_coalesced_without_waiting()` for the
-  schedule tick that queues behind another identity of its group under the pool lock,
-  `group_members()` (from the manifest's attribute index, debounced members included),
-  `pending_ids_on_run_lock()` (the waiters of one lock - for a group, every pending run of
-  every member),
-  `params_hash()`, the coalescing enqueue under the identity's
-  enqueue lock, `try_acquire_run_lock()` (a worker's non-blocking try), `acquire_run_lock()`
-  (an inline run waits), `reschedule_pending_after_completion()`.
+  `class::method::params_hash` whenever `#[Debounce]` is declared; the RUN-LOCK identities
+  (`run_lock_identities()`) are every group's whenever one or more `#[Exclusive('group')]`
+  are declared (the attribute is repeatable) and the pending identity alone otherwise.
+  `get_policy()` answers `mode` `debounce` whenever `#[Debounce]` is present (a bare
+  `#[Exclusive]` beside it changes nothing) and `groups` (sorted) from every
+  `#[Exclusive('group')]`. `groups_of()`, `group_identity()`, `is_group_running()` (the
+  group's lock, asked of the daemon), `group_members()` (from the manifest's attribute
+  index, any instance naming the group), `pending_ids_on_run_lock()` (the waiters of any of
+  a run's locks), `params_hash()`, the coalescing enqueue under the identity's enqueue lock
+  (`enqueue_coalesced()`, and `enqueue_coalesced_without_waiting()` for the schedule tick a
+  worker enqueues under its pool lock; both take the due time a schedule passes),
+  `try_acquire_run_lock()` (a worker's non-blocking all-or-none try) and
+  `acquire_run_lock()` (an inline run waits), both answering a `Task_Lock_Set`,
+  `reschedule_pending_after_completion()`.
+- `Task_Lock_Set.php` — every run lock one run needs, held from claim to settle:
+  `try_acquire()` takes all or none (releasing what it took the moment one is held
+  elsewhere), `acquire()` waits for each in NAME ORDER (no two inline runs can each hold one
+  and wait on the other), `release()`.
 - `Task_Waiting.php` — what a PENDING run is waiting for (`disabled` / `scheduled` / `lock` /
   `workers` / `queued`), derived per read: one instance memoizes the switch (one read), the
   RUNNING rows (one query: holders by
@@ -121,8 +124,9 @@ says what is in this DIRECTORY and what must stay true when editing it.
 ## Invariants to keep when editing here
 
 - **Every execution is a run row.** Dispatched, scheduled (created by the claiming
-  scheduled-pool worker in the same transaction that advances `next_run_at`) and inline
-  alike; every path settles through `Task_Runner::settle()` or a guarded write of its own
+  scheduled-pool worker in the same transaction that advances `next_run_at` - RUNNING for an
+  unmanaged task, a coalesced PENDING run due at the schedule's due time for a managed one,
+  which every worker then claims like any pending run) and inline alike; every path settles through `Task_Runner::settle()` or a guarded write of its own
   (kill, abandonment, cancel). A schedule is a `_task_schedules` row and is never a run.
 - **Every settle and every claim is GUARDED** on the status it expects (and, for a
   kill or an abandonment, on the worker that held it), so two writers can never both win:
@@ -209,23 +213,28 @@ says what is in this DIRECTORY and what must stay true when editing it.
   every NEW reporting call on `Task_Instance` must end in `__reported()`, including its
   early returns; `insert_row()` must never write a default into `timeout`; and none of this
   is licence to add a timeout anywhere else (the no-timeout mandate).
-- **A run takes ONE run lock, the run-lock identity's.** A debounced member of an exclusive
-  group takes the group's lock and no lock of its debounce identity: the group's lock already
-  allows one run in the whole group, and which pending identity is the one running is read
-  from the RUNNING row (`is_identity_running()`). Nothing may add a second run lock for it -
-  two locks per claim would be two tries under the pool lock and an ordering to get wrong.
-  Every branch that asks "which rows are this identity's" goes through the pending identity
+- **A run takes ALL its run locks or none.** `Task_Lock_Set` is the only way a run lock is
+  taken: a worker's claim makes non-blocking tries (THE RULE) and lets go of every one the
+  moment one is refused, so a waiting run never holds part of its locks; an inline run waits
+  for each in name order. A grouped member takes no lock of its own identity - one run in
+  the group is implied by the group's lock. Nothing reserves a lock for a waiting run: the
+  claim walks due pending runs most overdue first and starts the first whose locks are all
+  free, and skipped runs are looked at again after every settle and at every tick. Every
+  branch that asks "which rows are this identity's" goes through the pending identity
   (`__identity_query()`), and every branch that asks "what excludes this run" through
-  `run_lock_identity()`; neither is inferred from `mode` alone.
+  `run_lock_identities()`; neither is inferred from `mode` alone.
+- **A managed schedule tick is a call.** It enqueues through the same coalescing path as
+  `dispatch()`, so every marker applies to it: a tick while the identity runs is its one
+  pending follow-up, never folded into the running run and never a second running instance.
 - **What a pending run waits for is DERIVED, never stored.** `Task_Waiting` reads the row,
   the lock daemon and the running rows when asked; no column may be added to cache it, and no
   path may write "blocked by" state onto a run - a dead holder must leave nothing to clean
   up. A list presents its runs through ONE `Task_Waiting` (`to_status_arrays()`), never one
   per row. Only the holder's run id reaches a viewer.
 - **An explicit next run survives everything but its own claim.** `set_next_run()` writes
-  `next_run_at`; reconciliation touches that column only for a changed expression or
-  `--force-scheduled`, and BOTH worker writes that advance it (the claim, and the coalesced
-  tick of a busy identity) are guarded on the `next_run_at` the worker read. A new write to
+  `next_run_at`; reconciliation touches that column only for a changed expression, resolution or timezone, or
+  `--force-scheduled`, and the worker write that advances it (the tick, whether it creates a
+  RUNNING run or enqueues a pending one) is guarded on the `next_run_at` the worker read. A new write to
   that column must be guarded the same way.
 - Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]` classes.
 

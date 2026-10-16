@@ -13,7 +13,9 @@ use App\RSpade\Core\Task\Task_Instance;
 /**
  * Test-only service exercising the concurrency attributes (#[Exclusive], a two-member
  * #[Exclusive('fixture_group')] group, #[Debounce], #[Debounce] beside a bare #[Exclusive],
- * and a second group, 'fixture_combo_group', of one #[Debounce] member and one plain member)
+ * a second group, 'fixture_combo_group', of one #[Debounce] member and one plain member,
+ * and two groups 'fixture_lock_a' / 'fixture_lock_b' with a member of each and one member
+ * naming both)
  * and the plain (unmanaged) case. No #[Schedule] - never auto-run by the cron. Methods are
  * trivial and side-effect-free; each reports what ran.
  */
@@ -97,6 +99,34 @@ class Task_Concurrency_Fixture_Service extends Rsx_Service_Abstract
     public static function combo_plain(Task_Instance $task, array $params = [])
     {
         $task->state(['ran' => 'combo_plain']);
+
+        return null;
+    }
+
+    #[Task('Fixture member of fixture_lock_a only (test-only)')]
+    #[Exclusive('fixture_lock_a')]
+    public static function lock_a_only(Task_Instance $task, array $params = [])
+    {
+        $task->state(['ran' => 'lock_a_only']);
+
+        return null;
+    }
+
+    #[Task('Fixture member of fixture_lock_b only (test-only)')]
+    #[Exclusive('fixture_lock_b')]
+    public static function lock_b_only(Task_Instance $task, array $params = [])
+    {
+        $task->state(['ran' => 'lock_b_only']);
+
+        return null;
+    }
+
+    #[Task('Fixture member of both fixture_lock_a and fixture_lock_b (test-only)')]
+    #[Exclusive('fixture_lock_a')]
+    #[Exclusive('fixture_lock_b')]
+    public static function lock_a_and_b(Task_Instance $task, array $params = [])
+    {
+        $task->state(['ran' => 'lock_a_and_b']);
 
         return null;
     }

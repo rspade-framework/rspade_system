@@ -118,7 +118,7 @@ Building elsewhere (a CI artifact, a container image) works because of determini
 
 ## The seal
 
-`build/prod_seal.json` pins: **build_key, mode, git commit, and a per-asset sha256** (the manifest index, `build_key`, every file under `bundles/` and `bundle_models/`). A migration changes none of them. It is written LAST and only on success, so it means "a build completed here". `is_sealed()` is true only when a seal exists AND the current `RSX_MODE` is a prod mode - which is what makes a hand-edited `.env` unable to half-seal a box.
+`build/prod_seal.json` pins: **build_key, mode, git commit, and a per-asset sha256** (the manifest index, `build_key`, every file under `bundles/`, `bundle_models/` and `bundle_outputs/`). A migration changes none of them. It is written LAST and only on success, so it means "a build completed here". `is_sealed()` is true only when a seal exists AND the current `RSX_MODE` is a prod mode - which is what makes a hand-edited `.env` unable to half-seal a box.
 
 `rsx:prod:verify` is the cluster/CI tool: it recomputes the sha256 of every sealed asset and checks the on-disk build_key against the seal, and reports OPcache posture (advisory). Table out, **exit 0 when the build matches, 1 otherwise** - put it in the deploy health check next to `rsx:health`.
 

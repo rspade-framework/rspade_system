@@ -27,21 +27,24 @@ use App\RSpade\Core\Time\Rsx_Time;
  *                  "task system disabled - php artisan rsx:tasks:enable"
  *   scheduled  the run is not due yet (scheduled_for is in the future)
  *                  "scheduled for <time>"
- *   lock       its #[Exclusive] / #[Debounce] run lock is held - by a run of the same
- *              identity, or of any member of its exclusive group
+ *   lock       one of its #[Exclusive] / #[Debounce] run locks is held - by a run of the
+ *              same identity, or of any member of one of its exclusive groups. A run needs
+ *              every lock at once, so it names every one that is held:
  *                  waiting for exclusive lock "<group>" (held by task #<id>)
+ *                  waiting for exclusive locks "<a>", "<b>" (held by task #<id>, task #<id>)
  *                  waiting for exclusive lock (held by task #<id>)        no group name
- *              The holder is the RUNNING run with that lock identity. In the moment between
+ *              A holder is the RUNNING run with that lock identity. In the moment between
  *              a lock being taken and its run's row being marked running there is no such
- *              row, and the parenthesis is left off.
+ *              row, and that holder is left out.
  *   workers    every worker that could claim it is busy (both task pools claim pending runs)
  *                  "waiting for a free worker (<busy> of <max> busy)"
  *   queued     none of the above: due, unlocked, a worker slot free - it starts when a worker
  *              reaches it (a finishing worker's next claim, or the next cron tick's spawn)
  *                  "waiting for a worker to start"
  *
- * The answer is {reason, text, lock, held_by_task_id}: lock is the group's name (null for an
- * ungrouped lock and for every other reason), held_by_task_id the holder's run id - the only
+ * The answer is {reason, text, lock, held_by_task_id}: lock is the held groups' names, comma-
+ * separated (null for an ungrouped lock and for every other reason), held_by_task_id the
+ * first holder's run id - the only
  * thing about the holder a viewer is told. A run that is not pending answers null.
  *
  * ONE INSTANCE PER READ. An instance remembers what it has asked - the running rows (one
@@ -106,17 +109,36 @@ class Task_Waiting
         $class = (string) $run->class;
         $method = (string) $run->method;
 
-        $identity = Task_Concurrency::run_lock_identity($class, $method, (string) $run->params_hash);
-        if ($identity !== null && $this->__lock_in_use($identity)) {
-            $group = Task_Concurrency::group_of($class, $method);
-            $holder = $this->__holders()[$identity] ?? null;
+        // Every run lock the task takes that is held right now. A run needs them all at once,
+        // so it waits while ANY is held - and says which.
+        $groups = Task_Concurrency::groups_of($class, $method);
+        $busy = [];
+        foreach (Task_Concurrency::run_lock_identities($class, $method, (string) $run->params_hash) as $identity) {
+            if ($this->__lock_in_use($identity)) {
+                $busy[$identity] = $this->__holders()[$identity] ?? null;
+            }
+        }
 
-            $text = 'waiting for exclusive lock' . ($group !== null ? ' "' . $group . '"' : '');
-            if ($holder !== null) {
-                $text .= ' (held by task #' . $holder . ')';
+        if ($busy !== []) {
+            $names = [];
+            foreach (array_keys($busy) as $identity) {
+                foreach ($groups as $group) {
+                    if (Task_Concurrency::group_identity($group) === $identity) {
+                        $names[] = $group;
+                    }
+                }
+            }
+            $holders = array_values(array_unique(array_filter($busy, fn ($holder) => $holder !== null)));
+
+            $text = 'waiting for exclusive lock' . (count($names) > 1 ? 's' : '');
+            if ($names !== []) {
+                $text .= ' ' . implode(', ', array_map(fn ($name) => '"' . $name . '"', $names));
+            }
+            if ($holders !== []) {
+                $text .= ' (held by ' . implode(', ', array_map(fn ($holder) => 'task #' . $holder, $holders)) . ')';
             }
 
-            return static::__answer(self::REASON_LOCK, $text, $group, $holder);
+            return static::__answer(self::REASON_LOCK, $text, $names === [] ? null : implode(', ', $names), $holders[0] ?? null);
         }
 
         $this->__holders();
@@ -165,9 +187,10 @@ class Task_Waiting
                 $this->busy_workers++;
             }
 
-            $identity = Task_Concurrency::run_lock_identity($row->class, $row->method, (string) $row->params_hash);
-            if ($identity !== null && !isset($this->holders[$identity])) {
-                $this->holders[$identity] = (int) $row->id;
+            foreach (Task_Concurrency::run_lock_identities($row->class, $row->method, (string) $row->params_hash) as $identity) {
+                if (!isset($this->holders[$identity])) {
+                    $this->holders[$identity] = (int) $row->id;
+                }
             }
         }
 

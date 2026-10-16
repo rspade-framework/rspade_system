@@ -16,7 +16,7 @@ use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
-use App\RSpade\Core\Task\Task_Lock;
+use App\RSpade\Core\Task\Task_Lock_Set;
 use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
@@ -239,7 +239,7 @@ class Task_Worker_Command extends Command
      * UNDER THE POOL LOCK, and it never releases it. Everything here is THE RULE's allowance:
      * task-table reads and writes, plus a NON-BLOCKING try of the identity run lock.
      *
-     * @return array{0: int, 1: Task_Lock|null}|string|null The claimed run's id with its held
+     * @return array{0: int, 1: Task_Lock_Set|null}|string|null The claimed run's id with its held
      *         run lock; CLAIM_SKIPPED for a candidate set aside (claim again); null when nothing
      *         is claimable.
      */
@@ -281,8 +281,10 @@ class Task_Worker_Command extends Command
         }
 
         // Per-identity guard for Exclusive/Debounce tasks: at most one instance runs at a
-        // time, cluster-wide, via the identity run lock. A NON-BLOCKING try - the only kind
-        // of other lock THE RULE allows under the pool lock.
+        // time, cluster-wide, via every run lock the task names - all of them or none. NON-
+        // BLOCKING tries - the only kind of other lock THE RULE allows under the pool lock. A
+        // run that cannot have them all is set aside for this pass; the pass resumes with the
+        // next most overdue run, and the set-aside list is cleared after every settle.
         $run_lock = null;
         if (Task_Concurrency::is_managed($row->class, $row->method)) {
             $run_lock = Task_Concurrency::try_acquire_run_lock($row->class, $row->method, $row->params_hash);
@@ -310,12 +312,17 @@ class Task_Worker_Command extends Command
     }
 
     /**
-     * A due #[Schedule]: advance its next_run_at and create its run row, RUNNING under this
-     * worker, in one transaction. A schedule whose identity is already running (an on-demand
-     * run of an #[Exclusive] task) has this tick coalesced into that run: next_run_at is
-     * advanced and nothing runs. A schedule held back only by ANOTHER identity of its exclusive
-     * group - another member, or for a #[Debounce] member a run of its own method with other
-     * params - is queued as a pending run instead.
+     * A due #[Schedule]: advance its next_run_at and produce its run, in one transaction.
+     *
+     * An UNMANAGED task's run row is created RUNNING under this worker and returned as the
+     * claim. A MANAGED task's tick (#[Exclusive], #[Debounce], any group) is a call to the task
+     * like any other: it goes through the coalescing enqueue, exactly as Task::dispatch() does,
+     * as a pending run of origin Scheduled due at the schedule's due time - so a tick while the
+     * identity is running becomes its one pending follow-up (debounced by the delay, re-anchored
+     * when the running run settles), a tick while a run is already pending is that run, and the
+     * run is claimed by claim_pending_run() under every run lock it needs, like any other
+     * pending run. The tick is then CLAIM_SKIPPED, and the next claim pass picks the run up if
+     * its locks are free.
      */
     private function claim_due_schedule(array $identity)
     {
@@ -329,59 +336,40 @@ class Task_Worker_Command extends Command
         }
 
         $next_run_at = date('Y-m-d H:i:s', (new Cron_Parser($schedule->cron_expression))->get_next_run_time());
-        $params_hash = Task_Concurrency::params_hash([]);
+        $managed = Task_Concurrency::is_managed($schedule->class, $schedule->method);
 
-        $run_lock = null;
-        if (Task_Concurrency::is_managed($schedule->class, $schedule->method)) {
-            $run_lock = Task_Concurrency::try_acquire_run_lock($schedule->class, $schedule->method, $params_hash);
-            if (!$run_lock) {
-                // Guarded on the due time this worker read, like the claim below: a next run
-                // set explicitly since (Task::set_next_run()) is not overwritten.
-                DB::table('_task_schedules')->where('id', $schedule->id)->where('next_run_at', $schedule->next_run_at)->update([
-                    'next_run_at' => $next_run_at,
-                    'updated_at' => now(),
-                ]);
-
-                // The lock of an exclusive GROUP may be held by a run of a different identity
-                // of the group. This tick is then not a repeat of anything running: it is
-                // queued as this identity's pending run, which a worker claims once the group
-                // is free.
-                if (Task_Concurrency::group_of($schedule->class, $schedule->method) !== null
-                    && !Task_Concurrency::is_identity_running($schedule->class, $schedule->method, $params_hash)) {
-                    $queued_id = Task_Concurrency::enqueue_coalesced_without_waiting(
-                        $schedule->class,
-                        $schedule->method,
-                        $params_hash,
-                        function (string $scheduled_for) use ($schedule) {
-                            return Task_Runner::insert_row(
-                                $schedule->class,
-                                $schedule->method,
-                                [],
-                                Task_Run_Model::ORIGIN_SCHEDULED,
-                                ['schedule_id' => $schedule->id, 'scheduled_for' => $scheduled_for]
-                            );
-                        }
-                    );
-
-                    if ($queued_id !== null) {
-                        // Set aside for this pass: its group is busy right now.
-                        $this->skip_ids[] = $queued_id;
-                    }
-                }
-
-                return self::CLAIM_SKIPPED;
-            }
-        }
-
-        $task_id = DB::transaction(function () use ($schedule, $next_run_at, $identity) {
+        $task_id = DB::transaction(function () use ($schedule, $next_run_at, $identity, $managed) {
             // Advance the cadence BEFORE running, so it holds even if the run is slow or
-            // crashes - guarded on the due time this worker read.
+            // crashes - guarded on the due time this worker read, so a next run set
+            // explicitly since (Task::set_next_run()) is not overwritten.
             $advanced = DB::table('_task_schedules')
                 ->where('id', $schedule->id)
                 ->where('next_run_at', $schedule->next_run_at)
                 ->update(['next_run_at' => $next_run_at, 'updated_at' => now()]);
 
             if (!$advanced) {
+                return null;
+            }
+
+            if ($managed) {
+                // A non-blocking probe of the enqueue lock (THE RULE): when another process is
+                // enqueuing this identity right now, its pending run is the one this tick wanted.
+                Task_Concurrency::enqueue_coalesced_without_waiting(
+                    $schedule->class,
+                    $schedule->method,
+                    Task_Concurrency::params_hash([]),
+                    function (string $scheduled_for) use ($schedule) {
+                        return Task_Runner::insert_row(
+                            $schedule->class,
+                            $schedule->method,
+                            [],
+                            Task_Run_Model::ORIGIN_SCHEDULED,
+                            ['schedule_id' => $schedule->id, 'scheduled_for' => $scheduled_for]
+                        );
+                    },
+                    $schedule->next_run_at
+                );
+
                 return null;
             }
 
@@ -395,12 +383,10 @@ class Task_Worker_Command extends Command
         });
 
         if ($task_id === null) {
-            $run_lock?->release();
-
             return self::CLAIM_SKIPPED;
         }
 
-        return [(int) $task_id, $run_lock];
+        return [(int) $task_id, null];
     }
 
     /** The columns a claim writes: RUNNING here, by this pid, under this pool identity. */
@@ -428,7 +414,7 @@ class Task_Worker_Command extends Command
      * daemon dropped the membership, a reaper tick may already have settled it, and that
      * verdict stands. Loud on purpose, and the worker exits non-zero after it.
      */
-    private function release_unrun_claim(int $task_id, ?Task_Lock $run_lock, array $identity, string $reason): void
+    private function release_unrun_claim(int $task_id, ?Task_Lock_Set $run_lock, array $identity, string $reason): void
     {
         $mine = DB::table('_tasks')
             ->where('id', $task_id)

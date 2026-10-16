@@ -191,9 +191,11 @@ class Task_Pools_Test extends Rsx_Test_Abstract
 
     /**
      * A due schedule whose identity is already running (an #[Exclusive] task's on-demand run)
-     * has this tick coalesced into that run: next_run_at advances and no run is created.
+     * is queued as the identity's one pending follow-up, exactly as a dispatch would be: the
+     * tick is spent, nothing runs beside the running instance, and the follow-up runs once the
+     * identity is free.
      */
-    public static function test_a_schedule_whose_identity_is_running_is_coalesced()
+    public static function test_a_schedule_whose_identity_is_running_is_queued_as_its_follow_up()
     {
         static::__settle_queue();
         $schedule_id = static::__due_schedule(Task_Concurrency_Fixture_Service::class, 'exclusive_task');
@@ -202,12 +204,18 @@ class Task_Pools_Test extends Rsx_Test_Abstract
         $holder = Task_Lock_Holder::start($lock_name, 'hold');
         try {
             Artisan::call('rsx:task:worker', ['--pool' => Task_Pool::SCHEDULED]);
+
+            $runs = Task_Run_Model::where('schedule_id', $schedule_id)->get();
+            static::__assert_count(1, $runs, 'the tick became one run');
+            static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) $runs[0]->status_id, 'waiting, not running beside the holder');
+            static::__assert_equals(Task_Run_Model::ORIGIN_SCHEDULED, (int) $runs[0]->origin_id);
+            static::__assert_greater_than(time(), strtotime(DB::table('_task_schedules')->where('id', $schedule_id)->value('next_run_at')), 'the tick was spent');
         } finally {
             Task_Lock_Holder::release($holder);
         }
 
-        static::__assert_equals(0, Task_Run_Model::where('schedule_id', $schedule_id)->count(), 'nothing ran');
-        static::__assert_greater_than(time(), strtotime(DB::table('_task_schedules')->where('id', $schedule_id)->value('next_run_at')), 'the tick was spent');
+        Artisan::call('rsx:task:worker', ['--pool' => Task_Pool::SCHEDULED]);
+        static::__assert_equals(Task_Run_Model::STATUS_COMPLETED, (int) Task_Run_Model::where('schedule_id', $schedule_id)->value('status_id'), 'the follow-up ran once the identity was free');
     }
 
     // -------------------------------------------------------------------------

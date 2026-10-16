@@ -465,6 +465,18 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
     Both guarantee, per IDENTITY, AT MOST ONE RUNNING + AT MOST ONE PENDING run - a
     distributed translation of the JS debounce(). #[Exclusive] has no delay.
 
+    EVERY CALL IS A CALL, WHATEVER MADE IT. Task::dispatch(), a due #[Schedule] and an
+    inline run (Task::internal(), rsx:task:run, a #[Command]) are all calls to the task,
+    and every marker applies to each the same way: a scheduled task can be started on
+    demand with dispatch() at any time, and a schedule that comes due while that run is
+    still going becomes the identity's one pending follow-up - debounced by the delay, if
+    there is one - exactly as a second dispatch would.
+
+    A CALL NEVER MOVES A PENDING RUN. Its due time is set when it is queued (no sooner
+    than the delay after the identity's last completion) and re-anchored only when a run
+    of the identity settles. Once a debounced run is due it only waits for its locks, and
+    a further call joins it without pushing it back.
+
     THE DELAY IS OPTIONAL. #[Debounce] with no argument, and #[Debounce(0)], mean no
     delay: a dispatch made while a run of the same identity is in progress queues one
     follow-up, and that follow-up is due the moment the running one finishes - it runs
@@ -485,16 +497,18 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
     identity (what "running" is keyed on). They are the same thing for every declaration
     but a group's:
 
-        declaration                         pending identity   run lock          delay
-        #[Exclusive]                        method             method            none
-        #[Exclusive('g')]                   method             group g           none
-        #[Debounce(n)]                      method + params    method + params   n
-        #[Debounce(n)] + #[Exclusive]       method + params    method + params   n
-        #[Debounce(n)] + #[Exclusive('g')]  method + params    group g           n
+        declaration                            pending identity   run locks         delay
+        #[Exclusive]                           method             method            none
+        #[Exclusive('g')]                      method             group g           none
+        #[Exclusive('g')] #[Exclusive('h')]    method             groups g AND h    none
+        #[Debounce(n)]                         method + params    method + params   n
+        #[Debounce(n)] + #[Exclusive]          method + params    method + params   n
+        #[Debounce(n)] + #[Exclusive('g')]     method + params    group g           n
 
-    rsx:check (TASK-CONCURRENCY-01) refuses only a malformed argument: #[Debounce] takes
-    nothing or one non-negative integer number of seconds, #[Exclusive] nothing or one
-    group name as a non-empty string.
+    rsx:check (TASK-CONCURRENCY-01) refuses a malformed argument and a repeated
+    #[Debounce]: #[Debounce] is declared once and takes nothing or one non-negative
+    integer number of seconds; each #[Exclusive] takes nothing or one group name as a
+    non-empty string.
 
     AN EXCLUSIVE GROUP serializes several task methods against each other:
 
@@ -519,12 +533,30 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
 
     A pending run whose group is busy is PASSED OVER by every worker - it holds no worker
     slot while it waits - and is claimed as soon as the group's lock is free; the worker
-    that just finished a member looks at the queue again at once. The order in which
-    waiting members run is the queue's (oldest due first). A schedule tick held back only
-    by another member of the group is queued as that method's pending run, not dropped;
-    a tick that finds its OWN method running is coalesced into that run as always. An
-    inline run waits for the group. The group name is a plain string, shared by
-    declaration: nothing registers it.
+    that just finished a member looks at the queue again at once. A schedule tick is
+    queued as the method's pending run like any other call. An inline run waits for the
+    group. The group name is a plain string, shared by declaration: nothing registers it.
+
+    SEVERAL GROUPS. #[Exclusive] is repeatable: a task naming several groups runs only
+    while it holds EVERY one of their locks.
+
+        #[Task('Rebuild the remote index from the mirror')]
+        #[Exclusive('remote_sync')]
+        #[Exclusive('search_index')]
+        public static function rebuild_remote_index(Task_Instance $task, array $params = []) { ... }
+
+    The locks are taken ALL AT ONCE OR NOT AT ALL: a run that cannot have every one holds
+    none of them while it waits, so it never blocks a task needing only one. An inline run
+    waits for each in name order, so two inline runs can never each hold one and wait on
+    the other.
+
+    WHICH RUN STARTS NEXT. Every time a worker takes the queue, it looks at the due
+    pending runs from the MOST OVERDUE to the most recent and starts the first whose locks
+    are all free right now; a run it cannot start is skipped, not held. Nothing reserves a
+    lock for a waiting run: if a younger run can go with just one free lock it goes, and a
+    run needing several waits for a window where all of them are free. Skipped runs are
+    looked at again after every run a worker finishes and at every cron tick (once a
+    minute), so a waiting run starts in the first such window.
 
     Never take the group's lock yourself inside a task body to get the same effect: by
     then the run occupies a worker slot, and tasks waiting there starve the pool.
@@ -567,19 +599,18 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
     member plus one per method for each plain member.
 
     "At most one running per parameter set" needs no lock of its own here - the group's
-    lock already allows one run in the whole group. Which run that is, is read from its
-    row: a schedule tick that finds its OWN parameter set (a schedule's is the empty one)
-    running is coalesced into that run; one held back by anything else in the group - a
-    different member, or the same method with other params - is queued as its pending
-    run. The wait line of a blocked run names the group and the holder; while its delay
-    has not elapsed it reads "scheduled for ..." instead (WHAT A PENDING RUN IS WAITING
-    FOR).
+    lock already allows one run in the whole group. A schedule tick (its parameter set is
+    the empty one) is queued like any dispatch of that set: the one pending follow-up when
+    the set is running, the existing pending run when one is queued. The wait line of a
+    blocked run names every held group and its holder; while its delay has not elapsed it
+    reads "scheduled for ..." instead (WHAT A PENDING RUN IS WAITING FOR).
 
     The guarantee holds however the task runs: dispatch() coalesces onto the identity's
-    pending run and returns its id; a worker claims a run only while holding the
-    identity's run lock (a non-blocking try - a run whose identity is busy is passed over);
-    a schedule tick whose identity is already running is coalesced into that run (its
-    next_run_at advances and nothing runs); an inline run waits for the run lock. When a
+    pending run and returns its id; a due schedule enqueues through the same coalescing
+    path (a pending run of origin Scheduled, due at the schedule's due time, so an overdue
+    tick sorts as overdue); a worker claims a run only while holding every run lock it
+    needs (non-blocking tries - a run whose locks are not all free is passed over); an
+    inline run waits for its run locks. When a
     run settles, a coalesced pending run of the same pending identity is re-anchored to
     now + the debounce delay. State
     is durable (_tasks rows) and cluster-safe (Task_Lock, a named RsxLocks lock).
@@ -801,7 +832,7 @@ SCHEDULES
     as after any scheduled run, so the regular cadence resumes by itself. Reconciliation
     never moves it: the tick rewrites next_run_at only for a declaration whose expression
     resolution or timezone changed, and under --force-scheduled. A moment in the past is due now; a moment that
-    comes due while an #[Exclusive] task is still running is coalesced into that run like
+    comes due while an #[Exclusive] task is still running is queued as its follow-up like
     any tick. A declaration the tick has not registered yet is registered by the call.
 
         // A drain that yields after 20 minutes with work left, and resumes in 10.
@@ -957,14 +988,16 @@ READING A RUN (Task_Run_Model)
         scheduled   scheduled_for is in the future (a deferred dispatch, a debounce
                     delay, a retry after an abandonment)
                         scheduled for <time>
-        lock        its #[Exclusive]/#[Debounce] run lock is held - by a run of its own
-                    identity, or of any task of its exclusive group
+        lock        one of its #[Exclusive]/#[Debounce] run locks is held - by a run of
+                    its own identity, or of any task of one of its exclusive groups. A run
+                    needs all its locks at once, so every held one is named:
                         waiting for exclusive lock "<group>" (held by task #<id>)
+                        waiting for exclusive locks "<a>", "<b>" (held by task #<id>, task #<id>)
                         waiting for exclusive lock (held by task #<id>)
-                    The first for a named group (lock = the group name), the second for
-                    a task with no group. The holder is the RUNNING run on that lock; in
-                    the moment between a lock being taken and its run being marked
-                    running there is none, and the parenthesis is left off
+                    lock = the held groups' names, comma-separated (null for a task with
+                    no group); held_by_task_id = the first holder. A holder is the RUNNING
+                    run on that lock; in the moment between a lock being taken and its run
+                    being marked running there is none, and it is left out
         workers     every worker that could claim it is busy
                         waiting for a free worker (<busy> of <max> busy)
                     busy = runs a pool worker is running; max = the on_demand cap plus

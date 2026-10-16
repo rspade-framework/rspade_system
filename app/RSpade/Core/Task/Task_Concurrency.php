@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Task;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Task\Task_Lock;
+use App\RSpade\Core\Task\Task_Lock_Set;
 use App\RSpade\Core\Task\Task_Run_Model;
 
 /**
@@ -18,7 +19,8 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * A task method may carry these markers, alone or together:
  *   #[Exclusive]          - at most one instance runs at a time
  *   #[Exclusive('group')] - the same, and additionally at most one task of the GROUP runs
- *                           at a time
+ *                           at a time. REPEATABLE: a task naming several groups runs only
+ *                           while it holds the lock of every one of them.
  *   #[Debounce(seconds)]  - same single-instance guarantee, and the coalesced
  *                           follow-up run fires `seconds` after the prior run COMPLETED.
  *                           The argument is optional: a bare #[Debounce] has no delay,
@@ -26,6 +28,9 @@ use App\RSpade\Core\Task\Task_Run_Model;
  *
  * All mean the SAME invariant, a distributed translation of the JS debounce()
  * (Core/Js/async.js): per IDENTITY, AT MOST ONE RUNNING + AT MOST ONE PENDING execution.
+ * A call never moves the pending run's due time: it is set when the run is queued (and
+ * re-anchored when a run of the identity completes), so once a debounced run is due it only
+ * waits for its locks, and further calls join it.
  *
  * A POLICY HAS TWO IDENTITIES, DECIDED SEPARATELY:
  *
@@ -37,45 +42,54 @@ use App\RSpade\Core\Task\Task_Run_Model;
  *       class::method + params_hash. Two different parameter sets are two pieces of work,
  *       each debounced on its own.
  *
- *   the RUN-LOCK identity (run_lock_identity()) - what "running" is keyed on:
- *     - #[Exclusive('group')] (with or without #[Debounce]): the group.
- *     - everything else: the pending identity.
+ *   the RUN-LOCK identities (run_lock_identities()) - what "running" is keyed on:
+ *     - one or more #[Exclusive('group')] (with or without #[Debounce]): every group named.
+ *     - everything else: the pending identity, alone.
  *
- *   declaration                          pending identity        run lock           delay
- *   #[Exclusive]                         class::method           class::method      0
- *   #[Exclusive('g')]                    class::method           group g            0
- *   #[Debounce(n)]                       class::method + params  the same           n
- *   #[Debounce(n)] + #[Exclusive]        class::method + params  the same           n
- *   #[Debounce(n)] + #[Exclusive('g')]   class::method + params  group g            n
+ *   declaration                               pending identity        run locks         delay
+ *   #[Exclusive]                              class::method           class::method     0
+ *   #[Exclusive('g')]                         class::method           group g           0
+ *   #[Exclusive('g')] #[Exclusive('h')]       class::method           groups g and h    0
+ *   #[Debounce(n)]                            class::method + params  the same          n
+ *   #[Debounce(n)] + #[Exclusive]             class::method + params  the same          n
+ *   #[Debounce(n)] + #[Exclusive('g')]        class::method + params  group g           n
  *
- * A bare #[Exclusive] beside #[Debounce] adds nothing: the task is #[Debounce] alone.
+ * A bare #[Exclusive] beside #[Debounce] or beside a group adds nothing.
  *
  * AN EXCLUSIVE GROUP serializes several methods against each other - six tasks that all
  * write one external resource, say. Every method naming the same group shares ONE run lock,
- * so one of them runs at a time, cluster-wide. PENDING stays per pending identity: a plain
- * member keeps one pending run per method, a debounced member one per parameter set, so a
- * run of one member queued behind another is never replaced by a third's - the group gates
- * execution, each identity still coalesces its own repeats. A pending run whose group is
- * busy is passed over by every worker and holds no worker slot while it waits; it is claimed
- * once the group's lock is free, oldest due first.
+ * so one of them runs at a time, cluster-wide. A run of a task naming several groups takes
+ * ALL their locks at once or none (Task_Lock_Set), so it runs only in a window where every
+ * one is free, and never holds part of them while it waits. PENDING stays per pending
+ * identity: a plain member keeps one pending run per method, a debounced member one per
+ * parameter set, so a run of one member queued behind another is never replaced by a
+ * third's - the groups gate execution, each identity still coalesces its own repeats.
  *
- * A DEBOUNCED GROUP MEMBER takes no lock of its own identity. "At most one running per
- * debounce identity" is implied by the group's lock (one running across the whole group), so
- * whether a given identity is the one running is read from its RUNNING row
- * (is_identity_running()), never from a second lock.
+ * A pending run whose locks are not all free is passed over by every worker and holds no
+ * worker slot while it waits. A worker looks at the due pending runs most overdue first, at
+ * every claim, and runs the first one whose locks are all free; nothing reserves a lock for a
+ * waiting run, so a run needing one free lock goes ahead of an older run needing two. The
+ * older run is looked at again after every settle and at every cron tick, and runs in the
+ * first window where all its locks are free.
+ *
+ * A grouped member takes no lock of its own identity: one run in the whole group is implied
+ * by the group's lock.
  *
  * It holds however the task runs:
  *   - Task::dispatch() enqueues through enqueue_coalesced(): the existing pending run of the
  *     identity is returned, or a new one is created - so the caller always gets the id of THE
  *     pending run to watch.
- *   - a worker claims a run only while holding the identity's RUN lock (try_acquire_run_lock),
- *     and a schedule tick whose identity is already running is coalesced into that run;
- *   - an inline run (Task::internal(), rsx:task:run, a #[Command]) takes the run lock too,
+ *   - a due #[Schedule] of a managed task enqueues through the same coalescing path (a
+ *     pending run of origin Scheduled, due at the schedule's due time): a tick while the
+ *     identity is running becomes its one pending follow-up, and a tick while a run is
+ *     already pending is that run.
+ *   - a worker claims a run only while holding every run lock (try_acquire_run_lock);
+ *   - an inline run (Task::internal(), rsx:task:run, a #[Command]) takes the run locks too,
  *     waiting for a running instance to finish.
  *
  * State is durable (`_tasks` rows) + cluster-safe (Task_Lock, a named rsx-lockd lock through
  * RsxLocks), so correctness never depends on an in-memory trigger:
- *   - running  -> the identity run-lock is held by a worker (or an inline runner)
+ *   - running  -> the run locks are held by a worker (or an inline runner)
  *   - queued   -> exactly one PENDING row for the identity
  *   - last_end -> the identity's last completed_at
  *   - timer    -> the pending row's scheduled_for (= last completed + delay)
@@ -90,45 +104,56 @@ class Task_Concurrency
      * @param string $class  Fully-qualified service class
      * @param string $method Static task method
      * mode decides the PENDING identity (and the delay): 'debounce' whenever #[Debounce] is
-     * declared, 'exclusive' for #[Exclusive] without it. group decides the RUN lock: the
-     * #[Exclusive('group')] name whichever mode it sits beside, or null.
+     * declared, 'exclusive' for #[Exclusive] without it. groups decides the RUN locks: every
+     * #[Exclusive('group')] name the method declares, sorted, whichever mode they sit beside.
      *
-     * @return array{mode: ?string, delay: int, group: ?string}  mode = 'exclusive' | 'debounce'
-     *         | null.
+     * @return array{mode: ?string, delay: int, groups: array<int, string>}  mode =
+     *         'exclusive' | 'debounce' | null.
      */
     public static function get_policy(string $class, string $method): array
     {
         $attributes = static::_method_attributes($class, $method);
 
-        $exclusive = static::_attribute_args($attributes, 'Exclusive');
-        $debounce = static::_attribute_args($attributes, 'Debounce');
+        $exclusive = static::_attribute_instances($attributes, 'Exclusive');
+        $debounce = static::_attribute_instances($attributes, 'Debounce');
 
-        $group = null;
-        if ($exclusive !== null) {
-            $group = $exclusive[0] ?? null;
-
-            if ($group !== null && (!is_string($group) || trim($group) === '')) {
+        $groups = [];
+        foreach ($exclusive as $args) {
+            $group = $args[0] ?? null;
+            if ($group === null) {
+                continue;
+            }
+            if (!is_string($group) || trim($group) === '') {
                 throw new \RuntimeException("#[Exclusive] on {$class}::{$method} takes one optional argument, the group name as a non-empty string.");
             }
+            $groups[$group] = true;
+        }
+        $groups = array_keys($groups);
+        sort($groups, SORT_STRING);
+
+        if (count($debounce) > 1) {
+            throw new \RuntimeException("#[Debounce] is declared more than once on {$class}::{$method}; a task has one debounce delay.");
         }
 
-        if ($debounce !== null) {
-            return ['mode' => 'debounce', 'delay' => max(0, (int) ($debounce[0] ?? 0)), 'group' => $group];
+        if ($debounce !== []) {
+            return ['mode' => 'debounce', 'delay' => max(0, (int) ($debounce[0][0] ?? 0)), 'groups' => $groups];
         }
 
-        if ($exclusive !== null) {
-            return ['mode' => 'exclusive', 'delay' => 0, 'group' => $group];
+        if ($exclusive !== []) {
+            return ['mode' => 'exclusive', 'delay' => 0, 'groups' => $groups];
         }
 
-        return ['mode' => null, 'delay' => 0, 'group' => null];
+        return ['mode' => null, 'delay' => 0, 'groups' => []];
     }
 
     /**
-     * The exclusive group a task method belongs to, or null.
+     * The exclusive groups a task method belongs to, sorted; empty for none.
+     *
+     * @return array<int, string>
      */
-    public static function group_of(string $class, string $method): ?string
+    public static function groups_of(string $class, string $method): array
     {
-        return static::get_policy($class, $method)['group'];
+        return static::get_policy($class, $method)['groups'];
     }
 
     /**
@@ -138,19 +163,7 @@ class Task_Concurrency
      */
     public static function is_group_running(string $group): bool
     {
-        return (new Task_Lock(static::run_lock_name(static::__group_identity($group))))->is_in_use();
-    }
-
-    /**
-     * Whether a run of this PENDING identity is RUNNING, by its row: any run of the method for
-     * #[Exclusive], a run with the same params_hash for #[Debounce]. What tells a group
-     * member's own repeat from another member holding the group's lock.
-     */
-    public static function is_identity_running(string $class, string $method, string $params_hash): bool
-    {
-        return static::__identity_query($class, $method, $params_hash)
-            ->where('status_id', Task_Run_Model::STATUS_RUNNING)
-            ->exists();
+        return (new Task_Lock(static::run_lock_name(static::group_identity($group))))->is_in_use();
     }
 
     /**
@@ -167,7 +180,14 @@ class Task_Concurrency
             if ($row['member'] === null || $row['class'] === null) {
                 continue;
             }
-            if (($row['instances'][0][0] ?? null) !== $group) {
+            $names_group = false;
+            foreach ($row['instances'] as $args) {
+                if (($args[0] ?? null) === $group) {
+                    $names_group = true;
+                    break;
+                }
+            }
+            if (!$names_group) {
                 continue;
             }
 
@@ -181,27 +201,32 @@ class Task_Concurrency
     }
 
     /**
-     * What a run's RUN lock is keyed on - the group for a task declaring #[Exclusive('group')]
-     * (a debounced one included), else the pending identity (identity_key()) - or null for an
-     * unmanaged task, which has no run lock. Two runs with the same answer can never run at
-     * once.
+     * What a run's RUN locks are keyed on - every group for a task declaring
+     * #[Exclusive('group')] (a debounced one included), else the pending identity
+     * (identity_key()) alone - or an empty list for an unmanaged task, which has no run lock.
+     * Two runs whose answers share an identity can never run at once.
+     *
+     * @return array<int, string> sorted
      */
-    public static function run_lock_identity(string $class, string $method, string $params_hash): ?string
+    public static function run_lock_identities(string $class, string $method, string $params_hash): array
     {
         $identity = static::identity_key($class, $method, $params_hash);
         if ($identity === null) {
-            return null;
+            return [];
         }
 
-        $group = static::get_policy($class, $method)['group'];
+        $groups = static::get_policy($class, $method)['groups'];
+        if ($groups === []) {
+            return [$identity];
+        }
 
-        return $group !== null ? static::__group_identity($group) : $identity;
+        return array_map(fn ($group) => static::group_identity($group), $groups);
     }
 
     /**
-     * The PENDING runs that wait on the same run lock as a run of ($class, $method,
-     * $params_hash): the identity's own pending run, and for a grouped task every pending run
-     * of every member of the group (one per method for a plain member, one per parameter set
+     * The PENDING runs that wait on any run lock a run of ($class, $method, $params_hash)
+     * takes: the identity's own pending run, and for a grouped task every pending run of every
+     * member of every group it names (one per method for a plain member, one per parameter set
      * for a debounced one). One pending run per pending identity; empty for an unmanaged task.
      * Task-table reads only.
      *
@@ -216,8 +241,13 @@ class Task_Concurrency
 
         $query = DB::table('_tasks')->where('status_id', Task_Run_Model::STATUS_PENDING);
 
-        if ($policy['group'] !== null) {
-            $members = static::group_members($policy['group']);
+        if ($policy['groups'] !== []) {
+            $members = [];
+            foreach ($policy['groups'] as $group) {
+                foreach (static::group_members($group) as $member) {
+                    $members[$member[0] . '::' . $member[1]] = $member;
+                }
+            }
             if ($members === []) {
                 return [];
             }
@@ -258,7 +288,7 @@ class Task_Concurrency
     /**
      * The PENDING identity's key: class::method for #[Exclusive], class::method::params_hash
      * for #[Debounce] (whatever #[Exclusive] it also declares). Null for an unmanaged task.
-     * The run lock is keyed on run_lock_identity(), which differs for a grouped task.
+     * The run locks are keyed on run_lock_identities(), which differ for a grouped task.
      */
     public static function identity_key(string $class, string $method, string $params_hash): ?string
     {
@@ -301,7 +331,7 @@ class Task_Concurrency
      *
      * @param callable $insert fn (string $scheduled_for): int - writes the pending row.
      */
-    public static function enqueue_coalesced(string $class, string $method, string $params_hash, callable $insert): int
+    public static function enqueue_coalesced(string $class, string $method, string $params_hash, callable $insert, ?string $due_at = null): int
     {
         $identity = static::identity_key($class, $method, $params_hash);
         if ($identity === null) {
@@ -319,7 +349,7 @@ class Task_Concurrency
                 return $existing;
             }
 
-            return (int) $insert(static::_next_scheduled_for($class, $method, $params_hash));
+            return (int) $insert(static::_next_scheduled_for($class, $method, $params_hash, $due_at));
         } finally {
             $lock->release();
         }
@@ -328,16 +358,17 @@ class Task_Concurrency
     /**
      * enqueue_coalesced() for a caller that may not wait: the enqueue lock is only PROBED.
      *
-     * For the one caller that enqueues while holding a task pool lock (a schedule tick of a
-     * grouped task whose group is held by a run of another pending identity), where waiting
-     * on another lock is not allowed. When
-     * the probe fails, another process is enqueuing this identity at this moment, and its
-     * pending run is the one this call wanted.
+     * For the one caller that enqueues while holding a task pool lock - a due #[Schedule] of
+     * a managed task, queued by the claiming worker - where waiting on another lock is not
+     * allowed. When the probe fails, another process is enqueuing this identity at this
+     * moment, and its pending run is the one this call wanted.
      *
-     * @param callable $insert fn (string $scheduled_for): int - writes the pending row.
+     * @param callable    $insert fn (string $scheduled_for): int - writes the pending row.
+     * @param string|null $due_at The earliest the run is due (the schedule's due time), so an
+     *                            overdue tick sorts as overdue; null = now.
      * @return int|null The pending run's id; null when the probe found an enqueue in flight.
      */
-    public static function enqueue_coalesced_without_waiting(string $class, string $method, string $params_hash, callable $insert): ?int
+    public static function enqueue_coalesced_without_waiting(string $class, string $method, string $params_hash, callable $insert, ?string $due_at = null): ?int
     {
         $lock = new Task_Lock(static::enqueue_lock_name(static::__require_identity($class, $method, $params_hash)), 0);
 
@@ -351,7 +382,7 @@ class Task_Concurrency
                 return $existing;
             }
 
-            return (int) $insert(static::_next_scheduled_for($class, $method, $params_hash));
+            return (int) $insert(static::_next_scheduled_for($class, $method, $params_hash, $due_at));
         } finally {
             $lock->release();
         }
@@ -372,33 +403,29 @@ class Task_Concurrency
     }
 
     /**
-     * Non-blocking attempt to acquire the run lock: the identity's, or the GROUP's for a
-     * task declaring #[Exclusive('group')]. Returns the held lock (keep it and release when
-     * the run finishes) or null if another run of the identity - or any task of the group -
-     * holds it. An unmanaged task has no run lock and the caller must not ask.
+     * Non-blocking attempt to acquire every run lock (run_lock_identities()) at once: the
+     * identity's, or each group's. Returns the held set (keep it and release when the run
+     * finishes) or null - holding nothing - if any one is held elsewhere. An unmanaged task
+     * has no run lock and the caller must not ask.
      */
-    public static function try_acquire_run_lock(string $class, string $method, string $params_hash): ?Task_Lock
+    public static function try_acquire_run_lock(string $class, string $method, string $params_hash): ?Task_Lock_Set
     {
-        $lock = new Task_Lock(static::run_lock_name(static::__run_identity($class, $method, $params_hash)), 0);
-        if ($lock->acquire()) {
-            return $lock;
-        }
+        $set = static::__run_lock_set($class, $method, $params_hash);
 
-        return null;
+        return $set->try_acquire() ? $set : null;
     }
 
     /**
-     * Acquire the run lock (the identity's, or the group's), waiting for as long as a running
-     * instance - or another task of the group - holds it. The
-     * inline runner's path: an inline run of a managed task waits its turn instead of running
-     * beside the instance already running.
+     * Acquire every run lock, waiting for as long as a running instance - or another task of
+     * any of its groups - holds one. The inline runner's path: an inline run of a managed task
+     * waits its turn instead of running beside the instance already running.
      */
-    public static function acquire_run_lock(string $class, string $method, string $params_hash): Task_Lock
+    public static function acquire_run_lock(string $class, string $method, string $params_hash): Task_Lock_Set
     {
-        $lock = new Task_Lock(static::run_lock_name(static::__run_identity($class, $method, $params_hash)));
-        $lock->acquire();
+        $set = static::__run_lock_set($class, $method, $params_hash);
+        $set->acquire();
 
-        return $lock;
+        return $set;
     }
 
     /**
@@ -442,21 +469,19 @@ class Task_Concurrency
         return $query;
     }
 
-    /**
-     * What the RUN lock is keyed on: the group for a task declaring #[Exclusive('group')], the
-     * pending identity for everything else. Pending rows are always keyed on the pending
-     * identity.
-     */
-    private static function __run_identity(string $class, string $method, string $params_hash): string
+    /** The unheld lock set of a managed task's run locks. */
+    private static function __run_lock_set(string $class, string $method, string $params_hash): Task_Lock_Set
     {
-        $identity = static::__require_identity($class, $method, $params_hash);
-        $group = static::get_policy($class, $method)['group'];
+        static::__require_identity($class, $method, $params_hash);
 
-        return $group !== null ? static::__group_identity($group) : $identity;
+        return new Task_Lock_Set(array_map(
+            fn ($identity) => static::run_lock_name($identity),
+            static::run_lock_identities($class, $method, $params_hash)
+        ));
     }
 
     /** The run-lock key of an exclusive group. No class::method identity can equal it. */
-    private static function __group_identity(string $group): string
+    public static function group_identity(string $group): string
     {
         return 'group::' . $group;
     }
@@ -472,29 +497,29 @@ class Task_Concurrency
     }
 
     /**
-     * scheduled_for for a fresh coalesced enqueue: not before the debounce delay
-     * has elapsed since the last completion of this identity.
+     * scheduled_for for a fresh coalesced enqueue: $due_at (default now), but not before the
+     * debounce delay has elapsed since the last completion of this identity.
      */
-    private static function _next_scheduled_for(string $class, string $method, string $params_hash): string
+    private static function _next_scheduled_for(string $class, string $method, string $params_hash, ?string $due_at = null): string
     {
+        $due = $due_at !== null ? \Illuminate\Support\Carbon::parse($due_at) : now();
         $delay = static::get_policy($class, $method)['delay'];
 
-        if ($delay <= 0) {
-            return now()->format('Y-m-d H:i:s.v');
+        if ($delay > 0) {
+            $last = static::__identity_query($class, $method, $params_hash)
+                ->whereNotNull('completed_at')
+                ->orderBy('completed_at', 'desc')
+                ->value('completed_at');
+
+            if ($last) {
+                $earliest = \Illuminate\Support\Carbon::parse($last)->addSeconds($delay);
+                if ($earliest->greaterThan($due)) {
+                    $due = $earliest;
+                }
+            }
         }
 
-        $last = static::__identity_query($class, $method, $params_hash)
-            ->whereNotNull('completed_at')
-            ->orderBy('completed_at', 'desc')
-            ->value('completed_at');
-
-        if (!$last) {
-            return now()->format('Y-m-d H:i:s.v');
-        }
-
-        $earliest = \Illuminate\Support\Carbon::parse($last)->addSeconds($delay);
-
-        return ($earliest->isFuture() ? $earliest : now())->format('Y-m-d H:i:s.v');
+        return $due->format('Y-m-d H:i:s.v');
     }
 
     /** Recursively sort the keys of every associative array, leaving lists in order. */
@@ -528,16 +553,19 @@ class Task_Concurrency
     }
 
     /**
-     * Arguments of the first instance of a named attribute, or null if absent.
+     * The argument lists of every instance of a named attribute, in declaration order; empty
+     * when the attribute is absent.
+     *
+     * @return array<int, array>
      */
-    private static function _attribute_args(array $attributes, string $name): ?array
+    private static function _attribute_instances(array $attributes, string $name): array
     {
         foreach ($attributes as $attr_name => $instances) {
             if ($attr_name === $name || str_ends_with($attr_name, '\\' . $name)) {
-                return $instances[0] ?? [];
+                return array_values($instances);
             }
         }
 
-        return null;
+        return [];
     }
 }

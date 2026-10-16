@@ -69,6 +69,16 @@
 - If Asset Bundle needs directory scanning, include it explicitly by class name
 - Discovery uses `Manifest::php_is_subclass_of()` (NOT filename patterns)
 
+**Output Record** (`_write_output_record`, `Rsx_Project_Paths::bundle_outputs_file`)
+- Each compile of a bundle type writes `build/bundle_outputs/<Bundle>__<type>.json`
+  `{bundle, type, hash, files}` AFTER its outputs: the files it wrote, relative to `bundles/`.
+- The cache (`_get_cached_bundle` / `_is_cache_valid`) is that record: no record or a record
+  for another hash is a miss, and in development a recorded file missing from disk recompiles
+  the type - a deleted `.css` is rebuilt, never served absent. The record, not the disk, is
+  what tells a deleted `.css` from a type that bundles no stylesheet.
+- A sealed build never recompiles: a recorded file that is missing throws naming
+  `rsx:build --force` (`_check_production_cache`). The records are sealed assets.
+
 **Model List And Field-Length Script** (`BundleCompiler::read_model_list`, `Core/Database/Field_Length_Script`)
 - The app compile writes `build/bundle_models/<Bundle>.json` beside the app script, in every
   mode: `{bundle, app_hash, models}` - the PHP model names whose generated JS stubs are in

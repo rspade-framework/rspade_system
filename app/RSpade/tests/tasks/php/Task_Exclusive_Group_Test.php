@@ -59,13 +59,13 @@ class Task_Exclusive_Group_Test extends Rsx_Test_Abstract
 
     public static function test_the_group_is_read_from_the_attribute()
     {
-        static::__assert_equals(self::GROUP, Task_Concurrency::group_of(self::SERVICE, 'group_alpha'));
-        static::__assert_equals(self::GROUP, Task_Concurrency::group_of(self::SERVICE, 'group_beta'));
+        static::__assert_equals([self::GROUP], Task_Concurrency::groups_of(self::SERVICE, 'group_alpha'));
+        static::__assert_equals([self::GROUP], Task_Concurrency::groups_of(self::SERVICE, 'group_beta'));
         static::__assert_equals('exclusive', Task_Concurrency::get_policy(self::SERVICE, 'group_alpha')['mode']);
 
-        static::__assert_null(Task_Concurrency::group_of(self::SERVICE, 'exclusive_task'), 'a bare #[Exclusive] has no group');
-        static::__assert_null(Task_Concurrency::group_of(self::SERVICE, 'debounce_task'));
-        static::__assert_null(Task_Concurrency::group_of(self::SERVICE, 'plain_task'));
+        static::__assert_equals([], Task_Concurrency::groups_of(self::SERVICE, 'exclusive_task'), 'a bare #[Exclusive] has no group');
+        static::__assert_equals([], Task_Concurrency::groups_of(self::SERVICE, 'debounce_task'));
+        static::__assert_equals([], Task_Concurrency::groups_of(self::SERVICE, 'plain_task'));
     }
 
     // -------------------------------------------------------------------------

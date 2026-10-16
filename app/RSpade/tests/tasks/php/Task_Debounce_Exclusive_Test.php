@@ -127,13 +127,13 @@ class Task_Debounce_Exclusive_Test extends Rsx_Test_Abstract
             Task_Concurrency::get_policy(self::SERVICE, 'debounce_exclusive_task'),
             'the policy of #[Debounce(30)] alone'
         );
-        static::__assert_equals(['mode' => 'debounce', 'delay' => self::DELAY, 'group' => null], Task_Concurrency::get_policy(self::SERVICE, 'debounce_exclusive_task'));
+        static::__assert_equals(['mode' => 'debounce', 'delay' => self::DELAY, 'groups' => []], Task_Concurrency::get_policy(self::SERVICE, 'debounce_exclusive_task'));
 
         $hash = Task_Concurrency::params_hash(['p' => 'a']);
         static::__assert_equals(self::SERVICE . '::debounce_exclusive_task::' . $hash, Task_Concurrency::identity_key(self::SERVICE, 'debounce_exclusive_task', $hash));
         static::__assert_equals(
-            Task_Concurrency::identity_key(self::SERVICE, 'debounce_exclusive_task', $hash),
-            Task_Concurrency::run_lock_identity(self::SERVICE, 'debounce_exclusive_task', $hash),
+            [Task_Concurrency::identity_key(self::SERVICE, 'debounce_exclusive_task', $hash)],
+            Task_Concurrency::run_lock_identities(self::SERVICE, 'debounce_exclusive_task', $hash),
             'the run lock is the debounce identity\'s, never the method\'s'
         );
     }
@@ -187,9 +187,9 @@ class Task_Debounce_Exclusive_Test extends Rsx_Test_Abstract
 
     public static function test_a_debounced_group_member_has_a_params_pending_identity_and_the_groups_run_lock()
     {
-        static::__assert_equals(['mode' => 'debounce', 'delay' => self::DELAY, 'group' => self::GROUP], Task_Concurrency::get_policy(self::SERVICE, 'combo_debounced'));
-        static::__assert_equals(['mode' => 'exclusive', 'delay' => 0, 'group' => self::GROUP], Task_Concurrency::get_policy(self::SERVICE, 'combo_plain'));
-        static::__assert_equals(self::GROUP, Task_Concurrency::group_of(self::SERVICE, 'combo_debounced'));
+        static::__assert_equals(['mode' => 'debounce', 'delay' => self::DELAY, 'groups' => [self::GROUP]], Task_Concurrency::get_policy(self::SERVICE, 'combo_debounced'));
+        static::__assert_equals(['mode' => 'exclusive', 'delay' => 0, 'groups' => [self::GROUP]], Task_Concurrency::get_policy(self::SERVICE, 'combo_plain'));
+        static::__assert_equals([self::GROUP], Task_Concurrency::groups_of(self::SERVICE, 'combo_debounced'));
 
         $hash_a = Task_Concurrency::params_hash(['p' => 'a']);
         $hash_b = Task_Concurrency::params_hash(['p' => 'b']);
@@ -200,15 +200,15 @@ class Task_Debounce_Exclusive_Test extends Rsx_Test_Abstract
             Task_Concurrency::identity_key(self::SERVICE, 'combo_debounced', $hash_b)
         );
 
-        static::__assert_equals('group::' . self::GROUP, Task_Concurrency::run_lock_identity(self::SERVICE, 'combo_debounced', $hash_a), 'running: the group');
+        static::__assert_equals(['group::' . self::GROUP], Task_Concurrency::run_lock_identities(self::SERVICE, 'combo_debounced', $hash_a), 'running: the group');
         static::__assert_equals(
-            Task_Concurrency::run_lock_identity(self::SERVICE, 'combo_debounced', $hash_a),
-            Task_Concurrency::run_lock_identity(self::SERVICE, 'combo_debounced', $hash_b),
+            Task_Concurrency::run_lock_identities(self::SERVICE, 'combo_debounced', $hash_a),
+            Task_Concurrency::run_lock_identities(self::SERVICE, 'combo_debounced', $hash_b),
             'whatever the params'
         );
         static::__assert_equals(
-            Task_Concurrency::run_lock_identity(self::SERVICE, 'combo_plain', $hash_a),
-            Task_Concurrency::run_lock_identity(self::SERVICE, 'combo_debounced', $hash_a),
+            Task_Concurrency::run_lock_identities(self::SERVICE, 'combo_plain', $hash_a),
+            Task_Concurrency::run_lock_identities(self::SERVICE, 'combo_debounced', $hash_a),
             'and the plain member shares it'
         );
 
@@ -300,9 +300,6 @@ class Task_Debounce_Exclusive_Test extends Rsx_Test_Abstract
 
         $first = Task::dispatch(self::SERVICE_NAME, 'combo_debounced', ['p' => 'a']);
         DB::table('_tasks')->where('id', $first)->update(Task_Runner::running_fields());
-
-        static::__assert_true(Task_Concurrency::is_identity_running(self::SERVICE, 'combo_debounced', Task_Concurrency::params_hash(['p' => 'a'])));
-        static::__assert_false(Task_Concurrency::is_identity_running(self::SERVICE, 'combo_debounced', Task_Concurrency::params_hash(['p' => 'b'])), 'another parameter set is not the one running');
 
         $follow_up = Task::dispatch(self::SERVICE_NAME, 'combo_debounced', ['p' => 'a']);
         static::__assert_not_equals($first, $follow_up, 'a running instance does not absorb the next dispatch');
@@ -507,8 +504,12 @@ class Task_Debounce_Exclusive_Test extends Rsx_Test_Abstract
         }
     }
 
-    /** A tick whose OWN identity is the one running is coalesced into that run: nothing is queued. */
-    public static function test_a_tick_whose_own_identity_is_running_is_coalesced()
+    /**
+     * A tick whose OWN identity is the one running - here an on-demand run - is a call like
+     * any other: it becomes the identity's one pending follow-up, a dispatch made meanwhile
+     * joins it, and the running run's settle re-anchors it by the debounce delay.
+     */
+    public static function test_a_tick_whose_own_identity_is_running_is_queued_and_debounced()
     {
         static::__clear_queue();
 
@@ -522,12 +523,19 @@ class Task_Debounce_Exclusive_Test extends Rsx_Test_Abstract
             Task_Lock_Holder::release($holder);
         }
 
-        static::__assert_equals(0, DB::table('_tasks')->where('schedule_id', $schedule_id)->count(), 'no run was created');
-        static::__assert_equals(0, static::__pending_count('combo_debounced'));
+        $queued = DB::table('_tasks')->where('schedule_id', $schedule_id)->get();
+        static::__assert_count(1, $queued, 'the tick became one pending follow-up');
+        static::__assert_equals(Task_Run_Model::STATUS_PENDING, (int) $queued[0]->status_id);
+        static::__assert_equals(1, static::__pending_count('combo_debounced'));
         static::__assert_true(
             strtotime((string) DB::table('_task_schedules')->where('id', $schedule_id)->value('next_run_at')) > time(),
             'the tick was spent'
         );
+
+        static::__assert_equals((int) $queued[0]->id, Task::dispatch(self::SERVICE_NAME, 'combo_debounced', []), 'an on-demand call joins the scheduled follow-up');
+
+        Task_Concurrency::reschedule_pending_after_completion(self::SERVICE, 'combo_debounced', Task_Concurrency::params_hash([]));
+        static::__assert_equals_approx(self::DELAY, static::__seconds_ahead((int) $queued[0]->id), 5, 'the follow-up waits out the delay after the running run completes');
     }
 
     // -------------------------------------------------------------------------

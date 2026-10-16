@@ -17,7 +17,7 @@ use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
-use App\RSpade\Core\Task\Task_Lock;
+use App\RSpade\Core\Task\Task_Lock_Set;
 use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
@@ -144,7 +144,7 @@ class Task
      *
      * A command-line caller is told once, on stderr, what it is waiting for.
      *
-     * @return array{0: int, 1: Task_Lock|null|false} The run's id with the run lock this
+     * @return array{0: int, 1: Task_Lock_Set|null|false} The run's id with the run locks this
      *         process holds for it (null for an unmanaged task) - the row is RUNNING here and
      *         the caller executes it; or false in place of the lock when the run has settled
      *         without this process.

@@ -11,8 +11,11 @@ use App\RSpade\Core\Manifest\Manifest;
  * #[Exclusive] and #[Debounce(seconds)] may be declared alone or together on one task
  * method (rsx:man tasks, CONCURRENCY). What the rule refuses is a malformed argument:
  *
- *   - #[Debounce] takes nothing (no delay), or one non-negative integer number of seconds;
- *   - #[Exclusive] takes nothing, or one group name as a non-empty string.
+ *   - #[Debounce] takes nothing (no delay), or one non-negative integer number of seconds,
+ *     and is declared at most once - a task has one delay;
+ *   - #[Exclusive] takes nothing, or one group name as a non-empty string. It is
+ *     REPEATABLE: a task naming several groups runs only while it holds all their locks, and
+ *     each instance is judged on its own.
  *
  * Cross-file rule: runs once per rsx:check over the whole manifest.
  */
@@ -30,7 +33,7 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function get_description(): string
     {
-        return 'Debounce takes nothing or one non-negative integer number of seconds; Exclusive takes nothing or one non-empty group name';
+        return 'Debounce is declared once and takes nothing or one non-negative integer number of seconds; each Exclusive takes nothing or one non-empty group name';
     }
 
     public function get_file_patterns(): array
@@ -104,7 +107,15 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
     {
         $problems = [];
 
-        $debounce_args = static::__attr_args($attrs, 'Debounce');
+        $debounce_instances = static::__attr_instances($attrs, 'Debounce');
+        if (count($debounce_instances) > 1) {
+            $problems[] = [
+                "Task {$method_name} declares #[Debounce] more than once.",
+                'A task has one debounce delay: keep a single #[Debounce] (or #[Debounce(seconds)]).',
+            ];
+        }
+
+        $debounce_args = $debounce_instances[0] ?? null;
         if ($debounce_args !== null && $debounce_args !== []) {
             $delay = $debounce_args[0] ?? null;
             if (count($debounce_args) !== 1 || !is_int($delay) || $delay < 0) {
@@ -116,14 +127,17 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
             }
         }
 
-        $exclusive_args = static::__attr_args($attrs, 'Exclusive');
-        if ($exclusive_args !== null && $exclusive_args !== []) {
+        foreach (static::__attr_instances($attrs, 'Exclusive') as $exclusive_args) {
+            if ($exclusive_args === []) {
+                continue;
+            }
             $group = $exclusive_args[0] ?? null;
             if (count($exclusive_args) !== 1 || !is_string($group) || trim($group) === '') {
                 $problems[] = [
                     "Task {$method_name} #[Exclusive] takes nothing, or one group name as a non-empty string.",
                     "Use #[Exclusive] for a task serialized against itself, or #[Exclusive('group_name')] to " .
-                    'serialize it against every other task naming the same group.',
+                    'serialize it against every other task naming the same group; declare it once per ' .
+                    "group to need several: #[Exclusive('a')] #[Exclusive('b')].",
                 ];
             }
         }
@@ -131,15 +145,16 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
         return $problems;
     }
 
-    private static function __attr_args(array $attrs, string $name): ?array
+    /** The argument lists of every instance of a named attribute; empty when absent. */
+    private static function __attr_instances(array $attrs, string $name): array
     {
         foreach ($attrs as $attr_name => $instances) {
             if ($attr_name === $name || str_ends_with($attr_name, '\\' . $name)) {
-                return $instances[0] ?? [];
+                return array_values($instances);
             }
         }
 
-        return null;
+        return [];
     }
 
     private function __violate(string $file, string $method, string $message, string $fix): void

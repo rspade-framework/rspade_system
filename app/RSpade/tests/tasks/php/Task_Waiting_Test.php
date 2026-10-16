@@ -48,6 +48,17 @@ class Task_Waiting_Test extends Rsx_Test_Abstract
         DB::table('_tasks')->whereIn('status_id', Task_Run_Model::LIVE_STATUSES)->delete();
     }
 
+    /**
+     * Load the _tasks column map before a query count. A process's first read of a model
+     * attribute loads its table's column map (Rsx_Schema), which asks the database for the
+     * state key once - a cost of the process, not of the code being measured, and the first
+     * thing a fresh test container does.
+     */
+    private static function __warm_schema(Task_Run_Model $run): void
+    {
+        $run->status_id;
+    }
+
     private static function __pending(string $method, array $params = [], array $fields = []): Task_Run_Model
     {
         return Task_Run_Model::find(Task_Runner::insert_row(self::SERVICE, $method, $params, Task_Run_Model::ORIGIN_DISPATCHED, $fields));
@@ -359,6 +370,7 @@ class Task_Waiting_Test extends Rsx_Test_Abstract
 
         $holder = Task_Lock_Holder::start(static::__group_lock(), 'hold');
         try {
+            static::__warm_schema($runs[0]);
             DB::flushQueryLog();
             DB::enableQueryLog();
             try {
@@ -406,6 +418,7 @@ class Task_Waiting_Test extends Rsx_Test_Abstract
 
         \App\RSpade\Core\Task\Task::disable('test');
 
+        static::__warm_schema($due);
         DB::flushQueryLog();
         DB::enableQueryLog();
         try {
@@ -440,14 +453,14 @@ class Task_Waiting_Test extends Rsx_Test_Abstract
         static::__clear_live();
         $hash = Task_Concurrency::params_hash([]);
 
-        static::__assert_null(Task_Concurrency::run_lock_identity(self::SERVICE, 'plain_task', $hash), 'an unmanaged task has no run lock');
-        static::__assert_equals('group::' . self::GROUP, Task_Concurrency::run_lock_identity(self::SERVICE, 'group_alpha', $hash));
+        static::__assert_equals([], Task_Concurrency::run_lock_identities(self::SERVICE, 'plain_task', $hash), 'an unmanaged task has no run lock');
+        static::__assert_equals(['group::' . self::GROUP], Task_Concurrency::run_lock_identities(self::SERVICE, 'group_alpha', $hash));
         static::__assert_equals(
-            Task_Concurrency::run_lock_identity(self::SERVICE, 'group_alpha', $hash),
-            Task_Concurrency::run_lock_identity(self::SERVICE, 'group_beta', $hash),
+            Task_Concurrency::run_lock_identities(self::SERVICE, 'group_alpha', $hash),
+            Task_Concurrency::run_lock_identities(self::SERVICE, 'group_beta', $hash),
             'every member of a group shares one'
         );
-        static::__assert_equals(self::SERVICE . '::exclusive_task', Task_Concurrency::run_lock_identity(self::SERVICE, 'exclusive_task', $hash));
+        static::__assert_equals([self::SERVICE . '::exclusive_task'], Task_Concurrency::run_lock_identities(self::SERVICE, 'exclusive_task', $hash));
 
         $members = Task_Concurrency::group_members(self::GROUP);
         sort($members);
