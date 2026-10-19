@@ -1,10 +1,24 @@
 // @FILE-SUBCLASS-01-EXCEPTION
 
 /**
- * Client-side Ajax class for making API calls to RSX controllers
+ * Client-side Ajax: calls RSX #[Ajax_Endpoint] methods (await Controller.method(params)).
  *
- * Automatically batches multiple calls into single HTTP requests to reduce network overhead.
- * Batches up to 20 calls or flushes after setTimeout(0) debounce.
+ * ONE TRANSPORT, EVERY MODE. Every call is sent to /_ajax/_batch - a lone call as a batch
+ * of one - and answered from its own key in the response. Calls made in the same
+ * synchronous turn share one request (at most MAX_BATCH_SIZE calls each) when
+ * config('rsx.ajax.batching') is on (the default); with it off, every call is its own
+ * request. Nothing else differs: the same endpoint answers the same way in development and
+ * production, batched or not.
+ *
+ * NO MERGING. Two identical calls are two calls: every Ajax call is a POST, and the
+ * transport cannot know an endpoint is a read - merging two identical "add note" calls
+ * would run it once and tell both callers it succeeded. Reads that are safe to share are
+ * coalesced where they are known to be reads: the ORM fetch (Rsx_Js_Model) and jqhtml's
+ * load coordinator (same component, same args, loading at the same time).
+ *
+ * EVERY CALL IS SETTLED. A call resolves with its endpoint's value or rejects with an
+ * Error carrying .code (an Ajax.ERROR_* constant) and .metadata - including when the
+ * request fails as a whole, and when an answer arrives without the call in it.
  */
 class Ajax {
     // Error code constants (must match server-side Ajax::ERROR_* constants)
@@ -16,58 +30,53 @@ class Ajax {
     static ERROR_FATAL = 'fatal';
     static ERROR_GENERIC = 'generic';
     static ERROR_QUESTION = 'question';             // Not a failure: a pending server-driven question
-    static ERROR_SERVER = 'server_error';           // Client-generated (HTTP 500)
+    static ERROR_SERVER = 'server_error';           // Client-generated (HTTP 5xx, or an answer missing a call)
     static ERROR_NETWORK = 'network_error';         // Client-generated (connection failed)
     static ERROR_PHP_EXCEPTION = 'php_exception';   // Client-generated (PHP exception with file/line/backtrace)
+
+    // The most calls one request carries. The server refuses a batch over
+    // rsx.ajax.batch_max_calls (100), so this only splits what a page sends at once.
+    static MAX_BATCH_SIZE = 20;
 
     /**
      * Initialize Ajax system
      * Called automatically when class is loaded
      */
     static _on_framework_core_init() {
-        // Queue of pending calls waiting to be batched
-        Ajax._pending_calls = {};
-
-        // Timer for batching flush
-        Ajax._flush_timeout = null;
-
-        // Call counter for generating unique call IDs
+        // Calls made this turn, not yet sent: [{call_id, controller, action, params, hydrate, resolve, reject}]
+        Ajax._queue = [];
+        Ajax._flush_scheduled = false;
         Ajax._call_counter = 0;
 
-        // Maximum batch size before forcing immediate flush
-        Ajax.MAX_BATCH_SIZE = 20;
-
-        // Debounce time in milliseconds
-        Ajax.DEBOUNCE_MS = 0;
-
-        // Track promises from Ajax calls to detect uncaught rejections
-        Ajax._tracked_promises = new WeakSet();
-
-        // Set up global unhandled rejection handler for Ajax errors
+        // An Ajax failure nobody caught gets the framework's error dialog instead of the
+        // browser's bare "Uncaught (in promise)". Recognised by the marker every Ajax error
+        // carries (Ajax._error()), so it holds whatever promise chain the error travelled -
+        // a generated stub, the ORM fetch, an app's own async wrapper.
         window.addEventListener('unhandledrejection', async (event) => {
-            // Only handle rejections from Ajax promises
-            if (Ajax._tracked_promises.has(event.promise)) {
-                event.preventDefault(); // Prevent browser's default "Uncaught (in promise)" error
+            const error = event.reason;
 
-                const error = event.reason;
-                console.error('Uncaught Ajax error:', error);
+            if (!error || error.__rsx_ajax_error !== true) {
+                return;
+            }
 
-                // Suppress errors during navigation grace period
-                // After page navigation, pending requests from the old page may error out
-                // These errors are not relevant to the new page
-                if (typeof Spa !== 'undefined' && Spa.is_within_navigation_grace_period()) {
-                    console.log('[Ajax] Suppressing error modal during navigation grace period');
-                    return;
-                }
+            event.preventDefault();
+            console.error('Uncaught Ajax error:', error);
 
-                // Show error modal for uncaught Ajax errors
-                // In debug mode, use fatal_error() for detailed file/line info
-                if (typeof Modal !== 'undefined') {
-                    if (window.rsxapp?.debug && Modal.fatal_error) {
-                        await Modal.fatal_error(error, 'Uncaught Ajax Error');
-                    } else if (Modal.error) {
-                        await Modal.error(error, 'Uncaught Ajax Error');
-                    }
+            // Suppress errors during navigation grace period
+            // After page navigation, pending requests from the old page may error out
+            // These errors are not relevant to the new page
+            if (typeof Spa !== 'undefined' && Spa.is_within_navigation_grace_period()) {
+                console_debug('AJAX', 'Suppressing error modal during navigation grace period');
+                return;
+            }
+
+            // Show error modal for uncaught Ajax errors
+            // In debug mode, use fatal_error() for detailed file/line info
+            if (typeof Modal !== 'undefined') {
+                if (window.rsxapp?.debug && Modal.fatal_error) {
+                    await Modal.fatal_error(error, 'Uncaught Ajax Error');
+                } else if (Modal.error) {
+                    await Modal.error(error, 'Uncaught Ajax Error');
                 }
             }
         });
@@ -76,56 +85,167 @@ class Ajax {
     /**
      * Make an AJAX call to an RSX controller action
      *
-     * Calls are batched when window.rsxapp.ajax_batching is true (debug/production modes).
-     * In development mode, batching is disabled for easier debugging.
-     *
-     * NOT async by design: an async function returns an adopting promise, which is a
-     * DIFFERENT object than the one registered in Ajax._tracked_promises - the
-     * unhandledrejection identity gate would never match the promise the caller holds
-     * and the curated Ajax error modal would never fire. The object returned here MUST
-     * be the exact object that was tracked.
-     *
      * @param {string|object|function} url - The Ajax URL (e.g., '/_ajax/Controller_Name/action_name') or an object/function with a .path property
      * @param {object} params - Parameters to send to the action
      * @returns {Promise} - Resolves with the return value, rejects with error
      */
     static call(url, params = {}) {
-        let promise;
+        return Ajax._enqueue(url, params, true);
+    }
 
-        try {
-            // If url is an object or function with a .path property, use that as the URL
-            if (url && typeof url === 'object' && url.path) {
-                url = url.path;
-            } else if (url && typeof url === 'function' && url.path) {
-                url = url.path;
+    /**
+     * Ajax.call() without model hydration: resolves with the endpoint's value exactly as
+     * decoded from JSON. For the ORM fetch, which hydrates a SEPARATE instance for each of
+     * the callers sharing one lookup.
+     *
+     * @param {string} url
+     * @param {object} params
+     * @returns {Promise<*>}
+     */
+    static _call_unhydrated(url, params = {}) {
+        return Ajax._enqueue(url, params, false);
+    }
+
+    /**
+     * Queue one call for this turn's request and schedule the flush.
+     * @private
+     */
+    static _enqueue(url, params, hydrate) {
+        return new Promise((resolve, reject) => {
+            // URL errors reach the caller as a rejection, never a synchronous throw - every
+            // caller holds a promise, in every case.
+            let controller;
+            let action;
+
+            try {
+                ({ controller, action } = Ajax.ajax_url_to_controller_action(url));
+            } catch (error) {
+                reject(Ajax._error(Ajax.ERROR_GENERIC, error.message));
+                return;
             }
 
-            // Validate url is a non-empty string
-            if (typeof url !== 'string' || url.length === 0) {
-                throw new Error('Ajax.call() requires a non-empty string URL or an object/function with a .path property');
-            }
+            console_debug('AJAX', `${controller}.${action}`, params);
 
-            // Extract controller and action from URL
-            const { controller, action } = Ajax.ajax_url_to_controller_action(url);
+            Ajax._queue.push({
+                call_id: Ajax._call_counter++,
+                controller: controller,
+                action: action,
+                params: params,
+                hydrate: hydrate,
+                resolve: resolve,
+                reject: reject,
+            });
 
-            console.log('Ajax:', controller, action, params);
+            Ajax._schedule_flush();
+        });
+    }
 
-            // Batch calls in debug/production mode, direct calls in development mode
-            if (window.rsxapp && window.rsxapp.ajax_batching) {
-                promise = Ajax._call_batch(controller, action, params);
-            } else {
-                promise = Ajax._call_direct(controller, action, params);
-            }
-        } catch (error) {
-            // Argument/URL errors reach the caller as a rejection, never a synchronous
-            // throw - every caller holds a promise, in every case.
-            promise = Promise.reject(error);
+    /**
+     * Ensure exactly one flush is scheduled.
+     *
+     * setTimeout(0) is the flush SCHEDULER, not a deadline (owner ruling 2026-08-13): it
+     * defers the request until every synchronously-running piece of code - a template
+     * rendering twenty rows, a component's on_load, a Promise.all - has queued its calls,
+     * so they leave together. NOT requestAnimationFrame: rAF does not fire in a hidden tab.
+     * @private
+     */
+    static _schedule_flush() {
+        if (Ajax._flush_scheduled) {
+            return;
         }
 
-        // Track this promise for unhandled rejection detection
-        Ajax._tracked_promises.add(promise);
+        Ajax._flush_scheduled = true;
+        setTimeout(() => Ajax._flush(), 0);
+    }
 
-        return promise;
+    /**
+     * Send everything queued: chunks of MAX_BATCH_SIZE calls, or one call per request when
+     * config('rsx.ajax.batching') is off.
+     * @private
+     */
+    static _flush() {
+        // Cleared FIRST: a call queued while these requests are in flight belongs to the
+        // NEXT flush and must be able to schedule it.
+        Ajax._flush_scheduled = false;
+
+        const queued = Ajax._queue;
+        Ajax._queue = [];
+
+        const chunk_size = window.rsxapp.ajax_batching ? Ajax.MAX_BATCH_SIZE : 1;
+
+        for (let offset = 0; offset < queued.length; offset += chunk_size) {
+            Ajax._send(queued.slice(offset, offset + chunk_size));
+        }
+    }
+
+    /**
+     * One request to /_ajax/_batch, then each call settled from its own key.
+     * @private
+     */
+    static async _send(calls) {
+        // Rsx_Portal.internal_url() rebases the path onto the channel this page is served
+        // under, so a portal page's calls are dispatched as portal requests.
+        const url = Rsx_Portal.internal_url('/_ajax/_batch');
+
+        let response;
+
+        try {
+            response = await $.ajax({
+                url: url,
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    batch_calls: calls.map((call) => ({
+                        call_id: call.call_id,
+                        controller: call.controller,
+                        action: call.action,
+                        params: call.params,
+                    })),
+                }),
+                dataType: 'json',
+                __local_integration: true, // Bypass $.ajax override
+            });
+        } catch (xhr) {
+            const error = Ajax._http_failure(xhr, url);
+
+            for (const call of calls) {
+                call.reject(error);
+            }
+
+            return;
+        }
+
+        // Every call is settled from its own key; an answer without it is a protocol fault,
+        // never a promise left pending.
+        for (const call of calls) {
+            const endpoint = `/_ajax/${call.controller}/${call.action}`;
+            const envelope = response ? response['C_' + call.call_id] : undefined;
+
+            if (envelope === undefined || envelope === null || typeof envelope !== 'object') {
+                Debugger.log_error({
+                    message: `Ajax answer missing call ${call.controller}.${call.action}`,
+                    type: 'ajax_protocol',
+                    endpoint: endpoint,
+                });
+                call.reject(Ajax._error(Ajax.ERROR_SERVER, 'The server did not answer this request. Please try again.'));
+                continue;
+            }
+
+            try {
+                Ajax._process_side_channels(envelope);
+
+                if (envelope._success === true) {
+                    // @JS-AJAX-02-EXCEPTION - the transport unwraps _ajax_return_value
+                    const value = envelope._ajax_return_value;
+                    call.resolve(call.hydrate ? Rsx_Js_Model._instantiate_models_recursive(value) : value);
+                } else {
+                    call.reject(Ajax._envelope_error(envelope, endpoint));
+                }
+            } catch (error) {
+                // Hydration or a side channel threw for THIS call: it is this call's failure.
+                call.reject(error);
+            }
+        }
     }
 
     /**
@@ -229,7 +349,14 @@ class Ajax {
             headers: headers,
         });
 
-        const result = await response.json();
+        // A refusal in front of PHP (the web server's 413 for an oversized body, a 502)
+        // answers HTML, not JSON: report its status rather than a JSON parse error.
+        let result;
+        try {
+            result = await response.json();
+        } catch (e) {
+            throw new Error(`Upload failed (HTTP ${response.status} ${response.statusText})`);
+        }
 
         if (!response.ok || !result.success || !result.attachment) {
             throw new Error(result.error || 'Upload failed');
@@ -239,274 +366,42 @@ class Ajax {
     }
 
     /**
-     * Make a batched Ajax call
+     * The Error for a request that failed as a whole (no JSON answer): one reading for
+     * every call the request carried.
      * @private
      */
-    static _call_batch(controller, action, params = {}) {
-        console.log('Ajax Batch:', controller, action, params);
+    static _http_failure(xhr, url) {
+        let error;
 
-        return new Promise((resolve, reject) => {
-            // Generate call key for deduplication
-            const call_key = Ajax._generate_call_key(controller, action, params);
+        if (xhr.status >= 500) {
+            error = Ajax._error(Ajax.ERROR_SERVER, 'A server error occurred. Please try again.');
+            Debugger.log_error({
+                message: `Ajax Server Error ${xhr.status}`,
+                type: 'ajax_server_error',
+                endpoint: url,
+                status: xhr.status,
+            });
+        } else if (xhr.status === 0) {
+            error = Ajax._error(Ajax.ERROR_NETWORK, 'Could not connect to server. Please check your connection.');
+        } else {
+            error = Ajax._error(Ajax.ERROR_GENERIC, Ajax._extract_error_message(xhr));
+        }
 
-            // Check if this exact call is already pending
-            if (Ajax._pending_calls[call_key]) {
-                const existing_call = Ajax._pending_calls[call_key];
+        error.metadata = { status: xhr.status, statusText: xhr.statusText || '' };
 
-                // If call already completed (cached), return immediately
-                if (existing_call.is_complete) {
-                    if (existing_call.is_error) {
-                        reject(existing_call.error);
-                    } else {
-                        resolve(existing_call.result);
-                    }
-                    return;
-                }
-
-                // Call is pending, add this promise to callbacks
-                existing_call.callbacks.push({ resolve, reject });
-                return;
-            }
-
-            // Create new pending call
-            const call_id = Ajax._call_counter++;
-            const pending_call = {
-                call_id: call_id,
-                call_key: call_key,
-                controller: controller,
-                action: action,
-                params: params,
-                callbacks: [{ resolve, reject }],
-                is_sent: false,
-                is_complete: false,
-                is_error: false,
-                result: null,
-                error: null,
-            };
-
-            // Add to pending queue
-            Ajax._pending_calls[call_key] = pending_call;
-
-            // Count pending calls
-            const pending_count = Object.keys(Ajax._pending_calls).filter(
-                (key) => !Ajax._pending_calls[key].is_complete && !Ajax._pending_calls[key].is_sent
-            ).length;
-
-            // If we've hit the batch size limit, flush immediately
-            if (pending_count >= Ajax.MAX_BATCH_SIZE) {
-                clearTimeout(Ajax._flush_timeout);
-                Ajax._flush_timeout = null;
-                Ajax._flush_pending_calls();
-            } else {
-                // Schedule batch flush with debounce
-                clearTimeout(Ajax._flush_timeout);
-                Ajax._flush_timeout = setTimeout(() => {
-                    Ajax._flush_pending_calls();
-                }, Ajax.DEBOUNCE_MS);
-            }
-        });
+        return error;
     }
 
     /**
-     * Make a direct (non-batched) Ajax call
+     * An Error carrying an Ajax code, marked as an Ajax failure for the uncaught-error dialog.
      * @private
      */
-    static async _call_direct(controller, action, params = {}) {
-        // Construct URL from controller and action. Rsx_Portal.internal_url() rebases
-        // it onto the channel this page is served under - the ONE place the direct
-        // transport's URL is built, so generated controller stubs (which all hand
-        // their '/_ajax/...' string to Ajax.call) never carry a channel of their own.
-        const url = Rsx_Portal.internal_url(`/_ajax/${controller}/${action}`);
-
-        // Log the AJAX call using console_debug
-        if (typeof Debugger !== 'undefined' && Debugger.console_debug) {
-            Debugger.console_debug('AJAX', `Calling ${controller}.${action} (unbatched)`, params);
-        }
-
-        return new Promise((resolve, reject) => {
-            $.ajax({
-                url: url,
-                method: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify(params),
-                dataType: 'json',
-                __local_integration: true, // Bypass $.ajax override
-                success: (response) => {
-                    Ajax._process_side_channels(response);
-
-                    if (response._success === true) {
-                        // @JS-AJAX-02-EXCEPTION - Unwrap server responses with _ajax_return_value
-                        resolve(Rsx_Js_Model._instantiate_models_recursive(response._ajax_return_value));
-                    } else {
-                        reject(Ajax._envelope_error(response, url));
-                    }
-                },
-                error: (xhr, status, error) => {
-                    const err = new Error();
-
-                    // Determine error code based on status
-                    if (xhr.status >= 500) {
-                        // Server error (PHP crashed)
-                        err.code = Ajax.ERROR_SERVER;
-                        err.message = 'A server error occurred. Please try again.';
-                    } else if (xhr.status === 0 || status === 'timeout' || status === 'error') {
-                        // Network error (connection failed)
-                        err.code = Ajax.ERROR_NETWORK;
-                        err.message = 'Could not connect to server. Please check your connection.';
-                    } else {
-                        // Generic error
-                        err.code = Ajax.ERROR_GENERIC;
-                        err.message = Ajax._extract_error_message(xhr);
-                    }
-
-                    err.metadata = {
-                        status: xhr.status,
-                        statusText: status
-                    };
-
-                    // Log server errors to server
-                    if (xhr.status >= 500) {
-                        Debugger.log_error({
-                            message: `Ajax Server Error ${xhr.status}: ${err.message}`,
-                            type: 'ajax_server_error',
-                            endpoint: url,
-                            status: xhr.status,
-                            statusText: status,
-                        });
-                    }
-
-                    reject(err);
-                },
-            });
-        });
-    }
-
-    /**
-     * Flush all pending calls by sending batch request
-     * @private
-     */
-    static async _flush_pending_calls() {
-        // Collect all pending calls
-        const calls_to_send = [];
-        const call_map = {}; // Map call_id to pending_call object
-
-        for (const call_key in Ajax._pending_calls) {
-            const pending_call = Ajax._pending_calls[call_key];
-
-            // A call already sent by an earlier flush is in flight, not pending: sending
-            // it again would run the endpoint twice.
-            if (!pending_call.is_complete && !pending_call.is_sent) {
-                pending_call.is_sent = true;
-                calls_to_send.push({
-                    call_id: pending_call.call_id,
-                    controller: pending_call.controller,
-                    action: pending_call.action,
-                    params: pending_call.params,
-                });
-
-                call_map[pending_call.call_id] = pending_call;
-            }
-        }
-
-        // Nothing to send
-        if (calls_to_send.length === 0) {
-            return;
-        }
-
-        // Log batch for debugging
-        if (typeof Debugger !== 'undefined' && Debugger.console_debug) {
-            Debugger.console_debug(
-                'AJAX_BATCH',
-                `Sending batch of ${calls_to_send.length} calls`,
-                calls_to_send.map((c) => `${c.controller}.${c.action}`)
-            );
-        }
-
-        try {
-            // Send batch request
-            const response = await $.ajax({
-                // Same channel rule as the direct transport (Rsx_Portal.internal_url).
-                url: Rsx_Portal.internal_url('/_ajax/_batch'),
-                method: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({ batch_calls: calls_to_send }),
-                dataType: 'json',
-                __local_integration: true, // Bypass $.ajax override
-            });
-
-            // Response format: { C_<call_id>: <envelope>, ... } - each envelope exactly what the
-            // direct transport would have answered for that call.
-            for (const response_key in response) {
-                if (!response_key.startsWith('C_')) {
-                    continue;
-                }
-
-                const call_id = parseInt(response_key.substring(2), 10);
-                const call_response = response[response_key];
-                const pending_call = call_map[call_id];
-
-                if (!pending_call) {
-                    console.error('Received response for unknown call_id:', call_id);
-                    continue;
-                }
-
-                Ajax._process_side_channels(call_response);
-
-                // Mark call as complete
-                pending_call.is_complete = true;
-
-                if (call_response._success === true) {
-                    // @JS-AJAX-02-EXCEPTION - Batch system unwraps server responses with _ajax_return_value
-                    const processed_value = Rsx_Js_Model._instantiate_models_recursive(call_response._ajax_return_value);
-                    pending_call.result = processed_value;
-
-                    pending_call.callbacks.forEach(({ resolve }) => {
-                        resolve(processed_value);
-                    });
-                } else {
-                    const error = Ajax._envelope_error(call_response, `/_ajax/${pending_call.controller}/${pending_call.action}`);
-
-                    pending_call.is_error = true;
-                    pending_call.error = error;
-
-                    pending_call.callbacks.forEach(({ reject }) => {
-                        reject(error);
-                    });
-                }
-            }
-        } catch (xhr_error) {
-            // Network or server error - reject all pending calls
-            const error_message = Ajax._extract_error_message(xhr_error);
-            const error = new Error(error_message);
-            error.code = Ajax.ERROR_NETWORK;
-            error.metadata = {};
-
-            for (const call_id in call_map) {
-                const pending_call = call_map[call_id];
-                pending_call.is_complete = true;
-                pending_call.is_error = true;
-                pending_call.error = error;
-
-                pending_call.callbacks.forEach(({ reject }) => {
-                    reject(error);
-                });
-            }
-
-            console.error('Batch Ajax request failed:', error_message);
-        }
-
-        // FORGET every call this flush handled. Ajax._pending_calls is an IN-FLIGHT dedup
-        // map - an entry exists so a second identical call made before the response
-        // arrives joins the first one's callbacks. Once the response has been distributed
-        // the entry has no job left, and keeping it turned the map into a permanent memo:
-        // the same call made a minute later hit the completed entry at the top of
-        // _call_batch and resolved with the ORIGINAL result, forever. record.refresh() was
-        // a no-op in batched (debug/production) mode for that reason, while development -
-        // which uses the direct transport and no memo - refetched correctly. A repeated
-        // call must be a fresh request in every mode.
-        for (const call_id in call_map) {
-            delete Ajax._pending_calls[call_map[call_id].call_key];
-        }
+    static _error(code, message, metadata = {}) {
+        const error = new Error(message);
+        error.code = code;
+        error.metadata = metadata;
+        error.__rsx_ajax_error = true;
+        return error;
     }
 
     /**
@@ -551,9 +446,7 @@ class Ajax {
      */
     static _envelope_error(envelope, endpoint) {
         const error_code = envelope.error_code || Ajax.ERROR_GENERIC;
-        const error = new Error(envelope.reason || 'An error occurred');
-        error.code = error_code;
-        error.metadata = envelope.metadata || {};
+        const error = Ajax._error(error_code, envelope.reason || 'An error occurred', envelope.metadata || {});
 
         // A fatal envelope carries the PHP exception (file, line, backtrace) for a caller
         // the server admits as a developer, and an error_id for everybody else.
@@ -598,29 +491,12 @@ class Ajax {
     }
 
     /**
-     * Generate a unique key for deduplicating calls
-     * @private
-     */
-    static _generate_call_key(controller, action, params) {
-        // Create a stable string representation of the call
-        // Sort params keys for consistent hashing
-        const sorted_params = {};
-        Object.keys(params)
-            .sort()
-            .forEach((key) => {
-                sorted_params[key] = params[key];
-            });
-
-        return `${controller}::${action}::${JSON.stringify(sorted_params)}`;
-    }
-
-    /**
      * Extract error message from jQuery XHR object
      * @private
      */
     static _extract_error_message(xhr) {
-        if (xhr.responseJSON && xhr.responseJSON.message) {
-            return xhr.responseJSON.message;
+        if (xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.error)) {
+            return xhr.responseJSON.message || xhr.responseJSON.error;
         } else if (xhr.responseText) {
             try {
                 const response = JSON.parse(xhr.responseText);
@@ -656,7 +532,7 @@ class Ajax {
         }
 
         // Tolerate an ALREADY-rebased portal URL. The channel is applied at call time
-        // (Rsx_Portal.internal_url in _call_direct), so a caller that rebased the path
+        // (Rsx_Portal.internal_url in _send), so a caller that rebased the path
         // itself must not end up double-prefixed or rejected here.
         const portal_prefix = Rsx_Portal.prefix();
         if (portal_prefix !== '' && url.startsWith(portal_prefix + '/_ajax')) {

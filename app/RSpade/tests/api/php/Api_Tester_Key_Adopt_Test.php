@@ -31,7 +31,8 @@ class Api_Tester_Key_Adopt_Test extends Rsx_Test_Abstract
     {
         static::__reset_session();
 
-        static::__assert_throws(AjaxUnauthorizedException::class, function () {
+        // Nobody is signed in, so the gate denial asks for a sign-in.
+        static::__assert_throws(\App\RSpade\Core\Ajax\Exceptions\AjaxAuthRequiredException::class, function () {
             Ajax::internal('_Apidocs_Controller', 'adopt_tester_key', ['key' => 'rsx_live_anything']);
         });
     }

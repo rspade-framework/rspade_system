@@ -60,11 +60,13 @@ if echo "$ajax_status" | grep -q "302"; then
     echo "FAIL: $TEST_NAME - ajax rejection returned 302: $ajax_status"
     exit 1
 fi
-if ! echo "$ajax_body" | grep -q '"error_code":"unauthorized"'; then
-    echo "FAIL: $TEST_NAME - ajax rejection missing error_code:unauthorized. Body: $ajax_body"
+# Nobody is signed in, so the gate denial asks for a sign-in (auth_required), the Ajax
+# twin of the page channel's redirect to the login route.
+if ! echo "$ajax_body" | grep -q '"error_code":"auth_required"'; then
+    echo "FAIL: $TEST_NAME - anonymous ajax rejection missing error_code:auth_required. Body: $ajax_body"
     exit 1
 fi
-echo "[TEST] 2. OK - ajax path returned error_code:unauthorized with no redirect" >&2
+echo "[TEST] 2. OK - ajax path returned error_code:auth_required with no redirect" >&2
 
 echo "PASS: $TEST_NAME"
 exit 0

@@ -15,7 +15,7 @@ A 32-byte random token, minted with the session row and stored on `_sessions.csr
 
 ## Transport (handled for you)
 
-- **Ajax and uploads**: the token rides the `X-CSRF-Token` header, attached in ONE place - the framework's jQuery `$.ajax` chokepoint - so every `Controller.method()` call (direct and batched) and every `/_upload` multipart POST carries it. Never attached to external cross-domain requests.
+- **Ajax and uploads**: the token rides the `X-CSRF-Token` header, attached in ONE place - the framework's jQuery `$.ajax` chokepoint - so every `Controller.method()` call (each sent through `/_ajax/_batch`) and every `/_upload` multipart POST carries it. Never attached to external cross-domain requests.
 - **Native `<form>` POSTs** (login/auth pages): a global submit listener injects a hidden `_csrf_token` input just before submit. `<Rsx_Form>` submits via Ajax, so it uses the header path; a stray hidden field is excluded from its serialized values.
 - **Blade**: use `@csrf`. RSpade overrides the directive to emit the browser's one token, and it emits **nothing** when there is no session yet - correct, because a session-less POST needs none.
 - The server reads the header first, then the `_csrf_token` body field.
@@ -28,7 +28,7 @@ There is **one session per browser** - one session cookie (`__Host-rsx`), one `_
 
 One POST-gated call (`App\RSpade\Core\Session\Rsx_Csrf::enforce($request)`) in the `Dispatcher`, run for both realms (the external API is a channel of its own and never reaches it). It covers `/_ajax/<Controller>/<action>`, `/_ajax/_batch`, `/_upload` and native `#[Route(POST)]` controllers, on both the staff and portal spellings of those paths.
 
-A failure returns a clean auth-style error with no stack trace - the Ajax error contract for `/_ajax` and `/_upload`, a **419** for native form POSTs. The rejection is an already-rendered response carried by an `HttpResponseException` honored **before** the handler chain, so no error handler can replace it with a 500. The check uses `has_session()` and never creates a session for a token-less anonymous caller.
+A failure returns a clean auth-style error with no stack trace - the Ajax error contract for `/_ajax` and `/_upload` (`unauthorized` "CSRF token mismatch"; a `/_ajax/_batch` gets it under EVERY `call_id` it named, so each call rejects with it), a **419** for native form POSTs. The rejection is an already-rendered response carried by an `HttpResponseException` honored **before** the handler chain, so no error handler can replace it with a 500. The check uses `has_session()` and never creates a session for a token-less anonymous caller.
 
 **Exempt**: the external API (`#[Api_Endpoint]`, `/api/vN/*`) - it authenticates with a Bearer token and a cookie-less headless session, so there is no ambient cookie to forge, and it branches off before this seam.
 

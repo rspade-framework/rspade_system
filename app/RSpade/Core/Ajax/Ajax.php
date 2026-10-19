@@ -11,6 +11,7 @@ use Exception;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\InputBag;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -48,16 +49,25 @@ use App\RSpade\Lib\Flash\Flash_Alert;
  * action, fire rsx.post_dispatch - and it answers the endpoint's raw result or throws. Its
  * callers only differ in what they do with that answer:
  *
- *   /_ajax/<Controller>/<action>  handle_browser_request(): one call, one envelope
- *   /_ajax/_batch                 handle_batch_request(): N calls, N envelopes, one response
+ *   /_ajax/_batch                 handle_batch_request(): N calls, N envelopes, one
+ *                                 response - THE browser transport (Ajax.js sends every
+ *                                 call here, a lone call as a batch of one)
+ *   /_ajax/<Controller>/<action>  handle_browser_request(): one call answered with its bare
+ *                                 envelope, for a hand-made request (curl, a test). It is a
+ *                                 batch of one through the same handle_calls().
  *   Ajax::internal()              server-side PHP, rsx:ajax, tests: the value, or the coded
  *                                 exception (AjaxUnauthorizedException etc.)
  *
- * ONE ENVELOPE. call_envelope() turns one call into the {_success, ...} array, and both
- * transports send exactly that array - so the same endpoint failure is the same wire shape
- * whether the client batched it (debug and production) or not (development). An exception
- * raised by the endpoint is mapped by error_envelope() for both transports, and by the
- * AJAX channel's error policy (Ajax_Exception_Handler) for a failure outside any call.
+ * ONE PER-CALL PATH. handle_calls() runs every browser call the same way, alone or in a
+ * batch: the session-lifetime and site-membership checks, the realm's Main::pre_dispatch
+ * with the call's own controller and action, then call_envelope(). So the identity a call
+ * runs under is checked for THAT call, even when an earlier call in the same request
+ * signed somebody out or switched site.
+ *
+ * ONE ENVELOPE. call_envelope() turns one call into the {_success, ...} array. An exception
+ * raised by the endpoint is mapped by error_envelope(); a failure that refuses the whole
+ * REQUEST (CSRF, a fault outside any call) is answered by request_refusal(), which gives a
+ * batch one envelope per call_id - so every call a client sent is always answered.
  *
  * The browser transport is the AJAX channel of Rsx_Request_Channel: a POST to /_ajax/...
  * in its realm. Dispatcher routes it here after the realm preamble (CSRF, dev-auth, the
@@ -74,7 +84,7 @@ class Ajax
     const ERROR_FATAL = 'fatal';
     const ERROR_GENERIC = 'generic';
     const ERROR_QUESTION = 'question';        // Not a failure: the endpoint is asking the user something
-    const ERROR_SERVER = 'server_error';      // Client-generated (HTTP 500)
+    const ERROR_SERVER = 'server_error';      // Client-generated (HTTP 5xx, or an answer missing a call)
     const ERROR_NETWORK = 'network_error';    // Client-generated (connection failed)
 
     /**
@@ -217,8 +227,11 @@ class Ajax
     {
         $controller_class = static::_resolve_endpoint_class($controller_name, $action_name);
 
-        if (!static::_endpoint_gates_pass($controller_name, $action_name)) {
-            return response_unauthorized();
+        if (!Auth_Gates::surface_permits($controller_name . '::' . $action_name)) {
+            // The page channel's split: nobody signed in in this realm is asked to sign in;
+            // a signed-in caller the gates refuse is unauthorized. So a page whose sign-in
+            // ended elsewhere gets the session-ended handling, not a permission error.
+            return static::__realm_has_identity() ? response_unauthorized() : response_auth_required();
         }
 
         if (static::__refused_while_impersonating($controller_name, $action_name)) {
@@ -240,12 +253,26 @@ class Ajax
         Rsx_Turnstile::_reset_request_state();
         Revision::_reset_request_state('ajax', $controller_name . '::' . $action_name);
 
+        // The call's own request is THE request while it runs: request(), the Request
+        // facade and a helper that reads either see this call's parameters, never the
+        // batch that carried it.
+        $previous_request = app('request');
+        static::__bind_request($request);
+
+        // A call that leaves a database transaction open would carry its siblings in the
+        // same request into it: their realtime frames wait for level 0, and their writes
+        // are rolled back when the request ends after they reported success.
+        $transaction_level = DB::transactionLevel();
+        $leaked_transactions = 0;
+
         try {
             $result = $controller_class::pre_dispatch($request, $params);
 
             if ($result === null) {
                 $result = $controller_class::$action_name($request, $params);
             }
+
+            static::__refuse_http_response($controller_name, $action_name, $result);
 
             // rsx.post_dispatch - fired immediately after the handler returns and before
             // any response shaping, on the SUCCESS path only (never after an exception).
@@ -261,9 +288,89 @@ class Ajax
             static::$__in_endpoint_call = $previous_in_call;
             Rsx_Turnstile::_set_request_checked($previous_turnstile_checked);
             Revision::_restore_request_state($previous_revision_state);
+            static::__bind_request($previous_request);
+
+            while (DB::transactionLevel() > $transaction_level) {
+                DB::rollBack();
+                $leaked_transactions++;
+            }
+        }
+
+        if ($leaked_transactions > 0) {
+            throw new \RuntimeException(
+                "{$controller_name}::{$action_name} returned with {$leaked_transactions} database transaction(s) "
+                . 'still open. They have been rolled back, so whatever the call wrote inside them is gone. '
+                . 'Commit or roll back every transaction an endpoint begins - DB::transaction(fn) does both.'
+            );
         }
 
         return $result;
+    }
+
+    /**
+     * Make $request the container's request, so request() and the Request facade answer it.
+     *
+     * @param Request $request
+     * @return void
+     */
+    private static function __bind_request(Request $request): void
+    {
+        app()->instance('request', $request);
+        \Illuminate\Support\Facades\Facade::clearResolvedInstance('request');
+    }
+
+    /**
+     * Refuse a pre_dispatch or action result that is an HTTP response: a redirect, a view,
+     * a download. An Ajax call answers a value or a coded result; JSON-encoding a response
+     * object would report SUCCESS with a meaningless value while nothing the caller asked
+     * for happened.
+     *
+     * @param string $controller_name
+     * @param string $action_name
+     * @param mixed $result
+     * @return void
+     * @throws \RuntimeException
+     */
+    private static function __refuse_http_response(string $controller_name, string $action_name, $result): void
+    {
+        if (!($result instanceof Response
+            || $result instanceof \Illuminate\Contracts\View\View
+            || $result instanceof \Illuminate\Contracts\Support\Responsable
+            || $result instanceof \Illuminate\Contracts\Support\Renderable)) {
+            return;
+        }
+
+        throw new \RuntimeException(
+            "{$controller_name}::{$action_name} (or its controller's pre_dispatch) returned " . get_class($result)
+            . ', an HTTP response, to an Ajax call. An Ajax endpoint answers a value, or a coded result '
+            . '(response_unauthorized(), response_not_found(), response_form_error(), ...). '
+            . 'A controller pre_dispatch that redirects its pages must return null for an Ajax call '
+            . '(Rsx_Request_Channel::current() === Rsx_Request_Channel::AJAX) or answer a coded result.'
+        );
+    }
+
+    /**
+     * Does the request's realm have a signed-in identity?
+     *
+     * @return bool
+     */
+    private static function __realm_has_identity(): bool
+    {
+        return Auth_Gates::active_realm() === Auth_Gates::REALM_PORTAL
+            ? Portal_Session::is_logged_in()
+            : Session::is_logged_in();
+    }
+
+    /**
+     * Is $e a CODED failure - a refusal with an error code (AjaxUnauthorizedException,
+     * AjaxNotFoundException, an HttpException 401/403/404 ...) - as opposed to a fault?
+     *
+     * @param Throwable $e
+     * @return bool
+     */
+    public static function is_coded_failure(Throwable $e): bool
+    {
+        return static::__coded_failure($e) !== null;
     }
 
     /**
@@ -540,13 +647,38 @@ class Ajax
     }
 
     /**
-     * /_ajax/<Controller>/<action> - one call from the browser, answered with its envelope.
+     * /_ajax/_batch - THE browser transport: one or more calls in one request, answered as
+     * {"C_<call_id>": envelope}. Ajax.js sends every call here, a lone call as a batch of one.
      *
      * Reached from Dispatcher on the AJAX channel, after the realm preamble (CSRF, dev-auth,
-     * the portal's init). Then, once per request: the staff site-membership check, and the
-     * realm's Main::pre_dispatch (Dispatcher::ajax_main_pre_dispatch(), whose non-null answer
-     * halts the request). The call's parameters are the request body (a JSON-encoded
-     * 'params' field, or the body itself).
+     * the portal's init). A batch is refused WHOLE (400, {"error": ...}) when it is malformed
+     * or larger than config('rsx.ajax.batch_max_calls'): every call must be an object with a
+     * non-negative integer call_id (unique within the batch), a controller and an action, and
+     * params that are an object when present. The client never sends such a batch, so a
+     * refusal is a caller defect and nothing in it runs. Otherwise every call is answered.
+     *
+     * @param Request $request
+     * @return Response
+     */
+    public static function handle_batch_request(Request $request): Response
+    {
+        $batch_calls = $request->input('batch_calls');
+        $problem = static::__batch_problem($batch_calls);
+
+        if ($problem !== null) {
+            return response()->json(['error' => $problem], 400);
+        }
+
+        return response()->json(static::handle_calls($request, $batch_calls));
+    }
+
+    /**
+     * /_ajax/<Controller>/<action> - one call answered with its bare envelope.
+     *
+     * For a request made by hand (curl, a shell test); the browser never sends one. It is a
+     * batch of one through handle_calls(), so it is checked and answered exactly as a batched
+     * call is. The call's parameters are the request body as sent: the JSON body's object, or
+     * the form fields - nothing added, nothing removed, no query string.
      *
      * @param Request $request
      * @param string $controller_name
@@ -555,100 +687,104 @@ class Ajax
      */
     public static function handle_browser_request(Request $request, string $controller_name, string $action_name): Response
     {
-        Debugger::disable_console_html_output();
+        $params = $request->isJson() ? $request->json()->all() : $request->request->all();
 
-        $expired = static::__timeout_refusal();
-        if ($expired !== null) {
-            return response()->json($expired);
-        }
-
-        $membership = static::__membership_refusal();
-        if ($membership !== null) {
-            return response()->json($membership);
-        }
-
-        $halted = Dispatcher::ajax_main_pre_dispatch($request, [
+        $envelopes = static::handle_calls($request, [[
+            'call_id' => 0,
             'controller' => $controller_name,
             'action' => $action_name,
-            '_route' => '/_ajax/:controller/:action',
-        ]);
-        if ($halted !== null) {
-            return $halted;
-        }
+            'params' => $params,
+        ]]);
 
-        $params_json = $request->input('params');
-
-        if ($params_json) {
-            $params = json_decode($params_json, true);
-
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new Exception('Invalid JSON in params: ' . json_last_error_msg());
-            }
-        } else {
-            $params = array_diff_key($request->all(), array_flip(['controller', 'action', '_method', '_route', '_handler']));
-        }
-
-        $envelope = static::call_envelope($controller_name, $action_name, (array) $params, $request);
-
-        return response()->json($envelope);
+        return response()->json($envelopes['C_0']);
     }
 
     /**
-     * /_ajax/_batch - several calls in one request, answered as {"C_<call_id>": envelope}.
+     * Run browser calls and answer each one: THE per-call path both browser transports share.
      *
-     * Each call runs through the same core as a direct call, on call_request() - the real
-     * request with that call's parameters - and its envelope is the one the direct
-     * transport would have sent, with one difference: pending flash alerts are read once,
-     * after the last call, and ride on the LAST call's envelope (reading them per call
-     * would be two queries per call for a value the client handles identically wherever it
-     * appears). Console messages ride on the call that produced them.
+     * Every call, in order, on call_request() - the real request (its address, headers,
+     * cookies, session) carrying that call's parameters:
      *
-     * Once per request, before any call: the staff site-membership check (a refusal answers
-     * every call auth_required) and the realm's Main::pre_dispatch
-     * (Dispatcher::ajax_main_pre_dispatch(), whose non-null answer halts the request).
+     *   1. the session lifetime (rsx.sessions.*) - once a call ends the sign-in, every later
+     *      call in the request answers the same session_expired envelope;
+     *   2. the staff site membership (users.is_enabled);
+     *   3. the realm's Main::pre_dispatch, with the call's own controller and action - a
+     *      non-null answer refuses THAT call (main_pre_dispatch_refusal());
+     *   4. call_envelope().
      *
-     * A batch is refused WHOLE (400, {"error": ...}) when it is malformed or larger than
-     * config('rsx.ajax.batch_max_calls'): every call must be an object with a non-negative
-     * integer call_id (unique within the batch), a controller and an action, and params
-     * that are an object when present. The client never sends such a batch, so a refusal
-     * is a caller defect and nothing in it runs.
+     * The checks are per call because a call can change who is signed in - a sign-in, a
+     * logout, a site switch - and the next call must be judged as the identity it runs under.
+     * Pending flash alerts are read once, after the last call, and ride on the LAST call's
+     * envelope; console messages ride on the call that produced them.
      *
      * @param Request $request
-     * @return Response
+     * @param array $calls Validated calls: [{call_id, controller, action, params?}, ...]
+     * @return array {"C_<call_id>": envelope, ...}
      */
-    public static function handle_batch_request(Request $request): Response
+    public static function handle_calls(Request $request, array $calls): array
     {
         Debugger::disable_console_html_output();
 
-        $batch_calls = $request->input('batch_calls');
-        $problem = static::__batch_problem($batch_calls);
-
-        if ($problem !== null) {
-            return response()->json(['error' => $problem], 400);
-        }
-
         $responses = [];
-        $membership = static::__timeout_refusal(false) ?? static::__membership_refusal(false);
+        $expired = null;
 
-        if ($membership === null) {
-            $halted = Dispatcher::ajax_main_pre_dispatch($request, ['_route' => '/_ajax/_batch']);
-            if ($halted !== null) {
-                return $halted;
-            }
-        }
+        foreach ($calls as $call) {
+            $params = $call['params'] ?? [];
+            $call_request = static::call_request($request, $params);
+            $console_mark = count(Debugger::_get_console_messages());
 
-        foreach ($batch_calls as $call) {
-            $responses['C_' . $call['call_id']] = $membership ?? static::call_envelope(
-                $call['controller'],
-                $call['action'],
-                $call['params'] ?? [],
-                static::call_request($request, $call['params'] ?? [])
-            );
+            $expired = $expired ?? static::__timeout_refusal($console_mark);
+            $envelope = $expired
+                ?? static::__membership_refusal($console_mark)
+                ?? static::__main_pre_dispatch_refusal($call_request, $call['controller'], $call['action'], $console_mark)
+                ?? static::call_envelope($call['controller'], $call['action'], $params, $call_request);
+
+            $responses['C_' . $call['call_id']] = $envelope;
         }
 
         $flash_messages = Flash_Alert::get_pending_messages();
         if (!empty($flash_messages)) {
             $responses[array_key_last($responses)]['flash_alerts'] = $flash_messages;
+        }
+
+        return $responses;
+    }
+
+    /**
+     * The response that refuses a whole Ajax REQUEST - a CSRF failure, a fault outside any
+     * call (Ajax_Exception_Handler) - shaped so every call the client sent is answered.
+     *
+     * A batch is answered {"C_<call_id>": $envelope} for every call_id its body names; the
+     * client settles each call from its own key and would otherwise wait forever. A direct
+     * call, and a batch whose body names no call, get the bare envelope. The side channels
+     * (server clock, user's zone) are added here, so a refusal carries them like any envelope.
+     *
+     * @param Request $request
+     * @param array $envelope {_success: false, error_code, reason, metadata?}
+     * @return \Illuminate\Http\JsonResponse HTTP 200
+     */
+    public static function request_refusal(Request $request, array $envelope): \Illuminate\Http\JsonResponse
+    {
+        $envelope = static::__side_channels($envelope + ['metadata' => []], 0, false);
+
+        $call_ids = [];
+        if (str_ends_with('/' . ltrim($request->getPathInfo(), '/'), '/_ajax/_batch')) {
+            $batch_calls = json_decode((string) $request->getContent(), true)['batch_calls'] ?? null;
+
+            foreach (is_array($batch_calls) ? $batch_calls : [] as $call) {
+                if (is_array($call) && is_int($call['call_id'] ?? null)) {
+                    $call_ids[] = $call['call_id'];
+                }
+            }
+        }
+
+        if ($call_ids === []) {
+            return response()->json($envelope);
+        }
+
+        $responses = [];
+        foreach ($call_ids as $call_id) {
+            $responses['C_' . $call_id] = $envelope;
         }
 
         return response()->json($responses);
@@ -690,9 +826,10 @@ class Ajax
             }
             $seen[$call_id] = true;
 
+            // The rule the direct path's URL pattern applies: a PHP identifier.
             foreach (['controller', 'action'] as $key) {
-                if (!is_string($call[$key] ?? null) || $call[$key] === '') {
-                    return "Call {$index} has no {$key}";
+                if (!is_string($call[$key] ?? null) || !preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $call[$key])) {
+                    return "Call {$index} has no {$key}, or one that is not an identifier";
                 }
             }
 
@@ -705,29 +842,28 @@ class Ajax
     }
 
     /**
-     * Session lifetime (rsx.sessions.staff / rsx.sessions.portal), asked once per Ajax
-     * request for the request's own experience. An Ajax call is allowed
-     * rsx.sessions.ajax_grace_minutes past the limit - the page that sent it may have been
-     * open when the limit passed, and should still be able to save what is on screen. The
-     * first call after that window ends the sign-in and every call in the request answers
-     * the session_expired envelope, which the client turns into its "you have been signed
-     * out" handling (Rsx.set_session_expired_handler()).
+     * Session lifetime (rsx.sessions.staff / rsx.sessions.portal), for the request's own
+     * experience. An Ajax call is allowed rsx.sessions.ajax_grace_minutes past the limit -
+     * the page that sent it may have been open when the limit passed, and should still be
+     * able to save what is on screen. The first call after that window ends the sign-in and
+     * answers the session_expired envelope, which the client turns into its "you have been
+     * signed out" handling (Rsx.set_session_expired_handler()).
      *
-     * @param bool $with_flash
+     * @param int $console_mark
      * @return array|null The session_expired envelope, or null to proceed
      */
-    private static function __timeout_refusal(bool $with_flash = true): ?array
+    private static function __timeout_refusal(int $console_mark): ?array
     {
         // A call carrying the token of a session row that has since been replaced (a
         // sign-in or an expiry on this browser, or a copied cookie): the row is dead, so
         // the call is refused exactly as an expired one is.
         if (Session::_arrived_on_retired_token()) {
-            return [
+            return static::__side_channels([
                 '_success' => false,
                 'error_code' => self::ERROR_SESSION_EXPIRED,
                 'reason' => 'This session has ended. Reload the page to continue.',
                 'metadata' => ['cause' => 'retired'],
-            ];
+            ], $console_mark, false);
         }
 
         $reason = Rsx_Portal::is_portal_request()
@@ -743,38 +879,71 @@ class Ajax
             'error_code' => self::ERROR_SESSION_EXPIRED,
             'reason' => Session::timeout_message($reason),
             'metadata' => ['cause' => $reason],
-        ], 0, $with_flash);
+        ], $console_mark, false);
     }
 
     /**
      * Site membership (users.is_enabled): the request-time half of the framework's
-     * is_enabled contract, asked once per Ajax request. A session whose membership was
-     * disabled or deleted since it was established is ended here, and every call in the
-     * request answers the ordinary auth_required envelope - which the client's generic
-     * handlers render as a sign-in prompt.
+     * is_enabled contract. A session whose membership was disabled or deleted since it was
+     * established is ended here, and the call answers the ordinary auth_required envelope -
+     * which the client's generic handlers render as a sign-in prompt.
      *
      * STAFF ONLY. Session is the staff facade, so the row it asks about is the staff
      * membership; a portal request shares the browser's one session row and would have its
      * staff identity judged for it. The portal's own per-client rules live in the record
      * layer (portal_can_read).
      *
-     * @param bool $with_flash
+     * @param int $console_mark
      * @return array|null The auth_required envelope, or null to proceed
      */
-    private static function __membership_refusal(bool $with_flash = true): ?array
+    private static function __membership_refusal(int $console_mark): ?array
     {
         if (Rsx_Portal::is_portal_request() || Session::enforce_enabled_membership()) {
             return null;
         }
 
-        $response = response_auth_required();
+        return static::coded_envelope(response_auth_required(), $console_mark);
+    }
 
-        return static::__side_channels([
-            '_success' => false,
-            'error_code' => $response->get_type(),
-            'reason' => $response->get_reason(),
-            'metadata' => $response->get_details(),
-        ], 0, $with_flash);
+    /**
+     * The realm's Main::pre_dispatch for one call (Dispatcher::ajax_main_pre_dispatch()),
+     * answered as that call's envelope when it halts.
+     *
+     * A coded result (response_unauthorized('Account suspended'), response_auth_required()
+     * ...) is the call's coded envelope, its reason intact. Any other non-null answer - a
+     * redirect, a page, an array, which a hook written for pages returns - refuses the call
+     * as unauthorized: the hook halted the request, and an Ajax caller can act on a code but
+     * never on a page.
+     *
+     * @param Request $call_request
+     * @param string $controller_name
+     * @param string $action_name
+     * @param int $console_mark
+     * @return array|null The refusal envelope, or null to proceed
+     */
+    private static function __main_pre_dispatch_refusal(Request $call_request, string $controller_name, string $action_name, int $console_mark): ?array
+    {
+        $previous_request = app('request');
+        static::__bind_request($call_request);
+
+        try {
+            $result = Dispatcher::ajax_main_pre_dispatch($call_request, $controller_name, $action_name);
+        } finally {
+            static::__bind_request($previous_request);
+        }
+
+        if ($result === null) {
+            return null;
+        }
+
+        if ($result instanceof Rsx_Response_Abstract) {
+            return static::coded_envelope($result, $console_mark);
+        }
+
+        return static::coded_envelope(
+            response_unauthorized('This request was refused.'),
+            $console_mark
+        );
     }
 
     /**
@@ -830,15 +999,17 @@ class Ajax
      * @param string $action_name
      * @param string $developer_detail
      * @return never
-     * @throws Exception
+     * @throws AjaxNotFoundException
      */
     protected static function _not_an_endpoint(string $controller_name, string $action_name, string $developer_detail): never
     {
+        // A CODED not-found, not a fault: a name that is not an endpoint is the caller's
+        // mistake (or a probe), so it is answered, never reported and logged as a server error.
         if (\App\RSpade\Core\Debug\Rsx_Diagnostics::caller_sees_detail()) {
-            throw new Exception($developer_detail);
+            throw new AjaxNotFoundException($developer_detail);
         }
 
-        throw new Exception("{$controller_name}::{$action_name} is not an Ajax endpoint");
+        throw new AjaxNotFoundException("{$controller_name}::{$action_name} is not an Ajax endpoint");
     }
 
     /**
@@ -870,38 +1041,6 @@ class Ajax
     }
 
     /**
-     * Evaluate the REALM and the declarative #[Auth] gates an Ajax endpoint declares.
-     *
-     * Each realm has its own internal-endpoint channel (/_ajax/... for staff,
-     * <portal-prefix>/_ajax/... for the portal - /_ajax/... when the portal is at the root
-     * of its own host), so
-     * the realm of the request is known and meaningful here. The surface's own realm is
-     * checked FIRST - a staff request must not reach a portal endpoint, nor a portal
-     * request a staff one, whatever the gate names say (see
-     * Auth_Gates::surface_realm_permits). Only then do the gates run, resolved in the
-     * REQUEST's realm. The indexed gate list already merges the controller's
-     * class-level #[Auth] with the method's own, so that part is a straight lookup.
-     * An endpoint the index does not know, or knows without a gate, is refused loudly
-     * (Auth_Gates::require_surface) - never treated as open.
-     *
-     * @param string $controller_name The controller's SIMPLE class name - how auth.surfaces
-     *                         is keyed, and how both entry points name it
-     * @param string $action_name The endpoint method
-     * @return bool True when the realm permits and every gate passes
-     */
-    protected static function _endpoint_gates_pass(string $controller_name, string $action_name): bool
-    {
-        $target = $controller_name . '::' . $action_name;
-        $realm = Auth_Gates::active_realm();
-
-        if (!Auth_Gates::surface_realm_permits($target, $realm)) {
-            return false;
-        }
-
-        return Auth_Gates::gates_pass_at_seam(Auth_Gates::surface_gates($target), $realm, $target);
-    }
-
-    /**
      * Handle special response types by throwing appropriate exceptions
      *
      * @param Rsx_Response_Abstract $response
@@ -918,7 +1057,9 @@ class Ajax
         $details = $response->get_details();
 
         switch ($type) {
+            // An ended sign-in asks for a new one, exactly as a missing one does.
             case self::ERROR_AUTH_REQUIRED:
+            case self::ERROR_SESSION_EXPIRED:
                 throw new AjaxAuthRequiredException($reason);
 
             case self::ERROR_UNAUTHORIZED:

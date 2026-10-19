@@ -45,8 +45,26 @@ class Model_Fetch_Parent_Fixture_Model extends Rsx_Model_Abstract
     #[Auth('is_logged_in')]
     public static function fetch($id)
     {
-        return static::find($id);
+        $record = static::find($id);
+
+        // Record-level answers a test can stage by title: a coded refusal (what
+        // Permission::require_permission() raises), a fault, and a refusal by `false`.
+        if ($record !== null && $record->title === self::TITLE_REFUSED) {
+            throw new \App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException('Probe record refused');
+        }
+        if ($record !== null && $record->title === self::TITLE_FAULTY) {
+            throw new \RuntimeException('Probe fetch fault');
+        }
+        if ($record !== null && $record->title === self::TITLE_FALSE) {
+            return false;
+        }
+
+        return $record;
     }
+
+    public const TITLE_REFUSED = 'fixture: refused by a coded exception';
+    public const TITLE_FAULTY = 'fixture: fetch() faults';
+    public const TITLE_FALSE = 'fixture: refused by false';
 
     /**
      * The plural relationship the preload's related-id branch is driven against.

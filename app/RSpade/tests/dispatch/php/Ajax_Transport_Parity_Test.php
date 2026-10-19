@@ -17,18 +17,20 @@ use App\RSpade\Tests\Dispatch\Php\Ajax_Main_Hook_Probe;
 use App\RSpade\Tests\Dispatch\Php\Ajax_Parity_Fixture_Controller;
 
 /**
- * One Ajax core, two browser transports: the SAME endpoint outcome is the SAME envelope
- * whether the client sent it directly (/_ajax/<Controller>/<action>, development) or in a
- * batch (/_ajax/_batch, debug and production).
+ * One Ajax core, two wire shapes: the SAME endpoint outcome is the SAME envelope whether it
+ * arrived as a direct call (/_ajax/<Controller>/<action>, a hand-made request) or in a batch
+ * (/_ajax/_batch, the browser transport) - a direct call is a batch of one.
  *
  * Pinned: success, a returned validation error, a THROWN unauthorized (what
  * Permission::require_permission() raises), a returned not-found, abort(404) and a crash
  * each produce identical envelopes on both transports (the server clock and a crash's
  * error id and stack frames aside); a batched endpoint sees the REAL caller - its address
  * and headers - with only its own parameters as input; the batch refuses, whole and before
- * anything runs, a batch over rsx.ajax.batch_max_calls and a malformed call_id; and the
- * application's Main::pre_dispatch runs once per Ajax request on both transports, its
- * non-null answer halting the request before any endpoint runs.
+ * anything runs, a batch over rsx.ajax.batch_max_calls and a malformed call_id; the
+ * application's Main::pre_dispatch runs once per CALL on both transports, its non-null
+ * answer refusing that call with an envelope; an HTTP response from an endpoint and a
+ * leaked transaction are faults; a gate denial with nobody signed in is auth_required; and
+ * a refusal of the whole request answers every call of a batch.
  *
  * Behavior of record: php artisan rsx:man ajax_error_handling.
  */
@@ -197,10 +199,10 @@ class Ajax_Transport_Parity_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Main::pre_dispatch runs once per Ajax request - direct or batched - with the
-     * transport's synthetic keys and, for a direct call, the endpoint it names.
+     * Main::pre_dispatch runs once per CALL - direct or batched - with that call's own
+     * controller and action and the same synthetic keys either way.
      */
-    public static function test_main_pre_dispatch_runs_once_per_ajax_request()
+    public static function test_main_pre_dispatch_runs_once_per_call()
     {
         Ajax_Main_Hook_Probe::$seen = [];
         Ajax_Main_Hook_Probe::$halt_with = null;
@@ -209,44 +211,120 @@ class Ajax_Transport_Parity_Test extends Rsx_Test_Abstract
             Ajax::handle_browser_request(static::__direct_request('succeed'), self::FIXTURE, 'succeed');
             Ajax::handle_batch_request(static::__batch_request([
                 static::__batch_call(0, 'succeed'),
-                static::__batch_call(1, 'succeed'),
+                static::__batch_call(1, 'caller'),
             ]));
         });
 
-        static::__assert_count(2, Ajax_Main_Hook_Probe::$seen, 'once per request, not once per call');
+        static::__assert_count(3, Ajax_Main_Hook_Probe::$seen, 'once per call');
 
-        [$direct, $batch] = Ajax_Main_Hook_Probe::$seen;
+        [$direct, $first, $second] = Ajax_Main_Hook_Probe::$seen;
+        static::__assert_equals($direct, $first, 'a direct call and a batched one hand the hook the same params');
         static::__assert_equals(self::FIXTURE, $direct['controller'] ?? null);
         static::__assert_equals('succeed', $direct['action'] ?? null);
         static::__assert_equals('/_ajax/:controller/:action', $direct['_route'] ?? null);
         static::__assert_equals(Ajax::class, $direct['_handler'] ?? null);
         static::__assert_equals('POST', $direct['_method'] ?? null);
-        static::__assert_equals('/_ajax/_batch', $batch['_route'] ?? null);
+        static::__assert_equals('caller', $second['action'] ?? null, 'each call names its own endpoint');
     }
 
     /**
-     * A non-null answer from Main::pre_dispatch halts the request: it is the response, and
-     * no endpoint runs.
+     * A non-null answer from Main::pre_dispatch refuses THAT call with an envelope: a coded
+     * result keeps its code and reason, anything else (a page response) is unauthorized.
+     * The endpoint never runs, and the answer is the same on both transports.
      */
-    public static function test_main_pre_dispatch_halts_an_ajax_request()
+    public static function test_main_pre_dispatch_refuses_the_call_with_an_envelope()
     {
-        Ajax_Main_Hook_Probe::$seen = [];
-        Ajax_Main_Hook_Probe::$halt_with = response()->json(['halted' => true], 409);
         Ajax_Parity_Fixture_Controller::$invocations = 0;
 
         try {
             static::__with_probe_main(function () {
-                $direct = Ajax::handle_browser_request(static::__direct_request('succeed'), self::FIXTURE, 'succeed');
-                static::__assert_equals(409, $direct->getStatusCode());
+                Ajax_Main_Hook_Probe::$halt_with = response_unauthorized('Account suspended');
+                $coded = static::__assert_parity('succeed');
+                static::__assert_false($coded['_success']);
+                static::__assert_equals('unauthorized', $coded['error_code']);
+                static::__assert_equals('Account suspended', $coded['reason']);
 
-                $batch = Ajax::handle_batch_request(static::__batch_request([static::__batch_call(0, 'succeed')]));
-                static::__assert_equals(409, $batch->getStatusCode());
+                Ajax_Main_Hook_Probe::$halt_with = response()->json(['halted' => true], 409);
+                $page = static::__assert_parity('succeed');
+                static::__assert_equals('unauthorized', $page['error_code'], 'a page response refuses as unauthorized');
             });
         } finally {
             Ajax_Main_Hook_Probe::$halt_with = null;
         }
 
         static::__assert_equals(0, Ajax_Parity_Fixture_Controller::$invocations, 'no endpoint ran');
+    }
+
+    /**
+     * A direct call's params are its body exactly - a key named action or controller
+     * included - as a batched call's are.
+     */
+    public static function test_a_direct_call_receives_its_body_as_sent()
+    {
+        $params = ['action' => 'approve', 'controller' => 'x', 'value' => 4];
+        $envelope = static::__assert_parity('echo_params', $params);
+
+        static::__assert_equals($params, $envelope['_ajax_return_value']['params']);
+    }
+
+    /**
+     * An endpoint that answers an HTTP response is a fault, never a success.
+     */
+    public static function test_an_http_response_from_an_endpoint_is_a_fault()
+    {
+        $envelope = static::__assert_parity('redirects');
+
+        static::__assert_false($envelope['_success']);
+        static::__assert_equals('fatal', $envelope['error_code']);
+    }
+
+    /**
+     * A transaction left open by a call is rolled back and fails that call, so it can
+     * never carry the next call's writes.
+     */
+    public static function test_a_leaked_transaction_is_rolled_back_and_fails_the_call()
+    {
+        $level = \Illuminate\Support\Facades\DB::transactionLevel();
+
+        $envelope = static::__assert_parity('leaks_transaction');
+
+        static::__assert_equals('fatal', $envelope['error_code']);
+        static::__assert_equals($level, \Illuminate\Support\Facades\DB::transactionLevel(), 'the leaked transaction was rolled back');
+    }
+
+    /**
+     * Denied by its gates with nobody signed in, a call is asked to sign in.
+     */
+    public static function test_a_gate_denial_with_nobody_signed_in_is_auth_required()
+    {
+        static::__reset_session();
+        Ajax_Parity_Fixture_Controller::$invocations = 0;
+
+        $envelope = static::__assert_parity('signed_in_only');
+
+        static::__assert_equals('auth_required', $envelope['error_code']);
+        static::__assert_equals(0, Ajax_Parity_Fixture_Controller::$invocations);
+    }
+
+    /**
+     * A refusal of the whole request (CSRF, a fault outside any call) answers every call
+     * of a batch under its own key, so no promise is left waiting; a direct call gets the
+     * bare envelope.
+     */
+    public static function test_a_request_refusal_answers_every_call()
+    {
+        $refusal = ['_success' => false, 'error_code' => 'unauthorized', 'reason' => 'CSRF token mismatch'];
+
+        $batch = Request::create('/_ajax/_batch', 'POST', [], [], [], static::SERVER + ['CONTENT_TYPE' => 'application/json'],
+            json_encode(['batch_calls' => [static::__batch_call(3, 'succeed'), static::__batch_call(9, 'caller')]]));
+        $answer = Ajax::request_refusal($batch, $refusal)->getData(true);
+
+        static::__assert_equals(['C_3', 'C_9'], array_keys($answer));
+        static::__assert_equals('unauthorized', $answer['C_9']['error_code']);
+        static::__assert_true(isset($answer['C_3']['_server_time']), 'a refusal carries the side channels');
+
+        $direct = Ajax::request_refusal(static::__direct_request('succeed'), $refusal)->getData(true);
+        static::__assert_equals('CSRF token mismatch', $direct['reason']);
     }
 
     // =========================================================================

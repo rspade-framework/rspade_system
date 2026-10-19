@@ -116,6 +116,9 @@ class Auth_Gates_Realm_Test extends Rsx_Test_Abstract
      */
     public static function test_ajax_seam_denies_cross_realm_surface_whose_gates_pass()
     {
+        // A SIGNED-IN caller the gates refuse is unauthorized (nobody signed in is auth_required).
+        static::__acting_as_user(1);
+
         static::__install_surface(Auth_Gates::REALM_PORTAL, ['grants']);
 
         static::__assert_throws(
@@ -125,6 +128,7 @@ class Auth_Gates_Realm_Test extends Rsx_Test_Abstract
             }
         );
 
+        static::__reset_session();
         Auth_Gates::_reset_for_testing();
     }
 

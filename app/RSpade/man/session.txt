@@ -320,7 +320,7 @@ API REFERENCE
 
         Session::enforce_enabled_membership(): bool
             Framework seam, called once per request by the staff dispatcher and
-            by the Ajax browser entry point, ahead of the #[Auth] gates. Returns
+            once per CALL by the Ajax channel, ahead of the #[Auth] gates. Returns
             true when the request may proceed; LOGS THE SESSION OUT and returns
             false when the users row for (login_user_id, site_id) is missing or
             not active (User_Model::is_active(): its is_enabled is false, or its
@@ -666,7 +666,7 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     is MISSING or not active (its is_enabled is false, or the SITE is disabled or
     deleted), the session is LOGGED OUT and false is
     returned. The staff dispatcher calls it once per request immediately before the
-    #[Auth] gates, and the Ajax browser entry point calls it before its own gates;
+    #[Auth] gates, and the Ajax channel calls it for every call before its gates;
     both then answer response_auth_required() through their ordinary channel - a
     redirect to login with the intended URL captured for a page, the auth_required
     envelope for an Ajax call. Disabling an account therefore ends the sessions
@@ -762,10 +762,23 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
        and the session writers are unavailable to a headless API identity, which
        is why the example branches on Session::is_api_request() before logout().
 
+       It also runs for every Ajax CALL, once per call (batched or not), with
+       $params['controller'] and $params['action'] naming the endpoint. A
+       non-null return refuses that call: a coded result keeps its code and
+       reason (return response_unauthorized('Your account is suspended.')
+       for an Ajax call to show that message), and any other value - the
+       redirect above included - answers 'unauthorized' "This request was
+       refused.". It is never rendered as a page (rsx:man
+       ajax_error_handling, TRANSPORT).
+
        Return an interstitial instead of a logout when the state is meant to be
        RESOLVED rather than punished (unverified email, terms not accepted,
        payment overdue): redirect to the screen that fixes it, and let the user
-       keep their session.
+       keep their session. Because the hook also runs for each Ajax call, an
+       interstitial that answers every request refuses the fixing screen's own
+       calls too: decide on the channel (Rsx_Request_Channel::current() ===
+       Rsx_Request_Channel::AJAX) or on $params['controller'] /
+       $params['action'].
 
        NOT init(). Main::init() is a BOOTSTRAP hook - it runs once as the
        framework provider boots, in EVERY process including artisan commands and
@@ -1445,7 +1458,8 @@ SESSION LIFETIME
         page that sends it was open before the limit passed, and should still
         be able to finish what it was doing, such as saving the form on screen.
         The first such request after the grace signs out; an Ajax call then
-        answers the session_expired envelope.
+        answers the session_expired envelope, and so does every later call
+        carried by the same request.
 
         AN SPA NAVIGATION gets no grace: the browser's page-view report is
         judged like a page, so somebody who only ever moves around inside the

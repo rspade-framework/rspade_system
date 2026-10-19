@@ -223,8 +223,6 @@ class Controller_Stub_ManifestSupport extends ManifestSupport_Abstract
             $content .= "     * @param {Object} params - Parameters object to pass to the method\n";
             $content .= "     * @returns {Promise<*>}\n";
             $content .= "     */\n";
-            // NOT async: an async wrapper would return an adopting promise, breaking the
-            // promise-identity gate Ajax uses to detect its own unhandled rejections.
             $content .= "    static {$method_name}(params = {}) {\n";
             $content .= "        return Ajax.call('/_ajax/{$controller_name}/{$method_name}', params);\n";
             $content .= "    }\n\n";

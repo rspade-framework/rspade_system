@@ -352,6 +352,14 @@ JAVASCRIPT USAGE
         - fetch()         - View/edit pages where record MUST exist (throws on not found)
         - fetch_or_null() - Optional lookups where missing is valid (returns null)
 
+    Refreshing An Instance:
+        // Re-fetches this record and updates the instance in place
+        await project.refresh();
+
+        refresh() resolves with the same instance, updated. When the record no
+        longer exists or is no longer visible to the caller it THROWS (code
+        not_found), exactly as fetch() does - it never resolves false.
+
     Enum Properties on Instances (BEM-style double underscore):
         const project = await Project_Model.fetch(1);
 
@@ -397,6 +405,54 @@ JAVASCRIPT USAGE
                 showErrorMessage(error.message);
             }
         }
+
+THE WIRE CONTRACT
+    Every fetch() and fetch_or_null() issued in one synchronous turn leaves in
+    ONE request per model, to the one framework endpoint:
+
+        POST /_ajax/Orm_Controller/fetch   (carried by /_ajax/_batch)
+        in:   {model: "Project_Model", ids: [1, 2, 3]}
+        out:  {records: {"1": {...}, "3": {...}}}
+
+    A larger set is split across requests of at most
+    rsx.model_fetch.batch_max_ids ids (default 100); the server REFUSES a
+    request over the cap (validation) rather than truncating it.
+
+    Absence Is The Only Answer For An Unresolvable Id:
+        A requested id is present in records when it resolved, and simply
+        ABSENT when it did not - the row does not exist, the surface's gates
+        denied the caller, the fetch() body returned false or null, or the
+        body THREW A CODED REFUSAL (AjaxUnauthorizedException from
+        Permission::require_permission(), AjaxNotFoundException, any coded
+        failure). These are indistinguishable on the wire, and one id's
+        refusal never fails the other ids in the request. Any OTHER
+        exception a fetch() body throws is a fault and fails the request.
+        The throw-or-null choice is the client's: fetch() throws not_found,
+        fetch_or_null() answers null.
+
+        Request-level problems are errors: a missing or malformed
+        model or ids, or too many ids (validation); a name that is not a
+        model (not_found, one message whatever the reason); a model whose
+        fetch() lacks #[Ajax_Endpoint_Model_Fetch] (unauthorized, naming the
+        attribute).
+
+    Overlapping Fetches Share One Lookup:
+        fetch(), fetch_or_null() and fetch_cached() of the same model and id
+        that overlap - issued before the earlier one's answer arrived - share
+        ONE lookup and one wire answer. A fetch issued after that answer
+        arrived asks the server again (caching across that boundary is
+        fetch_cached()'s job). This is the ORM's own coalescing: the Ajax
+        transport itself never merges two calls (rsx:man
+        ajax_error_handling, TRANSPORT).
+
+    Every Caller Gets Its Own Instance:
+        Callers sharing one lookup each receive their OWN hydrated model
+        instance, nested records included. A record one component changes
+        is never another component's record.
+
+    The same serving rules apply to lazy relationships (see LAZY
+    RELATIONSHIPS): every related record goes through its model's fetch()
+    exactly as above.
 
 JAVASCRIPT CLASS ARCHITECTURE
     Class Hierarchy:
@@ -793,6 +849,13 @@ LAZY RELATIONSHIPS
         3. Each related record passed through its model's fetch() for authorization
         4. Only records passing fetch() security check are returned
 
+        A record refused at step 1 or 3 - its fetch() returned false or null,
+        or threw a coded refusal such as require_permission()'s - is absent
+        exactly as in THE WIRE CONTRACT: a refused source record answers
+        not_found ("Record not found or access denied"), a singular
+        relationship answers null (never false), and a plural relationship
+        leaves the record out of the array.
+
     Plural Relationship Size Cap:
         Step 3 above is one gated fetch() per related id, so a lazy plural
         relationship is a fan-out: `await client.contacts()` on a client with
@@ -955,8 +1018,9 @@ MODEL CONSTANTS
 
 CLIENT-SIDE FETCH CACHE
 
-    In-memory cache for Model.fetch_cached() results. Stores promises keyed by
-    model name + id. Automatically resets on SPA navigation.
+    In-memory cache for Model.fetch_cached() results. Stores a promise of the
+    record's raw payload, keyed by model name + id; every fetch_cached() call
+    hydrates its OWN instance from it. Automatically resets on SPA navigation.
 
     API:
         // Cached fetch - returns cached result or fetches from backend
@@ -972,12 +1036,12 @@ CLIENT-SIDE FETCH CACHE
         Rsx_Js_Model.orm_cache_reset('Contact_Model', 5);
 
     Behavior:
-        - First call: cache miss, calls fetch(), stores promise in cache
-        - Concurrent calls: same model/id awaits same promise (one request)
-        - Subsequent calls: returns cached promise (resolves immediately)
-        - Failed fetch: removed from cache, next call retries
+        - First call: cache miss, queues the lookup, stores its promise
+        - Concurrent calls: same model/id awaits the same promise (one lookup)
+        - Subsequent calls: resolve from the cached payload immediately
+        - Every call: a fresh instance, hydrated from the cached payload
+        - Failed or not-found fetch: removed from cache, next call retries
         - fetch() and fetch_or_null() warm the cache on success
-        - Cache stores promises, not raw values (enables concurrent dedup)
 
     Automatic Reset:
         Cache clears at the start of every SPA navigation (Spa.dispatch).

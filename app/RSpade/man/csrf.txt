@@ -44,7 +44,7 @@ TRANSPORT (handled for you)
     AJAX and file upload:
         The token rides the request header X-CSRF-Token. It is attached in ONE
         place - the framework's jQuery $.ajax chokepoint - so every
-        Controller.method() call (direct and batched) and every /_upload
+        Controller.method() call (each sent through /_ajax/_batch) and every /_upload
         multipart POST carries it automatically when window.rsxapp.csrf is set.
         It is never attached to external cross-domain requests (no token leak).
 
@@ -76,7 +76,9 @@ ENFORCEMENT POINT
     #[Route(POST)] controllers. Both realms share one call because both serve the
     same browser session and the same token - Rsx_Csrf takes no realm argument. A
     failure returns a clean auth-style error with no stack trace: the AJAX
-    envelope for /_ajax and /_upload, and for a native form POST the 419 error
+    envelope (unauthorized, "CSRF token mismatch") for /_ajax and /_upload -
+    for /_ajax/_batch under EVERY call_id the batch named, so each call
+    rejects with it - and for a native form POST the 419 error
     page - the application's own /error/419 when it declares one, the
     framework's page otherwise (rsx:man error_pages). The portal channel
     is the same path under the portal base (<portal-prefix>/_ajax/..., or

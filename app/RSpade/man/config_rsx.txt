@@ -168,13 +168,22 @@ ROUTING AND DISPATCH
 
     'ajax' => [
         'batch_max_calls' => 100,
+        'batching' => true,
     ]
 
     batch_max_calls      The most calls one /_ajax/_batch request may carry.
                          A larger batch is refused WHOLE with HTTP 400 naming
-                         this key, and nothing in it runs. The client flushes
-                         at 20 pending calls, so only a hand-built batch meets
-                         the cap. See rsx:man ajax_error_handling.
+                         this key, and nothing in it runs. The client sends
+                         at most 20 calls per request, so only a hand-built
+                         batch meets the cap. See rsx:man ajax_error_handling.
+
+    batching             Whether the calls a page makes in one synchronous
+                         turn share one request (true, the default) or each
+                         go as a request of their own (false). Every call
+                         goes to /_ajax/_batch and is answered the same way
+                         either way; false makes each call its own entry in
+                         the browser's network panel. Applies in every mode,
+                         exposed as window.rsxapp.ajax_batching.
 
     'exception_handlers' => [ ... ]
 

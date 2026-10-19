@@ -219,6 +219,9 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
      */
     public static function test_ajax_internal_denies_before_the_body()
     {
+        // A SIGNED-IN caller the gates refuse is unauthorized (nobody signed in is auth_required).
+        static::__acting_as_user(1);
+
         static::__install(['denies']);
 
         static::__assert_throws(
@@ -228,6 +231,7 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
             }
         );
 
+        static::__reset_session();
         Auth_Gates::_reset_for_testing();
     }
 
@@ -255,12 +259,33 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
      */
     public static function test_ajax_browser_denies_with_coded_unauthorized()
     {
+        // A SIGNED-IN caller the gates refuse is unauthorized (nobody signed in is auth_required).
+        static::__acting_as_user(1);
+
         static::__install(['denies']);
 
         $json = static::__browser_ajax();
 
         static::__assert_false($json['_success']);
         static::__assert_equals(Ajax::ERROR_UNAUTHORIZED, $json['error_code']);
+
+        static::__reset_session();
+        Auth_Gates::_reset_for_testing();
+    }
+
+    /**
+     * The same denial with nobody signed in answers auth_required - the page channel's
+     * split - so a page whose sign-in ended elsewhere is asked to sign in again.
+     */
+    public static function test_ajax_browser_denies_anonymous_with_auth_required()
+    {
+        static::__install(['denies']);
+        static::__reset_session();
+
+        $json = static::__browser_ajax();
+
+        static::__assert_false($json['_success']);
+        static::__assert_equals(Ajax::ERROR_AUTH_REQUIRED, $json['error_code']);
 
         Auth_Gates::_reset_for_testing();
     }
@@ -277,6 +302,9 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
      */
     public static function test_unknown_check_name_denies_at_a_seam_and_warns()
     {
+        // A SIGNED-IN caller the gates refuse is unauthorized (nobody signed in is auth_required).
+        static::__acting_as_user(1);
+
         static::__install(['no_such_check_defined_anywhere']);
 
         $warnings = [];
@@ -304,6 +332,7 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
         static::__assert_true($matched, 'expected one warning naming the surface, the check and the realm');
 
         Event::forget(MessageLogged::class);
+        static::__reset_session();
         Auth_Gates::_reset_for_testing();
     }
 

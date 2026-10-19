@@ -456,8 +456,9 @@ abstract class Rsx_Bundle_Abstract
         $rsxapp_data['current_action'] = $is_portal ? Rsx_Portal::get_current_action() : Rsx::get_current_action();
         $rsxapp_data['is_spa'] = $is_portal ? Rsx_Portal::is_spa() : Rsx::is_spa();
 
-        // Enable ajax batching in debug/production modes, disable in development for easier debugging
-        $rsxapp_data['ajax_batching'] = !Rsx::is_development();
+        // Whether calls made in one turn share a request (rsx.ajax.batching). Every call goes
+        // through /_ajax/_batch either way; this only sets how many ride in one request.
+        $rsxapp_data['ajax_batching'] = (bool) config('rsx.ajax.batching');
 
         // Add current params (always set to reduce state variations)
         $current_params = \App\RSpade\Core\Rsx::get_current_params();

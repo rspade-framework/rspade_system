@@ -29,9 +29,13 @@ abstract class Main_Abstract
     /**
      * Pre-dispatch hook
      * 
-     * Called before any route dispatch, and before every external API call (after the
-     * bearer identity and the #[Auth] gates). If a non-null value is returned, dispatch
-     * is halted: a page answers with that value, an API call with 403 account_refused.
+     * Called before any route dispatch, before every external API call (after the
+     * bearer identity and the #[Auth] gates), and before every Ajax CALL - once per call,
+     * alone or batched, with $params['controller'] and $params['action'] naming the
+     * endpoint and $request carrying that call's parameters. If a non-null value is
+     * returned, dispatch is halted: a page answers with that value, an API call with 403
+     * account_refused, and an Ajax call with that coded result's envelope (a
+     * response_unauthorized('...') keeps its reason) or, for any other value, unauthorized.
      * 
      * @param Request $request The current request
      * @param array $params Combined GET values and URL parameters

@@ -254,8 +254,12 @@ PORTAL MAIN HOOKS
       pre_dispatch($req, $params)  before every matched route, AFTER the #[Auth]
                                    gates have already run, and for an unmatched
                                    URL; return null to continue, or a Response
-                                   to halt. NOT for authorization - gates own
-                                   that (see AUTHORIZATION).
+                                   to halt. Also once per Ajax CALL, before
+                                   that call's endpoint and its gates; a
+                                   non-null return refuses that call only
+                                   (rsx:man ajax_error_handling, TRANSPORT).
+                                   NOT for authorization - gates own that (see
+                                   AUTHORIZATION).
       unhandled_route($req,$params) when no portal route matches (after
                                    pre_dispatch); return null for the 404 page,
                                    or a Response

@@ -49,9 +49,10 @@
 | AG-SEAM-04 | A denied AUTHENTICATED route caller gets 403 | php | The shared unauthorized channel the seam feeds | 403, not a redirect | implemented (dispatch concern: `Dispatcher_Auth_Rejection_Test::test_unauthorized_logged_in_is_403_not_redirect`) | 2026-08-07 |
 | AG-SEAM-05 | The portal route row carries its gate list | php | `#[Portal_Route]` fixture | `auth` == `['is_logged_in']` | implemented | 2026-08-07 |
 | AG-SEAM-06 | A denied anonymous portal caller lands on the PORTAL login | php | Gated portal fixture route, no portal session | 302 to the portal login route | implemented | 2026-08-07 |
-| AG-SEAM-07 | Ajax internal() denies before the endpoint body runs | php | Fixture endpoint, denying gate via the test index | AjaxUnauthorizedException | implemented | 2026-08-07 |
+| AG-SEAM-07 | Ajax internal() denies a SIGNED-IN caller before the endpoint body runs | php | Fixture endpoint, denying gate via the test index | AjaxUnauthorizedException | implemented | 2026-08-07 |
 | AG-SEAM-08 | Ajax internal() runs the body when the gates pass | php | Same, granting gate | the endpoint's marker | implemented | 2026-08-07 |
-| AG-SEAM-09 | Ajax browser entry denies with the coded unauthorized error | php | `handle_browser_request` on a denied endpoint | `_success` false, `error_code` unauthorized | implemented | 2026-08-07 |
+| AG-SEAM-09 | Ajax browser entry denies a SIGNED-IN caller with the coded unauthorized error | php | `handle_browser_request` on a denied endpoint | `_success` false, `error_code` unauthorized | implemented | 2026-08-07 |
+| AG-SEAM-09b | Ajax browser entry denies a caller with nobody signed in with `auth_required` (the page channel's split) | php | `handle_browser_request` on a denied endpoint, session reset | `_success` false, `error_code` auth_required | implemented | 2026-10-19 |
 | AG-SEAM-10 | Ajax browser entry runs the body when the gates pass | php | Same, granting gate | `_success` true | implemented | 2026-08-07 |
 | AG-SEAM-11 | An unknown check name DENIES at a seam and logs one warning | php | Endpoint gated on a name defined in no realm | coded unauthorized + a warning naming surface, check and realm | implemented | 2026-08-07 |
 | AG-SEAM-12 | ORM fetch denial is indistinguishable from a missing row | php | Denied `User_Model::fetch` vs an absent id | identical code + message ("Record not found") | implemented | 2026-09-08 |

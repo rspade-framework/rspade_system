@@ -71,7 +71,7 @@ class Users_Index_Action extends Spa_Action { }
 | Surface | Seam | Denied |
 |---|---|---|
 | `#[Route]` / `#[SPA]` | Dispatcher, after route resolution, **before `Main::pre_dispatch`** | no session -> 302 to the realm's login with the intended URL captured (`Login_Redirect`); authenticated -> the application's 403 error page (`#[Route('/error/403')]`) |
-| `#[Ajax_Endpoint]` | Ajax dispatch, after CSRF | the standard coded unauthorized Ajax error; the body never runs |
+| `#[Ajax_Endpoint]` | Ajax dispatch, after CSRF, per call (batched or not) | the coded `auth_required` Ajax error when nobody is signed in in the request's realm, `unauthorized` when somebody is (the page channel's split); the body never runs |
 | `#[Ajax_Endpoint_Model_Fetch]` | ORM seam | the same generic "not found" a missing row returns (anti-enumeration) |
 | `#[Api_Endpoint]` | API dispatch | 401/403 JSON error |
 | `@route` action | Spa gate | `Error_Screens.unauthorized()` rendered into the layout - no navigation, no round trip |

@@ -136,7 +136,7 @@ for method in identities_list identity_unlink link_begin; do
         echo "FAIL: $TEST_NAME - anonymous ${method} SUCCEEDED; the is_logged_in gate is not enforced: $response"
         exit 1
     fi
-    if ! printf '%s' "$response" | grep -q '"error_code":"unauthorized"'; then
+    if ! printf '%s' "$response" | grep -q '"error_code":"auth_required"'; then
         echo "FAIL: $TEST_NAME - anonymous ${method} failed for the wrong reason: $response"
         exit 1
     fi

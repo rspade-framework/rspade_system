@@ -246,9 +246,13 @@ HOW THE CHECKS RUN - THE SEAMS
         setup, redirects, interstitials).
 
     #[Ajax_Endpoint]  (Ajax dispatch)
-        After CSRF, before the method. Denial -> the standard coded
-        unauthorized Ajax error; the endpoint body never runs. The client's
-        existing generic handlers render it (see ERROR SCREENS / Ajax).
+        After CSRF, per call (batched or not), before the method. Denial ->
+        the coded auth_required Ajax error when nobody is signed in in the
+        request's realm, unauthorized when somebody is (the page channel's
+        split); the endpoint body never runs. Ajax::internal() throws
+        AjaxAuthRequiredException / AjaxUnauthorizedException to match. The
+        client's existing generic handlers render it (see ERROR SCREENS /
+        Ajax).
 
     #[Ajax_Endpoint_Model_Fetch]  (Orm_Controller)
         Before any model code - this is the framework authorization seam the

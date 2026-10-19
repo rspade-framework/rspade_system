@@ -156,14 +156,17 @@ class Rsx_Csrf
     private static function __reject(Request $request): void
     {
         $path = '/' . ltrim($request->getPathInfo(), '/');
-        $is_ajax = str_contains($path, '/_ajax') || str_ends_with($path, '/_upload');
+        $refusal = [
+            '_success'   => false,
+            'error_code' => 'unauthorized',
+            'reason'     => 'CSRF token mismatch',
+        ];
 
-        if ($is_ajax) {
-            $response = response()->json([
-                '_success'   => false,
-                'error_code' => 'unauthorized',
-                'reason'     => 'CSRF token mismatch',
-            ]);
+        if (str_contains($path, '/_ajax')) {
+            // Every call of a refused batch is answered, each under its own call_id.
+            $response = \App\RSpade\Core\Ajax\Ajax::request_refusal($request, $refusal);
+        } elseif (str_ends_with($path, '/_upload')) {
+            $response = response()->json($refusal);
         } else {
             $response = \App\RSpade\Core\Errors\Error_Screens::expired($request);
         }

@@ -7,9 +7,9 @@ OVERVIEW
     - Encodes success/failure in response body via _success field
     - Differentiates between business logic errors and fatal PHP errors
     - Provides consistent error display across dev and production modes
-    - Uses the same response envelope for direct and batched calls: both
-      transports run ONE core (Ajax::execute()) and build ONE envelope, so the
-      same endpoint outcome is byte-for-byte the same wire shape either way
+    - Uses ONE browser transport in every mode (POST /_ajax/_batch, see
+      TRANSPORT) and ONE core (Ajax::execute()) building ONE envelope, so the
+      same endpoint outcome is the same wire shape however it was called
 
 RESPONSE FORMATS
 
@@ -84,9 +84,10 @@ RESPONSE FORMATS
 
     Network/Infrastructure Errors
     ------------------------------
-    No response body - PHP never executed
-    xhr.status === 0 or timeout
-    Only occurs when nginx/PHP-FPM is down
+    No JSON answer - the request failed as a whole. The client rejects
+    EVERY call the request carried with one error: HTTP 5xx is
+    'server_error' (also logged through Debugger.log_error), status 0 is
+    'network_error', any other HTTP failure 'generic'.
 
 HTTP STATUS CODE STRATEGY
 
@@ -99,8 +100,9 @@ HTTP STATUS CODE STRATEGY
 
     Non-200 Responses
     -----------------
-    Only when server infrastructure is completely down (nginx crashed,
-    PHP-FPM dead, network failure). These bypass PHP entirely.
+    Only when the request never reached a PHP answer (nginx crashed,
+    PHP-FPM dead, network failure, a 5xx from the web server), and the HTTP
+    400 that refuses a malformed batch (see TRANSPORT).
 
     Rationale
     ---------
@@ -163,9 +165,10 @@ ERROR TYPES
 
     Full protocol: rsx:man form_conventions, the QUESTIONS section.
 
-    network (client-side only)
-    --------------------------
-    Server unreachable (xhr.status === 0).
+    server_error / network_error (client-side only)
+    -----------------------------------------------
+    network_error: server unreachable (xhr.status === 0). server_error: an
+    HTTP 5xx, or an answer that does not carry the call (see TRANSPORT).
 
 SERVER-SIDE IMPLEMENTATION
 
@@ -270,8 +273,11 @@ CLIENT-SIDE IMPLEMENTATION
     Rejected promises receive standard Error objects with additional properties:
 
         error.code       - 'validation'|'not_found'|'unauthorized'|
-                           'auth_required'|'session_expired'|'fatal'|
-                           'network'
+                           'auth_required'|'session_expired'|'question'|
+                           'generic'|'fatal', or one the client raises
+                           itself: 'php_exception' (a fatal carrying
+                           file/line, for a developer caller),
+                           'server_error', 'network_error'
         error.message    - User-displayable message
         error.metadata   - Additional error data from server
                            (for validation: field-specific errors)
@@ -288,8 +294,12 @@ CLIENT-SIDE IMPLEMENTATION
     // No try/catch - error shows in modal automatically
     const user = await User_Controller.get_user(123);
 
-    Global unhandled rejection handler detects uncaught Ajax promises and
+    Global unhandled rejection handler detects uncaught Ajax errors and
     shows red danger modal with error details. This prevents silent failures.
+    It recognises an Ajax error by the marker every one carries
+    (error.__rsx_ajax_error === true), so it covers an error whatever promise
+    chain carried it - a generated stub, Model.fetch(), an application's own
+    async wrapper that let it propagate.
 
     Rsx_Form Error Handling
     -----------------------
@@ -398,8 +408,7 @@ WHO SEES FATAL-ERROR DETAIL
     --------------
     Fatal errors show:
     - Generic message: "An unexpected error occurred. Please try again."
-    - An error_id (16 hex characters): error.error_id, on the direct and the
-      batched envelope alike
+    - An error_id (16 hex characters): error.error_id in the envelope
     - No file paths, SQL, backtrace, or exception message in the response body
     The full detail is logged server-side as "[error_id=<id>] ..." so a user's
     reference finds the trace.
@@ -409,19 +418,31 @@ WHO SEES FATAL-ERROR DETAIL
     A target that is no class, not a controller, or not an #[Ajax_Endpoint] fails
     with ONE message for a non-developer caller ("<Controller>::<action> is not an
     Ajax endpoint"), so the channel cannot be used to probe which class names exist.
-    A developer caller gets the specific reason.
+    A developer caller gets the specific reason. It is a CODED not_found, never a
+    reported server fault.
 
     Validation/auth errors show the same user-friendly messages to every caller.
 
-BATCH REQUESTS
+TRANSPORT
 
-    Outside development mode the client coalesces concurrent calls onto
-    POST /_ajax/_batch, sending batch_calls - an array of {call_id,
-    controller, action, params}. The client flushes at 20 pending calls.
+    One Browser Transport, Every Mode
+    ---------------------------------
+    The client sends EVERY call to POST /_ajax/_batch - a lone call as a
+    batch of one - with a JSON body batch_calls, an array of {call_id,
+    controller, action, params}. Development, debug and production behave
+    identically.
 
-    The response is a MAP keyed "C_<call_id>", each value being EXACTLY the
-    envelope a direct call to that endpoint returns - the same core runs each
-    call, and the same envelope is built for it:
+    config('rsx.ajax.batching') (default true; window.rsxapp.ajax_batching
+    in every mode) decides only how many calls share one request:
+
+        true    calls made in one synchronous turn share a request, at most
+                20 per request (Ajax.MAX_BATCH_SIZE)
+        false   every call is its own /_ajax/_batch request, answered the
+                same way - each call is its own entry in the browser's
+                network panel
+
+    The response is a MAP keyed "C_<call_id>", each value being exactly the
+    envelope for that call:
 
     {
         "C_0": {"_success": true, "_ajax_return_value": {...}, "_server_time": "..."},
@@ -431,17 +452,98 @@ BATCH REQUESTS
 
     HTTP status: Always 200
     Each result: Has own _success field, and its own error_code
-    Client: Distributes each result to its originating caller
+    Client: Settles each call from its own key
 
-    Each batched call runs on the REAL request - the caller's address,
-    headers, cookies and session - with only that call's params as its input,
-    and each call is its own unit: its own Turnstile verification and its own
+    No Merging
+    ----------
+    Two identical calls are two calls. Every Ajax call is a POST and the
+    transport cannot know that an endpoint is a read, so it never sends one
+    call for two callers. Reads that are safe to share are coalesced where
+    they are known to be reads: the ORM fetch (overlapping fetch() of the same
+    model and id - rsx:man model_fetch) and jqhtml's load coordinator (the
+    same component with the same args loading at the same time).
+
+    Every Call Is Settled
+    ---------------------
+    A call always resolves or rejects - never stays pending:
+    - an answer that does not carry the call rejects it with 'server_error';
+    - a request that fails as a whole rejects every call it carried (HTTP
+      5xx 'server_error', status 0 'network_error', otherwise 'generic');
+    - a failure turning one call's value into models (a record whose class
+      the bundle lacks) rejects THAT call, never the page or its siblings.
+    A failure that refuses the whole REQUEST on the server - a CSRF mismatch,
+    a fault outside any call - is answered with the same envelope under
+    every call_id the batch named (side channels included), so each caller
+    receives it.
+
+    The Direct URL
+    --------------
+    POST /_ajax/<Controller>/<action> is answered with the bare envelope,
+    for a request made by hand (curl, a shell test). It is a batch of one
+    through the same per-call path. Its params are the request body exactly
+    - the JSON object, or the form fields - with nothing added or removed
+    and no query string merged.
+
+    Per-Call Checks
+    ---------------
+    Each call, alone or batched, runs on the REAL request - the caller's
+    address, headers, cookies and session - with only that call's params as
+    its input, and request() and the Request facade answer that call's
+    request while it runs. In order, for each call:
+
+        1. Session lifetime (rsx.sessions.*). Once a call answers
+           session_expired, every later call in the request answers the
+           same envelope. A cookie naming a replaced session row answers
+           session_expired with metadata.cause "retired".
+        2. Staff site membership: a disabled membership ends the session
+           and the call answers auth_required.
+        3. The realm's Main::pre_dispatch (Portal_Main on the portal), once
+           PER CALL, with $request the call's request and $params:
+
+               controller   the endpoint's controller
+               action       the endpoint's method
+               _route       '/_ajax/:controller/:action'
+               _method      'POST'
+               _handler     the Ajax class
+
+           A non-null answer refuses THAT call and no other. A coded result
+           keeps its code and reason - return
+           response_unauthorized('Account suspended') and the call rejects
+           with 'unauthorized' and that message; any other non-null value
+           (a redirect or page from a hook written for pages) answers
+           'unauthorized' "This request was refused.". Nothing is ever
+           rendered as a page.
+        4. The endpoint: its realm and #[Auth] gates, the controller's
+           pre_dispatch, the action.
+
+    A gate denial answers 'auth_required' when nobody is signed in in the
+    request's realm and 'unauthorized' when somebody is - the same split the
+    page channel makes, so a page whose sign-in ended elsewhere gets the
+    session-ended handling. Ajax::internal() throws AjaxAuthRequiredException
+    / AjaxUnauthorizedException correspondingly.
+
+    Each call is its own unit: its own Turnstile verification and its own
     revision transaction.
 
-    Two deliberate differences from a sequence of direct calls: pending flash
-    alerts are read once, after the last call, and ride on the LAST call's
-    envelope; console_debug messages ride on the call that produced them.
+    What An Endpoint May Not Do
+    ---------------------------
+    - Return an HTTP response. A redirect(), view(), download or any other
+      Symfony Response, View, Responsable or Renderable returned by the
+      action or by its controller's pre_dispatch is a FAULT (fatal
+      envelope), never a success. A controller pre_dispatch that redirects
+      its pages returns null for an Ajax call or answers a coded result.
+    - Leave a database transaction open. It is rolled back - whatever the
+      call wrote inside it is gone - and the call answers a fault naming the
+      endpoint. DB::transaction(fn) commits or rolls back for you.
 
+    Flash And Console
+    -----------------
+    Pending flash alerts are read once, after the last call of a request,
+    and ride on the LAST call's envelope; console_debug messages ride on the
+    call that produced them.
+
+    Refused Batches
+    ---------------
     A batch is REFUSED WHOLE with HTTP 400 {"error": "..."} - nothing in it
     runs - when:
     - it carries more calls than config('rsx.ajax.batch_max_calls')
@@ -449,7 +551,8 @@ BATCH REQUESTS
     - it is not a non-empty array of calls;
     - a call has no call_id, one that is not a non-negative integer, or one
       repeated in the batch;
-    - a call has no controller or action, or params that are not an object.
+    - a call has no controller or action, or one that is not a PHP
+      identifier, or params that are not an object.
     The client never sends such a batch.
 
 TESTING
@@ -544,3 +647,5 @@ SEE ALSO
     rsx:man jqhtml         - Component system
     rsx:man modals         - Modal dialogs
     rsx:man error_handling - General error handling
+    rsx:man model_fetch    - ORM fetch, where overlapping reads coalesce
+    rsx:man config_rsx     - rsx.ajax.batching, rsx.ajax.batch_max_calls

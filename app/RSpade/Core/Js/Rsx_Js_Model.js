@@ -16,7 +16,8 @@
  * @Instantiatable
  */
 class Rsx_Js_Model {
-    // Client-side fetch cache: Map<"ModelName:id", Promise<model>>
+    // Client-side fetch cache: Map<"ModelName:id", Promise<raw record payload>>. Holds the
+    // WIRE form; every fetch_cached() caller hydrates its own instance from it.
     // Reset on SPA navigation, manual reset via orm_cache_reset()
     static _fetch_cache = new Map();
 
@@ -34,7 +35,9 @@ class Rsx_Js_Model {
     //               lookup. An entry is JOINABLE from the moment it is created until the
     //               response for its chunk is distributed - that is the dedup window: two
     //               fetches of the same record that overlap share one wire slot and one
-    //               result object, while a fetch issued AFTER the previous one resolved
+    //               raw payload, and EACH CALLER HYDRATES ITS OWN INSTANCE from it (a
+    //               record one component changes is never another component's record),
+    //               while a fetch issued AFTER the previous one resolved
     //               starts a fresh cycle and hits the server again. (Caching across that
     //               boundary is fetch_cached()'s job, deliberately opt-in.)
     //               fetch() and fetch_or_null() share the SAME entry - the wire answer is
@@ -114,23 +117,17 @@ class Rsx_Js_Model {
         const outcome = await Rsx_Js_Model._orm_enqueue(modelName, record_id);
 
         if (!outcome.found) {
-            // Byte-identical to what the server used to send for a missing/denied/refused
-            // record. The server no longer distinguishes them on the wire (an id is simply
-            // absent from the response), so this is where the distinction between "throw"
-            // and "return null" is made - by which method the caller chose.
-            const error = new Error('Record not found');
-            error.code = Ajax.ERROR_NOT_FOUND;
-            error.metadata = {};
-            throw error;
+            // The server does not distinguish a missing, denied or refused record on the wire
+            // (the id is simply absent from the response), so this is where "throw" and
+            // "return null" part - by which method the caller chose.
+            throw Ajax._error(Ajax.ERROR_NOT_FOUND, 'Record not found');
         }
 
-        // The record was hydrated by the Ajax layer (Ajax.js calls
-        // _instantiate_models_recursive over the whole response, nested records included).
-
         // Warm fetch cache for subsequent fetch_cached() calls
-        Rsx_Js_Model._fetch_cache.set(`${modelName}:${record_id}`, Promise.resolve(outcome.record));
+        Rsx_Js_Model._fetch_cache.set(`${modelName}:${record_id}`, Promise.resolve(outcome.raw));
 
-        return outcome.record;
+        // This caller's own instance, nested records included.
+        return Rsx_Js_Model._instantiate_models_recursive(outcome.raw);
     }
 
     /**
@@ -162,9 +159,9 @@ class Rsx_Js_Model {
         }
 
         // Warm fetch cache on successful fetch (don't cache nulls)
-        Rsx_Js_Model._fetch_cache.set(`${modelName}:${record_id}`, Promise.resolve(outcome.record));
+        Rsx_Js_Model._fetch_cache.set(`${modelName}:${record_id}`, Promise.resolve(outcome.raw));
 
-        return outcome.record;
+        return Rsx_Js_Model._instantiate_models_recursive(outcome.raw);
     }
 
     /**
@@ -181,10 +178,7 @@ class Rsx_Js_Model {
      */
     static _orm_normalize_id(model_name, id) {
         if (!is_numeric(id)) {
-            const error = new Error(`${model_name}.fetch() requires a numeric record id, got: ${str(id)}`);
-            error.code = Ajax.ERROR_VALIDATION;
-            error.metadata = {};
-            throw error;
+            throw Ajax._error(Ajax.ERROR_VALIDATION, `${model_name}.fetch() requires a numeric record id, got: ${str(id)}`);
         }
 
         return int(id);
@@ -195,8 +189,9 @@ class Rsx_Js_Model {
      *
      * @param {string} model_name
      * @param {number} record_id
-     * @returns {Promise<{found: boolean, record: *}>} Resolves with the outcome for THIS
-     *          id; rejects with the batch's error if the request itself failed.
+     * @returns {Promise<{found: boolean, raw: *}>} Resolves with the outcome for THIS id -
+     *          the record's payload as received, never hydrated, so every caller can build
+     *          its own instance; rejects with the batch's error if the request itself failed.
      */
     static _orm_enqueue(model_name, record_id) {
         const key = `${model_name}:${record_id}`;
@@ -230,7 +225,7 @@ class Rsx_Js_Model {
      * Ensure exactly one flush is scheduled.
      *
      * setTimeout(0) is the flush SCHEDULER, not a deadline (owner ruling 2026-08-13;
-     * same choice the transport batcher makes - Ajax.DEBOUNCE_MS is 0). It defers the
+     * same choice the transport makes - Ajax._schedule_flush()). It defers the
      * request until every synchronously-running piece of code - a template rendering
      * twenty rows, a component's on_load, a Promise.all - has finished enqueueing its
      * lookups, so they all leave in one request. Nothing is being given a time budget:
@@ -292,8 +287,16 @@ class Rsx_Js_Model {
         let failure = null;
 
         try {
-            const response = await Orm_Controller.fetch({ model: model_name, ids: ids });
-            records = response.records;
+            // Unhydrated: one payload per record, from which each waiting caller builds its
+            // own instance (fetch() / fetch_or_null()).
+            const response = await Ajax._call_unhydrated('/_ajax/Orm_Controller/fetch', { model: model_name, ids: ids });
+
+            if (response === null || typeof response !== 'object'
+                || response.records === null || typeof response.records !== 'object') {
+                failure = Ajax._error(Ajax.ERROR_SERVER, `The server's answer to a ${model_name} fetch carried no records map.`);
+            } else {
+                records = response.records;
+            }
         } catch (e) {
             failure = e;
         }
@@ -310,8 +313,8 @@ class Rsx_Js_Model {
                 continue;
             }
 
-            const record = records[String(id)];
-            entry.resolve(record === undefined ? { found: false } : { found: true, record: record });
+            const raw = records[String(id)];
+            entry.resolve(raw === undefined ? { found: false } : { found: true, raw: raw });
         }
     }
 
@@ -332,25 +335,31 @@ class Rsx_Js_Model {
     static async fetch_cached(id) {
         const CurrentClass = this;
         const modelName = CurrentClass.__MODEL || CurrentClass.name;
-        const cache_key = `${modelName}:${id}`;
+        const record_id = Rsx_Js_Model._orm_normalize_id(modelName, id);
+        const cache_key = `${modelName}:${record_id}`;
 
-        if (Rsx_Js_Model._fetch_cache.has(cache_key)) {
-            return Rsx_Js_Model._fetch_cache.get(cache_key);
-        }
+        if (!Rsx_Js_Model._fetch_cache.has(cache_key)) {
+            // The promise itself is cached, so concurrent calls for the same record share
+            // one lookup. It resolves with the raw payload; each caller hydrates its own.
+            const promise = Rsx_Js_Model._orm_enqueue(modelName, record_id).then((outcome) => {
+                if (!outcome.found) {
+                    throw Ajax._error(Ajax.ERROR_NOT_FOUND, 'Record not found');
+                }
 
-        // Store the promise itself - concurrent calls for same model/id
-        // await the same promise (single backend request)
-        const promise = CurrentClass.fetch(id);
-        Rsx_Js_Model._fetch_cache.set(cache_key, promise);
+                return outcome.raw;
+            });
 
-        try {
-            const result = await promise;
-            return result;
-        } catch (e) {
+            Rsx_Js_Model._fetch_cache.set(cache_key, promise);
+
             // Failed fetches removed from cache so next attempt retries
-            Rsx_Js_Model._fetch_cache.delete(cache_key);
-            throw e;
+            promise.catch(() => {
+                if (Rsx_Js_Model._fetch_cache.get(cache_key) === promise) {
+                    Rsx_Js_Model._fetch_cache.delete(cache_key);
+                }
+            });
         }
+
+        return Rsx_Js_Model._instantiate_models_recursive(await Rsx_Js_Model._fetch_cache.get(cache_key));
     }
 
     /**
@@ -497,7 +506,8 @@ class Rsx_Js_Model {
     /**
      * Refresh this instance with latest data from server
      *
-     * @returns {Promise} Updated instance or false if not found
+     * @returns {Promise} This instance, updated
+     * @throws {Error} The record no longer exists or is no longer visible (code not_found)
      */
     async refresh() {
         const that = this;
@@ -505,13 +515,9 @@ class Rsx_Js_Model {
             shouldnt_happen('Cannot refresh model without id property');
         }
 
+        // fetch() throws for a record that is gone; the instance is this caller's own.
         const fresh = await that.constructor.fetch(that.id);
 
-        if (fresh === false) {
-            return false;
-        }
-
-        // Update this instance with fresh data
         Object.assign(that, fresh);
         return that;
     }

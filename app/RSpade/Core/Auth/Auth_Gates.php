@@ -212,6 +212,27 @@ class Auth_Gates
     }
 
     /**
+     * May the current caller use this surface? THE check every in-process seam asks before
+     * running a surface's body - an Ajax endpoint, a model's (portal_)fetch(), a fetchable
+     * relationship: the surface's declared realm first (surface_realm_permits()), then its
+     * #[Auth] gates resolved in the request's realm (gates_pass_at_seam()). A surface the
+     * index does not know, or knows without a gate, is refused loudly (require_surface()).
+     *
+     * @param string $target 'Simple_Class::method' as spelled in the surface index
+     * @return bool True when the realm permits and every gate passes
+     */
+    public static function surface_permits(string $target): bool
+    {
+        $realm = static::active_realm();
+
+        if (!static::surface_realm_permits($target, $realm)) {
+            return false;
+        }
+
+        return static::gates_pass_at_seam(static::surface_gates($target), $realm, $target);
+    }
+
+    /**
      * The gate list a dispatchable surface declares - never empty. The dispatch seams
      * resolve a matched route row, an Ajax endpoint or a model member through here.
      *

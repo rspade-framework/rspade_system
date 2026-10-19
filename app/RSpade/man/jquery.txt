@@ -54,7 +54,7 @@ BLOCKED: $.ajax()
         const result = await My_Controller.save({id: 1});
 
     The generated stub carries the CSRF token, the site/portal channel, the
-    unified error contract, and the batching/dedup layer; a hand-rolled XHR
+    unified error contract, and the batching transport; a hand-rolled XHR
     carries none of them. File uploads go through Ajax.upload(form_data) for
     the same reason - a raw fetch('/_upload') hardcodes the staff path and
     sends no CSRF token.

@@ -103,6 +103,53 @@ class Ajax_Parity_Fixture_Controller extends Rsx_Controller_Abstract
     }
 
     /**
+     * Its whole $params, as received.
+     */
+    #[Ajax_Endpoint]
+    #[Auth('public')]
+    public static function echo_params(Request $request, array $params = [])
+    {
+        static::$invocations++;
+
+        return ['params' => $params];
+    }
+
+    /**
+     * Answers an HTTP response - what a page-minded handler returns by mistake.
+     */
+    #[Ajax_Endpoint]
+    #[Auth('public')]
+    public static function redirects(Request $request, array $params = [])
+    {
+        static::$invocations++;
+
+        return redirect('/');
+    }
+
+    /**
+     * Begins a transaction and returns without ending it.
+     */
+    #[Ajax_Endpoint]
+    #[Auth('public')]
+    public static function leaks_transaction(Request $request, array $params = [])
+    {
+        static::$invocations++;
+
+        \Illuminate\Support\Facades\DB::beginTransaction();
+
+        return ['ok' => true];
+    }
+
+    #[Ajax_Endpoint]
+    #[Auth('is_logged_in')]
+    public static function signed_in_only(Request $request, array $params = [])
+    {
+        static::$invocations++;
+
+        return ['ok' => true];
+    }
+
+    /**
      * A page action denied by the thrown coded exception.
      */
     #[Route('/_test/front/thrown-denial')]

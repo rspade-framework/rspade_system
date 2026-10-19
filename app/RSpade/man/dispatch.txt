@@ -343,6 +343,15 @@ MAIN HOOKS
       matched (and the default route did not apply). A non-null return becomes
       the response; null lets the request fall through to the 404 error page.
 
+    On the AJAX channel pre_dispatch runs once PER CALL, alone or batched,
+    before that call's endpoint and its gates: $request is the call's own request (its
+    params as input) and $params are 'controller' and 'action' naming the
+    endpoint, '_route' '/_ajax/:controller/:action', '_method' 'POST' and
+    '_handler' the Ajax class. A non-null return refuses that call only: a
+    coded result (response_unauthorized('Account suspended')) becomes its
+    envelope with its reason, any other value answers 'unauthorized'. It is
+    never rendered as a page (rsx:man ajax_error_handling, TRANSPORT).
+
     For an unmatched URL both hooks receive the query string as $params. The
     portal's /rsx/portal_main.php (Portal_Main_Abstract) has the same two hooks,
     called the same way for a portal request, plus init() (see step 1 of THE

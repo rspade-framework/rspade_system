@@ -32,7 +32,7 @@ class Project_Model extends Rsx_Site_Model_Abstract
 }
 ```
 
-**Return values**: a model (serialized via `toArray()`, carrying `__MODEL` for JS hydration), an array built FROM `toArray()` (so `__MODEL` survives and you can add computed fields), or **`false`** - not `null` - for not-found-or-unauthorized.
+**Return values**: a model (serialized via `toArray()`, carrying `__MODEL` for JS hydration), an array built FROM `toArray()` (so `__MODEL` survives and you can add computed fields), or **`false`** - not `null` - for not-found-or-unauthorized. A body may also THROW a coded refusal (`Permission::require_permission()`'s `AjaxUnauthorizedException`, `AjaxNotFoundException`): that id is absent exactly as for `false`, and never fails the other ids in the request. Any other exception is a fault and fails the request.
 
 **Relationships** can be made fetchable on-demand for app data, and a related model must implement its OWN gated `fetch()`. **`fetch()` changes require user approval due to security implications** - it is a disclosure surface, not a convenience method.
 
@@ -77,7 +77,11 @@ const maybe   = await Project_Model.fetch_or_null(999); // null if not found
 
 console.log(project.status_id__label);                 // enum properties ride along
 if (project.status_id === Project_Model.STATUS_ACTIVE) { /* static constants */ }
+
+await project.refresh();   // re-fetches in place; THROWS not_found when the record is gone
 ```
+
+**One request per turn, absence on the wire.** Every `fetch()`/`fetch_or_null()` issued in one synchronous turn goes as ONE request per model: `{model, ids}` -> `{records: {"<id>": record}}` (at most `rsx.model_fetch.batch_max_ids` ids, 100, per request; the client splits). An unresolvable id - no row, gates denied, body returned false/null or threw a coded refusal - is simply ABSENT; the client turns absence into a throw (`fetch()`) or null (`fetch_or_null()`). **Overlapping fetches of the same model+id share one lookup, and each caller hydrates its OWN instance** - a record one component mutates is never another's. The Ajax transport itself never merges calls; this coalescing is the ORM's. A singular relationship answers null (never false) for a refused or missing record. `rsx:man model_fetch`, THE WIRE CONTRACT.
 
 ### Lazy relationships
 
@@ -113,10 +117,10 @@ A lazy `await record.things()` is ONE gated `fetch()` per related id, so it is c
 ### fetch_cached
 
 ```javascript
-const client = await Client_Model.fetch_cached(id);   // in-memory, promise-deduped
+const client = await Client_Model.fetch_cached(id);   // in-memory, one lookup per record
 ```
 
-For **non-critical display data** - names, labels, log history. The cache stores promises, so concurrent calls share one request; `fetch()`/`fetch_or_null()` warm it. It resets automatically on SPA navigation.
+For **non-critical display data** - names, labels, log history. The cache stores a promise of the RAW payload, so concurrent calls share one lookup and every call hydrates its own instance; a failed or not-found lookup is evicted; `fetch()`/`fetch_or_null()` warm it. It resets automatically on SPA navigation.
 
 **Do NOT use it for data that must be fresh after edits.** Manual reset, three forms:
 

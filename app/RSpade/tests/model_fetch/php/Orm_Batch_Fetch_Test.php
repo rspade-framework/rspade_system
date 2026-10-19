@@ -207,6 +207,58 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * A record its fetch() body refuses - by THROWING a coded refusal, or by returning
+     * false - is absent, exactly like a missing row, and never fails the other ids in the
+     * request. A fault thrown by a body still fails the request loudly.
+     */
+    public static function test_a_refused_record_is_absent_and_spares_its_siblings()
+    {
+        $ids = static::__make_parents(4);
+        DB::table(self::PARENT_TABLE)->where('id', $ids[1])->update(['title' => Model_Fetch_Parent_Fixture_Model::TITLE_REFUSED]);
+        DB::table(self::PARENT_TABLE)->where('id', $ids[2])->update(['title' => Model_Fetch_Parent_Fixture_Model::TITLE_FALSE]);
+
+        $result = Orm_Controller::fetch(
+            static::__ajax_request(),
+            ['model' => self::MODEL, 'ids' => [$ids[0], $ids[1], $ids[2], $ids[3]]]
+        );
+
+        static::__assert_equals([$ids[0], $ids[3]], array_keys($result['records']), 'the refused records are simply absent');
+
+        DB::table(self::PARENT_TABLE)->where('id', $ids[3])->update(['title' => Model_Fetch_Parent_Fixture_Model::TITLE_FAULTY]);
+
+        static::__assert_throws(\RuntimeException::class, function () use ($ids) {
+            Orm_Controller::fetch(static::__ajax_request(), ['model' => self::MODEL, 'ids' => [$ids[0], $ids[3]]]);
+        }, 'Probe fetch fault');
+
+        static::__reset_session();
+    }
+
+    /**
+     * A singular relationship whose related record is refused answers null - the same
+     * answer as "no related record", never false.
+     */
+    public static function test_a_refused_singular_relationship_is_null()
+    {
+        $parent_id = static::__make_parents(1)[0];
+        DB::table(self::PARENT_TABLE)->where('id', $parent_id)->update(['title' => Model_Fetch_Parent_Fixture_Model::TITLE_FALSE]);
+
+        $child = new Model_Fetch_Child_Fixture_Model();
+        $child->parent_fixture_id = $parent_id;
+        $child->subject()->associate(Model_Fetch_Parent_Fixture_Model::find($parent_id));
+        $child->save();
+
+        $result = Orm_Controller::fetch_relationship(static::__ajax_request(), [
+            'model' => 'Model_Fetch_Child_Fixture_Model',
+            'id' => (int) $child->id,
+            'relationship' => 'subject',
+        ]);
+
+        static::__assert_null($result);
+
+        static::__reset_session();
+    }
+
+    /**
      * A batch of nothing but nonexistent ids succeeds with an EMPTY map. That is the same
      * response a denial produces (Auth_Gates_Seam_Test asserts the denial half), which is
      * the whole point: absence carries no reason.

@@ -8,7 +8,7 @@ The framework provides application-wide middleware hooks via `Main_Abstract`:
 
 1. **Create `/rsx/main.php`** extending `Main_Abstract` with three methods:
    - `init()` - Called once during bootstrap
-   - `pre_dispatch(Request $request, array $params)` - Called before any route dispatch and every external API call (after the gates; non-null for a bearer-key identity - on `/api/vN` or a file-serving route - = 403 `account_refused`)
+   - `pre_dispatch(Request $request, array $params)` - Called before any route dispatch and every external API call (after the gates; non-null for a bearer-key identity - on `/api/vN` or a file-serving route - = 403 `account_refused`) and every Ajax CALL, once per call with `$params['controller']`/`['action']` naming the endpoint (non-null = that call's coded envelope, or `unauthorized`)
    - `unhandled_route(Request $request, array $params)` - Called when no route matches
 
 2. **Pre-dispatch flow**:
@@ -49,8 +49,8 @@ Laravel's router is never consulted. It classifies the request once
 channel's pipeline (`AssetHandler`, `Api_Dispatcher`, or `Dispatcher` - ONE page and Ajax
 pipeline for both realms, parameterized by a realm descriptor) and renders any failure
 through that channel's error policy, once. Nothing that renders an error dispatches. The
-Ajax channel is one core, `Ajax::execute()`, shared by the direct transport, the batch
-transport and `Ajax::internal()`. `rsx:man dispatch`.
+Ajax channel is one core, `Ajax::execute()`, shared by `/_ajax/_batch` (the one browser
+transport), the hand-made direct URL `/_ajax/<Controller>/<action>` and `Ajax::internal()`. `rsx:man dispatch`.
 
 ## Autoloader System
 

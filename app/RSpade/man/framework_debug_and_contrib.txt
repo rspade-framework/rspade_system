@@ -1007,8 +1007,8 @@ SUBSYSTEM PRIMERS
 
     THE URLS, all POST:
 
-        /_ajax/<Controller>/<action>   an endpoint
-        /_ajax/_batch                  the batching transport
+        /_ajax/_batch                  the browser transport (every call)
+        /_ajax/<Controller>/<action>   one endpoint, for a hand-made request
         /_ajax/Orm_Controller/fetch    model fetch
         /_ajax/Orm_Controller/fetch_relationship
         /_upload                       the browser upload transport
@@ -1023,17 +1023,24 @@ SUBSYSTEM PRIMERS
     rebases every path onto the portal prefix on a portal page.
     Authorization happens on the target endpoint.
 
-    THE SERVER PATH is ONE core, Ajax::execute(), run by the direct call,
-    by each batched call (on the real request, with that call's params as
-    its input) and by Ajax::internal(): find the class by basename in the
-    manifest, verify it is a controller and the method carries the
-    attribute, EVALUATE THE REALM AND #[Auth] GATES, hydrate text
-    envelopes, open a fresh Turnstile latch and revision transaction for
-    the call, run the controller's pre_dispatch, call the endpoint, and fire
-    the post-dispatch event. Ajax::call_envelope() then builds the envelope
-    from the result, or from a thrown failure through
-    Ajax::error_envelope() - the same function the Ajax exception handler
-    uses.
+    THE SERVER PATH is ONE core, Ajax::execute(), run for every browser
+    call (Ajax::handle_calls(), on the real request with that call's params
+    as its input - the direct URL is a batch of one) and by
+    Ajax::internal(). handle_calls() first checks, PER CALL, the session
+    lifetime, the staff site membership and the realm's Main::pre_dispatch
+    (Dispatcher::ajax_main_pre_dispatch()). execute() then finds the class
+    by basename in the manifest, verifies it is a controller and the method
+    carries the attribute, EVALUATES THE REALM AND #[Auth] GATES
+    (Auth_Gates::surface_permits()), hydrates text envelopes, opens a fresh
+    Turnstile latch and revision transaction for the call, binds request()
+    to the call's request, runs the controller's pre_dispatch, calls the
+    endpoint, and fires the post-dispatch event - refusing an HTTP-response
+    result and rolling back a transaction the call left open, both as
+    faults. Ajax::call_envelope() then builds the envelope from the result,
+    or from a thrown failure through Ajax::error_envelope(). A failure that
+    refuses the whole request (CSRF, the Ajax exception handler) goes
+    through Ajax::request_refusal(), which answers every call_id a batch
+    named.
 
     EVERY RESPONSE IS HTTP 200, success and failure alike, because the
     envelope carries the outcome:
@@ -1060,14 +1067,17 @@ SUBSYSTEM PRIMERS
     of form-error) and fatal. That is the channel the CLI tool uses.
 
     THE CLIENT is Core/Js/Ajax.js. Ajax.call() accepts either a string path
-    or the stub function itself, then branches to the batching or the direct
-    transport depending on a runtime flag. It is deliberately NOT an async
-    function, so that the promise it returns is the identity the global
-    unhandled-rejection gate matches. On the way back it drains
-    console_debug output, syncs the server time and user timezone, processes
-    flash alerts, re-instantiates models inside the return value, and then
-    either resolves with the unwrapped value or rejects with an error object
-    carrying the code and metadata.
+    or the stub function itself and queues the call; one flush per turn
+    sends the queue to /_ajax/_batch - up to 20 calls per request, or one
+    per request when rsxapp.ajax_batching is false - and never merges two
+    calls. Each call is settled from its own C_<call_id> key: on the way
+    back it drains console_debug output, syncs the server time and user
+    timezone, processes flash alerts, re-instantiates models inside the
+    return value, and then either resolves with the unwrapped value or
+    rejects with an error object carrying the code and metadata. A missing
+    key rejects that call with server_error. Every error is built by
+    Ajax._error() and carries __rsx_ajax_error, the marker the global
+    unhandled-rejection dialog keys on.
 
     CSRF is the X-CSRF-Token header (the body field is _csrf_token). It is
     attached at ONE chokepoint - the jQuery ajax override - which is why a

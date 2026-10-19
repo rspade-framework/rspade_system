@@ -51,6 +51,8 @@ class Ajax_Exception_Handler extends Rsx_Exception_Handler_Abstract
             return null;
         }
 
-        return response()->json(Ajax::error_envelope($e), 200);
+        // A fault outside any call refuses the whole request: a batch gets the envelope
+        // under every call_id it sent, so no call is left unanswered.
+        return Ajax::request_refusal($request, Ajax::error_envelope($e));
     }
 }

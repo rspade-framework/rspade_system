@@ -78,7 +78,7 @@ One `rsx/portal_main.php` extending `Portal_Main_Abstract`:
 | hook | when |
 |---|---|
 | `init()` | once per process, at the top of the first portal request - **the FIRST application code in the portal stack** |
-| `pre_dispatch($req, $params)` | before every matched route, **AFTER the `#[Auth]` gates have already run**, and for an unmatched URL; return null to continue, a Response to halt |
+| `pre_dispatch($req, $params)` | before every matched route, **AFTER the `#[Auth]` gates have already run**, and for an unmatched URL; return null to continue, a Response to halt. Also once per Ajax CALL (before its endpoint and gates; `$params['controller']`/`['action']`): non-null refuses that call only - a coded result keeps its code and reason, anything else is `unauthorized` |
 | `unhandled_route($req, $params)` | no portal route matched (after `pre_dispatch`); return null for the 404 page |
 
 Order: `Portal_Main::init` -> CSRF -> dev auth -> route match -> **`#[Auth]` gates** -> `Portal_Main::pre_dispatch` -> controller `pre_dispatch` -> handler.

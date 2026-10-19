@@ -16,7 +16,8 @@
  *   c. a record of a model NO bundle carries throws, naming the model and the fix;
  *   d. a name the bundle carries as something other than a model throws too;
  *   e. a record nested inside another record is refused the same way;
- *   f. the refusal is reached through a real Ajax response, not only a direct call.
+ *   f. the refusal is reached through a real Ajax response, not only a direct call, and
+ *      rejects THAT call.
  *
  * EVERYTHING IT TOUCHES IS THE FRAMEWORK'S: the page is the control panel at /_sys, the
  * model is the framework's User_Model, and the Ajax response in (f) is supplied by the
@@ -33,9 +34,6 @@ const USER_ID = 1;
 const MISSING_MODEL = 'Rsx_Probe_No_Such_Model_Temp';
 const AJAX_PATH = '/_ajax/Rsx_Reference_Data_Controller/countries';
 
-// The house bound for a wait on another process (the browser): it truncates no work, and
-// reaching it fails the test naming the condition that never held.
-const WAIT_BOUND_MS = 120000;
 
 function fail(msg) {
     console.log('FAIL: A record with no class in the bundle is refused - ' + msg);
@@ -75,8 +73,6 @@ async function run() {
     });
     const page = await context.newPage();
 
-    const page_errors = [];
-    page.on('pageerror', (error) => page_errors.push(String(error && error.message)));
 
     // Auth headers ONLY on the initial document request (per the SPA test harness contract).
     const auth_headers = {
@@ -89,16 +85,24 @@ async function run() {
 
         // (f) the response a framework endpoint's URL answers with, carrying a record of a
         // model this bundle has no class for.
-        if (url.includes(AJAX_PATH)) {
-            await route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({
-                    _success: true,
-                    _ajax_return_value: { rows: [{ __MODEL: MISSING_MODEL, id: 7 }] },
-                }),
-            });
-            return;
+        // Every call rides /_ajax/_batch, so the batch carrying that endpoint's call is
+        // answered under the call's own key.
+        if (url.includes('/_ajax/_batch')) {
+            const body = JSON.parse(request.postData() || '{}');
+            const call = (body.batch_calls || []).find((c) => '/_ajax/' + c.controller + '/' + c.action === AJAX_PATH);
+            if (call) {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify({
+                        ['C_' + call.call_id]: {
+                            _success: true,
+                            _ajax_return_value: { rows: [{ __MODEL: MISSING_MODEL, id: 7 }] },
+                        },
+                    }),
+                });
+                return;
+            }
         }
 
         if (url.startsWith(BASE_URL)) {
@@ -191,24 +195,21 @@ async function run() {
             console.log('PASS: a classless record nested inside another record is refused');
         }
 
-        // f. through the transport. The call is started and NOT awaited: the refusal is an
-        // uncaught error raised while the response is unwrapped, which is what this waits for.
-        await page.evaluate((ajax_path) => { Ajax.call(ajax_path, {}).catch(() => {}); }, AJAX_PATH);
-
-        const deadline = Date.now() + WAIT_BOUND_MS;
-        let seen = false;
-        while (!seen && Date.now() < deadline) {
-            seen = page_errors.some(names_the_cause);
-            if (!seen) {
-                await page.waitForTimeout(100);
+        // f. through the transport: the refusal raised while the response is unwrapped is
+        // THAT call's failure - the caller's promise rejects with it.
+        const f_message = await page.evaluate(async (ajax_path) => {
+            try {
+                await Ajax.call(ajax_path, {});
+                return 'NO THROW';
+            } catch (e) {
+                return String(e && e.message);
             }
-        }
+        }, AJAX_PATH);
 
-        if (!seen) {
-            fail('(f) an Ajax response carrying a classless record never raised the refusal as a page error; page errors seen: '
-                + JSON.stringify(page_errors).slice(0, 600));
+        if (!names_the_cause(f_message)) {
+            fail('(f) an Ajax response carrying a classless record did not reject the call with the refusal; got: ' + f_message);
         } else {
-            console.log('PASS: an Ajax response carrying a classless record raises the refusal');
+            console.log('PASS: an Ajax response carrying a classless record rejects the call with the refusal');
         }
     } catch (e) {
         fail('exception: ' + (e && e.message ? e.message : String(e)));

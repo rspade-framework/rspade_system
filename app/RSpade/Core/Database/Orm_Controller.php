@@ -23,7 +23,7 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  * AUTHORIZATION: the class gate is 'public' because this controller is the generic
  * ORM transport, not a data surface of its own. Every request is gated inside, on
- * the TARGET model member: _fetch_gates_pass() evaluates the #[Auth] gates the
+ * the TARGET model member: Auth_Gates::surface_permits() evaluates the #[Auth] gates the
  * model's fetch()/portal_fetch()/relationship declares, and the model's own body
  * still applies its record-level rules. A denial is reported as "not found" like
  * any other unresolvable record (anti-enumeration).
@@ -162,49 +162,18 @@ class Orm_Controller extends Rsx_Controller_Abstract
         // all happen to name no row. That is the same indistinguishability the single-id
         // endpoint bought with its one generic "Record not found". Record-level narrowing
         // stays inside fetch()/portal_can_read().
-        if (!static::_fetch_gates_pass($model_name, $fetch_method_name)) {
+        if (!Auth_Gates::surface_permits($model_name . '::' . $fetch_method_name)) {
             return ['records' => []];
         }
 
+        // Keyed by record id. PHP coerces the numeric-string key back to an int, which is
+        // harmless: record ids are always >= 1, so the key set is never the 0..n-1 run that
+        // would make json_encode emit an ARRAY instead of an object. The client aligns on
+        // String(id).
         $records = [];
 
-        try {
-            // ONE query for every requested id, held in request RAM for the loop below.
-            // The fetch() bodies are unchanged and unaware: their `static::find($id)`
-            // resolves out of the preload (RestrictedEloquentBuilder::find), so N ids
-            // cost one SELECT instead of N. A body whose lookup is constrained or
-            // scope-stripped simply misses the preload and runs its own query.
-            Orm_Fetch_Preload::populate(
-                $model_class,
-                $model_class::whereIn('id', $distinct_ids)->get()
-            );
-
-            foreach ($distinct_ids as $id) {
-                $result = $model_class::$fetch_method_name($id);
-
-                // Not found / refused by the model: leave the id out of the map.
-                if ($result === false || $result === null) {
-                    continue;
-                }
-
-                // Validate array returns include __MODEL for JavaScript hydration
-                if (is_array($result) && !isset($result['__MODEL'])) {
-                    throw new \RuntimeException(
-                        "Model {$model_name}::fetch() returned an array without __MODEL property. " .
-                        "JavaScript ORM requires __MODEL for class hydration. " .
-                        "Fix: Call \$model->toArray() on the Eloquent model first, then augment the array before returning. " .
-                        "Example: \$data = \$model->toArray(); \$data['computed_field'] = 'value'; return \$data;"
-                    );
-                }
-
-                // Keyed by record id. PHP coerces the numeric-string key back to an int,
-                // which is harmless: record ids are always >= 1, so the key set is never
-                // the 0..n-1 run that would make json_encode emit an ARRAY instead of an
-                // object. The client aligns on String(id).
-                $records[(string) $id] = $result;
-            }
-        } finally {
-            Orm_Fetch_Preload::clear();
+        foreach (static::__serve_records($model_class, $model_name, $fetch_method_name, $distinct_ids) as $id => $record) {
+            $records[(string) $id] = $record;
         }
 
         return ['records' => $records];
@@ -317,14 +286,25 @@ class Orm_Controller extends Rsx_Controller_Abstract
         // gate lists (each already merged with the model's class-level #[Auth]), and
         // both must pass before any model code runs. A denial is reported as the
         // generic "not found" the missing-record path uses (anti-enumeration).
-        if (!static::_fetch_gates_pass($model_name, $fetch_method_name)
-            || !static::_fetch_gates_pass($model_name, $relationship_name)) {
+        if (!Auth_Gates::surface_permits($model_name . '::' . $fetch_method_name)
+            || !Auth_Gates::surface_permits($model_name . '::' . $relationship_name)) {
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND, "Record not found or access denied");
         }
 
         // Fetch the source record using its (portal_)fetch() method (security check)
         // This validates that the current user has access to this record.
-        $fetch_result = $model_class::$fetch_method_name($id);
+        // A coded refusal thrown by the body (require_permission(), a not-found) reads as
+        // absence, exactly as fetch() serves it: the answer never tells refused from absent.
+        try {
+            $fetch_result = $model_class::$fetch_method_name($id);
+        } catch (\Throwable $e) {
+            if (!\App\RSpade\Core\Ajax\Ajax::is_coded_failure($e)) {
+                throw $e;
+            }
+
+            $fetch_result = null;
+        }
+
         if (!$fetch_result) {
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND, "Record not found or access denied");
         }
@@ -412,12 +392,13 @@ class Orm_Controller extends Rsx_Controller_Abstract
             // is reached here by a direct static call rather than by re-entering this
             // endpoint - so that surface's gates are evaluated here. A denial reads as
             // "no related record", identical to an unfetchable relation above.
-            if (!static::_fetch_gates_pass($related_model_name, $fetch_method_name)) {
+            if (!Auth_Gates::surface_permits($related_model_name . '::' . $fetch_method_name)) {
                 return null;
             }
 
-            // Fetch through the security filter
-            return $related_fqcn::$fetch_method_name($related_id);
+            // Through the security filter, served exactly as fetch() serves it: a refusal
+            // or an absent row is null, never false.
+            return static::__serve_records($related_fqcn, $related_model_name, $fetch_method_name, [$related_id])[$related_id] ?? null;
         } else {
             // For plural relationships, get the IDs efficiently - but never more than
             // the endpoint is willing to serve. Each id below costs a full fetch()
@@ -425,7 +406,9 @@ class Orm_Controller extends Rsx_Controller_Abstract
             // turn one lazy `await record.things()` into 80k queries and a memory
             // fatal. One id past the cap is fetched purely to detect the overflow.
             $cap = (int) config('rsx.model_fetch.max_relationship_records');
-            $related_ids = $relation->limit($cap + 1)->pluck('id')->toArray();
+            // QUALIFIED: a many-to-many or through relation joins a pivot table that carries an
+            // `id` of its own, and Eloquent's pluck() does not qualify the column.
+            $related_ids = $relation->limit($cap + 1)->pluck($relation->getRelated()->getQualifiedKeyName())->toArray();
 
             if (count($related_ids) > $cap) {
                 // Loud, not truncated: silently returning the first N would hand the
@@ -456,65 +439,78 @@ class Orm_Controller extends Rsx_Controller_Abstract
             // Same gate evaluation as the singular branch: the related model's own
             // fetch surface is invoked directly, so its gates are enforced here. A
             // denial yields an empty set, identical to an unfetchable relation.
-            if (!static::_fetch_gates_pass($related_model_name, $fetch_method_name)) {
+            if (!Auth_Gates::surface_permits($related_model_name . '::' . $fetch_method_name)) {
                 return [];
             }
 
-            // Fetch each record through its security filter. Every related id must still
-            // go through its own (portal_)fetch() - that is the authorization boundary -
-            // but the primary-key lookup each of those bodies performs is served from ONE
-            // preloaded query instead of one query per id (see Orm_Fetch_Preload).
-            $results = [];
-
-            try {
-                Orm_Fetch_Preload::populate(
-                    $related_fqcn,
-                    $related_fqcn::whereIn('id', $related_ids)->get()
-                );
-
-                foreach ($related_ids as $related_id) {
-                    $record = $related_fqcn::$fetch_method_name($related_id);
-                    if ($record) {
-                        $results[] = $record;
-                    }
-                }
-            } finally {
-                Orm_Fetch_Preload::clear();
-            }
+            // Every related id still goes through its own (portal_)fetch() - that is the
+            // authorization boundary - served exactly as fetch() serves it.
+            $results = array_values(static::__serve_records($related_fqcn, $related_model_name, $fetch_method_name, $related_ids));
 
             return $results;
         }
     }
 
     /**
-     * Evaluate the declarative #[Auth] gates on one model surface.
+     * Serve records through a model's (portal_)fetch(): THE one way every ORM path answers a
+     * set of ids, so the same record has the same payload whether it was asked for by id or
+     * reached through a relationship.
      *
-     * The surface index carries the fully merged list (the model's class-level
-     * #[Auth] followed by the member's own) for every #[Ajax_Endpoint_Model_Fetch]
-     * member, so this is a straight lookup. fetch() is indexed staff, portal_fetch()
-     * portal, and relationship methods realm-agnostic - the request's realm is the
-     * right one for all three, and it is the same detection that chose the fetch
-     * method name in the first place.
+     * ONE query preloads every id (Orm_Fetch_Preload): each fetch() body's `static::find($id)`
+     * is served from it, so N ids cost one SELECT. A body whose lookup is constrained or
+     * scope-stripped misses the preload and runs its own query.
      *
-     * The surface's declared realm is checked first, exactly as at the Ajax seam: a
-     * realm-explicit member reached from the other realm is refused before any gate
-     * name is resolved (Auth_Gates::surface_realm_permits). A member the index does not
-     * know, or knows without a gate, is refused loudly (Auth_Gates::require_surface).
+     * An id is ABSENT from the answer when the body returned false or null, or THREW A CODED
+     * REFUSAL (require_permission(), a not-found - Ajax::is_coded_failure()). One id's refusal
+     * is that id's answer and never fails its siblings, and a refusal is indistinguishable
+     * from a missing row. Anything else a body throws is a fault and fails the request loudly.
      *
-     * @param string $model_name Simple model class name
-     * @param string $member fetch / portal_fetch / a relationship method
-     * @return bool True when the realm permits and every gate passes
+     * @param string $fqcn The model's FQCN
+     * @param string $model_name Its simple name, for the messages
+     * @param string $fetch_method_name 'fetch' or 'portal_fetch'
+     * @param array<int> $ids Distinct record ids
+     * @return array<int, mixed> id => the body's result, in $ids order, absent ids left out
      */
-    private static function _fetch_gates_pass(string $model_name, string $member): bool
+    private static function __serve_records(string $fqcn, string $model_name, string $fetch_method_name, array $ids): array
     {
-        $target = $model_name . '::' . $member;
-        $realm = Auth_Gates::active_realm();
+        $records = [];
 
-        if (!Auth_Gates::surface_realm_permits($target, $realm)) {
-            return false;
+        try {
+            Orm_Fetch_Preload::populate($fqcn, $fqcn::whereIn('id', $ids)->get());
+
+            foreach ($ids as $id) {
+                try {
+                    $result = $fqcn::$fetch_method_name($id);
+                } catch (\Throwable $e) {
+                    if (!\App\RSpade\Core\Ajax\Ajax::is_coded_failure($e)) {
+                        throw $e;
+                    }
+
+                    continue;
+                }
+
+                if ($result === false || $result === null) {
+                    continue;
+                }
+
+                // The JavaScript ORM hydrates by __MODEL; an array without it would arrive as
+                // a plain object that reads correctly field by field and fails far away.
+                if (is_array($result) && !isset($result['__MODEL'])) {
+                    throw new \RuntimeException(
+                        "Model {$model_name}::{$fetch_method_name}() returned an array without __MODEL property. " .
+                        "JavaScript ORM requires __MODEL for class hydration. " .
+                        "Fix: Call \$model->toArray() on the Eloquent model first, then augment the array before returning. " .
+                        "Example: \$data = \$model->toArray(); \$data['computed_field'] = 'value'; return \$data;"
+                    );
+                }
+
+                $records[$id] = $result;
+            }
+        } finally {
+            Orm_Fetch_Preload::clear();
         }
 
-        return Auth_Gates::gates_pass_at_seam(Auth_Gates::surface_gates($target), $realm, $target);
+        return $records;
     }
 
     /**

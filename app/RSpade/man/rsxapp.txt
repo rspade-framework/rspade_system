@@ -138,11 +138,12 @@ OBJECT STRUCTURE
         console_debug       Object. Console debug configuration.
                             Controls console_debug() output filtering.
 
-    Mode-Dependent:
+    Ajax:
 
-        ajax_batching       Boolean. When true, Ajax calls are batched.
-                            Set automatically: true in debug/production,
-                            false in development for easier debugging.
+        ajax_batching       Boolean. config('rsx.ajax.batching'), the same
+                            in every mode. True: calls made in one turn
+                            share one /_ajax/_batch request. False: every
+                            call is its own /_ajax/_batch request.
 
     Optional:
 

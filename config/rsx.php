@@ -458,6 +458,12 @@ return [
     */
     'ajax' => [
         'batch_max_calls' => 100,
+
+        // Calls a page makes in the same synchronous turn share one request to /_ajax/_batch
+        // (up to 20 each). False sends every call as its own request - still through
+        // /_ajax/_batch, still answered the same way - which makes each call its own entry
+        // in the browser's network panel. Applies in every mode.
+        'batching' => true,
     ],
 
     /*

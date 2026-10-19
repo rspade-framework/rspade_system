@@ -25,7 +25,20 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 }
 ```
 
-**Rationale**: Batch requests need uniform status codes. Always get parseable response body. Non-200 only means "couldn't reach PHP at all".
+**Rationale**: Batch requests need uniform status codes. Always get parseable response body. Non-200 only means "couldn't reach PHP at all" (or a malformed batch, refused 400).
+
+---
+
+## The Transport
+
+- **One browser transport, every mode.** `Ajax.js` sends every call to `POST /_ajax/_batch` (a lone call as a batch of one) and settles each from its own `C_<call_id>` key. `config('rsx.ajax.batching')` (default true; `window.rsxapp.ajax_batching`) decides only how many calls share a request: the calls of one synchronous turn (up to 20), or - false - one per request, for reading calls one by one in the network panel. `POST /_ajax/<Controller>/<action>` answers a hand-made request (curl, a shell test) with the bare envelope; its params are the request body exactly, no query string.
+- **No merging.** Two identical calls are two calls - every call is a POST, and the transport cannot know an endpoint is a read. Read coalescing lives in the ORM fetch (overlapping `fetch()` of one model+id share a lookup; each caller still gets its own instance) and jqhtml's load coordinator.
+- **Every call is settled.** An answer missing the call rejects it with `server_error`; an HTTP 5xx rejects every call in the request with `server_error`, status 0 with `network_error`, anything else `generic`; a hydration failure rejects only that call. A CSRF failure or a fault outside any call is answered under every `call_id` the batch named.
+- **Checked per call, in order**: session lifetime (once one call gets `session_expired`, so does every later call in the request), staff site membership (`auth_required`), then the realm's `Main::pre_dispatch` ONCE PER CALL (`$params['controller']`/`['action']`, `_route` `/_ajax/:controller/:action`) - non-null refuses that call: a coded result keeps its code and reason (`response_unauthorized('Account suspended')`), anything else is `unauthorized` "This request was refused.", never a page. Then the gates: a denial is `auth_required` when nobody is signed in in the realm, `unauthorized` when somebody is.
+- **`request()` and the `Request` facade answer the call's own request** while it runs, never the batch's.
+- **An endpoint never returns an HTTP response.** `redirect()`, `view()`, a download - from the action or the controller's `pre_dispatch` - is a FAULT (`fatal`), never a success. A controller `pre_dispatch` that redirects pages returns null for an Ajax call.
+- **An endpoint never leaves a DB transaction open.** It is rolled back (its writes are gone) and the call answers a fault naming the endpoint.
+- **A name that is not an endpoint is a coded `not_found`**, never a reported fault.
 
 ---
 
@@ -38,9 +51,10 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 | `Ajax::ERROR_UNAUTHORIZED` | User lacks permission |
 | `Ajax::ERROR_AUTH_REQUIRED` | User not logged in |
 | `Ajax::ERROR_FATAL` | Uncaught PHP exceptions |
+| `Ajax::ERROR_SESSION_EXPIRED` | The sign-in outlived its limits, or the cookie names a replaced session row; announced once per page to `Rsx.set_session_expired_handler()` |
 | `Ajax::ERROR_QUESTION` | Not a failure: a pending question (`response_form_question($key, $question)`); the form engine answers it, a non-form caller reads `metadata.key`/`metadata.question`, an in-process `Ajax::internal()` raises `AjaxQuestionException`. `rsx:man form_conventions`, QUESTIONS |
 
-Constants available in both PHP (`Ajax::ERROR_*`) and JavaScript (`Ajax.ERROR_*`).
+Constants available in both PHP (`Ajax::ERROR_*`) and JavaScript (`Ajax.ERROR_*`). The client raises three of its own: `Ajax.ERROR_SERVER` (`server_error`), `Ajax.ERROR_NETWORK` (`network_error`), and `Ajax.ERROR_PHP_EXCEPTION` (`php_exception` - a fatal carrying file/line, for a developer caller).
 
 ---
 
@@ -143,6 +157,8 @@ Uncaught Ajax errors automatically display via `Modal.error()`:
 const user = await User_Controller.get_user(123);
 ```
 
+The dialog recognises an Ajax error by its marker (`error.__rsx_ajax_error === true`, set on every error the Ajax layer builds), so it covers a rejection whatever promise chain carried it - a generated stub, `Model.fetch()`, your own `async` wrapper that lets it propagate.
+
 ---
 
 ## Form Error Handling
@@ -224,7 +240,7 @@ Keyed on the CALLER, server-side (`Rsx_Diagnostics::caller_sees_detail()`): deve
 
 **Everybody else**:
 - Generic message: "An unexpected error occurred. Please try again."
-- An `error_id` (`error.error_id` direct, `metadata.error_id` batched); the detail is logged as `[error_id=<id>] ...`
+- An `error_id` (the envelope's `error.error_id`; `error.metadata.error_id` on the rejected JS Error); the detail is logged as `[error_id=<id>] ...`
 - A target that is not an endpoint answers one message, "`<Controller>::<action>` is not an Ajax endpoint" — no class-name oracle
 
 ---

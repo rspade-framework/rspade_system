@@ -1035,7 +1035,11 @@ IMPLEMENTING 2FA IN AN APPLICATION
               with Session::put_value().
             - Main::pre_dispatch() redirects a page request to your
               enrollment screen while that value is set, leaving the
-              login, enrollment and logout routes alone.
+              login, enrollment and logout routes alone. The hook also
+              runs once per Ajax call, so it leaves the enrollment
+              screen's calls alone too (return null on the AJAX channel,
+              Rsx_Request_Channel::current(), or for those
+              $params['controller'] / $params['action']).
             - The screen hosts <Totp_Enrollment /> and/or
               <Passkey_Register /> and clears the value on their
               enrolled / registered event.

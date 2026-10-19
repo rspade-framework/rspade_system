@@ -207,37 +207,35 @@ class Dispatcher
     }
 
     /**
-     * The application's per-request hook for an AJAX request: the realm's
-     * Main::pre_dispatch, once per HTTP request - before any endpoint runs, after the
-     * transport's site-membership check - exactly as it runs once for every page request.
-     * A non-null answer halts the request and becomes its response.
+     * The application's hook for one Ajax CALL: the realm's Main::pre_dispatch, run before
+     * that call's endpoint - once per call, alone or in a batch (Ajax::handle_calls()), so a
+     * hook keyed on the endpoint sees the same thing whichever way the call arrived.
      *
-     * $params are the query string plus what the transport adds ('controller' and
-     * 'action' for a direct call), and the synthetic keys: _method 'POST', _route the
-     * transport pattern ('/_ajax/:controller/:action' or '/_ajax/_batch'), and _handler
-     * the transport's class (App\RSpade\Core\Ajax\Ajax) - the ENDPOINT is named by
-     * 'controller'/'action', so a hook keyed on page handlers is not applied to Ajax.
+     * $request is the call's own request (Ajax::call_request(): the real request carrying the
+     * call's parameters as its input). $params are 'controller' and 'action' naming the
+     * endpoint, and the synthetic keys: _method 'POST', _route '/_ajax/:controller/:action',
+     * and _handler the transport's class (App\RSpade\Core\Ajax\Ajax) - so a hook keyed on
+     * page handlers is not applied to Ajax.
      *
-     * @param Request $request
-     * @param array $params What the transport adds, including '_route'
-     * @return \Symfony\Component\HttpFoundation\Response|null
+     * The answer is returned RAW: null to proceed, anything else halts the call, and the
+     * Ajax core turns it into that call's envelope.
+     *
+     * @param Request $request The call's request
+     * @param string $controller_name
+     * @param string $action_name
+     * @return mixed Null to proceed
      */
-    public static function ajax_main_pre_dispatch(Request $request, array $params)
+    public static function ajax_main_pre_dispatch(Request $request, string $controller_name, string $action_name)
     {
         $realm = static::__realm(Rsx_Request_Channel::realm());
 
-        $params = array_merge($request->query->all(), $params, [
+        return static::__call_main_pre_dispatch($realm, $request, [
+            'controller' => $controller_name,
+            'action' => $action_name,
+            '_route' => '/_ajax/:controller/:action',
             '_method' => 'POST',
             '_handler' => Ajax::class,
         ]);
-
-        $result = static::__call_main_pre_dispatch($realm, $request, $params);
-
-        if ($result === null) {
-            return null;
-        }
-
-        return static::__transform_response($realm, static::__build_response($realm, $result), 'POST', $request);
     }
 
     /**

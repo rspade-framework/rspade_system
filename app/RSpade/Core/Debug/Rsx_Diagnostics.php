@@ -69,7 +69,7 @@ class Rsx_Diagnostics
      * exception itself, so the trace is attached exactly as Laravel's own report would.
      *
      * @param Throwable $e
-     * @param string $channel Which channel redacted it ('web', 'ajax', 'ajax_batch', 'api')
+     * @param string $channel Which channel redacted it ('web', 'ajax', 'api')
      * @return string The error id
      */
     public static function report_redacted(Throwable $e, string $channel): string

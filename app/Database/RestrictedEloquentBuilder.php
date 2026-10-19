@@ -770,10 +770,20 @@ class RestrictedEloquentBuilder extends Builder
      */
     public function find($id, $columns = ['*'])
     {
+        // Anything that narrows or changes the row beyond "the default-scoped row with this
+        // id" misses the preload: a where, a join (an inner join narrows by its ON clause), a
+        // select() of other columns, a row lock the preloaded copy was not read under, or a
+        // scope added or removed at the call site.
+        $query = $this->getQuery();
+
         if (is_scalar($id)
             && $columns === ['*']
-            && empty($this->getQuery()->wheres)
-            && empty($this->removedScopes())) {
+            && empty($query->wheres)
+            && empty($query->joins)
+            && $query->columns === null
+            && $query->lock === null
+            && empty($this->removedScopes())
+            && array_keys($this->scopes) === array_keys($this->getModel()->getGlobalScopes())) {
             $preloaded = Orm_Fetch_Preload::get(get_class($this->getModel()), $id);
 
             if ($preloaded !== null) {

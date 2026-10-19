@@ -30,9 +30,12 @@
  * `node orm_batch_fetch.js`. Runs against the dev web server on localhost (the same
  * target rsx:debug uses).
  *
- * NOTE: the dev site runs in development mode, where Ajax batching (the TRANSPORT
- * batcher, /_ajax/_batch) is off - so each ORM request is its own direct
- * /_ajax/Orm_Controller/fetch POST and the request count is read straight off the wire.
+ * Every Ajax call rides /_ajax/_batch, so the ORM fetch calls are counted out of the batch
+ * bodies: one Orm_Controller/fetch CALL per model per chunk of ids, whatever request
+ * carried it.
+ *
+ *   5. Two overlapping fetches of the same record share one lookup but each caller
+ *      receives its OWN instance - a record one component changes is never another's.
  *
  * Exit 0 on pass, 1 on any failure. Prints PASS:/FAIL: lines.
  */
@@ -62,11 +65,18 @@ async function run() {
     });
     const page = await context.newPage();
 
-    // Count ORM fetch requests as they leave the browser.
+    // Count ORM fetch CALLS as they leave the browser. Every call rides /_ajax/_batch, so
+    // they are read out of each batch body.
     let orm_requests = 0;
     page.on('request', (request) => {
-        if (request.url().includes('/_ajax/Orm_Controller/fetch')) {
-            orm_requests++;
+        if (!request.url().includes('/_ajax/_batch')) {
+            return;
+        }
+        const body = JSON.parse(request.postData() || '{}');
+        for (const call of body.batch_calls || []) {
+            if (call.controller === 'Orm_Controller' && call.action === 'fetch') {
+                orm_requests++;
+            }
         }
     });
 
@@ -133,9 +143,9 @@ async function run() {
         }, ids);
 
         if (orm_requests !== 1) {
-            fail('expected 1 Orm_Controller/fetch request for 4 parallel fetches, saw ' + orm_requests);
+            fail('expected 1 Orm_Controller/fetch call for 4 parallel fetches, saw ' + orm_requests);
         } else {
-            console.log('PASS: 4 parallel fetches (3 distinct + 1 duplicate) = 1 request');
+            console.log('PASS: 4 parallel fetches (3 distinct + 1 duplicate) = 1 fetch call');
         }
 
         const expected = [String(USER_ID), 'null', 'null', String(USER_ID)].join(',');
@@ -192,9 +202,25 @@ async function run() {
         }
 
         if (orm_requests !== 2) {
-            fail('expected ' + (cap + 1) + ' ids to split into 2 requests, saw ' + orm_requests);
+            fail('expected ' + (cap + 1) + ' ids to split into 2 fetch calls, saw ' + orm_requests);
         } else {
-            console.log('PASS: ' + (cap + 1) + ' ids split into 2 requests (cap ' + cap + ')');
+            console.log('PASS: ' + (cap + 1) + ' ids split into 2 fetch calls (cap ' + cap + ')');
+        }
+
+        // --- 5. one lookup, one instance per caller ---
+        orm_requests = 0;
+        const instances = await page.evaluate(async (id) => {
+            const [a, b] = await Promise.all([User_Model.fetch_or_null(id), User_Model.fetch_or_null(id)]);
+            a.__probe_mark = 'changed by caller a';
+            return { distinct: a !== b, b_untouched: b.__probe_mark === undefined, same_id: a.id === b.id };
+        }, USER_ID);
+
+        if (orm_requests !== 1) {
+            fail('expected one lookup for two overlapping fetches of one record, saw ' + orm_requests);
+        } else if (!instances.distinct || !instances.b_untouched || !instances.same_id) {
+            fail('overlapping fetches must give each caller its own instance: ' + JSON.stringify(instances));
+        } else {
+            console.log('PASS: overlapping fetches share one lookup and get separate instances');
         }
     } catch (e) {
         fail('exception: ' + (e && e.message ? e.message : String(e)));
