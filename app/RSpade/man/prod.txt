@@ -367,8 +367,8 @@ THE RECOMMENDED DEPLOYMENT
     a client can reach nginx from directly - a trusted peer's X-Forwarded-For is
     believed. Only X-Forwarded-For is trusted: the host the site answers on is
     the Host header nginx received, which debug and production validate
-    against APP_URL / PORTAL_URL (rsx:man config_rsx, HTTP). Prelaunch entry 8
-    (rsx:man prelaunch_checklist) is the audit.
+    against APP_URL / PORTAL_URL (rsx:man config_rsx, HTTP). rsx:man
+    launch_checklist carries the check.
 
   COMPOSER IS NOT A PRODUCTION-BOX OPERATION
     Do not run `composer install` or `composer dump-autoload` by hand on an
@@ -676,8 +676,9 @@ SEE ALSO
                        migrate does and never writes
     rsx:man maintenance_mode - the window to hold around a deployment
     rsx:man health - the check inventory and what each row means
-    rsx:man prelaunch_checklist - the launch-gating audits, including the
-                       read-only posture
+    rsx:man launch_checklist - the deployment steps and host checks,
+                       including the read-only posture
+    rsx:man conformance_audits - the code contracts audited before launch
     rsx:man config_rsx - configuration tiers and the .env contract
     skill rspade:application-modes-deployment - when to reach for which
                        command, and diagnosing a refusal

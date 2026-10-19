@@ -120,14 +120,6 @@ class ClassOverrideDrift_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        static $already_checked = false;
-
-        if ($already_checked) {
-            return;
-        }
-
-        $already_checked = true;
-
         foreach (Class_Override_Drift::pairs() as $pair) {
             $this->evaluate_pair(
                 $pair['class'],

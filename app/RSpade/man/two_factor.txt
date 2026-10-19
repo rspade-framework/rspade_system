@@ -1170,7 +1170,7 @@ THE CLIENT PORTAL REALM
                     PASSKEYS above). A prefix never enters it. A passkey is
                     bound to its rpId, so moving the portal to another host
                     strands the passkeys enrolled under the old one (rsx:man
-                    prelaunch_checklist, ENTRY 16).
+                    launch_checklist, PORTAL_URL is final).
         user handle 'portal-<id>'.
         endpoints   Rsx_Portal_Two_Factor_Controller.
         impersonation

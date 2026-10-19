@@ -174,7 +174,7 @@ https://<APP_URL host>/_sso/<provider key>/callback               staff
   https://portal.myapp.com/_sso/google/callback                     PORTAL_URL=https://portal.myapp.com/
 ```
 
-`Rsx_Sso::callback_url($key)` / `Rsx_Portal_Sso::callback_url($key)` print the exact string. The portal URI derives from `PORTAL_URL` (`rsx:man portal`), so **changing `PORTAL_URL` means re-registering the portal URI in every provider console** (`rsx:man prelaunch_checklist`, ENTRY 16).
+`Rsx_Sso::callback_url($key)` / `Rsx_Portal_Sso::callback_url($key)` print the exact string. The portal URI derives from `PORTAL_URL` (`rsx:man portal`), so **changing `PORTAL_URL` means re-registering the portal URI in every provider console** (`rsx:man launch_checklist`, PORTAL_URL is final).
 
 Matched exactly by providers. Apple's `client_id` is the **Services ID** (`com.example.web`), never a bundle id, and takes three more credentials because its client secret is an ES256 JWT minted offline per exchange.
 

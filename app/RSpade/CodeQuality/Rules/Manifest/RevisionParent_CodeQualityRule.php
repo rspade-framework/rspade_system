@@ -108,12 +108,6 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        static $already_checked = false;
-        if ($already_checked) {
-            return;
-        }
-        $already_checked = true;
-
         $files = Manifest::get_all();
         if (empty($files)) {
             return;

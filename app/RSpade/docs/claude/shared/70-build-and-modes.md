@@ -28,6 +28,6 @@ Three modes: `development`, `debug`, `production` — switched with `php artisan
 
 **`RSX_MODE` in `.env` is the mode, and you never edit it by hand.** **Per-invocation intent is a `--flag`, never an env prefix: do NOT prefix an invocation with `KEY=VALUE`** (owner ruling).
 
-**Before launch**, review `rsx:man prelaunch_checklist` AND your own `rsx/resource/audits/prelaunch_checklist.md`. Both lists, every launch.
+**Before launch**, walk `rsx:man launch_checklist` AND have the launch conformance audits run (`rsx:conformance:list --when=launch`). Both, every launch.
 
 Skill `rspade:application-modes-deployment` (per-mode behavior table, what the seal pins, the determinism contract, diagnosing a refusal). Details: `rsx:man prod` (deploying), `rsx:man app_mode` (the mechanics).

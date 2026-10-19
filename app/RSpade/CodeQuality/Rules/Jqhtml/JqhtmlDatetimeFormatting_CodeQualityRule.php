@@ -25,8 +25,8 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
  *
  * The alternative (per-identifier argument tracing) needs a real JS expression parse and
  * would fire on every wrapped value written in a shape the tracer did not model. A rule
- * that cries wolf gets ignored, so this one under-reports instead. The prelaunch
- * checklist (ENTRY 6) carries the manual sweep that covers what the regex cannot reach.
+ * that cries wolf gets ignored, so this one under-reports instead. The conformance audit
+ * datetime_display_and_columns carries the manual sweep that covers what the regex cannot reach.
  */
 class JqhtmlDatetimeFormatting_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -190,7 +190,7 @@ class JqhtmlDatetimeFormatting_CodeQualityRule extends CodeQualityRule_Abstract
             "  2. The identifier is not temporal at all and merely ends in _at or _date - a name\n" .
             "     like format_date, seat_at, or an enum label field.\n" .
             "  Both get a line-level marker with a one-word reason:\n\n" .
-            "    <%= row.created_at %>  <!-- @JQHTML-DATETIME-01-EXCEPTION - preformatted -->\n\n" .
+            "    <%= row.created_at %>  <%-- @JQHTML-DATETIME-01-EXCEPTION - preformatted --%>\n\n" .
             "  This rule reads the marker on the flagged line or the line immediately above it, so\n" .
             "  that is where it belongs - one marker per genuinely exempt line, each with its own\n" .
             "  reason. (The checker's own generic handling is file-granular, so a stray marker\n" .
@@ -202,9 +202,9 @@ class JqhtmlDatetimeFormatting_CodeQualityRule extends CodeQualityRule_Abstract
             "  without the programmer's approval (see CodeQuality/CLAUDE.md).\n\n" .
             "  If the value turns out to be a calendar fact stored in a DATETIME column, that is a\n" .
             "  SCHEMA defect, not a display one. Format it correctly here and raise the column: the\n" .
-            "  prelaunch checklist ENTRY 6 covers the DATETIME-vs-DATE column audit.\n\n" .
+            "  conformance audit datetime_display_and_columns covers the DATETIME-vs-DATE columns.\n\n" .
             "See: php artisan rsx:man time\n" .
-            "     php artisan rsx:man prelaunch_checklist (ENTRY 6 - the display + column audit)\n" .
+            "     php artisan rsx:conformance:show datetime_display_and_columns (display + columns)\n" .
             "     MODEL-FETCH-DATE-01 - the server-side twin, which forbids pre-formatting a date\n" .
             "     inside a model's fetch() so that the template stays the one place formatting happens.";
     }

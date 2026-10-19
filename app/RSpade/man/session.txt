@@ -361,7 +361,7 @@ API REFERENCE
             (Logout semantics above). Weigh that against making every logout link
             in every layout a form, and the plain link wins. This is the ONE
             sanctioned mutating GET in the auth surface; everything else follows
-            the usual rule (rsx:man prelaunch_checklist ENTRY 2).
+            the usual rule (conformance audit get_routes_write_nothing).
 
         Logout semantics (owner ruling 2026-08-05):
             logout() does NOT invalidate the session row, by design. The row
@@ -2272,7 +2272,7 @@ LOGIN THROTTLE (BRUTE FORCE)
         default. A box behind a load balancer, TLS terminator or CDN MUST list
         that device's addresses or CIDRs in TRUSTED_PROXIES in .env; until it does, every request
         appears to come from the device and the per-IP throttle counts every
-        visitor as one (rsx:man prod, rsx:man prelaunch_checklist).
+        visitor as one (rsx:man prod, rsx:man launch_checklist).
 
     A CALLER WITH NO CLIENT IP IS NEVER THROTTLED:
         Session::get_client_ip() answers null outside a request - CLI, tasks,

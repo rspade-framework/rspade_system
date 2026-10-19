@@ -1,0 +1,175 @@
+LAUNCH_CHECKLIST(7)          RSX Framework Manual          LAUNCH_CHECKLIST(7)
+
+NAME
+    launch_checklist - preparing an RSpade site for production: the
+    deployment steps and the host checks
+
+SYNOPSIS
+    php artisan rsx:man launch_checklist
+
+DESCRIPTION
+    The steps and checks that take an RSpade site from a development box to
+    a production host. Every item here is about the host and its
+    configuration. Contracts about the shape of the application's code are
+    the conformance audits, run on request before launch:
+
+        php artisan rsx:conformance:list --when=launch
+
+    See rsx:man conformance_audits.
+
+CHEATSHEET
+    First install, empty database, on a box already set to production:
+
+        php artisan rsx:build --force               # build + seal; migrate refuses on an unsealed box
+        php artisan migrate                         # shipped schema cache (if any), then migrations
+
+    Every deployment after that:
+
+        php artisan rsx:maintenance:enable --reason="deploying <version>"
+        git pull                                    # or however the code arrives
+        php artisan migrate --dump-rollback         # dump first, restore on failure
+        php artisan rsx:mode:set prod               # writes RSX_MODE, runs rsx:build --force
+        php artisan rsx:prod:verify                 # served assets match the seal
+        php artisan rsx:maintenance:disable
+
+    Once per host:
+
+        * * * * * cd /path/to/project && php artisan rsx:task:process
+                                                    # crontab of the serving user; drives every task
+
+        APP_URL=https://www.example.com             # .env; http throws at boot in debug and production
+
+    After every deployment, as the serving user:
+
+        php artisan rsx:health                      # exit 1 on any FAIL row
+
+    Notes:
+        - rsx:mode:set prod on a box already in production is a reseal: there
+          is no separate refresh.
+        - The build and the migration are independent; migrating first means
+          new code never serves against an older schema.
+        - A box that takes code with `php artisan rsx:git pull` rebuilds
+          itself; the migration is still yours.
+        - --dump-rollback needs storage/ to persist between deploys.
+
+CHECKS
+    Run each on the production host, as the user that serves requests,
+    against the production database.
+
+    - rsx:health is clean. No FAIL row: Production Seal, APP_URL Scheme,
+      Login Auto-fill, Storage Writable, Schema Contract, Hostname, Task
+      Scheduler Liveness among them. Read every row, not only the exit code.
+          php artisan rsx:health
+
+    - Schema Contract. No FAIL on any "schema: <table>" row; read every WARN
+      (a semantic probe naming rows that exist and are wrong). Fix a FAIL
+      with a migration, never a hand-edit. Re-run after any restore or import.
+          php artisan rsx:health
+
+    - Hostname. The APP_URL host does not contain ".dev." (that host forces
+      mail to the dev whitelist or catchall). Fix: set APP_URL, then rebuild.
+          php artisan rsx:health                     # "Hostname" row
+          php artisan rsx:build --force
+
+    - Document Sandbox. "docker" on a site that accepts uploads from outside
+      the organisation; "none" only as a deliberate choice. With docker,
+      build the converter image during the deploy.
+          php artisan rsx:health                     # "Document Sandbox" row
+          php artisan rsx:heal document-sandbox-image
+
+    - Client address behind a proxy. Anything in front of nginx (load
+      balancer, TLS terminator, CDN) appends X-Forwarded-For and is listed in
+      TRUSTED_PROXIES (addresses or CIDRs, comma-separated). Unlisted, every
+      visitor shares one login-throttle bucket. Never list a range clients
+      reach nginx from directly. Verify with one deliberate failed login and
+      read the address recorded.
+          TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10      # .env
+          grep "Login failure" <storage>/logs/laravel.log
+
+    - Mail delivery is live. MAIL_DELIVERY=live, explicitly - "suppressed"
+      (the default), "aiosmtpd" and "disabled" all look healthy and deliver
+      nothing. MAIL_MAILER and its MAIL_* keys name the real transport (read
+      only when live).
+          php artisan rsx:health                     # "Mail delivery", "Mail transport"
+          php artisan rsx:mail:test you@your-domain.example
+
+    - Mail sender domain. MAIL_FROM_ADDRESS is on a domain you control (not
+      the shipped noreply@example.com); SPF, DMARC and DKIM are published
+      (set rsx.mail.dkim_selector to have DKIM checked). A WARN here is a
+      launch blocker. Read the delivered message in a real mailbox: From,
+      absolute links, images, datetimes, inbox or spam.
+          php artisan rsx:health                     # "Mail sender domain"
+          php artisan rsx:mail:test you@your-domain.example --email=Welcome_Email
+
+    - Dev-site mail layer. EMAIL_DEV_CATCHALL_ADDRESS,
+      EMAIL_DEV_EMAIL_ADDRESS_WHITELIST and EMAIL_DEV_EMAIL_DOMAIN_WHITELIST
+      say what you mean on every environment. The layer applies only in live
+      delivery and only on a host containing ".dev."; a staging host without
+      it mails real addresses.
+          grep '^EMAIL_DEV_\|^APP_URL' .env
+
+    - Mail retention and staleness chosen deliberately: rsx.mail.retention_days
+      (30; deletes queue rows and bodies) and rsx.mail.stale_after_days (2;
+      older unsent mail is Failed, resent only by rsx:mail:resend).
+          grep -n 'retention_days\|stale_after_days' rsx/resource/config/rsx.php   # absent = default
+
+    - Read-only posture. The web user writes storage/ and tmp/ only;
+      system/, rsx/ and build/ are owned by the deploy user and read-only to
+      the web user. Every "WRITABLE" tree row is a finding; storage/ and tmp/
+      rows must be writable. Neither writable tree is under the docroot
+      (system/public).
+          sudo -u <web user> php artisan rsx:health
+
+    - Relocated trees. RSX_TMP_PATH and RSX_STORAGE_PATH, when set, are
+      absolute or project-root-relative and owned to the same split.
+      storage/state follows RSX_STORAGE_PATH; build/ is fixed.
+          grep '^RSX_TMP_PATH\|^RSX_STORAGE_PATH' .env
+
+    - TMPDIR in processes you start. Your own php-fpm pool, supervisor
+      program and cron lines set TMPDIR to the tmp root.
+          php artisan rsx:health                     # "PHP temp dir" row, per process user
+
+    - Disabled sites. Every row returned is intentionally closed; a disabled
+      or deleted site refuses its users exactly like a wrong password.
+          php artisan db:query "SELECT id, name, is_enabled, deleted_at FROM sites WHERE id <> 0 AND (is_enabled = 0 OR deleted_at IS NOT NULL)"
+
+    - PORTAL_URL is final. Changing it later breaks portal SSO (each enabled
+      provider console registers the old callback URI), portal passkeys on a
+      host change (bound to the old host; users enrol again) and stored
+      portal URLs (notification payloads, sent email). Treat a change as a
+      migration.
+          php artisan rsx:health                     # "Portal URL" row
+
+    - Keep-forever file retention. At rsx.files.deleted_retention_days = 0
+      no blob is ever removed, force_destroy() included: unreferenced bytes
+      accumulate and an erasure request leaves the file on disk. Choose it
+      deliberately; under 0, assign who removes unreferenced blobs.
+          php artisan rsx:files:unreferenced_blobs
+
+    - Server timezone. RSX_SERVER_TIMEZONE (blank = UTC) is the wall clock
+      #[Schedule] times and the maintenance hour run on, the zone a new site
+      gets, and the display fallback. Set it to the zone the schedules mean,
+      or write them in UTC. Every site carries a timezone.
+          php artisan rsx:tasks:list
+          php artisan db:query "SELECT id, name, timezone FROM sites WHERE id <> 0 AND deleted_at IS NULL AND (timezone IS NULL OR timezone = '')"
+
+    - Launch conformance audits run and their findings resolved (on the
+      development box, by request to the agent).
+          php artisan rsx:conformance:list --when=launch
+
+SEE ALSO
+    prod - the build, the deployment recipes, the read-only posture
+    conformance_audits - the code-shape contracts and how they are run
+    health - the rsx:health check inventory
+    app_mode - modes, the seal, determinism
+    migrations - migrate --dump-rollback and fixing a schema FAIL
+    maintenance_mode - the deployment window
+    email - delivery modes, the dev-site layer, transports
+    session - the login throttle and the client address
+    portal - PORTAL_URL
+    sso - provider redirect URIs
+    two_factor - passkey relying-party id
+    file_disposal - keep-forever retention
+    libreoffice - the document sandbox
+    tasks - schedules and timezones
+    storage_directories - what lives in each tree

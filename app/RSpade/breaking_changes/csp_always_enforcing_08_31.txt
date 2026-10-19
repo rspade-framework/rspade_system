@@ -43,10 +43,8 @@ THE FIX
         at all. It is not a quiet mode - it deletes the protection and says so.
       - window.rsxapp.csp.report_only is no longer exported, and the
         development [RSX CSP] console warning says "blocked" unconditionally.
-      - The prelaunch checklist's CSP entry is DELETED. There is nothing left
-        to flip, so there is nothing left to audit at launch. (The remaining
-        entries were renumbered: the former ENTRY 7 datetime audit is now
-        ENTRY 6, ENTRY 8 is now ENTRY 7, ENTRY 9 is now ENTRY 8.)
+      - There is no launch check for CSP. There is nothing left to flip, so
+        there is nothing left to audit at launch.
 
     Your own 'report_only' key, if you still have one, is INERT: the rsx config
     is a plain deep merge with no schema, so an unknown key is neither an error

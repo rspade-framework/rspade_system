@@ -11,7 +11,7 @@ hostile/invalid value degrades SILENTLY to `[]`/the default (a CR-mandated excep
 to fail-loud, scoped to this class's read/validate paths).
 
 This concern matters for security (open-redirect prevention) and for the wiring
-contract that the prelaunch checklist audits.
+contract that the conformance audit `login_redirect_wiring` checks.
 
 ## Source files
 
@@ -32,7 +32,7 @@ contract that the prelaunch checklist audits.
   / consume)
 - `rsx/app/login/login_controller.php` - `logout()` routes its redirect through
   `Login_Redirect::consume()` (the one-sanitizer generalization)
-- `app/RSpade/Commands/Rsx/Prod_Enable_Command.php` - prints the prelaunch hint
+- `app/RSpade/Commands/Rsx/Prod_Enable_Command.php` - prints the launch hint
 
 ## Test fixtures
 
@@ -49,7 +49,7 @@ contract that the prelaunch checklist audits.
 ## Man page(s)
 
 - `man/login_redirect.txt`
-- `man/prelaunch_checklist.txt` (entry #1 audits the wiring contract)
+- `man/conformance_audits.txt` (audit `login_redirect_wiring` checks the wiring contract)
 
 ## Testable surface
 

@@ -20,7 +20,7 @@ Login_Redirect::consume(string $default): string   // the terminal call, exactly
 
 ## The wiring contract
 
-Every page between the auth rejection and the terminal destination merges `params()` into its outbound login-flow routes and includes `hidden_input()` in its forms. A hop that drops the param **degrades gracefully** - the user lands on the default - so dropping it deliberately is legitimate when a flow owns its own destination (an invite-acceptance flow that always lands on its workspace). Audited before launch: `rsx:man prelaunch_checklist`, entry 1.
+Every page between the auth rejection and the terminal destination merges `params()` into its outbound login-flow routes and includes `hidden_input()` in its forms. A hop that drops the param **degrades gracefully** - the user lands on the default - so dropping it deliberately is legitimate when a flow owns its own destination (an invite-acceptance flow that always lands on its workspace). Audited by the conformance audit `login_redirect_wiring` (`php artisan rsx:conformance:show login_redirect_wiring`).
 
 ```php
 // rejection point (rsx/main.php)

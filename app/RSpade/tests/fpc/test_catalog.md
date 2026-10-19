@@ -53,3 +53,4 @@ port dropped - is part of every key. The key is a contract between `Rsx_FPC` and
 | fpc-p-02 | TTL expiry causes re-render | http | time-dependent (the declaration side is covered by fpc-ttl-01..06) | planned |
 | fpc-p-03 | invalidation clears the right `fpc:*` keys | http | needs invalidation trigger | planned |
 | fpc-p-04 | bypass-rule unit logic (the key derivation is Fpc_Cache_Key_Test) | php | the in-process decision logic, isolated from HTTP | planned |
+| fpc-p-05 | FPC and SSR are disabled in this release (B-132): both switches are off; an #[FPC] route dispatches normally with no X-RSpade-FPC marker and logs one warning naming the route; Rsx_SSR::render_component() logs one warning naming the component and throws | php | `Fpc_Ttl_Fixture_Controller::ttl` through the front controller; `render_component('Any_Component')` | 200, no marker, warnings as stated | implemented (`Fpc_Ssr_Disabled_Test`) | 2026-10-19 |

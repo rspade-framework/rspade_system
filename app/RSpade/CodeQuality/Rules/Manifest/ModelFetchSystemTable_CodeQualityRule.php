@@ -87,12 +87,6 @@ class ModelFetchSystemTable_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        static $already_checked = false;
-        if ($already_checked) {
-            return;
-        }
-        $already_checked = true;
-
         foreach (Manifest::get_all() as $rel_path => $file_metadata) {
             if (($file_metadata['extension'] ?? '') !== 'php' || empty($file_metadata['class'])) {
                 continue;

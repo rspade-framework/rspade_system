@@ -2708,7 +2708,7 @@ SEE ALSO
     rsx:man config_rsx        rsx:man app_mode
     rsx:man storage_directories         rsx:man dependencies
     rsx:man artisan_commands
-    rsx:man prelaunch_checklist
+    rsx:man launch_checklist  rsx:man conformance_audits
 
   Diagnosis, conventions and testing
     rsx:man error_handling    rsx:man rsx_debug       rsx:man console_debug

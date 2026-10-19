@@ -3,6 +3,14 @@ SSR(3)                      RSX Framework Manual                      SSR(3)
 NAME
     SSR - Server-side rendering of jqhtml components via Node.js
 
+DISABLED IN THIS RELEASE
+    Server-side rendering is switched off (Rsx_SSR::ENABLED is false) until its
+    functionality and security posture are validated, together with jqhtml core
+    changes it depends on. Rsx_SSR::render_component() logs a warning to
+    laravel.log and throws; the SSR Node server is never started. Serve the
+    component client-side. Everything below describes the feature as it will
+    behave when it returns.
+
 SYNOPSIS
     use App\RSpade\Core\SSR\Rsx_SSR;
 

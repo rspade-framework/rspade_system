@@ -20,7 +20,7 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  * SCOPE: framework code only (system/app/), because that is the code we ship to everyone
  * and hold to the higher bar. Application code is covered by the runtime row-count tripwire
- * and by the prelaunch checklist's unbounded-query audit - not by this rule, which would
+ * and by the conformance audit unbounded_queries - not by this rule, which would
  * otherwise fire on perfectly reasonable app queries.
  *
  * This is ADVISORY. The declaration is NOT a claim that every query on the model is huge; a
@@ -101,7 +101,7 @@ class UnboundedResultSet_CodeQualityRule extends CodeQualityRule_Abstract
         $normalized = str_replace('\\', '/', $file_path);
 
         // FRAMEWORK code only. Application code answers to the runtime tripwire and the
-        // prelaunch audit; linting it here would flag ordinary app queries.
+        // unbounded_queries conformance audit; linting it here would flag ordinary app queries.
         if (!str_contains($normalized, '/app/RSpade/')) {
             return;
         }

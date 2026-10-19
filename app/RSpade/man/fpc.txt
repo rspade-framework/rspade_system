@@ -3,6 +3,14 @@ FPC(3)                      RSX Framework Manual                      FPC(3)
 NAME
     FPC - Full Page Cache via Node.js reverse proxy with Redis
 
+DISABLED IN THIS RELEASE
+    Full page caching is switched off (Rsx_FPC::ENABLED is false) until its
+    functionality and security posture are validated. #[FPC] is still parsed
+    and recorded on the route, but the route dispatches like any other: the
+    response is never marked for the proxy, nothing is cached, and each request
+    to it logs a warning to laravel.log. Everything below describes the feature
+    as it will behave when it returns.
+
 SYNOPSIS
     Controller attribute:
 

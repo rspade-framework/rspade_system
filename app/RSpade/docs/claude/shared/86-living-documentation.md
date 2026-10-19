@@ -22,5 +22,5 @@ dates, no "previously": the framework text is the before, this file is the after
 
 Framework skills, man pages and fragments whose subject lives in `rsx/` open with a
 **template-feature notice** naming the living file; **where the living file records a
-divergence, it wins.** Currency is audited before launch (`rsx:man prelaunch_checklist`,
-the LIVING DOCUMENTATION entry), not linted.
+divergence, it wins.** Currency is audited (conformance audit
+`living_documentation_currency`), not linted.

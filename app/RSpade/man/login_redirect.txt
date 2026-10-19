@@ -91,8 +91,8 @@ THE WIRING CONTRACT
     destination (today's behavior), never an error. Dropping the param at a hop is
     a legitimate, deliberate choice when a flow owns its own destination (e.g. an
     invite-acceptance flow that always lands on its own workspace). This wiring is
-    audited before launch via the prelaunch checklist (see rsx:man
-    prelaunch_checklist, entry #1).
+    audited by the conformance audit login_redirect_wiring
+    (php artisan rsx:conformance:show login_redirect_wiring).
 
 VALIDATION GUARANTEES
     The validator (inside params()/consume()/hidden_input(), and used by capture())
@@ -203,8 +203,8 @@ STRATEGY - why URL threading, not a session stash (do not redesign)
     The known weakness of threading - "a hop forgot to carry the param" - is
     engineered away: the per-hop cost is one short call, the param name lives in a
     private constant (never hand-typed), and the wiring is documented here and
-    audited via the prelaunch checklist. A dropped hop degrades gracefully; it
-    never errors.
+    audited by the conformance audit login_redirect_wiring. A dropped hop
+    degrades gracefully; it never errors.
 
 PORTAL PARITY
     Login_Redirect serves the staff app and the client portal with the SAME four
@@ -285,6 +285,6 @@ COMMON PITFALLS
       dropped hop; the call exists precisely to make it a one-liner.
 
 SEE ALSO
-    rsx:man prelaunch_checklist   (entry #1 audits this wiring)
+    rsx:man conformance_audits   (audit login_redirect_wiring checks this wiring)
     rsx:man session
     rsx:man acls

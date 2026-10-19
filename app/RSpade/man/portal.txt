@@ -543,7 +543,7 @@ EXPERIENCE FORKS (which properties answer)
     staff login present (a private window, or clear the session cookie), and perform
     at least one REAL form login: rsx:debug --portal installs the session directly
     and never runs your login controller, so it cannot reproduce anything that
-    happens during login. Pre-launch audit: rsx:man prelaunch_checklist ENTRY 5.
+    happens during login. Audit: php artisan rsx:conformance:show portal_session_boundary.
 
 
 PORTAL LOGIN FLOW

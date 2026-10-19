@@ -333,11 +333,16 @@ class Dispatcher
 
         // --- FPC detection (staff) ---
         // #[FPC] is baked onto the route row by the manifest. Active only for an anonymous
-        // GET with no POST or FILE data.
+        // GET with no POST or FILE data - and only while full page caching is enabled
+        // (Rsx_FPC::ENABLED): disabled, the route dispatches like any other and says so.
         $has_fpc = false;
         $fpc_ttl_mins = 0;
 
-        if ($realm['fpc'] && !empty($route_match['fpc']) && $route_method === 'GET' && empty($_POST) && empty($_FILES)) {
+        if ($realm['fpc'] && !empty($route_match['fpc']) && !\App\RSpade\Core\FPC\Rsx_FPC::ENABLED) {
+            \Illuminate\Support\Facades\Log::warning(
+                \App\RSpade\Core\FPC\Rsx_FPC::DISABLED_WARNING . " Route: {$handler_class}::{$handler_method}"
+            );
+        } elseif ($realm['fpc'] && !empty($route_match['fpc']) && $route_method === 'GET' && empty($_POST) && empty($_FILES)) {
             Session::init();
 
             if (!Session::is_logged_in()) {

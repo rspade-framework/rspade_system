@@ -96,14 +96,6 @@ class SpaAttributeMisuse_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        static $already_checked = false;
-
-        // Only check once per manifest build
-        if ($already_checked) {
-            return;
-        }
-        $already_checked = true;
-
         // Get all manifest files
         $files = \App\RSpade\Core\Manifest\Manifest::get_all();
         if (empty($files)) {

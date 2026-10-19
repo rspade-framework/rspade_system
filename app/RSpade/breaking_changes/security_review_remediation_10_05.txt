@@ -69,7 +69,7 @@ A6. Client IP comes from trusted proxies only.
     rsx.http.trusted_proxies (empty by default). Action: a box behind a load
     balancer or TLS terminator MUST list it there, or every visitor resolves to
     the proxy's address and shares one login-throttle bucket
-    (rsx:man prelaunch_checklist).
+    (rsx:man launch_checklist).
 
 A7. Debug mode validates the request host like production.
     A debug-mode box browsed under a host APP_URL / PORTAL_URL does not serve
@@ -209,6 +209,6 @@ SEE ALSO
     acls - roles, can_admin_roles, the ACL administration API
     file_upload - the mandatory upload and read gates
     session - the session cookie and the client-IP resolver
-    prelaunch_checklist - trusted proxies
+    launch_checklist - trusted proxies
     portal - portal access and memberships
     sso - sign-in hooks

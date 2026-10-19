@@ -40,16 +40,29 @@ class FilenameClassMatch_CodeQualityRule extends CodeQualityRule_Abstract
         return false;
     }
 
+    /**
+     * CROSS-FILE: one pass judges every indexed class, view and component against its
+     * filename.
+     *
+     * @return string
+     */
+    public function kind(): string
+    {
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * The files whose names and declarations it compares.
+     *
+     * @return array
+     */
+    public function depends_on(): array
+    {
+        return ['files:*.php', 'files:*.js', 'files:*.jqhtml'];
+    }
+
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        static $already_checked = false;
-
-        // Only check once per manifest build
-        if ($already_checked) {
-            return;
-        }
-        $already_checked = true;
-
         // Check if filename conventions are globally disabled
         if (config('rsx.development.ignore_filename_convention', false)) {
             return;

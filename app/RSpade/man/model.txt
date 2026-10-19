@@ -662,10 +662,10 @@ model is still perfectly fine. Two things consume it:
     @DB-UNBOUNDED-01-EXCEPTION - <rationale>.
 
     rsx.database.result_set_warn_threshold (default 1000) logs ONE warning in
-    development when any get() actually returns more rows than that, naming the
-    count, the model and the call site. It never throws and never truncates; it
-    tells you while you are still writing the feature. Production never pays for
-    it. Set 0/null to disable.
+    development and debug mode when any get() actually returns more rows than
+    that, naming the count, the model and the call site. It never throws and
+    never truncates; it tells you while you are still writing the feature.
+    Production never pays for it. Set 0/null to disable.
 
 The two are complements: the declaration is a static claim about a table, the
 threshold is what really happened.
@@ -720,4 +720,4 @@ rsx:man model_normalization - Database normalization process
 rsx:man enums - Complete enum system documentation
 rsx:man migrations - Migration system and safety
 rsx:man revisions - Per-model revision history
-rsx:man prelaunch_checklist - the unbounded-query audit (ENTRY 4)
+rsx:man conformance_audits - the unbounded-query audit (unbounded_queries)

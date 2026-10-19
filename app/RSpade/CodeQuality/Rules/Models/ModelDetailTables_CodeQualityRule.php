@@ -70,12 +70,6 @@ class ModelDetailTables_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        static $already_checked = false;
-        if ($already_checked) {
-            return;
-        }
-        $already_checked = true;
-
         foreach (Manifest::php_get_extending('Rsx_Model_Abstract') as $entry) {
             $fqcn = $entry['fqcn'] ?? null;
             $base_file = $entry['file'] ?? null;

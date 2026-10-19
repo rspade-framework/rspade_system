@@ -1,0 +1,211 @@
+CONFORMANCE_AUDITS(7)        RSX Framework Manual        CONFORMANCE_AUDITS(7)
+
+NAME
+    conformance_audits - review prompts for the contracts no lint rule can
+    enforce, each walked on request by one read-only agent
+
+SYNOPSIS
+    php artisan rsx:conformance:list [--when=launch|change|periodic]
+                                     [--severity=critical|high|medium|low]
+                                     [--json]
+    php artisan rsx:conformance:show <id>
+    php artisan rsx:conformance:for <path>
+
+DESCRIPTION
+    Some contracts an application's code must honour cannot be checked
+    mechanically: a GET handler that writes nothing (including through every
+    helper it calls), a money amount never computed in a float, the intended
+    URL threaded through every sign-in hop. Recognising them takes reading
+    and judgement. A conformance audit is one markdown file describing one
+    such contract, written as a PROMPT that an agent follows to review the
+    application and report what does not conform.
+
+    An audit is:
+        - never run automatically - a developer asks for it;
+        - not a test - nothing passes or fails a build or a suite;
+        - not a lint rule - when a pattern can be checked mechanically, it
+          belongs in rsx:check instead, and an audit covers what a rule
+          cannot see.
+
+    The output of a run is a report of findings, each naming a file and line,
+    what is wrong and the conforming fix. A run changes nothing.
+
+TWO HOMES, ONE NAMESPACE
+    system/app/RSpade/conformance/<id>.md
+        The framework library. Ships with the framework; overwritten on every
+        framework update.
+
+    rsx/resource/conformance/<id>.md
+        The application's own audits, for contracts the application defines.
+
+    An id is unique across both directories. An application audit ADDS to
+    the library and never replaces a framework one: a repeated id throws
+    when the library is read, naming both files. There are no overrides.
+
+    Every *.md file in either directory is an audit, except CLAUDE.md, the
+    directory's own description.
+
+THE FILE
+    A header between two '---' lines, one 'key: value' per line, then the
+    prompt body:
+
+        ---
+        id: unbounded_queries
+        title: Every multi-row read has a ceiling or iterates
+        severity: high
+        when: launch, change, periodic
+        scope: rsx/**/*.php
+        related: rsx:man model, skill rspade:bounded-result-sets
+        ---
+
+        ## The contract
+        ...
+
+    The file opens with '---' on its first line. Keys:
+
+        id        Required. Equals the file's basename (unbounded_queries.md).
+        title     Required. One line.
+        severity  Required. critical | high | medium | low.
+        when      Required. One or more of launch, change, periodic,
+                  comma-separated:
+                      launch    before a site goes live
+                      change    whenever code in its scope is written or
+                                changed
+                      periodic  on a schedule of the owner's choosing
+        scope     Required. Comma-separated globs relative to the project
+                  root, matched by rsx:conformance:for:
+                      **    any run of characters, across directories;
+                            '**/' also matches no directory at all
+                      *     any run of characters within one path segment
+                      ?     one character within one path segment
+                  So rsx/**/*.js matches rsx/a.js and rsx/app/x/y.js.
+        related   Optional. Comma-separated references, written
+                  'rsx:man <topic>' and 'skill rspade:<name>'.
+
+    A missing required key, an unknown key, a key given twice, a severity or
+    when value outside the lists above, an id that does not equal the file
+    name, or a header that is not between two '---' lines throws, naming the
+    file.
+
+COMMANDS
+    rsx:conformance:list [--when=] [--severity=] [--json]
+        Every audit, framework first, each group ordered by id: id,
+        severity, when, origin (framework or application) and title.
+        --when keeps the audits for one occasion; --severity keeps that
+        severity and above; --json prints the headers (no bodies).
+
+            php artisan rsx:conformance:list --when=launch
+            php artisan rsx:conformance:list --severity=high --json
+
+    rsx:conformance:show <id>
+        Prints one audit: its header fields, its file, and the prompt. This
+        is what the agent running the audit reads.
+
+            php artisan rsx:conformance:show get_routes_write_nothing
+
+    rsx:conformance:for <path>
+        The audits whose scope covers a file, given relative to the project
+        root or absolute.
+
+            php artisan rsx:conformance:for rsx/app/frontend/projects/projects_controller.php
+
+HOW THEY ARE RUN
+    The developer asks, in words such as:
+
+        "run the conformance audits"
+        "run the launch conformance audits"
+        "run conformance audit unbounded_queries"
+
+    The agent the developer is talking to orchestrates:
+
+    1. Lists the requested set: rsx:conformance:list, filtered with --when
+       or --severity as asked, or the one id named.
+    2. Dispatches ONE read-only background agent per audit, on the Sonnet
+       model, in parallel. Each is told to run
+       `php artisan rsx:conformance:show <id>`, follow it literally without
+       editing any file, and answer in the audit's Report format.
+    3. Collects the reports.
+    4. VERIFIES every finding against the source before presenting it: opens
+       the cited file and line, confirms the code says what the finding
+       claims, and confirms it is not one of the exceptions the audit lists.
+       A finding that does not hold is dropped; one that is uncertain is
+       marked so.
+    5. Presents one consolidated report, grouped by audit and ordered by
+       severity, with the verified findings and each audit's PASS line.
+
+    Nothing is fixed unless the developer then asks for it.
+
+WHEN TO CONSULT ONE
+    Before writing or changing code an audit governs, find the audits that
+    cover the file and build to them:
+
+        php artisan rsx:conformance:for <path>
+        php artisan rsx:conformance:show <id>
+
+    Reading the audit while writing the code is cheaper than a finding later.
+
+WRITING AN AUDIT
+    One contract per audit. The body is a prompt addressed to a careful,
+    literal, read-only reviewer, in four sections:
+
+        ## The contract
+            What must hold and why it matters, in one short paragraph, and
+            which man page or skill is the source of truth (read it first).
+            Name what a rule already enforces, so it is not re-checked.
+
+        ## Find every instance
+            The exact commands and greps that enumerate the cases, and what
+            to read for each.
+
+        ## What does not conform
+            The violations, and the legitimate exceptions, so the reviewer
+            does not report them.
+
+        ## Report
+            The report shape, exactly: `PASS - <one-line reason>`, or one
+            finding per line, `file:line - what is wrong - the conforming
+            fix`, and no other prose.
+
+    Run every command in the audit before shipping it. Choose scope globs a
+    developer's edit to a governed file will actually match. Prefer a lint
+    rule whenever the pattern is mechanically checkable; an audit is for what
+    is not.
+
+THE FRAMEWORK LIBRARY
+    api_get_endpoints_read_only
+        External API GET endpoints write nothing, through any helper.
+    credential_throttle_coverage
+        Every credential check spends the per-IP login throttle.
+    datetime_display_and_columns
+        Dates render through Rsx_Time / Rsx_Date; calendar facts are DATE
+        columns.
+    file_urls_from_builders
+        File URLs come from the model's builders; thumbnails from
+        <Attachment_Thumbnail>.
+    get_routes_write_nothing
+        No staff or portal page route changes state on a GET.
+    living_documentation_currency
+        Every CLAUDE.md under rsx/ and every app skill matches the code.
+    login_redirect_wiring
+        The intended URL survives every sign-in hop, through Login_Redirect.
+    money_never_in_a_float
+        No amount is computed in a float; brick/money does the arithmetic.
+    portal_session_boundary
+        Portal-reachable code reads Portal_Session and forks on the
+        experience, never on identity.
+    public_bundle_contents
+        A bundle served before sign-in includes no shared directory.
+    reload_vs_refresh
+        refresh() on server hints, reload() on user actions.
+    required_fields_have_server_rules
+        Every $required asterisk has a blank-checking server rule.
+    runtime_assembled_component_names
+        Components reached by an assembled name are in their bundle's keep.
+    unbounded_queries
+        Every multi-row read has a ceiling or iterates; growing tables have
+        retention.
+
+SEE ALSO
+    launch_checklist - preparing a site for production
+    prod - the deployment recipes and the production host
+    skill rspade:conformance-audits - running a set and writing an audit

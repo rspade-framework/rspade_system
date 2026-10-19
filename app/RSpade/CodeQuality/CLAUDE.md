@@ -739,11 +739,12 @@ public function depends_on(): array
 `DuplicateCaseFiles` is the cautionary tale: it was declared per-file, guarded itself with a
 static flag, and RESET that flag at the end of every call - so it rebuilt a map of the whole
 tree once per changed file, 18.5 seconds of a cold build spent answering the same question
-1,400 times. Seventeen cross-file rules still open `check()` with a never-reset
-`static $already_checked` from before `kind()` existed. It is inert belt-and-braces where the
-driver already guarantees one call, and it is WRONG in the one process that runs two passes
-(a build followed by `rsx:check`), where the second pass would be skipped. **Do not add one to
-a new rule**; the existing ones are a standing cleanup (backlog B-114).
+1,400 times. A never-reset `static $already_checked` (or a per-file rule that walks the tree
+on its first file behind `static $already_run`) is the other wrong answer: it does nothing in an
+ordinary pass and silently skips the rule in a process that runs two (a build followed by
+`rsx:check`). **A rule that judges the tree declares `kind()` `KIND_CROSS_FILE` and
+`depends_on()`, and its `check()` simply judges.** `tests/code_quality/php/Rule_Self_Guard_Test`
+refuses any function-level `static` in a rule's `check()`.
 
 **When in doubt, `depends_on()` lists `files:<your own patterns>`.** An under-stated
 dependency is a rule that silently stops firing; an over-stated one only costs time.

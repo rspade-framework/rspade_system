@@ -352,8 +352,8 @@ VERIFICATION
        reaches Sent - not Pending, not Failed - within seconds, without waiting for
        the minute sweeper.
 
-    7. BEFORE PRODUCTION, walk ENTRY 9 (OUTBOUND EMAIL) of
-       `php artisan rsx:man prelaunch_checklist`: MAIL_DELIVERY=live EXPLICITLY (the
+    7. BEFORE PRODUCTION, walk the mail checks of
+       `php artisan rsx:man launch_checklist`: MAIL_DELIVERY=live EXPLICITLY (the
        shipped default captures into a local Maildir and looks perfectly healthy
        doing it), a real relay in MAIL_HOST, a real MAIL_FROM_ADDRESS on a domain you
        control, SPF/DKIM/DMARC published for it, and a deliberate

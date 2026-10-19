@@ -1,6 +1,6 @@
 ---
 name: shipping-a-contract-change
-description: "Finishing a framework change that alters how downstream code is written or invoked - working the six-artifact mandate (always-on knowledge, shared fragment, template app, man page, breaking_changes, prelaunch checklist), deciding which audit artifact a new obligation belongs in, authoring a breaking_changes document against the manual-action gate, writing a prelaunch checklist entry, and the external-requests INDEX/archive workflow. Use whenever a framework change touches a downstream-facing contract, syntax, default, or behavior."
+description: "Finishing a framework change that alters how downstream code is written or invoked - working the six-artifact mandate (always-on knowledge, shared fragment, template app, man page, breaking_changes, conformance audit), deciding which audit artifact a new obligation belongs in, authoring a breaking_changes document against the manual-action gate, proposing a conformance audit or a launch_checklist check, and the external-requests INDEX/archive workflow. Use whenever a framework change touches a downstream-facing contract, syntax, default, or behavior."
 ---
 
 # Shipping a downstream-facing contract change
@@ -41,13 +41,13 @@ Note the framework-developer-only pages are stripped at publish (`code_quality`,
 
 The migration: how a downstream developer FINDS and CONVERTS existing code. **Only when the gate below is met** - a document with no `IF YOU DO NOTHING:` line does not exist.
 
-## 6. `man/prelaunch_checklist.txt`
+## 6. A conformance audit, or a `man/launch_checklist.txt` check
 
-**ONLY if the change does not self-correct** through a thrown exception or failed build, and so needs a human eye to confirm it was applied correctly.
+**ONLY if the change does not self-correct** through a thrown exception or failed build, and so needs a human eye to confirm it was applied correctly. A contract on the shape of application code is a conformance audit (`system/app/RSpade/conformance/<id>.md`); a fact about the host or its configuration is a check in `man/launch_checklist.txt`.
 
-**When #6 applies:** a signature change that fatals, a manifest-build validation, a lint rule - all self-correct; no entry. A silent behavior change (an ordering that quietly stopped being applied, a new declaration nobody is forced to add, a default that changed) does NOT self-correct - entry required.
+**When #6 applies:** a signature change that fatals, a manifest-build validation, a lint rule - all self-correct; nothing to add. A silent behavior change (an ordering that quietly stopped being applied, a new declaration nobody is forced to add, a default that changed) does NOT self-correct - an audit or a check is required.
 
-**Keep the audiences separate.** Always-on knowledge describes how to write code with the feature TODAY. Audit sweeps, "find your existing call sites", grep recipes and conversion steps belong in `breaking_changes/`; recurring pre-launch verification belongs in the prelaunch checklist. Mixing migration prose into always-on knowledge bloats what every reader loads on every task.
+**Keep the audiences separate.** Always-on knowledge describes how to write code with the feature TODAY. Audit sweeps, "find your existing call sites", grep recipes and conversion steps belong in `breaking_changes/`; recurring verification belongs in a conformance audit or the launch checklist. Mixing migration prose into always-on knowledge bloats what every reader loads on every task.
 
 ---
 
@@ -55,7 +55,8 @@ The migration: how a downstream developer FINDS and CONVERTS existing code. **On
 
 ```
 Is the obligation RECURRING (must be re-checked by every app, forever)?
-├─ yes, by DOWNSTREAM apps        -> an ENTRY in man/prelaunch_checklist.txt
+├─ yes, by DOWNSTREAM apps        -> a conformance audit in system/app/RSpade/conformance/
+│                                    (a host check: man/launch_checklist.txt)
 │                                    (distributes via framework pull; NO breaking_changes doc)
 ├─ yes, by RSpade CORE on itself  -> a row in docs.dev/audits/framework_internal_audit_checklist.md
 │                                    (a living discipline, not a gate)
@@ -72,7 +73,7 @@ Is the obligation RECURRING (must be re-checked by every app, forever)?
                 └─ no  -> NOTHING. Do not write a document.
 ```
 
-A downstream app also keeps its OWN pre-launch items in `rsx/resource/audits/prelaunch_checklist.md`; framework-required audits never go there.
+A downstream app keeps its OWN conformance audits in `rsx/resource/conformance/`; framework audits never go there.
 
 ---
 
@@ -135,7 +136,7 @@ Worked examples:
 | A performance or behavior change with no contract change | **No** | Nothing downstream is written or invoked differently. |
 | A `/rsx/` template UI improvement | **No** | The fork may adopt it at leisure, or never. It ships in the reference app. |
 | A `/rsx/` TEMPLATE CHANGE | **ONLY** when the fork BREAKS or loses a documented capability without it - never because it COULD adopt something new |
-| A DEFAULT changed silently (old code keeps running, differently) | **Yes** | Nothing fails; only an audit finds it. Also a prelaunch-checklist candidate. |
+| A DEFAULT changed silently (old code keeps running, differently) | **Yes** | Nothing fails; only an audit finds it. Also a conformance-audit candidate. |
 | An exposed dependency retired or majored | **Yes** (Category 2) | Must include the adopt/re-record remedy. |
 | A deleted or re-signatured API that call sites depend on | **Yes** | Call sites must be FOUND and converted; a production path nobody exercises locally fatals otherwise. |
 | A data migration leaving rows that need a human decision | **Yes** | Only the developer knows what those rows were meant to mean. |
@@ -150,30 +151,11 @@ Downstream consumption (what your document will be read through): `rsx:framework
 
 ---
 
-## Authoring a prelaunch checklist entry
+## Proposing a conformance audit
 
-`man/prelaunch_checklist.txt` is a **sanctioned enforcement channel**: when a lint rule is impractical, "add this to the prelaunch checklist" is a good answer - and the RSpade LLM may proactively suggest it to the owner. It is ADVISORY (nothing blocks a build), and an entry INVENTS an obligation rather than recording behavior that already shipped - which is the owner's call, not yours - so **propose the entry and get the owner's go-ahead**.
+Conformance audits are a **sanctioned enforcement channel**: when a lint rule is impractical, "add a conformance audit" is a good answer - and the RSpade LLM may proactively suggest it to the owner. An audit is ADVISORY (nothing blocks a build), and it INVENTS an obligation rather than recording behavior that already shipped - which is the owner's call, not yours - so **propose the audit and get the owner's go-ahead**. The same holds for a new check in `man/launch_checklist.txt`.
 
-An entry follows the house shape of the existing ones:
-
-```
-ENTRY N: SHORT TITLE (what it is about)
-
-    What to audit
-        The exact property to verify, and a pointer to the man page that holds
-        the patterns. Do NOT restate the patterns here - direct the reader.
-
-    Why it matters
-        The failure this catches, concretely.
-
-    Guidelines
-        How to perform the audit: what to enumerate, what to check per item.
-
-    Dos and don'ts
-        The specific right and wrong spellings.
-```
-
-Entry 1 (login-redirect wiring) is the model: enumeration-driven, pointing at `rsx:man login_redirect` for the patterns rather than duplicating them.
+The file format, the four-section body and the authoring rules are in skill `rspade:conformance-audits` and `rsx:man conformance_audits`. `login_redirect_wiring` is the model: enumeration-driven, pointing at `rsx:man login_redirect` for the patterns rather than duplicating them.
 
 ---
 
@@ -193,6 +175,6 @@ So `archive/` is the done pile; a file still at the top level is OPEN (`PARTIAL`
 
 ## Final check
 
-Before calling the change shipped, re-read the six items and name, out loud, which ones applied and which did not and why. **"I updated the code and the man page" is not shipping** if the template still teaches the old way or a silent behavior change went out with no checklist entry.
+Before calling the change shipped, re-read the six items and name, out loud, which ones applied and which did not and why. **"I updated the code and the man page" is not shipping** if the template still teaches the old way or a silent behavior change went out with no audit or check.
 
-Details: `system/app/RSpade/breaking_changes/CLAUDE.md`, `rsx:man breaking_changes`, `rsx:man prelaunch_checklist`. Related: `rspade:publishing-a-release`.
+Details: `system/app/RSpade/breaking_changes/CLAUDE.md`, `rsx:man breaking_changes`, `rsx:man conformance_audits`, `rsx:man launch_checklist`. Related: `rspade:publishing-a-release`.

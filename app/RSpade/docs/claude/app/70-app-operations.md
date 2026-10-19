@@ -19,6 +19,6 @@ php artisan rsx:npm install <pkg>        # JS package  -> /node_modules
 ### Local conventions
 
 - **App config overrides** live in `rsx/resource/config/rsx.php` (merged over the framework config; never modify `system/config/`).
-- **Your own pre-launch checklist** lives at `rsx/resource/audits/prelaunch_checklist.md` — app-specific items (permission gates you added, email templates, seed-data cleanup). The framework-required audits are `php artisan rsx:man prelaunch_checklist`; review BOTH before going live.
+- **Your own conformance audits** live in `rsx/resource/conformance/<id>.md` — contracts specific to what you built, run beside the framework's on request (`rsx:man conformance_audits`).
 
 Skill: `rspade:dependencies`. Details: `php artisan rsx:man dependencies`, `rsx:man npm`.

@@ -39,6 +39,17 @@ class Rsx_SSR
     private const STARTUP_TIMEOUT_MS = 10000;
 
     /**
+     * SERVER-SIDE RENDERING IS DISABLED IN THIS RELEASE. render_component() refuses: it logs
+     * DISABLED_MESSAGE and throws, and the SSR Node server is never started. The feature
+     * returns once its functionality and security posture are validated, with the jqhtml
+     * core changes it depends on (backlog B-132).
+     */
+    public const ENABLED = false;
+
+    public const DISABLED_MESSAGE = 'Server-side rendering (Rsx_SSR::render_component()) is disabled in this RSpade '
+        . 'release and will be implemented in a future release. Serve the component client-side.';
+
+    /**
      * Server startup poll interval (milliseconds)
      */
     private const STARTUP_POLL_MS = 50;
@@ -58,10 +69,16 @@ class Rsx_SSR
      * @param array $args Component arguments (becomes this.args)
      * @param string $bundle_class Bundle class name (e.g., 'SSR_Test_Bundle')
      * @return array ['html' => string, 'timing' => array, 'preload' => array]
-     * @throws \RuntimeException on connection or render failure
+     * @throws \RuntimeException while SSR is disabled (ENABLED), or on connection or render failure
      */
     public static function render_component(string $component, array $args = [], string $bundle_class = ''): array
     {
+        if (!self::ENABLED) {
+            \Illuminate\Support\Facades\Log::warning(self::DISABLED_MESSAGE . " Component: {$component}");
+
+            throw new \RuntimeException(self::DISABLED_MESSAGE);
+        }
+
         // SYSTEM lock: the SSR server is a node process on THIS box. Waits forever, and
         // that is only safe BECAUSE the render itself is bounded (DEFAULT_TIMEOUT, the
         // sanctioned timeout documented in bin/ssr-server.js) - the two are one design:

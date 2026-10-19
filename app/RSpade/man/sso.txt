@@ -869,7 +869,7 @@ THE CLIENT PORTAL REALM
         https://myapp.com/clients           https://myapp.com/clients/_sso/google/callback
 
     Changing PORTAL_URL changes this URI, so every provider console needs the
-    new one (rsx:man prelaunch_checklist, ENTRY 16).
+    new one (rsx:man launch_checklist, PORTAL_URL is final).
 
     ITS OWN HOOKS, NEVER THE STAFF ONES. The portal fires DISTINCT hook names,
     each payload carrying 'portal_user' where the staff one carries

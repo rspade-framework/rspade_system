@@ -686,9 +686,23 @@ class Manifest_Indexer
 
         // Generate attribute stubs. The ATTRIBUTE INDEX is the one answer to "which
         // attributes does this tree declare", and it is ksorted - so the generated file is
-        // deterministic, which matters because it is COMMITTED. This used to walk every file
-        // and every method map in insertion order.
-        $attributes = array_keys(Manifest::$data['data']['attribute_index'] ?? []);
+        // deterministic, which matters because it is COMMITTED.
+        //
+        // THE SHIPPED TREE'S VOCABULARY, whatever kind of build this is. A test run also
+        // indexes the test trees (Manifest_Scanner::TEST_SCAN_DIRECTORIES), and an attribute
+        // only a fixture declares would otherwise appear in the file after a test run and
+        // vanish after a plain build - a committed file flipping with the last build kind.
+        $attributes = [];
+
+        foreach (Manifest::$data['data']['attribute_index'] ?? [] as $attribute => $rows) {
+            foreach ($rows as $row) {
+                if (!static::__is_test_tree_file((string) ($row['file'] ?? ''))) {
+                    $attributes[] = $attribute;
+                    break;
+                }
+            }
+        }
+
         sort($attributes, SORT_STRING);
 
         if (!empty($attributes)) {
@@ -709,5 +723,22 @@ class Manifest_Indexer
         if (!file_exists($stub_file) || file_get_contents($stub_file) !== $output) {
             file_put_contents_safe($stub_file, $output);
         }
+    }
+
+    /**
+     * Is this indexed path inside one of the test trees a test run adds to the scan?
+     *
+     * @param string $file_path A manifest file key
+     * @return bool
+     */
+    private static function __is_test_tree_file(string $file_path): bool
+    {
+        foreach (Manifest_Scanner::TEST_SCAN_DIRECTORIES as $test_path) {
+            if (str_starts_with($file_path, $test_path . '/')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

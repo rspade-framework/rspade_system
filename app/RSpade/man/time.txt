@@ -661,7 +661,8 @@ SEE ALSO
        Rsx_Timezone_Controller, Rsx_Timezone_Auto
 
        rsx:man datetime_inputs - date and time ENTRY in forms (native input types)
-       rsx:man prelaunch_checklist ENTRY 6 - the display / column-type audit
+       rsx:man conformance_audits - audit datetime_display_and_columns, the
+       display / column-type audit
 
 AUTHOR
        RSpade Framework

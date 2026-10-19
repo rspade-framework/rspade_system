@@ -22,7 +22,7 @@ class Query_Command extends Command
      *
      * @var string
      */
-    protected $description = 'Execute MySQL queries directly - useful for data queries, schema inspection (SHOW CREATE TABLE), and query analysis (EXPLAIN). Default limit of 25 records applied to SELECT queries without LIMIT clause.';
+    protected $description = 'Execute MySQL queries directly - useful for data queries, schema inspection (SHOW CREATE TABLE), and query analysis (EXPLAIN). Default limit of 25 records applied to SELECT queries without LIMIT clause, and at most 25 rows are printed.';
 
     /**
      * Execute the console command.

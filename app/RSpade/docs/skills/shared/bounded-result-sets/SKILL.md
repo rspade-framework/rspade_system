@@ -97,9 +97,9 @@ The test is **"could a reasonable query here return thousands?"** - and **over-m
 
 ## The two enforcement surfaces
 
-**`DB-UNBOUNDED-01`** (`rsx:check`, AST) flags a whole-set read (`->get()` / `->pluck()`) reached through a builder chain whose root model declares `$unbounded`. Scope is **framework code only** (`system/app/`) - the code shipped to everyone, held to the higher bar; application code is covered by the runtime tripwire and by the prelaunch checklist's unbounded-query audit, and linting it would fire on perfectly reasonable app queries. Suppressed when the chain already carries a bound or an iteration strategy (`->limit()`, `->take()`, `->result_set()`, `->lazyById()`, `->lazy()`, `->chunkById()`, `->chunk()`, `->cursor()`, `->paginate()`, `->simplePaginate()`, `->first()`, `->raw_bulk()`), or by a file-level `@DB-UNBOUNDED-01-EXCEPTION - <rationale>`. It is ADVISORY: the answer is usually to state what bounds this one query.
+**`DB-UNBOUNDED-01`** (`rsx:check`, AST) flags a whole-set read (`->get()` / `->pluck()`) reached through a builder chain whose root model declares `$unbounded`. Scope is **framework code only** (`system/app/`) - the code shipped to everyone, held to the higher bar; application code is covered by the runtime tripwire and by the conformance audit `unbounded_queries`, and linting it would fire on perfectly reasonable app queries. Suppressed when the chain already carries a bound or an iteration strategy (`->limit()`, `->take()`, `->result_set()`, `->lazyById()`, `->lazy()`, `->chunkById()`, `->chunk()`, `->cursor()`, `->paginate()`, `->simplePaginate()`, `->first()`, `->raw_bulk()`), or by a file-level `@DB-UNBOUNDED-01-EXCEPTION - <rationale>`. It is ADVISORY: the answer is usually to state what bounds this one query.
 
-**`rsx.database.result_set_warn_threshold`** (default 1000): in development, logs ONE `[DB-UNBOUNDED]` warning when a `get()` actually returns more rows than that, naming your call site. **It never throws and never truncates.** Set `0`/`null` to disable.
+**`rsx.database.result_set_warn_threshold`** (default 1000): in development and debug mode, logs ONE `[DB-UNBOUNDED]` warning when a `get()` actually returns more rows than that, naming your call site. **It never throws and never truncates.** Set `0`/`null` to disable.
 
 ## Anti-zealotry
 

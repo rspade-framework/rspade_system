@@ -37,6 +37,18 @@ use App\RSpade\Core\Manifest\Manifest;
 class Rsx_FPC
 {
     /**
+     * FULL PAGE CACHING IS DISABLED IN THIS RELEASE. #[FPC] is still parsed and baked onto
+     * the route row, but the dispatcher never marks a response for the proxy: an #[FPC]
+     * route dispatches like any other route and logs DISABLED_WARNING. The feature returns
+     * once its functionality and security posture are validated (backlog B-132).
+     */
+    public const ENABLED = false;
+
+    /** The log line an #[FPC] route writes on every request while ENABLED is false. */
+    public const DISABLED_WARNING = 'Full page caching (#[FPC]) is disabled in this RSpade release and will be '
+        . 'implemented in a future release; this route was dispatched normally and not cached.';
+
+    /**
      * Redis database holding FPC entries - the reduced-volatility cache. Must match
      * FPC_REDIS_DB in system/bin/fpc-proxy.js; the RsxCache class header is the authority
      * on the database map.

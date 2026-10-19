@@ -188,10 +188,10 @@ Without that sync, an `enable` launched from a development parent spawns a build
 
 ## Before launch
 
-`php artisan rsx:man prelaunch_checklist` is a curated audit of framework-required requirements that are impractical to enforce with a lint rule - whole-flow wiring obligations, patterns a build cannot detect. The read-only posture is one of its entries.
+`php artisan rsx:man launch_checklist` is the deployment steps and the host checks - the read-only posture, `rsx:health` on the production host, mail delivery, the server timezone among them. Walk it on the production host, as the serving user.
 
-Work it as a checklist, not a skim: each entry says what to audit, why, and what a correct implementation looks like. Then work your OWN list at `rsx/resource/audits/prelaunch_checklist.md` - app-specific items (permission gates you added, email templates, seed-data cleanup, throwaway accounts). **Review BOTH before going live**; neither replaces the other.
+The contracts on the shape of the application's code are the launch conformance audits (`php artisan rsx:conformance:list --when=launch`, skill `rspade:conformance-audits`), run on request on the development box - the application's own audits in `rsx/resource/conformance/` included. **Do BOTH before going live**; neither replaces the other.
 
 ---
 
-Details: `php artisan rsx:man prod`, `rsx:man app_mode`, `rsx:man storage_directories`, `rsx:man prelaunch_checklist`, `rsx:man fpc`. Related: `rspade:maintenance-mode`, `rspade:environment-config`.
+Details: `php artisan rsx:man prod`, `rsx:man app_mode`, `rsx:man storage_directories`, `rsx:man launch_checklist`, `rsx:man fpc`. Related: `rspade:maintenance-mode`, `rspade:environment-config`.

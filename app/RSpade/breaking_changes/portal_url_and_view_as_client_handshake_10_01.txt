@@ -95,7 +95,7 @@ PORTING IT
     Moving the portal to a different host has consequences outside your code:
     each SSO provider console needs the new portal redirect URI, passkeys
     enrolled under the old portal host stop working, and stored portal links
-    carry the old address. rsx:man prelaunch_checklist (ENTRY 16).
+    carry the old address. rsx:man launch_checklist (PORTAL_URL is final).
 
 VERIFICATION
     php artisan rsx:health shows the "Portal URL" row OK with the origin and
@@ -106,5 +106,5 @@ VERIFICATION
 
 SEE ALSO
     portal - PORTAL URL, INTERNAL ENDPOINTS, IMPERSONATION
-    prelaunch_checklist - changing PORTAL_URL
+    launch_checklist - changing PORTAL_URL
     skill rspade:portal-core - layouts and View as Client

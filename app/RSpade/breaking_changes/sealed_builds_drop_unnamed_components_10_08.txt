@@ -66,5 +66,5 @@ VERIFICATION
 
 SEE ALSO
     rsx:man bundle_api - THE COMPONENT SHAKE
-    rsx:man prelaunch_checklist - ENTRY 18
+    rsx:man conformance_audits - runtime_assembled_component_names
     skill rspade:bundles

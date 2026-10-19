@@ -35,8 +35,7 @@ use App\RSpade\CodeQuality\Support\FileSanitizer;
  *
  * WHY IT IS HIGH: both failures are invisible to the sender. Nothing throws, no build
  * breaks, the queue row says SENT - the defect exists only in a message that has
- * already left, in somebody else's inbox. This began life as a grep in the prelaunch
- * checklist, which is the strongest possible evidence that it needed to be a rule.
+ * already left, in somebody else's inbox.
  */
 class EmailTemplate_CodeQualityRule extends CodeQualityRule_Abstract
 {

@@ -15,6 +15,13 @@ echo "[SETUP] Preparing test..." >&2
 FPC_PORT=3200
 FPC_URL="http://localhost:$FPC_PORT"
 
+# Full page caching is disabled in this release (Rsx_FPC::ENABLED, backlog B-132): an
+# #[FPC] route is dispatched normally and never cached, so there is no behaviour to assert.
+if grep -q 'public const ENABLED = false;' "$TEST_DIR/../../../Core/FPC/Rsx_FPC.php"; then
+    echo "SKIP: $TEST_NAME - full page caching is disabled in this release (Rsx_FPC::ENABLED)"
+    exit 0
+fi
+
 # Verify FPC proxy is running
 if ! curl -s -o /dev/null --connect-timeout 2 "$FPC_URL/ssr-test" 2>/dev/null; then
     echo "SKIP: $TEST_NAME - FPC proxy not running on port $FPC_PORT"

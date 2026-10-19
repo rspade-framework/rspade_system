@@ -55,23 +55,30 @@ class PhpFileStructure_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
+     * CROSS-FILE: the driver calls it once per pass, and it judges every indexed file.
+     *
+     * @return string
+     */
+    public function kind(): string
+    {
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * @return array
+     */
+    public function depends_on(): array
+    {
+        return ['files:*.php'];
+    }
+
+    /**
      * Main check method - called by CodeQualityChecker
      * For manifest-time rules, this aggregates data across all files
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        // Only process during manifest-time when we have all files
-        // This rule needs to scan all files to check for duplicates
-        static $already_run = false;
-        if ($already_run) {
-            return;
-        }
-
-        // On the first PHP file, process all files
-        if (!empty($metadata) && $metadata['extension'] === 'php') {
-            $this->process_all_files();
-            $already_run = true;
-        }
+        $this->process_all_files();
     }
 
     private function process_all_files(): void

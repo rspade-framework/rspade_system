@@ -58,8 +58,9 @@ class Prod_Enable_Command extends Command
 
         $this->newLine();
         $this->line('Before deploying the live application, read and verify:');
-        $this->line('  php artisan rsx:man prelaunch_checklist');
+        $this->line('  php artisan rsx:man launch_checklist');
         $this->line('  php artisan rsx:man prod');
+        $this->line('and have the launch conformance audits run (php artisan rsx:conformance:list --when=launch).');
 
         return 0;
     }

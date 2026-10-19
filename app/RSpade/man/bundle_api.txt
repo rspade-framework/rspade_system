@@ -499,7 +499,7 @@ PUBLIC-FACING BUNDLES
     its portal's:
         system/app/RSpade/resource/reference_app/app/login/login_bundle.php
         system/app/RSpade/resource/reference_app/portal/auth/portal_auth_bundle.php
-    The recurring audit is an entry in rsx:man prelaunch_checklist.
+    The recurring audit is the conformance audit public_bundle_contents.
 
 ROUTE EXTRACTION (include_routes)
     Bundles can extract route definitions from directories without bundling
@@ -1153,7 +1153,7 @@ SEE ALSO
     rsx:man app_mode
     rsx:man prod
     rsx:man model_fetch
-    rsx:man prelaunch_checklist
+    rsx:man conformance_audits
     skill rspade:bundles - writing a bundle, public-facing bundles
 
 RSX Framework                     2025-12-09                      BUNDLE_API(3)

@@ -260,10 +260,11 @@ LIVING DOCUMENTATION
     IT WINS - the framework page remains the reference for how the feature was
     designed and the conventions it was built to.
 
-    THE AUDIT. Currency is not linted. It is audited before launch:
-    `php artisan rsx:man prelaunch_checklist`, ENTRY 10 - LIVING DOCUMENTATION
-    CURRENCY, which enumerates every `CLAUDE.md` under /rsx/ and every skill in
-    rsx/resource/skills/ and holds each one against its directory's current contents.
+    THE AUDIT. Currency is not linted. It is the conformance audit
+    living_documentation_currency (`php artisan rsx:conformance:show
+    living_documentation_currency`), which enumerates every `CLAUDE.md` under /rsx/
+    and every skill in rsx/resource/skills/ and holds each one against its
+    directory's current contents.
 
     THE PRISTINE BASELINE. The copies under
     system/app/RSpade/resource/reference_app/ are NOT audited and are never edited:

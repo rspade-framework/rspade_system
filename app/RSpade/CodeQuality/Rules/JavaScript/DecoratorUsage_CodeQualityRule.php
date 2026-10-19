@@ -50,21 +50,27 @@ class DecoratorUsage_CodeQualityRule extends CodeQualityRule_Abstract
         return true;
     }
 
+    /**
+     * CROSS-FILE: the driver calls it once per pass, and it judges every indexed file.
+     *
+     * @return string
+     */
+    public function kind(): string
+    {
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * @return array
+     */
+    public function depends_on(): array
+    {
+        return ['files:*.js'];
+    }
+
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        // Only process during manifest-time when we have all files
-        // This rule needs to scan all files first to build the whitelist
-        // So we run it once at the end of manifest building
-        static $already_run = false;
-        if ($already_run) {
-            return;
-        }
-
-        // On the first JavaScript file, process all files
-        if (!empty($metadata) && $metadata['extension'] === 'js') {
-            $this->process_all_files();
-            $already_run = true;
-        }
+        $this->process_all_files();
     }
 
     private function process_all_files(): void
