@@ -89,7 +89,7 @@ async function probe_synthetic(page) {
 
         const $slot = $('#rsx_cascade_probe_mount_temp').find('.rsx_cascade_probe_slot_temp');
         observed.instance_after = !!$slot.component();
-        observed.painted = $slot.find('.Rsx_Default_Spinner__circle').length;
+        observed.painted = $slot.find('.Rsx_Default_Spinner__icon').length;
         observed.classes = $slot.attr('class') || '';
 
         $('#rsx_cascade_probe_mount_temp').remove();

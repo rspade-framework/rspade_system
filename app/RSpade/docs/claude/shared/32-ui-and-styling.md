@@ -9,9 +9,10 @@ CSS). Never hand-roll spinner markup and never pass a size to the spinner compon
 there are no size arguments anywhere. **The host is a CENTERING STAGE, not a scale
 target**: it says where the spinner goes, and the REGISTERED component decides whether
 it fills that box or draws at a fixed size centered inside it. An application registers
-its spinner once via `Rsx.set_default_spinner('Name')` from a `static on_app_ready()`;
-the framework ships `Rsx_Default_Spinner` (a plain spinning circle) so a fresh app has
-one before it has designed one.
+its spinner once via `Rsx.set_default_spinner('Name')` from a `static on_app_modules_define()`
+- the first boot phase: the first SPA page draws its spinners before `app_ready`, so a later
+registration silently misses it. The framework ships `Rsx_Default_Spinner` (a small
+fixed-size circle, centered) so a fresh app has one before it has designed one.
 
 
 **Asset split**: jqhtml = markup | JS files = logic, lifecycle, state | SCSS = component styles, auto-bundled. **No `<style>` or `<script>` tags**, no inline event handlers. **An external script/stylesheet is never hand-injected either** (no appended `<script src=cdn>`, no vendor copy-paste snippet) — declare it in a `*.externals.php` file beside the feature and `await Rsx.load_external('id')`; the CSP whitelist derives from that declaration, so an ad-hoc external is a blocked external. Skill `rspade:external-resources`; `rsx:man external_resources`, `rsx:man csp`.

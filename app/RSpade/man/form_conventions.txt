@@ -568,13 +568,15 @@ THE SPINNER REGISTRY
         <Spinner />                              template entry point
         $(el).component(Rsx.get_default_spinner())    the JS equivalent
 
-    The framework default is Rsx_Default_Spinner, a plain spinning circle drawn
-    in currentColor, so a fresh RSpade app has a working spinner before it has
-    designed one. An application registers its own once, from a static
-    on_app_ready():
+    The framework default is Rsx_Default_Spinner, a small rotating circle drawn
+    at a fixed size (24px), centered in its host, in currentColor - so a fresh
+    RSpade app has a working spinner before it has designed one. An application
+    registers its own once, from a static on_app_modules_define() - the first
+    boot phase; the first SPA page draws its spinners before app_init and
+    app_ready, so a registration made there is not in force for that page:
 
         class App_Spinner extends Component {
-            static on_app_ready() { Rsx.set_default_spinner('App_Spinner'); }
+            static on_app_modules_define() { Rsx.set_default_spinner('App_Spinner'); }
         }
 
     THE HOST OWNS THE BOX, and the box is a CENTERING STAGE - not a scale target.

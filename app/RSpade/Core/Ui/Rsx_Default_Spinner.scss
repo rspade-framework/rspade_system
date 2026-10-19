@@ -1,7 +1,11 @@
-/* Drawn in currentColor so it is legible on any surface: core has no palette, and the
-   spinner inherits the colour of whatever the host is sitting in. The track is the same
-   colour mixed down to a hint, so light-on-dark and dark-on-light both read correctly
-   with no theme rule anywhere. */
+/* The root FILLS its host and centers the glyph; the GLYPH is a fixed size and never
+   scales. The host decides where the spinner goes, not how big it is - a loading region
+   is frequently a whole panel, and a spinner that grew with it would be a rotating shape
+   the size of the region.
+
+   Drawn in currentColor: core has no palette, so the spinner inherits the colour of
+   whatever surface it is sitting on and reads correctly light-on-dark and dark-on-light
+   with no theme rule anywhere. The opacity mutes it to a mark rather than a shout. */
 .Rsx_Default_Spinner {
     width: 100%;
     height: 100%;
@@ -9,16 +13,14 @@
     align-items: center;
     justify-content: center;
 
-    .Rsx_Default_Spinner__circle {
-        width: 70%;
-        height: 70%;
-        max-width: 100%;
-        max-height: 100%;
-        aspect-ratio: 1;
-        border: 4px solid color-mix(in srgb, currentColor 20%, transparent);
-        border-top-color: currentColor;
-        border-radius: 50%;
-        animation: rsx-default-spinner-rotate 0.9s linear infinite;
+    .Rsx_Default_Spinner__icon {
+        /* A fixed square, so the circle is a circle at every host size and shape. flex:none
+           keeps a host narrower than the glyph from shrinking it. */
+        width: 24px;
+        height: 24px;
+        flex: none;
+        opacity: 0.65;
+        animation: rsx-default-spinner-rotate 1s linear infinite;
     }
 }
 

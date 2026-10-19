@@ -264,7 +264,7 @@ html.rsx-dark { --rsx-form-veil: rgba(16, 21, 27, 0.7); }
 ```
 
 The overlay hosts the **registered spinner** - `Rsx.set_default_spinner('App_Spinner')`
-once at app init, `<Spinner />` or `$(el).component(Rsx.get_default_spinner())` anywhere
+once, from a static `on_app_modules_define()`, `<Spinner />` or `$(el).component(Rsx.get_default_spinner())` anywhere
 else. The host owns the box and the box is a centering stage; there are no size
 arguments, and spinner markup is never hand-rolled.
 

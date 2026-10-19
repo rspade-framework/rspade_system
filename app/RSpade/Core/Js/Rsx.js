@@ -56,9 +56,11 @@ class Rsx {
     static _default_spinner = 'Rsx_Default_Spinner';
 
     /**
-     * Register the application's spinner component. Call once at application init
-     * (a static on_app_ready() is the natural home). The component must GROW TO FILL
-     * its container - hosts own the box, the spinner owns only the animation.
+     * Register the application's spinner component. Call once, from a static
+     * on_app_modules_define() - the first boot phase. The first SPA page renders, and
+     * draws its spinners, before app_init and app_ready, so a later registration is not in
+     * force for that page. The host owns the box and is a centering stage; the component
+     * decides whether it fills the box or draws at a fixed size centered in it.
      *
      * @param {string} component_name
      */
@@ -72,8 +74,8 @@ class Rsx {
      *
      *     $(element).component(Rsx.get_default_spinner());
      *
-     * or place <Spinner /> in a template. The HOST controls the size (the spinner
-     * fills it); never size the spinner itself.
+     * or place <Spinner /> in a template. The HOST owns the box; never size the spinner
+     * itself.
      *
      * @returns {string}
      */
