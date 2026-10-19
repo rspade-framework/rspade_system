@@ -15,6 +15,7 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Task\Task_Concurrency;
+use App\RSpade\Core\Task\Task_Dispatcher_Context;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Lock_Set;
 use App\RSpade\Core\Task\Task_Notify;
@@ -33,9 +34,12 @@ class Task_Runner
     /**
      * Insert a run's row and return its id.
      *
-     * The row records who started it and for which site - the signed-in identity of the
-     * current realm (Rsx_Model_Abstract::_resolve_context_actor()) and the current site - so an
-     * application's view gate can show users the runs they started.
+     * The row records who started it, for which site and from what acting context - the
+     * signed-in identity of the current realm (Rsx_Model_Abstract::_resolve_context_actor()),
+     * the current site and Session::get_audit_session_id() - so an application's view gate can
+     * show users the runs they started, and a task declared #[Run_As_Dispatcher] can run as
+     * them (Task_Dispatcher_Context). Such a task dispatched with nobody signed in is refused
+     * here: it would otherwise run as nobody.
      *
      * `timeout` stays NULL unless $fields names one: NULL is "no hard limit - the silence rule
      * applies" (rsx.tasks.silent_timeout), a number is a hard limit somebody asked for.
@@ -47,6 +51,13 @@ class Task_Runner
         $now = now()->format('Y-m-d H:i:s.v');
         $actor = Rsx_Model_Abstract::_resolve_context_actor();
 
+        if ($actor === null && Task_Dispatcher_Context::is_declared($class, $method)) {
+            throw new \RuntimeException(
+                "{$class}::{$method} runs as the person who dispatched it (#[Run_As_Dispatcher]), and it was "
+                . 'dispatched with nobody signed in. Dispatch it from a signed-in request.'
+            );
+        }
+
         $row = [
             'class' => $class,
             'method' => $method,
@@ -57,6 +68,7 @@ class Task_Runner
             'site_id' => static::__current_site_id(),
             'dispatched_by_id' => $actor['id'] ?? null,
             'dispatched_by_type' => $actor !== null ? Type_Ref_Registry::class_to_id($actor['type']) : null,
+            'audit_session_id' => \App\RSpade\Core\Session\Session::get_audit_session_id(),
             'scheduled_for' => $now,
             'created_at' => $now,
             'updated_at' => $now,
@@ -77,8 +89,12 @@ class Task_Runner
      * @param bool $release_leaked_locks A WORKER runs unrelated tasks back to back in one long
      *        process, so it hands back every lock the task took and left held (loudly - that
      *        is a defect in the task). An inline caller keeps its own locks.
+     * @param bool $as_recorded_dispatcher The run executes in a process other than the one that
+     *        dispatched it (a worker, rsx:task:process --once), so a task declared
+     *        #[Run_As_Dispatcher] has its dispatcher's context put back for the call
+     *        (Task_Dispatcher_Context). An inline run is already in its dispatcher's context.
      */
-    public static function execute(Task_Instance $instance, bool $release_leaked_locks): Task_Run_Outcome
+    public static function execute(Task_Instance $instance, bool $release_leaked_locks, bool $as_recorded_dispatcher = false): Task_Run_Outcome
     {
         $class = $instance->get_class();
         $method = $instance->get_method();
@@ -94,7 +110,7 @@ class Task_Runner
                 throw new \RuntimeException("Method not found: {$class}::{$method}");
             }
 
-            $value = static::__capturing_output($instance, function () use ($class, $method, $instance, $params) {
+            $invoke = fn () => static::__capturing_output($instance, function () use ($class, $method, $instance, $params) {
                 $pre = $class::pre_task($instance, $params);
                 if ($pre !== null) {
                     return $pre;
@@ -102,6 +118,10 @@ class Task_Runner
 
                 return $class::$method($instance, $params);
             });
+
+            $value = $as_recorded_dispatcher && Task_Dispatcher_Context::is_declared($class, $method)
+                ? Task_Dispatcher_Context::run($instance->get_id(), $invoke)
+                : $invoke();
 
             $outcome = Task_Run_Outcome::from_return($value);
         } catch (Throwable $e) {

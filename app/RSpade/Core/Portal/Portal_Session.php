@@ -1022,6 +1022,22 @@ class Portal_Session
     }
 
     /**
+     * End a portal identity declared in CLI mode: the portal user, the impersonator and the
+     * declared site. FRAMEWORK INTERNAL - Task_Dispatcher_Context calls it after a run it
+     * executed as a portal user.
+     *
+     * @return void
+     */
+    public static function _clear_cli_identity(): void
+    {
+        self::$_declared_site_id = null;
+        self::$_cli_portal_user_id = null;
+        self::$_cli_impersonator_user_id = null;
+        self::$_site = null;
+        self::$_portal_user = null;
+    }
+
+    /**
      * Set impersonator user id in CLI mode (test seeding; mirrors
      * cli_set_portal_user_id).
      *

@@ -70,6 +70,14 @@ class Audit_Session
     private static array $user_agent_strings = [];
 
     /**
+     * An acting context DECLARED for the work this process is doing now - a task running as
+     * the person who dispatched it (Task_Dispatcher_Context). While set, current_id() answers
+     * it instead of deriving one, so what the run writes points at the dispatching request's
+     * own context: its identity, its impersonators, its address and user agent.
+     */
+    private static ?int $declared_id = null;
+
+    /**
      * The id of the audit session for whoever is acting right now, minting the row if
      * this context has not been seen before.
      *
@@ -80,6 +88,10 @@ class Audit_Session
      */
     public static function current_id(): int
     {
+        if (self::$declared_id !== null) {
+            return self::$declared_id;
+        }
+
         $context = self::__current_context();
 
         // The tuple: everything that makes this a DIFFERENT context when it changes.
@@ -338,6 +350,19 @@ class Audit_Session
         }
 
         return self::JOINED_FIELDS[$name];
+    }
+
+    /**
+     * Declare (an id) or end (null) the acting context current_id() answers.
+     *
+     * FRAMEWORK INTERNAL - Task_Dispatcher_Context is the one caller.
+     *
+     * @param int|null $audit_session_id
+     * @return void
+     */
+    public static function _declare(?int $audit_session_id): void
+    {
+        self::$declared_id = $audit_session_id;
     }
 
     /**

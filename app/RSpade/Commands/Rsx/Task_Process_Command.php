@@ -600,7 +600,7 @@ class Task_Process_Command extends Command
         $instance = Task_Instance::find((int) $row->id);
         $this->info("[ONCE MODE] Executing task {$row->id}: {$instance->get_class()}::{$instance->get_method()}");
 
-        $outcome = Task_Runner::execute($instance, false);
+        $outcome = Task_Runner::execute($instance, false, true);
         Task_Runner::settle($instance, $outcome);
 
         if ($outcome->success) {

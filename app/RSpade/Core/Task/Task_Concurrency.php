@@ -537,9 +537,10 @@ class Task_Concurrency
     }
 
     /**
-     * Method attribute map from the manifest (keyed by simple attribute name).
+     * Method attribute map from the manifest (keyed by simple attribute name). Framework
+     * internal: the task core reads a task's declarations through it.
      */
-    private static function _method_attributes(string $class, string $method): array
+    public static function _method_attributes(string $class, string $method): array
     {
         $record = Manifest::php_class_metadata(Manifest::_normalize_class_name($class));
 

@@ -103,8 +103,11 @@ RUNS
 
     Each row records dispatched_by (a type-ref pair: the User_Model, Portal_User_Model or
     Login_User_Model signed in when the run was created, null for a schedule, a worker or
-    the CLI) and site_id (the current site, 0 when there is none). Those two columns are
-    what an application's view gate keys on (GATES AND THE BROWSER API).
+    the CLI), site_id (the current site, 0 when there is none) and audit_session_id (the
+    acting context it was started from - Session::get_audit_session_id()). dispatched_by and
+    site_id are what an application's view gate keys on (GATES AND THE BROWSER API); the three
+    together are what a task declared #[Run_As_Dispatcher] runs as (RUNNING AS THE
+    DISPATCHER).
 
 REPORTING (Task_Instance)
 
@@ -652,6 +655,55 @@ LOCKS: PROTECTING CRITICAL SECTIONS
     SPAWNING artisan from inside a task goes through Rsx_Artisan, never
     passthru/exec_safe - a subprocess is a different lock connection and would queue
     behind locks this task holds, forever. Full contract: rsx:man locks.
+
+RUNNING AS THE DISPATCHER
+
+    A dispatched task runs as NOBODY: no session identity, no site, no realm - correct for
+    system work (a render queued by an upload, a mail drain, a schedule). A task that is a
+    PERSON'S request moved off the request thread declares it runs as that person:
+
+        #[Task('Set the status of the selected records')]
+        #[Run_As_Dispatcher]
+        public static function bulk_set_status(Task_Instance $task, array $params = [])
+
+    Opt-in, per task. While a worker (or rsx:task:process --once) executes such a run, for
+    pre_task() and the method, the context recorded at dispatch is put back:
+
+        - the identity and the site: Session::get_login_user_id(), get_user_id(), get_user(),
+          get_site_id() and the site scope answer as they did in the dispatching request; a
+          run dispatched by a portal user runs in the portal realm
+          (Rsx_Portal::is_portal_request(), Portal_Session::get_portal_user_id(), its site);
+        - attribution: Rsx_Model_Abstract::_resolve_context_actor() names the dispatcher, so
+          revisions, the created_by/updated_by pairs and an application's own log do;
+        - the acting context: Session::get_audit_session_id() answers the dispatch's
+          audit_session_id - its address, user agent and device;
+        - impersonation, faithfully: the run acts as the EFFECTIVE identity, and the
+          impersonator the dispatching request carried is declared too
+          (Session::get_impersonator_login_user_id(),
+          Portal_Session::get_impersonator_user_id()).
+
+    Afterwards the worker is back to acting as nobody, so its next run starts clean. No
+    _sessions row is created and no cookie exists: it is a declaration.
+
+    An INLINE run (Task::internal(), and a run queued while the task system is off and then
+    executed inline) executes in its caller's own context already; nothing is restored.
+
+    REFUSALS. Never a fallback to running as nobody:
+
+        - dispatched with nobody signed in - Task::dispatch() throws ("dispatched with nobody
+          signed in");
+        - the dispatcher may no longer act when the run starts - the membership or its site
+          was disabled or deleted (users.is_enabled, sites.is_enabled: User_Model::is_active()),
+          the login identity or the portal user was deleted, the portal site was disabled -
+          the run FAILS with the reason and nothing executes. Account statuses an application
+          defines are its own to check, in the task.
+
+    A rerun ($run->rerun()) is a new dispatch, so it runs as whoever asked for the rerun.
+    Running as the dispatcher grants nothing about who may watch or stop the run: the view
+    and control gates are unchanged.
+
+    TASK-RUN-AS-01 (a manifest-build FATAL) refuses #[Run_As_Dispatcher] on a method that is
+    not a #[Task], and beside #[Schedule] or #[Command] - neither has a signed-in dispatcher.
 
 THE WORKER POOLS
 
@@ -1497,7 +1549,7 @@ DATABASE SCHEMA
 
     _tasks (Task_Run_Model) - one row per run:
         class, method, params (JSON), params_hash, origin_id, schedule_id, pool_id,
-        site_id, dispatched_by_id + dispatched_by_type,
+        site_id, dispatched_by_id + dispatched_by_type, audit_session_id,
         status_id, status_reason, error, return_code,
         scheduled_for, started_at, completed_at, stop_requested_at, abandon_count, timeout,
         status_text, progress_percent, progress_done, progress_total, eta_at,

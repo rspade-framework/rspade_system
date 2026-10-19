@@ -142,7 +142,9 @@ php artisan rsx:tasks:list                                    # the switch, pool
 - **`Task::internal()`** runs in this process and returns the settled row. A throw settles FAILED and is rethrown; a failure return comes back as the row (read `status_id`, `return_code`).
 - **A task worth invoking by hand gets its own artisan command**: `#[Command('myapp:report', 'Generate the monthly report')]` beside the `#[Task]`. Skill `rspade:task-commands`.
 
-The row records `dispatched_by` (the signed-in identity, a type-ref pair) and `site_id` - what a view gate keys on.
+The row records `dispatched_by` (the signed-in identity, a type-ref pair), `site_id` - what a view gate keys on - and `audit_session_id` (the acting context it was started from).
+
+**A person's request moved off the request thread runs as that person: `#[Run_As_Dispatcher]`** beside the `#[Task]`. A worker executing the run restores the dispatcher's identity, site, realm (a portal user's run is a portal run), impersonator and acting context for `pre_task()` and the method, then clears them - so revisions, `created_by`/`updated_by` and your own log name the person who clicked, exactly as an inline write would. Without it a task runs as nobody, which is right for system work. Dispatched with nobody signed in it is refused at dispatch; a dispatcher disabled or deleted before the run starts FAILS the run with nothing executed. An inline run is already in its caller's context. A rerun runs as whoever asked for it. Never beside `#[Schedule]` or `#[Command]` (`TASK-RUN-AS-01`, build-time). `rsx:man tasks`, RUNNING AS THE DISPATCHER.
 
 ---
 

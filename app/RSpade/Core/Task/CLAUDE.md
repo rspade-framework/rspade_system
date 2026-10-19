@@ -24,8 +24,16 @@ says what is in this DIRECTORY and what must stay true when editing it.
   lock, unlock, and spawn only below the cap - `rsx:task:killer` for the kill pool,
   `rsx:task:worker --pool=` otherwise) and the process switch `spawn_workers(bool)` (OFF by
   default under the test suite).
+- `Task_Dispatcher_Context.php` — `#[Run_As_Dispatcher]`: `run($task_id, $call)` restores a
+  run's recorded dispatcher (staff via `Session::impersonate()`, portal via `Portal_Session`
+  + the portal realm, the impersonator from the dispatch's audit session, and
+  `Audit_Session::_declare()` for the acting context), re-checks the account first (refusal =
+  a failed run, nothing executed) and clears everything after. `Task_Runner::execute()`
+  calls it only when its third argument says the run executes outside its dispatcher's
+  process (the worker, `rsx:task:process --once`); `Task::internal()` does not.
 - `Task_Runner.php` — the one path every run takes: `insert_row()` (stamps `dispatched_by`
-  from `Rsx_Model_Abstract::_resolve_context_actor()` and the current `site_id`),
+  from `Rsx_Model_Abstract::_resolve_context_actor()`, the current `site_id` and
+  `audit_session_id`; refuses a `#[Run_As_Dispatcher]` task dispatched with nobody signed in),
   `execute()` (`pre_task()`, the method, echo captured line by line as stdout, a throw is an
   outcome, a worker's leaked locks released and named), `settle()` (flush, guarded
   RUNNING -> COMPLETED/STOPPED/FAILED, schedule statistics, run lock release + re-anchor of a

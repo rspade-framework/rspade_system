@@ -47,6 +47,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * Table: _tasks
  *
  * @property int $abandon_count
+ * @property int $audit_session_id
  * @property string $class
  * @property string $completed_at
  * @property string $created_at

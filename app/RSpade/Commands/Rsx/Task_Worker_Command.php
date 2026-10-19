@@ -463,6 +463,6 @@ class Task_Worker_Command extends Command
         // worker ever recorded would be filed under the first task's transaction.
         Revision::_reset_request_state('task', $instance->get_class() . '::' . $instance->get_method());
 
-        return [$instance, Task_Runner::execute($instance, true)];
+        return [$instance, Task_Runner::execute($instance, true, true)];
     }
 }
