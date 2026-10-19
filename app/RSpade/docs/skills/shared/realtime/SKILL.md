@@ -48,8 +48,13 @@ this.subscribe(record, cb);                           // a fetched record instan
 this.subscribe('Contact_Updated_Topic', {id: 5}, cb); // an explicit topic + filter
 Client_Model.watch_changes(id, cb);                   // outside a component
 const w = await Rsx_Realtime.watch(topic, filter, cb);// returns {stop(), established}
-Rsx_Realtime.on_state_change(s => ...);               // connecting|connected|disconnected|reconnecting
+const m = Rsx_Realtime.watch_connection(s => ...);    // 'connected'|'disconnected'|'disabled'; m.stop()
 ```
+
+`watch_connection()` is the whole connection-state surface: `'disconnected'` arrives only after
+5s without a connection (a blip never shows), `'disabled'` once and synchronously when realtime
+is off, and every monitor hears something within 5s. Registering holds the socket open, like a
+watch. `Rsx_Realtime.is_enabled()` answers "is realtime configured" without registering.
 
 Component subscriptions are **ref-counted** (N components on the same topic+filter share ONE server-side subscription), **auto-stop on destroy** (with or without an `on_stop()` of the component's own) and are **open only while the component is in the document** - closed when its element leaves it, DOM removal included, and reopened with a resync if it returns; a component built before it is inserted subscribes on insertion, so it loads once and refetches once, and are **idempotent per (topic, filter)** for a component instance - a repeat call returns the cached handle rather than registering a second callback. Subscribing to a model that is not `$realtime` **throws** (fails loud).
 

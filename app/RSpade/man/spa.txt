@@ -760,13 +760,12 @@ THE NAVIGATION GUARD
     URL is pushed instead, which restores the address and drops the entries
     ahead.)
 
-    THE GUARD FOLLOWS THE PAGE'S STATE. On at the first change, off when the
-    change is saved or discarded, off when the page is torn down:
+    THE GUARD FOLLOWS THE PAGE'S STATE. On while the form holds unsaved changes,
+    off when they are undone, saved or discarded, off when the page is torn down:
 
-        on_ready() {
+        on_render() {
             const form = this.$.find('.Rsx_Form').first().component();
-            form.on('input', () => Rsx.set_navigation_guard());        // changed
-            form.on('submitted', () => Rsx.clear_navigation_guard());  // saved
+            form.on('dirty', (form, dirty) => (dirty ? Rsx.set_navigation_guard() : Rsx.clear_navigation_guard()));
         }
 
         discard_changes() {                 // @click on the Cancel link
@@ -778,10 +777,11 @@ THE NAVIGATION GUARD
         }
 
     A guard turned on when the page loads and never turned off asks on EVERY
-    exit, whether or not anything changed. The form's 'input' event fires for
-    an edit the user makes, never for values applied from loaded data, so it is
-    the signal to turn the guard on. The form engine itself never touches the
-    guard: an application opts in, page by page.
+    exit, whether or not anything changed. The form's 'dirty' event (rsx:man
+    form_conventions, UNSAVED CHANGES) flips true when the user changes a value
+    and false when every value is back as it was given or a submit succeeds;
+    values applied from loaded data never make a form dirty. The form engine
+    itself never touches the guard: an application opts in, page by page.
 
     On a server-rendered Blade page the native unload dialog is the whole
     feature. Never write a beforeunload listener beside the guard:

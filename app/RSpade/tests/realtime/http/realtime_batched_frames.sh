@@ -32,8 +32,8 @@ const results = {};
 
 Rsx_Realtime._anchored = true;   // hold the connection for the whole run (no idle close)
 await Rsx_Realtime._connect();
-for (let i = 0; i < 40 && Rsx_Realtime._state !== 'connected'; i++) await sleep(250);
-results.setup_state = Rsx_Realtime._state;
+for (let i = 0; i < 40 && Rsx_Realtime._connection_state !== 'connected'; i++) await sleep(250);
+results.setup_state = Rsx_Realtime._connection_state;
 
 // --- One tick, ten messages, ONE frame. (unsubscribe of a sub_id nobody holds is the
 // cheapest message with no reply: the relay just deletes a key that is not there.)
@@ -64,12 +64,12 @@ await sleep(2000);
 results.thirty_watch_frames = Rsx_Realtime._frames_sent - before;
 results.thirty_watches = Rsx_Realtime._watches.size;
 results.thirty_sockets = Rsx_Realtime._sockets_opened;
-results.thirty_state = Rsx_Realtime._state;
+results.thirty_state = Rsx_Realtime._connection_state;
 
 // Hold the subscriptions open across one relay stats tick (60s cadence) so the server's
 // own view can be read from its log.
 await sleep(65000);
-results.final_state = Rsx_Realtime._state;
+results.final_state = Rsx_Realtime._connection_state;
 results.final_watches = Rsx_Realtime._watches.size;
 
 return JSON.stringify(results);

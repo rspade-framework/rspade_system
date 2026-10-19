@@ -133,6 +133,24 @@ this.sid('amount').on('val',   (c, v) => this.update_total(v));    // all change
 
 From a form, reach one input with `form.input(name)`, not a selector.
 
+## Changed - what `form.dirty()` asks of an input
+
+`is_changed()` (base class; nothing to implement) compares `_get_value()` with a BASELINE
+read back through `_get_value()` itself - at readiness after any buffered value lands,
+after every programmatic `val(v)`, and whenever the form re-baselines. Reading the baseline
+back means a select given `5` and reporting `'5'` compares like with like.
+
+**The one thing it asks: once ready, `_get_value()` reports the same value until the user
+or `val()` changes it.** An input that calls `_mark_ready()` before its options arrive, or
+whose `_set_value()` lands the value later (resolving a label over Ajax and only then
+selecting it), reads as CHANGED with nobody touching it - and, worse, serializes the wrong
+value if submitted in that window. Make the written value readable at once (add a
+placeholder option and select it, then fill in the label), or mark ready later.
+
+Override `_comparable_value(value)` only for a value that carries noise that is not a change
+(an id regenerated per render). Comparison is structural (`deep_equal`'s hash), and the
+baseline is stored as that hash, so returning an internal array is safe.
+
 ## `$name` and `data-name`
 
 `$name` is required on every input that participates in a form. The base class stamps it
@@ -209,7 +227,14 @@ and calls `_mark_ready()`.
 ## Template rules
 
 - Render elements **empty**. No `value` attribute, ever - the form writes the value.
-- Inputs have no `on_load()`, so `this.data` is always `{}`.
+- The value never comes from `this.data`. Most inputs have no `on_load()`; one that fetches
+  its own option list keeps only that list there, and reports the value it was given until
+  the list can show it.
+- **Inside an input, the user's own change is `_set_value()` + `_notify_input()`, never
+  `this.val()`** - `val()` makes its value the new baseline, so the change would read as none.
+- A keydown handler that prevents the keystroke and rewrites the box, or a blur reformat that
+  changes the value, dispatches a native `input` event, or the edit is never announced.
+- `reload()` runs `on_ready()` again: destroy a wrapped library before re-creating it.
 
 ## Common mistakes
 

@@ -64,8 +64,51 @@ return new class extends Migration
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
-        // Uncomment after verifying seeder works:
-        // \Illuminate\Support\Facades\Artisan::call('rsx:seed:geographic-data');
+        // The reference data itself: every ISO 3166-1 country and ISO 3166-2 subdivision,
+        // from the framework's sokil/php-isocodes package, so a fresh install's country and
+        // state pickers have options without a manual step. Raw inserts, not the models: at
+        // this point in history the tables carry only the columns above.
+        // rsx:seed:geographic-data re-runs the same import against a later ISO release.
+        $iso = new \Sokil\IsoCodes\IsoCodesFactory();
+        $now = date('Y-m-d H:i:s');
+
+        $countries = [];
+        foreach ($iso->getCountries() as $country) {
+            $countries[$country->getAlpha2()] = [
+                'alpha2' => $country->getAlpha2(),
+                'alpha3' => $country->getAlpha3(),
+                'numeric' => $country->getNumericCode(),
+                'name' => $country->getName(),
+                'common_name' => $country->getLocalName() !== $country->getName() ? $country->getLocalName() : null,
+                'enabled' => 1,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+        foreach (array_chunk(array_values($countries), 500) as $chunk) {
+            DB::table('countries')->insert($chunk);
+        }
+
+        $regions = [];
+        foreach ($iso->getSubdivisions() as $subdivision) {
+            $code = $subdivision->getCode();
+            $country_alpha2 = explode('-', $code)[0];
+            if (!isset($countries[$country_alpha2]) || !str_contains($code, '-')) {
+                continue;
+            }
+            $regions[] = [
+                'code' => $code,
+                'country_alpha2' => $country_alpha2,
+                'name' => $subdivision->getName(),
+                'type' => $subdivision->getType(),
+                'enabled' => 1,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+        foreach (array_chunk($regions, 500) as $chunk) {
+            DB::table('regions')->insert($chunk);
+        }
     }
     
     /**

@@ -68,8 +68,10 @@ COMPONENT COMPLEXITY TIERS
                     filter: this.args.filter
                 });
             }
-            on_ready() {
-                this.$sid('filter_btn').on('click', () => {
+            on_render() {
+                // Own markup, no child or final data needed: on_render, so the
+                // cached paint already responds; namespaced, because it re-fires
+                this.$sid('filter_btn').off('click.user_list').on('click.user_list', () => {
                     this.args.filter = 'active';
                     this.reload();  // Re-fetches via on_load()
                 });
@@ -81,26 +83,27 @@ COMPONENT COMPLEXITY TIERS
         mutations after initialization. Avoids unnecessary network round-trips
         and preserves user state (selections, scroll position, input).
 
-        class Chat_Widget extends Jqhtml_Component {
+        class Order_Notes extends Jqhtml_Component {
             async on_load() {
-                this.data = await Chat_Controller.get_messages({
-                    channel: this.args.channel
+                this.data.notes = await Order_Controller.notes({ order_id: this.args.order_id });
+            }
+            on_render() {
+                // Adding a note appends ONE row instead of repainting the list,
+                // keeping the reader's scroll position and any text selection
+                this.$sid('add').off('click.notes').on('click.notes', async () => {
+                    const note = await Order_Controller.add_note({
+                        order_id: this.args.order_id,
+                        text: this.$sid('text').val(),
+                    });
+                    this.$sid('list').append($('<div class="Order_Notes__note">').text(note.text));
                 });
             }
-            on_ready() {
-                // Incremental updates via DOM, not reload()
-                this.socket = new WebSocket(this.args.ws_url);
-                this.socket.onmessage = (e) => {
-                    const msg = JSON.parse(e.data);
-                    this.$sid('messages').append(
-                        '<div class="message">' + Rsx.escape(msg.text) + '</div>'
-                    );
-                };
-            }
-            on_stop() {
-                this.socket.close();
-            }
         }
+
+        The NEXT visit renders the whole list from the (cached) this.data
+        again, so the incremental edit never has to be remembered. When the
+        updates are the component's main job - they arrive constantly, or
+        the view grows line by line - it is the Standalone stream shape below.
 
     Standalone Components (self-managed lifecycle + hand-rolled caching):
         Deliberately does NOT use on_load()/on_loaded() or the framework
@@ -124,11 +127,13 @@ COMPONENT COMPLEXITY TIERS
         If any criterion does not hold, use the Complex tier. Standalone is
         a last resort, not an optimization.
 
-        THE OTHER STANDALONE SHAPE: A LIVE, APPEND-ONLY STREAM.
+        THE OTHER STANDALONE SHAPE: A LIVE, FREQUENTLY-UPDATED VIEW.
         The load-then-render cycle suits a screen whose content rarely
         changes: a realtime frame refetches it and it repaints. It is the
-        wrong tool for a view that GROWS BY APPENDING - a terminal showing
-        live output, a log tail, a chat transcript, a progress feed.
+        wrong tool for a view that GROWS BY APPENDING or changes CONSTANTLY
+        - a terminal showing live output, a log tail, a chat transcript, a
+        progress feed. The working test: updates arrive more often than
+        about once a second, or the view grows by appending.
         Rendered from data, every new line rebuilds the whole history,
         loses the reader's scroll position and drops their selection. Such
         an action or component is Standalone on that ground alone (the
@@ -1288,14 +1293,16 @@ HOOK DECISION MATRIX
     Format/decorate the component's OWN just-rendered   on_render       Fires ~instantly after draw, even on a cached
       markup                                                            stub render; must be idempotent, own-template
                                                                         only
-    Bind a handler to a static direct-descendant HTML   on_render       Child DOM recreated each render, must
-      element                                             (dedup guard) re-attach; on_ready() also valid
-                                                          or on_ready
+    Bind a handler to the component's OWN markup        on_render       Runs on the cached paint, so the copy on
+      (needing no child component and no final data)      (delegated on screen responds before the load finishes;
+                                                          this.$, or     child DOM is recreated each render, so
+                                                          .off().on())   re-bind idempotently
     Call a function on a first-generation child built   on_render       Only if the child's own contract supports
       to be timing-indifferent (Form_Input_Abstract      (cautiously)   pre-ready calls; otherwise use on_ready
       .val())
-    Interact with a child that has no such contract     on_ready        Children guaranteed ready only here
-      (call methods, read state, bind its events)
+    Interact with a child that has no such contract     on_ready        Children guaranteed ready, and this.data
+      (call methods, read state, bind its events), or                   final, only here
+      bind a handler that needs the final loaded data
     Read the finalized/correct this.data for post-draw  on_ready        on_render may see a stale cached stub or
       logic                                                             default this.data
     Start a socket/subscription/observer                on_ready        One-time, needs a stable tree
@@ -1427,9 +1434,10 @@ ON_CREATE() USE CASES
                 this.data.is_empty = false;
             }
 
-            async on_ready() {
-                // Later: load actual data
-                await this.load_page(1);
+            async on_load() {
+                // The actual data replaces the defaults; the template re-renders
+                this.data.rows = await Rows_Controller.page({ page: 1 });
+                this.data.loading = false;
             }
         }
 
@@ -1465,9 +1473,9 @@ DOUBLE-RENDER PATTERN
 
     Use for loading states:
         <Define:Product_List>
-            <% if (Object.keys(this.data).length === 0) { %>
-                <!-- FIRST RENDER: Loading state -->
-                <div class="spinner">Loading products...</div>
+            <% if (!this.data.loaded) { %>
+                <%-- FIRST RENDER: loading state (see LOADING STATE PATTERN) --%>
+                <Spinner />
             <% } else { %>
                 <!-- SECOND RENDER: Actual data -->
                 <% for (let product of this.data.products) { %>
@@ -1479,13 +1487,14 @@ DOUBLE-RENDER PATTERN
     Example class:
         class Product_List extends Jqhtml_Component {
             on_render() {
-                // Fires TWICE: before and after data load
-                const is_loading = Object.keys(this.data).length === 0;
-                console.log('Rendered, loading?', is_loading);
+                // Fires TWICE: before and after data load - and on a cached
+                // revisit it may fire with the cached data first
+                console.log('Rendered, loaded?', !!this.data.loaded);
             }
 
             async on_load() {
                 this.data.products = await Product_Controller.list();
+                this.data.loaded = true;
                 // Automatic re-render happens after this completes
             }
 
@@ -1558,14 +1567,11 @@ LOADING STATE PATTERN (CRITICAL)
 
         Template for correct pattern:
             <Define:Product_List>
-                <% if (!this.data || !this.data.loaded) { %>
-                    <!-- FIRST RENDER: Loading state -->
-                    <div class="loading-spinner text-center">
-                        <div class="spinner-border"></div>
-                        <p>Loading products...</p>
-                    </div>
-                <% } else if (this.data.records && this.data.records.length > 0) { %>
-                    <!-- SECOND RENDER: Data loaded -->
+                <% if (!this.data.loaded) { %>
+                    <%-- FIRST RENDER: loading state - the registered spinner, never hand-rolled markup --%>
+                    <Spinner />
+                <% } else if (this.data.records.length > 0) { %>
+                    <%-- SECOND RENDER: data loaded --%>
                     <div class="table-responsive">
                         <table class="table">
                             <% for (let record of this.data.records) { %>
@@ -1574,15 +1580,15 @@ LOADING STATE PATTERN (CRITICAL)
                         </table>
                     </div>
                 <% } else { %>
-                    <!-- Empty state -->
-                    <div class="text-center">
-                        <p>No records found</p>
-                    </div>
+                    <%-- empty state --%>
+                    <p>No records found</p>
                 <% } %>
             </Define:Product_List>
 
     Why this pattern works:
-    1. First render: this.data = {} (empty) - Template shows loading
+    1. First render: on_create() defaults (loaded unset) - template shows loading
+       (on a CACHED revisit the first render is the cached data instead, with
+       loaded already true - the instant paint; see CACHING AND CACHEABLE DESIGN)
     2. on_load() executes: Populates this.data and sets loaded = true
     3. Automatic re-render: Framework detects this.data changed
     4. Second render: this.data.loaded === true - Template shows data
@@ -1598,6 +1604,92 @@ LOADING STATE PATTERN (CRITICAL)
     - NEVER use nested state objects (this.data.state.loading)
     - NEVER set loading flags at START of on_load()
     - ONLY set this.data.loaded = true at END
+
+CACHING AND CACHEABLE DESIGN
+    WHY. A component with on_load() is cached under a key built from its
+    name and arguments. Revisited with the same key, it paints the last
+    this.data AT ONCE, then runs on_load() and repaints only if the answer
+    changed (stale-while-revalidate). That is what makes an SPA revisit
+    instant rather than a spinner - and losing it throws nothing: the
+    component works, it just refetches behind a loading state every time.
+    A component with no on_load() is never cached and needs none of this.
+
+    THE DESIGN RULES (a cacheable component):
+        1. Arguments IDENTIFY, they do not carry: primitives, or small plain
+           objects/arrays of primitives. Pass ids, not records.
+        2. A function argument is legitimate, and obliges cache_id().
+        3. this.data holds only what on_load() fetched - nothing a stale
+           copy would make lie (a loading flag, a form seed, a selection:
+           this.state or an instance property).
+        4. The template is a pure function of this.args + this.data, and
+           formatting of the component's own markup runs in on_render(),
+           which runs on the cached paint - never on_ready(), which waits
+           for the load and leaves the cached copy unformatted.
+        5. A server hint calls refresh() (repaints only on change); the
+           user's own action calls reload().
+
+    THE KEY. Plain data is keyed by CONTENT: null, booleans, numbers,
+    strings, Dates, arrays and plain objects, in any nesting - so a template
+    rebuilding {status: 'open'} every render still hits. It DECLINES on a
+    function, symbol, class instance, Map/Set, DOM or jQuery object,
+    circular structure, invalid Date, or anything over 500 bytes: the
+    element is marked data-nocache="<arg>:<reason>" and, in development,
+    the console warns
+
+        [JQHTML] <Name> cannot be cached: arg $x is not keyable because ...
+
+    A key that dropped a callback would let two argument sets share an
+    entry and serve the wrong content, which is worse than not caching.
+
+    A value carrying _jqhtml_cache_id (property) or jqhtml_cache_id()
+    (method) is keyed by that. RSpade stamps 'Class.method' on every static
+    class method, so $data_source=My_Controller.fetch stays keyable; an
+    arrow function, this.handler or a bound method does not. An application
+    object that carries its own _jqhtml_cache_id defines it NON-enumerable
+    (Object.defineProperty(obj, '_jqhtml_cache_id', {value: id,
+    enumerable: false})), or spreading the object copies it into a payload.
+
+    cache_id(). A component whose arguments cannot be keyed states its
+    identity itself. The return value REPLACES the whole key
+    ('<Name>::<cache_id>'), so it names everything that changes what
+    on_load() fetches and nothing else; a cache_id() that throws disables
+    caching with its own warning. The contract is easy to break later, so
+    it is announced in on_create():
+
+        on_create() {
+            // =============================================================
+            // CACHE CONTRACT - READ BEFORE CHANGING THIS COMPONENT'S ARGS
+            // $on_select is a callback, so jqhtml cannot derive this
+            // component's identity; cache_id() below supplies it. IF THE
+            // ARGS THIS COMPONENT ACCEPTS EVER CHANGE, cache_id() MUST
+            // CHANGE TO MATCH - or the cache serves another invocation's data.
+            // =============================================================
+            this.data.rows = [];
+        }
+
+        cache_id() {
+            return 'contact_picker_' + this.args.client_id;
+        }
+
+    Uncached is an acceptable LAST resort for a component with no clean
+    identity: one comment saying why, so data-nocache reads as a decision.
+
+    DEDUPLICATION is separate and stricter. Identical components loading at
+    the same moment share ONE on_load() - only when every argument is a
+    primitive or carries _jqhtml_cache_id; content keys and cache_id() do
+    not apply. A deduplicated follower adopts the leader's data with no
+    revalidation, so a wrong key there would be permanently wrong data. A
+    plain-object argument therefore caches but does not share loads; that
+    is expected.
+
+    FINDING UNCACHED COMPONENTS. An empty result is the healthy state:
+
+        php artisan rsx:debug /path --user=1 --eval="return $('[data-nocache]').map((i, e) => e.className.split(' ')[0] + ' ' + e.getAttribute('data-nocache')).get()"
+
+    A Standalone component has no on_load() and so no framework cache; the
+    stateful-DOM shape hand-rolls stale-while-revalidate (COMPONENT
+    COMPLEXITY TIERS, "Caching mandate") and the stream shape reads from a
+    cursor.
 
 JAVASCRIPT COMPONENT CLASS
     Optional JavaScript class for behavior:
@@ -1969,9 +2061,16 @@ EVENT HANDLER PLACEMENT
                 });
             }
 
-    DOM Events on Child Elements - Register in on_render() or on_ready():
-        Child DOM elements are recreated on each render, so their handlers
-        must be re-attached after each render. Because on_render() can fire
+    DOM Events on the Component's Own Markup - Register in on_render():
+        on_render() runs on the cached paint (CACHING AND CACHEABLE DESIGN),
+        so a handler bound there makes the copy on screen respond before the
+        load finishes; bound in on_ready() it would be dead until then. Only
+        a handler that needs a child component or the final loaded data
+        waits for on_ready(). The preferred form is ONE handler on this.$,
+        delegated to the children (DELEGATED HANDLERS) - the root survives
+        the component's own re-renders. Child DOM elements are recreated on
+        each render, so a handler bound on one must be re-attached after
+        each render. Because on_render() can fire
         more than once per instance (a cached-stub render, the post-on_load()
         re-render, and every render()/redraw()/reload()), the bind MUST be
         idempotent: deregister first, or use a namespaced .off().on() pair, so
@@ -3092,9 +3191,10 @@ DEBUGGING
 
 PERFORMANCE
     - Templates cached after first compilation
-    - Use data-component-init-name for server-side initial render
     - Minimize DOM manipulation in lifecycle methods
     - Leverage automatic re-render via this.data changes
+    - Keep components cacheable (CACHING AND CACHEABLE DESIGN): the cached
+      paint is what makes a revisit instant
     - Sibling components load in parallel during on_load()
 
 SEE ALSO

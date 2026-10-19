@@ -3,15 +3,13 @@ set -e
 
 TEST_NAME="Realtime Delayed Offline Announcement"
 
-# The client used to tell the whole app 'disconnected' the instant a socket closed, so a
-# 300ms blip - a relay restart, a wifi handoff - flashed an offline state at the user. Now
-# an unintentional close announces 'reconnecting' IMMEDIATELY (something is happening) and
-# 'disconnected' only if no reconnect has landed within OFFLINE_ANNOUNCE_GRACE_MS.
+# A 300ms blip - a relay restart, a wifi handoff - must never flash an offline state at
+# the user: watch_connection() reports 'disconnected' only if no reconnect has landed
+# within the grace window (_OFFLINE_ANNOUNCE_GRACE_MS, 5s).
 #
-# Two assertions, both read from a real on_state_change listener:
-#   BRIEF      a drop that reconnects inside the window never emits 'disconnected' at all,
-#              and does emit 'reconnecting' at once.
-#   SUSTAINED  an outage that outlasts the window does emit it - after the window, not before.
+# Two assertions, both read from a real watch_connection() monitor:
+#   BRIEF      a drop that reconnects inside the window never reports 'disconnected' at all.
+#   SUSTAINED  an outage that outlasts the window does report it - after the window, not before.
 #
 # Internal state is NOT delayed: _connected/_authenticated/_ws go false the moment the
 # socket closes, which is asserted directly.
@@ -28,22 +26,21 @@ const results = {};
 
 Rsx_Realtime._anchored = true;   // hold the connection; this test is about drops, not idling
 await Rsx_Realtime._connect();
-for (let i = 0; i < 40 && Rsx_Realtime._state !== 'connected'; i++) await sleep(250);
-results.setup_state = Rsx_Realtime._state;
+for (let i = 0; i < 40 && Rsx_Realtime._connection_state !== 'connected'; i++) await sleep(250);
+results.setup_state = Rsx_Realtime._connection_state;
 
 const seen = [];
-const unsub = Rsx_Realtime.on_state_change((state) => seen.push(state));
-seen.length = 0;   // drop the immediate current-state call
+const monitor = Rsx_Realtime.watch_connection((state) => seen.push(state));
+seen.length = 0;   // drop the synchronous 'connected'
 
 // --- BRIEF: close, let the ordinary 1s backoff reconnect land well inside the 5s window.
 Rsx_Realtime._ws.close();
 await sleep(50);
 results.brief_internal_connected = Rsx_Realtime._connected;      // must be false IMMEDIATELY
-results.brief_first_announced = seen[0] || null;                 // must be 'reconnecting'
 
 await sleep(6000);
 results.brief_saw_disconnected = seen.includes('disconnected');   // must be false
-results.brief_end_state = Rsx_Realtime._state;
+results.brief_end_state = Rsx_Realtime._connection_state;
 
 // --- SUSTAINED: break the token endpoint so no reconnect can succeed.
 seen.length = 0;
@@ -59,10 +56,10 @@ await sleep(4000);
 results.sustained_at_7s = seen.includes('disconnected');    // window expired - announced
 
 Realtime_Controller.get_connection_token = real_token;
-for (let i = 0; i < 60 && Rsx_Realtime._state !== 'connected'; i++) await sleep(500);
-results.recovered_state = Rsx_Realtime._state;
+for (let i = 0; i < 60 && Rsx_Realtime._connection_state !== 'connected'; i++) await sleep(500);
+results.recovered_state = Rsx_Realtime._connection_state;
 
-unsub();
+monitor.stop();
 return JSON.stringify(results);
 JS
 
@@ -81,7 +78,6 @@ fail() {
 
 echo "$result" | grep -q '"setup_state":"connected"'          || fail "the page never reached connected before the test began"
 echo "$result" | grep -q '"brief_internal_connected":false'   || fail "internal connection state was not updated immediately on close"
-echo "$result" | grep -q '"brief_first_announced":"reconnecting"' || fail "an unintentional close did not announce 'reconnecting' immediately"
 echo "$result" | grep -q '"brief_saw_disconnected":false'     || fail "a brief drop flashed 'disconnected' at listeners"
 echo "$result" | grep -q '"brief_end_state":"connected"'      || fail "the brief drop did not reconnect"
 echo "$result" | grep -q '"sustained_at_3s":false'            || fail "a sustained outage announced 'disconnected' before the grace window expired"

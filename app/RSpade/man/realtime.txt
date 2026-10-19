@@ -1010,116 +1010,78 @@ RESIDUAL GAPS
     pass through as normal.
 
 CONNECTION STATE
-    Rsx_Realtime.on_state_change(callback) reports the WebSocket connection
-    state -- useful for a "backend offline" indicator in a header/status bar:
+    Rsx_Realtime.watch_connection(callback) answers ONE question - is this
+    page connected? - for a "live updates offline" indicator in a header or
+    status bar:
 
-        Rsx_Realtime.on_state_change((state) => {
-            // state: 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+        const monitor = Rsx_Realtime.watch_connection((state) => {
+            // state: 'connected' | 'disconnected' | 'disabled'
         });
 
-    The callback fires immediately with the current state when registered,
-    then again on every transition. Call the returned function to stop
-    listening.
+        monitor.stop();
+
+        'connected'     the client holds an authenticated socket
+        'disconnected'  it has not been connected for 5 seconds
+        'disabled'      realtime is not configured in this application
+                        (REALTIME_ENABLED off). Emitted once, synchronously, at
+                        registration, and never again: nothing else will arrive,
+                        and no network is touched.
+
+    Rsx_Realtime.is_enabled() answers the 'disabled' question directly, for a
+    host deciding whether to mount an indicator at all.
+
+    THE GUARANTEES:
+    - The callback never receives the same value twice in a row.
+    - Every monitor hears something within 5 seconds of registering:
+      synchronously when the answer is already known (connected, or a decided
+      outage), otherwise when the ONE grace window in flight resolves. The
+      window belongs to the client, not the monitor: three monitors registering
+      in one tick are all answered off one window, and a monitor joining a
+      running window does not extend it.
+    - A blip never shows. Losing the link starts the 5s window; a reconnect
+      inside it means 'disconnected' is never reported. Once an outage has been
+      reported, the next report is 'connected'.
+
+    A MONITOR HOLDS THE CONNECTION. Like watch(), registering is a reason for
+    the socket to exist: an idle client connects, and idle disconnect is
+    suppressed while any monitor is registered, with or without subscriptions.
+    stop() on the last monitor releases the hold: the answer is forgotten (a
+    later registration starts a fresh window rather than replaying an old
+    verdict) and, with no watches and no anchor, the client returns to its
+    ordinary lazy behaviour. On a signed-in page the session anchor (SESSION
+    REFRESH PUSH) holds the connection anyway.
+
+    There is no session requirement. An anonymous visitor's page connects like
+    any other - opening a socket never creates a session - so an indicator
+    works on a public page too; 'disabled' means only that realtime is off.
+
+    The socket's own states (connecting, reconnecting, ...) are internal and
+    not published: an application never needs to reduce them, because the
+    client has already done it. Internally nothing is delayed - the client's
+    own flags go false the instant the socket closes; only what monitors are
+    told waits out the window.
 
     A tab holds exactly ONE socket. Connecting is single-flight: N subscribers
-    racing in the same tick (the ordinary shape when N components each subscribe
-    in their own on_create()) share the ONE in-flight connect and then share the
-    ONE connection it produces.
-
-    There is no connection at all until something calls watch()/subscribe()
-    (see SETUP) -- before that, the state is 'disconnected' by definition,
-    which is correct: nothing is being watched, so there is nothing to be
-    connected for.
-
-    THE OFFLINE ANNOUNCEMENT IS DELAYED. Losing the link no longer tells the
-    app 'disconnected' the instant the socket closes; a 300ms blip (a relay
-    restart, a wifi handoff) used to flash an offline state at every listener.
-    An unintentional close announces 'reconnecting' IMMEDIATELY, and
-    'disconnected' only if no reconnect has landed within
-    Rsx_Realtime.OFFLINE_ANNOUNCE_GRACE_MS (5s). A reconnect inside the window
-    means the app never hears 'disconnected' at all.
-
-    The delay is in what LISTENERS are told, never in what the client knows:
-    _ws / _connected / _authenticated go false the moment the socket closes,
-    and nothing inside Rsx_Realtime reads the announced state to decide
-    anything. State is a projection for the app; the flags are the truth.
-
-    STATE SEMANTICS (critical -- get this wrong and the indicator lies):
-    - 'disconnected' carries two meanings, told apart by WHAT PRECEDED IT:
-      * after 'connecting'/'reconnecting' it is the CONFIRMED offline
-        announcement -- the grace window expired with no reconnect. A real
-        outage; surface it.
-      * otherwise it is idle / lazy / realtime-disabled -- the socket is not
-        open because nothing needs it (lazy connect) or the last watch stopped
-        (intentional idle close, no reconnect). NOT an error, and it must never
-        raise a warning.
-    - An UNINTENTIONAL drop always passes through 'reconnecting' at once
-      (onclose -> schedule reconnect); a fresh attempt is 'connecting'.
-    - A "backend unreachable" warning therefore ARMS A GRACE TIMER on
-      'connecting'/'reconnecting', SHOWS on a 'disconnected' that followed one
-      of those (or when its own timer fires first), and HIDES on 'connected'
-      or an idle 'disconnected'. Warning on an idle 'disconnected' is a bug --
-      it would fire on every ordinary lazy page.
-
-    There is no longer a transient 'disconnected' flash on the way into a
-    reconnect, so the old deferred (setTimeout 0) re-check that used to tell
-    transient from terminal is gone: read the PREVIOUS state instead.
+    racing in the same tick (the ordinary shape when N components each
+    subscribe in their own on_create()) share the ONE in-flight connect and
+    then share the ONE connection it produces.
 
     REFERENCE IMPLEMENTATION: the shipped Realtime_Status_Badge theme component
-    (rsx/theme/components/realtime/) is the living example of this pattern -- a
-    header pill, hidden by default, that fades in only during a genuine outage.
-    It observes state only (subscribes to no topic):
+    (rsx/theme/components/realtime/, downstream
+    system/app/RSpade/resource/reference_app/theme/components/realtime/) - a
+    header pill, hidden by default, shown while the monitor says
+    'disconnected':
 
-        class Realtime_Status_Badge extends Component {
-            static GRACE_MS = 5000;  // continuous not-connected time before warning
-
-            on_create() {
-                this.state = { visible: false };
-                this._grace_timer = null;
-                this._last_state = null;
-                // Store the unsubscribe fn; call it in on_stop().
-                this._state_unsub = Rsx_Realtime.on_state_change(
-                    (state) => this._on_state_change(state)
-                );
-            }
-
-            on_stop() {
-                if (this._state_unsub) this._state_unsub();
-                this._clear_grace_timer();
-            }
-
-            _on_state_change(state) {
-                const previous = this._last_state;
-                this._last_state = state;
-                if (state === 'connecting' || state === 'reconnecting') {
-                    this._arm_grace_timer();      // arm ONLY here
-                } else if (state === 'connected') {
-                    this._hide();                 // clear + hide
-                } else if (state === 'disconnected') {
-                    // Confirmed outage if it followed a trying state; idle
-                    // otherwise. No deferral needed -- the client no longer
-                    // flashes a transient 'disconnected'.
-                    if (previous === 'connecting' || previous === 'reconnecting') {
-                        this._show();
-                    } else {
-                        this._hide();
-                    }
-                }
-            }
-
-            _arm_grace_timer() {
-                if (this.state.visible || this._grace_timer) return;  // never reset
-                this._grace_timer = setTimeout(() => {
-                    this._grace_timer = null;
-                    this._show();  // fade in via a CSS opacity-transition class
-                }, Realtime_Status_Badge.GRACE_MS);
-            }
+        on_create() {
+            this.state = { visible: false };
+            this._monitor = Rsx_Realtime.watch_connection((state) => {
+                state === 'disconnected' ? this._show() : this._hide();
+            });
         }
 
-    The grace timer is NEVER reset by a subsequent trying-state, so it measures
-    continuous outage time across the whole reconnect backoff loop rather than
-    restarting each attempt -- the warning appears a fixed ~5s after the outage
-    begins, not after backoff has stretched out.
+        on_stop() {
+            this._monitor.stop();
+        }
 
 AUTO-RECONNECT
     The client automatically reconnects with exponential backoff:
@@ -1140,7 +1102,8 @@ AUTO-RECONNECT
     enabled the client also holds a system ANCHOR connection for the whole page
     lifetime (see SESSION REFRESH PUSH) -- the anchor suppresses idle
     disconnect, so an enabled page stays connected even with zero app
-    subscriptions.
+    subscriptions. A registered connection monitor (CONNECTION STATE) holds the
+    connection the same way.
 
     Intentionality is decided AT CLOSE TIME, not when close() was called.
     ws.close() is asynchronous, so a watch() (or the anchor) can arrive while
@@ -1566,8 +1529,10 @@ API REFERENCE
                                                               is a promise that resolves
                                                               when the subscription's
                                                               first ack arrives
-        Rsx_Realtime.on_state_change(callback)               Connection state changes;
-                                                              returns an unsubscribe fn
+        Rsx_Realtime.watch_connection(callback)              'connected' | 'disconnected'
+                                                              | 'disabled'; holds the
+                                                              socket open; returns {stop()}
+        Rsx_Realtime.is_enabled()                            Is realtime configured?
         this.subscribe(topic, [filter], callback)            Component shorthand --
                                                               auto-stops on destroy;
                                                               idempotent per

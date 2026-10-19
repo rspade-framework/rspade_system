@@ -133,7 +133,8 @@ THE SUBMISSION PIPELINE
         7.  Submit affordance - Button_Utils animates the submit buttons and
             makes them inert.
         8.  Ajax POST to /_ajax/{controller}/{method}.
-        9a. Success: dirty state and parked values cleared, 'submitted' fired
+        9a. Success: touched and parked values cleared, the inputs re-baselined
+            ('dirty' flips to false), 'submitted' fired
             with the result, result.redirect honoured (the affordance
             deliberately stays until the page goes), result resolved.
         9b. Failure: errors rendered, 'submit_error' fired, false resolved. The
@@ -351,7 +352,7 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
             Rsx_Form.is_cancelled(v)    identity test
 
         Returning CANCELLED stops the submit exactly like before_submit
-        returning false: no error rendered, no 'submit_error' fired, dirty state
+        returning false: no error rendered, no 'submit_error' fired, unsaved changes
         and parking intact, the form still open with the user's values. It is
         what the dialog's Back button, its X, Escape and a backdrop click mean.
 
@@ -429,7 +430,10 @@ VALUES AND INPUT ACCESS
                             (shallow: inputs inside a composite input belong to
                             that composite) plus native hidden inputs
     form.vals(object)       apply - sets each named input present in the object,
-                            SKIPPING dirty names (see DIRTY PROTECTION)
+                            SKIPPING touched names (see KEYSTROKES WIN); never
+                            makes the form dirty
+    form.dirty()            true while any input holds a value the user changed
+                            (see UNSAVED CHANGES)
     form.input(name)        the input component with that $name, or null - the
                             sanctioned way to wire one input:
                             form.input('due_date').on('val', cb)
@@ -439,6 +443,9 @@ VALUES AND INPUT ACCESS
 
     To programmatically overwrite a field the user has touched, address the input
     directly: form.input(name).val(v). vals(object) will not do it, by design.
+
+    Events on the form: 'input' (name, value) for every user edit, 'dirty'
+    (dirty) when dirty() flips, 'submitted' (result), 'submit_error' (errors).
 
 THE PAGE PATTERN (SPA add/edit action)
 
@@ -585,26 +592,57 @@ THE SPINNER REGISTRY
     that box or draws at a fixed size centred inside it. There are no size
     arguments anywhere, and spinner markup is never hand-rolled.
 
-DIRTY PROTECTION
+UNSAVED CHANGES
+
+    form.dirty() is true while any input holds a value the USER changed from
+    what the form was given, and the form fires 'dirty' each time that answer
+    flips:
+
+        form.on('dirty', (form, dirty) => (dirty ? Rsx.set_navigation_guard() : Rsx.clear_navigation_guard()));
+
+    CHANGED, NOT TOUCHED. Each input compares its current value with a BASELINE
+    (Form_Input_Abstract.is_changed(); rsx:man form_input, CHANGED). A value
+    typed and typed back is clean again, and the event flips back to false.
+
+    The baseline is taken - and so none of these ever makes a form dirty - from:
+        the $data seed, when the form is ready
+        populate()
+        every programmatic write: vals(object), form.input(name).val(v)
+        a successful submit (the event flips to false before 'submitted')
+
+    Inputs implement nothing for this. It relies on the input contract that
+    already stands: once an input is ready, _get_value() reports the same value
+    until the user or val() changes it.
+
+    A form restoring PARKED values (KEYSTROKES WIN) is dirty from its own
+    on_ready(). A host that wires 'dirty' in on_render() hears that flip; one
+    wiring later reads form.dirty() once as it wires.
+
+    A use beside the navigation guard: a Save button disabled until the form is
+    dirty, enabled from the same event.
+
+KEYSTROKES WIN
 
     The invariant: DATA FILLS FIELDS THE USER HAS NOT TOUCHED; THE USER'S
     KEYSTROKES ALWAYS WIN.
 
-    Every user 'input' marks that name dirty. Applying data - the $data seed,
-    vals(object) - skips dirty names, so a revalidation re-render updates
-    untouched fields and leaves in-progress edits alone.
+    Every user 'input' marks that name TOUCHED. Applying data - vals(object),
+    populate() - skips touched names, so a revalidation re-render updates
+    untouched fields and leaves in-progress edits alone. (Touched is not
+    dirty: a field typed into and typed back is still touched, and still
+    protected from data.)
 
     Across component RE-CREATION (an SPA action re-rendering on fresh data
-    rebuilds the form component) dirty values are PARKED on the live SPA action
-    and re-applied to the successor instance, still winning over $data. Parking
-    is engine-internal and silent, cleared on a successful submit, and dies with
+    rebuilds the form component) touched values are PARKED on the live SPA
+    action and restored to the successor instance after its seed - so they
+    still win over $data, and the successor reads them as changes. Parking is
+    engine-internal and silent, cleared on a successful submit, and dies with
     the action on navigation.
 
-    Dirty protection is about VALUES SURVIVING A RE-RENDER. Leaving the page
-    altogether is a different question and a different seam: Rsx's navigation
-    guard, a toggle the PAGE turns on at the form's first 'input' and off on
-    'submitted', which has the browser ask before the user leaves. The form
-    never sets or clears it. See rsx:man spa, THE NAVIGATION GUARD.
+    Leaving the page altogether is a different seam: Rsx's navigation guard, a
+    toggle the PAGE drives from the form's 'dirty' event, which has the browser
+    ask before the user leaves. The form never sets or clears it. See rsx:man
+    spa, THE NAVIGATION GUARD.
 
     The parking key is computed ONCE, in on_create(), from
     controller|method|record-id ('new' for a create form). It must not be

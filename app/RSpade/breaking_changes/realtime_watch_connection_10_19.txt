@@ -1,0 +1,74 @@
+REALTIME CONNECTION STATE IS NOW watch_connection() - on_state_change() IS GONE
+Date: 2026-10-19
+
+IF YOU DO NOTHING: your copy of Realtime_Status_Badge (and anything else of yours
+    that calls Rsx_Realtime.on_state_change()) throws "Rsx_Realtime.on_state_change
+    is not a function" when it is created - in the header of every staff and portal
+    page that mounts it.
+
+SUMMARY
+    Rsx_Realtime.on_state_change(), which published the socket's four internal states
+    (connecting / connected / disconnected / reconnecting), is deleted. Its
+    replacement, Rsx_Realtime.watch_connection(callback), reports the one fact an
+    application wants, as one of three values:
+
+        'connected'     the client holds an authenticated socket
+        'disconnected'  it has not been connected for 5 seconds
+        'disabled'      realtime is not configured (once, synchronously, never again)
+
+    The reduction every connection indicator had to hand-roll - a 5s grace timer
+    armed on two of four states, and telling an idle 'disconnected' from an outage by
+    reading the previous state - is now the framework's.
+
+THE CHANGE
+    - Rsx_Realtime.on_state_change() and Rsx_Realtime.OFFLINE_ANNOUNCE_GRACE_MS are
+      deleted. The socket's own states are internal (Rsx_Realtime._connection_state).
+    - Rsx_Realtime.watch_connection(callback) returns {stop()}. The callback never
+      receives the same value twice in a row, and always hears something within 5s:
+      at once when the answer is known, otherwise when the client's ONE grace window
+      resolves.
+    - A registered monitor HOLDS THE SOCKET OPEN, like a watch(): an idle page
+      connects, and idle disconnect is suppressed until the last monitor stops.
+    - Rsx_Realtime.is_enabled() answers "is realtime configured" without registering.
+
+    Contract: rsx:man realtime, CONNECTION STATE.
+
+ACTION REQUIRED
+    1. Find your callers:
+
+           grep -rn "on_state_change\|OFFLINE_ANNOUNCE_GRACE_MS" rsx/
+
+    2. Realtime_Status_Badge (rsx/theme/components/realtime/Realtime_Status_Badge.js),
+       if you kept it: replace its state machine with the shipped one. The reference is
+       system/app/RSpade/resource/reference_app/theme/components/realtime/
+       Realtime_Status_Badge.js; the logic that remains is
+
+           on_create() {
+               this.state = { visible: false };
+               this._hide_timer = null;
+               this._rendered = false;
+               this._monitor = Rsx_Realtime.watch_connection((state) => {
+                   state === 'disconnected' ? this._show() : this._hide();
+               });
+           }
+
+           on_stop() {
+               this._monitor.stop();
+               ...
+           }
+
+       and GRACE_MS, _grace_timer, _arm_grace_timer(), _clear_grace_timer(),
+       _last_state, _on_state_change() and _handle_disconnected() are deleted (drop
+       the _clear_grace_timer() call from _hide() too). The template and SCSS are
+       unchanged. Copy the reference file whole if you never changed yours.
+
+    3. Any other caller: map its states onto the three values. A handler that showed a
+       warning after 'connecting'/'reconnecting' plus a timer, or on a 'disconnected'
+       following them, becomes `state === 'disconnected'`; 'connected' and 'disabled'
+       mean nothing to show. Replace the returned unsubscribe function with the
+       handle's stop().
+
+VERIFY
+    Load a staff page and a portal page: no console error, and no badge. With the
+    realtime relay stopped (supervisorctl stop realtime), the badge appears about 5
+    seconds later; start it again and the badge goes away.

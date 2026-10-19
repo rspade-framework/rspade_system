@@ -60,6 +60,27 @@
  * nothing buffered it fires NOTHING - readiness is not a value change, and listeners
  * wired to "on change" must not fire on load.
  *
+ * ── Changed: compared with a baseline, in the input's own vocabulary ────────────────
+ *
+ * is_changed() answers "does this input now hold something other than what it was
+ * given?" - the question Rsx_Form.dirty() asks of every input. The BASELINE is
+ * _get_value() read at three moments: when the input becomes ready (after any buffered
+ * value lands), after every programmatic val(v), and when the form re-baselines (its
+ * seed, populate(), a successful submit). Because the baseline is read back through
+ * _get_value() rather than taken from what was written, a select given the number 5 and
+ * reading back '5' compares like with like, and a value typed and typed back is
+ * unchanged. Only a USER edit (_notify_input) can make an input changed.
+ *
+ * Comparison is structural (deep_equal's hash) and the baseline is kept as that hash,
+ * so an input that returns its own internal array is safe. An input whose value carries
+ * noise that is not a change (an id regenerated per render, a timestamp) overrides
+ * _comparable_value(value) to return what should be compared.
+ *
+ * WHAT THIS ASKS OF AN INPUT, and nothing more: once ready, _get_value() reports the
+ * same value until the user or val() changes it - no option list arriving afterwards,
+ * no library reformatting a tick later. _mark_ready() called too early breaks exactly
+ * that, which is why its timing is part of the contract.
+ *
  * ── _validate(): the architectural exception, NOT a validation layer ─────────────────
  *
  * Validation lives on the server, once - a client check that duplicates a server rule
@@ -100,6 +121,16 @@ class Form_Input_Abstract extends Component {
         this._is_ready = false;
         this._focus_pending = false;
 
+        // The baseline is_changed() compares with (see the class docblock).
+        this._baseline = undefined;
+        this._has_baseline = false;
+        this._baseline_pending = false;
+
+        // A USER value the form restores to a successor instance before it is ready
+        // (Rsx_Form parking). Applied after the baseline, so it reads as changed.
+        this._restore_value = undefined;
+        this._has_restore = false;
+
         if (this.args.name) {
             this.$.attr('data-name', this.args.name);
         }
@@ -115,6 +146,9 @@ class Form_Input_Abstract extends Component {
     val(value) {
         if (arguments.length === 0) {
             // Getter: a pending value IS the value until it lands.
+            if (this._has_restore) {
+                return this._restore_value;
+            }
             if (this._has_pending) {
                 return this._pending_value;
             }
@@ -124,13 +158,85 @@ class Form_Input_Abstract extends Component {
         // Setter
         this._assert_accepts(value);
 
+        // A programmatic write is the new unchanged state: it is not the user's edit.
         if (this._is_ready) {
             this._set_value(value);
+            this._rebaseline();
             this.trigger('val', value);
         } else {
             this._pending_value = value;
             this._has_pending = true;
+            this._has_restore = false;
+            this._restore_value = undefined;
+            this._baseline_pending = true;
         }
+    }
+
+    /**
+     * Has the USER changed this input from its baseline? (See the class docblock.)
+     * An input that is not ready yet is unchanged, unless the form is restoring a user
+     * value to it.
+     *
+     * @returns {boolean}
+     */
+    is_changed() {
+        if (!this._is_ready) {
+            return this._has_restore;
+        }
+
+        if (!this._has_baseline) {
+            return false;
+        }
+
+        return this.__snapshot(this._get_value()) !== this._baseline;
+    }
+
+    /**
+     * Take the current value as the unchanged state - now when ready, otherwise the moment
+     * the input becomes ready. Rsx_Form calls it for its seed, populate() and a successful
+     * submit; val(v) calls it for every programmatic write.
+     */
+    _rebaseline() {
+        if (this._is_ready) {
+            this._baseline = this.__snapshot(this._get_value());
+            this._has_baseline = true;
+            this._baseline_pending = false;
+        } else {
+            this._baseline_pending = true;
+        }
+    }
+
+    /**
+     * Put back a value the USER entered on a predecessor instance (Rsx_Form parking). Unlike
+     * val(v) it leaves the baseline alone, so the input reads as changed.
+     *
+     * @param {*} value
+     */
+    _restore_user_value(value) {
+        this._assert_accepts(value);
+
+        if (this._is_ready) {
+            this._set_value(value);
+            this.trigger('val', value);
+        } else {
+            this._restore_value = value;
+            this._has_restore = true;
+        }
+    }
+
+    /**
+     * What is_changed() compares. The default is the value itself; override only for a
+     * value carrying noise that is not a change.
+     *
+     * @param {*} value - A value read through _get_value()
+     * @returns {*}
+     */
+    _comparable_value(value) {
+        return value;
+    }
+
+    __snapshot(value) {
+        return hash(this._comparable_value(value), false);
     }
 
     /**
@@ -239,9 +345,24 @@ class Form_Input_Abstract extends Component {
             this._pending_value = undefined;
             this._has_pending = false;
             this._set_value(value);
+            this._rebaseline();
             this.trigger('val', value);
         }
         // Nothing pending: no event. Readiness is not a value change.
+
+        // The value at readiness is the unchanged state, unless a baseline already stands.
+        if (this._baseline_pending || !this._has_baseline) {
+            this._rebaseline();
+        }
+
+        // A user value restored before readiness lands AFTER the baseline: it is a change.
+        if (this._has_restore) {
+            const restored = this._restore_value;
+            this._restore_value = undefined;
+            this._has_restore = false;
+            this._set_value(restored);
+            this.trigger('val', restored);
+        }
 
         // After the value, so the cursor lands in the input as the user will see it.
         if (this._focus_pending) {

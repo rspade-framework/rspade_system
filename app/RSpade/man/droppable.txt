@@ -117,7 +117,8 @@ EVENT HANDLER REGISTRATION
     registered once in on_create().
 
     DOM events on child elements ($sid elements) are recreated on each
-    render, so those handlers belong in on_render() or on_ready().
+    render, so those handlers belong in on_render() - namespaced, because it
+    re-fires - which also makes a cached paint respond at once.
 
     Correct - component event in on_create():
         on_create() {
@@ -129,7 +130,7 @@ EVENT HANDLER REGISTRATION
 
         on_render() {
             // DOM events on children - must re-attach after each render
-            this.$sid('clear_btn').on('click', () => this._clear_files());
+            this.$sid('clear_btn').off('click.drop').on('click.drop', () => this._clear_files());
         }
 
     Wrong (causes infinite loop if handler triggers render/reload):
@@ -154,7 +155,7 @@ EVENT HANDLER REGISTRATION
         8. Event replays again -> infinite loop
 
     Rule: Component events (this.on()) go in on_create(). Child DOM events
-    go in on_render() or on_ready().
+    go in on_render().
 
 FILE VALIDATION
 

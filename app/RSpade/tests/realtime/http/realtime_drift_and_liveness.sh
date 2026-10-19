@@ -30,8 +30,8 @@ const results = {};
 
 Rsx_Realtime._anchored = true;
 await Rsx_Realtime._connect();
-for (let i = 0; i < 40 && Rsx_Realtime._state !== 'connected'; i++) await sleep(250);
-results.setup_state = Rsx_Realtime._state;
+for (let i = 0; i < 40 && Rsx_Realtime._connection_state !== 'connected'; i++) await sleep(250);
+results.setup_state = Rsx_Realtime._connection_state;
 
 let resyncs = 0;
 await Rsx_Realtime.watch('Model_Changed_Topic', {model: 'Client', id: 77}, (data, meta) => {
@@ -41,7 +41,7 @@ await sleep(1500);
 results.setup_resyncs = resyncs;
 
 const seen = [];
-const unsub = Rsx_Realtime.on_state_change((state) => seen.push(state));
+const monitor = Rsx_Realtime.watch_connection((state) => seen.push(state));
 
 // --- DRIFT: a 10-minute freeze observed while the socket is held.
 const socket_before = Rsx_Realtime._ws;
@@ -53,7 +53,7 @@ results.drift_socket_dropped = Rsx_Realtime._ws === null;   // immediate, synchr
 await sleep(5000);
 results.drift_new_sockets = Rsx_Realtime._sockets_opened - sockets_before;
 results.drift_socket_replaced = !!Rsx_Realtime._ws && Rsx_Realtime._ws !== socket_before;
-results.drift_state = Rsx_Realtime._state;
+results.drift_state = Rsx_Realtime._connection_state;
 results.drift_resynced = resyncs > results.setup_resyncs;
 results.drift_no_offline_flash = !seen.includes('disconnected');
 
@@ -68,7 +68,7 @@ Rsx_Realtime._last_tick_ts = Date.now() - 3700000;   // 61+ minutes
 Rsx_Realtime._drift_tick();
 await sleep(18000);                                   // 500ms floor + up to 10s jitter
 results.stale_reloads = reloads;
-results.stale_state = Rsx_Realtime._state;
+results.stale_state = Rsx_Realtime._connection_state;
 Rsx_Realtime._do_reload = real_reload;
 
 // --- LIVENESS, healthy link: a quiet cadence sends a ping and the relay answers.
@@ -85,9 +85,9 @@ Rsx_Realtime._last_inbound_ts = Date.now() - 120000;
 Rsx_Realtime._liveness_tick(Date.now());
 await sleep(5000);
 results.dead_new_sockets = Rsx_Realtime._sockets_opened - sockets_before_dead;
-results.dead_state = Rsx_Realtime._state;
+results.dead_state = Rsx_Realtime._connection_state;
 
-unsub();
+monitor.stop();
 return JSON.stringify(results);
 JS
 

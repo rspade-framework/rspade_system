@@ -37,16 +37,62 @@ Most component bugs are code in the wrong hook. Find the row that matches your i
 | Set `this.data`/`this.state` defaults | `on_create` | Before first render |
 | Register a persistent component-level handler (`this.on/once`) | `on_create` | Persists across renders; `on_ready()` risks infinite loops from event replay |
 | Fetch data | `on_load` | Only place `this.data` is writable post-create; NO DOM or child access here |
-| Format/decorate the component's OWN just-rendered markup | `on_render` | Fires ~instantly after draw, even on a cached-stub render; must be idempotent, own-template only |
-| Bind a handler to a static direct-descendant HTML element | `on_render` (dedup guard) or `on_ready` | Child DOM recreated each render, must re-attach |
+| Format/decorate the component's OWN just-rendered markup | `on_render` | Fires ~instantly after draw, even on a cached paint - formatting here means the cached copy already looks right; idempotent, own-template only |
+| Bind a handler to the component's OWN markup (its elements, not child components, and needing nothing the load has not delivered) | `on_render` - one delegated handler on `this.$`, or `.off('x.ns').on('x.ns')` on a `$sid` element | The cached paint is interactive at once; `on_ready` would leave it dead until the load finishes |
 | Call a function on a first-generation child built to be timing-indifferent (`Form_Input_Abstract.val()`) | `on_render` (cautiously) | Only if the child's own contract supports pre-ready calls; else `on_ready` |
-| Interact with a child that has no such contract (call methods, read state, bind its events) | `on_ready` | Children guaranteed ready only here |
+| Interact with a child that has no such contract (call methods, read state, bind its events), or bind a handler that needs a child or the loaded data | `on_ready` | Children guaranteed ready, and `this.data` final, only here |
 | Read the finalized/correct `this.data` for post-draw logic | `on_ready` | `on_render` may see a stale cached stub or default `this.data` |
 | Start a socket/subscription/observer | `on_ready` | One-time, needs a stable tree |
 | Teardown (sockets, observers, timers) | `on_stop` | Symmetric with `on_ready` setup |
 | Work that should PAUSE while the component is out of the document and resume when it returns (a poll, a window listener) | `on_attach` / `on_detach` | Fire on every entry to / exit from the document; `on_attach` always sees a ready component and can run many times |
 
 One exception to the last-but-one row: a **realtime** subscription is placed in `on_create()` so the first load is gated on the subscription being live - see the realtime skill.
+
+## Designing for the cache
+
+A component with `on_load()` is CACHED: revisit it with the same arguments and jqhtml paints the
+last `this.data` at once, then runs `on_load()` and repaints only if the answer changed
+(stale-while-revalidate). That is what makes an SPA revisit instant, and it is lost silently -
+nothing throws. Five rules keep a component cacheable, each for a reason:
+
+1. **Arguments identify, they do not carry.** Primitives, or small plain objects/arrays of
+   primitives (keyed by CONTENT, so a template rebuilding `{status: 'open'}` every render still
+   hits). A function, class instance, jQuery/DOM object, circular value or anything over 500
+   bytes has no stable key: the component renders uncached and is marked
+   `data-nocache="<arg>:<reason>"`, and a development console warning names the arg. Pass ids,
+   not records.
+2. **A function argument is legitimate - and obliges `cache_id()`.** A callback (`$on_select=`)
+   is real identity content cannot express, so the component states its identity itself:
+   `cache_id() { return 'contact_picker_' + this.args.client_id; }`. `cache_id()` REPLACES the
+   whole key, so it names everything that changes what `on_load()` fetches - and nothing that
+   does not. It carries a `CACHE CONTRACT` comment in `on_create()` (the shape is in
+   `reference/lifecycle-and-state.md`): change the args and `cache_id()` must change with them,
+   or the cache serves another invocation's data. Uncached is an acceptable LAST resort for a
+   component with no clean identity - say so in one comment, so `data-nocache` reads as a
+   decision rather than an accident. A STATIC
+   class method is already keyable: RSpade tags every one with `_jqhtml_cache_id`
+   (`'Class.method'`), so `$data_source=My_Controller.fetch` caches; an arrow function,
+   `this.handler` or a bound method has no such tag. An object an application builds can carry
+   its own `_jqhtml_cache_id` property (or `jqhtml_cache_id()` method) - defined NON-enumerable
+   (`Object.defineProperty`), or it rides into any payload the object is spread into.
+3. **`this.data` holds what `on_load()` fetched, and nothing a stale copy would make lie.** A
+   `loading` flag, a form seed, a selection or a "settled" marker cached from the last visit
+   is wrong during the next visit's revalidation: `this.state` or a plain instance property.
+4. **The template is a pure function of `this.args` + `this.data`**, so the cached paint is
+   correct before revalidation. Formatting of the component's own markup goes in `on_render()`
+   (which runs on the cached paint), never `on_ready()` (which waits for the load): otherwise
+   the cached copy flashes unformatted.
+5. **Server hints `refresh()`; the user's own action `reload()`.** `refresh()` repaints only
+   when the data changed, so a realtime frame with no real change costs no repaint.
+
+Load DEDUPLICATION (identical components loading at the same moment share one `on_load()`) is
+stricter: it needs primitive arguments or `_jqhtml_cache_id`, and `cache_id()` does NOT apply to
+it - a deduplicated follower never revalidates, so a wrong key there would be permanently
+wrong data. Non-primitive arguments therefore cache but do not share loads; that is expected.
+
+Find every uncached component on a page: `php artisan rsx:debug /path --user=1 --eval="return
+\$('[data-nocache]').map((i, e) => e.className.split(' ')[0] + ' ' + e.getAttribute('data-nocache')).get()"`.
+A component with no `on_load()` is never cached and never needs to be.
 
 ## Complexity tiers
 
@@ -65,7 +111,7 @@ Pick the lowest tier that does the job. Reaching for a higher tier than the comp
 - **Imperative render into stable shell-template `$sid` containers.** The template renders a shell of empty containers once; JS paints into them. A templateless Standalone component has no `$sid` at all - use in-memory element references, **never data-\* tagging**.
 - **Justified only** by one of two shapes, where a template re-render is the wrong tool:
   - **Stateful imperative DOM** - drag-and-drop, inline editing, context menus: the DOM holds state between renders that a re-render would drop.
-  - **A live, append-only stream** - a terminal's output, a log tail, a chat transcript, a progress feed: the view grows a line at a time, and repainting the whole history for each new line is the overhead. Most pages are not this: a page whose content rarely changes refetches and repaints on a realtime frame, and that is correct.
+  - **A live, frequently-updated view** - a terminal's output, a log tail, a chat transcript, a progress feed: the view grows a line at a time or changes several times a second, and repainting it for each update costs the reader their scroll position and selection on top of the work. The working test: updates arrive more often than about once a second, or the view grows by appending. Most pages are not this: a page whose content rarely changes refetches and repaints on a realtime frame (`refresh()`), and that is correct.
 - **`on_ready()` is the component's `$(document).ready()`.** From it the component does everything a jQuery plugin would: its own Ajax, its own event binding on `this.$sid(...)` (namespaced and idempotent - `.off('click.ns').on('click.ns', ...)`), and its own changes to the page with `.append()` / `.hide()` / `.show()` / `.text()`. The `.jqhtml` is static markup to be manipulated, not a function of data.
 - **Keeping it current is the component's own job.** A stateful-DOM component **MUST hand-roll stale-while-revalidate**: `Rsx_Storage` session tier, write-through, `deep_equal` skip when nothing changed. A stream reads from a CURSOR (the last id it has shown) so a repeated or overlapping read is harmless, and routes every read through ONE core `debounce()`. Either way the method that brings it up to date is **UNIQUELY NAMED and public** (`read_new()`, `reload_board()`) - never an override of a reserved name like `refresh()` or `reload()`.
 - **Nothing may re-render it.** `reload()` on the component, or a re-render of its PARENT, destroys it and builds a new one from nothing - scrollback, cursor and handlers gone. A host that must react to something calls the component's own method.
@@ -151,14 +197,14 @@ Remedies included - most of these are silent, not thrown.
 11. **Never put `<% %>` inside a quoted attribute value** - `class="x<% if (c) { %>y<% } %>"` is a COMPILE ERROR (`<% %> code blocks are not allowed inside attribute values`), so this one fails loudly rather than corrupting silently. Build the value in a `<% %>` block, then `class="<%= cls %>"`. Conditional logic toggles a WHOLE attribute *between* attributes: `<% if (cond) { %>attr="val"<% } %>`.
 12. **`<pre>` and `<textarea>` are raw-content elements, and both accept `<%= %>` (jqhtml >= 2.3.59).** `<pre>` additionally accepts nested markup, so `<pre><code><%= this.data.src %></code></pre>` - the standard code-block idiom - compiles, and its interior whitespace is preserved byte for byte. `<textarea>` still takes text only: a nested element inside one is a compile error, because its HTML content model is text. Neither accepts a `<% %>` code block - their content is one flat string with nowhere to write output, so build the value first and interpolate it.
 13. **An unquoted `$arg=expression` ends at the first space unless it is bracketed.** `$alert=_x > 0` fails; `$alert=(_x>0)` and `$alert=(_x > 0)` both work, because the parser tracks the parentheses. Wrap any expression containing spaces, or precompute it in a `<% %>` block.
-14. **`render()` destroys child DOM.** Every child element and child component is recreated, and DOM handlers on them are lost - re-register in `on_render()` (namespaced and idempotent) or `on_ready()`. For ONE data-driven fragment, mark it `$redrawable $sid="x"` and call `this.render('x')` instead - only that element redraws.
+14. **`render()` destroys child DOM.** Every child element and child component is recreated, and DOM handlers on them are lost - re-register in `on_render()` (namespaced and idempotent), or bind ONE delegated handler on `this.$`, which survives the component's own re-renders. For ONE data-driven fragment, mark it `$redrawable $sid="x"` and call `this.render('x')` instead - only that element redraws.
 15. **`on_render` fires more than once.** Namespace every DOM bind (`.off('click.ns').on('click.ns', ...)`) and guard every DOM injection against duplicate appends.
 16. **Do not render display templates from a `this.state` copy of `this.data`.** The post-load re-render is gated on `JSON.stringify(this.data)` changing, so such a template goes stale after a save that returns identical values.
 17. **Never tag imperative DOM with `data-id`.** `$sid` is template-only, `data-*` belongs to the args machinery, and the jquery layer THROWS on the setter form. Use in-memory element references (a Map) or CSS classes.
 18. **Never name a custom event `create`/`load`/`loaded`/`ready`/`render`/`rendered`/`stop`**, and never shadow a component method name (`reload`/`refresh`/`render`/`redraw`/`stop`/`ready`/`rendered`/`gate_load`/`sid`/`$sid`/`closest`/`find`/`instantiator`/`on`/`once`/`trigger`/`invalidate` + the lifecycle hooks, plus `subscribe`: RSpade assigns it to `Component.prototype` at framework-modules init, so it is present on every component whether or not realtime is enabled). Both collide silently with framework behavior.
 19. **Never fire custom events with `this.$.trigger()`** - use `this.trigger()` (enforced by `JQHTML-EVENT-01`).
 20. **Iterate with the page renderer, not the lint suite.** `php artisan rsx:debug /path --user=1` surfaces compile, SCSS and runtime errors immediately; run the full `rsx:check` once at the end. For live timing/ordering bugs a single render pass cannot show (double-render, hook order, slow renders), `jqhtml.enableDebugMode('basic')` in the browser console logs each phase with timestamps.
-21. **Some args silently disable caching, and non-primitive args always disable load deduplication.** CACHING keys plain data by CONTENT (jqhtml >= 2.3.54), so `$filters={status:'open'}` and `$ids=[1,2]` cache correctly even though the template rebuilds them on every render; what declines is a function, a class instance, a DOM/jQuery object, a circular structure, or anything over 500 bytes - marked `data-nocache="<arg>:<reason>"`. DEDUPLICATION is stricter and does NOT use content keys: it needs primitive args or a `_jqhtml_cache_id` on the object, so a non-primitive arg still opts out of shared loads with no error.
+21. **An unkeyable argument silently turns caching off.** A function, class instance, DOM/jQuery object, circular value or anything over 500 bytes - see "Designing for the cache" above for the rules and `cache_id()`.
 22. **A tag is a component only if it starts with a capital, optionally preceded by a single underscore.** `<user_card>` is never a component no matter what is registered - it renders as a literal unknown HTML element with no scoping, lifecycle or `Component` class (`JQHTML-CLASS-01`). `<_Sys_Card>` IS one, but the prefix is the framework's: an application may not declare it (`NAME-RESERVED-01`).
 23. **No inline `<script>` or `<style>` tags in a `.jqhtml` template** (`JQHTML-INLINE-01`). Behavior goes in the companion `.js` or a `<% %>` block; styling goes in the component's `.scss`.
 24. **`on_stop()` fires for every removal through jQuery or the framework** - `.remove()`, `.empty()`, `.html(x)`, `.text(x)`, `.replaceWith()`, a parent's re-render - descendants included. It does NOT fire for NATIVE DOM removal (`element.remove()`, `innerHTML = ''`) or for jQuery `.detach()`; application code uses the jQuery and component APIs, so that is a third-party library's doing. Such a component still fires `detach`. Put cleanup in `on_stop()`; reach for `on_attach()` / `on_detach()` only for work that should pause while the component is out of the document. **Realtime needs neither**: `this.subscribe()` in `on_create()` is released on its own, with or without an `on_stop()`.

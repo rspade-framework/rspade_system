@@ -1,6 +1,6 @@
 ---
 name: form-engine
-description: "Building RSX forms on the framework's Rsx_Form engine - the $controller/$method declaration, form.submit(), server-only validation, the mandatory <Form_Errors />, set_loading()/populate(), dirty-value parking, and the Form_Utils error renderer. Use when creating or converting a form, wiring an endpoint to a form, writing the save() endpoint's validation, deciding where a form's loading state lives, or hitting \"no <Form_Errors /> in this form\", \"$controller and $method are required on the <Rsx_Form> tag\", or a form whose values arrive blank."
+description: "Building RSX forms on the framework's Rsx_Form engine - the $controller/$method declaration, form.submit(), server-only validation, the mandatory <Form_Errors />, set_loading()/populate(), unsaved changes (form.dirty() and the 'dirty' event, for a navigation guard or a disabled-until-changed Save), touched-value parking, and the Form_Utils error renderer. Use when creating or converting a form, wiring an endpoint to a form, writing the save() endpoint's validation, deciding where a form's loading state lives, or hitting \"no <Form_Errors /> in this form\", \"$controller and $method are required on the <Rsx_Form> tag\", or a form whose values arrive blank."
 ---
 
 # The Rsx_Form engine
@@ -70,7 +70,7 @@ form.on('submitted', (form, result) => grid.reload());
 ```
 
 Reaching one input: `form.input('due_date').on('val', cb)` - never a raw selector.
-`form.vals()` serializes, `form.vals(object)` applies (skipping dirty names).
+`form.vals()` serializes, `form.vals(object)` applies (skipping touched names, never making the form dirty).
 
 ## Validation lives on the server, once
 
@@ -268,16 +268,32 @@ once, from a static `on_app_modules_define()`, `<Spinner />` or `$(el).component
 else. The host owns the box and the box is a centering stage; there are no size
 arguments, and spinner markup is never hand-rolled.
 
-## Dirty protection
+## Unsaved changes - `form.dirty()` and `'dirty'`
+
+```javascript
+form.on('dirty', (form, dirty) => (dirty ? Rsx.set_navigation_guard() : Rsx.clear_navigation_guard()));
+```
+
+`dirty()` is true while any input holds a value the USER changed; `'dirty'` fires each time
+that flips, both ways. Each input compares its value with a baseline read back through its
+own `_get_value()` - taken from the seed, `populate()`, every programmatic write
+(`vals(object)`, `input.val(v)`) and a successful submit - so programmatic writes never
+dirty a form and a value typed back is clean again. Inputs implement nothing; an input that
+calls `_mark_ready()` before a written value sticks reads as changed with nobody touching
+it (skill `rspade:form-input-contract`). Wire `'dirty'` in `on_render()`, or read `dirty()`
+as you wire: a form restoring parked values flips in its own `on_ready()`.
+
+## Keystrokes win - touched values and parking
 
 **Data fills fields the user has not touched; the user's keystrokes always win.**
 
-Every user `'input'` marks that name dirty, and applying data (`$data`, `vals(object)`)
-skips dirty names. Across component **re-creation** - an SPA action re-rendering on fresh
-data - dirty values are parked on the live SPA action under a key frozen at `on_create()`
-(`controller|method|record-id`) and re-applied to the successor, still beating `$data`.
-Parking is silent, cleared on a successful submit, and dies with the action on
-navigation.
+Every user `'input'` marks that name TOUCHED (not the same as dirty: typed-and-typed-back
+stays touched), and applying data (`vals(object)`, `populate()`) skips touched names. Across
+component **re-creation** - an SPA action re-rendering on fresh data - touched values are
+parked on the live SPA action under a key frozen at `on_create()`
+(`controller|method|record-id`) and restored to the successor after its seed, still beating
+`$data` and reading as changes. Parking is silent, cleared on a successful submit, and dies
+with the action on navigation.
 
 To overwrite a field the user has touched, address the input: `form.input(name).val(v)`.
 

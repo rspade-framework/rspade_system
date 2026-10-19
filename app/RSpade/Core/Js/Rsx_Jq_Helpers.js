@@ -287,9 +287,10 @@ class Rsx_Jq_Helpers {
          * a separator deletes the digit before it rather than a character that is only
          * there to be read. The box looks the same focused and blurred.
          *
-         * Filtering is all it does - it never validates (that is the server's), never
-         * calls `_notify_input()`, and never fires an `input` event of its own: the
-         * browser already fired one for the keystroke that reached it.
+         * Filtering is all it does - it never validates (that is the server's) and never
+         * calls `_notify_input()`. It fires an `input` event of its own only for the
+         * Backspace it intercepts (prevented, so the browser fires none); every other
+         * keystroke reaches it through the browser's own.
          *
          * Calling it again reconfigures: the previous handlers come off first, so the last
          * options win and there is only ever one set. `rsx_numeric(false)` takes the
@@ -379,6 +380,10 @@ class Rsx_Jq_Helpers {
                     element.value = Rsx_Jq_Helpers._numeric_format(numeric.slice(0, -1), state);
                     const end = element.value.length;
                     element.setSelectionRange(end, end);
+
+                    // The keystroke was prevented, so the browser fires no input event for
+                    // this edit - raise the one it would have, or the edit goes unannounced.
+                    element.dispatchEvent(new Event('input', { bubbles: true }));
                 });
 
                 $input.on('input.rsx_numeric', function () {

@@ -21,10 +21,12 @@
  *     // later:
  *     watcher.stop();
  *
- * Connection state:
- *     Rsx_Realtime.on_state_change((state) => {
- *         // state: 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+ * Is the page connected? (a connection indicator):
+ *     const monitor = Rsx_Realtime.watch_connection((state) => {
+ *         // state: 'connected' | 'disconnected' | 'disabled' - never anything else
  *     });
+ *     // later:
+ *     monitor.stop();
  *
  * Connection model, in one place:
  *   - ONE socket per tab. Connecting is single-flight (_connect), and a socket in
@@ -33,9 +35,11 @@
  *     flushed as one array frame (_send/_flush_outbox). The relay accepts nothing
  *     else. A message queued while the link is down is DROPPED, never replayed —
  *     auth_ok resync is the one and only catch-up mechanism.
- *   - Losing the link is announced to listeners on a DELAY (OFFLINE_ANNOUNCE_GRACE_MS)
- *     so a blip never flashes an offline state at the app; internal state is updated
- *     immediately regardless.
+ *   - The application sees ONE bit, never the socket's own states: watch_connection()
+ *     reports 'connected' once authenticated and 'disconnected' only once the link has been
+ *     down for _OFFLINE_ANNOUNCE_GRACE_MS, so a blip never flashes an offline state; internal
+ *     state is updated immediately regardless. A connection monitor, like a watch, is a
+ *     reason to hold the socket open.
  *   - A large wall-clock gap (laptop resume) or an unanswered liveness ping forces a
  *     disconnect/reconnect, because resync is the only correct recovery from a link
  *     that may have missed messages or died without telling the browser.
@@ -127,16 +131,22 @@ class Rsx_Realtime {
 
     // Grace window between LOSING the link and TELLING the app about it. Internal state
     // (_ws / _connected / _authenticated) is updated the instant the socket closes; this
-    // bounds only the listener-facing 'disconnected' announcement, so a 300ms blip — a
+    // bounds only the public 'disconnected' (watch_connection()), so a 300ms blip — a
     // relay restart, a wifi handoff — never flashes an offline banner at the user. A
-    // reconnect inside the window means the app never hears 'disconnected' at all.
+    // reconnect inside the window means the app never hears 'disconnected' at all. ONE
+    // window per client, never per monitor: a monitor registering while one runs joins it.
     //
-    // 5s because that is the shipped Realtime_Status_Badge's own GRACE_MS: shorter and no
-    // consumer has reacted yet anyway, longer and a genuine outage stays hidden from the
-    // user past the point they would notice the page has gone quiet.
-    static OFFLINE_ANNOUNCE_GRACE_MS = 5000;
+    // 5s: shorter and a relay restart reads as an outage; longer and a genuine outage stays
+    // hidden from the user past the point they would notice the page has gone quiet.
+    static _OFFLINE_ANNOUNCE_GRACE_MS = 5000;
     static _offline_timer = null;
-    static _offline_announced = false;
+
+    // The PUBLIC connection value watch_connection() reports: null while undecided (idle,
+    // or inside a grace window), else 'connected' | 'disconnected'. 'disabled' is never
+    // stored - it is terminal and answered per call. A projection like _connection_state:
+    // nothing in the class reads it to decide what to do with the socket.
+    static _public_connection = null;
+    static _connection_monitors = new Set();
 
     // Outgoing batch queue. Every client -> relay message goes through _send(); the wire
     // format is an ARRAY of messages and the relay accepts nothing else.
@@ -178,8 +188,9 @@ class Rsx_Realtime {
     // contract. Resync dispatch is NOT debounced (fires immediately).
     static _live_dispatch_debounce_ms = 250;
 
-    static _state = 'disconnected';
-    static _state_listeners = new Set();
+    // The socket's own state ('connecting' | 'connected' | 'disconnected' | 'reconnecting'),
+    // kept for debugging only. Framework-internal: the application sees watch_connection().
+    static _connection_state = 'disconnected';
 
     /**
      * Boot: always patch Component.prototype.subscribe (safe no-op when realtime
@@ -200,7 +211,7 @@ class Rsx_Realtime {
      */
     static _install_refresh_listeners() {
         if (Rsx_Realtime._refresh_listeners_installed) return;
-        if (!window.rsxapp?.realtime_url) return;
+        if (!Rsx_Realtime.is_enabled()) return;
         if (Rsx.is_ssr()) return;
         if (typeof window === 'undefined' || typeof document === 'undefined') return;
         Rsx_Realtime._refresh_listeners_installed = true;
@@ -447,7 +458,7 @@ class Rsx_Realtime {
      * visitor who has none. No-op when realtime is disabled or in SSR. Idempotent.
      */
     static _ensure_anchor() {
-        if (!window.rsxapp?.realtime_url) return;
+        if (!Rsx_Realtime.is_enabled()) return;
         if (typeof window.rsxapp.session_hash !== 'string' || window.rsxapp.session_hash === '') return;
         if (Rsx.is_ssr()) return;
         if (Rsx_Realtime._anchored) return;
@@ -462,39 +473,124 @@ class Rsx_Realtime {
     // =========================================================================
 
     /**
-     * Register a callback for connection state changes. Invoked immediately with
-     * the current state, then again on every transition.
+     * Is realtime configured in this application? (window.rsxapp.realtime_url is injected
+     * at render, so the answer cannot change within a page.) For a host deciding whether to
+     * mount a connection indicator at all; watch_connection() answers 'disabled' on its own.
      *
-     * @param {Function} callback - (state) => void
-     * @returns {Function} Call to stop listening.
+     * @returns {boolean}
      */
-    static on_state_change(callback) {
-        Rsx_Realtime._state_listeners.add(callback);
-        try {
-            callback(Rsx_Realtime._state);
-        } catch (e) {
-            console.error('[Realtime] on_state_change callback error:', e);
-        }
-        return () => Rsx_Realtime._state_listeners.delete(callback);
+    static is_enabled() {
+        return !!window.rsxapp?.realtime_url;
     }
 
     /**
-     * Announce a state to LISTENERS. This is a projection for the app, never the class's
-     * own source of truth: nothing here reads _state to decide behavior (_ws, _connected,
-     * _authenticated and _watches are the truth, and they are updated the instant anything
-     * happens). That separation is what lets the offline announcement be delayed without
-     * the class ever lying to itself — see _announce_offline_after_grace().
+     * Report whether this page is connected, as ONE of three values:
+     *
+     *   'connected'     the client holds an authenticated socket
+     *   'disconnected'  it has not been connected for _OFFLINE_ANNOUNCE_GRACE_MS (5s)
+     *   'disabled'      realtime is not configured; emitted once, synchronously, and never again
+     *
+     * The callback never receives the same value twice in a row, and always hears something
+     * within the grace window: at once when the answer is already known, otherwise when the
+     * ONE window in flight resolves (a monitor joining a running window does not extend it).
+     *
+     * Registering is a reason to HOLD THE SOCKET OPEN, independent of subscriptions and of
+     * the session anchor: an idle client connects, and idle disconnect is suppressed while
+     * any monitor is registered. Stopping the last monitor releases the hold, and the client
+     * returns to its ordinary lazy behaviour. There is no session requirement: a visitor with
+     * no session connects like any other (opening a socket never creates a session).
+     *
+     * @param {Function} callback - (state) => void
+     * @returns {{stop: Function}} stop() unregisters; idempotent
      */
-    static _set_state(state) {
-        if (Rsx_Realtime._state === state) return;
-        Rsx_Realtime._state = state;
-        for (const listener of Rsx_Realtime._state_listeners) {
-            try {
-                listener(state);
-            } catch (e) {
-                console.error('[Realtime] on_state_change callback error:', e);
+    static watch_connection(callback) {
+        if (!Rsx_Realtime.is_enabled()) {
+            // No socket is possible on this page, ever: say so once, register nothing, touch
+            // no network (watch()'s disabled no-op, likewise).
+            Rsx_Realtime._emit_connection(callback, 'disabled');
+            return { stop() {} };
+        }
+
+        Rsx_Realtime._connection_monitors.add(callback);
+
+        if (Rsx_Realtime._connected && Rsx_Realtime._authenticated) {
+            Rsx_Realtime._public_connection = 'connected';
+            Rsx_Realtime._emit_connection(callback, 'connected');
+        } else {
+            if (Rsx_Realtime._public_connection === 'disconnected') {
+                Rsx_Realtime._emit_connection(callback, 'disconnected');
+            } else {
+                // Undecided: join the window in flight, or start one.
+                Rsx_Realtime._announce_offline_after_grace();
+            }
+
+            // Make sure an attempt is under way. _connect() is single-flight, and a reconnect
+            // already waiting out its backoff is left to it rather than jumped.
+            if (!Rsx_Realtime._reconnect_timer) {
+                Rsx_Realtime._connect();
             }
         }
+
+        let stopped = false;
+        return {
+            stop() {
+                if (stopped) return;
+                stopped = true;
+                Rsx_Realtime._connection_monitors.delete(callback);
+                if (Rsx_Realtime._connection_monitors.size === 0) {
+                    Rsx_Realtime._release_connection_hold();
+                }
+            },
+        };
+    }
+
+    /**
+     * The last monitor stopped. The answer is forgotten - a later registration starts a fresh
+     * window rather than replaying a stale verdict - and, if nothing else wants the socket,
+     * the ordinary idle disconnect takes over.
+     */
+    static _release_connection_hold() {
+        if (Rsx_Realtime._offline_timer) {
+            clearTimeout(Rsx_Realtime._offline_timer);
+            Rsx_Realtime._offline_timer = null;
+        }
+        Rsx_Realtime._public_connection = null;
+
+        if (Rsx_Realtime._watches.size === 0 && !Rsx_Realtime._anchored) {
+            Rsx_Realtime._schedule_idle_disconnect();
+        }
+    }
+
+    /** The ONE place the public value changes. A repeat of the current value emits nothing. */
+    static _publish_connection(value) {
+        if (Rsx_Realtime._public_connection === value) return;
+        Rsx_Realtime._public_connection = value;
+        for (const callback of Rsx_Realtime._connection_monitors) {
+            Rsx_Realtime._emit_connection(callback, value);
+        }
+    }
+
+    static _emit_connection(callback, value) {
+        try {
+            callback(value);
+        } catch (e) {
+            console.error('[Realtime] watch_connection callback error:', e);
+        }
+    }
+
+    /** Is anything holding the socket open? Re-asked wherever the socket might be let go. */
+    static _socket_wanted() {
+        return Rsx_Realtime._watches.size > 0 || Rsx_Realtime._anchored || Rsx_Realtime._connection_monitors.size > 0;
+    }
+
+    /**
+     * Record the socket's own state, for debugging. Never read to decide behavior: _ws,
+     * _connected, _authenticated and _watches are the truth, updated the instant anything
+     * happens - which is what lets the public 'disconnected' be delayed without the class
+     * ever lying to itself.
+     */
+    static _set_connection_state(state) {
+        Rsx_Realtime._connection_state = state;
     }
 
     // =========================================================================
@@ -530,7 +626,7 @@ class Rsx_Realtime {
 
         // Disabled (or realtime_url not injected): safe no-op, no network touched. A
         // resolved `established` keeps disabled-mode gated loads from ever waiting.
-        if (!window.rsxapp?.realtime_url) {
+        if (!Rsx_Realtime.is_enabled()) {
             return { stop() {}, established: Promise.resolve() };
         }
 
@@ -790,7 +886,7 @@ class Rsx_Realtime {
      * from a previous connection silently killing the current one.
      */
     static async _open_socket() {
-        Rsx_Realtime._set_state('connecting');
+        Rsx_Realtime._set_connection_state('connecting');
 
         try {
             // Realtime_Controller is a framework-core Ajax controller. Its JS stub is
@@ -849,12 +945,18 @@ class Rsx_Realtime {
                 // elapses in CLOSING. A watch() (or the anchor) arriving in that window is
                 // exactly the case that used to strand a live watch entry with no socket:
                 // the intent was right, the condition was stale.
-                const still_needed = Rsx_Realtime._watches.size > 0 || Rsx_Realtime._anchored;
+                const still_needed = Rsx_Realtime._socket_wanted();
 
                 if (was_intentional && !still_needed) {
                     // Terminal by intent: nothing wants the socket, nothing will reconnect.
-                    // Tell listeners immediately — there is no blip to wait out.
-                    Rsx_Realtime._set_state('disconnected');
+                    // Idle is not an outage, and no monitor exists to hear it (a monitor would
+                    // have made the socket wanted): the public answer is simply undecided.
+                    Rsx_Realtime._set_connection_state('disconnected');
+                    if (Rsx_Realtime._offline_timer) {
+                        clearTimeout(Rsx_Realtime._offline_timer);
+                        Rsx_Realtime._offline_timer = null;
+                    }
+                    Rsx_Realtime._public_connection = null;
                     return;
                 }
 
@@ -901,38 +1003,35 @@ class Rsx_Realtime {
     }
 
     /**
-     * Tell listeners we are offline — but only if we are STILL offline once the grace
+     * Publish 'disconnected' — but only if the client is STILL not connected once the grace
      * window has passed. A reconnect inside the window means the app never hears
      * 'disconnected' at all, which is the point: a 300ms blip is not an outage.
      *
-     * Once an outage HAS been announced, further closes in the same outage skip the grace
-     * and announce immediately — the delay exists to avoid crying wolf, and we are already
-     * known to be offline.
+     * Arms the window only if none is running (never restarts one: every monitor waiting on
+     * it is answered at the same moment), and does nothing once 'disconnected' is already
+     * the public answer - further closes in the same outage change nothing the app sees.
      */
     static _announce_offline_after_grace() {
-        if (Rsx_Realtime._offline_announced) {
-            Rsx_Realtime._set_state('disconnected');
-            return;
-        }
+        if (Rsx_Realtime._public_connection === 'disconnected') return;
         if (Rsx_Realtime._offline_timer) return;
 
         Rsx_Realtime._offline_timer = setTimeout(() => {
             Rsx_Realtime._offline_timer = null;
-            if (Rsx_Realtime._connected) return;
-            Rsx_Realtime._offline_announced = true;
-            Rsx_Realtime._set_state('disconnected');
-        }, Rsx_Realtime.OFFLINE_ANNOUNCE_GRACE_MS);
+            if (Rsx_Realtime._connected && Rsx_Realtime._authenticated) return;
+            Rsx_Realtime._publish_connection('disconnected');
+        }, Rsx_Realtime._OFFLINE_ANNOUNCE_GRACE_MS);
     }
 
     /**
-     * Cancel a pending offline announcement and end the outage. Called on auth_ok.
+     * The client is connected: cancel a pending offline announcement and publish
+     * 'connected'. Called on auth_ok.
      */
     static _cancel_offline_announcement() {
         if (Rsx_Realtime._offline_timer) {
             clearTimeout(Rsx_Realtime._offline_timer);
             Rsx_Realtime._offline_timer = null;
         }
-        Rsx_Realtime._offline_announced = false;
+        Rsx_Realtime._publish_connection('connected');
     }
 
     /**
@@ -972,14 +1071,14 @@ class Rsx_Realtime {
      */
     static _schedule_idle_disconnect() {
         // The system anchor holds the connection open for the page lifetime (refresh pushes
-        // arrive with no app subscription), so never idle-close while anchored.
-        if (Rsx_Realtime._anchored) return;
+        // arrive with no app subscription), and a connection monitor holds it while
+        // registered, so never idle-close while either holds it.
+        if (Rsx_Realtime._anchored || Rsx_Realtime._connection_monitors.size > 0) return;
         if (Rsx_Realtime._idle_timer) return;
 
         Rsx_Realtime._idle_timer = setTimeout(() => {
             Rsx_Realtime._idle_timer = null;
-            if (Rsx_Realtime._anchored) return;
-            if (Rsx_Realtime._watches.size > 0) return;
+            if (Rsx_Realtime._socket_wanted()) return;
             Rsx_Realtime._close_idle();
         }, Rsx_Realtime._idle_disconnect_delay);
     }
@@ -996,15 +1095,15 @@ class Rsx_Realtime {
             Rsx_Realtime._connected = true;
             Rsx_Realtime._authenticated = true;
             Rsx_Realtime._reconnect_delay = 1000;
+            Rsx_Realtime._set_connection_state('connected');
             Rsx_Realtime._cancel_offline_announcement();
-            Rsx_Realtime._set_state('connected');
 
             // Nothing wanted this connection by the time it finished opening — the idle
             // timer may have fired while the token request was in flight, when there was
             // no socket for it to close. Without this the socket would stay open forever
             // with nothing watching, since idle disconnect is otherwise only scheduled
             // from the release path.
-            if (Rsx_Realtime._watches.size === 0 && !Rsx_Realtime._anchored) {
+            if (!Rsx_Realtime._socket_wanted()) {
                 Rsx_Realtime._schedule_idle_disconnect();
             }
 
@@ -1189,10 +1288,10 @@ class Rsx_Realtime {
      * Schedule reconnection with exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max.
      */
     static _schedule_reconnect() {
-        Rsx_Realtime._set_state('reconnecting');
+        Rsx_Realtime._set_connection_state('reconnecting');
 
         if (Rsx_Realtime._reconnect_timer) return;
-        if (!window.rsxapp?.realtime_url) return;
+        if (!Rsx_Realtime.is_enabled()) return;
 
         console_debug('Realtime', 'Reconnecting in ' + Rsx_Realtime._reconnect_delay + 'ms');
 
@@ -1341,7 +1440,7 @@ class Rsx_Realtime {
             // establishment, so the ONE fetch happens strictly after the subscription is
             // live — no fetch-then-resync duplicate. Post-load subscriptions (on_ready)
             // skip the gate and behave as fetch-then-revalidate, exactly as before.
-            const realtime_active = !!window.rsxapp?.realtime_url;
+            const realtime_active = Rsx_Realtime.is_enabled();
             const pre_load = realtime_active && this.__first_load_started !== true;
 
             let first_callback = r_callback;

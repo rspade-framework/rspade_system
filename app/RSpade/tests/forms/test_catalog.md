@@ -84,6 +84,21 @@ drew the top alert only when it had found a field error. The probe is a runtime-
 | forms-focus-03 | readiness honours the request after the value | `val('buffered')`, `focus()`, `_mark_ready()` | focused, and the control held the value when it took focus | implemented |
 | forms-focus-04 | readiness alone moves nothing | `_mark_ready()` with nothing pending | the active element is unchanged | implemented |
 
+## form_dirty.js (playwright) - `Rsx_Form.dirty()` and the `'dirty'` event
+
+The panel's site-rename form mounted at runtime on `/_sys` with a made-up site; the submit answers through a stubbed `Ajax.call`.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-dirty-01 | a seeded form is clean | mount with `$data` | `dirty()` false, no `'dirty'` | implemented |
+| forms-dirty-02 | a user edit dirties | type into a field | `dirty()` true, `'dirty'` (true) | implemented |
+| forms-dirty-03 | changed, not touched | type the value back | `dirty()` false, `'dirty'` (false) | implemented |
+| forms-dirty-04 | programmatic writes never dirty | `vals(object)`, `input.val(v)` | clean, no event, value written | implemented |
+| forms-dirty-05 | keystrokes win, even typed back | `vals({name})` after typing back | the field keeps the user's value | implemented |
+| forms-dirty-06 | a value buffered before ready is the baseline | `val(v)` with the ready flag clear, then `_mark_ready()` | unchanged before and after | implemented |
+| forms-dirty-07 | a parked user value restored before ready is a change | `_restore_user_value(v)`, then `_mark_ready()` | changed before and after, value `v`, form dirty | implemented |
+| forms-dirty-08 | a successful submit re-baselines | `submit()` | clean; `'dirty'` (false) before `'submitted'` | implemented |
+
 ## code_input.js (playwright) - `Code_Input`, one digit per box
 
 Real keyboard input on a runtime-mounted widget on `/_sys`.

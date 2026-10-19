@@ -118,6 +118,19 @@ on load. It is a symptom of the page, NOT of `--eval` - bisect by running the sa
 individually, shortening the wait until one returns, and by checking whether a broadly-scoped
 selector (above) is driving code you did not intend to reach.
 
+## Is every component on the page cached?
+
+A component with `on_load()` that cannot be cached repaints behind a loading state on every
+revisit, and nothing reports it but a development console warning and a `data-nocache`
+attribute. One command lists them; an empty result is the healthy state:
+
+```bash
+php artisan rsx:debug /path --user=1 --eval="return \$('[data-nocache]').map((i, e) => e.className.split(' ')[0] + ' ' + e.getAttribute('data-nocache')).get()"
+```
+
+Each entry is `<Component> <arg>:<reason>`; skill `rspade:jqhtml`, "Designing for the cache",
+says how to fix it.
+
 ## Other options worth knowing
 
 | Option | Use |

@@ -51,7 +51,8 @@ A subscription that means "the USER changed this" rides **`input`**, never **`va
 |------|-------|-----|
 | `this.on/once('event', ...)` | `on_create()` | Persists across renders; on_ready() risks infinite loops from event replay |
 | `this.sid('child').on/once('event')` | `on_ready()` | Child component events - children are only guaranteed ready here |
-| `this.$sid('elem').on('click')` | `on_render()` or `on_ready()` | Child DOM is recreated on render, so it must be re-attached - and MUST deregister first (`.off('click.ns').on('click.ns')`) since `on_render` can fire multiple times |
+| A handler on the component's OWN markup - `this.$.on('click.ns', '.x', ...)` (preferred) or `this.$sid('elem').off('click.ns').on('click.ns', ...)` | `on_render()` | Runs on the cached paint, so it is interactive before the load finishes; child DOM is recreated on render, so it re-binds, deregistering first because `on_render` re-fires |
+| A handler that needs the final loaded data or a child component | `on_ready()` | Both are guaranteed only there |
 
 ### Reserved event names
 

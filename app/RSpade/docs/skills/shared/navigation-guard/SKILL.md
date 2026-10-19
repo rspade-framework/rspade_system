@@ -47,14 +47,13 @@ With the guard off, links are intercepted again from the very next click and not
 
 ## The recipe: the guard follows the page's state
 
-On at the first change, off when the change is saved, off when it is discarded, off when
-the page is torn down.
+On while the form holds unsaved changes, off when they are undone, saved or discarded, off
+when the page is torn down.
 
 ```js
-on_ready() {
+on_render() {
     const form = this.$.find('.Rsx_Form').first().component();
-    form.on('input', () => Rsx.set_navigation_guard());        // the user changed something
-    form.on('submitted', () => Rsx.clear_navigation_guard());  // saved
+    form.on('dirty', (form, dirty) => (dirty ? Rsx.set_navigation_guard() : Rsx.clear_navigation_guard()));
 }
 
 discard_changes() {                 // <a href=... @click=this.discard_changes>Cancel</a>
@@ -66,10 +65,14 @@ on_stop() {
 }
 ```
 
-- **`'input'` on `<Rsx_Form>` is the "something changed" signal.** It fires for an edit
-  the user makes and never for values applied from loaded data (`$data`, `vals(object)`,
-  `populate()`), so an edit form filling itself does not turn the guard on. It also fires
-  again for a value typed and then typed back - the guard stays on until save or discard.
+- **`'dirty'` on `<Rsx_Form>` is the "unsaved changes" signal** (`form.dirty()` asks the
+  same question). It flips true when the user changes a value and false when every value
+  is back as given or a submit succeeds - a value typed and typed back turns the guard off
+  again. Values applied from loaded data (`$data`, `vals(object)`, `populate()`) and every
+  programmatic `input.val(v)` never make a form dirty.
+- Wire it before the form is ready (`on_render()`), or read `form.dirty()` once as you wire:
+  a form that restores parked values after a re-render becomes dirty in its own
+  `on_ready()`.
 - The form engine never sets or clears the guard itself. A page opts in.
 - A re-render replaces the form component: wire the instance you are given, once per
   instance.

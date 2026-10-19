@@ -32,7 +32,7 @@ draws or removes the indicator to match. (`Rsx_Form.set_loading()` /
 
 Fires after render, BEFORE children are ready (top-down, sync). **May fire more than once**: a cached-stub render, the post-`on_load()` re-render, and every `render()`/`redraw()`/`reload()`.
 
-**Own-template only by default**: read, format, and bind handlers to raw HTML nodes owned directly by this component (no other component boundary between them and the root). Because it re-fires, **any DOM handler bind MUST be idempotent**:
+**Own-template only by default**: read, format, and bind handlers to raw HTML nodes owned directly by this component (no other component boundary between them and the root). **This is where formatting and own-markup handlers belong** - it runs on the cached paint, so the cached copy looks right and responds to clicks at once; the same code in `on_ready()` would leave it unformatted and dead until the load finished. A handler that needs a child component or the FINAL loaded data goes in `on_ready()`. Because `on_render` re-fires, **any DOM handler bind MUST be idempotent**:
 
 ```javascript
 on_render() {
@@ -355,24 +355,77 @@ override only when layout needs real measurement (canvas sizing, chart redraw, v
 
 ## Caching and deduplication
 
-The skill's `on_render` cache-stub warnings presuppose this model:
+**Why it matters.** A component with `on_load()` is cached under a key built from its name and
+arguments. Revisit it with the same key and jqhtml paints the last `this.data` IMMEDIATELY, then
+runs `on_load()` and repaints only if the answer differs (stale-while-revalidate). That is what
+makes an SPA revisit instant instead of a spinner, and losing it throws nothing: the component
+still works, it just refetches behind a loading state every time. Cacheability is therefore a
+design goal for every component that loads, decided by four things the author controls -
+arguments, `this.data`, the template and the hook formatting lives in (SKILL.md, "Designing for
+the cache"). A component with no `on_load()` is never cached and never needs to be.
 
-- Components with the same name and the same args loading at the same time share **one** `on_load()`
-  call. Automatic, always on. Fewer network requests than component instances is expected.
-- **Caching and deduplication key differently, and this is deliberate.** CACHING keys plain data by
-  CONTENT (jqhtml >= 2.3.54): null, booleans, numbers, strings, Dates, arrays and plain objects, in
-  any nesting, so `$filters={status:'open'}` rebuilt on every render still hits the same entry. It
-  DECLINES - never silently degrades - on a function, a class instance, a DOM/jQuery object, a
-  circular structure, or anything over 500 bytes, marking the element
-  `data-nocache="<arg>:<reason>"`. A key that dropped a callback would let two different arg sets
-  share an entry and serve the wrong content, which is worse than not caching.
-- DEDUPLICATION is stricter and does NOT use content keys: it needs primitive args, or a
-  `_jqhtml_cache_id` property on the object. A deduplicated follower skips `on_load()` entirely with
-  no revalidation, so a wrong key there is permanently wrong data - redundant requests are the
-  cheaper failure. This is why a non-primitive arg still opts out of shared loads (SKILL.md
-  pitfall 21) even though it now caches.
-- `cache_id()` can be overridden to control the persisted cache key. It does **not** affect
-  deduplication, which always keys off raw `this.args`.
+**How the key is built.** Plain data is keyed by CONTENT: null, booleans, numbers, strings,
+Dates, arrays and plain objects in any nesting (so `$filters={status: 'open'}` rebuilt every
+render hits the same entry). It DECLINES - never silently degrades - on a function, symbol,
+class instance, Map/Set, DOM or jQuery object, circular structure, invalid Date, or anything
+over 500 bytes: the element gets `data-nocache="<arg>:<reason>"` and, in development, the
+console says `[JQHTML] <Name> cannot be cached: arg $x is not keyable because ...`. A key that
+dropped a callback would let two different argument sets share an entry and serve the wrong
+content, which is worse than not caching. A value carrying `_jqhtml_cache_id` (property) or
+`jqhtml_cache_id()` (method) is keyed by that instead - and RSpade stamps `'Class.method'` on
+every static class method, so `$data_source=My_Controller.fetch` stays keyable while an arrow
+function, `this.handler` or a bound method does not.
+
+**`cache_id()` - stating identity by hand.** A component whose arguments cannot be keyed (a
+callback is legitimate: `$on_select=this.picked`) defines `cache_id()`, and its return value
+REPLACES the whole key (`<Name>::<cache_id>`): name everything that changes what `on_load()`
+fetches, and nothing that does not. A throwing `cache_id()` disables caching with its own
+warning. Because the contract is easy to break later, the component says so where the next
+reader looks:
+
+```javascript
+on_create() {
+    // =====================================================================
+    // CACHE CONTRACT - READ BEFORE CHANGING THIS COMPONENT'S ARGS
+    // $on_select is a callback, so jqhtml cannot derive this component's
+    // identity; cache_id() below supplies it. IF THE ARGS THIS COMPONENT
+    // ACCEPTS EVER CHANGE, cache_id() MUST CHANGE TO MATCH - otherwise the
+    // cache serves another invocation's data.
+    // =====================================================================
+    this.data.rows = [];
+}
+
+cache_id() {
+    return 'contact_picker_' + this.args.client_id;
+}
+```
+
+Uncached is an acceptable LAST resort for a component with no clean identity: one comment
+saying why, so the `data-nocache` marker reads as a decision. An application object carrying
+its own `_jqhtml_cache_id` defines it NON-enumerable
+(`Object.defineProperty(obj, '_jqhtml_cache_id', {value: id, enumerable: false})`) - otherwise
+`Object.assign`/spread copies it into whatever Ajax payload the object is merged into.
+
+**Deduplication is stricter, on purpose.** Identical components loading at the same moment share
+ONE `on_load()` - but only when every argument is a primitive or carries `_jqhtml_cache_id`;
+content keys and `cache_id()` do not apply. A deduplicated follower adopts the leader's data with
+no revalidation, so a wrong key there would be permanently wrong data and redundant requests are
+the cheaper failure. A plain-object argument therefore caches but does not share loads: expected,
+not a defect.
+
+**Finding uncached components.** Every component that loads and declined renders with
+`data-nocache`; an empty sweep is the healthy state:
+
+```
+php artisan rsx:debug /path --user=1 --eval="return $('[data-nocache]').map((i, e) => e.className.split(' ')[0] + ' ' + e.getAttribute('data-nocache')).get()"
+```
+
+**What a cache hit means for the hooks.** The cached paint runs `on_render()` with cached
+`this.data`; `on_ready()` waits for the revalidated load. So formatting and own-markup handlers
+in `on_render()` make the cached copy look and behave right at once, and anything that must see
+FINAL data belongs in `on_ready()`. Anything in `this.data` that is not a load result - a
+`loading` flag, a form seed - comes back from the cache describing the previous visit: keep it
+in `this.state` or an instance property (see "The state triad").
 
 ## Parallel loads
 
@@ -469,7 +522,10 @@ into a plain re-render, leaving `this.data` untouched.
 
 ## Delegated handlers
 
-Bind delegated handlers **namespaced and idempotent**, on the component root:
+The preferred way to handle events on the component's own markup: ONE handler on the root,
+delegated to the children, bound in `on_render()` - namespaced and idempotent. The root element
+survives the component's own re-renders, so the handler is never lost, and binding in
+`on_render()` makes the cached paint interactive:
 
 ```javascript
 on_render() {
@@ -521,4 +577,4 @@ Realtime needs none of it: `this.subscribe()` in `on_create()` is open only whil
 
 `render()` and `reload()` invalidate the sticky `ready` state first, so a `.ready()`/`.on('ready')` registered mid-cycle waits for the NEW render instead of resolving against the old one.
 
-**`render()` destroys child DOM**: all child elements and child components are recreated. DOM event handlers on children are lost and must be re-registered in `on_render()` (namespaced, idempotent) or `on_ready()`.
+**`render()` destroys child DOM**: all child elements and child components are recreated. DOM event handlers on children are lost and must be re-registered in `on_render()` (namespaced, idempotent) - or bound once, delegated, on `this.$`, which survives.

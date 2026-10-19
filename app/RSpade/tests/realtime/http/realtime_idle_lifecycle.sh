@@ -57,14 +57,14 @@ Realtime_Controller.get_connection_token = real_token;
 
 await sleep(3000);
 results.b_orphan_socket = !!Rsx_Realtime._ws;
-results.b_state = Rsx_Realtime._state;
+results.b_state = Rsx_Realtime._connection_state;
 
 Rsx_Realtime._idle_disconnect_delay = 10000;
 
 // --- A: subscribe INSIDE the closing gap.
 await Rsx_Realtime._connect();
-for (let i = 0; i < 40 && Rsx_Realtime._state !== 'connected'; i++) await sleep(250);
-results.a_setup_state = Rsx_Realtime._state;
+for (let i = 0; i < 40 && Rsx_Realtime._connection_state !== 'connected'; i++) await sleep(250);
+results.a_setup_state = Rsx_Realtime._connection_state;
 
 const sockets_before_a = Rsx_Realtime._sockets_opened;
 Rsx_Realtime._close_idle();
@@ -78,7 +78,7 @@ let a_established = false;
 handle.established.then(() => { a_established = true; });
 
 await sleep(6000);
-results.a_state = Rsx_Realtime._state;
+results.a_state = Rsx_Realtime._connection_state;
 results.a_socket_open = Rsx_Realtime._ws ? Rsx_Realtime._ws.readyState === WebSocket.OPEN : false;
 results.a_watches = Rsx_Realtime._watches.size;
 results.a_established = a_established;

@@ -47,7 +47,8 @@ DESCRIPTION
     bundle through Core_Bundle.
 
     Unlike an ordinary jqhtml component:
-        - an input has NO on_load(), so this.data is always {}
+        - the value never comes from this.data: most inputs have no on_load(),
+          and one that fetches its own option list keeps only that list there
         - its template renders EMPTY - no value attribute, ever; the form writes
           the value through val() after render
         - .Form_Input_Abstract is stamped automatically; never add a marker class
@@ -170,6 +171,34 @@ EVENTS
         this.sid('amount').on('val',  (c, v) => this.update_total(v));     // all changes
 
     From a form, reach one input with form.input(name) rather than a selector.
+
+CHANGED
+
+    is_changed() answers "does this input hold something other than what it was
+    given?", and Rsx_Form.dirty() is that question asked of every input (rsx:man
+    form_conventions, UNSAVED CHANGES). The base class answers it; an input
+    implements nothing.
+
+    The BASELINE is _get_value() read back - when the input becomes ready (after
+    any buffered value lands), after every programmatic val(v), and whenever the
+    form re-baselines (its seed, populate(), a successful submit). Reading it
+    back through _get_value() means it is in the input's own vocabulary: a select
+    given the number 5 and reporting '5' compares like with like. Only a user
+    edit (_notify_input) makes an input changed; comparison is structural
+    (deep_equal's hash) and the baseline is stored as that hash.
+
+    WHAT IT ASKS: once ready, _get_value() reports the same value until the user
+    or val() changes it. That is the existing contract - _mark_ready() at the
+    earliest moment a written value STICKS - seen from the other side. An input
+    that marks ready before its options arrive, or whose _set_value() selects the
+    value only after an Ajax call resolves its label, reads as changed with nobody
+    touching it, and would submit the wrong value in that window. Make a written
+    value readable at once (add a placeholder option, select it, fill in the
+    label when it arrives) or mark ready later.
+
+        _comparable_value(value)    optional: what is compared. Override only
+                                    for a value carrying noise that is not a
+                                    change (an id regenerated per render).
 
 NAMING
 
@@ -362,7 +391,13 @@ COMMON MISTAKES
 
     Calling _mark_ready() too early
         For async initialization, wait until the library or option list is
-        actually usable.
+        actually usable. Otherwise the form reads the input as changed on load
+        (see CHANGED).
+
+    A _set_value() that lands the value later
+        Selecting the value only once an Ajax label lookup resolves leaves
+        _get_value() reporting the old value in between: the form reads it as
+        changed, and a submit in that window sends the old value.
 
     Hand-triggering 'input' + 'val'
         Call _notify_input(value).
@@ -370,8 +405,25 @@ COMMON MISTAKES
     Overriding on_create() without super.on_create()
         Buffering state and data-name never initialize.
 
-    Using this.data
-        Inputs have no on_load(); this.data is always {}.
+    Reading the value from this.data
+        The value always arrives through val(). Only an input that fetches its
+        own option list (EXTENDING ANOTHER INPUT) has an on_load(), and only
+        that list lives in this.data.
+
+    Calling this.val() for the user's own change
+        val() is the programmatic door: the value it writes becomes the
+        baseline (CHANGED), so an upload or a removal written through it reads
+        as no change. A user-driven write inside an input is _set_value()
+        followed by _notify_input().
+
+    Changing the value without an event
+        A keydown handler that prevents the keystroke and rewrites the box, or
+        a blur reformat that changes the value, dispatches a native 'input'
+        event - otherwise the edit is never announced.
+
+    Re-creating a library without destroying the last one
+        reload() runs on_ready() again. Destroy the previous instance first, or
+        its detached markup (a dropdown parented to <body>) is left behind.
 
     Writing a required/format/length check
         That rule is the server's. See THE _validate() EXCEPTION.
@@ -398,6 +450,10 @@ TROUBLESHOOTING
     A listener fires on page load
         It is on 'val', which is every change including the seed. Use 'input' for
         user-only reactions.
+
+    The form is dirty before anybody touched it
+        An input's _get_value() moved after its baseline - see CHANGED. Find it
+        with form.input(name).is_changed() for each name in form.vals().
 
 SEE ALSO
     rsx:man form_conventions - the form contract this input plugs into

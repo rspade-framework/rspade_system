@@ -121,16 +121,36 @@
  *
  * Contract of record, including the recommended question shapes: rsx:man form_conventions.
  *
- * ── Dirty protection ─────────────────────────────────────────────────────────────────
+ * ── Unsaved changes: dirty() and the 'dirty' event ───────────────────────────────────
  *
- * The user's keystrokes always win. Every user 'input' marks that name dirty; applying
- * data (the $data seed, vals(object)) skips dirty names, so a revalidation re-render
- * updates untouched fields and leaves in-progress edits alone. Across component
- * re-creation (an SPA action re-rendering on fresh data) dirty values are parked on
- * the live SPA action - keyed by controller|method|record-id - and re-applied to the
- * successor instance. Parking is silent, cleared on successful submit, and dies with
- * the action on navigation. To programmatically overwrite a dirty field, address the
- * input directly: form.input(name).val(v).
+ * dirty() is true when any input holds a value the USER changed from what the form was
+ * given, and the 'dirty' event fires each time that answer flips - (form, true) on the
+ * first change, (form, false) when the user puts every value back or a submit succeeds:
+ *
+ *     form.on('dirty', (form, dirty) => dirty ? Rsx.set_navigation_guard() : Rsx.clear_navigation_guard());
+ *
+ * CHANGED, NOT TOUCHED: each input compares its current value with a baseline read
+ * through its own _get_value() (Form_Input_Abstract.is_changed()), so a value typed and
+ * typed back is clean again. The baseline is taken from the $data seed when the form is
+ * ready, from populate(), from every programmatic write (vals(object), input.val(v)) and
+ * after a successful submit - none of which ever makes the form dirty. Inputs implement
+ * nothing for this; the one requirement is the existing one, that _mark_ready() is not
+ * called before a written value sticks.
+ *
+ * A form that reclaims parked values (below) is dirty from the start, and that flip
+ * happens in on_ready(), before a host can listen: a host wiring 'dirty' reads dirty()
+ * once as it wires.
+ *
+ * ── Keystrokes win ───────────────────────────────────────────────────────────────────
+ *
+ * Every user 'input' marks that name TOUCHED; applying data (vals(object), populate())
+ * skips touched names, so a revalidation re-render updates untouched fields and leaves
+ * in-progress edits alone. Across component re-creation (an SPA action re-rendering on
+ * fresh data) touched values are parked on the live SPA action - keyed by
+ * controller|method|record-id - and restored to the successor instance, which reads them
+ * as changed. Parking is silent, cleared on successful submit, and dies with the action
+ * on navigation. To programmatically overwrite a touched field, address the input
+ * directly: form.input(name).val(v).
  */
 class Rsx_Form extends Component {
     /**
@@ -230,7 +250,8 @@ class Rsx_Form extends Component {
             tabs: null, // Rsx_Tabs component when the form contains one
         };
 
-        this._dirty = {}; // {name: value} - fields the user has touched
+        this._touched = {}; // {name: value} - fields the user has typed into (parking, keystrokes win)
+        this._was_dirty = false; // the last answer the 'dirty' event announced
         this._submitting = false;
         this._loading = false;
 
@@ -280,7 +301,7 @@ class Rsx_Form extends Component {
         // Reclaim any values parked by a predecessor instance (see class docblock).
         const parked = this._parking();
         if (parked) {
-            Object.assign(this._dirty, parked);
+            Object.assign(this._touched, parked);
         }
     }
 
@@ -320,7 +341,7 @@ class Rsx_Form extends Component {
     }
 
     /**
-     * Apply seed values and wire dirty tracking.
+     * Apply seed values, take the baseline and wire change tracking.
      *
      * MUST run in on_ready(), not on_render(): every input is typically wrapped in a
      * Form_Field, so at on_render() time the input components are not guaranteed to
@@ -330,29 +351,71 @@ class Rsx_Form extends Component {
     on_ready() {
         const that = this;
 
-        // Seed - dirty names win (vals() skips them), including values reclaimed from
-        // a predecessor instance.
-        this.vals(this.state.values);
-        if (Object.keys(this._dirty).length) {
-            this._apply_dirty();
+        // Seed EVERY input, touched or not, and take the baseline: the seed is what the
+        // form was given. Then restore the values a predecessor instance parked - after
+        // the baseline, so they read as the user's changes.
+        this.__apply_values(this.state.values, true);
+        this.__each_input((component) => component._rebaseline());
+        for (const name in this._touched) {
+            const component = this.input(name);
+            if (component) {
+                component._restore_user_value(this._touched[name]);
+            }
         }
 
-        // Dirty tracking: every user interaction marks its field and parks the value.
-        this.$.shallowFind('.Form_Input_Abstract').each(function () {
-            const $input = $(this);
-            const component = $input.component();
-            const name = $input.attr('data-name');
-            if (!component || !name || !('on' in component)) {
-                return;
-            }
+        // Every user interaction marks its field touched and parks the value; every value
+        // change, by any path, re-asks whether the form is dirty.
+        this.__each_input((component, name) => {
             component.on('input', function (comp, value) {
-                that._dirty[name] = value;
+                that._touched[name] = value;
                 const parking = that._parking(true);
                 if (parking) {
                     parking[name] = value;
                 }
                 that.trigger('input', name, value);
             });
+            component.on('val', function () {
+                that.__announce_dirty();
+            });
+        });
+
+        this.__announce_dirty();
+    }
+
+    /**
+     * Has the user changed any input from what the form was given? See the class docblock.
+     *
+     * @returns {boolean}
+     */
+    dirty() {
+        let dirty = false;
+        this.__each_input((component) => {
+            if (!dirty && component.is_changed()) {
+                dirty = true;
+            }
+        });
+
+        return dirty;
+    }
+
+    /** Fire 'dirty' when the answer has flipped since it was last announced. */
+    __announce_dirty() {
+        const dirty = this.dirty();
+        if (dirty !== this._was_dirty) {
+            this._was_dirty = dirty;
+            this.trigger('dirty', dirty);
+        }
+    }
+
+    /** Call fn(component, name) for every named input the form owns (shallow - see vals()). */
+    __each_input(fn) {
+        this.$.shallowFind('.Form_Input_Abstract').each(function () {
+            const $input = $(this);
+            const component = $input.component();
+            const name = $input.attr('data-name');
+            if (component && name) {
+                fn(component, name);
+            }
         });
     }
 
@@ -385,23 +448,16 @@ class Rsx_Form extends Component {
      *
      * Serializing collects every descendant input's val() - shallow, so inputs inside
      * a composite input (a Repeater) belong to that composite - plus native hidden
-     * inputs. Applying sets each named input present in the object, SKIPPING dirty
-     * names: data never clobbers the user (see class docblock).
+     * inputs. Applying sets each named input present in the object, SKIPPING touched
+     * names: data never clobbers the user (see class docblock). An applied value is a
+     * programmatic write, so it never makes the form dirty.
      *
      * @param {Object} [values] - Values to apply. Omit to serialize.
      * @returns {Object|null} The serialized values, or null when applying.
      */
     vals(values) {
         if (values) {
-            const that = this;
-            this.$.shallowFind('.Form_Input_Abstract').each(function () {
-                const $input = $(this);
-                const name = $input.attr('data-name');
-                if (name && name in values && !(name in that._dirty)) {
-                    $input.component().val(values[name]);
-                }
-            });
-
+            this.__apply_values(values, false);
             return null;
         }
 
@@ -438,14 +494,13 @@ class Rsx_Form extends Component {
         return $input.exists() ? $input.component() : null;
     }
 
-    /** Apply reclaimed dirty values directly (bypasses the dirty skip - they ARE the dirty values). */
-    _apply_dirty() {
-        for (const name in this._dirty) {
-            const component = this.input(name);
-            if (component) {
-                component.val(this._dirty[name]);
+    /** Write values to the named inputs present in the object; touched names only when asked. */
+    __apply_values(values, include_touched) {
+        this.__each_input((component, name) => {
+            if (name in values && (include_touched || !(name in this._touched))) {
+                component.val(values[name]);
             }
-        }
+        });
     }
 
     // =========================================================================
@@ -576,9 +631,12 @@ class Rsx_Form extends Component {
                 this._set_submitting($submit_btns, true);
             }
 
-            // Success: the user's edits are now the record - nothing left to protect.
-            this._dirty = {};
+            // Success: the user's edits are now the record - nothing left to protect, and
+            // what the inputs hold is the new unchanged state.
+            this._touched = {};
             this._clear_parking();
+            this.__each_input((component) => component._rebaseline());
+            this.__announce_dirty();
 
             this.trigger('submitted', result);
 
@@ -708,6 +766,7 @@ class Rsx_Form extends Component {
             const values = await data;
             this.state.values = values && typeof values === 'object' ? values : {};
             this.vals(this.state.values);
+            this.__announce_dirty();
             return values;
         } finally {
             this.set_loading(false);
@@ -809,7 +868,7 @@ class Rsx_Form extends Component {
     // =========================================================================
 
     /**
-     * The parking slot for this form's dirty values on the live SPA action, or null
+     * The parking slot for this form's touched values on the live SPA action, or null
      * outside an SPA context. Keyed by endpoint + record identity (this._parking_key,
      * frozen in on_create) so two forms on one page never share a slot; create forms
      * key on 'new'.

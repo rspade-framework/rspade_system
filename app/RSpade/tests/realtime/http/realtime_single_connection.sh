@@ -42,7 +42,7 @@ for (let i = 1; i <= 10; i++) {
 await sleep(4000);
 results.a_sockets = Rsx_Realtime._sockets_opened;
 results.a_watches = Rsx_Realtime._watches.size;
-results.a_state = Rsx_Realtime._state;
+results.a_state = Rsx_Realtime._connection_state;
 
 // --- B: the same race, widened. A slowed token endpoint holds every caller inside
 // the window the old guard could not cover.
@@ -67,7 +67,7 @@ results.b_sockets = Rsx_Realtime._sockets_opened - before_b;
 
 Realtime_Controller.get_connection_token = real_token;
 await sleep(2000);
-results.b_state = Rsx_Realtime._state;
+results.b_state = Rsx_Realtime._connection_state;
 
 // --- C: an orphan's close must never touch the live socket's state.
 const first = Rsx_Realtime._ws;
@@ -78,7 +78,7 @@ results.c_installed_second = !!second && second !== first;
 first.close();
 await sleep(2500);
 results.c_live_socket_survived = Rsx_Realtime._ws === second;
-results.c_state = Rsx_Realtime._state;
+results.c_state = Rsx_Realtime._connection_state;
 
 return JSON.stringify(results);
 JS

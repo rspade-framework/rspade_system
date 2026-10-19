@@ -241,13 +241,20 @@ HEADLESS (no session — everything from `$site_id`/`$filter`).
   written, like every lifecycle hook, without `super` - shadowed it and kept its subscriptions.
   `isConnected`, not `is_attached()`: the latter reports the `attach` event, which first fires
   after `ready`.
-- `on_state_change(callback)` — `connecting | connected | disconnected | reconnecting`.
-  The names are a public contract. `disconnected` is DELAYED by
-  `OFFLINE_ANNOUNCE_GRACE_MS` (5s) on an unintentional close (`reconnecting` is announced
-  immediately) so a blip never flashes offline; a reconnect inside the window means
-  listeners never hear it. The delay is in the ANNOUNCEMENT only — `_ws`/`_connected`/
-  `_authenticated` update synchronously and nothing in the class reads `_state`.
-- Lazy connect: no connection exists until the first `watch()`/`subscribe()` call. When the
+- `watch_connection(callback)` → `{stop()}` — the PUBLIC connection surface, three values:
+  `'connected'` (auth_ok), `'disconnected'` (not connected for `_OFFLINE_ANNOUNCE_GRACE_MS`,
+  5s), `'disabled'` (realtime not configured; synchronous, terminal, registers nothing).
+  `_publish_connection()` is the one place the value (`_public_connection`: null = undecided)
+  changes, deduped. ONE grace window per client (`_offline_timer`, armed by
+  `_announce_offline_after_grace()` only if none runs, cancelled by auth_ok), so monitors
+  joining a running window share its answer. A monitor holds the socket: `_socket_wanted()`
+  counts `_connection_monitors` beside `_watches` and `_anchored`, at close time and in the
+  idle timer; stopping the last one clears the window and the value and lets idle disconnect
+  run. The socket's own states live in `_connection_state` (debug only). Both projections are
+  outputs: `_ws`/`_connected`/`_authenticated` update synchronously, and nothing in the class
+  reads either projection to decide what to do with the socket. `is_enabled()` is the one
+  `realtime_url` test.
+- Lazy connect: no connection exists until the first `watch()`/`subscribe()`/`watch_connection()` call. When the
   last watch stops, the socket closes after 10s if nothing new starts watching (the window
   spans an SPA navigation, which drains and re-establishes subscriptions) — an intentional
   idle close, which does NOT trigger reconnect logic. Intentionality is re-evaluated AT

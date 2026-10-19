@@ -182,8 +182,16 @@ THE FRAMEWORK LIBRARY
     file_urls_from_builders
         File URLs come from the model's builders; thumbnails from
         <Attachment_Thumbnail>.
+    form_input_contract
+        Inputs keep the value contract (settable before ready, stable once
+        ready, user edits only via _notify_input); hosts drive the guard
+        from 'dirty'.
     get_routes_write_nothing
         No staff or portal page route changes state on a GET.
+    jqhtml_component_design
+        Components that load are cacheable, use the right hooks (formatting
+        and own-markup handlers in on_render) and the right tier (a live
+        view is Standalone).
     living_documentation_currency
         Every CLAUDE.md under rsx/ and every app skill matches the code.
     login_redirect_wiring
