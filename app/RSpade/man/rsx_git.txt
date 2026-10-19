@@ -35,6 +35,9 @@ WHAT IT DOES WHEN THE REVISIONS DISAGREE
         maintenance window down
         -> report pending migrations
 
+    On a SEALED box (debug or production) the two rebuild steps are replaced
+    by `rsx:build --force` - see ON A SEALED BOX, below.
+
     The window matters: replacing the framework under a live php-fpm is
     exactly the situation maintenance mode exists for.
 
@@ -53,7 +56,8 @@ WHAT IT DOES WHEN THE REVISIONS DISAGREE
 
     A FAILED REBUILD is reported the same way, after the window is down: the
     box is UP, but the manifest still describes the framework that was replaced,
-    and it stays that way until `rsx:manifest:build --force` succeeds. A failed
+    and it stays that way until `rsx:manifest:build --force` succeeds (on a
+    sealed box, `rsx:build --force`). A failed
     build is a reason to print the error, never a reason to leave the box down.
 
     The submodule reset is performed DIRECTLY, not through rsx:clean. rsx:clean
@@ -68,6 +72,45 @@ WHAT IT DOES WHEN THE REVISIONS DISAGREE
     should it fail, is reported with the exit code and the command's own
     output; the sync continues either way, because a stale cache is a rebuild
     away and an unsynced framework is not.
+
+ON A SEALED BOX
+    In debug and production mode the development rebuild (rsx:clean,
+    rsx:manifest:build --force, rsx:bundle:compile) is refused - those refusals
+    are the guards that keep a sealed build immutable - and a sealed build
+    serves only what it was built from. So on a sealed box the proxy rebuilds
+    with the one command that mode accepts, inside the maintenance window:
+
+        maintenance window up
+          -> rsx:build --force          (clean, build, seal)
+        maintenance window down
+        -> report pending migrations
+
+    It does so whenever a proxied operation succeeded and changed the checkout:
+    when the framework revision moved (in place of the development rebuild
+    above), and when only APPLICATION code moved (HEAD changed, the gitlink did
+    not) - a case that rebuilds nothing in development, where the build is
+    invisible, but that would otherwise leave a sealed box serving the code
+    from before the pull. One build covers both when one pull brings both.
+
+    The reasoning: pulling inside a sealed box is a deployment model that takes
+    code in place. A deployment that relies on a reviewed, shipped build/ never
+    runs this proxy on the box, so it is unaffected; one that does pull in
+    place gets served code that matches the checkout instead of a build from
+    before the pull.
+
+    The site cannot serve while the build runs (it discards build/ first).
+    A FAILED build leaves the box UNSEALED, and every web request is refused
+    until a build succeeds; the proxy says so after the window is down, with
+    the build's last lines and the command to run:
+
+        php artisan rsx:build --force
+
+    Migrations are not run here either: the pending-migration notice is printed
+    after the build, and `migrate` is the operator's step. The build and the
+    migration are independent and may run in either order (rsx:man prod).
+
+    The mode is read through the framework's own pre-boot mode reader, the
+    same one every PHP entrypoint uses.
 
 IT NEVER RECURSES INTO system/
     The proxied command runs with recursion scoped off:

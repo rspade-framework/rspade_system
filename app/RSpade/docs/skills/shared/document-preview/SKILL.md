@@ -193,7 +193,7 @@ Behind it is `File_Preview_Controller::get_extracted_text`, returning `{status, 
 
 ---
 
-## Viewer resolution (server-side) and overriding it
+## Viewer resolution (server-side) and adding a viewer
 
 `Document_Preview` calls `File_Preview_Controller::get_preview_info()` in `on_load()`; the SERVER picks the viewer by mime from `config('rsx.preview.viewers')` — an ordered fnmatch map, first match wins, terminating in `'*' => 'Icon_Viewer'` so every mime resolves to something:
 
@@ -221,13 +221,15 @@ Because the markup is sanitised at the source, the component interpolates it wit
 
 Because it has a viewer, **`text/*` classifies as `FILE_TYPE_DOCUMENT`** (`FILE_TYPE_TEXT` survives as an enum value nothing assigns).
 
-Register your own in `rsx/resource/config/rsx.php` under the same key:
+Register your own in `rsx/resource/config/rsx.php` under the same key, for a mime the framework does not cover:
 
 ```php
 'preview' => ['viewers' => [
     'application/vnd.custom.cad' => 'Cad_Viewer',   // simple, manifest-resolved component name
-] + config('rsx.preview.viewers')],
+]],
 ```
+
+Your entries merge in AFTER the framework's, and the terminal `'*'` is consulted last wherever it sits, so an added pattern wins over the icon - but a mime a framework pattern already matches (PDF, Office, `image/*`, `text/*`) keeps the framework's viewer.
 
 The built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{attachment_id, url, extension, file_name, page, fit}` (the framework's own `Spreadsheet_Viewer` and `Markdown_Viewer` take this path and read only `attachment_id`). So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `page_changed`.
 

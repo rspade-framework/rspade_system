@@ -25,11 +25,19 @@
 #     maintenance window up
 #       -> rsx:clean          (resets the submodule hard, discarding local drift)
 #       -> checkout the recorded revision
-#       -> rebuild            (manifest + bundles)
+#       -> rebuild            (manifest + bundles; `rsx:build --force` in a sealed mode)
 #     maintenance window down
 #
 # The window matters: replacing the framework under a live php-fpm is exactly the
 # situation maintenance mode exists for.
+#
+# A SEALED BOX (debug or production) also rebuilds when only APPLICATION code moved.
+# A sealed build serves what it was built from and nothing else, so a pull that changes
+# the checkout and does not rebuild leaves served code and checked-out code disagreeing
+# with nothing to say so. Pulling inside a sealed box is a deployment model that takes
+# code in place - one that relies on shipping a reviewed build/ never runs this proxy on
+# the box - so the pull finishes the job: `rsx:build --force`, inside the window. See
+# sealed_rebuild.
 #
 # WHAT IT NO LONGER DOES. This script used to be 1,553 lines, and every one of
 # them followed from system/ being a VENDORED tree - ordinary tracked files
@@ -290,6 +298,74 @@ upstream_url() {
     "${SUB_GIT[@]}" remote get-url origin 2>/dev/null || true
 }
 
+# Is this box in a SEALED mode (debug or production)? Asked of the framework's own
+# pre-boot mode reader, so this script and every PHP entrypoint agree on what mode the box
+# is in (absent means development; `prod` is production). Read AFTER any checkout, from
+# the framework now on disk. A reader that cannot answer counts as development - the
+# rebuild this proxy has always run - since the proxy is fail-open by design.
+sealed_mode() {
+    local reader="$SYSTEM_DIR/bootstrap/rsx_mode.php"
+    [ -f "$reader" ] || return 1
+    local mode
+    mode="$(php -r 'require_once $argv[1]; echo rsx_preboot_mode();' "$reader" 2>/dev/null)" || return 1
+    [ "$mode" = "debug" ] || [ "$mode" = "production" ]
+}
+
+# Set once a sealed rebuild has run in this invocation, so a framework sync that already
+# rebuilt is not followed by a second build for the application commits that came with it.
+SEALED_REBUILT=false
+SEALED_BUILD_FAILED=false
+
+# =============================================================================
+# sealed_rebuild - the one rebuild a sealed mode accepts.
+#
+# rsx:clean, rsx:manifest:build --force and rsx:bundle:compile are the DEVELOPMENT chain,
+# and a sealed box refuses every one of them - correctly: they are the guards that keep a
+# sealed tree immutable. `rsx:build --force` cleans, builds and re-seals in one command and
+# is what a sealed box is rebuilt with.
+#
+# The caller holds the maintenance window: the build discards build/ first, so the site
+# cannot serve until it finishes. A failure is reported once the window is down (the
+# caller prints report_sealed_build_failure), with the build's own last lines.
+# =============================================================================
+SEALED_BUILD_OUTPUT=""
+
+sealed_rebuild() {
+    SEALED_REBUILT=true
+    note "rebuilding the sealed build (rsx:build --force) - the site is down until it finishes"
+    local rc=0
+    SEALED_BUILD_OUTPUT="$(artisan rsx:build --force 2>&1)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        SEALED_BUILD_FAILED=true
+    fi
+    return 0
+}
+
+report_sealed_build_failure() {
+    [ "$SEALED_BUILD_FAILED" = true ] || return 0
+    err ""
+    err "[ERROR] rsx:build --force FAILED. This box is in a sealed mode and its build is now"
+    err "        UNSEALED: every web request is refused until a build succeeds. It said:"
+    err ""
+    printf '%s\n' "$SEALED_BUILD_OUTPUT" | tail -n 20 | sed 's/^/            /' >&2
+    err ""
+    err "        Fix what it reports, then run:"
+    err ""
+    err "            php artisan rsx:build --force"
+    err ""
+}
+
+# Migrations are a separate, deliberate step - a framework release or an application
+# commit can carry schema changes, and this proxy is not the thing that applies them.
+report_pending_migrations() {
+    # An unsealed box refuses every command but the build, migrate:pending included.
+    [ "$SEALED_BUILD_FAILED" = true ] && return 0
+    if artisan migrate:pending 2>/dev/null | grep -qv "No pending migrations"; then
+        note ""
+        warn "There are pending migrations. Run: php artisan migrate"
+    fi
+}
+
 # =============================================================================
 # sync_submodule - make the checkout agree with what the project records.
 # =============================================================================
@@ -358,6 +434,17 @@ sync_submodule() {
         return 1
     fi
 
+    # A sealed box takes the one rebuild it accepts; the development chain below is
+    # refused there, step by step.
+    if sealed_mode; then
+        sealed_rebuild
+        maint_disable
+        note "system/ is now at ${recorded:0:12}"
+        report_sealed_build_failure
+        report_pending_migrations
+        return 0
+    fi
+
     # And the caches, which describe the framework that was just replaced. This runs
     # AFTER the checkout on purpose: system/artisan refuses to boot while the recorded
     # revision and the checkout disagree (bootstrap/rsx_submodule_sync.php), and between
@@ -404,12 +491,7 @@ sync_submodule() {
         err ""
     fi
 
-    # Migrations are a separate, deliberate step - a framework release can carry
-    # schema changes and this proxy is not the thing that applies them.
-    if artisan migrate:pending 2>/dev/null | grep -qv "No pending migrations"; then
-        note ""
-        warn "The new framework revision has pending migrations. Run: php artisan migrate"
-    fi
+    report_pending_migrations
 
     return 0
 }
@@ -705,8 +787,24 @@ if [ -z "$AFTER" ] || [ -z "$ACTUAL" ]; then
     exit "$GIT_RC"
 fi
 
+SYNC_FAILED=false
 if [ "$AFTER" != "$ACTUAL" ]; then
-    sync_submodule "$AFTER" "$ACTUAL" || true
+    sync_submodule "$AFTER" "$ACTUAL" || SYNC_FAILED=true
+fi
+
+# A sealed box serves only what it was built from, so an operation that succeeded and
+# moved HEAD - application code only, the framework unchanged - rebuilds it too, inside
+# the window. A framework sync that already rebuilt is not repeated, and one that failed
+# left a framework artisan will not boot, so there is nothing to build with.
+HEAD_AFTER="$("${ROOT_GIT_RO[@]}" rev-parse HEAD 2>/dev/null || true)"
+if [ "$GIT_RC" -eq 0 ] && [ "$SEALED_REBUILT" = false ] && [ "$SYNC_FAILED" = false ] \
+    && [ -n "$HEAD_AFTER" ] && [ "$HEAD_AFTER" != "$HEAD_BEFORE" ] && sealed_mode; then
+    note "the checkout changed on a sealed box (maintenance window up)"
+    maint_enable
+    sealed_rebuild
+    maint_disable
+    report_sealed_build_failure
+    report_pending_migrations
 fi
 
 # A successful pull/merge that actually moved HEAD brought code in - re-apply the
@@ -715,7 +813,6 @@ fi
 if [ "$GIT_RC" -eq 0 ]; then
     case "$SUBCMD" in
         pull|merge)
-            HEAD_AFTER="$("${ROOT_GIT_RO[@]}" rev-parse HEAD 2>/dev/null || true)"
             if [ -n "$HEAD_AFTER" ] && [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
                 run_post_update
             fi

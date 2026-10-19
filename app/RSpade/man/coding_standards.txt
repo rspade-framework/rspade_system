@@ -338,6 +338,23 @@ LOSSY CONVERSIONS ARE SPELLED OUT
     are the usual producers; state the rounding mode where it matters, and widen the
     signature to float instead when the precision is actually wanted.
 
+ATTRIBUTES
+    RSpade's PHP attributes (#[Route], #[Task], #[Exclusive], #[Auth], ...) are
+    metadata read by reflection when the manifest is built. They have no class:
+    never define one, and a linter removing their `use` statements is correct.
+
+    One attribute may appear more than once on a declaration when each instance
+    says something different - #[Exclusive('a')] #[Exclusive('b')], two #[Route]
+    paths. The SAME attribute with IDENTICAL arguments twice on one declaration
+    (a class, method, parameter, property or constant) is a manifest-build FATAL:
+
+        Fatal: #[Exclusive('sync')] is declared twice on method push().
+
+    PHP itself accepts the repeat, and it means nothing a single one does not -
+    it is a copy-paste slip that hides what was meant. Delete the repeat, or
+    change its arguments to what it was for. Arguments are compared as written:
+    a positional and a named spelling of one value count as different.
+
 FILE STRUCTURE RESTRICTIONS
     PHP Files Without Classes (in ./rsx directory):
         PHP utility files without classes may only contain at global scope:

@@ -249,6 +249,11 @@ THE RECOMMENDED DEPLOYMENT
         php artisan rsx:prod:verify
         php artisan rsx:maintenance:disable
 
+    A box that takes code with `php artisan rsx:git pull` does the rebuild
+    itself: on a sealed box the proxy ends any pull that changed the checkout
+    with `rsx:build --force`, inside its own maintenance window (rsx:man
+    rsx_git, ON A SEALED BOX). The migration remains yours to run.
+
     THE BUILD AND THE MIGRATION ARE INDEPENDENT. Neither reads what the other
     produces, so the two lines run in either order and neither is ever
     repeated because of the other (BUILD AND MIGRATE, below). What the order

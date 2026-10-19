@@ -10,7 +10,7 @@
 
 **Static-first**: classes are namespacing tools. Use static unless instances are genuinely needed (models, resources, service connectors); **avoid dependency injection**.
 
-**NEVER define attribute classes** — attributes work via reflection, and the linter removing their `use` statements is CORRECT. **NEVER manually update namespaces** — the manifest regenerates them.
+**NEVER define attribute classes** — attributes work via reflection, and the linter removing their `use` statements is CORRECT. An attribute may repeat with DIFFERENT arguments (`#[Exclusive('a')] #[Exclusive('b')]`); the same attribute with IDENTICAL arguments twice on one declaration is a manifest-build FATAL. **NEVER manually update namespaces** — the manifest regenerates them.
 
 Attribute markers (metadata only): `#[Instantiatable]` whitelists abstract-class children for instantiation; `#[Replaceable]` on a PARENT method lets overriders skip the `parent::` call; `#[Sealed]` on a PROPERTY forbids redeclaration by any descendant. **Parent-call chaining (`PHP-PARENT-CHAIN-01`)**: an override MUST call `parent::<same-method>()` unless the nearest declaring ancestor is abstract, `#[Replaceable]`, or a vendor class. Both are manifest-build FATALs.
 

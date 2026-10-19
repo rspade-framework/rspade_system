@@ -468,6 +468,13 @@ DOCUMENT_PREVIEW COMPONENT
                        file, not a fault in the preview.
         Icon_Viewer    terminal - the generic extension icon for anything else.
 
+    The '*' entry is consulted LAST wherever it sits in the map. An application
+    adds a viewer for a mime the framework does not cover by listing the pattern
+    in rsx/resource/config/rsx.php ('preview' => ['viewers' => ['video/*' =>
+    'Video_Viewer']]); its entries merge in after the framework's, so a mime a
+    framework pattern already matches (PDF, Office, image/*, text/*) keeps the
+    framework's viewer.
+
     A text/* attachment therefore classifies as FILE_TYPE_DOCUMENT: it is previewable in
     exactly the way a PDF is. FILE_TYPE_TEXT remains a declared enum value that nothing
     assigns.

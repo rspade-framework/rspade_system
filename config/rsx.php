@@ -1346,9 +1346,11 @@ return [
     | background - a web request never converts anything).
     |
     | - viewers: ordered fnmatch map of mime pattern (glob) => viewer component (simple
-    |   name). First match wins; the trailing '*' entry is the terminal Icon_Viewer so
-    |   every mime resolves to something. Apps may override/extend in
-    |   rsx/resource/config/rsx.php. Viewer components ship in Batch 4.
+    |   name). First match wins; the '*' entry is the terminal Icon_Viewer, consulted
+    |   LAST wherever it sits, so every mime resolves to something. An application ADDS a
+    |   viewer for a mime no pattern here covers by listing it in
+    |   rsx/resource/config/rsx.php; its entries merge in after these, so a mime a
+    |   framework pattern already matches keeps the framework's viewer.
     | - convertible: mimes the render worker converts to a PDF rendition via headless
     |   LibreOffice (fnmatch globs). This list is also what makes a new attachment queue
     |   its blob for rendering. A convertible mime is only converted when

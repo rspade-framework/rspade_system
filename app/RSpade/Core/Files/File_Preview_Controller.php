@@ -824,7 +824,12 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
 
     /**
      * Resolve the viewer component (simple name) for a mime from rsx.preview.viewers (fnmatch, first
-     * match wins). The config's trailing '*' entry (Icon_Viewer) guarantees a terminal result.
+     * match wins), with the '*' entry consulted LAST wherever it sits in the map.
+     *
+     * The application's config is deep-merged over the framework's, and a key the framework does
+     * not have is APPENDED - after the framework's terminal '*'. Taking '*' out of the ordered walk
+     * is what lets an application ADD a viewer for a mime the framework does not cover; a mime a
+     * framework pattern already matches stays with the framework's viewer.
      *
      * @param string|null $mime
      * @return string Viewer component simple name.
@@ -832,14 +837,18 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     public static function viewer_for_mime(?string $mime): string
     {
         $mime = ($mime === null || $mime === '') ? 'application/octet-stream' : $mime;
+        $viewers = config('rsx.preview.viewers', []);
 
-        foreach (config('rsx.preview.viewers', []) as $pattern => $viewer) {
-            if (fnmatch($pattern, $mime)) {
+        foreach ($viewers as $pattern => $viewer) {
+            if ($pattern !== '*' && fnmatch($pattern, $mime)) {
                 return $viewer;
             }
         }
 
-        // The config ships a terminal '*' entry, so this is only reached on a misconfigured map.
-        return 'Icon_Viewer';
+        if (!isset($viewers['*'])) {
+            shouldnt_happen("config('rsx.preview.viewers') has no terminal '*' entry - every mime must resolve to a viewer");
+        }
+
+        return $viewers['*'];
     }
 }

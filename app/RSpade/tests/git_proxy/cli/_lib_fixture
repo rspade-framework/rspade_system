@@ -21,7 +21,7 @@
 # THE SHIM answers the artisan calls rsx-git.sh makes:
 #   rsx:maintenance:enable|disable  -> exec the fixture's REAL maintenance-mode.sh with
 #                                      --no-services appended (no supervisor on a test box)
-#   rsx:clean / rsx:manifest:build  -> exit 0 (or 1 iff $PROJECT/rebuild_fail exists)
+#   rsx:clean / rsx:manifest:build / rsx:build -> exit 0 (or 1 iff $PROJECT/rebuild_fail exists)
 #   anything else                   -> exit 0
 # Every call appends one line to $PROJECT/artisan.log, which is what the tests assert
 # the maintenance cycle against.
@@ -35,6 +35,9 @@ REAL_PROXY="/var/www/html/system/bin/rsx-git.sh"
 REAL_PATHS_LIB="/var/www/html/system/bin/lib/rsx_paths.sh"
 REAL_WHITELIST_MERGE="/var/www/html/system/bin/lib/merge_migration_whitelist.php"
 REAL_MAINT="/var/www/html/system/bin/maintenance-mode.sh"
+# The framework's pre-boot mode reader, which the proxy asks whether the box is sealed.
+REAL_MODE_READER="/var/www/html/system/bootstrap/rsx_mode.php"
+REAL_PATHS_READER="/var/www/html/system/bootstrap/rsx_paths.php"
 
 FX_ROOT=""
 PROJECT=""
@@ -108,7 +111,7 @@ if ($sub === 'rsx:maintenance:enable' || $sub === 'rsx:maintenance:disable') {
     exit($rc);
 }
 
-if ($sub === 'rsx:clean' || $sub === 'rsx:manifest:build') {
+if ($sub === 'rsx:clean' || $sub === 'rsx:manifest:build' || $sub === 'rsx:build') {
     // The real artisan refuses to boot while the recorded gitlink and the submodule
     // checkout disagree (bootstrap/rsx_submodule_sync.php). Record what system/ was
     // checked out at when each command ran, so a test can prove the sync only asks
@@ -157,6 +160,10 @@ fx_build_project() {
         # The append-append resolver the proxy shells to for a conflicted
         # .migration_whitelist. It ships in the same bin/lib/ the proxy reads it from.
         cp "$REAL_WHITELIST_MERGE" "$fw/bin/lib/merge_migration_whitelist.php"
+        # The mode reader the proxy asks whether this is a sealed box.
+        mkdir -p "$fw/bootstrap"
+        cp "$REAL_MODE_READER" "$fw/bootstrap/rsx_mode.php"
+        cp "$REAL_PATHS_READER" "$fw/bootstrap/rsx_paths.php"
 
         # A FLAG-ONLY maintenance-mode.sh. The proxy calls this script directly (not
         # through artisan), so there is no seam a test could use to pass --no-services -

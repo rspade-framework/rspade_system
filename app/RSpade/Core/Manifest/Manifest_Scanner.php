@@ -520,13 +520,91 @@ class Manifest_Scanner
     }
 
     /**
+     * Refuse an attribute declared twice WITH IDENTICAL ARGUMENTS on one declaration - a
+     * manifest-build FATAL.
+     *
+     * PHP accepts `#[Exclusive('g')] #[Exclusive('g')]`: only ReflectionAttribute::newInstance()
+     * objects to a repeated non-repeatable attribute, and RSpade never instantiates one (its
+     * attributes are reflection-only and have no class). So a copy-pasted duplicate would be
+     * read as two instances and pass silently. Repeating an attribute with DIFFERENT arguments
+     * is legitimate (two exclusive groups, two routes) and is not touched.
+     *
+     * Covers every declaration of this class or trait that can carry an attribute: the class
+     * itself, its methods (and their parameters), properties and constants - including those
+     * no index records. Arguments are compared exactly as PHP reports them, so a positional
+     * and a named spelling of the same value (`'g'` / `group: 'g'`) count as different.
+     *
+     * @throws \RuntimeException naming the attribute, the declaration and the file
+     */
+    public static function _refuse_repeated_attributes(\ReflectionClass $reflection, string $file_path): void
+    {
+        $own = $reflection->getName();
+        $targets = [['class ' . $reflection->getShortName(), $reflection->getStartLine(), $reflection]];
+
+        foreach ($reflection->getMethods() as $method) {
+            if ($method->getDeclaringClass()->getName() !== $own) {
+                continue;
+            }
+            $targets[] = ["method {$method->getName()}()", $method->getStartLine(), $method];
+            foreach ($method->getParameters() as $parameter) {
+                $targets[] = ["parameter \${$parameter->getName()} of {$method->getName()}()", $method->getStartLine(), $parameter];
+            }
+        }
+        foreach ($reflection->getProperties() as $property) {
+            if ($property->getDeclaringClass()->getName() === $own) {
+                $targets[] = ["property \${$property->getName()}", null, $property];
+            }
+        }
+        foreach ($reflection->getReflectionConstants() as $constant) {
+            if ($constant->getDeclaringClass()->getName() === $own) {
+                $targets[] = ["constant {$constant->getName()}", null, $constant];
+            }
+        }
+
+        foreach ($targets as [$what, $line, $target]) {
+            $seen = [];
+            foreach ($target->getAttributes() as $attribute) {
+                $name = substr(strrchr($attribute->getName(), '\\'), 1) ?: $attribute->getName();
+                $arguments = $attribute->getArguments();
+                $key = $name . "\0" . serialize($arguments);
+
+                if (isset($seen[$key])) {
+                    $spelled = implode(', ', array_map(
+                        fn ($argument, $label) => (is_string($label) ? "{$label}: " : '') . var_export($argument, true),
+                        $arguments,
+                        array_keys($arguments)
+                    ));
+                    $where = $file_path . ($line !== null ? ":{$line}" : '');
+
+                    throw new \RuntimeException(
+                        "Fatal: #[{$name}({$spelled})] is declared twice on {$what}.\n\n"
+                        . "  File: {$where}\n\n"
+                        . "The same attribute with the same arguments appears more than once on one\n"
+                        . "declaration. It means nothing a single one does not, and is almost always a\n"
+                        . "copy-paste slip that hides what was meant (a second group name, another\n"
+                        . "route). Delete the repeat, or change its arguments to what it was for.\n"
+                        . "An attribute repeated with DIFFERENT arguments is allowed."
+                    );
+                }
+                $seen[$key] = true;
+            }
+        }
+    }
+
+    /**
     * Extract public static methods and their attributes using PHP reflection
     * Note: This is called in Phase 4 after all PHP files have been loaded
     */
     public static function _extract_reflection_data(string $file_path, string $full_class_name, array &$data): void
     {
-        // Skip method indexing for traits - methods will be indexed when we process classes that use them
+        // Skip method indexing for traits - methods will be indexed when we process classes that use them.
+        // A trait's own declarations are still checked for repeated attributes here: the
+        // classes that use it never look at the trait's file.
         if (isset($data['is_trait']) && $data['is_trait']) {
+            if (trait_exists($full_class_name)) {
+                self::_refuse_repeated_attributes(new \ReflectionClass($full_class_name), $file_path);
+            }
+
             return;
         }
 
@@ -537,6 +615,8 @@ class Manifest_Scanner
         }
 
         $reflection = new \ReflectionClass($full_class_name);
+
+        self::_refuse_repeated_attributes($reflection, $file_path);
 
         // Extract whether the class is abstract
         if ($reflection->isAbstract()) {

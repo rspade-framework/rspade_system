@@ -95,6 +95,12 @@ leaving the merge half-finished is the worst of both outcomes. The `system/` git
 opposite case and keeps its refusal: the two sides genuinely disagree about which framework
 release to run, and no result is correct by construction (`cli/t25`, `cli/t26`).
 
+On a SEALED box (debug or production) the rebuild is `rsx:build --force` - the development
+chain is refused there - and an operation that moved only application code rebuilds too,
+because a sealed build serves only what it was built from (`cli/t27`). The mode comes from
+the framework's pre-boot reader, `bootstrap/rsx_mode.php`, which the fixture copies into its
+framework tree.
+
 ## Source files under test
 
 - `bin/rsx-git.sh` - the proxy

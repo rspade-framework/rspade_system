@@ -3,6 +3,7 @@
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | PREVIEW-VIEWER-RESOLUTION | viewer_for_mime maps pdf/office->Pdf_Viewer, image->Image_Viewer, unknown/null->Icon_Viewer | php | assorted mimes | expected viewer per mime | implemented | 2026-07-16 |
+| PREVIEW-VIEWER-ADDED | an application's added pattern (merged in after the terminal '*') resolves; a framework-covered mime keeps the framework viewer; an unknown mime still gets Icon_Viewer | php | viewers map + `video/*`, `image/png` appended | Fixture_Video_Viewer / Image_Viewer / Icon_Viewer | implemented | 2026-10-19 |
 | PREVIEW-CACHE-PATH | rendition cache path is content-addressed on the blob hash | php | storage with hash | storage/rsx-renditions/{hash}.pdf | implemented | 2026-07-16 |
 | PREVIEW-INFO-PDF | get_preview_info returns viewer + mime + type-safe URLs behind the thumbnail gate | php | seeded PDF + staff session | viewer Pdf_Viewer, urls carry key/extension | implemented (skips if no seeded user) | 2026-07-16 |
 | PREVIEW-THUMB-INTERCEPT | a document.thumbnail_render handler's WebP bytes are served verbatim | php | marker source path | fixture WebP bytes returned | implemented | 2026-07-16 |

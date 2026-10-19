@@ -35,7 +35,7 @@ rsx:maintenance:enable --reason="rsx:git <op>"
   -> pending-migration notice       (advisory; silent when the schema is current)
   -> rsx:maintenance:disable
 ```
-The disable runs from an EXIT/INT/TERM trap, so a failure or Ctrl-C never leaves maintenance stuck on; the rebuild happens BEFORE services return. **Ops that rewrite nothing are deliberately excluded** - `checkout -b` / `switch -c`, `clean -n`, `restore --staged` alone, a plain `reset`.
+**On a sealed box (debug or production) the rebuild is `rsx:build --force`**, and an op that moved only application code rebuilds too, inside its own window (`rsx:man rsx_git`, ON A SEALED BOX). The disable runs from an EXIT/INT/TERM trap, so a failure or Ctrl-C never leaves maintenance stuck on; the rebuild happens BEFORE services return. **Ops that rewrite nothing are deliberately excluded** - `checkout -b` / `switch -c`, `clean -n`, `restore --staged` alone, a plain `reset`.
 
 The `system/` reset is UNCONDITIONAL - `rsx:clean` runs `git reset --hard` + `git clean -fdx` inside the submodule. There is no integrity gate and nothing to override (`--force` is accepted and does nothing), so **an edit under `system/` that you have not committed is gone**. It is fail-open everywhere else.
 

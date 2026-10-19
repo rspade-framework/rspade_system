@@ -58,6 +58,22 @@ class Preview_Info_Test extends Rsx_Test_Abstract
         static::__assert_equals('Icon_Viewer', File_Preview_Controller::viewer_for_mime(null), 'null mime -> Icon_Viewer (terminal)');
     }
 
+    public static function test_an_added_viewer_resolves_ahead_of_the_terminal_entry()
+    {
+        $framework = config('rsx.preview.viewers');
+
+        // The application's map is deep-merged over the framework's, so its new keys land after '*'.
+        config(['rsx.preview.viewers' => $framework + ['video/*' => 'Fixture_Video_Viewer', 'image/png' => 'Fixture_Png_Viewer']]);
+
+        try {
+            static::__assert_equals('Fixture_Video_Viewer', File_Preview_Controller::viewer_for_mime('video/mp4'), 'an added pattern wins over the icon');
+            static::__assert_equals('Image_Viewer', File_Preview_Controller::viewer_for_mime('image/png'), 'a mime a framework pattern covers keeps the framework viewer');
+            static::__assert_equals('Icon_Viewer', File_Preview_Controller::viewer_for_mime('application/x-unknown-xyz'), 'an unknown mime still reaches the terminal entry');
+        } finally {
+            config(['rsx.preview.viewers' => $framework]);
+        }
+    }
+
     public static function test_rendition_cache_path_derivation()
     {
         $storage = new File_Storage_Model();
