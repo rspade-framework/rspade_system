@@ -88,6 +88,23 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
     \Illuminate\Contracts\Auth\Access\Authorizable,
     \Illuminate\Contracts\Auth\CanResetPassword
 {
+
+    /**
+     * A changed password ends every browser's two-factor trust for this identity: whoever
+     * knew the old password must verify again wherever they are (rsx:man two_factor,
+     * TRUSTED BROWSERS).
+     */
+    protected static function booted()
+    {
+        parent::booted();
+
+        static::updated(function ($model) {
+            if ($model->wasChanged('password')) {
+                \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::forget_trusted_devices((int) $model->id);
+            }
+        });
+    }
+
     /**
      * _AUTO_GENERATED_ Enum constants
      */

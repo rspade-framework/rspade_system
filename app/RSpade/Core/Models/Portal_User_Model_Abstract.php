@@ -114,6 +114,23 @@ use App\RSpade\Core\Portal\Rsx_Portal;
 #[Auth('is_logged_in')]
 abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
 {
+
+    /**
+     * A changed password ends every browser's two-factor trust for this identity: whoever
+     * knew the old password must verify again wherever they are (rsx:man two_factor,
+     * TRUSTED BROWSERS).
+     */
+    protected static function booted()
+    {
+        parent::booted();
+
+        static::updated(function ($model) {
+            if ($model->wasChanged('password')) {
+                \App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor::forget_trusted_devices((int) $model->id);
+            }
+        });
+    }
+
     /**
      * _AUTO_GENERATED_ Enum constants
      */

@@ -2938,6 +2938,9 @@ class Session extends Rsx_System_Model_Abstract
             $query->where('id', '!=', self::$_session->id);
         }
 
+        // "Sign out everywhere else" also ends every other browser's two-factor trust.
+        \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::forget_trusted_devices((int) $login_user_id, true);
+
         // The ids are plucked BEFORE the UPDATE because each one gets a refresh push and an
         // audit event afterward, and an UPDATE reports only a count. Bounded by the
         // concurrent-session cap (rsx.sessions.max_web_sessions_per_user, ~25).
@@ -3223,6 +3226,34 @@ class Session extends Rsx_System_Model_Abstract
      *
      * @return int|null
      */
+    /**
+     * Test seam: the device this process's "browser" is, for a test of something keyed on
+     * the browser (a CLI process has no session row, so no device).
+     */
+    public static ?int $_device_id_for_tests = null;
+
+    /**
+     * The id of the device - THIS BROWSER's long-lived record in _session_devices - or null
+     * when the browser has none yet (it has never signed in, or this is a command).
+     *
+     * A device is assigned at a browser's first sign-in and inherited by every later session
+     * row of that browser, across sign-ins, expiries and forced sign-outs; it is lost only
+     * with the browser's cookie. Creates nothing. FRAMEWORK INTERNAL - two-factor device
+     * trust keys on it (Rsx_Two_Factor_Abstract::trust_this_device()).
+     *
+     * @return int|null
+     */
+    public static function _current_device_id(): ?int
+    {
+        if (self::$_device_id_for_tests !== null) {
+            return self::$_device_id_for_tests;
+        }
+
+        $row = self::__row_if_any();
+
+        return $row && $row->device_id ? (int) $row->device_id : null;
+    }
+
     public static function _get_portal_site_id(): ?int
     {
         $row = self::__row_if_any();

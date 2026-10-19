@@ -401,6 +401,30 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      * @param array $params Task parameters (unused)
      * @return null
      */
+    /**
+     * Delete two-factor browser trust that has run out (_two_factor_trusted_devices), in
+     * both realms. A row past trusted_until is already ignored by device_is_trusted(); this
+     * keeps the table to the browsers still trusted. Trusting again inserts a fresh row.
+     *
+     * @param Task_Instance $task
+     * @param array $params Unused
+     * @return null
+     */
+    #[Task('Delete expired two-factor browser trust (runs daily)')]
+    #[Exclusive('maintenance')]
+    #[Schedule('maintenance')]
+    public static function cleanup_trusted_devices(Task_Instance $task, array $params = [])
+    {
+        $task->status('Deleting expired two-factor browser trust');
+
+        $deleted = \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::_delete_expired_trust();
+
+        $task->stdout("Deleted {$deleted} expired trusted-browser row(s).");
+        $task->summary("{$deleted} expired trusted browser(s) removed.");
+
+        return null;
+    }
+
     #[Task('End impersonations older than rsx.sessions.impersonation_max_days (runs daily)')]
     #[Exclusive('maintenance')]
     #[Schedule('maintenance')]

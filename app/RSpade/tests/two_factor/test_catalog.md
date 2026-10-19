@@ -375,3 +375,10 @@ Both screens against a scripted controller on `/_sys`.
 A blank answer spends nothing server-side either: `Two_Factor_Challenge_Test::test_a_blank_answer_is_refused_and_spends_nothing`
 (no input, `''` and whitespace, repeated past the challenge's failure cap - no failure row, the
 challenge still pending, the identity not locked).
+| 2FA-TRUST-01 | trust_this_device() refuses unless the identity passed a second factor in this request, and for another identity than the one that passed | php | no verification; a verification for user A, trust for B | RuntimeException "only valid in the request" | implemented (`Two_Factor_Trusted_Device_Test`) | 2026-10-19 |
+| 2FA-TRUST-02 | a realm whose window is 0 refuses to trust and never answers trusted | php | staff window 0 | trust throws "trusted browsers are off"; device_is_trusted false | implemented | 2026-10-19 |
+| 2FA-TRUST-03 | a trusted browser answers for that identity on that device, filtered by what earned it, until trusted_until; the cleanup removes expired rows | php | emailed-code verification, trust, another device, expiry | true / issued_code true / totp false / other device false / expired false / cleanup 1 | implemented | 2026-10-19 |
+| 2FA-TRUST-04 | the realms are separate: staff trust is not portal trust for the same id; turning a realm to 0 stops it answering | php | staff trust, portal check, staff window 0 | false, false | implemented | 2026-10-19 |
+| 2FA-TRUST-05 | the portal realm trusts on its own; a portal verification mints no staff trust; a changed portal password ends trust | php | portal emailed-code verification | staff trust throws; portal trusted; after set_password false | implemented | 2026-10-19 |
+| 2FA-TRUST-06 | a changed staff password and remove_all() each end trust | php | trust, password change; trust, remove_all | false each time | implemented | 2026-10-19 |
+| 2FA-TRUST-07 | forget_trusted_devices(except_this_device) keeps this browser and forgets the others | php | two trusted devices | 1 removed; this kept; the other forgotten | implemented | 2026-10-19 |

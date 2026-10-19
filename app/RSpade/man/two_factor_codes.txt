@@ -232,6 +232,14 @@ THE REFERENCE IMPLEMENTATION
     Downstream these are at system/app/RSpade/resource/reference_app/. The
     staff login is the same code against Rsx_Two_Factor.
 
+TRUSTING THE BROWSER
+    A site that emails a code on every sign-in can let a browser that passed
+    one skip the next for a while: set the realm's
+    rsx.two_factor.trusted_device_days, call trust_this_device() in the verify
+    endpoint after verify_challenge(), and ask device_is_trusted() in the
+    login function before begin_challenge(). Off by default, per realm, and
+    entirely the application's call (rsx:man two_factor, TRUSTED BROWSERS).
+
 LIFETIME
     A code lives exactly as long as its challenge:
     rsx.two_factor.challenge_window_minutes (15). The window is a SECURITY

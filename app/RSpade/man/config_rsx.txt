@@ -328,6 +328,7 @@ TWO-FACTOR AUTHENTICATION
         'challenge_max_failures' => 5,
         'identity_max_failures' => 10,
         'identity_failure_window_minutes' => 60,
+        'trusted_device_days' => ['staff' => 0, 'portal' => 0],
     ]
 
     Second factors (TOTP, passkeys, recovery codes). THERE IS NO ENABLE

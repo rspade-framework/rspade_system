@@ -1083,6 +1083,63 @@ ISSUED CODES
     (rsx.two_factor.challenge_window_minutes, 15). codes_issued in
     challenge_pending() lets the application cap "Send a new code".
 
+TRUSTED BROWSERS
+    A browser on which an identity passed a second factor may be TRUSTED for a
+    while, so its next sign-ins there can skip the challenge. Off in both
+    realms by default; each realm has its own window:
+
+        'trusted_device_days' => ['staff' => 0, 'portal' => 0]
+
+    THE FRAMEWORK RECORDS AND ANSWERS; THE APPLICATION DECIDES. Nothing skips a
+    challenge on its own. Three calls, identical on Rsx_Two_Factor and
+    Rsx_Portal_Two_Factor:
+
+        trust_this_device($identity)
+            Called by the application's verify endpoint after a successful
+            verify_challenge() (or verify_passkey_login()). Trusts THIS browser
+            for that identity for the realm's window, recording which kind of
+            answer passed; trusting again extends it. THROWS unless the identity
+            passed a second factor in this same request - it is never a way to
+            mint trust - and while the realm's window is 0.
+
+        device_is_trusted($identity, ?array $earned_by = null): bool
+            Asked by the login function before begin_challenge(): did this
+            identity pass a second factor on this browser within the window
+            (by one of $earned_by's ANSWER_* kinds, when given)? Always false
+            while the realm's window is 0. What a trusted browser excuses is the
+            application's policy - every challenge, the emailed code only, or
+            nothing for an administrator.
+
+        forget_trusted_devices($identity, bool $except_this_device = false)
+            Ends trust. The framework calls it itself when the identity's
+            password changes, when a second factor is removed, and when the
+            identity ends its other sessions (terminate_all_other_sessions(),
+            this browser kept).
+
+    The portal, an emailed code earning a week:
+
+        // config: 'trusted_device_days' => ['staff' => 0, 'portal' => 7]
+
+        // the login function, after the password
+        if (!Rsx_Portal_Two_Factor::device_is_trusted($portal_user)) {
+            Rsx_Portal_Two_Factor::begin_challenge($portal_user, [ANSWER_ISSUED_CODE, ...]);
+            return redirect(Rsx_Portal::Route('Portal_Login_Controller::verify'));
+        }
+
+        // the verify endpoint
+        $portal_user = Rsx_Portal_Two_Factor::verify_challenge($params);
+        Rsx_Portal_Two_Factor::trust_this_device($portal_user);
+
+    A staff realm left at 0 cannot be trusted by any application code.
+
+    A BROWSER is its device record (_session_devices): assigned at the
+    browser's first sign-in and kept across every later sign-in, expiry and
+    forced sign-out on it, lost with its cookie. So cleared cookies, a private
+    window or another browser always meet the challenge. Trust waives only the
+    second step - the password is always checked - and is as strong as the
+    session cookie it is recognised by. Rows past their window are removed by
+    the daily maintenance task Session_Cleanup_Service::cleanup_trusted_devices.
+
 PASSWORDLESS SIGN-IN
     A passkey as the FIRST and only credential: the visitor presses "Sign in
     with a passkey", the authenticator offers the discoverable credential it
@@ -1235,7 +1292,7 @@ CLI COMMANDS
         Reports whether the identity was locked ("was_locked" under --json).
 
 CONFIGURATION
-    config('rsx.two_factor') - six keys, and there is no seventh:
+    config('rsx.two_factor') - seven keys, and there is no eighth:
 
         'issuer' => null
             The label an authenticator app files the account under. null
@@ -1267,6 +1324,10 @@ CONFIGURATION
             A SECURITY WINDOW (not a timeout): opened by the identity's first
             wrong answer; how long a locked identity stays locked. Must be at
             least 1.
+
+        'trusted_device_days' => ['staff' => 0, 'portal' => 0]
+            Per realm, how long a browser trust_this_device() trusted is
+            honoured; 0 is off (TRUSTED BROWSERS).
 
     There is NO enable switch - see DESCRIPTION.
 

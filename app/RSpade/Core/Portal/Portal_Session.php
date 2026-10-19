@@ -852,6 +852,9 @@ class Portal_Session
 
         $query = self::__device_session_query((int) $portal_user_id);
 
+        // "Sign out everywhere else" also ends every other browser's two-factor trust.
+        \App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor::forget_trusted_devices((int) $portal_user_id, true);
+
         // Exclude current session if we have one
         if (!self::__is_cli() && Session::has_session()) {
             $query->where('id', '!=', Session::get_session_id());

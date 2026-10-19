@@ -1,6 +1,6 @@
 ---
 name: two-factor
-description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge with $accepts / issue_code / pending_identity / verify_challenge / begin_passkey_login / verify_passkey_login, the ANSWER_* kinds) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::verify_credentials(record: false) then begin_challenge, Two_Factor_Failed_Exception::reason() and the two_factor.challenge.spent event, passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove / :unlock operator commands, the attempt caps (is_locked / clear_failures, rsx.two_factor.challenge_max_failures / identity_max_failures), emailed six-digit sign-in codes (issued codes, a SECURITY-category email, <Two_Factor_Challenge $send_controller $send_method>, sso.two_factor.accepts), and requiring a factor as the application's own sign-in step. Use when adding 2FA, TOTP, passkeys or an emailed code to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor before a user may continue, recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Too many incorrect codes. Please sign in again.', 'Too many incorrect codes have been entered for this account. Please try again later.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', 'does not accept an issued code', 'holds none of them - nobody could answer this challenge', 'This sign-in cannot be completed with a passkey.', 'That security key request has expired. Please try again.', a passkey that will not save after a QR scan (publicKey.timeout, passkey_enroll_abandoned), or a passkey refused after moving hosts."
+description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge with $accepts / issue_code / pending_identity / verify_challenge / begin_passkey_login / verify_passkey_login, the ANSWER_* kinds) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::verify_credentials(record: false) then begin_challenge, Two_Factor_Failed_Exception::reason() and the two_factor.challenge.spent event, passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove / :unlock operator commands, the attempt caps (is_locked / clear_failures, rsx.two_factor.challenge_max_failures / identity_max_failures), emailed six-digit sign-in codes (issued codes, trusting a verified browser for a week with trust_this_device / device_is_trusted / forget_trusted_devices and rsx.two_factor.trusted_device_days, a SECURITY-category email, <Two_Factor_Challenge $send_controller $send_method>, sso.two_factor.accepts), and requiring a factor as the application's own sign-in step. Use when adding 2FA, TOTP, passkeys or an emailed code to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor before a user may continue, recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Too many incorrect codes. Please sign in again.', 'Too many incorrect codes have been entered for this account. Please try again later.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', 'does not accept an issued code', 'holds none of them - nobody could answer this challenge', 'This sign-in cannot be completed with a passkey.', 'That security key request has expired. Please try again.', a passkey that will not save after a QR scan (publicKey.timeout, passkey_enroll_abandoned), or a passkey refused after moving hosts."
 ---
 
 # Two-factor authentication
@@ -211,6 +211,21 @@ $code = Rsx_Two_Factor::issue_code();     // six digits; only a keyed hash is ke
 - A passwordless passkey sign-in owes nothing, so a user who registers a passkey skips the email.
 
 ---
+
+## Trusted browsers - skip the next challenge on a verified browser
+
+Off unless the realm's window is set: `rsx.two_factor.trusted_device_days` => `['staff' => 0, 'portal' => 0]` (days). The framework records and answers; the app decides:
+
+```php
+// verify endpoint, right after the challenge passes
+$portal_user = Rsx_Portal_Two_Factor::verify_challenge($params);
+Rsx_Portal_Two_Factor::trust_this_device($portal_user);   // throws unless verified THIS request, or window is 0
+
+// login function, before challenging
+if (Rsx_Portal_Two_Factor::device_is_trusted($portal_user /*, [ANSWER_ISSUED_CODE] */)) { /* skip */ }
+```
+
+A browser is its `_session_devices` row (kept across sign-ins and expiries, lost with the cookie). Trust ends on a password change, factor removal, and `terminate_all_other_sessions()` (this browser kept); `forget_trusted_devices($identity)` for anything else. Each realm separate - a staff window of 0 means no staff trust can exist. `rsx:man two_factor`, TRUSTED BROWSERS.
 
 ## Requiring a factor - the application's own step
 

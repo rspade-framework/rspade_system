@@ -14,6 +14,7 @@ use lbuchs\WebAuthn\WebAuthnException;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Qr\Rsx_Qr_Code;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Login_History;
@@ -562,6 +563,10 @@ abstract class Rsx_Two_Factor_Abstract
             ->where('id', $credential_id)
             ->delete();
 
+        // A factor removed is a reason to verify again everywhere: a browser trusted on its
+        // strength is not trusted on the strength of what remains.
+        static::forget_trusted_devices($identity_id);
+
         if (static::is_enabled($identity_id)) {
             return;
         }
@@ -586,6 +591,8 @@ abstract class Rsx_Two_Factor_Abstract
         $model = static::_credential_model();
 
         $model::where(static::_owner_column(), static::__resolve_id($identity))->delete();
+
+        static::forget_trusted_devices($identity);
     }
 
     // -------------------------------------------------------------------------
@@ -1321,18 +1328,18 @@ abstract class Rsx_Two_Factor_Abstract
             throw new Two_Factor_Failed_Exception('Enter your verification code.');
         }
 
-        $verified = false;
+        $answer = null;
 
         $accepts = static::__answerable($pending);
 
         if (isset($input['assertion']) && is_array($input['assertion'])) {
-            $verified = in_array(self::ANSWER_PASSKEY, $accepts, true)
-                && static::__try_assertion($input['assertion'], $identity_id);
+            $answer = in_array(self::ANSWER_PASSKEY, $accepts, true)
+                && static::__try_assertion($input['assertion'], $identity_id) ? self::ANSWER_PASSKEY : null;
         } elseif (isset($input['code']) && is_string($input['code'])) {
-            $verified = static::__try_code($input['code'], $pending, $accepts);
+            $answer = static::__try_code($input['code'], $pending, $accepts);
         }
 
-        if (!$verified) {
+        if ($answer === null) {
             static::__record_failure($email, Login_History::STATUS_FAILED_2FA, $identity_id);
 
             Rsx_Counter::increment(static::__identity_failure_key($identity_id), static::identity_failure_window_seconds());
@@ -1380,6 +1387,7 @@ abstract class Rsx_Two_Factor_Abstract
         }
 
         static::__record_success($identity, $email);
+        static::__remember_verified($identity_id, $answer);
 
         return $identity;
     }
@@ -1480,8 +1488,206 @@ abstract class Rsx_Two_Factor_Abstract
         }
 
         static::__record_success($identity, $email);
+        static::__remember_verified($identity_id, self::ANSWER_PASSKEY);
 
         return $identity;
+    }
+
+    // -------------------------------------------------------------------------
+    // Trusted browsers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Identities that passed a second factor in THIS request, per realm class:
+     * static::class => [identity_id, ANSWER_*]. What makes trust_this_device() refuse to
+     * mint trust for anybody who did not just prove a second factor.
+     *
+     * @var array<string, array{0: int, 1: string}>
+     */
+    private static array $__verified_this_request = [];
+
+    /**
+     * How many days a trusted browser is honoured in this realm -
+     * config('rsx.two_factor.trusted_device_days.<realm>'); 0 is off.
+     *
+     * @return int
+     */
+    public static function trusted_device_days(): int
+    {
+        $days = config('rsx.two_factor.trusted_device_days.' . static::TRUST_REALM);
+
+        if (!is_int($days) || $days < 0) {
+            throw new \RuntimeException(
+                'config(\'rsx.two_factor.trusted_device_days.' . static::TRUST_REALM . '\') must be a whole number of days, 0 or more.'
+            );
+        }
+
+        return $days;
+    }
+
+    /**
+     * Trust THIS BROWSER for $identity, for trusted_device_days(): the application's verify
+     * endpoint calls it after a successful verify_challenge() (or verify_passkey_login()) when
+     * its policy wants the next sign-in on this browser excused. Trusting again extends the
+     * window. Records which kind of answer passed, for device_is_trusted()'s $earned_by.
+     *
+     * Refuses - throws - unless $identity passed a second factor in THIS request: trust is a
+     * convenience on top of a verified sign-in, never a way to mint one. Throws too when the
+     * realm's window is 0 (the configuration says this realm trusts no browser), and when
+     * this browser has no device record.
+     *
+     * @param Rsx_Model_Abstract $identity
+     * @return void
+     */
+    public static function trust_this_device(Rsx_Model_Abstract $identity): void
+    {
+        $verified = self::$__verified_this_request[static::class] ?? null;
+
+        if ($verified === null || $verified[0] !== (int) $identity->id) {
+            throw new \RuntimeException(
+                static::class . '::trust_this_device() is only valid in the request in which this identity passed a '
+                . 'second factor (verify_challenge() or verify_passkey_login()).'
+            );
+        }
+
+        $days = static::trusted_device_days();
+
+        if ($days === 0) {
+            throw new \RuntimeException(
+                static::class . '::trust_this_device(): trusted browsers are off in this realm - '
+                . 'config(\'rsx.two_factor.trusted_device_days.' . static::TRUST_REALM . '\') is 0.'
+            );
+        }
+
+        $device_id = Session::_current_device_id();
+
+        if ($device_id === null) {
+            throw new \RuntimeException(static::class . '::trust_this_device(): this browser has no device record to trust.');
+        }
+
+        $now = now();
+
+        DB::statement(
+            'INSERT INTO _two_factor_trusted_devices
+                (identity_type, identity_id, device_id, earned_by, trusted_until, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE earned_by = VALUES(earned_by), trusted_until = VALUES(trusted_until), updated_at = VALUES(updated_at)',
+            [
+                static::__identity_type_id(),
+                (int) $identity->id,
+                $device_id,
+                $verified[1],
+                $now->copy()->addDays($days)->format('Y-m-d H:i:s.v'),
+                $now->format('Y-m-d H:i:s.v'),
+                $now->format('Y-m-d H:i:s.v'),
+            ]
+        );
+    }
+
+    /**
+     * Has $identity passed a second factor on THIS BROWSER within the realm's window - by one
+     * of $earned_by's kinds of answer, when given? The application's login function asks it
+     * before starting a challenge; what a trusted browser excuses is the application's
+     * policy. Always false while the realm's window is 0.
+     *
+     * @param int|Rsx_Model_Abstract $identity
+     * @param array|null $earned_by ANSWER_* kinds that count; null = any
+     * @return bool
+     */
+    public static function device_is_trusted(int|Rsx_Model_Abstract $identity, ?array $earned_by = null): bool
+    {
+        if (static::trusted_device_days() === 0) {
+            return false;
+        }
+
+        $device_id = Session::_current_device_id();
+
+        if ($device_id === null) {
+            return false;
+        }
+
+        $query = DB::table('_two_factor_trusted_devices')
+            ->where('identity_type', static::__identity_type_id())
+            ->where('identity_id', static::__resolve_id($identity))
+            ->where('device_id', $device_id)
+            ->where('trusted_until', '>', now()->format('Y-m-d H:i:s.v'));
+
+        if ($earned_by !== null) {
+            foreach ($earned_by as $kind) {
+                if (!in_array($kind, self::ANSWERS, true)) {
+                    throw new \RuntimeException("device_is_trusted(): '{$kind}' is not one of the ANSWER_* kinds.");
+                }
+            }
+
+            $query->whereIn('earned_by', $earned_by);
+        }
+
+        return $query->exists();
+    }
+
+    /**
+     * Stop trusting $identity's browsers - every one, or every one but this. The framework
+     * calls it when the identity's password changes, when it ends its other sessions, and
+     * when a second factor is removed; an application calls it for "sign out of all devices"
+     * or any policy of its own.
+     *
+     * @param int|Rsx_Model_Abstract $identity
+     * @param bool $except_this_device Keep this browser's trust
+     * @return int Rows removed
+     */
+    public static function forget_trusted_devices(int|Rsx_Model_Abstract $identity, bool $except_this_device = false): int
+    {
+        $query = DB::table('_two_factor_trusted_devices')
+            ->where('identity_type', static::__identity_type_id())
+            ->where('identity_id', static::__resolve_id($identity));
+
+        $device_id = Session::_current_device_id();
+
+        if ($except_this_device && $device_id !== null) {
+            $query->where('device_id', '<>', $device_id);
+        }
+
+        return $query->delete();
+    }
+
+    /**
+     * Remove trust that has run out, for every identity in both realms. Called by the session
+     * cleanup task. FRAMEWORK INTERNAL.
+     *
+     * @return int Rows removed
+     */
+    public static function _delete_expired_trust(): int
+    {
+        return DB::table('_two_factor_trusted_devices')
+            ->where('trusted_until', '<=', now()->format('Y-m-d H:i:s.v'))
+            ->delete();
+    }
+
+    /**
+     * Forget which identities passed a second factor in this request. FRAMEWORK INTERNAL -
+     * the test harness calls it between tests; a web request ends with the process state.
+     *
+     * @return void
+     */
+    public static function _reset_request_state(): void
+    {
+        self::$__verified_this_request = [];
+    }
+
+    /**
+     * Note that $identity_id passed a second factor in this request, and by what.
+     */
+    protected static function __remember_verified(int $identity_id, string $answer): void
+    {
+        self::$__verified_this_request[static::class] = [$identity_id, $answer];
+    }
+
+    /**
+     * This realm's identity model as a type ref - the identity_type column.
+     */
+    protected static function __identity_type_id(): int
+    {
+        return Type_Ref_Registry::class_to_id(class_basename(static::_identity_model()));
     }
 
     // -------------------------------------------------------------------------
@@ -1521,10 +1727,11 @@ abstract class Rsx_Two_Factor_Abstract
      * returning, which is what makes the code single-use - see Totp::verify().
      *
      * @param string $code
-     * @param int $identity_id
-     * @return bool
+     * @param array $pending
+     * @param array $accepts
+     * @return string|null The ANSWER_* that matched, or null
      */
-    protected static function __try_code(string $code, array $pending, array $accepts): bool
+    protected static function __try_code(string $code, array $pending, array $accepts): ?string
     {
         $identity_id = $pending['identity_id'];
         $code = trim($code);
@@ -1533,18 +1740,19 @@ abstract class Rsx_Two_Factor_Abstract
             && $pending['code_hash'] !== null
             && hash_equals($pending['code_hash'], static::__issued_code_hash($pending['challenge_id'], $code))
         ) {
-            return true;
+            return self::ANSWER_ISSUED_CODE;
         }
 
         if (in_array(self::ANSWER_TOTP, $accepts, true) && static::__try_totp($code, $identity_id)) {
-            return true;
+            return self::ANSWER_TOTP;
         }
 
-        if (in_array(self::ANSWER_RECOVERY_CODE, $accepts, true)) {
-            return Recovery_Codes::consume(static::class, $identity_id, $code);
+        if (in_array(self::ANSWER_RECOVERY_CODE, $accepts, true)
+            && Recovery_Codes::consume(static::class, $identity_id, $code)) {
+            return self::ANSWER_RECOVERY_CODE;
         }
 
-        return false;
+        return null;
     }
 
     /**

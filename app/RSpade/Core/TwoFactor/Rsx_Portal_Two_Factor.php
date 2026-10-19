@@ -69,6 +69,9 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
      */
     public const CHALLENGE_KEY = 'portal_two_factor.challenge';
 
+    /** This realm's key in config('rsx.two_factor.trusted_device_days'). */
+    public const TRUST_REALM = 'portal';
+
     /**
      * Session value key holding an in-flight TOTP seed, before it has been confirmed.
      */

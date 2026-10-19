@@ -400,6 +400,11 @@ abstract class Rsx_Test_Abstract
                     // there would not survive this reset).
                     Portal_Session::_testing_reset();
 
+                    // Forget which identities passed a second factor "in this request": a
+                    // test is a request, and a verification left standing would let a later
+                    // test mint browser trust without one.
+                    \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::_reset_request_state();
+
                     // Clear the request classification (channel and staff/portal realm). A
                     // test that declared a portal request and threw before restoring it
                     // would otherwise leave every later model write stamped with the

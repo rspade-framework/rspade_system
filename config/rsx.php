@@ -2060,6 +2060,19 @@ return [
         // their phone is locked out for at most an hour or until support unlocks them.
         // Must be at least 1.
         'identity_failure_window_minutes' => 60,
+
+        // TRUSTED BROWSERS, per realm, in days; 0 = off. After a challenge is passed, an
+        // application's verify endpoint may call trust_this_device($identity) to remember
+        // that browser for this long, and its login function may then ask
+        // device_is_trusted($identity) before starting the next challenge. Nothing skips a
+        // challenge on its own: the application decides who a trusted browser excuses. With
+        // a realm at 0, trust_this_device() throws and device_is_trusted() is always false.
+        // A browser is its _session_devices row, kept across sign-ins and expiries and lost
+        // with its cookie. See rsx:man two_factor, TRUSTED BROWSERS.
+        'trusted_device_days' => [
+            'staff' => 0,
+            'portal' => 0,
+        ],
     ],
 
     /*

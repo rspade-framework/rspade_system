@@ -1231,7 +1231,9 @@ WIDGETS
                                                 of the run's queue, one single-line row
                                                 per item, oldest first),
                                                 messages, summary, return_code.
-                                                $bar draws a fill behind progress text.
+                                                $bar draws a fill behind progress text;
+                                                a live run that has reported no progress
+                                                yet draws it empty, reading "0%".
                                                 Fills its host box and scrolls inside it.
                                                 A queue fetches only the rows its box
                                                 holds (box height / 24px) and says "+N
