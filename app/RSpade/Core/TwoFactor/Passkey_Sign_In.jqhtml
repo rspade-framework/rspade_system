@@ -34,17 +34,28 @@ Args:
   $controller (required) - the application controller holding the verification endpoint.
   $method     (required) - the endpoint's method name.
   $label      (optional) - the button text. Default 'Sign in with a passkey'.
+  $unstyled_controls - drop the theme (Bootstrap) classes from every control; each keeps its
+                 own __ class (see CONTROLS), and the host supplies the whole appearance.
 
 Events:
   signed_in - the endpoint accepted the assertion; fired just before the navigation.
 
+CONTROLS. Every control carries its own class - Passkey_Sign_In__button - so a host restyles
+it by name, never by a theme class or its position.
+
 See: php artisan rsx:man two_factor
 --%>
 <Define:Passkey_Sign_In tag="div">
+    <%
+        // $unstyled_controls drops the theme (Bootstrap) classes from every control, leaving
+        // each with its own __ class only, for a host whose realm has its own look.
+        const _btn = (kind) => (this.args.unstyled_controls ? '' : 'btn btn-' + kind + ' ');
+        const _input = this.args.unstyled_controls ? '' : 'form-control ';
+    %>
     <% if (!this.args.controller || !this.args.method) { throw new Error('Passkey_Sign_In requires $controller and $method'); } %>
 
     <% if (this.state.supported) { %>
-        <button type="button" class="btn btn-outline-secondary Passkey_Sign_In__button" $sid="sign_in">
+        <button type="button" class="<%= _btn('outline-secondary') %>Passkey_Sign_In__button" $sid="sign_in">
             <%-- Inline SVG, not an icon-font glyph: framework core, and the auth screens it is
                  wired into do not load the application theme's icon stylesheet. --%>
             <svg class="Passkey_Sign_In__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor"

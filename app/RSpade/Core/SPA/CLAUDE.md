@@ -53,7 +53,10 @@ bundle)**
 - `Default_Layout.js` + `.jqhtml` - the `$sid="content"` passthrough `match_url_to_route()` supplies
   when an action declares no `@layout`.
 - `Spa_Session_Controller.php` - `#[Auth('public')]` `#[Auth_Realm('any')]` `get_state`, returning
-  `{build_key, session_hash, user, site}` for the caller's OWN session. Called only by
+  `{build_key, session_hash, user, site}` for the caller's OWN session - `session_hash` is
+  `Session::_client_session_hash()`, the same reader `rsxapp.session_hash` comes from (the
+  session the request HOLDS, never the incoming cookie, so a session created or rotated while
+  a page rendered still matches). Called only by
   `Rsx.validate_session()` (`Core/Js/Rsx.js`) after a navigation; a mismatch is a
   `window.location.reload()`. The caller passes `is_portal` because an Ajax request cannot
   self-detect the portal context server-side - it drives staleness only, never authorization.

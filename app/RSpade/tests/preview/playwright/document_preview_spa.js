@@ -77,9 +77,6 @@ async function run() {
             }
         }));
 
-        // Prevent false-positive session-hash reloads in the dev-auth environment.
-        await page.evaluate(() => { if (typeof Rsx !== 'undefined') Rsx.validate_session = async () => true; });
-
         // Confirm we authenticated (the action loaded its attachment list).
         const on_page = await page.evaluate(() => typeof Spa !== 'undefined' && !!(Spa.action && Spa.action()));
         if (!on_page) {

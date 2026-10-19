@@ -4,9 +4,10 @@ set -e
 TEST_NAME="Realtime Debug Harness Connect"
 
 # Proves the realtime client can complete a full WebSocket handshake INSIDE the
-# rsx:debug harness: the harness browses http://localhost, so the client's
-# scheme-follows-page derivation (Rsx_Realtime._connect_url) must produce
-# ws://localhost/ws and connect through nginx's port-80 /ws proxy to the relay.
+# rsx:debug harness: the harness browses plain http (on the APP_URL host, carried in
+# the Host header), so the client's scheme-follows-page derivation
+# (Rsx_Realtime._connect_url) must turn the server's wss:// URL into ws://<host>/ws
+# and connect through nginx's port-80 /ws proxy to the relay.
 # Regression guard for the 2026-07-24 ERR_CONNECTION_REFUSED harness gap
 # (client hardcoded wss:// which nothing serves on the container's localhost).
 #
@@ -28,8 +29,8 @@ result="$(timeout 180 php artisan rsx:debug /_sys --user=1 \
     --eval="Rsx_Realtime._connect(); await sleep(2000); return JSON.stringify({state: Rsx_Realtime._connection_state, url: Rsx_Realtime._connect_url()})" 2>&1 \
     | grep -o '{"state":[^}]*}')"
 
-if ! echo "$result" | grep -q '"url":"ws://localhost/ws"'; then
-    echo "FAIL: $TEST_NAME - connect URL did not derive to ws://localhost/ws: $result"
+if ! echo "$result" | grep -qE '"url":"ws://[^"/]+/ws"'; then
+    echo "FAIL: $TEST_NAME - connect URL did not derive to ws://<host>/ws on a plain-http page: $result"
     exit 1
 fi
 

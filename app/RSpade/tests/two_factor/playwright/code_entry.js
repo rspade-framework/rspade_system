@@ -47,8 +47,6 @@ async function await_spa_ready(page) {
         setTimeout(resolve, 15000);
     }));
 
-    // Prevent false-positive session-hash reloads in the dev-auth environment.
-    await page.evaluate(() => { Rsx.validate_session = async () => true; });
 }
 
 /** Open an authenticated page on START_ROUTE. Auth headers ride the initial document only. */

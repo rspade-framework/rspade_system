@@ -22,7 +22,7 @@ what is under test is whether the pipeline is REACHED.
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | forms-enter-01 | the probe mount is a real form element | `Rsx_Form` mounted on a `<form>` | `tagName === 'FORM'` | implemented |
-| forms-enter-02 | Enter does not navigate the page | a real Enter keypress in the focused text input | the window sentinel survives, the form is still mounted, Playwright saw no frame navigation | implemented |
+| forms-enter-02 | Enter does not navigate the page | a real Enter keypress in the focused text input | the window sentinel survives, the form is still mounted, Playwright saw no new document load (a same-document history update is not a navigation) | implemented |
 | forms-enter-03 | Enter reaches the submission pipeline | the same keypress | `submit()` called exactly once - a bare `preventDefault()` would stop the navigation and leave Enter doing nothing, which is its own bug | implemented |
 
 ## Form_Questions_Test.php (php) - the server half of a server-driven question

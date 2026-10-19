@@ -34,6 +34,18 @@ class Jqhtml_Integration {
      */
     static _on_framework_modules_define() {
         // ─────────────────────────────────────────────────────────────────────
+        // jqhtml's diagnostics follow the application mode
+        //
+        // jqhtml defaults to its development mode, which emits debug-only DOM
+        // attributes (data-sid) and console warnings (an uncacheable component, a
+        // value dropped from this.data). A production page carries neither. The
+        // sealed DEBUG build keeps them: it exists to reproduce a production issue
+        // with the diagnostics still on, and jqhtml's mode changes nothing else.
+        // Set before any component renders, so no element is ever stamped.
+        // ─────────────────────────────────────────────────────────────────────
+        jqhtml.configure({ mode: window.rsxapp.mode === 'production' ? 'production' : 'development' });
+
+        // ─────────────────────────────────────────────────────────────────────
         // SSR Preload Data Injection
         //
         // If the page was SSR-rendered, window.rsxapp.ssr_preload contains

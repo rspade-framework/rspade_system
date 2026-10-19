@@ -140,10 +140,11 @@ OBJECT STRUCTURE
 
     Ajax:
 
-        ajax_batching       Boolean. config('rsx.ajax.batching'), the same
-                            in every mode. True: calls made in one turn
-                            share one /_ajax/_batch request. False: every
-                            call is its own /_ajax/_batch request.
+        ajax_batching       Boolean. config('rsx.ajax.batching') - by
+                            default false in development, true in debug and
+                            production. True: calls made in one turn share
+                            one /_ajax/_batch request. False: every call is
+                            its own /_ajax/_batch request.
 
     Optional:
 

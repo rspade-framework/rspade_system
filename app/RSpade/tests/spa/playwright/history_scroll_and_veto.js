@@ -87,8 +87,6 @@ async function open_panel(context, css) {
     }));
     await page.addStyleTag({ content: css });
     await page.evaluate(() => {
-        // Prevent false-positive session-hash reloads in the dev-auth environment.
-        Rsx.validate_session = async () => true;
         window.__dispatches = 0;
         Rsx.on('spa_dispatch_ready', () => { window.__dispatches++; });
     });

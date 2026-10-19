@@ -77,8 +77,6 @@ async function open_session() {
  */
 async function prepare_document(page) {
     await page.evaluate(([target, other]) => {
-        // Prevent false-positive session-hash reloads in the dev-auth environment.
-        Rsx.validate_session = async () => true;
         window.__document_mark = 'original';
         window.__dispatches = 0;
         Rsx.on('spa_dispatch_ready', () => { window.__dispatches++; });

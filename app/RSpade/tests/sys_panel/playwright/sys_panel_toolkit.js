@@ -70,7 +70,6 @@ async function await_spa_ready(page) {
         }
     }));
 
-    await page.evaluate(() => { if (typeof Rsx !== 'undefined') Rsx.validate_session = async () => true; });
 }
 
 /** Open a dialog in the page, keeping its promise on window, and wait until it has finished showing. */

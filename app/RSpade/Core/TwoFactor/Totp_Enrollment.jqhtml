@@ -22,18 +22,34 @@ THREE STATES, in the order the template tests them:
                          are on screen for the only time      -> the reveal
   otherwise              the QR code, the secret, the proof   -> the enrollment form
 
-Args: none. The component always enrolls the signed-in identity - the server offers no
-other spelling, deliberately (Rsx_Two_Factor_Abstract::__enrolling_identity). On a portal
-page it enrolls the signed-in PORTAL user, through the portal realm's controller.
+Args:
+  $unstyled_controls - drop the theme (Bootstrap) classes from every control; each keeps its
+                 own __ class (see CONTROLS), and the host supplies the whole appearance.
+                 The digit boxes are <Code_Input>'s and keep its classes - each box carries
+                 Code_Input__box, so the host styles them by that.
+
+No other. The component always enrolls the signed-in identity - the server offers no other
+spelling, deliberately (Rsx_Two_Factor_Abstract::__enrolling_identity). On a portal page it
+enrolls the signed-in PORTAL user, through the portal realm's controller.
 
 Events:
   enrolled  - fired when the user acknowledges the recovery codes, or as soon as the
               proof is accepted when no sheet was minted. The factor is already live at
               that point; this says the ceremony has nothing more to show.
 
+CONTROLS. Every control carries its own class - Totp_Enrollment__confirm,
+Totp_Enrollment__acknowledge, Totp_Enrollment__copy - so a host restyles it by name, never
+by a theme class or its position.
+
 See: php artisan rsx:man two_factor
 --%>
 <Define:Totp_Enrollment tag="div">
+    <%
+        // $unstyled_controls drops the theme (Bootstrap) classes from every control, leaving
+        // each with its own __ class only, for a host whose realm has its own look.
+        const _btn = (kind) => (this.args.unstyled_controls ? '' : 'btn btn-' + kind + ' ');
+        const _input = this.args.unstyled_controls ? '' : 'form-control ';
+    %>
     <% if (!this.data.setup) { %>
         <div class="Totp_Enrollment__notice">Preparing your authenticator setup...</div>
     <% } else if (this.state.recovery_codes) { %>
@@ -51,10 +67,10 @@ See: php artisan rsx:man two_factor
             </ul>
 
             <div class="Totp_Enrollment__actions">
-                <button type="button" class="btn btn-outline-secondary" $sid="copy">
+                <button type="button" class="<%= _btn('outline-secondary') %>Totp_Enrollment__copy" $sid="copy">
                     <%= this.state.copied ? 'Copied' : 'Copy codes' %>
                 </button>
-                <button type="button" class="btn btn-primary" $sid="acknowledge">I have saved these</button>
+                <button type="button" class="<%= _btn('primary') %>Totp_Enrollment__acknowledge" $sid="acknowledge">I have saved these</button>
             </div>
         </div>
     <% } else { %>
@@ -82,7 +98,7 @@ See: php artisan rsx:man two_factor
             <% } %>
 
             <div class="Totp_Enrollment__actions">
-                <button type="button" class="btn btn-primary" $sid="confirm">Confirm</button>
+                <button type="button" class="<%= _btn('primary') %>Totp_Enrollment__confirm" $sid="confirm">Confirm</button>
             </div>
         </div>
     <% } %>

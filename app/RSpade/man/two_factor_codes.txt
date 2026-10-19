@@ -192,6 +192,18 @@ DELIVERY MUST BE LIVE
 
     That is why the reference application ships the feature switched OFF.
 
+    And a deploy-time decision does not survive mail breaking, or being switched off,
+    AFTER the feature is on. The login function asks, every time:
+
+        if (!Rsx_Mail::deliverable_to($identity->email, Rsx_Mail::SECURITY)) {
+            // nobody would receive the code: degrade (skip the step, or offer
+            // another factor) rather than lock the account
+        }
+
+    deliverable_to() answers for the delivery mode, the dev-site gate, the block list and
+    the opt-out together, with SECURITY's exemptions (rsx:man email, WILL IT ARRIVE?).
+    Skipping the step or refusing the sign-in is the application's policy.
+
 PASSKEYS SKIP IT
     A passwordless passkey sign-in (verify_passkey_login(), rsx:man
     two_factor, PASSWORDLESS SIGN-IN) owes nothing further - the passkey is

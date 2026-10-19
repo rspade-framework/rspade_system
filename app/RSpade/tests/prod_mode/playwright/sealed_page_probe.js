@@ -34,7 +34,8 @@
  * starts, as a person's does, with none.
  *
  * FOR EVERY PAGE: the document answers 200; the page reports no error; rsxapp.build_key is
- * the state key and rsxapp.code_key the code key it was told to expect; and when the page
+ * the state key and rsxapp.code_key the code key it was told to expect; on a production page,
+ * jqhtml runs in production mode and no element carries the debug-only data-sid; and when the page
  * carries a field-length script tag, the tag carries that state key and the script has
  * assigned Rsx.__field_length_data.
  *
@@ -195,8 +196,19 @@ async function probe_page(context, path) {
             state_key: window.rsxapp ? window.rsxapp.build_key : null,
             code_key: window.rsxapp ? window.rsxapp.code_key : null,
             has_data: typeof Rsx !== 'undefined' && Rsx.__field_length_data !== null && typeof Rsx.__field_length_data === 'object',
+            mode: window.rsxapp ? window.rsxapp.mode : null,
+            jqhtml_mode: typeof jqhtml !== 'undefined' ? jqhtml.get_config().mode : null,
+            // Native query: jqhtml's jQuery layer refuses a data-sid selector by design.
+            sid_count: document.querySelectorAll('[data-sid]').length,
         };
     });
+
+    // A production page carries none of jqhtml's development diagnostics: its mode follows
+    // the application's, and no element is stamped with the debug-only data-sid.
+    if (seen.mode === 'production') {
+        check(seen.jqhtml_mode === 'production', path + ' runs jqhtml in production mode', String(seen.jqhtml_mode));
+        check(seen.sid_count === 0, path + ' carries no data-sid debug attribute', seen.sid_count + ' element(s)');
+    }
 
     check(seen.state_key === expected_state_key, path + ' carries the state key as rsxapp.build_key', seen.state_key + ' (expected ' + expected_state_key + ')');
     check(seen.code_key === expected_code_key, path + ' carries the code key as rsxapp.code_key', seen.code_key + ' (expected ' + expected_code_key + ')');

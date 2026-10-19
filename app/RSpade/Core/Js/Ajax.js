@@ -6,9 +6,9 @@
  * ONE TRANSPORT, EVERY MODE. Every call is sent to /_ajax/_batch - a lone call as a batch
  * of one - and answered from its own key in the response. Calls made in the same
  * synchronous turn share one request (at most MAX_BATCH_SIZE calls each) when
- * config('rsx.ajax.batching') is on (the default); with it off, every call is its own
- * request. Nothing else differs: the same endpoint answers the same way in development and
- * production, batched or not.
+ * config('rsx.ajax.batching') is on - the default in debug and production; development
+ * defaults it off, so every call is its own request (its own network-panel entry). Nothing
+ * else differs: the same endpoint answers the same way in every mode, batched or not.
  *
  * NO MERGING. Two identical calls are two calls: every Ajax call is a POST, and the
  * transport cannot know an endpoint is a read - merging two identical "add note" calls

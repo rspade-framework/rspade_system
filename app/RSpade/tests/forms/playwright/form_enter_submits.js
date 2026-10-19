@@ -66,8 +66,6 @@ async function await_spa_ready(page) {
         }
     }));
 
-    // Prevent false-positive session-hash reloads in the dev-auth environment.
-    await page.evaluate(() => { if (typeof Rsx !== 'undefined') Rsx.validate_session = async () => true; });
 }
 
 /**
@@ -173,15 +171,15 @@ async function run() {
             return;
         }
 
-        // Navigations from THIS point on are the failure being tested for. Watched from the
+        // Document loads from THIS point on are the failure being tested for. Watched from the
         // Playwright side as well as through the in-page sentinel, because the two catch it
-        // differently: the sentinel proves the document survived, this proves nothing
-        // navigated and came back.
+        // differently: the sentinel proves the document survived, this proves no NEW document
+        // loaded and came back. 'load' fires only for a new document - 'framenavigated' also
+        // fires for a same-document history update (the SPA's own replaceState), which is not
+        // a navigation away and must not count.
         const navigations = [];
-        page.on('framenavigated', (frame) => {
-            if (frame === page.mainFrame()) {
-                navigations.push(frame.url());
-            }
+        page.on('load', () => {
+            navigations.push(page.url());
         });
 
         // A REAL keypress, delivered by the browser to a focused text input.

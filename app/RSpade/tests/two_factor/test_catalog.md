@@ -382,3 +382,11 @@ challenge still pending, the identity not locked).
 | 2FA-TRUST-05 | the portal realm trusts on its own; a portal verification mints no staff trust; a changed portal password ends trust | php | portal emailed-code verification | staff trust throws; portal trusted; after set_password false | implemented | 2026-10-19 |
 | 2FA-TRUST-06 | a changed staff password and remove_all() each end trust | php | trust, password change; trust, remove_all | false each time | implemented | 2026-10-19 |
 | 2FA-TRUST-07 | forget_trusted_devices(except_this_device) keeps this browser and forgets the others | php | two trusted devices | 1 removed; this kept; the other forgotten | implemented | 2026-10-19 |
+
+## control_classes.js (playwright) - the components' own control classes and `$unstyled_controls`
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| 2FA-CONTROLS-01 | a control carries its own class beside the theme's | `Totp_Enrollment` mounted on `/_sys` | Confirm has `btn btn-primary` and `Totp_Enrollment__confirm` | implemented |
+| 2FA-CONTROLS-02 | `$unstyled_controls` drops the theme classes | the same with `$unstyled_controls` | Confirm has only `Totp_Enrollment__confirm` | implemented |
+| 2FA-CONTROLS-03 | the digit boxes are `Code_Input`'s either way | both mounts | six `Code_Input__box` | implemented |

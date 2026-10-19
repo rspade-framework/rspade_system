@@ -103,7 +103,6 @@ async function run() {
                 setTimeout(resolve, 3000);
             }
         }));
-        await page.evaluate(() => { if (typeof Rsx !== 'undefined') Rsx.validate_session = async () => true; });
 
         const ready = await page.evaluate(() => typeof Ajax !== 'undefined' && typeof Spa !== 'undefined' && !!(Spa.action && Spa.action()));
         if (!ready) {

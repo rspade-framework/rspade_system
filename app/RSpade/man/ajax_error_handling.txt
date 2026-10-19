@@ -429,11 +429,14 @@ TRANSPORT
     ---------------------------------
     The client sends EVERY call to POST /_ajax/_batch - a lone call as a
     batch of one - with a JSON body batch_calls, an array of {call_id,
-    controller, action, params}. Development, debug and production behave
-    identically.
+    controller, action, params}. The endpoint and the answers are identical
+    in every mode; only how many calls share a request differs by default.
 
-    config('rsx.ajax.batching') (default true; window.rsxapp.ajax_batching
-    in every mode) decides only how many calls share one request:
+    config('rsx.ajax.batching') (window.rsxapp.ajax_batching) decides only
+    how many calls share one request. Its default follows the mode: OFF in
+    development, so each call is its own request and its own entry in the
+    browser's network panel; ON in debug and production. An application sets
+    it either way in rsx/resource/config/rsx.php.
 
         true    calls made in one synchronous turn share a request, at most
                 20 per request (Ajax.MAX_BATCH_SIZE)

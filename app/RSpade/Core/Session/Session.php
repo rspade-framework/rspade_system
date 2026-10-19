@@ -2175,6 +2175,27 @@ class Session extends Rsx_System_Model_Abstract
      * In web mode: returns true if session record exists
      * @return bool
      */
+    /**
+     * The browser-facing hash of the session this request HOLDS, or null when it holds
+     * none - what rsxapp.session_hash and Spa_Session_Controller::get_state() both publish,
+     * and Rsx.validate_session() compares (a difference reloads the page). Read from the
+     * session row, so a session created or rotated DURING this request is the one hashed -
+     * never from the incoming cookie, which names the session the request arrived with.
+     * Hashed so the token itself never reaches the page. Creates nothing.
+     *
+     * @return string|null
+     */
+    public static function _client_session_hash(): ?string
+    {
+        self::init();
+
+        if (empty(self::$_session)) {
+            return null;
+        }
+
+        return hash_hmac('sha256', self::$_session->session_token, config('app.key'));
+    }
+
     public static function has_session(): bool
     {
         // API request: identity is not backed by a session row

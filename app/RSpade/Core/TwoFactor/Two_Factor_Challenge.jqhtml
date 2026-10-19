@@ -67,14 +67,30 @@ Args:
   $cancel_url  - where Cancel leads (normally the login page). Absent: no Cancel.
   $send_controller, $send_method - the application endpoint that issues and delivers a code.
                  Absent: no "Send a new code".
+  $unstyled_controls - drop the theme (Bootstrap) classes from every control; each keeps its
+                 own __ class (see CONTROLS), and the host supplies the whole appearance.
+                 The digit boxes are <Code_Input>'s and keep its classes - each box carries
+                 Code_Input__box, so the host styles them by that.
 
 Events:
   no_challenge - nothing is pending: an expired window, or a direct visit. The host page
                  sends the visitor back to the login screen.
 
+CONTROLS. Every control carries its own class - Two_Factor_Challenge__verify,
+Two_Factor_Challenge__cancel, Two_Factor_Challenge__send-button,
+Two_Factor_Challenge__switch-button, Two_Factor_Challenge__passkey,
+Two_Factor_Challenge__recovery-input - so a host restyles it by name, never by a theme class
+or its position.
+
 See: php artisan rsx:man two_factor
 --%>
 <Define:Two_Factor_Challenge tag="div">
+    <%
+        // $unstyled_controls drops the theme (Bootstrap) classes from every control, leaving
+        // each with its own __ class only, for a host whose realm has its own look.
+        const _btn = (kind) => (this.args.unstyled_controls ? '' : 'btn btn-' + kind + ' ');
+        const _input = this.args.unstyled_controls ? '' : 'form-control ';
+    %>
     <% if (!this.args.controller || !this.args.method) { throw new Error('Two_Factor_Challenge requires $controller and $method'); } %>
 
     <% if (!this.data.loaded) { %>
@@ -98,7 +114,7 @@ See: php artisan rsx:man two_factor
             </div>
 
             <% if (_recovery_box) { %>
-                <input type="text" class="form-control Two_Factor_Challenge__recovery-input" $sid="recovery"
+                <input type="text" class="<%= _input %>Two_Factor_Challenge__recovery-input" $sid="recovery"
                        autocomplete="off" autocapitalize="off" spellcheck="false"
                        placeholder="Recovery code" aria-label="Recovery code" />
             <% } else if (_code_answer) { %>
@@ -116,31 +132,31 @@ See: php artisan rsx:man two_factor
             <% if (_code_answer || _cancel) { %>
                 <div class="Two_Factor_Challenge__actions">
                     <% if (_cancel) { %>
-                        <button type="button" class="btn btn-secondary" $sid="cancel">Cancel</button>
+                        <button type="button" class="<%= _btn('secondary') %>Two_Factor_Challenge__cancel" $sid="cancel">Cancel</button>
                     <% } %>
                     <% if (_code_answer) { %>
-                        <button type="button" class="btn btn-primary" $sid="verify">Verify</button>
+                        <button type="button" class="<%= _btn('primary') %>Two_Factor_Challenge__verify" $sid="verify">Verify</button>
                     <% } %>
                 </div>
             <% } %>
 
             <% if (_digits && _recovery) { %>
                 <div class="Two_Factor_Challenge__switch">
-                    <button type="button" class="btn btn-link" $sid="switch">
+                    <button type="button" class="<%= _btn('link') %>Two_Factor_Challenge__switch-button" $sid="switch">
                         <%= this.state.recovery_mode ? 'Use a 6-digit code instead' : 'Use a recovery code instead' %>
                     </button>
                 </div>
             <% } %>
 
             <% if (_passkey) { %>
-                <button type="button" class="btn btn-outline-secondary Two_Factor_Challenge__passkey" $sid="passkey">
+                <button type="button" class="<%= _btn('outline-secondary') %>Two_Factor_Challenge__passkey" $sid="passkey">
                     Use passkey
                 </button>
             <% } %>
 
             <% if (_send) { %>
                 <div class="Two_Factor_Challenge__send">
-                    <button type="button" class="btn btn-link" $sid="send">Send a new code</button>
+                    <button type="button" class="<%= _btn('link') %>Two_Factor_Challenge__send-button" $sid="send">Send a new code</button>
                 </div>
             <% } %>
 

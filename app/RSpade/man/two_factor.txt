@@ -748,19 +748,38 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
     every shipped component goes through it - so none of them takes a realm
     argument, and a portal page can never start a staff ceremony.
 
+    THE HOST OWNS THE LOOK, as well as the box. All four are layout-neutral (no
+    card, no heading, no width), and every control they draw carries a class
+    of its own, so a host styles it by name - never by a theme class or by its
+    position:
+
+        Two_Factor_Challenge    __verify  __cancel  __send-button
+                                __switch-button  __passkey  __recovery-input
+        Totp_Enrollment         __confirm  __acknowledge  __copy
+        Passkey_Register        __register  __acknowledge  __copy  __label-input
+        Passkey_Sign_In         __button
+
+    The controls also wear Bootstrap's classes (btn btn-primary, form-control,
+    ...), which is what a Bootstrap-themed realm wants. A realm with its own
+    design system - a portal sign-in bundle narrowed to exclude Bootstrap, a
+    white-label theme - passes $unstyled_controls to any of the four: the
+    theme classes are dropped and each control keeps only its own. The digit
+    boxes are <Code_Input>'s, which already carries Code_Input__box on each.
+
     <Totp_Enrollment />
         The whole authenticator ceremony: QR code, manual-entry secret, the
         6-digit proof (typed one digit per box, <Code_Input>, the cursor
         already in it), and the ONE-TIME recovery-code reveal (skipped when
         the server minted no sheet).
-        Args:   none - it always enrolls the signed-in identity.
+        Args:   $unstyled_controls (above); nothing else - it always enrolls
+                the signed-in identity.
         Events: enrolled - the user acknowledged the code sheet (the factor
                 is already live at that point).
 
     <Passkey_Register />
         An optional key name, the button that raises the browser prompt, and
         the code-sheet reveal when this registration minted one.
-        Args:   none.
+        Args:   $unstyled_controls (above).
         Events: registered - fired immediately when no codes came back, or
                 when the user acknowledges the sheet that did.
         A browser without WebAuthn gets a plain notice instead of a button
@@ -779,6 +798,7 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
                 challenge accepting an issued code, the screen offers "Send a
                 new code" and sends the FIRST code itself when none has been
                 issued. Absent: no send link; the host issues the code.
+                $unstyled_controls (above).
         Posts:  {code: '...'} from the typed answer, or {assertion: {...}}
                 from a passkey. To the send endpoint: {}.
         Expects: {redirect: '/somewhere'}, followed with window.location.
@@ -819,7 +839,8 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         "Sign in with a passkey" for a login page: runs the PASSWORDLESS
         ceremony and posts it to the application's endpoint.
         Args:   $controller, $method (both REQUIRED) - the endpoint;
-                $label - the button text (default 'Sign in with a passkey').
+                $label - the button text (default 'Sign in with a passkey');
+                $unstyled_controls (above).
         Posts:  {assertion: {id, clientDataJSON, authenticatorData,
                 signature}} - the endpoint calls verify_passkey_login() on
                 the realm's facade with $params['assertion'].

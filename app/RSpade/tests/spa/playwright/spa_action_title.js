@@ -47,8 +47,6 @@ async function await_spa_ready(page) {
         }
     }));
 
-    // Prevent false-positive session-hash reloads in the dev-auth environment.
-    await page.evaluate(() => { if (typeof Rsx !== 'undefined') Rsx.validate_session = async () => true; });
 }
 
 /**

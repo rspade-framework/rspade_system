@@ -20,15 +20,29 @@ STATES, in the order the template tests them:
   state.recovery_codes   the key registered AND minted a sheet   -> the reveal
   otherwise              the label field and the register button
 
-Args: none. The component always enrolls the signed-in identity.
+Args:
+  $unstyled_controls - drop the theme (Bootstrap) classes from every control; each keeps its
+                 own __ class (see CONTROLS), and the host supplies the whole appearance.
+
+No other. The component always enrolls the signed-in identity.
 
 Events:
   registered - the passkey is live. Fired immediately when no recovery codes came back,
                or when the user acknowledges the sheet that did.
 
+CONTROLS. Every control carries its own class - Passkey_Register__register,
+Passkey_Register__acknowledge, Passkey_Register__copy, Passkey_Register__label-input - so a
+host restyles it by name, never by a theme class or its position.
+
 See: php artisan rsx:man two_factor
 --%>
 <Define:Passkey_Register tag="div">
+    <%
+        // $unstyled_controls drops the theme (Bootstrap) classes from every control, leaving
+        // each with its own __ class only, for a host whose realm has its own look.
+        const _btn = (kind) => (this.args.unstyled_controls ? '' : 'btn btn-' + kind + ' ');
+        const _input = this.args.unstyled_controls ? '' : 'form-control ';
+    %>
     <% if (!this.state.supported) { %>
         <div class="Passkey_Register__notice">
             <%-- Inline SVG, not an icon-font glyph: this is framework core and the auth screens
@@ -56,17 +70,17 @@ See: php artisan rsx:man two_factor
             </ul>
 
             <div class="Passkey_Register__actions">
-                <button type="button" class="btn btn-outline-secondary" $sid="copy">
+                <button type="button" class="<%= _btn('outline-secondary') %>Passkey_Register__copy" $sid="copy">
                     <%= this.state.copied ? 'Copied' : 'Copy codes' %>
                 </button>
-                <button type="button" class="btn btn-primary" $sid="acknowledge">I have saved these</button>
+                <button type="button" class="<%= _btn('primary') %>Passkey_Register__acknowledge" $sid="acknowledge">I have saved these</button>
             </div>
         </div>
     <% } else { %>
         <div class="Passkey_Register__form">
-            <input type="text" class="form-control Passkey_Register__label-input" $sid="label"
+            <input type="text" class="<%= _input %>Passkey_Register__label-input" $sid="label"
                    maxlength="120" placeholder="Name this key (optional)" aria-label="Passkey name" />
-            <button type="button" class="btn btn-primary" $sid="register">Register passkey</button>
+            <button type="button" class="<%= _btn('primary') %>Passkey_Register__register" $sid="register">Register passkey</button>
         </div>
 
         <% if (this.state.error) { %>

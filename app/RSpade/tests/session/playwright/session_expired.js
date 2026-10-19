@@ -67,7 +67,6 @@ async function open_panel(context) {
         Rsx.on('_debug_ready', () => resolve());
         setTimeout(resolve, 15000);
     }));
-    await page.evaluate(() => { Rsx.validate_session = async () => true; });
     return page;
 }
 

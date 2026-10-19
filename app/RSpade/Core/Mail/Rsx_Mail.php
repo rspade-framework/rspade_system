@@ -982,6 +982,65 @@ class Rsx_Mail
         return \App\RSpade\Core\Rsx::is_dev_site();
     }
 
+    // =========================================================================
+    // WILL IT ARRIVE - read-only windows onto the decisions enqueue() makes
+    // =========================================================================
+
+    /**
+     * Does this install hand messages to a real transport? True in MODE_LIVE only: suppressed
+     * records without sending, aiosmtpd files the message on this box, and disabled freezes the
+     * queue - a message queued while disabled is sent only after the mode changes, so for
+     * "can a feature that depends on email work NOW" the answer is false.
+     *
+     * @return bool
+     */
+    public static function delivers(): bool
+    {
+        return Rsx_Mail_Transport::delivery_mode() === Rsx_Mail_Transport::MODE_LIVE;
+    }
+
+    /**
+     * Will a message of $category addressed to $email actually arrive AT $email?
+     *
+     * Every layer enqueue() applies, asked in advance and with the same exemptions:
+     *   - the delivery mode (delivers());
+     *   - the dev-site recipient gate, on a `.dev.` host in live mode: only a whitelisted
+     *     address arrives - a catchall redirect delivers to somebody ELSE, and no catchall
+     *     delivers nowhere, so neither reaches $email (the row of a redirected message still
+     *     ends Sent, which is why this cannot be read back afterwards);
+     *   - the site block list, which a SECURITY message escapes;
+     *   - the recipient's opt-out for the category, which TRANSACTIONAL and SECURITY escape.
+     *
+     * For an application deciding whether a feature that DEPENDS on the message is usable at
+     * all - an emailed sign-in code, a verification link, an only recovery path - so it can
+     * degrade instead of locking somebody out. It is not a precondition of send(): code that
+     * simply sends still just sends. Reads the current tenant's lists, like enqueue().
+     *
+     * @param string $email
+     * @param int $category self::TRANSACTIONAL | NOTIFICATION | MARKETING | SECURITY
+     * @return bool
+     */
+    public static function deliverable_to(string $email, int $category): bool
+    {
+        if (!static::delivers()) {
+            return false;
+        }
+
+        if (static::is_dev_mode() && !self::_dev_whitelisted($email)) {
+            return false;
+        }
+
+        if ($category !== self::SECURITY && static::is_address_blocked($email)) {
+            return false;
+        }
+
+        if ($category !== self::TRANSACTIONAL && $category !== self::SECURITY && static::is_blocked($email, $category)) {
+            return false;
+        }
+
+        return true;
+    }
+
     /**
      * Apply dev site email redirect logic
      *

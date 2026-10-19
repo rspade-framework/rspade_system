@@ -168,7 +168,7 @@ ROUTING AND DISPATCH
 
     'ajax' => [
         'batch_max_calls' => 100,
-        'batching' => true,
+        'batching' => !\App\RSpade\Core\Rsx::is_development(),
     ]
 
     batch_max_calls      The most calls one /_ajax/_batch request may carry.
@@ -178,12 +178,14 @@ ROUTING AND DISPATCH
                          batch meets the cap. See rsx:man ajax_error_handling.
 
     batching             Whether the calls a page makes in one synchronous
-                         turn share one request (true, the default) or each
-                         go as a request of their own (false). Every call
-                         goes to /_ajax/_batch and is answered the same way
-                         either way; false makes each call its own entry in
-                         the browser's network panel. Applies in every mode,
-                         exposed as window.rsxapp.ajax_batching.
+                         turn share one request (true) or each go as a
+                         request of their own (false). Every call goes to
+                         /_ajax/_batch and is answered the same way either
+                         way; false makes each call its own entry in the
+                         browser's network panel. DEFAULT FOLLOWS THE MODE:
+                         false in development, true in debug and production;
+                         set it to override. Exposed as
+                         window.rsxapp.ajax_batching.
 
     'exception_handlers' => [ ... ]
 

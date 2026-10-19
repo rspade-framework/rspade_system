@@ -620,10 +620,11 @@ WINDOW.RSXAPP ACROSS MODES
     development AND debug (this is what makes browser console_debug() work in
     debug mode). Strict production omits the block entirely.
 
-    ajax_batching is always present and is NOT mode-dependent: it is
-    config('rsx.ajax.batching') (default true) in every mode. The Ajax
-    transport is the same in every mode (rsx:man ajax_error_handling,
-    TRANSPORT).
+    ajax_batching is always present: config('rsx.ajax.batching'), whose
+    DEFAULT follows the mode - false in development (one call per request,
+    for reading calls in the network panel), true in debug and production.
+    The Ajax transport and every answer are otherwise the same in every mode
+    (rsx:man ajax_error_handling, TRANSPORT).
 
     Core functionality (user, site, csrf, params, etc.) is present in all
     modes.

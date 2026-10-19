@@ -9,8 +9,8 @@ TEST_NAME="Realtime Batched Outgoing Frames"
 #   - N messages produced in one tick leave as ONE frame (before batching, ten components
 #     subscribing in one tick sent ten frames).
 #   - A burst longer than MAX_MESSAGES_PER_FRAME (25) is SPLIT into ceil(N/25) frames, in
-#     order, with no remainder dropped - the relay ends up holding all N subscriptions on
-#     ONE connection.
+#     order, with no remainder dropped - all N subscriptions are acknowledged by the relay,
+#     over ONE socket.
 #   - The relay logs no protocol violation for anything the client actually sends: the
 #     array frame is the only shape it accepts, and the client only ever sends that shape.
 #
@@ -106,19 +106,15 @@ if [ "$frames" -gt 20 ]; then
     fail "30 same-tick subscriptions produced $frames frames - the outbox is not coalescing them"
 fi
 
-# The relay's own view: all 30 subscriptions on ONE connection, and not a single frame
-# refused as a protocol violation while the client was talking.
+# The relay's own view: not a single frame refused as a protocol violation while the client
+# was talking. (Its stats line counts EVERY connection on the box - another open tab, another
+# session - so it cannot be asserted against; the 30 acknowledged subscriptions over one
+# socket are asserted from the client side above.)
 new_log="$(tail -n +$((log_lines_before + 1)) "$RELAY_LOG")"
 
 if echo "$new_log" | grep -q 'Protocol violation'; then
     echo "FAIL: $TEST_NAME - the relay refused a frame the client sent:"
     echo "$new_log" | grep 'Protocol violation'
-    exit 1
-fi
-
-if ! echo "$new_log" | grep -q 'Connections: 1, Subscriptions: 30'; then
-    echo "FAIL: $TEST_NAME - the relay never reported 1 connection holding 30 subscriptions. Relay said:"
-    echo "$new_log" | grep 'Connections:' || echo "  (no stats line in the window)"
     exit 1
 fi
 

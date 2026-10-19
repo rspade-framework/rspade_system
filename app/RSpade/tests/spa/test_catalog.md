@@ -55,6 +55,9 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-HISTORY-11 | A declined two-step jump steps back across both entries | playwright | `[A*, B, C]`, guard on, `history.go(2)`, dismiss | on A, as 08 + 09 | implemented | 2026-10-12 |
 | SPA-HISTORY-12 | An accepted Back/Forward turns the guard off and is dispatched in the SPA | playwright | guard on, Forward, accept | one `confirm`; on B; the document mark survives; guard off | implemented | 2026-10-12 |
 | SPA-HISTORY-13 | With the guard off nothing asks, and both neighbours are still reachable | playwright | Back before arming; after: Forward, Back, Back | no dialog; C then A reached, nothing added to the stack | implemented | 2026-10-12 |
+| SPA-SESSION-01 | The page's session hash names the session the request ENDED with: a sign-in during the request (dev-auth) still publishes a hash | playwright | `playwright/session_hash_after_sign_in.js` on `/_sys` | `rsxapp.session_hash` non-null | implemented (pre-fix: null - computed from the incoming cookie) | 2026-10-19 |
+| SPA-SESSION-02 | The page hash and `get_state()` agree | playwright | same | equal | implemented | 2026-10-19 |
+| SPA-SESSION-03 | An SPA navigation after that sign-in stays in the document, with `validate_session` NOT stubbed | playwright | `Spa.dispatch('/_sys/tasks')` | document mark survives, no `session_changed` | implemented (pre-fix: reloaded) | 2026-10-19 |
 
 ## Notes
 

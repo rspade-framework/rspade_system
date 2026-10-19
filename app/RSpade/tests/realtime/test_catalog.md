@@ -38,7 +38,7 @@ plumbing + the User_Model/ACL dirty-field matrix, which ARE reachable in CLI.
 | UREFRESH-03 | ACL grant/deny/remove-existing push; remove-absent is silent | php | User_Permission_Model ops | 1/1/1/0 | implemented | 2026-07-24 |
 | SREFRESH-E2E | Realm-scoped delivery through the real relay: session/user push reaches only the matching connection (staff vs portal same session-id disambiguated) | manual | direct WS client + tinker push | only target gets {type:'refresh'} | verified (live) | 2026-07-24 |
 | SREFRESH-NODE | Node route_control + client refresh handler + anchor gate (session_hash) | playwright/manual | rsx:debug eval | anchor engages only with session_hash; deduped reload | verified (live) | 2026-07-24 |
-| HARNESS-01 | rsx:debug harness client connect: scheme-follows-page derivation (ws://localhost/ws) completes token-mint -> handshake -> auth to 'connected' through the nginx :80 /ws proxy | http | http/realtime_debug_harness_connect.sh | state connected, url ws://localhost/ws | implemented | 2026-07-24 |
+| HARNESS-01 | rsx:debug harness client connect: scheme-follows-page derivation (ws://<APP_URL host>/ws on the harness's plain-http page) completes token-mint -> handshake -> auth to 'connected' through the nginx :80 /ws proxy | http | http/realtime_debug_harness_connect.sh | state connected, url ws://localhost/ws | implemented | 2026-07-24 |
 
 ## Relay pre-auth DoS hardening (UC-108 / audit F-003)
 
@@ -160,7 +160,7 @@ running them against the pre-fix client (see the Status column note).
 | IDLE-02 | An idle timer that fires while a connect is in flight leaves no orphan socket - auth_ok re-schedules the idle close | http | same script (B) | no socket, terminal disconnected | implemented (pre-fix: socket left open forever) | 2026-08-24 |
 | BATCH-01 | Ten messages produced in one tick leave as ONE frame | http | http/realtime_batched_frames.sh | 1 frame | implemented | 2026-08-24 |
 | BATCH-02 | A burst of 60 chunks into ceil(60/25) = 3 frames, remainder included | http | same script | 3 frames | implemented | 2026-08-24 |
-| BATCH-03 | 30 same-tick subscriptions coalesce (<= 20 frames in development, where Ajax batching is off) and all 30 reach the relay on ONE connection; no frame is refused | http | same script + relay stats line | `Connections: 1, Subscriptions: 30`, no protocol violation | implemented | 2026-08-24 |
+| BATCH-03 | 30 same-tick subscriptions coalesce (<= 20 frames in development, where Ajax batching is off) and all 30 are acknowledged over ONE socket; no frame is refused | http | same script + relay log | 30 established, 1 socket, no protocol violation (the relay's stats line counts every connection on the box, so it is not asserted) | implemented | 2026-08-24 |
 | OFFLINE-01 | A brief drop never reports 'disconnected' to a watch_connection() monitor; internal state goes false at once | http | http/realtime_offline_grace.sh | no disconnected, ends connected | implemented (pre-fix: 'disconnected' announced instantly) | 2026-10-19 |
 | OFFLINE-02 | A sustained outage announces 'disconnected' AFTER the grace window, not before, and recovers | http | same script | silent at 3s, announced at 7s, reconnects | implemented | 2026-08-24 |
 | RT-MONITOR-DISABLED | watch_connection() with realtime not configured answers 'disabled' once | http | http/realtime_connection_monitor.sh | 'disabled' synchronously; nothing registered; no socket; nothing after | implemented | 2026-10-19 |
@@ -182,11 +182,6 @@ The control panel is a FRAMEWORK-served page, so the harnesses run in an install
 application that ships none of the reference app's screens; the realtime client,
 `Realtime_Controller` and the watch registry are all framework globals present in every
 bundle, which is the whole requirement.
-
-KNOWN FAILURE, pre-existing and unrelated to the page: `HARNESS-01` asserts the derived
-socket URL is literally `ws://localhost/ws`, while `rsx:debug` browses the host `APP_URL`
-names. On a box whose `APP_URL` is not `localhost` the row fails on the hostname, not on the
-derivation it is about.
 
 ## subscription_released_on_stop.js (playwright) - a component's subscriptions follow its life in the document
 

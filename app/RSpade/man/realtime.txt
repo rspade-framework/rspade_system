@@ -1227,10 +1227,10 @@ WIRE FORMAT (CLIENT -> RELAY)
         subscription's establishment (on_create() subscribe) has that promise
         REJECTED rather than waiting for an ack that is not coming.
 
-    Ajax batching interacts with this. With rsx.ajax.batching on (the default,
-    every mode) the N subscribe-token calls of one tick return in ONE batched
-    response, so N subscriptions leave as one frame. With it off each call is
-    its own request, the replies arrive spread out, and the outbox coalesces
+    Ajax batching interacts with this. With rsx.ajax.batching on (the default
+    in debug and production) the N subscribe-token calls of one tick return in ONE batched
+    response, so N subscriptions leave as one frame. With it off (the default
+    in development) each call is its own request, the replies arrive spread out, and the outbox coalesces
     only what is ready together -- more frames than one, still far fewer than
     N. Nothing is lost either way.
 

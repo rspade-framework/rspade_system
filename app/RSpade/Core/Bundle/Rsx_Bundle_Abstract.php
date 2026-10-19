@@ -16,7 +16,6 @@ use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
-use App\RSpade\Core\Session\Rsx_Session_Cookie;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -437,12 +436,10 @@ abstract class Rsx_Bundle_Abstract
         // again.
         $rsxapp_data['code_key'] = Manifest::get_build_key();
 
-        // Add session_hash if session exists (hashed for scoping, non-reversible).
-        // ONE cookie for the whole site - staff and portal pages hash the same token.
-        $session_token = $_COOKIE[Rsx_Session_Cookie::name()] ?? null;
-        $rsxapp_data['session_hash'] = $session_token
-            ? hash_hmac('sha256', $session_token, config('app.key'))
-            : null;
+        // The session this request holds, hashed (non-reversible) - Session::_client_session_hash(),
+        // which get_state() also answers with, so Rsx.validate_session() compares like with like.
+        // ONE cookie for the whole site - staff and portal pages hash the same session.
+        $rsxapp_data['session_hash'] = \App\RSpade\Core\Session\Session::_client_session_hash();
 
         // Add runtime data
         // The application mode, read in JS through Rsx.is_dev() / is_debug() / is_prod()

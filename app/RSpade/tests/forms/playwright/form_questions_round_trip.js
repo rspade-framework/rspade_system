@@ -62,7 +62,6 @@ async function await_spa_ready(page) {
         }
     }));
 
-    await page.evaluate(() => { if (typeof Rsx !== 'undefined') Rsx.validate_session = async () => true; });
 }
 
 /**
