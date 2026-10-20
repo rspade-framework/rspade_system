@@ -265,13 +265,21 @@ class Rsx_Artisan
      *     command then runs the wrong artisan, or nothing.
      *   - The right PHP BINARY. PHP_BINARY is the RUNNING SAPI's executable; under
      *     php-fpm that is the fpm binary, which cannot run a script. A web-triggered
-     *     spawn would silently no-op. Only trust PHP_BINARY when we are the CLI.
+     *     spawn would silently no-op. Only trust PHP_BINARY when we are the CLI - and even
+     *     then it can be EMPTY: PHP derives it from PATH when argv[0] is bare, and php-fpm
+     *     clears the environment, so a worker php-fpm started as `php artisan ...` has no
+     *     PATH and no PHP_BINARY, and every child IT spawned ran the command ''. Otherwise
+     *     the CLI binary beside this build (PHP_BINDIR), absolute, so the child's own
+     *     PHP_BINARY resolves whatever its environment.
      *
      * @param array<int, string> $args
      */
     private static function __command_line(string $command, array $args, bool $propagate_locks): string
     {
-        $php = (\PHP_SAPI === 'cli') ? PHP_BINARY : 'php';
+        $php = (\PHP_SAPI === 'cli' && PHP_BINARY !== '') ? PHP_BINARY : PHP_BINDIR . '/php';
+        if (!is_executable($php)) {
+            shouldnt_happen("Rsx_Artisan: the PHP CLI binary '{$php}' is not executable");
+        }
 
         $parts = [
             escapeshellarg($php),

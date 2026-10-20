@@ -420,7 +420,7 @@ abstract class Rsx_Model_Abstract extends Model
      * Override toArray to include enum properties and model identifier
      *
      * Adds all enum properties and __MODEL identifier for client-side ORM instantiation
-     * Excludes fields listed in $neverExport property for security
+     * Excludes every column in never_exported_columns() for security
      *
      * @return array
      */
@@ -456,11 +456,10 @@ abstract class Rsx_Model_Abstract extends Model
             throw $e;
         }
 
-        // Remove fields that should never be exported to JavaScript
-        if (property_exists($this, 'neverExport') && is_array($this->neverExport)) {
-            foreach ($this->neverExport as $field) {
-                unset($array[$field]);
-            }
+        // Remove fields that must never leave the server. This runs AFTER parent::toArray(),
+        // so nothing Laravel offers ($visible, makeVisible()) can put one of them back.
+        foreach (static::never_exported_columns() as $field) {
+            unset($array[$field]);
         }
 
         // A single leading underscore marks a SYSTEM column: framework bookkeeping the
@@ -574,11 +573,26 @@ abstract class Rsx_Model_Abstract extends Model
     protected $guarded = ['*'];
 
     /**
-     * Columns that should never be exported to JavaScript
-     * Concrete classes should define this array with sensitive column names
-     * @var array
+     * Columns that must never leave the server in a payload.
+     *
+     * public static $neverExport = ['password', 'remember_token'];
+     *
+     * toArray() - the one serializer behind fetch(), relationships, the page's user object
+     * and the external API - unsets every listed column AFTER Laravel has built the array,
+     * so makeVisible() and $visible cannot reveal one. Anything whose disclosure would be a
+     * security event (a password hash, a token, a secret, an open key/value bag) belongs
+     * here; Laravel's $hidden is advisory and is for tidiness only.
+     *
+     * The effective list is the UNION of every declaration up the inheritance chain (see
+     * never_exported_columns()), so a subclass - a class override of a core model included
+     * - only ever ADDS columns and can never drop one its parent protects.
+     *
+     * A secret-shaped column (password, token, secret) missing from the effective list is
+     * flagged by the MODEL-NEVER-EXPORT-01 code-quality rule.
+     *
+     * @var array<int, string>
      */
-    protected $neverExport = [];
+    public static $neverExport = [];
 
     /**
      * Enumeration definitions for fields ending in _id
@@ -671,6 +685,34 @@ abstract class Rsx_Model_Abstract extends Model
      * @var array
      */
     protected static $type_ref_columns = ['created_by_type', 'updated_by_type', 'deleted_by_type'];
+
+    /**
+     * The effective never-export list for this model: the UNION of $neverExport as declared
+     * by this class and by every ancestor.
+     *
+     * PHP static properties are per-declaring-class: a model writing
+     * `public static $neverExport = ['api_secret'];` creates its OWN property, and
+     * `static::$neverExport` on that model answers only 'api_secret'. Reading the property
+     * through each class of the chain answers each class's nearest declaration, and merging
+     * those answers yields every column any class in the chain protects - which is what
+     * makes a subclass list additive rather than a replacement.
+     *
+     * toArray() and the MODEL-NEVER-EXPORT-01 rule both read the declaration through this
+     * method; nothing reads the property directly.
+     *
+     * @return array<int, string>
+     */
+    public static function never_exported_columns(): array
+    {
+        $columns = [];
+        for ($current = static::class; $current !== false; $current = get_parent_class($current)) {
+            if (property_exists($current, 'neverExport')) {
+                $columns = array_merge($columns, $current::$neverExport);
+            }
+        }
+
+        return array_values(array_unique($columns));
+    }
 
     /**
      * The full type-ref column list for this model: the framework audit authorship columns

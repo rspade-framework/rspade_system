@@ -1,0 +1,68 @@
+$neverExport IS PUBLIC STATIC AND UNIONED; IDENTITY SECRETS MOVE ONTO IT; $columnMeta IS GONE
+Date: 2026-10-20
+
+IF YOU DO NOTHING: any model of yours that declares `protected $neverExport = [...]` - an
+    override of User_Model, Login_User_Model or Portal_User_Model included - fails at class
+    load with "Cannot redeclare static ...::$neverExport as non static", taking down every
+    request that touches it; a $columnMeta array in your own models protects nothing (it never
+    did); and rsx:check now reports every password / token / secret column of yours that is
+    not in $neverExport (MODEL-NEVER-EXPORT-01).
+
+SUMMARY
+    Category 2: a declaration on Rsx_Model_Abstract changed shape, and the identity models -
+    in the likely-overridden set - changed what they declare.
+
+    - $neverExport is now `public static`, like $enums and $text_types. toArray() strips
+      every listed column AFTER Laravel builds the array, so makeVisible() and $visible
+      cannot reveal one.
+    - The effective list is the UNION of every $neverExport up the inheritance chain
+      (Model::never_exported_columns()). A subclass list ADDS to its parent's; it no longer
+      replaces it. An override that re-listed the base's columns keeps working; one that
+      forgot to no longer silently unprotects them.
+    - Login_User_Model_Abstract now never-exports password and remember_token, and
+      Portal_User_Model_Abstract password and metadata (the open JSON bag written by
+      set_metadata()). Both previously relied on Laravel's $hidden, which makeVisible()
+      defeats; their $hidden declarations are removed.
+    - $columnMeta is deleted from every framework model. Nothing ever read it.
+    - Rule MODEL-NEVER-EXPORT-01 (rsx:check, high) flags a column named password, token or
+      secret (or ending _password, _token, _secret) on any model's table that is not in that
+      model's effective list. Columns are read from the live schema.
+
+    Which control: anything whose disclosure is a security event goes in $neverExport.
+    $hidden is Laravel's and is for tidiness only.
+
+    Contract: php artisan rsx:man model (NEVER EXPORT FIELDS), rsx:man class_override
+
+ACTION REQUIRED - CODE
+    1. Make every declaration public static:
+           grep -rn "protected \$neverExport" rsx/
+       Each match becomes `public static $neverExport = [...]`. In an override of a core
+       model, keep only the columns YOU add - the base's are unioned in.
+
+    2. Move credential columns off $hidden:
+           grep -rn "protected \$hidden" rsx/models/
+       Any column listed there whose disclosure would be a security event moves to
+       $neverExport. (A Portal_User_Model override that listed `password` plus a column of
+       its own keeps the own column, now in $neverExport.)
+
+    3. Remove $columnMeta:
+           grep -rn "columnMeta" rsx/
+       Delete each declaration. Any column it marked never_export goes into $neverExport -
+       behaviour changes only in that the column is now actually protected.
+
+    4. Run php artisan rsx:check and add every column MODEL-NEVER-EXPORT-01 reports to that
+       model's $neverExport. A column a browser must legitimately hold is declared in the
+       model's file instead, with its reason:
+           // @MODEL-NEVER-EXPORT-01-EXCEPTION display_token - <why the browser may hold it>
+
+    5. A page that read a portal user's .metadata from a payload no longer receives it.
+           grep -rn "\.metadata" rsx/ --include=*.js --include=*.jqhtml
+       Publish what such a page needs through an accessor or an endpoint of yours.
+
+VERIFICATION
+    php artisan tinker, then:
+        $u = new \App\RSpade\Core\Models\Portal_User_Model(); $u->password = 'x';
+        array_key_exists('password', $u->makeVisible('password')->toArray());   // false
+    Before this change the same two lines answered true.
+
+        \App\RSpade\Core\Models\Login_User_Model::never_exported_columns();   // includes password, remember_token

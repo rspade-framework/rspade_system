@@ -348,10 +348,13 @@ CONFIGURATION OPTIONS
 
     thumbnails.renderers
     --------------------
-    The "produce a raster from bytes" step, pluggable by mime. Ordered fnmatch map of
-    mime pattern -> renderer class (simple, manifest-resolved name); first match wins,
-    and a mime with no renderer gets the generic extension icon. Overridable and
-    extendable in rsx/resource/config/rsx.php.
+    The "produce a raster from bytes" step, pluggable by mime. fnmatch map of mime
+    pattern -> renderer class (simple, manifest-resolved name), resolved by
+    Rsx_Mime_Map: an application entry beats every framework entry, and inside a
+    layer an exact mime beats a glob, a glob with more literal characters beats a
+    shorter one and a tie goes to the later line (rsx:man documents, MIME MAP
+    PRECEDENCE). A mime with no renderer gets the generic extension icon. Extended,
+    or overridden per type, in rsx/resource/config/rsx.php.
 
     Ships:
         'image/*'         => 'Imagick_Thumbnail_Renderer'
@@ -368,8 +371,9 @@ CONFIGURATION OPTIONS
     rendition the background worker produced, which this pipeline rasterizes with the
     application/pdf renderer like any other PDF. A renderer entry for .docx would mean
     converting a document inside a web request - exactly what the worker exists to
-    stop. (This is where Libreoffice_Thumbnail_Renderer used to be registered; that
-    class no longer exists.)
+    stop. The same holds for any type an application gives a PDF-producing document
+    renderer (rsx.documents.renderers, rsx:man documents, RENDERERS): its thumbnail
+    is page 1 of that rendition, with no entry here.
 
     thumbnails.renderer_max_bytes
     -----------------------------
@@ -495,14 +499,17 @@ RENDER PIPELINE (non-image files)
                           The worker retries it rsx.documents.retry_after_minutes
                           apart, up to rsx.documents.max_attempts attempts in all;
                           after the last it stays FAILED until an operator
-                          re-renders it. Whether another attempt is coming is not
-                          in this value - it is the work queue's answer
-                          (_file_storage.process_due_at; rsx:man documents). The
-                          picture is the same either way: the extension icon.
+                          re-renders it. A SOFT failure (a tool or the source
+                          unavailable, found before any attempt) is FAILED too, but
+                          spends no attempt and is checked again on a backoff of up
+                          to a week, indefinitely. Whether another attempt is
+                          coming is not in this value - it is the work queue's
+                          answer (_file_storage.process_due_at; rsx:man documents).
+                          The picture is the same either way: the extension icon.
 
     WHO SETS PENDING. The ATTACHMENT does, not the blob: on create and on
-    relink_storage(), if its pipeline_mime() matches config('rsx.preview.convertible')
-    and the blob is still NOT_REQUIRED, the attachment flips it to PENDING and kicks
+    relink_storage(), if a renderer in config('rsx.documents.renderers') matches its
+    pipeline_mime() and the blob is still NOT_REQUIRED, the attachment flips it to PENDING and kicks
     the worker (File_Storage_Model::request_render()). Dedup falls out of the
     condition - a blob already PENDING, RENDERED or FAILED is left alone, so
     re-uploading the same bytes converts nothing and the thumbnail is immediate,
@@ -511,9 +518,10 @@ RENDER PIPELINE (non-image files)
     THE WORKER. Document_Render_Service::render_pending is #[Exclusive] and
     #[Schedule('every 10 minutes')], kicked promptly on upload and swept on that
     schedule so a killed worker resumes unnoticed. It takes ONE blob per iteration -
-    the earliest due in its queue (_file_storage.process_due_at) - charges the
-    attempt, and runs the blob in a child process of its own, which: produces the PDF
-    rendition with ONE soffice run, extracts the text in the same pass, settles
+    the earliest due in its queue (_file_storage.process_due_at) - asks the soft
+    checks, charges the attempt, and runs the blob in a child process of its own,
+    which: produces the rendition through the type's renderer (ONE soffice run for
+    an Office document), extracts the text in the same pass, settles
     RENDERED/rendered_at (or FAILED/render_error), purges the thumbnail cache for the
     hash, and emits a realtime frame on every attachment referencing the blob. It is
     the ONLY caller of soffice for renditions, so no concurrency semaphore exists.
@@ -524,8 +532,10 @@ RENDER PIPELINE (non-image files)
     be evicted while the row still says RENDERED. The thumbnail endpoint notices the
     missing file, re-queues the blob (requeue_render()), and serves the placeholder -
     never an error page. The NEXT worker pass reconverts it. Only a RENDERED blob is
-    re-queued this way: a request for a FAILED document serves the placeholder and
-    never grants it another set of attempts. rsx:thumbnails:generate
+    re-queued this way: a request for a FAILED document serves the placeholder,
+    never grants it another set of attempts and never pulls a retry forward - only
+    opening the document's <Document_Preview> does that (rsx:man documents, THE
+    WORK QUEUE). rsx:thumbnails:generate
     does NOT do this: a cache-warming pass skips such a blob rather than queueing work
     as a side effect.
 
@@ -844,4 +854,4 @@ SEE ALSO
     rsx:man storage_directories  Storage directory organization
     rsx:man config_rsx           RSX configuration reference
 
-RSX Framework              Last updated 2026-08-22                 THUMBNAILS(1)
+RSX Framework              Last updated 2026-10-20                 THUMBNAILS(1)

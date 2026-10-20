@@ -8,10 +8,10 @@ config('rsx.preview.viewers') - the framework's Spreadsheet_Viewer and Markdown_
 viewer an app registers - is instantiated dynamically, once this component is ready, with
 {attachment_id, url, extension, file_name, page, fit}.
 
-A convertible document (Word, Excel, PowerPoint, ...) has no PDF rendition until the background
-render worker has produced one, so this component also owns the WAITING states: it subscribes to
-its attachment id and swaps from "Preparing preview..." to the real Pdf_Viewer when the render
-lands - no reload, no polling. The same subscription follows a REPLACED file: the URLs in the
+A document the background render worker renders (rsx.documents.renderers - Word, Excel,
+PowerPoint, ...) has no rendition until the worker has produced one, so this component also owns
+the WAITING states: it subscribes to its attachment id and swaps from "Preparing preview..." to
+the real viewer when the render lands - no reload, no polling. The same subscription follows a REPLACED file: the URLs in the
 server's answer carry the attachment's content version, so when the attachment is pointed at
 other bytes the answer differs, the frame repaints and the viewer loads the new URL.
 
@@ -19,12 +19,17 @@ States, in the order the template tests them:
   error_data set       - the record could not be read (deleted, or not visible to this user).
                          The "Preview unavailable" card with nothing to name. No viewer.
   preview_unavailable  - a degraded upload (unparseable image bytes). No viewer.
-  render_status_id 2   - PENDING: queued for render. "Preparing preview..." + the extension icon.
-  render_status_id 4   - FAILED: the last render attempt failed. "Preview could not be generated" +
-                         the extension icon. The worker may retry it; a realtime frame brings a
-                         later success here.
+  RENDER_STATUS_PENDING
+                       - queued for render. "Preparing preview..." + the extension icon.
+                         Also every FAILED blob the server answers with render_retrying: viewing
+                         it set a retry in motion (Document_Render_Service::attend_view() - a
+                         failure whose cause has gone, or one whose retry interval has passed),
+                         and the realtime frame brings the outcome.
+  RENDER_STATUS_FAILED - the last render attempt failed and no retry is under way. "Preview
+                         could not be generated" + the extension icon. The worker may retry it
+                         later; a realtime frame brings a later success here.
                          The operator reason (render_error) is deliberately NOT exported here.
-  urls.rendition       - a PDF (its own blob) or a RENDERED convertible document -> Pdf_Viewer.
+  urls.rendition       - a PDF (its own blob) or a document with a RENDERED PDF rendition -> Pdf_Viewer.
   otherwise            - Image_Viewer / Icon_Viewer / an app-registered viewer.
 
 Args:
@@ -105,9 +110,11 @@ Public methods (delegate to the active viewer; no-op before it is ready):
                     <div class="Document_Preview__unavailable-name"><%= this.data.info.file_name %></div>
                 <% } %>
             </div>
-        <% } else if (this.data.info && this.data.info.render_status_id === 2) { %>
-            <%-- PENDING: the render worker has the document queued. The realtime subscription in
-                 on_create brings us back here the moment it finishes. --%>
+        <% } else if (this.data.info && (this.data.info.render_status_id === File_Storage_Model.RENDER_STATUS_PENDING
+                || (this.data.info.render_status_id === File_Storage_Model.RENDER_STATUS_FAILED && this.data.info.render_retrying))) { %>
+            <%-- PENDING: the render worker has the document queued - or FAILED with a retry this
+                 view set in motion (render_retrying). The realtime subscription in on_create
+                 brings us back here the moment the worker settles it, either way. --%>
             <div class="Document_Preview__preparing">
                 <img class="Document_Preview__state-icon" src="<%= this.data.info.urls.icon %>" alt="">
                 <div class="Document_Preview__state-title">Preparing preview...</div>
@@ -115,9 +122,9 @@ Public methods (delegate to the active viewer; no-op before it is ready):
                     <div class="Document_Preview__state-name"><%= this.data.info.file_name %></div>
                 <% } %>
             </div>
-        <% } else if (this.data.info && this.data.info.render_status_id === 4) { %>
-            <%-- FAILED: the last attempt failed. Shown between the worker's retries and after
-                 the last one alike - never "Preparing preview". --%>
+        <% } else if (this.data.info && this.data.info.render_status_id === File_Storage_Model.RENDER_STATUS_FAILED) { %>
+            <%-- FAILED: the last attempt failed and no retry is under way. Shown while the
+                 worker waits out its retry interval and after the last attempt alike. --%>
             <div class="Document_Preview__failed">
                 <img class="Document_Preview__state-icon" src="<%= this.data.info.urls.icon %>" alt="">
                 <div class="Document_Preview__state-title">Preview could not be generated</div>

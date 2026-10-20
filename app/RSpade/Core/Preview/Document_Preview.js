@@ -49,7 +49,15 @@ class Document_Preview extends Component {
         // which is exactly the PENDING -> RENDERED swap - and the attachment being pointed at
         // other bytes, because the URLs in the info carry its content version; reload() would
         // tear down a live Pdf_Viewer on every unrelated frame.
-        this.subscribe(File_Attachment_Model, int(this.args.attachment_id), () => this.refresh());
+        //
+        // A refetch a frame caused is not somebody opening the document, so it does not ask the
+        // server to attend the view (File_Preview_Controller::get_preview_info, $attend). Were it
+        // to, a retry whose outcome is another failure would publish a frame, the frame a
+        // refetch, the refetch another retry - for as long as the page stayed open.
+        this.subscribe(File_Attachment_Model, int(this.args.attachment_id), () => {
+            this.state.frame_refetch = true;
+            this.refresh();
+        });
     }
 
     async on_load() {
@@ -57,6 +65,7 @@ class Document_Preview extends Component {
         try {
             this.data.info = await File_Preview_Controller.get_preview_info({
                 attachment_id: this.args.attachment_id,
+                attend: !this.state.frame_refetch,
             });
         } catch (e) {
             // SURFACE the failure, never substitute a payload for it (the catch-substitution rule):
@@ -183,6 +192,9 @@ class Document_Preview extends Component {
             return 'unavailable';
         }
         if (info.render_status_id === File_Storage_Model.RENDER_STATUS_PENDING) {
+            return 'preparing';
+        }
+        if (info.render_status_id === File_Storage_Model.RENDER_STATUS_FAILED && info.render_retrying) {
             return 'preparing';
         }
         if (info.render_status_id === File_Storage_Model.RENDER_STATUS_FAILED) {

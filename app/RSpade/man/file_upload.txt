@@ -1290,8 +1290,10 @@ THUMBNAILS
 
     Thumbnail renderer registry
         The "produce a raster from bytes" step is pluggable by mime via
-        config('rsx.thumbnails.renderers') - an ordered fnmatch map of mime
-        pattern -> renderer class (first match wins). Renderers extend
+        config('rsx.thumbnails.renderers') - an fnmatch map of mime pattern ->
+        renderer class, where an application entry beats a framework one and
+        the most specific pattern wins (rsx:man documents, MIME MAP
+        PRECEDENCE). Renderers extend
         App\RSpade\Core\Files\Rsx_Thumbnail_Renderer_Abstract::render(
         source_path, max_w, max_h): \Imagick.
 

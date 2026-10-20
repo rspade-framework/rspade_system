@@ -58,16 +58,18 @@ class Preview_Info_Test extends Rsx_Test_Abstract
         static::__assert_equals('Icon_Viewer', File_Preview_Controller::viewer_for_mime(null), 'null mime -> Icon_Viewer (terminal)');
     }
 
-    public static function test_an_added_viewer_resolves_ahead_of_the_terminal_entry()
+    public static function test_an_application_viewer_adds_and_replaces()
     {
         $framework = config('rsx.preview.viewers');
 
-        // The application's map is deep-merged over the framework's, so its new keys land after '*'.
+        // The application's map is deep-merged over the framework's, so its new keys land after '*'
+        // - and an application entry outranks every framework entry wherever it sits.
         config(['rsx.preview.viewers' => $framework + ['video/*' => 'Fixture_Video_Viewer', 'image/png' => 'Fixture_Png_Viewer']]);
 
         try {
             static::__assert_equals('Fixture_Video_Viewer', File_Preview_Controller::viewer_for_mime('video/mp4'), 'an added pattern wins over the icon');
-            static::__assert_equals('Image_Viewer', File_Preview_Controller::viewer_for_mime('image/png'), 'a mime a framework pattern covers keeps the framework viewer');
+            static::__assert_equals('Fixture_Png_Viewer', File_Preview_Controller::viewer_for_mime('image/png'), 'an application entry replaces the framework viewer for a mime a framework pattern covers');
+            static::__assert_equals('Image_Viewer', File_Preview_Controller::viewer_for_mime('image/gif'), 'a mime only the framework covers keeps the framework viewer');
             static::__assert_equals('Icon_Viewer', File_Preview_Controller::viewer_for_mime('application/x-unknown-xyz'), 'an unknown mime still reaches the terminal entry');
         } finally {
             config(['rsx.preview.viewers' => $framework]);
@@ -115,5 +117,6 @@ class Preview_Info_Test extends Rsx_Test_Abstract
         static::__assert_contains($attachment->key, (string) $info['urls']['rendition'], 'rendition url is type-safe (carries the key)');
         static::__assert_contains($attachment->key, (string) $info['urls']['inline'], 'inline url carries the key');
         static::__assert_contains('pdf', (string) $info['urls']['icon'], 'icon url carries the extension');
+        static::__assert_false($info['render_retrying'], 'a PDF owes no rendition, so a view sets no retry in motion');
     }
 }

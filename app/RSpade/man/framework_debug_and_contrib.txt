@@ -1314,10 +1314,13 @@ SUBSYSTEM PRIMERS
     that only ever moves NOT_REQUIRED -> PENDING. That idempotence is the
     dedup story, and it is why a new upload can never silently retry a FAILED
     blob. RENDERED and FAILED are the outcomes of an attempt. FAILED is
-    retried by the drain - and only by the drain, never by a web request -
-    until rsx.documents.max_attempts are spent; a FAILED blob with a due time
-    is waiting for its next attempt, one without is failed for good and only
-    an explicit rerender revives it. The unit of work (render_storage(),
+    retried by the drain until rsx.documents.max_attempts are spent; a view
+    of the preview may bring a due retry forward but never grants one. A
+    FAILED blob with a due time is waiting for its next attempt, one without
+    is failed for good and only an explicit rerender revives it. A SOFT
+    failure (a renderer's or extractor's soft_failure() check, made before
+    the attempt) is FAILED too but charges nothing and is re-checked on a
+    doubling backoff with no end - rsx:man documents, THE WORK QUEUE. The unit of work (render_storage(),
     command line only) never throws: any error becomes FAILED plus a recorded
     reason.
     Publication of a rendition is atomic (temp file beside the destination,

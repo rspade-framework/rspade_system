@@ -129,58 +129,6 @@ class Spreadsheet_Rendition
         CSS;
 
     /**
-     * Is this blob one this class renders? The mime list mirrors rsx.preview.viewers, which
-     * routes the same set to Spreadsheet_Viewer.
-     *
-     * @param string $mime
-     * @return bool
-     */
-    public static function handles_mime(string $mime): bool
-    {
-        foreach (static::mime_patterns() as $pattern) {
-            if (fnmatch($pattern, $mime)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Is this the extension of a workbook? The render worker asks with the blob's
-     * representative extension, which is what it already resolves to choose a converter.
-     *
-     * @param string|null $extension
-     * @return bool
-     */
-    public static function handles_extension(?string $extension): bool
-    {
-        if ($extension === null || $extension === '') {
-            return false;
-        }
-
-        $mime = config('rsx.files.document_mime_by_extension', [])[strtolower($extension)] ?? null;
-
-        return $mime !== null && static::handles_mime($mime);
-    }
-
-    /**
-     * The spreadsheet mimes, in ONE place - the render worker, the preview controller and the
-     * thumbnail suppression all ask here rather than each carrying a copy of the list.
-     *
-     * @return array<int,string>
-     */
-    public static function mime_patterns(): array
-    {
-        return [
-            // The glob takes the macro-enabled and template variants with the classic .xls.
-            'application/vnd.ms-excel*',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.*',
-            'application/vnd.oasis.opendocument.spreadsheet*',
-        ];
-    }
-
-    /**
      * Render a workbook to a self-contained, sanitized HTML file.
      *
      * @param string $source_path Absolute path to the workbook.

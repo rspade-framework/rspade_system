@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Tests\TwoFactor\Php;
 
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 use App\RSpade\Core\Auth\Login_Throttle;
@@ -16,6 +17,7 @@ use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\TwoFactor\Portal_Two_Factor_Credential_Model;
@@ -443,5 +445,74 @@ class Portal_Two_Factor_Test extends Rsx_Test_Abstract
             config(['rsx.two_factor' => $saved]);
             Rsx_Portal_Two_Factor::clear_failures($id);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Recording - the portal's own login history
+    // -------------------------------------------------------------------------
+
+    /**
+     * The second-factor challenge records into _portal_login_history: a wrong answer is a
+     * portal failure count and no row, the passed challenge is ONE success row carrying the
+     * portal user's site - and nothing reaches the staff history.
+     */
+    public static function test_the_portal_challenge_records_into_the_portal_history()
+    {
+        $fixture = static::__enrolled_portal_user(static::$_site_id);
+        $portal_user = $fixture['portal_user'];
+        $staff_rows_before = DB::table('_login_history')->count();
+
+        static::__as_portal(static::$_site_id);
+
+        Rsx_Portal_Two_Factor::begin_challenge($portal_user);
+
+        static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Portal_Two_Factor::verify_challenge(['code' => '000000']));
+        static::__assert_equals(1, Portal_Login_History::get_failed_attempts_count($portal_user->email), 'the wrong answer is counted');
+        static::__assert_equals(0, DB::table('_portal_login_history')->where('portal_user_id', $portal_user->id)->where('status', Portal_Login_History::STATUS_SUCCESS)->count(), 'and is no row');
+
+        Rsx_Portal_Two_Factor::challenge_passkey_options();
+        $challenge = (string) Session::get_value(Rsx_Portal_Two_Factor::WEBAUTHN_CHALLENGE_KEY);
+        Rsx_Portal_Two_Factor::verify_challenge(['assertion' => $fixture['authenticator']->assertion_response($challenge, 1)]);
+
+        $success = DB::table('_portal_login_history')
+            ->where('portal_user_id', $portal_user->id)
+            ->where('status', Portal_Login_History::STATUS_SUCCESS)
+            ->get();
+
+        static::__assert_equals(1, $success->count(), 'the passed challenge is one success row');
+        static::__assert_equals(static::$_site_id, (int) $success[0]->site_id);
+        static::__assert_equals($staff_rows_before, DB::table('_login_history')->count(), 'nothing in the staff history');
+        Rsx_Portal_Two_Factor::clear_failures($portal_user);
+    }
+
+    /**
+     * Passwordless passkey sign-in records into the portal history: a success row, and a
+     * portal user can_login() refuses is a FAILED_DISABLED count, never a row.
+     */
+    public static function test_a_portal_passkey_sign_in_records_into_the_portal_history()
+    {
+        $fixture = static::__enrolled_portal_user(static::$_site_id);
+        $portal_user = $fixture['portal_user'];
+
+        static::__as_portal(static::$_site_id);
+        Rsx_Portal_Two_Factor::verify_passkey_login($fixture['authenticator']->assertion_response(static::__begin_portal(), 1));
+
+        static::__assert_equals(
+            Portal_Login_History::STATUS_SUCCESS,
+            Portal_Login_History::get_history_for_user((int) $portal_user->id, 1)[0]['status'],
+            'the sign-in is the newest row'
+        );
+
+        Portal_User_Model::where('id', $portal_user->id)->update(['status_id' => Portal_User_Model::STATUS_SUSPENDED]);
+        $rows_before = DB::table('_portal_login_history')->where('portal_user_id', $portal_user->id)->count();
+
+        static::__as_portal(static::$_site_id);
+        static::__assert_throws(
+            Two_Factor_Failed_Exception::class,
+            fn () => Rsx_Portal_Two_Factor::verify_passkey_login($fixture['authenticator']->assertion_response(static::__begin_portal(), 2))
+        );
+
+        static::__assert_equals($rows_before, DB::table('_portal_login_history')->where('portal_user_id', $portal_user->id)->count(), 'a refusal is no row');
+        static::__assert_equals(1, Portal_Login_History::get_failed_attempts_count($portal_user->email), 'it is a portal failure count');
     }
 }

@@ -7,10 +7,12 @@
 
 namespace App\RSpade\Core\Search;
 
+use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\Document_Stage_Bound;
 use App\RSpade\Core\Files\Document_Stage_Timeout_Exception;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Rsx_Extraction_Unsupported_Exception;
@@ -50,7 +52,7 @@ class Search_Index_Service extends Rsx_Service_Abstract
      * Resolution order:
      *   1. App filter chain document.extract_text (first non-null handler wins).
      *   2. The PDF rendition shortcut, when the worker has one (see $rendition_path).
-     *   3. Framework extractor registry (config rsx.search.extractors, fnmatch by mime).
+     *   3. Framework extractor registry (config rsx.search.extractors, by mime via Rsx_Mime_Map).
      *   4. No match -> UNSUPPORTED (NOT failed - e.g. an image, a zip; OCR is out of scope).
      *
      * @param File_Storage_Model $storage
@@ -109,20 +111,7 @@ class Search_Index_Service extends Rsx_Service_Abstract
      */
     protected static function __extract(File_Storage_Model $storage, string $path, ?string $rendition_path): array
     {
-        $sniffed = mime_content_type($path);
-        if ($sniffed === false) {
-            $sniffed = 'application/octet-stream';
-        }
-
-        // Extraction routes on the PIPELINE mime (extension-first for documents), mirroring the
-        // viewer/rendition/thumbnail registries, so a per-file-flaky OOXML sniff of application/zip
-        // does not silently leave a document un-indexed. The blob carries no extension of its own,
-        // so we borrow one from a representative attachment referencing this blob - preferring an
-        // attachment whose extension is a known document type (a blob shared by a .docx and a .zip
-        // upload extracts as the docx). An orphan blob with no attachment falls through to the raw
-        // sniff.
-        $representative_extension = static::__representative_extension($storage);
-        $mime = File_Attachment_Model::resolve_pipeline_mime($sniffed, $representative_extension);
+        $mime = static::__pipeline_mime($storage, $path);
 
         // 1) App filter chain. Contract (enforced below, fail loud on anything else):
         //    null = decline (fall through) | string = extracted text
@@ -137,21 +126,17 @@ class Search_Index_Service extends Rsx_Service_Abstract
             return static::__apply_resolved($storage, $resolved);
         }
 
+        // 2) + 3) The rendition shortcut, else the registry - see __select_extractor().
+        $rendition_available = $rendition_path !== null && file_exists($rendition_path);
+        $extractor_class = static::__select_extractor($mime, $rendition_available);
+
         // What we actually hand the extractor. Normally the blob itself; the rendition shortcut
-        // below swaps in the already-produced PDF.
+        // swaps in the already-produced PDF.
         $extract_path = $path;
         $extract_mime = $mime;
-
-        // 2) The rendition shortcut: a word-processing document whose PDF the render worker has
-        // already produced. Extracting from that PDF with pdftotext is the SAME document without a
-        // second soffice run.
-        if ($rendition_path !== null && file_exists($rendition_path) && static::__is_word_processing_mime($mime)) {
-            $extractor_class = 'Pdftotext_Text_Extractor';
+        if (static::__uses_rendition_shortcut($mime, $rendition_available)) {
             $extract_path = $rendition_path;
             $extract_mime = 'application/pdf';
-        } else {
-            // 3) Framework extractor registry (fnmatch by mime).
-            $extractor_class = static::__extractor_for_mime($mime);
         }
 
         if ($extractor_class === null) {
@@ -161,7 +146,7 @@ class Search_Index_Service extends Rsx_Service_Abstract
 
         // LibreOffice master switch, mirroring the thumbnail registry: check BEFORE invoking, so a
         // disabled LibreOffice yields UNSUPPORTED, never a soffice call.
-        if ($extractor_class === 'Libreoffice_Text_Extractor' && !config('rsx.libreoffice.enabled', true)) {
+        if (static::__is_switched_off($extractor_class)) {
             return [Search_Index_Model::STATUS_UNSUPPORTED, '', 'LibreOffice disabled', $extractor_class, null];
         }
 
@@ -203,6 +188,109 @@ class Search_Index_Service extends Rsx_Service_Abstract
         }
 
         return [Search_Index_Model::STATUS_EXTRACTED, $text, null, $extractor_class, $metadata];
+    }
+
+    /**
+     * The framework extractor a pass over this blob WILL run (FQCN), or null when it runs none -
+     * no extractor matches the type (UNSUPPORTED), or the one that matches is switched off.
+     * The same decision extract_storage() makes, from the same code, so the two cannot drift.
+     *
+     * It answers for the FRAMEWORK's choice: an application's document.extract_text handler
+     * runs first in a real pass and may answer instead, which only running it can tell.
+     *
+     * A SOURCE THAT CANNOT BE READ cannot be sniffed, and a type no document extension names
+     * (a .txt, a .csv) would then read as application/octet-stream and match no extractor -
+     * so the extractor whose source check would say why the pass cannot run is never asked.
+     * The answer is then the type the blob was stored as: the representative attachment's
+     * pipeline mime (its sniff at upload). extract_storage() itself never reaches a missing
+     * source's extractor; this choice exists for the soft check.
+     *
+     * @param File_Storage_Model $storage
+     * @param bool $rendition_available True when the pass will have this blob's PDF rendition on
+     *                                  disk (rendered earlier, or rendered by the same pass): a
+     *                                  word-processing document is then extracted from it with
+     *                                  pdftotext instead.
+     * @return string|null
+     */
+    public static function extractor_for_pass(File_Storage_Model $storage, bool $rendition_available): ?string
+    {
+        $path = $storage->get_full_path();
+        $mime = is_readable($path)
+            ? static::__pipeline_mime($storage, $path)
+            : (Document_Render_Service::pipeline_mime($storage) ?? static::__pipeline_mime($storage, $path));
+        $extractor_class = static::__select_extractor($mime, $rendition_available);
+
+        if ($extractor_class === null || static::__is_switched_off($extractor_class)) {
+            return null;
+        }
+
+        return static::__resolve_extractor_fqcn($extractor_class);
+    }
+
+    /**
+     * The blob's PIPELINE mime (extension-first for documents), mirroring the viewer/rendition/
+     * thumbnail registries, so a per-file-flaky OOXML sniff of application/zip does not silently
+     * leave a document un-indexed. The blob carries no extension of its own, so one is borrowed
+     * from a representative attachment referencing this blob - preferring an attachment whose
+     * extension is a known document type (a blob shared by a .docx and a .zip upload extracts as
+     * the docx). An orphan blob with no attachment falls through to the raw sniff.
+     *
+     * @param File_Storage_Model $storage
+     * @param string $path The resident blob; a missing or unreadable file sniffs as
+     *                     application/octet-stream (its extension still decides a document).
+     * @return string
+     */
+    protected static function __pipeline_mime(File_Storage_Model $storage, string $path): string
+    {
+        $sniffed = is_readable($path) ? mime_content_type($path) : false;
+        if ($sniffed === false) {
+            $sniffed = 'application/octet-stream';
+        }
+
+        return File_Attachment_Model::resolve_pipeline_mime($sniffed, static::__representative_extension($storage));
+    }
+
+    /**
+     * Steps 2 and 3 of extract_storage()'s resolution: the rendition shortcut when it applies,
+     * otherwise the extractor registry. Simple class name, or null when nothing matches.
+     *
+     * @param string $mime The blob's pipeline mime.
+     * @param bool $rendition_available
+     * @return string|null
+     */
+    protected static function __select_extractor(string $mime, bool $rendition_available): ?string
+    {
+        if (static::__uses_rendition_shortcut($mime, $rendition_available)) {
+            return 'Pdftotext_Text_Extractor';
+        }
+
+        return static::__extractor_for_mime($mime);
+    }
+
+    /**
+     * The rendition shortcut: a word-processing document whose PDF the render worker has already
+     * produced. Extracting from that PDF with pdftotext is the SAME document without a second
+     * soffice run.
+     *
+     * @param string $mime
+     * @param bool $rendition_available
+     * @return bool
+     */
+    protected static function __uses_rendition_shortcut(string $mime, bool $rendition_available): bool
+    {
+        return $rendition_available && static::__is_word_processing_mime($mime);
+    }
+
+    /**
+     * Is this extractor switched off by config? The LibreOffice master switch
+     * (rsx.libreoffice.enabled) governs Libreoffice_Text_Extractor.
+     *
+     * @param string $extractor_class Simple class name.
+     * @return bool
+     */
+    protected static function __is_switched_off(string $extractor_class): bool
+    {
+        return $extractor_class === 'Libreoffice_Text_Extractor' && !config('rsx.libreoffice.enabled', true);
     }
 
     /**
@@ -386,22 +474,15 @@ class Search_Index_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * First fnmatch match in config('rsx.search.extractors') for this mime, or null.
+     * The extractor registered for this mime in config('rsx.search.extractors'), resolved
+     * through Rsx_Mime_Map (application over framework, most specific pattern wins), or null.
      *
      * @param string $mime
      * @return string|null Simple extractor class name.
      */
     protected static function __extractor_for_mime(string $mime): ?string
     {
-        $map = config('rsx.search.extractors', []);
-
-        foreach ($map as $pattern => $class) {
-            if (fnmatch($pattern, $mime)) {
-                return $class;
-            }
-        }
-
-        return null;
+        return Rsx_Mime_Map::match('rsx.search.extractors', $mime);
     }
 
     /**

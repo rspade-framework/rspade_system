@@ -7,9 +7,11 @@
 
 namespace App\RSpade\Tests\Attachments\Php;
 
+use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
+use App\RSpade\Core\Files\Libreoffice_Document_Renderer;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -148,19 +150,17 @@ class Pipeline_Mime_Test extends Rsx_Test_Abstract
 
     public static function test_convertible_on_pipeline_mime()
     {
-        // __is_convertible is protected; exercise it via reflection to prove the rendition endpoint
-        // recognizes the pipeline mime as convertible.
-        $method = new \ReflectionMethod(File_Preview_Controller::class, '__is_convertible');
-        $method->setAccessible(true);
-
+        // The rendition endpoint serves a PDF for a mime whose registered renderer produces one;
+        // prove that decision reads the pipeline mime.
         $pipeline = File_Attachment_Model::resolve_pipeline_mime('application/zip', 'docx');
-        static::__assert_true(
-            $method->invoke(null, $pipeline),
-            'zip-sniffed docx pipeline mime is convertible to PDF'
+        static::__assert_equals(
+            Libreoffice_Document_Renderer::class,
+            Document_Render_Service::renderer_for_mime($pipeline),
+            'zip-sniffed docx pipeline mime renders to PDF through LibreOffice'
         );
-        static::__assert_false(
-            $method->invoke(null, 'application/zip'),
-            'the raw application/zip sniff is not convertible (the bug)'
+        static::__assert_null(
+            Document_Render_Service::renderer_for_mime('application/zip'),
+            'the raw application/zip sniff has no renderer (the bug)'
         );
     }
 

@@ -204,6 +204,14 @@ async function run() {
             render_failed.length === 1 && render_failed[0].state === 'failed' && render_failed[0].render_status === 4,
             render_failed);
 
+        // -- PREVIEW-EVENT-RENDER-RETRYING: a FAILED render this view set a retry in motion for --
+        const retrying = await stage('render_retrying', ids.png.id, { render_status_id: 4, render_retrying: true });
+        const retrying_notice = await page.evaluate(() => window.__preview.text('render_retrying', '.Document_Preview__state-title'));
+        check('a FAILED render with a retry under way shows "Preparing preview..." and reports "preparing"',
+            retrying.length === 1 && retrying[0].state === 'preparing' && retrying[0].render_status === 4
+                && retrying_notice === 'Preparing preview...',
+            { retrying, retrying_notice });
+
         // -- PREVIEW-EVENT-PREPARING: the waiting notice, then the swap --------------------------
         const swap = await page.evaluate(async (id) => {
             window.__preview.script({ render_status_id: 2 });

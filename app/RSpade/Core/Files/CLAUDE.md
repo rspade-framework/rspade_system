@@ -15,20 +15,27 @@ is a pointer, not a second copy.
 - **Keep-forever (`deleted_retention_days = 0`) releases no blob anywhere (`File_Disposal_Service::blob_release_enabled()`); `rsx:files:unreferenced_blobs` (`File_Blob_Audit`) lists what stays**: `rsx:man file_disposal`
 - Skills: `rspade:file-attachments` (working with attachments), `rspade:document-preview`
 
-`Document_Render_Service` is the single background worker behind all of it: one soffice
-run per document produces the PDF rendition that feeds BOTH the thumbnail and
-`<Document_Preview>`, and extracts the text in the same pass. Render state lives on the
-blob (`File_Storage_Model::RENDER_STATUS_*`). Nothing converts inside a web request.
+`Document_Render_Service` is the single background worker behind all of it: the type's
+renderer (`rsx.documents.renderers` -> a `Rsx_Document_Renderer_Abstract`:
+`Libreoffice_Document_Renderer`'s one soffice run, or `Spreadsheet_Document_Renderer`'s HTML
+grid) produces the rendition that feeds the thumbnail and `<Document_Preview>`, and the text
+is extracted in the same pass. Every mime-keyed registry resolves through `Rsx_Mime_Map`
+(an application entry beats the framework's). Render state lives on the blob
+(`File_Storage_Model::RENDER_STATUS_*`). Nothing converts inside a web request.
 
 The worker's queue is one column on the blob, `_file_storage.process_due_at` (NULL = the
 worker has nothing to do; a time = owed work, attemptable from then), with
-`process_attempt_count` beside it - THE WORK QUEUE section of `File_Storage_Model_Abstract`
-holds every write of the two. Each document runs in a child process of its own
+`process_attempt_count`, `process_last_attempt_at` and `process_soft_failure_count` beside it
+- THE WORK QUEUE section of `File_Storage_Model_Abstract` holds every write of the four. Each document runs in a child process of its own
 (`rsx:documents:process_one`, hidden) spawned by `Document_Render_Service::process_storage()`
 through `Rsx_Artisan::run_bounded()`; the attempt is charged before the child starts, each
 stage inside it is bounded by `Document_Stage_Bound`, and a blob gets
 `rsx.documents.max_attempts` attempts a retry interval apart before it stays FAILED for an
-operator. `render_storage()` is the unit of work the child runs - command line only.
+operator. Before charging, the renderer's and extractor's `soft_failure()` checks
+(`Document_Soft_Checks`) may find the box unable to run the pass: recorded FAILED, nothing
+charged, re-checked on a doubling backoff. `attend_view()` (from `get_preview_info()`) re-checks
+or pulls a due retry forward when the preview is opened. `render_storage()` is the unit of work
+the child runs - command line only. All of it: `rsx:man documents`.
 
 Both models here are a BASE PLUS A SHELL. `File_Attachment_Model_Abstract` and
 `File_Storage_Model_Abstract` carry every member - `$table`, the enum constants, the

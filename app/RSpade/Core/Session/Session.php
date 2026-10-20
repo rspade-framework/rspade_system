@@ -339,7 +339,7 @@ class Session extends Rsx_System_Model_Abstract
      * Columns that should never be exported to JavaScript
      * @var array
      */
-    protected $neverExport = [
+    public static $neverExport = [
         'session_token',
         'csrf_token',
         'ip_address_id',

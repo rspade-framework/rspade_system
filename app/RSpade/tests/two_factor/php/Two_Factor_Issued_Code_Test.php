@@ -7,9 +7,11 @@
 
 namespace App\RSpade\Tests\TwoFactor\Php;
 
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Auth\Login_Throttle;
+use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\User_Model;
@@ -17,6 +19,7 @@ use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
 use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
 use App\RSpade\Core\TwoFactor\Totp;
@@ -31,15 +34,22 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  *    empty list, or a list the identity cannot answer throws;
  *  - verify_challenge() refuses an answer of a kind the challenge does not accept, even a
  *    correct one - the application's policy is enforced, not advisory;
- *  - issue_code() keeps only a keyed hash, a later code replaces an earlier one, and the
- *    count is reported for an application that caps resends;
+ *  - issue_code() keeps ONE live code per identity, encrypted with the application key: a
+ *    resend returns the same digits and moves no expiry, a code issued in one session
+ *    verifies in another session of the same identity and never for another identity, and
+ *    an expired code is replaced by a fresh mint;
+ *  - codes_issued counts SENDS, and issued_code_expires_at() reports the live code's expiry;
+ *  - a correct answer consumes the code, a spent challenge or a locked identity destroys it,
+ *    and abandon_challenge() leaves it;
  *  - a wrong issued code counts against the challenge's attempt cap like a wrong TOTP code;
  *  - pending_identity() names whose address the code goes to;
  *  - the portal facade issues and verifies on its own realm.
  *
  * Redis-held counters (the per-IP throttle, the per-email failure count) live outside the
  * rolled-back transaction, so every test uses a unique email and teardown clears them - the
- * same shape as Two_Factor_Challenge_Test.
+ * same shape as Two_Factor_Challenge_Test. The live issued code lives in the same store, so
+ * each fixture identity starts with none (a re-provisioned test database can hand out an id
+ * a previous run left a code against).
  */
 class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
 {
@@ -104,8 +114,48 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
         $user->save();
 
         Rsx_Two_Factor::clear_failures($login_user);
+        static::__engine(Rsx_Two_Factor::class, '__forget_issued_code', (int) $login_user->id);
 
         return $login_user;
+    }
+
+    /**
+     * Call one of the engine's protected statics on a realm facade.
+     */
+    private static function __engine(string $facade, string $method, ...$args)
+    {
+        return (new \ReflectionMethod($facade, $method))->invokeArgs(null, $args);
+    }
+
+    /**
+     * The identity's live code as the engine reads it: {code, expires_at}, or null.
+     */
+    private static function __live(Login_User_Model $login_user): ?array
+    {
+        return static::__engine(Rsx_Two_Factor::class, '__live_issued_code', (int) $login_user->id);
+    }
+
+    /**
+     * Store a code for the identity directly, with an expiry of the test's choosing - the
+     * store's own encoding, so the engine reads it as one it minted.
+     */
+    private static function __plant_code(Login_User_Model $login_user, string $code, string $expires_at): void
+    {
+        $stored = Rsx_Counter::add_value(
+            static::__engine(Rsx_Two_Factor::class, '__issued_code_key', (int) $login_user->id),
+            Crypt::encryptString(json_encode(['code' => $code, 'expires_at' => $expires_at])),
+            Rsx_Time::to_ms($expires_at)
+        );
+
+        static::__assert_true($stored, 'the identity had no live code to collide with');
+    }
+
+    /**
+     * A wrong six-digit answer for a known code.
+     */
+    private static function __wrong(string $code): string
+    {
+        return $code === '000000' ? '111111' : '000000';
     }
 
     /**
@@ -180,9 +230,10 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
     // -------------------------------------------------------------------------
 
     /**
-     * Six digits come back; only a hash is kept; the correct code signs the identity in.
+     * Six digits come back, the session holds no trace of them, the store holds them only
+     * encrypted, and the correct code signs the identity in.
      */
-    public static function test_an_issued_code_signs_in_and_only_its_hash_is_kept()
+    public static function test_an_issued_code_signs_in_and_is_stored_encrypted()
     {
         $login_user = static::__make_login_user('issue');
 
@@ -193,40 +244,183 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
         static::__assert_equals(1, Rsx_Two_Factor::challenge_pending()['codes_issued']);
         static::__assert_equals((int) $login_user->id, (int) Rsx_Two_Factor::pending_identity()->id, 'whose address the code goes to');
 
-        $stored = (string) DB::table('_session_values')
+        $session_value = (string) DB::table('_session_values')
             ->where('session_id', Session::get_session_id())
             ->where('value_key', Rsx_Two_Factor::CHALLENGE_KEY)
             ->value('value');
 
-        static::__assert_false(str_contains($stored, '"' . $code . '"'), 'the digits are not stored');
+        static::__assert_false(str_contains($session_value, $code), 'the session holds no trace of the digits');
+
+        $stored = Rsx_Counter::value(static::__engine(Rsx_Two_Factor::class, '__issued_code_key', (int) $login_user->id));
+
+        static::__assert_not_null($stored, 'the code is stored against the identity');
+        static::__assert_false(str_contains($stored, $code), 'the stored value is not the digits');
+        static::__assert_equals($code, json_decode(Crypt::decryptString($stored), true)['code'], 'it is the digits, encrypted with the app key');
 
         $signed_in = Rsx_Two_Factor::verify_challenge(['code' => $code]);
 
         static::__assert_equals((int) $login_user->id, (int) $signed_in->id);
         static::__assert_true(Session::is_logged_in(), 'signed in');
         static::__assert_null(Rsx_Two_Factor::challenge_pending(), 'the challenge is spent');
+        static::__assert_null(static::__live($login_user), 'a correct answer consumes the code');
     }
 
     /**
-     * "Send a new code" leaves exactly one live answer.
+     * "Resend code" re-sends the SAME digits, each send is counted, and the reader reports one
+     * unmoving expiry.
      */
-    public static function test_a_later_code_replaces_the_earlier_one()
+    public static function test_a_resend_returns_the_same_code_and_counts_the_send()
     {
-        $login_user = static::__make_login_user('replace');
+        $login_user = static::__make_login_user('resend');
 
         Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
 
+        static::__assert_null(Rsx_Two_Factor::issued_code_expires_at(), 'no live code before the first send');
+
         $first = Rsx_Two_Factor::issue_code();
-        do {
-            $second = Rsx_Two_Factor::issue_code();
-        } while ($second === $first);
+        $expires_at = Rsx_Two_Factor::issued_code_expires_at();
 
-        static::__assert_greater_than(1, Rsx_Two_Factor::challenge_pending()['codes_issued']);
+        static::__assert_not_null($expires_at, 'the reader sees the live code');
+        static::__assert_true(Rsx_Time::is_future($expires_at));
 
-        static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['code' => $first]), 'not valid');
+        static::__assert_equals($first, Rsx_Two_Factor::issue_code(), 'a resend re-sends the same digits');
+        static::__assert_equals($first, Rsx_Two_Factor::issue_code());
+        static::__assert_equals(3, Rsx_Two_Factor::challenge_pending()['codes_issued'], 'codes_issued counts sends, not mints');
+        static::__assert_equals($expires_at, Rsx_Two_Factor::issued_code_expires_at(), 'a resend moves no expiry');
 
-        Rsx_Two_Factor::verify_challenge(['code' => $second]);
-        static::__assert_true(Session::is_logged_in(), 'the latest code signs in');
+        Rsx_Two_Factor::verify_challenge(['code' => $first]);
+        static::__assert_true(Session::is_logged_in(), 'the one code signs in');
+    }
+
+    /**
+     * A resend extends nothing: a code with a minute left still has that minute after it.
+     */
+    public static function test_a_resend_does_not_extend_the_absolute_life()
+    {
+        $login_user = static::__make_login_user('absolute');
+        $expires_at = Rsx_Time::add(Rsx_Time::now_iso(), 60);
+
+        static::__plant_code($login_user, '246810', $expires_at);
+
+        Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+
+        static::__assert_equals($expires_at, Rsx_Two_Factor::issued_code_expires_at(), 'a fresh challenge sees the live code');
+        static::__assert_equals('246810', Rsx_Two_Factor::issue_code(), 'the live code is re-sent');
+        static::__assert_equals($expires_at, Rsx_Two_Factor::issued_code_expires_at(), 'its expiry is where it was');
+    }
+
+    /**
+     * Once the code has expired, the next send mints a new one with a full window.
+     */
+    public static function test_an_expired_code_is_replaced_by_a_new_mint()
+    {
+        $login_user = static::__make_login_user('expired');
+        $expires_at = Rsx_Time::add(Rsx_Time::now_iso(), 1);
+
+        static::__plant_code($login_user, '135790', $expires_at);
+
+        Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+
+        // The store expires the entry at the planted time. A bounded POLL of that condition
+        // (tests/CLAUDE.md, the contention principle): the bound only catches a store that
+        // never expires the entry, and reaching it fails the test naming that condition.
+        $deadline = microtime(true) + 120;
+        while (Rsx_Two_Factor::issued_code_expires_at() !== null) {
+            if (microtime(true) > $deadline) {
+                static::__fail('the store never expired the planted code at ' . $expires_at);
+            }
+            usleep(100000);
+        }
+
+        $code = Rsx_Two_Factor::issue_code();
+        $new_expiry = Rsx_Two_Factor::issued_code_expires_at();
+
+        static::__assert_not_null($new_expiry, 'a new code was minted');
+        static::__assert_greater_than(Rsx_Time::to_ms($expires_at) + 60000, Rsx_Time::to_ms($new_expiry), 'with a window of its own');
+
+        if ($code !== '135790') {
+            static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['code' => '135790']), 'not valid');
+            Login_Throttle::reset('CLI');
+        }
+
+        Rsx_Two_Factor::verify_challenge(['code' => $code]);
+        static::__assert_true(Session::is_logged_in(), 'the new code signs in');
+    }
+
+    /**
+     * Session cycling cannot mint a parallel code: a fresh session's challenge for the same
+     * identity is answered by the code the first session sent, and re-sends it.
+     */
+    public static function test_a_code_issued_in_one_session_verifies_in_another()
+    {
+        $login_user = static::__make_login_user('sessions');
+
+        Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+        $first_session_id = Session::get_session_id();
+        $code = Rsx_Two_Factor::issue_code();
+
+        Session::_cli_end_session();
+
+        Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+
+        static::__assert_true(Session::get_session_id() !== $first_session_id, 'a different session');
+        static::__assert_equals(0, Rsx_Two_Factor::challenge_pending()['codes_issued'], 'nothing sent from this one yet');
+        static::__assert_not_null(Rsx_Two_Factor::issued_code_expires_at(), 'but the identity holds a live code');
+        static::__assert_equals($code, Rsx_Two_Factor::issue_code(), 'the same digits, not a parallel code');
+
+        Rsx_Two_Factor::verify_challenge(['code' => $code]);
+        static::__assert_equals((int) $login_user->id, (int) Session::get_login_user_id(), 'signed in from the second session');
+    }
+
+    /**
+     * One identity's code never answers another identity's challenge.
+     */
+    public static function test_another_identitys_code_never_verifies()
+    {
+        $owner = static::__make_login_user('owner');
+        $other = static::__make_login_user('other');
+
+        Rsx_Two_Factor::begin_challenge($owner, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+        $code = Rsx_Two_Factor::issue_code();
+
+        Session::_cli_end_session();
+
+        Rsx_Two_Factor::begin_challenge($other, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+
+        static::__assert_null(Rsx_Two_Factor::issued_code_expires_at(), 'the other identity holds no code');
+        static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['code' => $code]), 'not valid');
+        static::__assert_false(Session::is_logged_in());
+        static::__assert_not_null(static::__live($owner), 'the owner\'s code is untouched');
+    }
+
+    /**
+     * Cancel in one browser leaves the identity's code for any other browser answering it.
+     */
+    public static function test_abandoning_a_challenge_leaves_the_code()
+    {
+        $login_user = static::__make_login_user('abandon');
+
+        Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+        $code = Rsx_Two_Factor::issue_code();
+        Rsx_Two_Factor::abandon_challenge();
+
+        static::__assert_equals($code, static::__live($login_user)['code'] ?? null, 'the code outlives the abandoned challenge');
+    }
+
+    /**
+     * The reader answers null for a challenge that does not accept an issued code.
+     */
+    public static function test_the_reader_is_null_without_an_issued_code_challenge()
+    {
+        $login_user = static::__make_login_user('reader');
+        static::__enroll_totp($login_user);
+
+        static::__assert_null(Rsx_Two_Factor::issued_code_expires_at(), 'nothing pending');
+
+        static::__plant_code($login_user, '864209', Rsx_Time::add(Rsx_Time::now_iso(), 60));
+        Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_TOTP]);
+
+        static::__assert_null(Rsx_Two_Factor::issued_code_expires_at(), 'this challenge takes no issued code');
     }
 
     /**
@@ -255,7 +449,7 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
 
         Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
         $code = Rsx_Two_Factor::issue_code();
-        $wrong = $code === '000000' ? '111111' : '000000';
+        $wrong = static::__wrong($code);
 
         for ($i = 1; $i < Rsx_Two_Factor::challenge_max_failures(); $i++) {
             static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['code' => $wrong]), 'not valid');
@@ -264,6 +458,40 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
 
         static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['code' => $wrong]), 'sign in again');
         static::__assert_null(Rsx_Two_Factor::challenge_pending(), 'the challenge is gone');
+        static::__assert_null(static::__live($login_user), 'and the code it was guessed against with it');
+
+        Login_Throttle::reset('CLI');
+        Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+
+        static::__assert_null(Rsx_Two_Factor::issued_code_expires_at(), 'the next sign-in starts with no code');
+    }
+
+    /**
+     * The wrong answer that locks the identity destroys its code: nothing would accept it.
+     */
+    public static function test_locking_the_identity_destroys_the_code()
+    {
+        $login_user = static::__make_login_user('lock');
+        $saved = config('rsx.two_factor.identity_max_failures');
+        config(['rsx.two_factor.identity_max_failures' => 2]);
+
+        try {
+            Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
+            $wrong = static::__wrong(Rsx_Two_Factor::issue_code());
+
+            static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['code' => $wrong]), 'not valid');
+            Login_Throttle::reset('CLI');
+            static::__assert_not_null(static::__live($login_user), 'one wrong answer leaves the code');
+
+            static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['code' => $wrong]), 'not valid');
+            Login_Throttle::reset('CLI');
+
+            static::__assert_true(Rsx_Two_Factor::is_locked($login_user), 'the identity is locked');
+            static::__assert_null(static::__live($login_user), 'and its code destroyed');
+        } finally {
+            config(['rsx.two_factor.identity_max_failures' => $saved]);
+            Rsx_Two_Factor::clear_failures($login_user);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -293,11 +521,16 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
         $portal_user->save();
 
         Rsx_Portal_Two_Factor::clear_failures($portal_user);
+        static::__engine(Rsx_Portal_Two_Factor::class, '__forget_issued_code', (int) $portal_user->id);
         Rsx_Portal_Two_Factor::begin_challenge($portal_user, [Rsx_Portal_Two_Factor::ANSWER_ISSUED_CODE]);
 
         static::__assert_null(Rsx_Two_Factor::challenge_pending(), 'the staff realm sees nothing');
 
         $code = Rsx_Portal_Two_Factor::issue_code();
+
+        static::__assert_equals($code, Rsx_Portal_Two_Factor::issue_code(), 'a portal resend re-sends the same digits');
+        static::__assert_not_null(Rsx_Portal_Two_Factor::issued_code_expires_at());
+
         $signed_in = Rsx_Portal_Two_Factor::verify_challenge(['code' => $code]);
 
         static::__assert_equals((int) $portal_user->id, (int) $signed_in->id);

@@ -566,8 +566,14 @@ PORTAL LOGIN FLOW
                                                     the staff login)
       #[Auth('public')]                             the gate every login-flow
                                                     surface carries
-      Portal_User_Model::find_by_email($site,$mail) / check_password() /
-      can_login() / touch_last_login()              the identity primitives
+      Portal_Auth::verify_credentials($site_id, $credentials, $record)
+                                                    THE password check: throttle,
+                                                    lookup, hash, reset refusal,
+                                                    recording (SIGNING IN below)
+      Portal_User_Model::can_login()                the account question the
+                                                    handler asks itself
+      Portal_Login_History                          the portal's sign-in history
+                                                    (rows + failure counters)
       Portal_Session::set_portal_user_id($id)       THE login: activates the
                                                     browser's session and stamps
                                                     the portal identity + the
@@ -589,13 +595,73 @@ PORTAL LOGIN FLOW
                                 get_site_id() just reads it. A flow that resolves
                                 the site ITSELF (see below) calls set_site_id()
                                 here, before touching the session.
-      3. Look the account up WITHIN that site: a portal account is a
-         (site_id, email) pair - find_by_email($site_id, $email), never a global
-         email lookup.
-      4. Verify: check_password() AND can_login() (active + verified).
+      3. Verify the pair WITHIN that site:
+         Portal_Auth::verify_credentials(Portal_Session::get_site_id(),
+         $credentials, record: false) - a portal account is a (site_id, email)
+         pair, never a global email lookup. Catch Auth_Throttled_Exception and
+         Auth_Password_Reset_Required_Exception and show their messages; record
+         a null as Portal_Login_History::record_failure($email,
+         STATUS_FAILED_PASSWORD).
+      4. Ask the account question: can_login() (active + verified), in your
+         own words.
       5. Portal_Session::set_portal_user_id($portal_user->id) - no site argument;
-         the session is created for the declared site.
+         the session is created for the declared site - then
+         Portal_Login_History::record_success($portal_user->id, $email).
       6. Flash + redirect to the post-auth destination.
+
+    SIGNING IN (Portal_Auth::verify_credentials())
+      App\RSpade\Core\Auth\Portal_Auth::verify_credentials(int $site_id,
+          array $credentials, bool $record = true): ?Portal_User_Model
+
+      The portal twin of RsxAuth::verify_credentials() (rsx:man session), in
+      the same order:
+
+        1. Login_Throttle::require_not_throttled() FIRST - throws
+           Auth_Throttled_Exception for a locked-out client IP (one budget per
+           IP across both realms), before any lookup.
+        2. Missing email or password: null, nothing recorded.
+        3. The lookup reads exactly $site_id (whatever tenant the process is
+           scoped to). An unknown address and a wrong password are the same
+           null, recorded with Portal_Login_History::record_failure()
+           (FAILED_NOT_FOUND / FAILED_PASSWORD: counters + the throttle + a log
+           line, no row). A soft-deleted portal user is NOT_FOUND.
+        4. A portal user flagged portal_users.password_reset_required THROWS
+           Auth_Password_Reset_Required_Exception (->identity is the portal
+           user), only now that the password matched - recorded as a
+           FAILED_PASSWORD_RESET_REQUIRED row even with $record = false.
+        5. Success: a SUCCESS row when $record is true; the portal user is
+           answered. NOBODY IS SIGNED IN - that is set_portal_user_id().
+
+      $record = false defers the SUCCESS to a caller that still owes a step
+      (an account question, a second factor), exactly as for staff; such a
+      caller records its own miss and its own password-only sign-in, and a
+      passed challenge is recorded by Rsx_Portal_Two_Factor.
+
+      ACCOUNT STATE IS THE APPLICATION'S: can_login() (status_id,
+      is_verified) is not asked here, so the handler can tell a person who
+      proved their password that their account is unverified. The framework's
+      other portal doors (challenge, passkey, federated) refuse an identity
+      can_login() rejects at their own sign-in step.
+
+      THE RESET FLAG REFUSES THE PASSWORD DOOR ONLY: a passkey or a federated
+      sign-in never presents the password, so neither consults it. The flag is
+      cleared by Portal_User_Model when the password changes (the reset flow's
+      set_password() + save()), and set by the application or by
+      rsx:users:force_password_reset --portal-user=<id> (rsx:man session,
+      PASSWORD RESET REQUIRED).
+
+    PORTAL LOGIN HISTORY
+      App\RSpade\Core\Session\Portal_Login_History records every portal
+      sign-in outcome into `_portal_login_history`, with Login_History's API and
+      statuses (rsx:man session, LOGIN HISTORY - PORTAL LOGIN HISTORY):
+      success, post-password refusal and passkey-enrollment rows carrying the
+      portal user and its site; failures as counters, the throttle and a log
+      line. The framework's portal doors record into it themselves -
+      Portal_Auth::verify_credentials(), Rsx_Portal_Two_Factor (challenge,
+      passkey sign-in, enrollment) and Rsx_Portal_Sso. Read it with
+      Portal_Login_History::get_history_for_user($portal_user_id) or
+      list_page(['portal_user_id' => $id, ...]); `_portal_login_history` is a
+      system table and is never queried directly.
 
     SECOND FACTORS, PASSKEYS AND FEDERATED SIGN-IN are framework-owned in the
     portal realm too, each a separate facade with its own table, so nothing a
@@ -646,8 +712,12 @@ PORTAL USER MODEL
     portal_users (site-scoped). Surface:
       const STATUS_ACTIVE / STATUS_INACTIVE / STATUS_SUSPENDED
       can_login(): bool                  active and verified
-      check_password(string): bool
-      set_password(string): void         hashes; does not save
+      check_password(string): bool       a bare hash check - a sign-in form
+                                         uses Portal_Auth::verify_credentials()
+      set_password(string): void         hashes; does not save (a saved new
+                                         password clears password_reset_required)
+      require_password_reset(): void     sets password_reset_required; does not save
+      is_password_reset_required(): bool
       touch_last_login(): void
       get_metadata(key,$default) / set_metadata(key,$value)
       static find_by_email(int $site_id, string $email): ?self
@@ -666,8 +736,11 @@ PORTAL USER MODEL
 
     Admin lifecycle (staff side): the model provides the primitives, not an admin
     screen. STATUS_SUSPENDED + can_login() block login; reactivation is just
-    status_id back to STATUS_ACTIVE; force-password-reset reuses the existing
-    portal reset flow (a Portal_Password_Reset token + the portal reset email).
+    status_id back to STATUS_ACTIVE; force-password-reset is the framework's
+    password_reset_required flag (require_password_reset(), or
+    rsx:users:force_password_reset), after which the portal user signs in again
+    through the application's reset flow (in the template, a
+    Portal_Password_Reset token + the portal reset email).
     The template ships staff admin surfaces over these primitives: a global
     "Portal Users" screen under Settings and per-client portal member rows, both
     calling one set of shared staff Ajax endpoints. To make a suspension effective

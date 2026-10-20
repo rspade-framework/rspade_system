@@ -4,9 +4,12 @@
 
 Operator administration of a staff LOGIN IDENTITY (`login_users`, the cross-site record that
 signs in) from the command line, where there is no signed-in operator to authorize against:
-`rsx:users:password:set` and `rsx:users:email:set`. Both name the identity with `--user`
-(a `login_users.id` or an email address), resolved once by `Login_User_Cli_Support` for every
-`rsx:users:*` command, and both answer the shared `--json` envelope.
+`rsx:users:password:set`, `rsx:users:email:set` and `rsx:users:force_password_reset`. Each
+names the identity with `--user` (a `login_users.id` or an email address), resolved once by
+`Login_User_Cli_Support` for every `rsx:users:*` command, and each answers the shared `--json`
+envelope. `rsx:users:force_password_reset` also takes a client portal user (`--portal-user`,
+with `--site` for an email, resolved by `Portal_User_Cli_Support`) and sets or clears
+`password_reset_required`, writing nothing else.
 
 The properties pinned are the ones an operator cannot see until somebody tries to sign in:
 a password change replaces the hash and ends every session the identity held (unless
@@ -25,7 +28,10 @@ concerns.
 - `app/RSpade/Commands/Rsx/Login_User_Password_Set_Command.php` - rsx:users:password:set
 - `app/RSpade/Commands/Rsx/Login_User_Email_Set_Command.php` - rsx:users:email:set
 - `app/RSpade/Commands/Rsx/Login_User_Cli_Support.php` - the --user resolver and identity output
+- `app/RSpade/Commands/Rsx/Force_Password_Reset_Command.php` - rsx:users:force_password_reset (both realms)
+- `app/RSpade/Commands/Rsx/Portal_User_Cli_Support.php` - the --portal-user (+ --site) resolver
 
 ## Tests
 
 - `cli/Login_User_Cli_Test.php` - both commands end to end, through Artisan::call()
+- `cli/Force_Password_Reset_Cli_Test.php` - rsx:users:force_password_reset for a login identity and a portal user

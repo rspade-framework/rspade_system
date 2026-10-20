@@ -81,6 +81,7 @@ use App\RSpade\Core\Portal\Rsx_Portal;
  * @property string $last_seen
  * @property array $metadata
  * @property string $password
+ * @property int $password_reset_required
  * @property int $site_id
  * @property int $status_id
  * @property string $updated_at
@@ -116,13 +117,28 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
 {
 
     /**
-     * A changed password ends every browser's two-factor trust for this identity: whoever
-     * knew the old password must verify again wherever they are (rsx:man two_factor,
-     * TRUSTED BROWSERS).
+     * Two consequences of a password change, both the framework's:
+     *
+     *   - password_reset_required is CLEARED in the same write (a `saving` hook, so it is one
+     *     UPDATE and no second save re-enters these hooks). The flag asked for a new password and
+     *     this is one. A save that assigns the flag itself alongside the password keeps what it
+     *     assigned - an operator setting a temporary password and requiring its replacement
+     *     writes both at once (rsx:man session, PASSWORD RESET REQUIRED).
+     *   - every browser's two-factor trust for this identity ends: whoever knew the old password
+     *     must verify again wherever they are (rsx:man two_factor, TRUSTED BROWSERS).
+     *
+     * Both run on a model save only; a write that bypasses the model (raw SQL, ->raw_bulk())
+     * gets neither.
      */
     protected static function booted()
     {
         parent::booted();
+
+        static::saving(function ($model) {
+            if ($model->isDirty('password') && !$model->isDirty('password_reset_required')) {
+                $model->password_reset_required = 0;
+            }
+        });
 
         static::updated(function ($model) {
             if ($model->wasChanged('password')) {
@@ -145,13 +161,19 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     protected $fillable = []; // No mass assignment - always explicit
 
     /**
-     * The attributes that should be hidden for serialization.
+     * Columns toArray() never sends to the browser (portal_fetch(), relationship and list
+     * payloads, the page's user object, the external API). password is the credential hash.
+     * metadata is an open key/value bag written by application code: whatever somebody
+     * parks in it later must not ride every payload of the identity, so the column never
+     * leaves the server, and a value a page genuinely needs is published deliberately by
+     * an accessor.
      *
-     * @var array<string>
+     * An override's own $neverExport is UNIONED with this list, never a replacement for it
+     * (see Rsx_Model_Abstract::never_exported_columns()).
+     *
+     * @var string[]
      */
-    protected $hidden = [
-        'password',
-    ];
+    public static $neverExport = ['password', 'metadata'];
 
     /**
      * The attributes that should be cast.
@@ -161,18 +183,6 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     protected $casts = [
         'is_verified' => 'boolean',
         'metadata' => 'array',
-    ];
-
-    /**
-     * Column metadata for special handling.
-     *
-     * @var array
-     */
-    protected $columnMeta = [
-        'password' => [
-            'never_export' => true,
-            'hidden' => true,
-        ],
     ];
 
     public static $enums = [
@@ -216,6 +226,33 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     }
 
     /**
+     * Refuse this identity's next PASSWORD sign-in until its password has been changed. Does
+     * not save.
+     *
+     * The application's switch (or rsx:users:force_password_reset): the credential verifier
+     * throws Auth_Password_Reset_Required_Exception for a flagged identity once its password
+     * matches, and the framework clears the flag itself when the password changes (booted()).
+     * A passkey or federated sign-in is not refused - it never presents the password. Nothing
+     * is emailed and no session is ended: both are the application's reset workflow.
+     *
+     * @return void
+     */
+    public function require_password_reset(): void
+    {
+        $this->password_reset_required = 1;
+    }
+
+    /**
+     * Must this identity reset its password before it may sign in with one?
+     *
+     * @return bool
+     */
+    public function is_password_reset_required(): bool
+    {
+        return (bool) $this->password_reset_required;
+    }
+
+    /**
      * Update and persist the last-login timestamp.
      *
      * @return void
@@ -228,6 +265,12 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
 
     /**
      * Read a value from the JSON metadata column.
+     *
+     * metadata is a serialized column on the row, listed in $neverExport, so no payload
+     * carries it. Per-identity key/value state that is not a property of the record - a
+     * prompt dismissed, a step skipped, a code to resend - belongs in the preference
+     * variables store instead (get_variable() / set_variable(), Has_Preference_Variables),
+     * which is never serialized at all.
      *
      * @param string $key
      * @param mixed $default
@@ -331,8 +374,8 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      *
      * A portal user may only read their own row. Fail-closed: any mismatch denies.
      * portal_fetch() (from the Portal_Authorizable trait) has already required an
-     * authenticated portal session before this is called. The password is removed
-     * via $hidden / $columnMeta.
+     * authenticated portal session before this is called. The password and the
+     * metadata bag are removed by $neverExport.
      *
      * @return bool
      */

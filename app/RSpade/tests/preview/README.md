@@ -30,7 +30,7 @@ Shipped in the Document Pipeline epic, Batch 3 (rendition endpoint + filter chai
   `cleanup_renditions` (LRU to `rsx.preview.quota_max_bytes`) + `get_statistics()`.
 - `app/RSpade/Core/Files/Libreoffice.php` - shared `find_soffice()`. Conversion itself belongs
   to `Document_Render_Service` (tests/documents); there is no concurrency semaphore any more.
-- Config `rsx.preview.*` (viewers, convertible, quota_max_bytes).
+- Config `rsx.preview.*` (viewers, quota_max_bytes) and `rsx.documents.renderers` (which types get a rendition).
 
 ## Behavior defined by
 

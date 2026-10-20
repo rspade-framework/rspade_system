@@ -50,7 +50,7 @@ IDENTITY MODEL
 
             id              Login identity primary key
             email           Authentication email (unique)
-            password        Bcrypt hash (hidden, never_export)
+            password        Bcrypt hash ($neverExport)
             is_activated    Account activation flag
             is_verified     Email-verification flag (enum: 0 Not Verified,
                             1 Verified)
@@ -61,7 +61,7 @@ IDENTITY MODEL
                             installation. Set by hand in the database only;
                             read with Session::is_developer(). Never a role,
                             never a hostname - see rsx:man session.
-            remember_token  (hidden, never_export)
+            remember_token  ($neverExport)
             last_login      Last successful login (set only on real login)
             created_at / updated_at / created_by_id / created_by_type /
             updated_by_id / updated_by_type
@@ -106,7 +106,7 @@ IDENTITY MODEL
     Full accessor list and semantics: rsx:man session.
 
 OPERATOR COMMANDS
-    Two artisan commands repair a login identity's credentials when nobody is
+    Three artisan commands repair a login identity's credentials when nobody is
     signed in to do it through a screen. Both name the identity with
     --user=<id|email> (a login_users.id, or its current email address), the
     same resolver every rsx:users:* command uses, and both accept --json for
@@ -146,6 +146,20 @@ OPERATOR COMMANDS
         Error codes: user_required, user_not_found, email_required,
         email_invalid, email_in_use.
 
+    rsx:users:force_password_reset --user=<id|email> [--clear] [--json]
+    rsx:users:force_password_reset --portal-user=<id | email --site=<id>> [--clear] [--json]
+        Sets (or with --clear, clears) password_reset_required on a login
+        identity or a portal user: the credential verifier then refuses that
+        identity's correct password with Auth_Password_Reset_Required_Exception
+        until the password changes, which clears the flag. Sends no email, ends
+        no session and changes no password - the reset workflow is the
+        application's. Data: action (password_reset_required /
+        password_reset_cleared), realm (staff / portal), user or portal_user,
+        was_required, is_required. Error codes: user_required, user_not_found,
+        portal_user_required, portal_user_not_found, site_required,
+        site_invalid, site_mismatch, site_not_applicable, identity_conflict.
+        rsx:man session, PASSWORD RESET REQUIRED.
+
 AUTHENTICATION
     RsxAuth facade (App\RSpade\Core\Auth\RsxAuth):
         A thin credential-check wrapper. It authenticates against login_users
@@ -182,6 +196,15 @@ AUTHENTICATION
             (a sign-in that still owes a second factor, a fixture, a harness),
             so a recorded SUCCESS always means full authentication - see
             rsx:man session (LOGIN HISTORY) and rsx:man two_factor.
+
+            IT THROWS TWO REFUSALS that are not "wrong credentials", and a login
+            function catches both and renders getMessage():
+            Auth_Throttled_Exception (the client IP is locked out - before the
+            lookup) and Auth_Password_Reset_Required_Exception (the password
+            matched, the membership is active, and the identity is flagged
+            login_users.password_reset_required; ->identity carries it, and the
+            refusal is recorded as a row even with $record = false). See
+            rsx:man session, PASSWORD RESET REQUIRED.
 
             ACCOUNT STATE IS NOT CHECKED HERE. login_users.status_id,
             is_activated and is_verified are application vocabulary; the

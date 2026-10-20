@@ -1,473 +1,71 @@
 <?php
+/**
+ * CODING CONVENTION:
+ * This file follows the coding convention where variable_names and function_names
+ * use snake_case (underscore_wherever_possible).
+ */
 
 namespace App\RSpade\Core\Session;
 
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use App\RSpade\Core\Auth\Login_Throttle;
-use App\RSpade\Core\Cache\Rsx_Counter;
-use App\RSpade\Core\Database\Rsx_Page_Query;
-use App\RSpade\Core\Session\Audit_Session;
-use App\RSpade\Core\Session\Ip_Address;
-use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Session\User_Agent;
+use App\RSpade\Core\Session\Login_History_Abstract;
 
 /**
- * Login History - Static service for recording login outcomes and reading them back
+ * Login History - the STAFF realm's record of sign-in outcomes, over `_login_history`.
  *
- * TWO STORES, ON PURPOSE:
+ * The API, the status vocabulary and the two-store design (rows for outcomes only a credential
+ * holder can cause, ephemeral counters for failures) are written once in
+ * Login_History_Abstract, whose docblock carries the reasoning. This class binds them to the
+ * staff identity: a row names a login_users id, and the readers take one.
  *
- * - SUCCESSES are database rows in `_login_history` (a system table, underscore-prefixed).
- *   They grow with real logins, are readable per user, and are pruned on a retention window by
- *   Session_Cleanup_Service (rsx.sessions.login_history_retention_days).
+ * Portal_Login_History is the client portal's twin, over `_portal_login_history`.
  *
- *   PASSKEY ENROLLMENT CEREMONIES are rows here too (record_passkey_enrollment()): begun,
- *   enrolled, failed and abandoned. They are written only for a SIGNED-IN identity enrolling
- *   its own passkey, so they grow with real use like successes do, and they are the record a
- *   support engineer reads when "my passkey would not save" - a ceremony that was begun and
- *   never confirmed is the browser or the phone declining, not the server refusing.
- *
- * - FAILURES are EPHEMERAL. record_failure() writes no row at all: it increments two
- *   Rsx_Counter counters (per email, per IP) that expire on
- *   rsx.sessions.login_throttle.window_minutes, and
- *   emits one Log::warning() line. That log line is the forensic record; the counters exist only
- *   to answer the throttling question "how many failures in the window".
- *
- *   WHY (2026-08-12 CR): /login is anonymous-reachable, so a persisted failure row was an
- *   UNAUTHENTICATED INSERT - any bot could grow the table without limit, and the only consumers
- *   of those rows were the two short-window counts below. Storing them bought unbounded growth
- *   in exchange for a number a TTL'd counter answers exactly.
- *
- *   Consequence, stated plainly: a long-horizon failure history (a 30-day failed-attempt count,
- *   "who attacked this account, from where") is no longer answerable from this API. The window
- *   is the horizon. Anything longer must come from the log.
- *
- * ENFORCEMENT LIVES IN Login_Throttle, not here: record_failure() hands every failure to it
- * (per client IP), and RsxAuth::verify_credentials() refuses a locked-out address before any lookup. The
- * counters below remain the readable per-email/per-IP statistic they always were, and nothing
- * enforces the per-email one.
- *
- * Under maintenance mode redis is stopped, the increments are dropped and the counts read 0 -
- * the throttle is inert while the web tier is answering 503 anyway.
+ * THERE IS NO SITE COLUMN, because there is no site to record: a staff sign-in authenticates
+ * the login identity before any site is chosen, and a row records the identity alone. Which of
+ * an identity's sessions are on a site is Session::get_sessions_for_user($login_user_id, $site_id).
  *
  * Similar to Session class design - static methods for developers to interact with system
  * tables without needing to know the underlying table structure.
  */
-class Login_History
+class Login_History extends Login_History_Abstract
 {
-    /**
-     * Status vocabulary.
-     *
-     * Framework producers: RsxAuth::verify_credentials() writes SUCCESS, FAILED_PASSWORD and
-     * FAILED_NOT_FOUND; Rsx_Two_Factor::verify_challenge() writes FAILED_2FA on a wrong
-     * second-factor answer (and the SUCCESS row when the challenge passes);
-     * Rsx_Sso::handle_callback() writes FAILED_SSO when a federated sign-in does not
-     * verify - a state that does not match, a token exchange the provider refused, a
-     * provider account connected to no local identity; Rsx_Two_Factor::verify_passkey_login()
-     * writes FAILED_PASSKEY when a passwordless passkey sign-in does not verify (and the
-     * SUCCESS row when it does).
-     *
-     * FAILED_DISABLED is written by the framework wherever a sign-in is refused because the
-     * identity holds no ACTIVE site membership (users.is_enabled + sites.is_enabled,
-     * User_Model::is_active()): RsxAuth::verify_credentials(),
-     * Rsx_Two_Factor::verify_challenge() and verify_passkey_login(), and Rsx_Sso when
-     * RsxAuth::login() refuses. Site
-     * membership is the framework's switch, so the framework records its own refusals.
-     *
-     * FAILED_LOCKED has NO framework producer - identity state (status_id, is_activated,
-     * is_verified) is APPLICATION vocabulary, so the app records that outcome itself through
-     * record_failure(). It is kept here so every app spells the same outcome the same way.
-     */
-    public const STATUS_SUCCESS = 'success';
-    public const STATUS_FAILED_PASSWORD = 'failed_password';
-    public const STATUS_FAILED_2FA = 'failed_2fa';
-    public const STATUS_FAILED_LOCKED = 'failed_locked';
-    public const STATUS_FAILED_DISABLED = 'failed_disabled';
-    public const STATUS_FAILED_NOT_FOUND = 'failed_not_found';
-    public const STATUS_FAILED_SSO = 'failed_sso';
-    public const STATUS_FAILED_PASSKEY = 'failed_passkey';
-
-    /**
-     * Passkey enrollment ceremony outcomes - rows, written by Rsx_Two_Factor through
-     * record_passkey_enrollment() (see that method). Not sign-ins and not failures in the
-     * throttle's sense: nothing here feeds Login_Throttle.
-     *
-     * BEGUN      begin_passkey_registration() issued creation options.
-     * ENROLLED   confirm_passkey_registration() stored the credential.
-     * FAILED     the confirmation reached the server and did not verify (failure_reason
-     *            carries why).
-     * ABANDONED  begun and never confirmed: superseded by a new attempt, found expired by
-     *            Session_Values_Cleanup_Service, or confirmed after the window closed.
-     */
-    public const STATUS_PASSKEY_ENROLL_BEGUN = 'passkey_enroll_begun';
-    public const STATUS_PASSKEY_ENROLLED = 'passkey_enrolled';
-    public const STATUS_PASSKEY_ENROLL_FAILED = 'passkey_enroll_failed';
-    public const STATUS_PASSKEY_ENROLL_ABANDONED = 'passkey_enroll_abandoned';
-
-    /**
-     * Record a successful login
-     *
-     * With record_passkey_enrollment(), the only thing that writes a `_login_history` row.
-     *
-     * @param int $login_user_id The authenticated user's ID
-     * @param string $email The email used to log in
-     * @return void
-     */
-    public static function record_success(int $login_user_id, string $email): void
+    protected static function __table(): string
     {
-        DB::table('_login_history')->insert([
-            'login_user_id' => $login_user_id,
-            'email_attempted' => $email,
-            'ip_address_id' => Ip_Address::id(Session::get_client_ip()),
-            'user_agent_id' => Audit_Session::user_agent_id(self::_get_user_agent()),
-            'status' => self::STATUS_SUCCESS,
-            'failure_reason' => null,
-            'created_at' => now(),
-        ]);
+        return '_login_history';
     }
 
-    /**
-     * Record one passkey enrollment ceremony outcome as a `_login_history` row.
-     *
-     * Called by the staff second-factor facade (Rsx_Two_Factor) and nothing else; the client
-     * portal has no login history and logs the same outcomes instead.
-     *
-     * $client_context is the {ip_address, user_agent} pair the row carries, as captured by
-     * client_context() - passed when the outcome is recorded somewhere other than the request
-     * that began the ceremony (an abandoned enrollment found by the hourly sweep is recorded
-     * against the browser that began it, not against the CLI). Null = the current request.
-     *
-     * @param int $login_user_id The identity enrolling
-     * @param string $email Its email address
-     * @param string $status One of the STATUS_PASSKEY_ENROLL* constants
-     * @param string|null $reason Detail (why it failed or was abandoned), null when none
-     * @param array|null $client_context {ip_address, user_agent}, null for the current request
-     * @return void
-     */
-    public static function record_passkey_enrollment(
-        int $login_user_id,
-        string $email,
-        string $status,
-        ?string $reason = null,
-        ?array $client_context = null
-    ): void {
-        $client_context ??= self::client_context();
-
-        DB::table('_login_history')->insert([
-            'login_user_id' => $login_user_id,
-            'email_attempted' => $email,
-            'ip_address_id' => Ip_Address::id($client_context['ip_address'] ?? null),
-            'user_agent_id' => Audit_Session::user_agent_id($client_context['user_agent'] ?? null),
-            'status' => $status,
-            'failure_reason' => $reason === null ? null : mb_substr($reason, 0, 255),
-            'created_at' => now(),
-        ]);
-    }
-
-    /**
-     * The client a history row is attributed to: {ip_address, user_agent}, read the way every
-     * row written here reads them (ip_address null outside a request).
-     *
-     * @return array
-     */
-    public static function client_context(): array
+    protected static function __query()
     {
-        return [
-            'ip_address' => Session::get_client_ip(),
-            'user_agent' => self::_get_user_agent(),
-        ];
+        return DB::table('_login_history');
     }
 
-    /**
-     * Record a failed login attempt
-     *
-     * Writes NO database row (see the class docblock - 2026-08-12 CR). It increments the
-     * per-email and per-IP throttle counters, both expiring on the configured window, and logs
-     * one warning line carrying the whole event for forensics.
-     *
-     * Safe to call with anything a stranger typed: nothing here is trusted, and no secret ever
-     * reaches this function (the password is never a parameter).
-     *
-     * @param string $email The email attempted
-     * @param string $status One of the STATUS_FAILED_* constants
-     * @param string|null $reason Optional failure reason details
-     * @param int|null $login_user_id Optional user ID if known
-     * @return void
-     */
-    public static function record_failure(
-        string $email,
-        string $status = self::STATUS_FAILED_PASSWORD,
-        ?string $reason = null,
-        ?int $login_user_id = null
-    ): void {
-        // The per-IP counter of a caller with no client (CLI) is keyed 'CLI'.
-        $ip_address = Session::get_client_ip() ?? 'CLI';
-        $window_seconds = self::_failure_window_seconds();
-
-        Rsx_Counter::increment(self::_email_counter_key($email), $window_seconds);
-        Rsx_Counter::increment(self::_ip_counter_key($ip_address), $window_seconds);
-
-        // Every recorded failure feeds the framework throttle - password misses, unknown
-        // addresses, and whatever outcomes the application records here itself (a second
-        // factor, an account status). The throttle keeps its own per-IP counter and reads
-        // the client IP the same way every other framework seam does, so a CLI caller
-        // (no remote party) is not throttled.
-        Login_Throttle::record_failure();
-
-        $context = [
-            'email' => $email,
-            'ip_address' => $ip_address,
-            'status' => $status,
-            'reason' => $reason,
-        ];
-
-        if ($login_user_id !== null) {
-            $context['login_user_id'] = $login_user_id;
-        }
-
-        Log::warning('Login failure', $context);
-    }
-
-    /**
-     * Length of the failure-counter window, in seconds.
-     *
-     * @return int
-     */
-    private static function _failure_window_seconds(): int
+    protected static function __identity_column(): string
     {
-        $minutes = (int) config('rsx.sessions.login_throttle.window_minutes', 15);
-
-        if ($minutes <= 0) {
-            shouldnt_happen('rsx.sessions.login_throttle.window_minutes must be a positive number of minutes');
-        }
-
-        return $minutes * 60;
+        return 'login_user_id';
     }
 
-    /**
-     * Counter key for an email address.
-     *
-     * Hashed: the raw address would otherwise sit in redis for the window, readable by anything
-     * that can list the keyspace. Normalized first so casing and stray whitespace cannot be used
-     * to open a fresh window per attempt.
-     *
-     * @param string $email
-     * @return string
-     */
-    private static function _email_counter_key(string $email): string
+    protected static function __counter_prefix(): string
     {
-        return 'login_failures:email:' . sha1(strtolower(trim($email)));
+        return 'login_failures';
     }
 
-    /**
-     * Counter key for a client IP.
-     *
-     * @param string $ip_address
-     * @return string
-     */
-    private static function _ip_counter_key(string $ip_address): string
+    protected static function __failure_log_message(): string
     {
-        return 'login_failures:ip:' . $ip_address;
+        return 'Login failure';
     }
 
     /**
-     * Get login history for a specific user
-     *
-     * Successes and passkey enrollment outcomes - failures are not stored (see the class
-     * docblock). The status/label and failure_reason keys tell them apart; an application may
-     * also record its own outcomes here through record_success().
-     *
-     * @param int $login_user_id
-     * @param int $limit Maximum number of records to return
-     * @return array Array of login history records
+     * Nothing beyond the shared columns - see the class docblock.
      */
-    public static function get_history_for_user(int $login_user_id, int $limit = 10): array
+    protected static function __row_columns(int $identity_id): array
     {
-        return DB::table('_login_history')
-            ->where('login_user_id', $login_user_id)
-            ->orderBy('created_at', 'desc')
-            ->limit($limit)
-            ->get()
-            ->map(fn ($record) => self::present_record($record))
-            ->toArray();
+        return [];
     }
 
     /**
-     * The names list_page() sorts by, and the column behind each. The names are what
-     * present_record() calls the values; the columns are the framework's business.
+     * The city, region and country columns the staff table carries.
      */
-    private const LIST_PAGE_SORTABLE = [
-        'created_at' => '_login_history.created_at',
-        'email' => '_login_history.email_attempted',
-        'ip_address' => 'ip.ip_address',
-        'status' => '_login_history.status',
-    ];
-
-    private const LIST_PAGE_MAX_LIMIT = 200;
-
-    private const LIST_PAGE_DEFAULT_LIMIT = 25;
-
-    /**
-     * One PAGE of a login identity's history, for a grid with column sorting, a search
-     * box and a numbered pager. The standard display-page reader (Rsx_Page_Query;
-     * rsx:man database_schema_architecture, READERS OVER SYSTEM TABLES).
-     *
-     *     $query = [
-     *         'login_user_id' => 12,          // REQUIRED - whose history
-     *         'filter' => 'firefox',          // attempted email, IP address or user agent
-     *         'sort'   => 'created_at',       // created_at | email | ip_address | status
-     *         'order'  => 'desc',
-     *         'offset' => 0,
-     *         'limit'  => 25,                 // 1..200
-     *     ];
-     *
-     * Answers ['rows' => [...], 'total' => int, 'offset' => int, 'limit' => int]; each row
-     * is present_record()'s shape, and total counts every match before the page is cut.
-     * The filter is applied in the query, so it searches the whole history and not the
-     * page. Anything invalid throws InvalidArgumentException.
-     *
-     * THERE IS NO SITE SCOPE, because there is no site to scope by: a sign-in
-     * authenticates the login identity before any site is chosen, and a row records the
-     * identity alone. Which of an identity's sessions are on a site is
-     * Session::get_sessions_for_user($login_user_id, $site_id).
-     *
-     * Ungated, like every reader here: whether the caller may see this identity's history
-     * is the calling endpoint's question.
-     *
-     * @param array $query
-     * @return array{rows: array, total: int, offset: int, limit: int}
-     */
-    public static function list_page(array $query): array
-    {
-        $reader = 'Login_History::list_page';
-
-        $parsed = Rsx_Page_Query::parse(
-            $query,
-            $reader,
-            self::LIST_PAGE_SORTABLE,
-            'created_at',
-            'desc',
-            self::LIST_PAGE_MAX_LIMIT,
-            self::LIST_PAGE_DEFAULT_LIMIT,
-            ['login_user_id']
-        );
-
-        // The address is joined for ordering; the filter reaches it through a subquery.
-        $matching = DB::table('_login_history')
-            ->select('_login_history.*')
-            ->leftJoin('_ip_addresses as ip', 'ip.id', '=', '_login_history.ip_address_id')
-            ->where('_login_history.login_user_id', Rsx_Page_Query::require_id($query, 'login_user_id', $reader));
-
-        if ($parsed['filter'] !== '') {
-            $like = Rsx_Page_Query::like($parsed['filter']);
-
-            $matching->where(function ($where) use ($like) {
-                $where->where('_login_history.email_attempted', 'like', $like)
-                    ->orWhereIn('_login_history.ip_address_id', fn ($addresses) => $addresses->select('id')->from('_ip_addresses')->where('ip_address', 'like', $like))
-                    ->orWhereIn('_login_history.user_agent_id', fn ($agents) => $agents->select('id')->from('_user_agents')->where('user_agent', 'like', $like));
-            });
-        }
-
-        $total = (clone $matching)->count();
-
-        // id breaks ties, so two rows that sort equal keep one order from page to page.
-        $rows = $matching
-            ->orderBy($parsed['sort_column'], $parsed['order'])
-            ->orderBy('_login_history.id', $parsed['order'])
-            ->offset($parsed['offset'])
-            ->limit($parsed['limit'])
-            ->get()
-            ->map(fn ($record) => self::present_record($record))
-            ->all();
-
-        return Rsx_Page_Query::result($rows, $total, $parsed);
-    }
-
-    /**
-     * One _login_history row in the shape get_history_for_user() answers: the attempted
-     * email, IP, raw and parsed user agent, location, status + its label, failure reason
-     * and created_at.
-     *
-     * The one presenter for the table, public so a reader that pages the rows itself (the
-     * /_sys panel's per-identity sign-in grid, which reads every row a page at a time where
-     * get_history_for_user() answers the newest $limit) presents them identically.
-     *
-     * @param object $record A _login_history row (a DB::table() row object)
-     * @return array
-     */
-    public static function present_record(object $record): array
-    {
-        $user_agent = Audit_Session::user_agent_string($record->user_agent_id === null ? null : (int) $record->user_agent_id);
-
-        return [
-            'id' => $record->id,
-            'email' => $record->email_attempted,
-            'ip_address' => Ip_Address::address($record->ip_address_id === null ? null : (int) $record->ip_address_id),
-            'user_agent' => $user_agent,
-            'user_agent_parsed' => User_Agent::parse($user_agent),
-            'location' => self::_format_location($record),
-            'status' => $record->status,
-            'status_label' => self::_get_status_label($record->status),
-            'failure_reason' => $record->failure_reason,
-            'created_at' => $record->created_at,
-        ];
-    }
-
-    /**
-     * Get count of failed login attempts for an email within the failure window
-     * Useful for rate limiting / lockout logic
-     *
-     * THE ANSWER IS BOUNDED BY rsx.sessions.login_throttle.window_minutes. Failures live in a
-     * counter that expires with that window, so a request for a LARGER window returns the
-     * window's count, not a longer history: the 30-day failed-attempt count that a row-backed
-     * table could answer is not answerable from an ephemeral store. $minutes is retained so
-     * existing call sites keep working; shrink such a stat to the window rather than trusting a
-     * number that cannot mean what it says.
-     *
-     * Returns 0 when the cache is unavailable (maintenance mode) - throttling fails open.
-     *
-     * @param string $email
-     * @param int $minutes Requested time window in minutes (see above - the configured window wins)
-     * @return int Number of failed attempts inside the configured window
-     */
-    public static function get_failed_attempts_count(string $email, int $minutes = 15): int
-    {
-        return Rsx_Counter::get(self::_email_counter_key($email));
-    }
-
-    /**
-     * Get count of failed login attempts from an IP within the failure window
-     * Useful for IP-based rate limiting
-     *
-     * Same window semantics as get_failed_attempts_count().
-     *
-     * @param string $ip_address
-     * @param int $minutes Requested time window in minutes (see above - the configured window wins)
-     * @return int Number of failed attempts inside the configured window
-     */
-    public static function get_failed_attempts_count_by_ip(string $ip_address, int $minutes = 15): int
-    {
-        return Rsx_Counter::get(self::_ip_counter_key($ip_address));
-    }
-
-    /**
-     * The client's user agent, or null when there is none (a command-line process has no client).
-     *
-     * @return string|null
-     */
-    private static function _get_user_agent(): ?string
-    {
-        $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? null;
-        return $user_agent ?: null;
-    }
-
-    /**
-     * Format location from record fields
-     *
-     * @param object $record
-     * @return string|null
-     */
-    private static function _format_location(object $record): ?string
+    protected static function __format_location(object $record): ?string
     {
         $parts = array_filter([
             $record->location_city,
@@ -476,30 +74,5 @@ class Login_History
         ]);
 
         return !empty($parts) ? implode(', ', $parts) : null;
-    }
-
-    /**
-     * Get human-readable status label
-     *
-     * @param string $status
-     * @return string
-     */
-    private static function _get_status_label(string $status): string
-    {
-        return match ($status) {
-            self::STATUS_SUCCESS => 'Success',
-            self::STATUS_FAILED_PASSWORD => 'Failed - Invalid Password',
-            self::STATUS_FAILED_2FA => 'Failed - 2FA Verification',
-            self::STATUS_FAILED_LOCKED => 'Failed - Account Locked',
-            self::STATUS_FAILED_DISABLED => 'Failed - Account Disabled',
-            self::STATUS_FAILED_NOT_FOUND => 'Failed - User Not Found',
-            self::STATUS_FAILED_SSO => 'Failed - SSO Sign-In',
-            self::STATUS_FAILED_PASSKEY => 'Failed - Passkey Sign-In',
-            self::STATUS_PASSKEY_ENROLL_BEGUN => 'Passkey Enrollment Started',
-            self::STATUS_PASSKEY_ENROLLED => 'Passkey Enrolled',
-            self::STATUS_PASSKEY_ENROLL_FAILED => 'Passkey Enrollment Failed',
-            self::STATUS_PASSKEY_ENROLL_ABANDONED => 'Passkey Enrollment Abandoned',
-            default => ucfirst(str_replace('_', ' ', $status)),
-        };
     }
 }

@@ -124,17 +124,24 @@ it created.
 ## Two_Factor_Issued_Code_Test (php, default isolation) - what a challenge accepts, and the issued code
 
 `begin_challenge($identity, $accepts)` names the answer kinds a challenge takes and `verify_challenge()` enforces it;
-`issue_code()` mints six digits the application delivers (an emailed sign-in code - `rsx:man two_factor_codes`).
+`issue_code()` returns the identity's one live code - minting six digits when it has none - for the application to deliver (an emailed sign-in code - `rsx:man two_factor_codes`).
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | TFA-ISS-01 | `$accepts` is validated before the sign-out | `[]`, `['sms']`, `[TOTP]` for an identity with none; then `[ISSUED_CODE, TOTP]` | three InvalidArgumentExceptions, nothing parked; then accepts `[issued_code]`, has_issued_code, codes_issued 0 | implemented |
 | TFA-ISS-02 | an answer of a kind not accepted is refused, even a correct one | identity with TOTP, challenge `[ISSUED_CODE]`, a live TOTP code | "not valid", not signed in, has_totp false | implemented |
-| TFA-ISS-03 | an issued code signs in, and only its hash is stored | `[ISSUED_CODE]`, issue_code(), verify | six digits, codes_issued 1, pending_identity() is the identity, the digits absent from the session value, signed in, challenge spent | implemented |
-| TFA-ISS-04 | a later code replaces an earlier one | two issue_code() calls | the first is "not valid", the second signs in | implemented |
+| TFA-ISS-03 | an issued code signs in, is stored encrypted, and is consumed | `[ISSUED_CODE]`, issue_code(), verify | six digits, codes_issued 1, pending_identity() is the identity, no digits in the session value, the store holds them only Crypt-encrypted, signed in, challenge spent, no live code left | implemented |
+| TFA-ISS-04 | a resend returns the same code and counts the send | three issue_code() calls | reader null before, the same digits each time, codes_issued 3, issued_code_expires_at() unchanged, the code signs in | implemented |
+| TFA-ISS-08 | a resend does not extend the absolute life | a planted code with 60 s left, a fresh challenge, issue_code() | the planted digits re-sent, the expiry unmoved | implemented |
+| TFA-ISS-09 | an expired code is replaced by a new mint | a planted code with 1 s left, polled until the store expires it | a new code with a window of its own; the planted digits refused; the new code signs in | implemented |
+| TFA-ISS-10 | a code issued in one session verifies in another session of the same identity | issue, end the CLI session, begin again | a different session, codes_issued 0, reader non-null, the same digits re-sent, signed in | implemented |
+| TFA-ISS-11 | another identity's code never verifies | owner issues; another identity's challenge | the other holds no code; "not valid"; the owner's code untouched | implemented |
+| TFA-ISS-12 | abandon_challenge() leaves the identity's code | issue, abandon | the live code is still the issued one | implemented |
+| TFA-ISS-13 | the reader is null without an issued-code challenge | nothing pending; a TOTP-only challenge over a live code | null both times | implemented |
+| TFA-ISS-14 | locking the identity destroys its code | identity_max_failures 2, two wrong codes | the code survives the first, the identity locks and the code is gone after the second | implemented |
 | TFA-ISS-05 | issue_code() refuses without an accepting challenge | nothing pending; then a default challenge | Two_Factor_Failed_Exception "expired"; RuntimeException "does not accept an issued code" | implemented |
-| TFA-ISS-06 | wrong issued codes spend the challenge's attempt cap | challenge_max_failures wrong codes | "not valid" until the last, then "sign in again" and the challenge is gone | implemented |
-| TFA-ISS-07 | the portal facade issues and verifies on its own realm | portal user, `[ISSUED_CODE]` | the staff realm sees no challenge; the code signs the portal user in | implemented |
+| TFA-ISS-06 | wrong issued codes spend the challenge's attempt cap | challenge_max_failures wrong codes | "not valid" until the last, then "sign in again", the challenge and its code are gone, the next challenge starts with no code | implemented |
+| TFA-ISS-07 | the portal facade issues and verifies on its own realm | portal user, `[ISSUED_CODE]` | the staff realm sees no challenge; a resend re-sends the same digits; the code signs the portal user in | implemented |
 
 ## Passkeys_Test (php, default isolation) - WebAuthn against a simulated authenticator
 
@@ -310,6 +317,8 @@ site, the portal's admission rule and "View as Client".
 | tfa-portal-08 | the portal's admission rule refuses a suspended portal user | valid key, status suspended | refused | implemented |
 | tfa-portal-09 | the portal second-factor challenge answers with a portal passkey | begin_challenge() + challenge assertion | signed in to the portal, nothing pending in either realm | implemented |
 | tfa-portal-10 | the attempt caps hold on the portal's OWN counters | caps 2/2, two wrong codes on a portal challenge | challenge destroyed, the portal user locked, the staff identity with the same id not locked | implemented |
+| tfa-portal-11 | the challenge records into the PORTAL history | a wrong code, then a passkey answer | the wrong code is a portal failure count and no row; the pass is one SUCCESS row with the site; no staff row | implemented |
+| tfa-portal-12 | passwordless sign-in records into the portal history | a sign-in, then the same key for a suspended portal user | SUCCESS is the newest row; the refusal is no row and one portal failure count | implemented |
 
 ## Passkey_Ceremony_Test (php, default isolation) - the ceremony timeout, the challenge window, enrollment outcomes
 
@@ -330,7 +339,7 @@ enrollment ceremony gets exactly one recorded outcome after its begun row.
 | tfa-cer-09 | a late confirmation is abandoned, not failed | begin, expire, confirm a valid attestation | 'expired' exception; [begun, abandoned ("after the challenge expired")] | implemented |
 | tfa-cer-10 | the session-values sweep records an expired enrollment once | begin, expire, Session_Values_Cleanup_Service::cleanup_expired_values() | abandoned row with the begin's IP, marker deleted, a second pass records 0 | implemented |
 | tfa-cer-11 | the sweep leaves a live enrollment alone | begin, record_expired_passkey_enrollments() | the marker remains | implemented |
-| tfa-cer-12 | the portal logs its outcomes and writes no row | portal begin twice, MessageLogged listener | 'Portal passkey enrollment' lines [begun, abandoned, begun]; _login_history count unchanged | implemented |
+| tfa-cer-12 | the portal writes its outcomes as rows of its own history | portal begin twice | _portal_login_history [begun, abandoned, begun] with the site, readable through Portal_Login_History; _login_history count unchanged | implemented |
 
 ## Deferred / planned
 

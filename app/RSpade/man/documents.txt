@@ -11,15 +11,20 @@ SYNOPSIS
 
 DESCRIPTION
     Three operator commands over Document_Render_Service - the single background
-    worker that turns an Office document into a PDF rendition (which feeds both the
-    thumbnail and <Document_Preview>) and extracts its text in the same pass - the
-    text <Document_Text_Preview> renders.
+    worker that turns a document into its preview rendition (a PDF, which feeds both
+    the thumbnail and <Document_Preview>, or a workbook's HTML grid) and extracts its
+    text in the same pass - the text <Document_Text_Preview> renders. Which renderer
+    makes a type's rendition is the registry rsx.documents.renderers (RENDERERS
+    below), which an application extends or overrides per type.
 
     The pipeline itself needs no operating: an attachment queues its blob on upload,
     the worker is kicked immediately and sweeps every 10 minutes, and a document
     that fails is retried by the worker a fixed number of times before it is left
-    FAILED. These commands answer the three questions an operator actually has -
-    what is the queue doing, what failed and why, and how do I make it try again.
+    FAILED. A document that fails because THE BOX cannot process it - a tool not
+    installed, an operator's own sandbox image absent, the source file unreadable - is a SOFT
+    failure: it spends no attempt and is checked again until the box is repaired.
+    These commands answer the three questions an operator actually has - what is
+    the queue doing, what failed and why, and how do I make it try again.
 
     Nothing here converts anything itself. rerender re-queues; the worker renders.
 
@@ -34,8 +39,19 @@ DESCRIPTION
                      attempted at or after that time.
 
         A new blob is born due. render_pending takes the earliest due blob, again
-        and again, until none is due. process_attempt_count beside it counts the
-        attempts charged since the blob last entered the queue.
+        and again, until none is due. Three columns beside it keep the books:
+
+            process_attempt_count       attempts charged since the blob last
+                                        entered the queue.
+            process_last_attempt_at     when the last counted attempt was charged
+                                        (the view rule below reads it).
+            process_soft_failure_count  soft failures in a row - the exponent of
+                                        the soft backoff. Above 0 on a blob in the
+                                        queue = soft-failed
+                                        (File_Storage_Model::is_soft_failed()).
+
+        Every write of the four columns is a method of THE WORK QUEUE section of
+        File_Storage_Model_Abstract.
 
         ONE DOCUMENT CANNOT STOP THE QUEUE. A document is input the application
         does not control, and a converter or a spreadsheet reader can run on a
@@ -66,16 +82,69 @@ DESCRIPTION
         blob whose text failed while its render succeeded is retried on the same
         schedule.
 
+        A SOFT FAILURE IS RECORDED, NOT CHARGED. Before an attempt is charged the
+        pass asks the renderer and the extractor it would run their
+        soft_failure() check (RENDERERS below; rsx:man document_search, CUSTOM
+        EXTRACTORS). A check only LOOKS - the tool is installed and executable,
+        an operator's own sandbox image is present, the source file opens - and never runs the
+        tool, builds an image or parses the document. When one answers a reason:
+
+            - the reason is recorded like any failure's: render_status_id FAILED
+              with render_error when a rendition is owed, a FAILED index row when
+              text is owed;
+            - NO attempt is charged and NO child is started (process_attempt_count
+              and process_last_attempt_at are untouched);
+            - the blob is offered again on the SOFT BACKOFF: retry_after_minutes
+              (30), doubling after every consecutive soft failure - 30 minutes,
+              1 hour, 2 hours ... - capped at rsx.documents.soft_retry_max_minutes
+              (10080 = one week), with no end. A box repaired next month still
+              processes what was uploaded today.
+
+        A pass that actually runs (an attempt is charged) restarts the backoff, and
+        so does anything that re-queues the blob. The checks are opt-in per type:
+        a renderer or extractor that declares none has no soft failures, and every
+        failure is HARD - charged, under the four rules above. What can only be
+        learned by trying (a corrupt, encrypted or oversized document; soffice
+        crashing on it; the box running out of memory part-way) is hard, and an
+        encrypted document gets its three attempts like any other - a cause such
+        as memory pressure or contention may clear between them. A source file
+        that vanishes between the check and the child is a hard failure of that
+        attempt.
+
         A FAILED ATTEMPT LOOKS FAILED. Between attempts and after the last, the
         render state is FAILED with the reason recorded, so every screen shows the
-        failed-document preview and never "Preparing preview...". Whether another
-        attempt is coming is the queue's answer (process_due_at), not the render
-        state's. A later attempt that succeeds reaches open pages by realtime frame.
+        failed-document preview. Whether another attempt is coming is the queue's
+        answer (process_due_at), not the render state's. A later attempt that
+        succeeds reaches open pages by realtime frame.
 
-        A WEB REQUEST NEVER GRANTS ATTEMPTS. Retries come from the worker's drain
-        only. A request for a FAILED document's thumbnail is answered with the
-        placeholder, one for its rendition with a 404, and neither changes anything
-        in the queue.
+        OPENING THE PREVIEW RETRIES WHAT MAY NOW SUCCEED. Every <Document_Preview>
+        view asks Document_Render_Service::attend_view() through
+        File_Preview_Controller::get_preview_info(), after its gate:
+
+            RENDERED, rendition file evicted   re-queued (requeue_render()).
+            FAILED softly (in the queue)       the soft check is asked again, in
+                                               the request, on EVERY view. Still
+                                               failing: nothing changes. Passing:
+                                               the blob is made due now and the
+                                               worker kicked.
+            FAILED hard (in the queue)         made due now and the worker kicked
+                                               only when the last counted attempt
+                                               is at least retry_after_minutes old.
+            anything else                      nothing. Attempts spent (out of the
+                                               queue), PENDING, NOT_REQUIRED.
+
+        A view never GRANTS an attempt: the attempt the worker then makes is
+        charged like any other, so a hard-failing document still gets
+        max_attempts in all however often it is opened, and a view never shortens
+        the interval between two counted attempts. It never runs a conversion or a
+        tool in the request. A rendition whose renderer is switched off is never
+        retried from a view. While a retry is under way the payload carries
+        render_retrying: true and the component shows "Preparing preview..."; the
+        worker's realtime frame brings the outcome. The refetch a frame causes
+        passes attend=false, so a retry that fails again does not start the next.
+        Thumbnails do not attend: a grid of thumbnails is not somebody looking at a
+        document, and a request for a FAILED document's thumbnail serves the
+        placeholder and changes nothing in the queue.
 
         PACED PASSES. The pass sets no timeout, and reports before every document,
         so the task system's silence limit never applies to a pass that is working
@@ -98,15 +167,19 @@ DESCRIPTION
         upload's kick still starts a pass at once.
 
         OWED WORK THAT IS SWITCHED OFF IS DEFERRED, NOT CHARGED. A rendition owed
-        while rsx.libreoffice.enabled is false, or text owed while
+        while its renderer is switched off (is_enabled() false - for the framework's
+        LibreOffice renderer, rsx.libreoffice.enabled), or text owed while
         rsx.search.enabled is false, is offered again one retry interval later
-        with no attempt counted.
+        with no attempt counted. A deferral is not a failure: nothing is recorded,
+        and the blob is owed a full set of attempts when the switch comes back.
 
         The two time limits are sanctioned timeouts, justified beside their keys in
         config/rsx.php (rsx:man config_rsx, 'documents'). The limit is the price
         every other document pays for one that cannot be processed, so it is set by
         how long the queue may stand still: at the defaults a document that cannot
-        be processed costs the queue behind it at most three minutes in all.
+        be processed costs the queue behind it at most three minutes in all (three
+        attempts of at most 60 seconds each). A soft failure costs it nothing - no
+        child runs - and a view never adds an attempt.
 
     The state machine, the component and the caching rules are rsx:man thumbnails.
     The text half is rsx:man document_search. The binary is rsx:man libreoffice.
@@ -121,10 +194,11 @@ DESCRIPTION
 
         So a workbook takes a different path through the same worker:
 
-            RENDITION   Spreadsheet_Rendition writes a self-contained, sanitized
-                        HTML grid to {hash}.html beside the PDFs, under the same
-                        LRU quota. It uses PhpSpreadsheet IN-PROCESS, so it needs
-                        no soffice and works with rsx.libreoffice.enabled false.
+            RENDITION   Spreadsheet_Document_Renderer (rendition_format() 'html')
+                        has Spreadsheet_Rendition write a self-contained, sanitized
+                        HTML grid to {hash}.grid.html beside the PDFs. It uses
+                        PhpSpreadsheet IN-PROCESS, so it needs no soffice and works
+                        with rsx.libreoffice.enabled false.
             VIEWER      Spreadsheet_Viewer, in a SANDBOXED iframe - style isolation
                         as much as security, since the grid carries the workbook's
                         own fonts and fills rather than the host theme's.
@@ -165,8 +239,9 @@ DESCRIPTION
         preview window rather than of the workbook.
 
     MARKDOWN RENDERS IN THE REQUEST, AND NOTHING IS STORED
-        A .md file resolves to Markdown_Viewer (registered for text/markdown ABOVE the
-        text/* entry - the viewer map is first-match), and the viewer asks the Ajax
+        A .md file resolves to Markdown_Viewer (registered for the exact mime
+        text/markdown, which beats the text/* glob - MIME MAP PRECEDENCE), and the
+        viewer asks the Ajax
         endpoint File_Preview_Controller::get_markdown_html for the rendered markup.
 
         NO WORKER IS INVOLVED, which is what makes this the odd one out here: markdown
@@ -185,7 +260,7 @@ DESCRIPTION
         the argument for both, and the allowlist drops anything new by default rather
         than by having been anticipated.
 
-        THUMBNAIL   none (text/* is not convertible - it keeps its extension icon).
+        THUMBNAIL   none (no renderer matches text/* - it keeps its extension icon).
         TEXT        Plain_Text_Extractor, as for any text file. text/markdown is
                     covered by the text/* glob in
                     rsx.preview.text_preview_suppressed, so no text pane is
@@ -195,8 +270,9 @@ DESCRIPTION
         They are different failures on different columns with different remedies,
         and one document can have either, both, or neither.
 
-            RENDER      the rendition could not be produced (soffice could not
-                        make a PDF, or a workbook could not be read).
+            RENDER      the rendition could not be produced (the type's renderer
+                        threw - soffice could not make a PDF, a workbook could not
+                        be read - or its soft check named a missing tool).
                         _file_storage.render_status_id = FAILED, reason in
                         render_error. Listed by rsx:documents:failed. Re-queued by
                         rsx:documents:rerender --failed.
@@ -207,7 +283,204 @@ DESCRIPTION
         Both are retried by the worker first, under the one attempt counter; the
         two commands are what an operator runs once the attempts are spent, or to
         skip the wait. rsx:documents:failed prints BOTH tables, each with its own
-        remedy line underneath, so a wrong guess costs nothing.
+        remedy line underneath, so a wrong guess costs nothing - plus a third,
+        first, for SOFT failures of either kind, whose remedy is to fix what the
+        reason names and nothing else.
+
+MIME MAP PRECEDENCE
+    Four registries map a mime pattern (an fnmatch glob) to a class, and all four
+    resolve through ONE matcher, Rsx_Mime_Map::match():
+
+        rsx.documents.renderers     the rendition step       (RENDERERS below)
+        rsx.search.extractors       the text step            (rsx:man document_search)
+        rsx.preview.viewers         the browser viewer       (rsx:man document_search)
+        rsx.thumbnails.renderers    the "bytes -> raster" step (rsx:man thumbnails)
+
+    PRECEDENCE, lowest to highest:
+
+        framework broad < framework specific < application broad < application specific
+
+    An application entry that matches the mime beats EVERY framework entry, however
+    broad the application's glob; inside one layer the most specific matching
+    pattern wins:
+
+        1. an exact mime (no '*', '?' or '[') beats any glob;
+        2. between two globs, the one with more literal characters wins (a bracket
+           expression counts as none);
+        3. a tie goes to the entry declared LATER.
+
+    THE '*' ENTRY is the fallback, consulted only when neither layer has a specific
+    match: the application's '*' when it declares one, otherwise the framework's. It
+    never beats a specific entry from either layer.
+
+    THE LAYERS. The framework layer is config/rsx.php as the framework ships it,
+    recorded before any application file is merged over it. The application layer
+    is every entry of the live config() value that is not IDENTICAL (same pattern
+    and same class) to a framework entry - rsx/resource/config/rsx.php and
+    RSX_ADDITIONAL_CONFIG. Restating a framework pattern with a different class
+    makes it the application's; restating it with the same class changes nothing.
+
+    So the order of lines in a map carries no meaning except to break a tie, and an
+    application takes a type away from a framework pipeline by adding one line:
+
+        // rsx/resource/config/rsx.php
+        'preview' => ['viewers' => [
+            'application/vnd.ms-excel*' => 'My_Grid_Viewer',   // beats the framework's
+        ]],
+
+    Boolean pattern LISTS (rsx.preview.browser_inline,
+    rsx.preview.text_preview_suppressed) are not maps: any match is true, and
+    precedence does not arise.
+
+RENDERERS
+    rsx.documents.renderers maps a document's PIPELINE mime
+    (File_Attachment_Model::pipeline_mime()) to a Rsx_Document_Renderer_Abstract.
+    THIS MAP IS WHAT MAKES A TYPE PREVIEWABLE BY RENDITION: an attachment whose type
+    matches it queues its blob for the worker (is_convertible_mime()), and the
+    rendition endpoints serve what the worker produced. A type matching nothing gets
+    no rendition. The framework ships:
+
+        workbook mimes (ms-excel*, spreadsheetml.*,      Spreadsheet_Document_Renderer
+          opendocument.spreadsheet*)                       HTML grid, in-process
+        msword, ms-word*, ms-powerpoint*,                Libreoffice_Document_Renderer
+          openxmlformats-officedocument.*,                 PDF through headless soffice;
+          opendocument.*, application/rtf                  switched by
+                                                           rsx.libreoffice.enabled
+
+    THE CONTRACT (every method static; a renderer holds no state):
+
+        render(string $source_path, string $target_path, ?string $extension): void
+            Write the rendition to $target_path, creating its directory, published
+            whole or not at all (write beside the target, rename over it).
+            $source_path is the resident blob - content-addressed, so it has NO
+            extension; $extension is the real one of an attachment naming the blob
+            (null for an orphan), for a tool that detects the format by file name.
+            Runs in the worker's child, under the render stage bound
+            (rsx.documents.stage_seconds); spawn a binary with
+            Document_Stage_Bound::run_process($argv) so the bound stops it. ANY
+            THROW IS A HARD FAILURE, recorded with the exception's message and
+            charged. render() cannot report a soft failure.
+
+        rendition_format(): string                          default 'pdf'
+            A PDF feeds Pdf_Viewer and the document thumbnail. 'html' is reserved to
+            Spreadsheet_Document_Renderer; any other renderer declaring it, or any
+            other format, fails loud when the registry resolves it.
+
+        is_enabled(): bool                                  default true
+            False keeps a blob owing this rendition DEFERRED - waiting, uncharged,
+            nothing recorded - until it is switched on, and keeps a view from
+            retrying it.
+
+        soft_failure(string $source_path): ?string          default null
+            THE OPT-IN. Null = an attempt may proceed; a string = why it cannot on
+            this box right now (recorded, not charged - THE WORK QUEUE). Asked
+            before every attempt and on every view of a soft-failed document, so it
+            must only LOOK: never run the tool, build or pull an image, or parse the
+            document. The helper source_unreadable($path) answers "the
+            source is missing or cannot be opened"; Document_Soft_Checks spells the
+            framework's own checks (source_unreadable(), soffice_unavailable(),
+            sandbox_unavailable()) for reuse.
+
+    A renderer extends Rsx_Document_Renderer_Abstract DIRECTLY: the base is
+    #[Monoprogenic], so extending a concrete renderer is refused
+    (MANIFEST-MONO-01). To reuse the framework's conversion, call it:
+    Libreoffice_Document_Renderer::render(...).
+
+    THE FRAMEWORK'S SOFT CHECKS
+        Libreoffice_Document_Renderer   soffice found and executable on the host
+                                        (Libreoffice::find_soffice()); sandboxed,
+                                        the docker client (and an operator's own
+                                        image) present instead; then the source readable.
+        Spreadsheet_Document_Renderer   the source readable.
+
+REPLACING A FRAMEWORK PIPELINE FOR A FILE TYPE
+    Every stage a document passes through has its own seam, and each replaces
+    exactly one thing. Registry entries follow MIME MAP PRECEDENCE, so an
+    application line for a type the framework covers wins:
+
+        rsx.documents.renderers       how the worker makes the rendition (what is
+                                      cached, what the thumbnail rasterizes, what
+                                      the rendition endpoint serves), and whether
+                                      the type gets one at all
+        rsx.preview.viewers           which component <Document_Preview> shows it
+                                      with. A PDF-producing renderer for a new
+                                      type needs 'Pdf_Viewer' here too, or the
+                                      type resolves to the '*' Icon_Viewer
+        rsx.search.extractors         how its text is extracted (rsx:man
+                                      document_search, CUSTOM EXTRACTORS)
+        rsx.thumbnails.renderers      how its bytes become a raster - for a type
+                                      whose picture does NOT come from a rendition
+                                      (rsx:man thumbnails)
+        document.extract_text         per-file text, decided by running code
+        document.preview_rendition    per-request takeover of /_preview/pdf/:key
+        document.thumbnail_render     per-request takeover of the raster step
+                                      (the three resolve chains: rsx:man
+                                      document_search, FILTER CHAINS)
+
+    Prefer the registries: they are resolved once per type, are visible to the
+    queue (a renderer's switch and soft check are honoured, a chain's code is not),
+    and keep conversion in the worker. A resolve chain is for a decision that
+    depends on the individual file or request.
+
+    A type the framework does not know must also reach the pipeline AS that mime:
+    the pipeline mime is the byte sniff, overridden for a document by its extension
+    through rsx.files.document_mime_by_extension, which the application extends in
+    the same file.
+
+    WORKED EXAMPLE - a CAD drawing previewed as a PDF through a converter of the
+    application's own (rsx/lib/cad/cad_document_renderer.php):
+
+        class Cad_Document_Renderer extends Rsx_Document_Renderer_Abstract
+        {
+            const BINARY = '/usr/local/bin/dwg2pdf';
+
+            public static function render(string $source_path, string $target_path, ?string $extension): void
+            {
+                ensure_directory(dirname($target_path));
+                $tmp = $target_path . '.tmp.' . bin2hex(random_bytes(4));
+
+                $process = Document_Stage_Bound::run_process([self::BINARY, $source_path, $tmp]);
+                if (!$process->isSuccessful() || !is_file($tmp)) {
+                    @unlink($tmp);
+                    throw new \Exception('dwg2pdf failed: ' . trim($process->getErrorOutput()));
+                }
+                if (!rename($tmp, $target_path)) {
+                    @unlink($tmp);
+                    throw new \Exception('Failed to publish the CAD rendition');
+                }
+            }
+
+            public static function soft_failure(string $source_path): ?string
+            {
+                if (!is_executable(self::BINARY)) {
+                    return 'dwg2pdf is not installed or not executable';
+                }
+
+                return static::source_unreadable($source_path);
+            }
+        }
+
+    and its registration:
+
+        // rsx/resource/config/rsx.php
+        'files' => ['document_mime_by_extension' => [
+            'dwg' => 'application/x-dwg',
+        ]],
+        'documents' => ['renderers' => [
+            'application/x-dwg' => 'Cad_Document_Renderer',
+        ]],
+        'preview' => ['viewers' => [
+            'application/x-dwg' => 'Pdf_Viewer',
+        ]],
+
+    A .dwg uploaded while dwg2pdf is absent is recorded FAILED ("dwg2pdf is not
+    installed or not executable") without spending an attempt; once the binary is
+    installed the next check - or the next person to open it - renders it. A
+    drawing dwg2pdf cannot convert fails hard, three attempts.
+
+    THE DOCUMENT SANDBOX (rsx:man libreoffice) wraps only soffice and pdftotext: its
+    image carries those two and fonts, and it mounts a per-invocation work dir. An
+    application converter runs on the host unless the application contains it.
 
 RSX:DOCUMENTS:STATUS
     The work queue, render-state counts, extraction counts, the rendition cache, and
@@ -220,14 +493,15 @@ RSX:DOCUMENTS:STATUS
           extraction enabled : yes  (rsx.search.enabled)
 
         Work queue (_file_storage.process_due_at):
-        +------------------------------------------------------------+-------+
-        | State                                                      | Blobs |
-        +------------------------------------------------------------+-------+
-        | Due now                                                    | 0     |
-        | Waiting for a retry (failed attempt, retried after 30 min) | 1     |
-        | Deferred (owed work is switched off)                       | 0     |
-        | Failed, out of attempts (3) - rsx:documents:failed         | 2     |
-        +------------------------------------------------------------+-------+
+        +--------------------------------------------------------------+-------+
+        | State                                                        | Blobs |
+        +--------------------------------------------------------------+-------+
+        | Due now                                                      | 0     |
+        | Waiting for a retry (failed attempt, retried after 30 min)   | 1     |
+        | Could not run: tool or source unavailable (nothing charged)  | 1     |
+        | Deferred (owed work is switched off)                         | 0     |
+        | Failed, out of attempts (3) - rsx:documents:failed           | 2     |
+        +--------------------------------------------------------------+-------+
           next waiting blob comes due Oct 11, 2026 1:22 PM
 
         Blob render state (_file_storage.render_status_id):
@@ -268,15 +542,18 @@ RSX:DOCUMENTS:STATUS
         The work queue table is the worker's own view. "Due now" is the backlog:
         what the next pass takes. "Waiting for a retry" is a failed attempt sitting
         out its interval - nothing can take it yet, and the line under the table
-        says when the earliest one comes due. "Deferred" owes work that is switched
-        off. "Failed, out of attempts" is a blob whose render is FAILED and which
-        has left the queue: the worker will not touch it again until an operator
-        re-queues it.
+        says when the earliest one comes due. "Could not run" is a SOFT failure
+        waiting out its backoff: a tool or the source file is unavailable, no
+        attempt has been spent, and fixing what rsx:documents:failed names is the
+        whole remedy. "Deferred" owes work that is switched off. "Failed, out of
+        attempts" is a blob whose render is FAILED and which has left the queue:
+        the worker will not touch it again until an operator re-queues it. The
+        first four rows partition the queue - every blob in it is in exactly one.
 
         Every enum label appears in the render table even at zero, so a state can
         never be missing merely because nothing is in it. Its Failed row counts
-        every FAILED blob - the ones waiting for a retry and the ones out of
-        attempts together.
+        every FAILED blob - soft-failed, waiting for a retry and out of attempts
+        together.
 
         "Not Required" is the healthy majority: images, PDFs and anything else with
         nothing to convert. It is not a backlog.
@@ -295,9 +572,12 @@ RSX:DOCUMENTS:STATUS
         Unsupported is normal and large: an image or a zip has no extractor at all.
 
 RSX:DOCUMENTS:FAILED
-    Every blob whose RENDER is FAILED, with the reason, the attempts charged and when
-    the next attempt is due (or that none is coming), plus - in a second table -
-    every FAILED text extraction. Read-only; always exits 0, because "there are
+    Three tables. First, every SOFT-failed blob - whatever it owed, a rendition, its
+    text or both, listed once - with the reason, how many checks in a row have
+    failed and when the next check is. Then every blob whose RENDER failed HARD,
+    with the reason, the attempts charged and when the next attempt is due (or that
+    none is coming). Then every hard-FAILED text extraction. A soft-failed blob
+    appears in the first table only. Read-only; always exits 0, because "there are
     failures" is a report, not a command failure. rsx:health reports the same
     counts as a WARN.
 
@@ -305,6 +585,14 @@ RSX:DOCUMENTS:FAILED
                     is the operator's to choose).
 
         $ php artisan rsx:documents:failed
+
+        1 document(s) could not be processed - tool or source unavailable (no attempt charged; checked again automatically):
+        +---------+--------------+-------------+------------------------------+---------------+----------------------+
+        | Storage | Hash         | File name   | Reason                       | Checks failed | Next check           |
+        +---------+--------------+-------------+------------------------------+---------------+----------------------+
+        | 57      | 3c01aa94d2e0 | budget.pptx | LibreOffice (soffice) is ... | 2             | Oct 20, 2026 2:40 PM |
+        +---------+--------------+-------------+------------------------------+---------------+----------------------+
+          Fix what the reason names; the worker processes them at the next check.
 
         2 failed document(s): 1 waiting for another attempt, 1 out of attempts.
         +---------+--------------+-------------+----------------------------+----------+------------------------+
@@ -325,6 +613,9 @@ RSX:DOCUMENTS:FAILED
 
     A row with a "Next attempt" time needs nothing done: the worker takes it then.
     "none - out of attempts" is the operator's to re-queue once the cause is fixed.
+    A soft-failed row needs only its cause fixed: nothing has been spent, the
+    worker checks again at "Next check", and opening the document's preview checks
+    at once. Re-queueing it is harmless and unnecessary.
 
     A content-addressed blob has no name of its own, so "File name" is borrowed from
     a representative attachment referencing it - preferring one whose extension is a
@@ -342,7 +633,7 @@ RSX:DOCUMENTS:RERENDER
                          RENDERED or FAILED. NEVER the NOT_REQUIRED images and text
                          files, which soffice could only fail on.
         --failed         blobs whose RENDER is FAILED (see the distinction above) -
-                         waiting for a retry and out of attempts alike.
+                         soft-failed, waiting for a retry and out of attempts alike.
         --storage=ID     one blob by _file_storage id.
         --attachment=ID  the blob backing one attachment id.
 
@@ -394,8 +685,18 @@ WHEN TO REACH FOR WHICH
 
     A preview says "Preparing preview..." and stays there
         The blob is PENDING and no attempt has reported yet: rsx:documents:status.
-        A document whose attempt failed says "Preview could not be generated"
-        instead, between retries as well as after the last one.
+        A FAILED document shows it too while a retry its view set in motion is
+        under way (render_retrying); the worker's frame then brings the outcome. A
+        document whose attempt failed with no retry under way says "Preview could
+        not be generated", between retries as well as after the last one.
+
+    A document fails with "... is not installed or not executable", "the document
+    sandbox image ... is not present" or "the source file is missing or
+    unreadable"
+        A soft failure: the box, not the document. Nothing was spent. Install the
+        tool, build or pull the image, or restore the file; the worker processes
+        it at its next check, and opening its preview checks at once. rsx:health
+        "Document Render Backlog" counts these first.
 
     A document fails with "render exceeded 20 seconds" on every attempt
         It needs longer than the stage bound on this hardware. If it is an ordinary
@@ -412,9 +713,9 @@ WHEN TO REACH FOR WHICH
         (rsx:man document_search).
 
     A rendition was evicted by the LRU cache
-        Nothing to do. The thumbnail endpoint and the rendition endpoint each notice
-        and re-queue the RENDERED blob themselves, serving a placeholder / 404 for
-        that one request while the worker reconverts.
+        Nothing to do. The thumbnail endpoint, the rendition endpoint and a view of
+        the preview each notice and re-queue the RENDERED blob themselves, serving a
+        placeholder / 404 / "Preparing preview..." while the worker reconverts.
 
 APPLICATION CODE AND THE QUEUE
     An application rarely touches any of this. When it does, three rules:
@@ -426,13 +727,18 @@ APPLICATION CODE AND THE QUEUE
     then returns
 
         ['outcome' => ..., 'reason' => ?string, 'attempt' => int,
-         'max_attempts' => int, 'next_attempt_at' => ?string, 'render_label' => string]
+         'max_attempts' => int, 'soft_failures' => int,
+         'next_attempt_at' => ?string, 'render_label' => string]
 
     where outcome is one of Document_Render_Service::OUTCOME_DONE (nothing is owed),
     OUTCOME_RETRY (the attempt failed, another is scheduled), OUTCOME_FAILED
-    (attempts spent), OUTCOME_WAITING (what it owes is switched off) or
+    (attempts spent), OUTCOME_WAITING (what it owes is switched off),
+    OUTCOME_SOFT_FAILED (a soft check failed: reason recorded, nothing charged or
+    run, next_attempt_at is the next check, soft_failures the count in a row) or
     OUTCOME_TAKEN (another process charged this attempt first). A blob that is not
-    in the queue answers DONE and nothing runs.
+    in the queue answers DONE and nothing runs. The order: outside the queue or
+    owing nothing -> DONE; switched off -> WAITING; soft check -> SOFT_FAILED;
+    attempts spent -> FAILED; otherwise charge, run, settle.
 
     Document_Render_Service::render_storage() and
     Search_Index_Service::extract_storage() ARE COMMAND-LINE ONLY. They are the unit
@@ -457,16 +763,22 @@ APPLICATION CODE AND THE QUEUE
     and .../app/dev/attachment_thumbnail/attachment_thumbnail_controller.php.
 
     $storage->is_render_failed_for_good() answers "FAILED, and the worker will not
-    try again by itself".
+    try again by itself"; $storage->is_soft_failed() answers "waiting out a soft
+    backoff". Document_Render_Service::soft_failure_for($storage) asks the soft
+    checks the next pass would ask, without recording anything. An application's
+    document.extract_text handler is not part of that check - only running it can
+    tell what it would do - so a pass whose text an application handler produces
+    is checked against the registry's extractor for the type.
 
 SEE ALSO
     rsx:man thumbnails       Render state machine, caching, <Attachment_Thumbnail>
     rsx:man document_search  Text extraction, search, Document_Preview and
                              Document_Text_Preview
     rsx:man libreoffice      Headless soffice and the document sandbox
-    rsx:man config_rsx       rsx.documents - attempts, retry interval, the two time limits
+    rsx:man config_rsx       rsx.documents - attempts, retry interval, soft backoff,
+                             the two time limits, renderers
     rsx:man file_upload      Attachments and the deduplicated blob store
     rsx:man health           rsx:health and the Document Render Backlog row
     rsx:man tasks            #[Exclusive], #[Schedule] and the worker pools
 
-RSX Framework              Last updated 2026-10-11                DOCUMENTS(1)
+RSX Framework              Last updated 2026-10-20                DOCUMENTS(1)

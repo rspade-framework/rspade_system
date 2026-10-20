@@ -30,6 +30,8 @@ Framework core:
   selects and generates with `Rsx`'s own routines and adds only the portal base
 - `Lib/Flash/Flash_Alert.php` - flash alerts are EXPERIENCE-scoped (`_flash_alerts.is_portal`);
   the tests live in the `flash` concern
+- `Core/Auth/Portal_Auth.php` - `verify_credentials()`, the portal password door (`Portal_Auth_Test`;
+  its history store is pinned in the `session` concern)
 - `CodeQuality/Rules/PHP/PortalModelFetchAuthCheck_CodeQualityRule.php` (PORTAL-MODEL-FETCH-01)
   - the RECORD-level contract only (`portal_can_read()` declared and called, both
     resolved through the lineage; the lineage cases live in the `code_quality` concern).

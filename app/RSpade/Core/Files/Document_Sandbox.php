@@ -219,6 +219,44 @@ class Document_Sandbox
     }
 
     /**
+     * Is the configured image on this host right now? A CHECK, never a remedy: unlike
+     * ensure_image() it builds nothing and pulls nothing, so it is safe to ask before an
+     * attempt is made, and from a web request.
+     *
+     * Presence is memoized for the life of the process (an image does not vanish between
+     * documents); ABSENCE is not, so a worker that asked before an operator built or pulled
+     * the image sees it the next time it asks. A forced answer (_testing_set_image_present)
+     * is honoured either way.
+     *
+     * @return bool
+     */
+    public static function image_present(): bool
+    {
+        if (self::$_image_present !== null) {
+            return self::$_image_present;
+        }
+
+        if (!static::__probe_image(static::image())) {
+            return false;
+        }
+
+        self::$_image_present = true;
+
+        return true;
+    }
+
+    /**
+     * Is the docker client installed and executable on this host? Asks `command -v docker`;
+     * says nothing about whether the daemon answers.
+     *
+     * @return bool
+     */
+    public static function client_present(): bool
+    {
+        return static::__probe_client();
+    }
+
+    /**
      * Force the image-presence answer without running docker (tests only). null re-arms it.
      */
     public static function _testing_set_image_present(?bool $present): void

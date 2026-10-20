@@ -7,9 +7,7 @@
 
 namespace App\RSpade\Tests\TwoFactor\Php;
 
-use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Models\Login_User_Model;
@@ -18,6 +16,7 @@ use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Login_History;
+use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\Session_Values_Cleanup_Service;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -43,7 +42,7 @@ use App\RSpade\Tests\TwoFactor\Php\Webauthn_Authenticator_Fixture;
  *    ABANDONED - when the next begin supersedes it, when the next begin finds it expired, when
  *    its confirmation arrives after the window, and when the hourly session-values sweep
  *    finds it expired - exactly once each;
- *  - the portal realm, which has no login history, logs the same outcomes and writes no row.
+ *  - the portal realm writes the same outcomes as rows of its own history, _portal_login_history.
  *
  * SESSIONS IN CLI: as in Passkeys_Test, each test resets the process's CLI session so the
  * values Session::put_value() writes live inside the current transaction.
@@ -52,7 +51,6 @@ class Passkey_Ceremony_Test extends Rsx_Test_Abstract
 {
     public static function teardown()
     {
-        Event::forget(MessageLogged::class);
         Login_Throttle::reset('CLI');
         Portal_Session::cli_set_impersonator_user_id(null);
         Portal_Session::cli_set_portal_user_id(0);
@@ -413,32 +411,37 @@ class Passkey_Ceremony_Test extends Rsx_Test_Abstract
     // -------------------------------------------------------------------------
 
     /**
-     * The portal has no login history: its outcomes are log lines, and no row is written.
+     * The portal records the same outcomes into ITS OWN history: rows in
+     * _portal_login_history, keyed on the portal user and its site, and none in the staff
+     * table.
      */
-    public static function test_portal_enrollment_outcomes_are_logged_not_stored()
+    public static function test_portal_enrollment_outcomes_are_portal_history_rows()
     {
-        $logged = [];
-        Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$logged) {
-            if ($event->message === 'Portal passkey enrollment') {
-                $logged[] = $event->context;
-            }
-        });
-
         $portal_user = static::__signed_in_portal_user();
-        $history_before = DB::table('_login_history')->count();
+        $staff_history_before = DB::table('_login_history')->count();
 
         Rsx_Portal_Two_Factor::begin_passkey_registration();
         Rsx_Portal_Two_Factor::begin_passkey_registration();
+
+        $rows = DB::table('_portal_login_history')
+            ->where('portal_user_id', $portal_user->id)
+            ->orderBy('id')
+            ->get();
 
         static::__assert_equals(
             [
-                Login_History::STATUS_PASSKEY_ENROLL_BEGUN,
-                Login_History::STATUS_PASSKEY_ENROLL_ABANDONED,
-                Login_History::STATUS_PASSKEY_ENROLL_BEGUN,
+                Portal_Login_History::STATUS_PASSKEY_ENROLL_BEGUN,
+                Portal_Login_History::STATUS_PASSKEY_ENROLL_ABANDONED,
+                Portal_Login_History::STATUS_PASSKEY_ENROLL_BEGUN,
             ],
-            array_column($logged, 'status')
+            $rows->pluck('status')->all()
         );
-        static::__assert_equals((int) $portal_user->id, $logged[0]['portal_user_id']);
-        static::__assert_equals($history_before, DB::table('_login_history')->count(), 'no _login_history row');
+        static::__assert_equals((int) $portal_user->site_id, (int) $rows[0]->site_id, 'the row carries the portal user\'s site');
+        static::__assert_equals(
+            Portal_Login_History::STATUS_PASSKEY_ENROLL_BEGUN,
+            Portal_Login_History::get_history_for_user((int) $portal_user->id, 1)[0]['status'],
+            'and the reader answers it'
+        );
+        static::__assert_equals($staff_history_before, DB::table('_login_history')->count(), 'no _login_history row');
     }
 }

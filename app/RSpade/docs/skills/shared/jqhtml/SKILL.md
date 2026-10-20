@@ -163,6 +163,8 @@ $(selector).component('Component_Name', { arg1: value1, arg2: value2 });
 this.$sid('result_container').component('My_Component', { data: my_data, some_option: true });
 ```
 
+**Use the RETURNED element.** `.component(name, args)` returns the element the component lives on - and when the component declares a tag the host does not have (a `tag="form"` component on a `<div>`) and the host is in the document, that is a NEW element: the host is replaced (attributes, id, classes, `.data()` and inner HTML copied), and the old reference is a discarded node whose `.component()` is null. Chain it - `const form = $slot.component('Rsx_Form', args).component();` - or re-query by `$sid`/id; never read the instance back through the original reference. A host not in the document keeps its tag and only warns.
+
 **Class preservation**: only component names (a capital first letter, optionally preceded by a single underscore, no `__`) are replaced. Utility classes (`text-muted`), BEM child classes (`Parent__child`) and **all attributes** are preserved. So a container can carry layout/utility classes safely across repeated `.component()` calls.
 
 Awaiting a dynamically created component: `await $(selector).component().ready()`. This is rarely needed inside a component (`on_ready()` already waits for children created during render) - it exists for dynamically created components and for Blade page JS reaching into a component.

@@ -1,6 +1,6 @@
 ---
 name: session-auth
-description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::verify_credentials() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifetime limits (rsx.sessions.staff / .portal max_length_minutes and max_idle_minutes, the session_expired envelope, Rsx.set_session_expired_handler()), sign-in rotation and device records, the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, a \"you have been signed out\" dialog, an idle or absolute session timeout, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
+description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::verify_credentials() and login history, the password_reset_required refusal (Auth_Password_Reset_Required_Exception, rsx:users:force_password_reset), account-state enforcement, device-session screens, self vs admin termination guards, session lifetime limits (rsx.sessions.staff / .portal max_length_minutes and max_idle_minutes, the session_expired envelope, Rsx.set_session_expired_handler()), sign-in rotation and device records, the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, a \"you have been signed out\" dialog, an idle or absolute session timeout, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
 ---
 
 # Sessions and Login
@@ -62,7 +62,8 @@ public static function index(Request $request, array $params = [])
             return redirect(Rsx::Route('Login_Controller'));
         }
 
-        Session::set_login_user_id($login_user->id);
+        RsxAuth::login($login_user);             // the ONLY way into a staff session
+        Login_History::record_success($login_user->id, $login_user->email);
         Session::set_site_id($site_id);
 
         return redirect(Login_Redirect::consume(Rsx::Route('Dashboard_Index_Action')));
@@ -75,6 +76,24 @@ public static function index(Request $request, array $params = [])
 ### `RsxAuth::verify_credentials()` records the outcome itself
 
 `RsxAuth::verify_credentials(array $credentials, bool $record = true): ?Login_User_Model` checks an email + password pair and answers the identity or null. **It signs nobody in and touches no session** - `RsxAuth::login($identity)` is the only way into a staff session, so anything a sign-in still owes (a second factor, your own account-state question) runs BETWEEN the two, with the visitor still signed out; there is never a session to undo on a refusal. It classifies and records SUCCESS / FAILED_NOT_FOUND / FAILED_PASSWORD / FAILED_DISABLED - **it is the only place that can tell those apart**. So **never call `Login_History::record_success()` beside it** with the default `record: true`; you would record twice. `record: false` is the opt-out for a check that is not yet a login - one that still owes a second step, a fixture, a harness - and then YOU record the outcome when it is known.
+
+### A password that must be reset - the second thrown refusal
+
+`login_users.password_reset_required` (and `portal_users.password_reset_required`) refuses a PASSWORD sign-in until the password changes. The app sets it (`$identity->require_password_reset(); $identity->save();`) or an operator runs `rsx:users:force_password_reset --user=<id|email>` / `--portal-user=<id>` (`--clear` lifts it; no email is sent, no session ended). The framework CLEARS it in the same save that writes a new password hash - unless that save assigns the flag itself (a temporary password that must be replaced).
+
+`verify_credentials()` asks it LAST - after the password matched and an active membership was found - and THROWS `Auth_Password_Reset_Required_Exception` (`->identity`, `getMessage()` = "Your password must be reset before you can sign in."). A wrong password or a disabled membership on a flagged identity is still the plain null. The refusal is a `_login_history` ROW (`STATUS_FAILED_PASSWORD_RESET_REQUIRED`, `Login_History::record_refusal()`) **even under `record: false`** - nothing can turn it into a sign-in - and is never counted against the throttle. Catch it beside `Auth_Throttled_Exception` and point at your reset flow:
+
+```php
+try {
+    $login_user = RsxAuth::verify_credentials($credentials, record: false);
+} catch (Auth_Throttled_Exception $e) {
+    $error = $e->getMessage();
+} catch (Auth_Password_Reset_Required_Exception $e) {
+    $error = $e->getMessage() . ' Use "Forgot your password?" to choose a new one.';
+}
+```
+
+A passkey or SSO sign-in is NOT refused - it never presents the password. Uncaught, the exception is an error page, but only for an account somebody flagged. `rsx:man session`, PASSWORD RESET REQUIRED.
 
 `RsxAuth::login($identity, $touch_last_login = true)`: `false` skips the `last_login` stamp - pass it whenever the login is not a real login (impersonation, a harness). **In CLI the stamp never happens at all.**
 
@@ -94,14 +113,14 @@ The second factor itself is `Rsx_Two_Factor` (TOTP, passkeys, recovery codes): `
 
 ### Login history APIs, and their window
 
-**A sign-in history GRID asks `Login_History::list_page($query)`** - `login_user_id` (required), `filter` (email, IP, user agent), `sort` (`created_at|email|ip_address|status`), `order`, `offset`, `limit` (1..200) - and gets `{rows, total, offset, limit}`, rows in `present_record()`'s shape. Invalid input throws. `get_history_for_user($id, $limit)` is the newest few, for a summary. Never query `_login_history`.
+**A sign-in history GRID asks `Login_History::list_page($query)`** - `login_user_id` (required), `filter` (email, IP, user agent), `sort` (`created_at|email|ip_address|status`), `order`, `offset`, `limit` (1..200) - and gets `{rows, total, offset, limit}`, rows in `present_record()`'s shape. Invalid input throws. `get_history_for_user($id, $limit)` is the newest few, for a summary. Never query `_login_history`. **The portal's twin is `Portal_Login_History`** - the same API and statuses over `_portal_login_history` (scope key `portal_user_id`), written by `Portal_Auth::verify_credentials()`, `Rsx_Portal_Two_Factor` and `Rsx_Portal_Sso`; never query that table either.
 
 ```php
 Login_History::get_failed_attempts_count($email);     // within the failure window ONLY
 Login_History::get_failed_attempts_count_by_ip($ip);  // same
 ```
 
-Successes (and passkey enrollment outcomes, written by `Rsx_Two_Factor`) are `_login_history` rows, pruned on `rsx.sessions.login_history_retention_days` (default 365). **Failures are ephemeral - no row at all**: a per-email and a per-IP counter expiring on `rsx.sessions.login_throttle.window_minutes` (default 15), plus one `Log::warning` line. `/login` is anonymous-reachable, and a persisted failure row was an unauthenticated INSERT anyone on the internet could drive.
+Successes, post-password refusals (`record_refusal()`) and passkey enrollment outcomes (written by `Rsx_Two_Factor`) are `_login_history` rows, pruned on `rsx.sessions.login_history_retention_days` (default 365). **Failures are ephemeral - no row at all**: a per-email and a per-IP counter expiring on `rsx.sessions.login_throttle.window_minutes` (default 15), plus one `Log::warning` line. `/login` is anonymous-reachable, and a persisted failure row was an unauthenticated INSERT anyone on the internet could drive.
 
 Consequences you must design around: **a 30-day failed-attempt count is not answerable** - shrink such a stat to the window, or state the window in the label. And these counts are a **statistic, not the enforcement** - never build a second throttle on them (below).
 
@@ -119,7 +138,7 @@ try {
 
 **It THROWS rather than returning false**, because "we did not check" is not "those credentials are wrong" - a false would report an invalid password to a user whose password may be correct. `$e->retry_after_seconds` is for your logs and headers; the message deliberately tells the caller nothing else.
 
-A login path that verifies its own password and does not record to `Login_History` does both halves itself - `Login_Throttle::require_not_throttled()` before the check, `Login_Throttle::record_failure()` on the miss (the template's portal login is the worked example). **Never pair `record_failure()` with a `Login_History::record_failure()` on the same event** - that counts twice.
+A password is verified by `RsxAuth::verify_credentials()` or, on the portal, `Portal_Auth::verify_credentials($site_id, ...)` - both throttle-first. A path that checks some OTHER guessable secret (a PIN, an access code) and records to neither history does both halves itself - `Login_Throttle::require_not_throttled()` before the check, `Login_Throttle::record_failure()` on the miss. **Never pair `record_failure()` with a `Login_History::record_failure()` on the same event** - that counts twice.
 
 Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (10), `window_minutes` (15), `lockout_minutes` (15). **A caller with no client IP is never throttled** - CLI, tasks and tests have no remote party to throttle. The client IP is `Session::get_client_ip()` = `$request->ip()`: X-Forwarded-For counts only through a trusted proxy (loopback plus `rsx.http.trusted_proxies`, empty by default), so **a box behind a load balancer must list it** or every visitor shares one bucket. Never read a forwarding header yourself. **Fail closed**: a cache error propagates and the login fails loud; only maintenance mode (redis deliberately stopped) leaves the throttle inert.
 

@@ -552,9 +552,11 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     authenticates AND enforces SITE MEMBERSHIP; the APPLICATION decides what an
     account's IDENTITY state means.
 
-    RsxAuth::verify_credentials() checks exactly three things: the address resolves to a live
-    login identity, the password matches, and the identity holds at least one
-    ACTIVE site membership (enabled, on an enabled site). It does NOT read login_users.status_id, is_activated
+    RsxAuth::verify_credentials() checks exactly four things: the address resolves to a live
+    login identity, the password matches, the identity holds at least one
+    ACTIVE site membership (enabled, on an enabled site), and the identity is not
+    waiting on a password reset (PASSWORD RESET REQUIRED below). It does NOT read
+    login_users.status_id, is_activated
     or is_verified, and it never will. Those three columns are APPLICATION
     vocabulary - they ship with the template as a starting point, they are meant to
     be overridden, and "suspended" means whatever your product says it means. A
@@ -585,6 +587,10 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
         (+ is_activated,        is_verified, the account-level state of the
            is_verified)         cross-site identity. Yours to define and yours to
                                 enforce.
+        login_users.password_reset_required  FRAMEWORK. Refuses a PASSWORD sign-in
+                                until the password changes; see PASSWORD RESET
+                                REQUIRED below. portal_users carries the same
+                                column for the portal realm.
         login_users.is_developer  FRAMEWORK. Whether this identity is a developer
                                 of the installation. It gates nothing about logging
                                 in; it is here because it is the one piece of
@@ -686,6 +692,80 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     STAFF ONLY. The portal realm does not read either switch: a portal's site is
     the application's own declaration (Portal_Session::set_site_id(), rsx:man
     portal), and its sign-in and per-request rules are the application's.
+
+    PASSWORD RESET REQUIRED (login_users.password_reset_required) - SET BY YOU,
+    ENFORCED AND CLEARED BY THE FRAMEWORK
+
+    A state of the identity that refuses a PASSWORD sign-in until the password
+    has been changed: a credential believed compromised, a temporary password an
+    operator issued. TINYINT, default 0, on login_users and on portal_users.
+
+        $login_user->require_password_reset();     // sets the flag; does not save
+        $login_user->save();
+        $login_user->is_password_reset_required(); // bool
+
+        php artisan rsx:users:force_password_reset --user=<id|email> [--clear] [--json]
+        php artisan rsx:users:force_password_reset --portal-user=<id> [--clear]
+        php artisan rsx:users:force_password_reset --portal-user=<email> --site=<id>
+
+    The command is the operator's switch and its --clear the recovery for a
+    wrongly flagged account. It sends no email, ends no session and changes no
+    password - the reset workflow (a forgot-password link, a support call) is the
+    application's, and a session already open stays open (rsx:users:password:set
+    ends sessions when the password must go now).
+
+    THE REFUSAL. verify_credentials() asks the flag LAST - after the password
+    matched and an active membership was found - and THROWS:
+
+        App\RSpade\Core\Auth\Auth_Password_Reset_Required_Exception
+            ->getMessage()   'Your password must be reset before you can sign in.'
+            ->identity       the Login_User_Model the credentials proved (NOT signed in)
+
+    Nothing about the flag reaches a caller that has not proved the password, and
+    an identity the installation would refuse anyway (no active membership) still
+    answers the indistinguishable null. It is the second thrown refusal beside
+    Auth_Throttled_Exception, and a login function catches both, rendering the
+    message and the way to a new password:
+
+        try {
+            $login_user = RsxAuth::verify_credentials($credentials, record: false);
+        } catch (Auth_Throttled_Exception $e) {
+            return $form_with_error($e->getMessage());
+        } catch (Auth_Password_Reset_Required_Exception $e) {
+            return $form_with_error($e->getMessage() . ' Use "Forgot your password?".');
+        }
+
+    A login function that does not catch it lets a flagged account's sign-in
+    surface as an error page; nothing sets the flag but the application and the
+    command, so an install that never flags anybody never sees it.
+
+    RECORDED, AS A ROW, WHATEVER record SAYS: STATUS_FAILED_PASSWORD_RESET_REQUIRED
+    through Login_History::record_refusal() (LOGIN HISTORY below). record: false
+    defers a SUCCESS the caller will know better; this outcome is already final.
+    It is not a failure in the throttle's sense - nothing is counted, since the
+    caller holds the password.
+
+    THE PASSWORD DOOR ONLY. A passkey sign-in and a federated sign-in never
+    present the password the flag distrusts, so neither consults it. No
+    second-factor challenge begins for a flagged identity's password either: the
+    check before it has already thrown.
+
+    CLEARED BY THE FRAMEWORK when the password changes: both models' booted()
+    zero the flag in the same save that writes a new password hash (one UPDATE,
+    no second save). A save that assigns the flag ITSELF beside a new password
+    keeps what it assigned - an operator issuing a temporary password that must
+    be replaced writes both at once:
+
+        $login_user->password = Login_User_Model::hash_password($temporary);
+        $login_user->require_password_reset();
+        $login_user->save();
+
+    Only a model save clears it; a write that bypasses the model (raw SQL,
+    ->raw_bulk()) does not.
+
+    THE PORTAL. Portal_Auth::verify_credentials() (rsx:man portal, SIGNING IN)
+    applies the same flag on portal_users, throws the same exception carrying the
+    Portal_User_Model, and records into Portal_Login_History.
 
     Enforce your own IDENTITY statuses in TWO places, and understand why both
     (site membership needs neither - the framework does it):
@@ -2003,11 +2083,19 @@ USER MANAGEMENT PAGES
         SINGLE-TENANT ASSUMPTION above, and B-92.)
 
 LOGIN HISTORY
-    Class: App\RSpade\Core\Session\Login_History
+    Class: App\RSpade\Core\Session\Login_History (staff, `_login_history`)
+           App\RSpade\Core\Session\Portal_Login_History (client portal,
+           `_portal_login_history`)
 
-    TWO STORES, ON PURPOSE. Successes are database rows; failures are ephemeral
-    counters plus a log line. This is the whole design, and everything below
-    follows from it.
+    TWO STORES, ON PURPOSE. Outcomes only a credential holder can cause are
+    database rows; failures are ephemeral counters plus a log line. This is the
+    whole design, and everything below follows from it.
+
+    ONE API, TWO REALMS. Both classes are Login_History_Abstract bound to their own
+    table and identity: the same methods, the same STATUS_* constants (spelled the
+    same through either class), the same throttle. Everything below is written for
+    Login_History; PORTAL LOGIN HISTORY at the end of this section says what the
+    portal binding does differently.
 
     RECORDING IS AUTOMATIC:
         RsxAuth::verify_credentials() records every outcome it classifies. You do not call
@@ -2018,6 +2106,11 @@ LOGIN HISTORY
             FAILED_NOT_FOUND     no such address (soft-deleted identities
                                  included - see ACCOUNT STATE)
             FAILED_PASSWORD      hash mismatch, with the login_user_id
+            FAILED_DISABLED      no active site membership
+            FAILED_PASSWORD_RESET_REQUIRED
+                                 correct password, identity flagged (a ROW,
+                                 recorded even with record: false - ACCOUNT
+                                 STATE, PASSWORD RESET REQUIRED)
 
         verify_credentials() is the only place that can tell those apart before
         collapsing them, which is why it is the place that records them - a
@@ -2031,13 +2124,19 @@ LOGIN HISTORY
         harness never reaches verify_credentials() at all, so rsx:debug logins
         are already excluded.
 
-    SUCCESSES ARE ROWS:
-        record_success() and record_passkey_enrollment() are the only things
-        that write `_login_history`. The second records the outcome of a
+    SUCCESSES AND POST-PASSWORD REFUSALS ARE ROWS:
+        record_success(), record_refusal() and record_passkey_enrollment() are
+        the only things that write `_login_history`. record_refusal($id, $email,
+        $status, $reason = null) records a sign-in refused AFTER its credentials
+        were proven - the framework's producer is the password-reset refusal; an
+        app may record its own post-password refusal there (STATUS_FAILED_LOCKED)
+        when it wants it in the history rather than the counters - and feeds no
+        counter. record_passkey_enrollment() records the outcome of a
         signed-in identity's passkey enrollment ceremony (begun, enrolled,
         failed, abandoned - rsx:man two_factor, PASSKEY ENROLLMENT OUTCOMES);
         it is written only for an authenticated identity acting on itself.
-        The table therefore grows with real use rather than with attack volume,
+        Each needs a credential to cause, so the tables grow with real use
+        rather than with attack volume,
         and is pruned by Session_Cleanup_Service::cleanup_login_history (hourly,
         chunked) past rsx.sessions.login_history_retention_days (default 365; 0
         or null disables the prune).
@@ -2086,8 +2185,16 @@ LOGIN HISTORY
         Login_History::STATUS_FAILED_SSO       - produced by
                                                  Rsx_Sso::handle_callback()
                                                  (rsx:man sso)
+        Login_History::STATUS_FAILED_PASSKEY   - produced by
+                                                 Rsx_Two_Factor::verify_passkey_login()
+        Login_History::STATUS_FAILED_DISABLED  - produced wherever the framework
+                                                 refuses an identity with no active
+                                                 membership (verify_credentials(),
+                                                 the challenge, passkey and SSO doors)
+        Login_History::STATUS_FAILED_PASSWORD_RESET_REQUIRED
+                                               - produced by verify_credentials(),
+                                                 a ROW (record_refusal())
         Login_History::STATUS_FAILED_LOCKED    - no framework producer
-        Login_History::STATUS_FAILED_DISABLED  - no framework producer
 
         Passkey enrollment ceremony rows (record_passkey_enrollment(), written
         by Rsx_Two_Factor - rows, not log lines, and never fed to the throttle):
@@ -2098,12 +2205,14 @@ LOGIN HISTORY
 
         FAILED_2FA is written by the framework's own second-factor challenge
         (rsx:man two_factor) - an app that runs the challenge through
-        Rsx_Two_Factor does NOT record it itself. The last two have no producer
+        Rsx_Two_Factor does NOT record it itself. FAILED_LOCKED has no producer
         because account state is APPLICATION vocabulary (ACCOUNT STATE above):
-        the app records those outcomes itself through record_failure(). All
-        three are kept here so every app spells the same outcome the same way.
-        Since failures are not rows, a FAILED_* status describes the LOG line,
-        not a column.
+        the app records that outcome itself through record_failure() (or
+        record_refusal()). It is kept here so every app spells the same outcome
+        the same way. Since failures are not rows, a FAILED_* status recorded
+        through record_failure() describes the LOG line, not a column;
+        FAILED_PASSWORD_RESET_REQUIRED is the one framework FAILED_* status that
+        is a row.
 
     READING IT BACK:
         $history = Login_History::get_history_for_user($login_user_id, $limit = 10);
@@ -2123,11 +2232,37 @@ LOGIN HISTORY
         // shape is the framework's standard display-page reader - rsx:man
         // database_schema_architecture, READERS OVER SYSTEM TABLES.
 
-        Successes and passkey enrollment outcomes, most recent first. Each
-        record: id, email, ip_address, user_agent, user_agent_parsed, location
-        (null until geo-IP is wired), status, status_label, failure_reason,
-        created_at. status tells a sign-in from an enrollment row; an app may
-        also record its own outcomes through record_success().
+        Successes, post-password refusals and passkey enrollment outcomes, most
+        recent first. Each record: id, email, ip_address, user_agent,
+        user_agent_parsed, location (null until geo-IP is wired), status,
+        status_label, failure_reason, created_at. status tells a sign-in from a
+        refusal or an enrollment row; an app may also record its own outcomes
+        through record_success() / record_refusal().
+
+    PORTAL LOGIN HISTORY:
+        Portal_Login_History is the same API over `_portal_login_history`, every
+        id a portal_users id. Its framework producers are
+        Portal_Auth::verify_credentials() (the password door, rsx:man portal),
+        Rsx_Portal_Two_Factor (the challenge, passwordless passkey sign-in,
+        passkey enrollment) and Rsx_Portal_Sso (federated sign-in) - the same
+        outcomes, the same statuses, written to the portal table. FAILED_DISABLED
+        there means the portal refused the identity (Portal_User_Model::can_login()
+        or another site's portal user). What differs:
+
+            - a row also carries the portal user's site_id, read from the portal
+              user itself;
+            - list_page() requires 'portal_user_id' (not 'login_user_id');
+            - the per-email/per-IP STATISTICS are kept under their own keys
+              ('portal_login_failures:...'), so get_failed_attempts_count*() on
+              each class reads its own realm - while Login_Throttle, the
+              enforcement, is ONE per-IP budget across both realms;
+            - location is always null (the portal table has no location columns);
+            - rows cascade with their portal user (a FOREIGN KEY ... ON DELETE
+              CASCADE, like the other portal-user-keyed system tables).
+
+        The same retention sweep and window prune both tables.
+        `_portal_login_history` is a system table: application code reads it
+        through Portal_Login_History and nothing else.
 
     APP RECIPE - CUSTOM STATUSES:
         Record the outcomes the framework cannot see, in the shared vocabulary
@@ -2209,18 +2344,19 @@ LOGIN THROTTLE (BRUTE FORCE)
 
         require_not_throttled(?string $ip = null): void
             Throws Auth_Throttled_Exception when this client IP is locked out.
-            RsxAuth::verify_credentials() calls it as its FIRST statement, before the
-            lookup - a locked-out address cannot even probe which addresses
-            exist. Call it yourself only on a login path that does not go
-            through verify_credentials().
+            RsxAuth::verify_credentials() and Portal_Auth::verify_credentials()
+            call it as their FIRST statement, before the lookup - a locked-out
+            address cannot even probe which addresses exist. Call it yourself
+            only on a path that goes through neither.
 
         record_failure(?string $ip = null): void
             Counts one failure against the IP and locks the address out when the
-            budget is spent. Login_History::record_failure() calls it, so every
-            recorded failure feeds the throttle - password misses, unknown
-            addresses, and the outcomes an APP records itself (a bad second
-            factor, a disabled account). Call it directly only where you do not
-            record through Login_History.
+            budget is spent. Login_History::record_failure() and
+            Portal_Login_History::record_failure() call it, so every recorded
+            failure feeds the throttle - password misses, unknown addresses, and
+            the outcomes an APP records itself (a bad second factor, a disabled
+            account). One budget per IP covers both realms. Call it directly only
+            where you record through neither.
 
         retry_after_seconds(?string $ip = null): int
             Seconds left on the lockout; 0 when the address is free. For a
@@ -2343,10 +2479,11 @@ LOGIN THROTTLE (BRUTE FORCE)
         record_failure() there already feeds the throttle; do NOT also call
         Login_Throttle::record_failure() or the failure counts twice.
 
-    APP RECIPE - A LOGIN PATH THAT VERIFIES ITS OWN PASSWORD:
-        A flow that does not go through RsxAuth::verify_credentials() and does not record to
-        Login_History does BOTH halves itself. The framework's own portal login
-        (rsx/portal/auth/Portal_Login_Controller.php) is the worked example:
+    APP RECIPE - A PATH THAT VERIFIES A SECRET OF ITS OWN:
+        A password belongs to RsxAuth::verify_credentials() (staff) or
+        Portal_Auth::verify_credentials() (portal), which do all of this already.
+        A flow that checks some OTHER guessable secret (a PIN, an access code)
+        and records to neither history does BOTH halves itself:
 
             try {
                 Login_Throttle::require_not_throttled();
@@ -2354,9 +2491,9 @@ LOGIN THROTTLE (BRUTE FORCE)
                 return $this_form_with_error($e->getMessage());
             }
 
-            if (!$portal_user || !$portal_user->check_password($password)) {
+            if (!hash_equals($expected_pin, $offered_pin)) {
                 Login_Throttle::record_failure();
-                $error = 'Invalid email or password. Please try again.';
+                $error = 'That PIN is not right.';
             }
 
     FAIL CLOSED, WITH ONE TOLERATED DEGRADATION:

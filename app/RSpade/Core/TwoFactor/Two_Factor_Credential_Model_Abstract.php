@@ -113,6 +113,15 @@ abstract class Two_Factor_Credential_Model_Abstract extends Rsx_System_Model_Abs
 
     protected $table = '_two_factor_credentials';
 
+    /**
+     * Never in a payload. secret is a TOTP seed (encrypted at rest) or a recovery code's
+     * hash; no fetch() exists for this model, and this keeps the column out of any toArray()
+     * a future caller makes.
+     *
+     * @var string[]
+     */
+    public static $neverExport = ['secret'];
+
     public static $enums = [
         'type_id' => [
             1 => [

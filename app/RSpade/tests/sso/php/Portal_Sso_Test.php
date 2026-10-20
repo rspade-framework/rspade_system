@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Sso\Php;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 use App\RSpade\Core\Auth\Login_Throttle;
@@ -18,6 +19,7 @@ use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
+use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Sso\Portal_Sso_Identity_Model;
 use App\RSpade\Core\Sso\Rsx_Portal_Sso;
@@ -390,5 +392,38 @@ class Portal_Sso_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(Rsx_Portal::portal_path('/login'), $response->getTargetUrl());
         static::__assert_false(Portal_Session::is_logged_in(), 'a suspended portal user signs nobody in');
+    }
+
+    /**
+     * A federated portal sign-in records into the portal's own history: a success row
+     * carrying the site, and a refusal by the portal (can_login()) a FAILED_DISABLED count
+     * that is never a row - nothing in the staff history either way.
+     */
+    public static function test_a_portal_sign_in_records_into_the_portal_history()
+    {
+        $portal_user = static::__make_portal_user(static::$_site_id);
+
+        static::__link($portal_user, 'subject-history');
+
+        $staff_rows_before = DB::table('_login_history')->count();
+        $rows_before = DB::table('_portal_login_history')->where('portal_user_id', $portal_user->id)->count();
+
+        static::__as_portal(static::$_site_id);
+        static::__ceremony(static::__identity('subject-history'));
+
+        $rows = DB::table('_portal_login_history')->where('portal_user_id', $portal_user->id)->orderBy('id', 'desc')->get();
+        static::__assert_equals($rows_before + 1, $rows->count(), 'one row for the sign-in');
+        static::__assert_equals(Portal_Login_History::STATUS_SUCCESS, $rows[0]->status);
+        static::__assert_equals(static::$_site_id, (int) $rows[0]->site_id);
+
+        Portal_User_Model::where('id', $portal_user->id)
+            ->update(['status_id' => Portal_User_Model::STATUS_SUSPENDED]);
+
+        static::__as_portal(static::$_site_id);
+        static::__ceremony(static::__identity('subject-history'));
+
+        static::__assert_equals($rows_before + 1, DB::table('_portal_login_history')->where('portal_user_id', $portal_user->id)->count(), 'a refusal is no row');
+        static::__assert_equals(1, Portal_Login_History::get_failed_attempts_count($portal_user->email), 'it is a portal failure count');
+        static::__assert_equals($staff_rows_before, DB::table('_login_history')->count(), 'nothing in the staff history');
     }
 }

@@ -53,6 +53,7 @@ use App\RSpade\Core\Session\Session;
  * @property string $last_login
  * @property string $last_seen
  * @property string $password
+ * @property int $password_reset_required
  * @property string $remember_token
  * @property int $status_id
  * @property string $timezone
@@ -90,13 +91,28 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
 {
 
     /**
-     * A changed password ends every browser's two-factor trust for this identity: whoever
-     * knew the old password must verify again wherever they are (rsx:man two_factor,
-     * TRUSTED BROWSERS).
+     * Two consequences of a password change, both the framework's:
+     *
+     *   - password_reset_required is CLEARED in the same write (a `saving` hook, so it is one
+     *     UPDATE and no second save re-enters these hooks). The flag asked for a new password and
+     *     this is one. A save that assigns the flag itself alongside the password keeps what it
+     *     assigned - an operator setting a temporary password and requiring its replacement
+     *     writes both at once (rsx:man session, PASSWORD RESET REQUIRED).
+     *   - every browser's two-factor trust for this identity ends: whoever knew the old password
+     *     must verify again wherever they are (rsx:man two_factor, TRUSTED BROWSERS).
+     *
+     * Both run on a model save only; a write that bypasses the model (raw SQL, ->raw_bulk())
+     * gets neither.
      */
     protected static function booted()
     {
         parent::booted();
+
+        static::saving(function ($model) {
+            if ($model->isDirty('password') && !$model->isDirty('password_reset_required')) {
+                $model->password_reset_required = 0;
+            }
+        });
 
         static::updated(function ($model) {
             if ($model->wasChanged('password')) {
@@ -204,30 +220,16 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
     protected $table = 'login_users';
 
     /**
-     * The attributes that should be hidden for serialization
+     * Columns toArray() never sends to the browser (window.rsxapp, model fetch, relationship
+     * and list payloads, the external API). password is the credential hash and
+     * remember_token a persistent credential; neither has a client-side reader.
      *
-     * @var array
-     */
-    protected $hidden = [
-        'password',
-        'remember_token',
-    ];
-
-    /**
-     * Column metadata for special handling
+     * An override's own $neverExport is UNIONED with this list, never a replacement for it
+     * (see Rsx_Model_Abstract::never_exported_columns()).
      *
-     * @var array
+     * @var string[]
      */
-    protected $columnMeta = [
-        'password' => [
-            'never_export' => true,
-            'hidden' => true,
-        ],
-        'remember_token' => [
-            'never_export' => true,
-            'hidden' => true,
-        ],
-    ];
+    public static $neverExport = ['password', 'remember_token'];
 
     /**
      * Get all site-specific user records for this login identity
@@ -307,6 +309,33 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
         return bcrypt($password);
     }
 
+    /**
+     * Refuse this identity's next PASSWORD sign-in until its password has been changed. Does
+     * not save.
+     *
+     * The application's switch (or rsx:users:force_password_reset): the credential verifier
+     * throws Auth_Password_Reset_Required_Exception for a flagged identity once its password
+     * matches, and the framework clears the flag itself when the password changes (booted()).
+     * A passkey or federated sign-in is not refused - it never presents the password. Nothing
+     * is emailed and no session is ended: both are the application's reset workflow.
+     *
+     * @return void
+     */
+    public function require_password_reset(): void
+    {
+        $this->password_reset_required = 1;
+    }
+
+    /**
+     * Must this identity reset its password before it may sign in with one?
+     *
+     * @return bool
+     */
+    public function is_password_reset_required(): bool
+    {
+        return (bool) $this->password_reset_required;
+    }
+
     // =========================================================================
     // ACTOR CONTRACT (see Rsx_Actor_Model_Abstract)
     // =========================================================================
@@ -357,7 +386,7 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
      * This implementation:
      * - Requires authentication (the declarative 'is_logged_in' gate)
      * - Only allows users to fetch their own login record (record-level, below)
-     * - Filters out sensitive data (password is already hidden via $hidden property)
+     * - Sensitive columns (password, remember_token) are stripped by $neverExport
      *
      * @param int $id Single ID
      * @return static|false Single model object or false if not found

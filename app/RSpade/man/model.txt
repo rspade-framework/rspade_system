@@ -186,11 +186,37 @@ Manual $casts entries take precedence over automatic detection.
 
 NEVER EXPORT FIELDS
 
-Exclude sensitive fields from toArray() and Ajax responses:
+Columns that must never leave the server are declared in $neverExport:
 
-    protected $neverExport = ['password', 'api_token', 'remember_token'];
+    public static $neverExport = ['api_token', 'client_secret'];
 
-Fields in $neverExport are automatically removed before JavaScript export.
+toArray() - the one serializer behind fetch(), relationship and list payloads,
+window.rsxapp.user and the external API - unsets every listed column AFTER
+Laravel has built the array, so nothing can put one back.
+
+The effective list is the UNION of every $neverExport declared up the
+inheritance chain (Model::never_exported_columns() answers it). A subclass -
+a class override of a core model included - lists only the columns it ADDS;
+it can never drop one its parent protects. The framework identity models
+already withhold their secrets: Login_User_Model password and remember_token,
+Portal_User_Model password and metadata, User_Model the invite columns.
+
+Which control to use: anything whose disclosure would be a security event (a
+password hash, a token, a secret, an open key/value bag) goes in $neverExport.
+Laravel's $hidden is advisory - makeVisible() removes a column from it - and is
+for tidiness only. getAttributes() and attribute reads ($model->password)
+bypass both: they are server-side raw access, never a payload.
+
+A column named password, token or secret (or ending _password, _token,
+_secret) that is missing from the effective list is flagged by rsx:check
+(MODEL-NEVER-EXPORT-01, read from the live schema). A column exported on
+purpose is declared in the model's file with its reason:
+
+    // @MODEL-NEVER-EXPORT-01-EXCEPTION display_token - a public badge token
+
+$neverExport is a STATIC property: a subclass declaring it non-static
+(protected $neverExport) fails at class load ("Cannot redeclare static ...
+as non static").
 
 DERIVED PROPERTIES ($appends)
 
@@ -364,7 +390,7 @@ Example Implementation:
 
         protected $table = 'users';
         public static $enums;
-        protected $neverExport = ['password', 'api_token'];
+        public static $neverExport = ['api_token'];
     }
 
 Manifest Integration:

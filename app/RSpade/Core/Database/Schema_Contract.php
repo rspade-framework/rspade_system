@@ -12,7 +12,7 @@ namespace App\RSpade\Core\Database;
  *
  * An application-owned table is one with no leading underscore: users, login_users,
  * sites, portal_users and the rest of the roster below. The framework models them,
- * reads and writes named columns on them, joins them, and - in six places - points a
+ * reads and writes named columns on them, joins them, and - in seven places - points a
  * foreign key from one of its OWN tables into them. An application may alter every one
  * of these tables, and is expected to: that is the difference between them and the
  * `_`-prefixed tables the framework owns outright. This class is the declaration of
@@ -159,6 +159,10 @@ class Schema_Contract
                         'where' => 'Session::is_developer(), rsxapp.is_developer',
                         'migration' => '2026_09_17_160704_add_is_developer_to_login_users',
                     ],
+                    'password_reset_required' => [
+                        'where' => 'RsxAuth::verify_credentials() refusal, Login_User_Model booted() clears it on a password change',
+                        'migration' => '2026_10_20_141047_add_password_reset_required_to_identities',
+                    ],
                     'deleted_at' => [
                         'where' => 'SoftDeletes - every query the model issues; ACTOR-01 requires it',
                         'migration' => '2026_08_09_112232 (deleted_at on the actor tables)',
@@ -202,7 +206,11 @@ class Schema_Contract
                     'id' => ['where' => 'Portal_Session; FK target of _sessions.portal_user_id'],
                     'site_id' => ['where' => 'Portal_Session::get_site_id() scoping'],
                     'email' => ['where' => 'Portal_User_Model::find_by_email() - stored lower-cased and trimmed'],
-                    'password' => ['where' => 'the portal sign-in Hash::check'],
+                    'password' => ['where' => 'Portal_Auth::verify_credentials() Hash::check'],
+                    'password_reset_required' => [
+                        'where' => 'Portal_Auth::verify_credentials() refusal, Portal_User_Model booted() clears it on a password change',
+                        'migration' => '2026_10_20_141047_add_password_reset_required_to_identities',
+                    ],
                     'is_verified' => ['where' => 'Portal_User_Model::is_active()'],
                     'status_id' => ['where' => 'Portal_User_Model::is_active()'],
                     'metadata' => ['where' => 'Portal_User_Model JSON attribute'],
@@ -273,7 +281,7 @@ class Schema_Contract
     /**
      * The foreign keys the framework relies on.
      *
-     * The six from FRAMEWORK-owned (`_`-prefixed) tables INTO application-owned tables
+     * The seven from FRAMEWORK-owned (`_`-prefixed) tables INTO application-owned tables
      * are the strongest form of this contract: the framework's own storage cannot be
      * written at all if the target is gone. The rest are the application-owned
      * references the framework's own models traverse.
@@ -314,6 +322,13 @@ class Schema_Contract
                 'references' => 'login_users',
                 'referenced_column' => 'id',
                 'why' => 'a second factor belongs to a login identity',
+            ],
+            [
+                'table' => '_portal_login_history',
+                'column' => 'portal_user_id',
+                'references' => 'portal_users',
+                'referenced_column' => 'id',
+                'why' => 'a portal sign-in history row belongs to a portal user',
             ],
 
             // Application-owned references the framework's own models traverse.

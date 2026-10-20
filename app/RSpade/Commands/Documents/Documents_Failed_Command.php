@@ -16,10 +16,15 @@ use Illuminate\Console\Command;
 /**
  * rsx:documents:failed - what the document pipeline could not process, why, and what happens next.
  *
- * A failed attempt is retried by the worker a few times before the blob is left FAILED for an
- * operator, so every row says where its blob stands: the attempts charged, and either the time
- * of the next attempt or that none is coming. Two tables, because the two halves of the
- * pipeline have two different remedies once the attempts are spent:
+ * SOFT failures come first, in a table of their own: blobs whose last pass could not run at all
+ * because a tool or the source file is unavailable (soffice or pdftotext missing, the sandbox
+ * image absent, the blob unreadable). They cost no attempt and the worker keeps checking them on
+ * a growing interval, so the remedy is to fix what the reason names - nothing needs re-queueing.
+ *
+ * Every other failure is HARD: a failed attempt is retried by the worker a few times before the
+ * blob is left FAILED for an operator, so every row says where its blob stands: the attempts
+ * charged, and either the time of the next attempt or that none is coming. Two tables, because
+ * the two halves of the pipeline have two different remedies once the attempts are spent:
  *   render failures    -> rsx:documents:rerender --failed
  *   extraction failures -> rsx:search:reindex --failed
  *
@@ -41,6 +46,8 @@ class Documents_Failed_Command extends Command
         // FULL count so a truncated table can never be mistaken for the whole story.
         $limit = (int) $this->option('limit');
 
+        $this->__print_soft_failures($limit);
+        $this->newLine();
         $this->__print_render_failures($limit);
         $this->newLine();
         $this->__print_extraction_failures($limit);
@@ -49,14 +56,81 @@ class Documents_Failed_Command extends Command
     }
 
     /**
-     * Blobs whose PDF rendition failed.
+     * The query for SOFT-failed blobs: in the queue, with a soft failure on record
+     * (File_Storage_Model::is_soft_failed()).
+     *
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    private function __soft_failed_query()
+    {
+        return File_Storage_Model::whereNotNull('process_due_at')->where('process_soft_failure_count', '>', 0);
+    }
+
+    /**
+     * Blobs whose last pass could not run: a tool or the source file is unavailable. Whatever
+     * they owed - a rendition, their text, or both - they are listed here once, and not in the
+     * two tables of hard failures below.
+     *
+     * @param int $limit 0 for every row.
+     * @return void
+     */
+    private function __print_soft_failures(int $limit): void
+    {
+        $total = $this->__soft_failed_query()->count();
+
+        if ($total === 0) {
+            $this->line('[OK] No documents waiting on a tool or source file.');
+
+            return;
+        }
+
+        $query = $this->__soft_failed_query()->orderBy('id');
+        $storages = $limit > 0 ? $query->limit($limit)->get() : $query->result_set();
+
+        $rows = [];
+        $shown = 0;
+        foreach ($storages as $storage) {
+            // The same reason is recorded on every part the pass owed: the render's when one was
+            // owed, the index row's otherwise.
+            $reason = (int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_FAILED
+                ? (string) $storage->render_error
+                : (string) Search_Index_Model::forModel('File_Storage_Model', $storage->id)->value('error');
+
+            $rows[] = [
+                $storage->id,
+                substr((string) $storage->hash, 0, 12),
+                Document_Render_Service::representative_file_name($storage) ?? '(orphan blob)',
+                $this->__excerpt($reason),
+                (int) $storage->process_soft_failure_count,
+                Rsx_Time::format_datetime($storage->process_due_at),
+            ];
+            $shown++;
+        }
+
+        $this->line("{$total} document(s) could not be processed - tool or source unavailable (no attempt charged; checked again automatically):");
+        $this->table(['Storage', 'Hash', 'File name', 'Reason', 'Checks failed', 'Next check'], $rows);
+
+        if ($shown < $total) {
+            $this->line("  showing {$shown} of {$total} - use --limit=0 for all");
+        }
+
+        $this->line('  Fix what the reason names; the worker processes them at the next check.');
+    }
+
+    /**
+     * Blobs whose rendition failed HARD (a soft-failed blob is in the table above).
      *
      * @param int $limit 0 for every row.
      * @return void
      */
     private function __print_render_failures(int $limit): void
     {
-        $total = File_Storage_Model::where('render_status_id', File_Storage_Model::RENDER_STATUS_FAILED)->count();
+        $base = fn () => File_Storage_Model::where('render_status_id', File_Storage_Model::RENDER_STATUS_FAILED)
+            ->where(function ($query) {
+                $query->whereNull('process_due_at')->orWhere('process_soft_failure_count', 0);
+            });
+
+        $total = $base()->count();
 
         if ($total === 0) {
             $this->line('[OK] No failed documents.');
@@ -64,8 +138,7 @@ class Documents_Failed_Command extends Command
             return;
         }
 
-        $query = File_Storage_Model::where('render_status_id', File_Storage_Model::RENDER_STATUS_FAILED)
-            ->orderBy('id');
+        $query = $base()->orderBy('id');
 
         // limit=0 means "every failed blob", which is unbounded by definition - iterate it by
         // keyset rather than materializing the whole set.
@@ -85,9 +158,7 @@ class Documents_Failed_Command extends Command
             $shown++;
         }
 
-        $retrying = File_Storage_Model::where('render_status_id', File_Storage_Model::RENDER_STATUS_FAILED)
-            ->whereNotNull('process_due_at')
-            ->count();
+        $retrying = $base()->whereNotNull('process_due_at')->count();
         $spent = $total - $retrying;
 
         $this->line("{$total} failed document(s): {$retrying} waiting for another attempt, {$spent} out of attempts.");
@@ -101,8 +172,9 @@ class Documents_Failed_Command extends Command
     }
 
     /**
-     * Blobs whose TEXT EXTRACTION failed. A different queue with a different remedy, and a
-     * document can easily fail one half while succeeding at the other.
+     * Blobs whose TEXT EXTRACTION failed HARD. A different queue with a different remedy, and a
+     * document can easily fail one half while succeeding at the other. A soft-failed blob is in
+     * the first table instead.
      *
      * @param int $limit 0 for every row.
      * @return void
@@ -110,7 +182,8 @@ class Documents_Failed_Command extends Command
     private function __print_extraction_failures(int $limit): void
     {
         $base = Search_Index_Model::where('indexable_type', 'File_Storage_Model')
-            ->where('status_id', Search_Index_Model::STATUS_FAILED);
+            ->where('status_id', Search_Index_Model::STATUS_FAILED)
+            ->whereNotIn('indexable_id', $this->__soft_failed_query()->select('id')->toBase());
 
         $total = (clone $base)->count();
 

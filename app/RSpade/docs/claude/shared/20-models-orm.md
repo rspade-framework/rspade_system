@@ -6,6 +6,8 @@
 
 **NEVER eager load relationships** — `->with()` throws framework-wide. Load what you need, when you need it.
 
+**A secret column goes in `public static $neverExport`** — stripped from every payload after Laravel builds it, unioned up the inheritance chain (an override only adds), and flagged by `rsx:check` when a `password`/`token`/`secret` column is missing from it (`MODEL-NEVER-EXPORT-01`). Laravel's `$hidden` is not a security control: `makeVisible()` undoes it.
+
 Bounded result sets (`$unbounded`, `Rsx_Result_Set`, `LIMIT`) are governed by the engineering-mandates fragment.
 
 **Enums** are integer columns (BIGINT, never VARCHAR/ENUM) mapped at the model by a `public static $enums` array to constants, labels and custom properties, read through BEM-style double-underscore magic properties — `Project_Model::STATUS_ACTIVE`, `$project->status_id__label`, `Model.status_id__enum_select()` in JS. Run `rsx:constants:regenerate` after changing one.

@@ -213,3 +213,14 @@ is proved by `session/http/session_link_handshake.sh` (sess-http-07).
 | PORTAL-LINK-20 | Session_Cleanup_Service::cleanup_session_links removes expired links only | php | one live, one expired | expired gone, live kept | implemented | 2026-10-01 |
 | PORTAL-LINK-21 | Session::_clone_session_to_this_host() refuses in CLI | php | call in CLI | RuntimeException (no browser) | implemented | 2026-10-01 |
 | PORTAL-LINK-22 | a live separate-host round trip on the dev box (two real hosts) | http | needs PORTAL_URL on another host in the box's .env | - | deferred (the suite never edits a box's .env, and a docker worker's .env is the dev box's defaults; the host binding is PORTAL-LINK-07/11 in-process and the cookie is sess-http-07 over HTTP in the same-host layout) | 2026-10-01 |
+
+## Portal_Auth_Test (php, default isolation) - Portal_Auth::verify_credentials(), the portal password door
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| pa-01 | correct credentials answer the portal user, sign nobody in, and write ONE success row carrying the site | php | a portal user, its password | Portal_User_Model; not signed in; one SUCCESS row in _portal_login_history with site_id; no staff row | implemented | 2026-10-20 |
+| pa-02 | record: false writes nothing | php | right and wrong password, record: false | no row, no portal failure count | implemented | 2026-10-20 |
+| pa-03 | unknown address and wrong password are the same null, counted in the PORTAL statistics only | php | wrong password; a stranger's address | null both; portal counts 1 each; staff count 0; no row | implemented | 2026-10-20 |
+| pa-04 | the lookup reads exactly the site it is given | php | a portal user of site B, declared site A | null for site A; found for site B | implemented | 2026-10-20 |
+| pa-05 | a flagged portal user is refused only after the password | php | password_reset_required set | wrong password null and no row; right password throws carrying the portal user, one refusal row under record: false | implemented | 2026-10-20 |
+| pa-06 | malformed input records nothing | php | missing email / password | null, no count | implemented | 2026-10-20 |

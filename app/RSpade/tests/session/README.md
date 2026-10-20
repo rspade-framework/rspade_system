@@ -27,7 +27,12 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   establish a CLI identity through `Session::impersonate()` (`Ajax_Debug_Identity_Test`, with
   the fixture endpoint `Ajax_Debug_Identity_Fixture_Controller` beside it)
 - `app/RSpade/Core/Session/User_Agent.php` - user-agent parsing
-- `app/RSpade/Core/Session/Login_History.php` (and `_login_history` table)
+- `app/RSpade/Core/Session/Login_History_Abstract.php` - the history store, written once for both realms;
+  `Login_History.php` (staff, `_login_history`) and `Portal_Login_History.php` (portal,
+  `_portal_login_history`) bind it
+- `app/RSpade/Core/Auth/Auth_Password_Reset_Required_Exception.php` - the refusal
+  `verify_credentials()` throws for a flagged identity (`password_reset_required`, cleared by
+  `Login_User_Model_Abstract` / `Portal_User_Model_Abstract` booted() on a password change)
 - `app/RSpade/Core/Auth/RsxAuth.php` - verify_credentials() / login() / logout() / has_enabled_membership()
 - `app/RSpade/Core/Auth/Login_Throttle.php`, `Auth_Throttled_Exception.php` - the
   per-IP brute-force throttle (config `rsx.sessions.login_throttle`)
@@ -52,7 +57,10 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   minted until demanded), identity syncing onto the row, and end-of-process
   deletion. (php - default isolation)
 - Login history: success rows + queries, failures as ephemeral counters (no row),
-  window-bounded failed-attempt counting, retention prune. (php)
+  window-bounded failed-attempt counting, retention prune; the portal binding's rows, site,
+  scope key and separation from the staff rows. (php)
+- Password reset required: the staff refusal (thrown last, recorded as a row even under
+  record: false) and the flag's clearing on both identity models. (php)
 - Login throttle: the failure budget and the lockout it triggers, per-IP isolation,
   the enable switch, reset(), the exact refusal message and its retry_after_seconds,
   and the ruling that a caller with NO client IP is never throttled. The ambient-IP

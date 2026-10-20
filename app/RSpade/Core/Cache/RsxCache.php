@@ -37,7 +37,8 @@ require_once __DIR__ . '/../../helpers.php';
  *   DB 2  REDUCED VOLATILITY CACHE ("RVC"). Reserved. The full page cache writes here
  *         directly (Rsx_FPC and system/bin/fpc-proxy.js), and this class routes any key
  *         beginning with _RVC_ here. NEVER flushed by clear().
- *   DB 3  TRANSIENT COUNTERS (Rsx_Counter) - login throttling and friends.
+ *   DB 3  TRANSIENT COUNTERS (Rsx_Counter) - login throttling and friends, plus short-lived
+ *         opaque values beside them (an identity's issued sign-in code).
  *
  * EVICTION IS PER INSTANCE, NOT PER DATABASE. The shipped conf
  * (system/app/RSpade/resource/docker/redis/redis.conf) sets allkeys-lru over the whole

@@ -900,8 +900,11 @@ THE CLIENT PORTAL REALM
                     Portal_User_Model::can_login() accepts them and they
                     belong to the declared site; a refusal is answered like a
                     denied gate.
-        recording   no login history: each failure feeds
-                    Login_Throttle::record_failure() directly, exactly once.
+        recording   the portal's own login history, Portal_Login_History
+                    (_portal_login_history): a SUCCESS row per sign-in;
+                    STATUS_FAILED_SSO, or STATUS_FAILED_DISABLED when the
+                    portal refuses the identity, through record_failure(),
+                    which feeds Login_Throttle exactly once.
         two factor  Rsx_Portal_Two_Factor.
         impersonation
                     "View as Client" refuses linking and unlinking.

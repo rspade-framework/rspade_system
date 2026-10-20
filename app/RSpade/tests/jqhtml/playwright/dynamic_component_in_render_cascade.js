@@ -116,12 +116,14 @@ async function probe_loading_overlay(page) {
 
                 // Mounting a framework component on a node appended during THIS render, then
                 // driving it - the overlay it draws mounts a component of its own.
-                $slot.component('Rsx_Form', {
+                // .component(name) RETURNS the element the component lives on. Rsx_Form is
+                // tag="form", so mounting it on this <div> REPLACES the div with a <form> and
+                // $slot is left pointing at the discarded node - the instance is read from the
+                // returned element, never from $slot.
+                const form = $slot.component('Rsx_Form', {
                     controller: 'Rsx_Cascade_Probe_Controller_Temp',
                     method: 'never_called',
-                });
-
-                const form = $slot.component();
+                }).component();
                 if (form && form.set_loading) {
                     form.set_loading(true);
                 }

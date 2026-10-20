@@ -1632,9 +1632,9 @@ class Spa {
         // Create a detached container (not in DOM)
         const $detached = $('<div>');
 
-        // Instantiate the action on the detached element
-        $detached.component(action_name, args);
-        const action = $detached.component();
+        // Instantiate the action on the detached element. The instance is read from the
+        // RETURNED element - the one the component lives on (rsx:man jqhtml, INSTANTIATION METHODS).
+        const action = $detached.component(action_name, args).component();
 
         // Wait for on_load to complete (data fetching)
         await action.ready();

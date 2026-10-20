@@ -17,7 +17,10 @@ Two concerns live here, both of them about SILENT wrongness:
 2. **A component mounted from inside a render cascade must be live.** Dynamic
    `.component()` creation on a hand-appended node is a real pattern (the form loading
    overlay is the framework's own use of it). If the runtime ever returned something
-   inert there, nothing would say so - the element would simply stay empty.
+   inert there, nothing would say so - the element would simply stay empty. The probe reads
+   each instance from the element `.component(name, args)` RETURNS: a component whose tag
+   differs from the host's (`Rsx_Form` is `tag="form"`) replaces the host, and the original
+   reference is then a discarded node.
 
 ## Source under test
 

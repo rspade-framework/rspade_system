@@ -300,7 +300,8 @@ RESPONSE CONTRACT
 SERIALIZATION
     A returned model is serialized with the SAME redacting toArray() the
     fetch() system uses - never a hand-rolled transformer:
-        - neverExport columns (password hashes, tokens, ...) are stripped
+        - $neverExport columns (password hashes, tokens, ...) are stripped,
+          unioned up the model's inheritance chain
         - enum columns gain BEM-style magic properties: status_id__label, etc.
         - a __MODEL key identifies the model class
       Never alias enum fields to shorter names; the double-underscore forms are

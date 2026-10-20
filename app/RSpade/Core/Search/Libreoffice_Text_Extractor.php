@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Search;
 
 use Exception;
 use App\RSpade\Core\Files\Document_Sandbox;
+use App\RSpade\Core\Files\Document_Soft_Checks;
 use App\RSpade\Core\Files\Document_Stage_Bound;
 use App\RSpade\Core\Files\Libreoffice;
 use App\RSpade\Core\Search\Rsx_Text_Extractor_Abstract;
@@ -292,5 +293,17 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
         // Defense-in-depth scrub (soffice flat XML is already UTF-8, but the FULLTEXT column must
         // never see a malformed byte).
         return mb_convert_encoding($out, 'UTF-8', 'UTF-8');
+    }
+
+    /**
+     * soffice cannot be run here (Document_Soft_Checks::soffice_unavailable() - the same check
+     * as Libreoffice_Document_Renderer), or the source cannot be read.
+     *
+     * @param string $source_path
+     * @return string|null
+     */
+    public static function soft_failure(string $source_path): ?string
+    {
+        return Document_Soft_Checks::soffice_unavailable() ?? static::source_unreadable($source_path);
     }
 }

@@ -25,9 +25,10 @@ use App\RSpade\Core\Session\Session;
  * FROM is the one thing the attacker has to keep using. The per-email counter Login_History
  * keeps is still there, still readable, and still not enforced by the framework.
  *
- * WHERE IT IS ENFORCED: RsxAuth::verify_credentials() calls require_not_throttled() as its first
- * statement, before any lookup - so a locked-out address cannot even probe which addresses
- * exist. Login_History::record_failure() calls record_failure() here, which is what makes
+ * WHERE IT IS ENFORCED: RsxAuth::verify_credentials() and Portal_Auth::verify_credentials() call
+ * require_not_throttled() as their first statement, before any lookup - so a locked-out address
+ * cannot even probe which addresses exist. Login_History::record_failure() and
+ * Portal_Login_History::record_failure() call record_failure() here, which is what makes
  * every recorded failure feed the throttle: password misses, unknown addresses, and the
  * outcomes an application records itself (a second factor, an account status).
  *
@@ -82,10 +83,10 @@ class Login_Throttle
      * Count one authentication failure against the client's IP, locking it out when the
      * budget is spent.
      *
-     * Called by Login_History::record_failure(), so an application that records its own
-     * failure outcomes (a bad second factor, a disabled account) feeds the throttle without
-     * doing anything extra. Call it directly only from a login path that does NOT record
-     * through Login_History - the portal's password check is the framework's own example.
+     * Called by Login_History::record_failure() and Portal_Login_History::record_failure(), so
+     * an application that records its own failure outcomes (a bad second factor, a disabled
+     * account) feeds the throttle without doing anything extra. Call it directly only from a
+     * path that checks a secret and records through neither (a PIN, an access code).
      *
      * @param string|null $ip Client IP; defaults to Session::get_client_ip()
      * @return void

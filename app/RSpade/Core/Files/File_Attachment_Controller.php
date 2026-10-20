@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
+use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
@@ -14,7 +15,7 @@ use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Rsx_File_Upload;
-use App\RSpade\Core\Files\Spreadsheet_Rendition;
+use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Files\Zip_Download_Request_Model;
 use App\RSpade\Core\Files\Zip_Stream;
 use App\RSpade\Core\Portal\Portal_Session;
@@ -1119,16 +1120,16 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
 
         // A rendered document rasterizes from its rendition; everything else from the blob itself.
         //
-        // A SPREADSHEET IS "everything else" DESPITE BEING RENDERED. Its rendition is HTML, not
-        // a PDF (see Spreadsheet_Rendition), so there is no page to rasterize and no picture to
-        // make - a workbook's thumbnail is its extension icon, which is the owner's ruling and
-        // is also the only honest answer. Excluding it here is load-bearing rather than tidy:
+        // A SPREADSHEET IS "everything else" DESPITE BEING RENDERED. Its renderer's rendition is
+        // HTML, not a PDF (see Spreadsheet_Rendition), so there is no page to rasterize and no
+        // picture to make - a workbook's thumbnail is its extension icon, which is the owner's
+        // ruling and is also the only honest answer. Excluding it here is load-bearing:
         // the branch below treats a missing PDF as corruption, logs it and calls
         // requeue_render(), so a spreadsheet would re-queue on every thumbnail request forever
         // while the worker dutifully produced the HTML the branch was not looking for.
         $rendition_path = null;
         if ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED
-            && !Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime())) {
+            && Document_Render_Service::rendition_format_for_mime($attachment->pipeline_mime()) !== 'html') {
             $rendition_path = File_Preview_Controller::rendition_cache_path($storage);
 
             if (!file_exists($rendition_path)) {
@@ -1355,8 +1356,9 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * Resolve the thumbnail renderer (simple class name) registered for a mime type, or null if
      * none - in which case the pipeline falls back to a generic extension icon.
      *
-     * Reads config('rsx.thumbnails.renderers') (an ordered map of fnmatch mime pattern => simple
-     * renderer class; first match wins). Office documents are deliberately NOT in that map - their
+     * Reads config('rsx.thumbnails.renderers') (a map of fnmatch mime pattern => simple renderer
+     * class) through Rsx_Mime_Map: an application entry beats a framework entry, and the most
+     * specific pattern wins inside a layer. Office documents are deliberately NOT in that map - their
      * pixels come from the background-produced PDF rendition, so "is there a picture of this file"
      * is answered by File_Attachment_Model::has_thumbnail(), which also consults the render state.
      *
@@ -1369,21 +1371,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             return null;
         }
 
-        $renderers = config('rsx.thumbnails.renderers', []);
-
-        $matched = null;
-        foreach ($renderers as $pattern => $class) {
-            if (fnmatch($pattern, $mime)) {
-                $matched = $class;
-                break;
-            }
-        }
-
-        if ($matched === null) {
-            return null;
-        }
-
-        return $matched;
+        return Rsx_Mime_Map::match('rsx.thumbnails.renderers', $mime);
     }
 
     /**

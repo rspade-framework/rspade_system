@@ -303,7 +303,7 @@ class Documents_Commands_Cli_Test extends Rsx_Test_Abstract
 
         static::__assert_contains('Owed (is_indexed=0)', $output, 'the text still owed is a row');
         static::__assert_contains('Work queue', $output, 'the queue section is present');
-        foreach (['Due now', 'Waiting for a retry', 'Deferred', 'Failed, out of attempts'] as $queue_state) {
+        foreach (['Due now', 'Waiting for a retry', 'Could not run: tool or source unavailable', 'Deferred', 'Failed, out of attempts'] as $queue_state) {
             static::__assert_contains($queue_state, $output, 'the queue state is listed: ' . $queue_state);
         }
         static::__assert_contains('PDF rendition cache', $output, 'the rendition cache section is present');
@@ -361,5 +361,71 @@ class Documents_Commands_Cli_Test extends Rsx_Test_Abstract
         static::__assert_equals(0, $code);
         static::__assert_contains('2 failed document(s)', $output, 'the header states the FULL count even when truncated');
         static::__assert_contains('showing 1 of 2', $output, 'the truncation is stated');
+
+        foreach ([$first, $second] as $storage) {
+            File_Storage_Model::where('id', $storage->id)->update(['render_status_id' => File_Storage_Model::RENDER_STATUS_NOT_REQUIRED, 'render_error' => null]);
+        }
+    }
+
+    // A SOFT failure - the last pass could not run because a tool or the source is unavailable -
+    // is listed once, in a table of its own with its reason, how many checks have failed and
+    // when the next one is; it is not in the hard-failure tables (no attempt was charged, and the
+    // remedy is the environment, not a re-queue). rsx:documents:status counts it in its own row.
+    public static function test_failed_lists_soft_failures_separately()
+    {
+        [$code, $output] = static::__artisan('rsx:documents:failed');
+        static::__assert_contains('[OK] No documents waiting on a tool or source file.', $output, 'no soft failure: the good case says so');
+
+        $storage = static::__storage(static::__make_attachment(static::__unique_bytes('soft'), 'board_minutes.docx'));
+        static::__force_state($storage, File_Storage_Model::RENDER_STATUS_FAILED, 'LibreOffice (soffice) is not installed or not executable');
+        File_Storage_Model::where('id', $storage->id)->update([
+            'process_attempt_count' => 0,
+            'process_soft_failure_count' => 2,
+            'process_due_at' => DB::raw('NOW(3) + INTERVAL 60 MINUTE'),
+        ]);
+
+        // A soft failure that owed only text: the reason is on the index row.
+        $text_only = static::__storage(static::__make_attachment(static::__unique_bytes('soft-text'), 'scan_notes.pdf'));
+        File_Storage_Model::where('id', $text_only->id)->update([
+            'render_status_id' => File_Storage_Model::RENDER_STATUS_NOT_REQUIRED,
+            'is_indexed' => 0,
+            'process_attempt_count' => 0,
+            'process_soft_failure_count' => 1,
+            'process_due_at' => DB::raw('NOW(3) + INTERVAL 30 MINUTE'),
+        ]);
+        $index = Search_Index_Model::find_or_create_for_model('File_Storage_Model', $text_only->id);
+        $index->status_id = Search_Index_Model::STATUS_FAILED;
+        $index->error = 'pdftotext (poppler-utils) is not installed or not executable';
+        $index->extraction_method = 'none';
+        $index->save();
+
+        [$code, $output] = static::__artisan('rsx:documents:failed');
+        static::__assert_equals(0, $code);
+        static::__assert_contains('2 document(s) could not be processed - tool or source unavailable', $output, 'the soft table states its count');
+        static::__assert_contains('board_minutes.docx', $output, 'the blob is named');
+        static::__assert_contains('LibreOffice (soffice) is not installed', $output, 'with the render reason');
+        static::__assert_contains('scan_notes.pdf', $output, 'a text-only soft failure is listed too');
+        static::__assert_contains('pdftotext (poppler-utils) is not installed', $output, 'with the index row\'s reason');
+        static::__assert_contains('Checks failed', $output, 'the soft count is a column');
+        static::__assert_contains('Next check', $output, 'and so is the next check');
+        static::__assert_equals(1, substr_count($output, 'board_minutes.docx'), 'listed once: the hard render table does not list a soft failure');
+        static::__assert_equals(1, substr_count($output, 'scan_notes.pdf'), 'listed once: nor does the hard extraction table');
+
+        [$code, $output] = static::__artisan('rsx:documents:status');
+        static::__assert_true(
+            (bool) preg_match('/Could not run: tool or source unavailable \(nothing charged\)\s*\|\s*2\s*\|/', $output),
+            'rsx:documents:status counts both soft failures in their own row'
+        );
+
+        foreach ([$storage, $text_only] as $blob) {
+            File_Storage_Model::where('id', $blob->id)->update([
+                'render_status_id' => File_Storage_Model::RENDER_STATUS_NOT_REQUIRED,
+                'render_error' => null,
+                'is_indexed' => 1,
+                'process_soft_failure_count' => 0,
+                'process_due_at' => null,
+            ]);
+        }
+        Search_Index_Model::forModel('File_Storage_Model', $text_only->id)->delete();
     }
 }

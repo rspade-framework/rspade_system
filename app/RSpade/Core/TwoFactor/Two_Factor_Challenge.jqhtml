@@ -34,13 +34,15 @@ The cursor starts in the answer and returns there after a refusal. Enter verifie
 digit boxes only once all six are filled.
 
 ISSUED CODES. When the challenge accepts one and the host names a send endpoint
-($send_controller + $send_method), the screen offers "Send a new code", and sends the FIRST
+($send_controller + $send_method), the screen offers "Resend code", and sends the FIRST
 code itself when none has been issued yet. The send endpoint's contract:
   it receives  {}
   it calls     Rsx_Two_Factor::issue_code() and delivers the digits (an email declared
                CATEGORY = SECURITY, an SMS, ...) to pending_identity()
-  it returns   anything; the screen re-reads the challenge and says "A new code has been sent."
+  it returns   anything; the screen re-reads the challenge and says "Your code has been sent."
   it rejects   with a user-safe message (a resend cap the application keeps), rendered inline
+A resend delivers the identity's LIVE code - the same digits as before, until that code expires
+- so every message the user holds carries the one code that works.
 Without a send endpoint the host issues and delivers the code itself, before the page loads.
 
 THE THROTTLE MESSAGE MUST SURVIVE. Auth_Throttled_Exception surfaces as an ordinary Ajax
@@ -66,7 +68,7 @@ Args:
   $method      (required) - the endpoint's method name.
   $cancel_url  - where Cancel leads (normally the login page). Absent: no Cancel.
   $send_controller, $send_method - the application endpoint that issues and delivers a code.
-                 Absent: no "Send a new code".
+                 Absent: no "Resend code".
   $unstyled_controls - drop the theme (Bootstrap) classes from every control; each keeps its
                  own __ class (see CONTROLS), and the host supplies the whole appearance.
                  The digit boxes are <Code_Input>'s and keep its classes - each box carries
@@ -156,7 +158,7 @@ See: php artisan rsx:man two_factor
 
             <% if (_send) { %>
                 <div class="Two_Factor_Challenge__send">
-                    <button type="button" class="<%= _btn('link') %>Two_Factor_Challenge__send-button" $sid="send">Send a new code</button>
+                    <button type="button" class="<%= _btn('link') %>Two_Factor_Challenge__send-button" $sid="send">Resend code</button>
                 </div>
             <% } %>
 

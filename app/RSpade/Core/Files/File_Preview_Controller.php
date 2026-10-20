@@ -5,13 +5,14 @@ namespace App\RSpade\Core\Files;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Response;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
+use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Markdown_Rendition;
 use App\RSpade\Core\Files\Rsx_File_Gates;
 use App\RSpade\Core\Files\Rsx_File_Paths;
-use App\RSpade\Core\Files\Spreadsheet_Rendition;
+use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
@@ -81,7 +82,7 @@ use App\RSpade\Core\Search\Search_Index_Model;
  *
  * FRAMEWORK RENDITION PIPELINE (when the resolve chain declines):
  *   - mime application/pdf                              -> serve the resident blob as-is.
- *   - mime in rsx.preview.convertible AND LibreOffice enabled
+ *   - mime whose rsx.documents.renderers renderer produces a PDF AND is switched on
  *                                                       -> serve the rendition Document_Render_Service
  *                                                          already produced (tmp/renditions/
  *                                                          {hash}.pdf) when the blob is RENDERED;
@@ -167,8 +168,10 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             return static::__serve_pdf($path, $attachment->file_name, $attachment, $params);
         }
 
-        // Convertible office document + LibreOffice enabled -> cached soffice->PDF rendition.
-        if (static::__is_convertible($mime) && config('rsx.libreoffice.enabled', true)) {
+        // A document the worker renders to a PDF, with its renderer switched on -> the cached
+        // rendition. A workbook's rendition is HTML, served by sheet_rendition() and never here.
+        $renderer = Document_Render_Service::renderer_for_mime($mime);
+        if ($renderer !== null && $renderer::rendition_format() === 'pdf' && $renderer::is_enabled()) {
             $rendition_path = static::__resolve_rendition($attachment);
 
             return static::__serve_pdf($rendition_path, static::__pdf_filename($attachment->file_name), $attachment, $params);
@@ -232,7 +235,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             return $download_auth;
         }
 
-        if (!Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime())) {
+        if (Document_Render_Service::rendition_format_for_mime($attachment->pipeline_mime()) !== 'html') {
             abort(415, 'This file is not a spreadsheet.');
         }
 
@@ -423,17 +426,6 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     }
 
     /**
-     * True if this mime is listed in rsx.preview.convertible (fnmatch globs).
-     *
-     * @param string|null $mime
-     * @return bool
-     */
-    protected static function __is_convertible(?string $mime): bool
-    {
-        return File_Attachment_Model::is_convertible_mime($mime);
-    }
-
-    /**
      * Derive a ".pdf" display filename from the source filename (swap/append the extension).
      *
      * @param string $file_name
@@ -514,7 +506,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
 
     /**
      * Resolve everything the Document_Preview component needs to render a viewer for an attachment:
-     * the viewer component name (first fnmatch match in rsx.preview.viewers), the mime/name/
+     * the viewer component name (rsx.preview.viewers, resolved through Rsx_Mime_Map), the mime/name/
      * extension, and the URLs it will fetch. Viewer resolution is server-side; no config is exported.
      *
      * Security: file.thumbnail.authorize gate (metadata, not full content - same as thumbnails).
@@ -554,6 +546,22 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to preview this file');
         }
 
+        // Somebody is looking at this document: if its preview is missing for a reason the
+        // worker could now remedy - a rendition evicted from the cache, a failure whose cause may
+        // have gone - set the retry in motion (see Document_Render_Service::attend_view()). It
+        // runs before the render status is read, so a requeued rendition is answered as the
+        // PENDING it now is. A caller refetching because a realtime frame told it something
+        // changed passes attend=false: that refetch is not a view, and attending it would let a
+        // failed retry's own frame start the next retry.
+        $render_retrying = false;
+        $attend = filter_var($params['attend'] ?? true, FILTER_VALIDATE_BOOLEAN);
+        if ($attend && $attachment->file_storage_id !== null) {
+            $attended_storage = File_Storage_Model::find($attachment->file_storage_id);
+            if ($attended_storage !== null) {
+                $render_retrying = Document_Render_Service::attend_view($attended_storage);
+            }
+        }
+
         // The rendition URL is present ONLY when the endpoint behind it would actually serve
         // bytes, so the viewer never has to request it "early" to find out:
         //   - a PDF serves its own resident blob (its blob is NOT_REQUIRED - nothing to render);
@@ -575,11 +583,10 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             $storage = File_Storage_Model::find($attachment->file_storage_id);
 
             // A workbook's rendition is HTML at its own endpoint - see sheet_rendition().
-            $rendition_path = $storage === null ? null : (
-                Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime())
-                    ? static::sheet_rendition_cache_path($storage)
-                    : static::rendition_cache_path($storage)
-            );
+            $renderer = Document_Render_Service::renderer_for_mime($attachment->pipeline_mime());
+            $rendition_path = ($storage === null || $renderer === null)
+                ? null
+                : Document_Render_Service::rendition_path($storage, $renderer);
 
             if ($rendition_path !== null && file_exists($rendition_path)) {
                 $rendition_url = $attachment->get_preview_url();
@@ -600,6 +607,11 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             // File_Storage_Model::RENDER_STATUS_* on this attachment's blob, or null when there is
             // no resident blob at all (an external attachment never materialized).
             'render_status_id' => $render_status,
+            // True when this view set a retry of the rendition in motion (attend_view()): a
+            // FAILED render_status_id with this set is about to be attempted again, and
+            // Document_Preview shows "Preparing preview..." until the worker's realtime frame
+            // brings the outcome.
+            'render_retrying' => $render_retrying,
             // Whether a host should ALSO show this file's extracted text beside the preview.
             // False for a file whose preview already IS its text (text/*) and for a spreadsheet,
             // whose extraction is search fodder rather than something a person can read. A host
@@ -823,13 +835,11 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     }
 
     /**
-     * Resolve the viewer component (simple name) for a mime from rsx.preview.viewers (fnmatch, first
-     * match wins), with the '*' entry consulted LAST wherever it sits in the map.
-     *
-     * The application's config is deep-merged over the framework's, and a key the framework does
-     * not have is APPENDED - after the framework's terminal '*'. Taking '*' out of the ordered walk
-     * is what lets an application ADD a viewer for a mime the framework does not cover; a mime a
-     * framework pattern already matches stays with the framework's viewer.
+     * Resolve the viewer component (simple name) for a mime from rsx.preview.viewers, through
+     * Rsx_Mime_Map: an application entry beats a framework entry, the most specific pattern wins
+     * inside a layer, and '*' is the catch-all consulted last. So an application can both ADD a
+     * viewer for a mime the framework does not cover and REPLACE the framework's viewer for one it
+     * does.
      *
      * @param string|null $mime
      * @return string Viewer component simple name.
@@ -837,18 +847,12 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     public static function viewer_for_mime(?string $mime): string
     {
         $mime = ($mime === null || $mime === '') ? 'application/octet-stream' : $mime;
-        $viewers = config('rsx.preview.viewers', []);
+        $viewer = Rsx_Mime_Map::match('rsx.preview.viewers', $mime);
 
-        foreach ($viewers as $pattern => $viewer) {
-            if ($pattern !== '*' && fnmatch($pattern, $mime)) {
-                return $viewer;
-            }
-        }
-
-        if (!isset($viewers['*'])) {
+        if ($viewer === null) {
             shouldnt_happen("config('rsx.preview.viewers') has no terminal '*' entry - every mime must resolve to a viewer");
         }
 
-        return $viewers['*'];
+        return $viewer;
     }
 }

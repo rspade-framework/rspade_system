@@ -11,8 +11,8 @@ use App\RSpade\Core\Task\Task_Instance;
  * Session_Cleanup_Service
  *
  * Hourly retention sweeps for the session concern's tables: cleanup_sessions() expires
- * idle `_sessions` rows by type, cleanup_login_history() prunes `_login_history` past its
- * retention window, cleanup_session_links() removes expired `_session_links` handshake codes.
+ * idle `_sessions` rows by type, cleanup_login_history() prunes `_login_history` and
+ * `_portal_login_history` past their retention window, cleanup_session_links() removes expired `_session_links` handshake codes.
  * Separate tasks because they answer separate questions (inactivity, age, expiry) and any
  * may be disabled without touching the others.
  *
@@ -58,7 +58,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      * Every table with a user_agent_id column pointing into _user_agents. A string is an
      * orphan only when none of them names it.
      */
-    private const USER_AGENT_REFERENCES = ['_sessions', '_session_devices', '_login_history', '_audit_sessions'];
+    private const USER_AGENT_REFERENCES = ['_sessions', '_session_devices', '_login_history', '_portal_login_history', '_audit_sessions'];
 
     /**
      * Delete rows matching a base query in bounded chunks until none remain, or until
@@ -225,8 +225,8 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
     /**
      * Delete the user-agent strings nothing refers to any more.
      *
-     * _user_agents holds each string once, and four tables point into it: _sessions,
-     * _session_devices, _login_history and _audit_sessions. A browser session can be
+     * _user_agents holds each string once, and five tables point into it: _sessions,
+     * _session_devices, _login_history, _portal_login_history and _audit_sessions. A browser session can be
      * minted by any visitor with any string, so once the rows that named a string have
      * been collected the string goes too. One an audit session names is never an orphan,
      * because audit sessions are never collected.
@@ -283,11 +283,13 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Prune aged rows from the login-history table.
+     * Prune aged rows from both realms' login-history tables.
      *
-     * `_login_history` holds successes and passkey enrollment outcomes - failed sign-in attempts
-     * are ephemeral counters and never become rows (see Login_History) - so it grows with real
-     * use rather than with attack volume. It still grows without bound over years, which is what this sweep answers.
+     * `_login_history` (staff) and `_portal_login_history` (client portal) hold successes,
+     * post-password refusals and passkey enrollment outcomes - failed sign-in attempts are
+     * ephemeral counters and never become rows (see Login_History_Abstract) - so they grow with
+     * real use rather than with attack volume. They still grow without bound over years, which
+     * is what this sweep answers. One retention window covers both.
      *
      * Chunked like the session sweep.
      * rsx.sessions.login_history_retention_days at 0 or null disables the prune entirely.
@@ -314,11 +316,24 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);
         $cutoff = now()->subDays($retention_days);
 
-        $deleted = self::_delete_chunked(
+        $deleted = 0;
+
+        $histories = [
             fn () => DB::table('_login_history')->where('created_at', '<', $cutoff),
-            $task,
-            $chunk_size
-        );
+            fn () => DB::table('_portal_login_history')->where('created_at', '<', $cutoff),
+        ];
+
+        foreach ($histories as $query) {
+            if ($task->is_stop_requested()) {
+                break;
+            }
+
+            $deleted += self::_delete_chunked(
+                $query,
+                $task,
+                $chunk_size
+            );
+        }
 
         if ($task->is_stop_requested()) {
             $task->stdout("Stop requested - stopped after deleting {$deleted} login history row(s).");

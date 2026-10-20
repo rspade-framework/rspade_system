@@ -10,15 +10,13 @@ namespace App\RSpade\Core\Files;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Console\Rsx_Artisan;
-use App\RSpade\Core\Files\Document_Sandbox;
 use App\RSpade\Core\Files\Document_Stage_Bound;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Rendition_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
-use App\RSpade\Core\Files\Libreoffice;
 use App\RSpade\Core\Files\Rsx_File_Paths;
-use App\RSpade\Core\Files\Spreadsheet_Rendition;
+use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Search\Search_Index_Model;
@@ -34,6 +32,10 @@ use App\RSpade\Core\Time\Rsx_Time;
  * ONE worker owns every heavy document operation: the preview rendition (a PDF from soffice,
  * which also feeds the Office-document thumbnail, or a workbook's HTML grid) and the text
  * extraction that makes the document searchable. Nothing renders inside a web request.
+ *
+ * WHICH RENDERER makes a blob's rendition is rsx.documents.renderers, by the blob's pipeline
+ * mime (renderer_for_storage()): a Rsx_Document_Renderer_Abstract per family of types, which
+ * an application can replace or extend for a type in its own config.
  *
  * WHY ONE WORKER. A single Word document needs up to three conversions - a thumbnail, the
  * viewer's rendition, and (to text) search - and renditions and thumbnails are both
@@ -66,6 +68,14 @@ use App\RSpade\Core\Time\Rsx_Time;
  *      already charged is one whose last attempt died with its worker: it is settled FAILED
  *      without being run again.
  * The time limits are sanctioned timeouts, each justified at its config key.
+ *
+ * A BROKEN ENVIRONMENT IS NOT A BROKEN DOCUMENT. Before charging, the pass asks the renderer
+ * and the extractor it would run whether they can run here at all (soft_failure_for(): the tool
+ * is installed and executable, the sandbox image is present, the source can be read). When one
+ * cannot, the pass is a SOFT failure: recorded FAILED with the reason like any other, but NOT
+ * charged and not run, and checked again on a doubling backoff that never gives up
+ * (File_Storage_Model::record_soft_failure()). So a box that is repaired later processes what
+ * was uploaded while it was broken. Everything else that goes wrong is HARD - the rules above.
  *
  * A FAILED ATTEMPT LOOKS FAILED. Between attempts and after the last, the blob's render state
  * is FAILED with the reason recorded, so every screen shows the failed-document preview (icon
@@ -118,6 +128,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
     public const OUTCOME_FAILED = 'failed';
     public const OUTCOME_WAITING = 'waiting';
     public const OUTCOME_TAKEN = 'taken';
+    public const OUTCOME_SOFT_FAILED = 'soft_failed';
 
     /** The child command that processes one blob, and nothing else. */
     public const CHILD_COMMAND = 'rsx:documents:process_one';
@@ -168,6 +179,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
         $processed = 0;
         $failed = 0;
         $retrying = 0;
+        $soft_failed = 0;
 
         [$yield_after_seconds, $resume_after_seconds] = static::drain_pacing();
         $started = microtime(true);
@@ -235,7 +247,13 @@ class Document_Render_Service extends Rsx_Service_Abstract
             $processed++;
             $task->progress_count($processed, max($total, $processed));
 
-            if ($result['outcome'] === self::OUTCOME_RETRY) {
+            if ($result['outcome'] === self::OUTCOME_SOFT_FAILED) {
+                $soft_failed++;
+                $task->stderr(
+                    "Could not run {$label}: {$result['reason']}"
+                    . ' - no attempt charged; will check again at ' . Rsx_Time::format_datetime($result['next_attempt_at'])
+                );
+            } elseif ($result['outcome'] === self::OUTCOME_RETRY) {
                 $retrying++;
                 $task->stderr(
                     "Attempt {$result['attempt']} of {$result['max_attempts']} failed for {$label}: {$result['reason']}"
@@ -253,12 +271,15 @@ class Document_Render_Service extends Rsx_Service_Abstract
             }
         }
 
+        // Soft failures are named only when there were some, so the ordinary line stays short.
+        $soft_note = $soft_failed > 0 ? ", {$soft_failed} could not run (tool or source unavailable)" : '';
+
         $task->stdout($processed > 0
-            ? "Done: {$processed} document(s) processed, {$retrying} to retry, {$failed} failed."
+            ? "Done: {$processed} document(s) processed, {$retrying} to retry, {$failed} failed{$soft_note}."
             : 'No documents were waiting to be rendered or indexed.');
 
-        $task->state(['processed' => $processed, 'retrying' => $retrying, 'failed' => $failed, 'yielded' => false]);
-        $task->summary("Processed {$processed} blob(s): {$retrying} to retry, {$failed} failed.");
+        $task->state(['processed' => $processed, 'retrying' => $retrying, 'failed' => $failed, 'soft_failed' => $soft_failed, 'yielded' => false]);
+        $task->summary("Processed {$processed} blob(s): {$retrying} to retry, {$failed} failed{$soft_note}.");
 
         return null;
     }
@@ -299,15 +320,22 @@ class Document_Render_Service extends Rsx_Service_Abstract
      * queue (process_due_at set), and the queue's rules hold: a blob with every attempt already
      * charged is settled FAILED without being run.
      *
+     * THE ORDER: outside the queue -> DONE; owes nothing -> DONE (closed); what it owes is
+     * switched off -> WAITING; the environment cannot run the pass (soft_failure_for()) ->
+     * SOFT_FAILED; attempts spent -> FAILED; otherwise charge, run the child, settle.
+     *
      * @param File_Storage_Model $storage
      * @return array{outcome: string, reason: ?string, attempt: int, max_attempts: int,
-     *               next_attempt_at: ?string, render_label: string}
+     *               soft_failures: int, next_attempt_at: ?string, render_label: string}
      *         outcome is one of the OUTCOME_* constants:
-     *           DONE     nothing is owed; the blob is out of the queue.
-     *           RETRY    the attempt failed and another is scheduled (next_attempt_at).
-     *           FAILED   the blob's attempts are spent; it left the queue FAILED.
-     *           WAITING  what it owes is switched off; deferred, no attempt charged.
-     *           TAKEN    another process charged this attempt first; nothing was done here.
+     *           DONE         nothing is owed; the blob is out of the queue.
+     *           RETRY        the attempt failed and another is scheduled (next_attempt_at).
+     *           FAILED       the blob's attempts are spent; it left the queue FAILED.
+     *           WAITING      what it owes is switched off; deferred, no attempt charged.
+     *           SOFT_FAILED  a renderer or extractor this pass needs cannot run here (reason);
+     *                        recorded FAILED, nothing charged and nothing run, checked again
+     *                        on the soft backoff (next_attempt_at; soft_failures in a row).
+     *           TAKEN        another process charged this attempt first; nothing was done here.
      */
     public static function process_storage(File_Storage_Model $storage): array
     {
@@ -340,6 +368,20 @@ class Document_Render_Service extends Rsx_Service_Abstract
                 $storage,
                 $owes_render ? 'rendering is switched off (rsx.libreoffice.enabled)' : 'text extraction is switched off (rsx.search.enabled)'
             );
+        }
+
+        // THE SOFT CHECK, before anything is charged: can the renderer and the extractor this
+        // pass would run work on this box at all? When one cannot, nothing runs - the reason is
+        // recorded on every owed part, as a failure that is still owed (text is not settled),
+        // and the blob is checked again on the soft backoff. The child's own "source blob
+        // missing" failure stays as the hard backstop for a file that vanishes after this check.
+        $soft_reason = static::soft_failure_for($storage);
+        if ($soft_reason !== null) {
+            static::__record_failure($storage, $soft_reason, false);
+            $storage->record_soft_failure();
+            static::notify_attachments($storage);
+
+            return static::__result(self::OUTCOME_SOFT_FAILED, $storage, $soft_reason);
         }
 
         // Due, with every attempt already charged: the last one was charged and never settled,
@@ -379,6 +421,170 @@ class Document_Render_Service extends Rsx_Service_Abstract
         }
 
         return static::__reconcile($fresh, $exit_code, $output);
+    }
+
+    /**
+     * Why this blob's next pass cannot run on this box right now, or null when it can: the
+     * first soft_failure() reason from the renderer and the extractor the pass would run.
+     *
+     * Only the parts the pass would ATTEMPT are asked: the rendition when one is owed and its
+     * renderer is switched on (a type with no renderer has nothing to ask - its pass fails hard
+     * and says why), the text when it is owed and extraction would run. The extractor is the one
+     * extract_storage() would choose (Search_Index_Service::extractor_for_pass()), given the PDF
+     * rendition render_storage() would hand it: the one this pass renders, or one already on
+     * disk. Both checks are given the blob's own resident file as the source - the rendition an
+     * extractor may read instead is produced from it.
+     *
+     * A check only LOOKS (see Rsx_Document_Renderer_Abstract::soft_failure()): it never runs a
+     * tool or parses the document, so this is cheap enough to ask before every attempt and from
+     * a web request. An application's document.extract_text handler is not asked - only running
+     * it can tell what it would do.
+     *
+     * @param File_Storage_Model $storage
+     * @return string|null
+     */
+    public static function soft_failure_for(File_Storage_Model $storage): ?string
+    {
+        $source_path = $storage->get_full_path();
+
+        // The same reading of the row process_storage() makes (__can_render()): a rendition is
+        // attempted when its renderer is switched on, or when no renderer matches at all.
+        $owes_render = static::__owes_render($storage);
+        $renderer = $owes_render ? static::renderer_for_storage($storage) : null;
+        $can_render = $owes_render && ($renderer === null || $renderer::is_enabled());
+        $will_render = $can_render && $renderer !== null;
+
+        if ($will_render) {
+            $reason = $renderer::soft_failure($source_path);
+            if ($reason !== null) {
+                return $reason;
+            }
+        }
+
+        // A pass that runs extracts whatever text is owed; text alone runs one only while
+        // extraction is switched on.
+        $owes_text = (int) $storage->is_indexed === 0;
+        $will_extract = $owes_text && ($can_render || config('rsx.search.enabled', true));
+
+        if ($will_extract) {
+            $rendition_available = $will_render
+                || ((int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_RENDERED
+                    && file_exists(File_Preview_Controller::rendition_cache_path($storage)));
+
+            $extractor = Search_Index_Service::extractor_for_pass($storage, $rendition_available);
+            if ($extractor !== null) {
+                $reason = $extractor::soft_failure($source_path);
+                if ($reason !== null) {
+                    return $reason;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * A person is looking at this blob's preview (<Document_Preview>, through
+     * File_Preview_Controller::get_preview_info(), after its gate): if the preview is missing for
+     * a reason the worker could now remedy, set the remedy in motion. True when a retry is now
+     * under way - the blob is queued, or brought due now with the worker kicked - so the page can
+     * say "Preparing preview..." instead of showing a failure that is about to be revisited.
+     *
+     * THE CASES, read from the row:
+     *   RENDERED, rendition file gone   the rendition cache evicted it. requeue_render(): the
+     *                                   blob owes a fresh render with a full set of attempts.
+     *   FAILED SOFTLY (in the queue,    the soft check (soft_failure_for()) is asked again, here,
+     *   a soft failure on record)       on every view. Still failing: nothing changes - the
+     *                                   backoff, its due time and its count stand. Passing: the
+     *                                   blob is made due now and the worker kicked.
+     *   FAILED HARD (in the queue, no   made due now and the worker kicked, but only when its
+     *   soft failure on record)         last counted attempt is at least retry_after_minutes old
+     *                                   (or none is on record) - a view never shortens the
+     *                                   interval between two counted attempts.
+     *   anything else                   nothing: PENDING is already queued; NOT_REQUIRED has no
+     *                                   rendition to make; a FAILED blob out of the queue has
+     *                                   spent its attempts and only an operator puts it back.
+     * A rendition whose renderer is switched off (or that no renderer matches any more) is never
+     * retried from here: the worker would only defer it, and the page would wait for nothing.
+     *
+     * WHAT A VIEW NEVER DOES. It never grants an attempt: the attempt the worker then makes is
+     * charged like any other (charge_work_attempt()), so a hard-failing document still gets
+     * rsx.documents.max_attempts in all, however often it is viewed. It never runs a conversion
+     * or a tool in the request: the soft check only LOOKS (an executable, an image, a readable
+     * file), and the work happens in the worker.
+     *
+     * CONCURRENT VIEWS ARE HARMLESS. Every write here is a guarded set UPDATE
+     * (pull_work_forward() moves only a blob still waiting; requeue_render() writes the same
+     * values twice), the worker's charge lets exactly one process take an attempt, and the kick
+     * is the #[Exclusive] drain, which coalesces into one pass. A blob already due when the view
+     * arrives is kicked anyway - its due time is right, the drain may simply not be running.
+     *
+     * Thumbnails do not call this: a list of thumbnails is not somebody looking at a document.
+     *
+     * @param File_Storage_Model $storage
+     * @return bool
+     */
+    public static function attend_view(File_Storage_Model $storage): bool
+    {
+        $status = (int) $storage->render_status_id;
+
+        if ($status === File_Storage_Model::RENDER_STATUS_RENDERED) {
+            $renderer = static::renderer_for_storage($storage);
+            if ($renderer === null || !$renderer::is_enabled()) {
+                return false;
+            }
+            if (file_exists(static::rendition_path($storage, $renderer))) {
+                return false;
+            }
+
+            $storage->requeue_render();
+
+            return true;
+        }
+
+        // Only a FAILED rendition still in the queue is the worker's to retry, and only when the
+        // pass would actually attempt it.
+        if ($status !== File_Storage_Model::RENDER_STATUS_FAILED || $storage->process_due_at === null) {
+            return false;
+        }
+
+        $renderer = static::renderer_for_storage($storage);
+        if ($renderer === null || !$renderer::is_enabled()) {
+            return false;
+        }
+
+        if ($storage->is_soft_failed()) {
+            if (static::soft_failure_for($storage) !== null) {
+                return false;
+            }
+        } elseif (!static::__last_attempt_is_old_enough($storage)) {
+            return false;
+        }
+
+        // Moved when it was still waiting; already due is the same answer - the work is owed now.
+        $storage->pull_work_forward();
+        static::kick();
+
+        return true;
+    }
+
+    /**
+     * True when this blob's last counted attempt is at least one retry interval ago, or none is
+     * on record - judged on the database's clock, as every queue time is.
+     *
+     * @param File_Storage_Model $storage
+     * @return bool
+     */
+    private static function __last_attempt_is_old_enough(File_Storage_Model $storage): bool
+    {
+        $minutes = File_Storage_Model::work_retry_after_minutes();
+
+        return File_Storage_Model::where('id', $storage->id)
+            ->where(function ($query) use ($minutes) {
+                $query->whereNull('process_last_attempt_at')
+                    ->orWhere('process_last_attempt_at', '<=', DB::raw("NOW(3) - INTERVAL {$minutes} MINUTE"));
+            })
+            ->exists();
     }
 
     /**
@@ -501,6 +707,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
             'reason' => $reason,
             'attempt' => (int) $storage->process_attempt_count,
             'max_attempts' => File_Storage_Model::work_max_attempts(),
+            'soft_failures' => (int) $storage->process_soft_failure_count,
             'next_attempt_at' => $storage->process_due_at,
             'render_label' => (string) $storage->render_status_id__label,
         ];
@@ -521,19 +728,116 @@ class Document_Render_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * True when this blob's rendition can be produced on this box right now.
+     * True when this blob's rendition can be attempted on this box right now: its renderer is
+     * switched on (Rsx_Document_Renderer_Abstract::is_enabled()).
      *
-     * A SPREADSHEET RENDERS WITHOUT LIBREOFFICE, so the master switch does not gate it:
-     * PhpSpreadsheet reads the workbook in-process. A box with soffice absent or disabled still
-     * previews its workbooks, and only loses the formats that genuinely need it.
+     * The switch is the RENDERER's, so a type that needs no LibreOffice - a spreadsheet, which
+     * PhpSpreadsheet reads in-process - still previews on a box with soffice absent or
+     * disabled, and only the formats that genuinely need it wait.
+     *
+     * A blob whose type no renderer matches is attempted, so that render_storage() records
+     * why it failed rather than leaving it waiting for a switch that does not exist.
      *
      * @param File_Storage_Model $storage
      * @return bool
      */
     private static function __can_render(File_Storage_Model $storage): bool
     {
-        return (bool) config('rsx.libreoffice.enabled', true)
-            || Spreadsheet_Rendition::handles_extension(static::representative_extension($storage));
+        $renderer = static::renderer_for_storage($storage);
+
+        return $renderer === null || $renderer::is_enabled();
+    }
+
+    /**
+     * The renderer class (FQCN) rsx.documents.renderers registers for a pipeline mime, or null
+     * when no pattern matches - a type that gets no rendition. Resolved through Rsx_Mime_Map
+     * (an application entry beats a framework entry; the most specific pattern wins).
+     *
+     * @param string|null $mime A PIPELINE mime (File_Attachment_Model::pipeline_mime()).
+     * @return string|null
+     */
+    public static function renderer_for_mime(?string $mime): ?string
+    {
+        if ($mime === null || $mime === '') {
+            return null;
+        }
+
+        $simple_name = Rsx_Mime_Map::match('rsx.documents.renderers', $mime);
+
+        return $simple_name === null ? null : static::__resolve_renderer_fqcn($simple_name);
+    }
+
+    /**
+     * The renderer for a blob: renderer_for_mime() over the blob's pipeline mime
+     * (pipeline_mime()).
+     *
+     * @param File_Storage_Model $storage
+     * @return string|null FQCN, or null when no renderer matches or no attachment names the blob.
+     */
+    public static function renderer_for_storage(File_Storage_Model $storage): ?string
+    {
+        return static::renderer_for_mime(static::pipeline_mime($storage));
+    }
+
+    /**
+     * The rendition format a pipeline mime renders to ('pdf' or 'html'), or null when no
+     * renderer matches it. What decides which rendition endpoint serves an attachment and where
+     * its rendition is cached.
+     *
+     * @param string|null $mime A PIPELINE mime.
+     * @return string|null
+     */
+    public static function rendition_format_for_mime(?string $mime): ?string
+    {
+        $renderer = static::renderer_for_mime($mime);
+
+        return $renderer === null ? null : $renderer::rendition_format();
+    }
+
+    /**
+     * Where a blob's rendition from this renderer is cached: the HTML grid path for an 'html'
+     * renderer, the PDF path otherwise (File_Preview_Controller owns both spellings).
+     *
+     * @param File_Storage_Model $storage
+     * @param string $renderer FQCN of a Rsx_Document_Renderer_Abstract.
+     * @return string
+     */
+    public static function rendition_path(File_Storage_Model $storage, string $renderer): string
+    {
+        return $renderer::rendition_format() === 'html'
+            ? File_Preview_Controller::sheet_rendition_cache_path($storage)
+            : File_Preview_Controller::rendition_cache_path($storage);
+    }
+
+    /**
+     * Resolve a simple renderer class name from rsx.documents.renderers to its FQCN via the
+     * manifest, validating that it is a Rsx_Document_Renderer_Abstract and that its rendition
+     * format is one the framework serves. Fail loud on a bogus config entry.
+     *
+     * @param string $simple_name
+     * @return string FQCN
+     */
+    private static function __resolve_renderer_fqcn(string $simple_name): string
+    {
+        if (!Manifest::php_is_subclass_of($simple_name, 'Rsx_Document_Renderer_Abstract')) {
+            shouldnt_happen("rsx.documents.renderers names '{$simple_name}', which is not a Rsx_Document_Renderer_Abstract");
+        }
+
+        $metadata = Manifest::php_get_metadata_by_class($simple_name);
+        $fqcn = $metadata['fqcn'] ?? null;
+        if ($fqcn === null) {
+            shouldnt_happen("Renderer class '{$simple_name}' not found in manifest");
+        }
+
+        $format = $fqcn::rendition_format();
+        if ($format === 'html' && $simple_name !== 'Spreadsheet_Document_Renderer') {
+            shouldnt_happen("Renderer '{$simple_name}' declares rendition_format() 'html', which is reserved to Spreadsheet_Document_Renderer - a document renderer produces a PDF");
+        }
+        if ($format !== 'html' && $format !== 'pdf') {
+            shouldnt_happen("Renderer '{$simple_name}' declares rendition_format() '{$format}' - a document renderer produces a PDF");
+        }
+
+        return $fqcn;
     }
 
     /**
@@ -609,11 +913,14 @@ class Document_Render_Service extends Rsx_Service_Abstract
         $owes_render = static::__owes_render($storage);
 
         // Resolved once, and only when a render is actually owed - it is a query.
-        $extension = $owes_render ? static::representative_extension($storage) : null;
-        $is_spreadsheet = $owes_render && Spreadsheet_Rendition::handles_extension($extension);
+        $attachment = $owes_render ? static::__representative_attachment($storage) : null;
+        $extension = static::__extension_of($attachment);
+        $mime = $attachment === null ? null : $attachment->pipeline_mime();
+        $renderer = static::renderer_for_mime($mime);
 
-        // A spreadsheet renders without LibreOffice - see __can_render().
-        $needs_render = $owes_render && ($is_spreadsheet || config('rsx.libreoffice.enabled', true));
+        // The renderer's own switch - see __can_render(). No renderer at all is attempted, and
+        // fails below with the reason.
+        $needs_render = $owes_render && ($renderer === null || $renderer::is_enabled());
         $needs_extract = (int) $storage->is_indexed === 0;
 
         $rendition_path = null;
@@ -633,24 +940,25 @@ class Document_Render_Service extends Rsx_Service_Abstract
             }
 
             if ($needs_render) {
-                $rendition_path = $is_spreadsheet
-                    ? File_Preview_Controller::sheet_rendition_cache_path($storage)
-                    : File_Preview_Controller::rendition_cache_path($storage);
+                if ($renderer === null) {
+                    throw new Exception(
+                        'no document renderer is registered for this blob\'s type ('
+                        . ($mime ?? 'no attachment names it') . ') in rsx.documents.renderers'
+                    );
+                }
+
+                $rendition_path = static::rendition_path($storage, $renderer);
 
                 // Short-circuit: the rendition already exists - a re-queued blob can find the
                 // file of an earlier render still in the cache. No conversion runs.
                 if (!file_exists($rendition_path)) {
                     // THE RENDER STAGE, under its bound (rsx.documents.stage_seconds).
-                    Document_Stage_Bound::run('render', function () use ($is_spreadsheet, $source_path, $extension, $rendition_path) {
+                    Document_Stage_Bound::run('render', function () use ($renderer, $source_path, $extension, $rendition_path) {
                         if (static::$_testing_render_stage !== null) {
                             (static::$_testing_render_stage)();
                         }
 
-                        if ($is_spreadsheet) {
-                            Spreadsheet_Rendition::render($source_path, $rendition_path);
-                        } else {
-                            static::__convert_to_pdf($source_path, $extension, $rendition_path);
-                        }
+                        $renderer::render($source_path, $rendition_path, $extension);
                     });
                 }
             } elseif ((int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_RENDERED) {
@@ -775,18 +1083,47 @@ class Document_Render_Service extends Rsx_Service_Abstract
      */
     public static function representative_extension(File_Storage_Model $storage): ?string
     {
+        return static::__extension_of(static::__representative_attachment($storage));
+    }
+
+    /**
+     * The PIPELINE mime of this blob - what the renderer registry is keyed on: the
+     * representative attachment's pipeline_mime() (its document extension first, its stored
+     * sniff otherwise). Null for an orphan blob.
+     *
+     * @param File_Storage_Model $storage
+     * @return string|null
+     */
+    public static function pipeline_mime(File_Storage_Model $storage): ?string
+    {
+        $attachment = static::__representative_attachment($storage);
+
+        return $attachment === null ? null : $attachment->pipeline_mime();
+    }
+
+    /**
+     * The attachment that speaks for a blob's type: the earliest one whose extension is a known
+     * document type (a blob shared by a .docx and a .zip upload renders as the docx), else the
+     * earliest with any extension, else the earliest at all. Null for an orphan blob.
+     *
+     * Read withTrashed() and without the site scope: the render is keyed on the deduplicated
+     * blob, which may back attachments in several sites and in the retention window, and a task
+     * carries no site context (see notify_attachments()).
+     *
+     * @param File_Storage_Model $storage
+     * @return File_Attachment_Model|null
+     */
+    private static function __representative_attachment(File_Storage_Model $storage): ?File_Attachment_Model
+    {
         $document_extensions = array_keys(config('rsx.files.document_mime_by_extension', []));
 
-        // Cross-site blob, no site context in a task: see notify_attachments().
         return File_Attachment_Model::without_site_scope(function () use ($storage, $document_extensions) {
-            // withTrashed(): the render is keyed on the deduplicated blob, so a representative
-            // extension is valid regardless of any one attachment's soft-delete state.
             $preferred = File_Attachment_Model::withTrashed()
                 ->where('file_storage_id', $storage->id)
                 ->whereIn('file_extension', $document_extensions)
                 ->orderBy('id')
-                ->value('file_extension');
-            if ($preferred !== null && $preferred !== '') {
+                ->first();
+            if ($preferred !== null) {
                 return $preferred;
             }
 
@@ -795,10 +1132,33 @@ class Document_Render_Service extends Rsx_Service_Abstract
                 ->whereNotNull('file_extension')
                 ->where('file_extension', '!=', '')
                 ->orderBy('id')
-                ->value('file_extension');
+                ->first();
+            if ($any !== null) {
+                return $any;
+            }
 
-            return ($any === null || $any === '') ? null : $any;
+            return File_Attachment_Model::withTrashed()
+                ->where('file_storage_id', $storage->id)
+                ->orderBy('id')
+                ->first();
         });
+    }
+
+    /**
+     * An attachment's extension, or null when there is no attachment or it has none.
+     *
+     * @param File_Attachment_Model|null $attachment
+     * @return string|null
+     */
+    private static function __extension_of(?File_Attachment_Model $attachment): ?string
+    {
+        if ($attachment === null) {
+            return null;
+        }
+
+        $extension = (string) $attachment->file_extension;
+
+        return $extension === '' ? null : $extension;
     }
 
     /**
@@ -839,95 +1199,6 @@ class Document_Render_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Convert a source document to PDF via headless LibreOffice, publishing atomically into the
-     * rendition cache. Fail loud - render_storage() turns a throw into a recorded FAILED.
-     *
-     * @param string $source_path Resident blob path (extensionless, content-addressed).
-     * @param string|null $extension The representative attachment's real extension.
-     * @param string $cache_path Destination path for the published PDF rendition.
-     * @return void
-     * @throws Exception
-     */
-    protected static function __convert_to_pdf(string $source_path, ?string $extension, string $cache_path): void
-    {
-        // Sandboxed, the binary name resolves on the image's PATH and there is nothing to
-        // discover on the host; unsandboxed, it is the host path discovery finds.
-        if (Document_Sandbox::is_docker()) {
-            $soffice = 'soffice';
-        } else {
-            $soffice = Libreoffice::find_soffice();
-            if ($soffice === null) {
-                throw new Exception('LibreOffice (soffice) is not installed or not configured');
-            }
-        }
-
-        // Lazy-create the rendition cache directory.
-        $dir = dirname($cache_path);
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
-
-        // Private work dir - LibreOffice needs an isolated user profile and an output dir.
-        $work_dir = sys_get_temp_dir() . '/rsx_soffice_pdf_' . bin2hex(random_bytes(8));
-        if (!mkdir($work_dir, 0700, true) && !is_dir($work_dir)) {
-            throw new Exception("Failed to create LibreOffice work dir: {$work_dir}");
-        }
-
-        try {
-            // Stage the extensionless blob under its real extension so soffice reliably detects the
-            // input format; soffice names its output after this basename.
-            $safe_ext = preg_replace('/[^a-z0-9]/i', '', (string) $extension);
-            if ($safe_ext === '') {
-                $safe_ext = 'bin';
-            }
-            $staged = $work_dir . '/source.' . $safe_ext;
-            if (!copy($source_path, $staged)) {
-                throw new Exception('Failed to stage source document for PDF rendition');
-            }
-
-            // Every path here is inside the work dir, which the sandbox mounts at its own
-            // absolute path - so ONE argv is correct both on the host and in the container.
-            $command = Document_Sandbox::command([
-                $soffice,
-                '-env:UserInstallation=file://' . $work_dir . '/profile',
-                '--headless',
-                '--convert-to',
-                'pdf',
-                '--outdir',
-                $work_dir,
-                $staged,
-            ], $work_dir);
-
-            // soffice runs inside the render stage and is bounded with it: a converter that
-            // wedges on a malformed document is stopped when the stage's limit expires.
-            $process = Document_Stage_Bound::run_process($command);
-
-            if (!$process->isSuccessful()) {
-                throw new Exception('LibreOffice PDF conversion failed: ' . trim($process->getErrorOutput()));
-            }
-
-            $pdf_path = $work_dir . '/source.pdf';
-            if (!file_exists($pdf_path)) {
-                throw new Exception('LibreOffice produced no PDF rendition');
-            }
-
-            // Atomic publish: copy into a temp file BESIDE the cache path (same filesystem), then
-            // rename over the destination. The work dir may be on a different filesystem, so a
-            // direct rename from there is not guaranteed atomic.
-            $tmp = $cache_path . '.tmp.' . bin2hex(random_bytes(4));
-            if (!copy($pdf_path, $tmp)) {
-                throw new Exception('Failed to write rendition temp file');
-            }
-            if (!rename($tmp, $cache_path)) {
-                @unlink($tmp);
-                throw new Exception('Failed to publish rendition file');
-            }
-        } finally {
-            rmdir_recursive($work_dir);
-        }
-    }
-
-    /**
      * rsx:health probe: how much render/extraction work is due, waiting for a retry, or failed.
      *
      * A public static `#[Health_Check('label')]` (bare marker attribute - never a defined class)
@@ -952,7 +1223,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
             ->where('status_id', Search_Index_Model::STATUS_FAILED)
             ->count();
 
-        $summary = "due={$queue['due']}, retrying={$queue['retrying']}, failed={$queue['failed']}, extract_failed={$extract_failed}";
+        $summary = "due={$queue['due']}, retrying={$queue['retrying']}, soft_failed={$queue['soft_failed']}, failed={$queue['failed']}, extract_failed={$extract_failed}";
 
         // A large queue of DUE work means the one-at-a-time worker is not keeping up (or not
         // running). Blobs waiting out a retry interval are not backlog: nothing can take them yet.
@@ -961,6 +1232,16 @@ class Document_Render_Service extends Rsx_Service_Abstract
                 'status' => 'WARN',
                 'detail' => $summary . ' - large backlog',
                 'remediation' => 'the render worker may not be running - check rsx:task:process and php artisan rsx:documents:status',
+            ];
+        }
+
+        // Soft failures first: they are the environment, not the documents, and fixing it is the
+        // whole remedy - the worker picks them up again by itself.
+        if ($queue['soft_failed'] > 0) {
+            return [
+                'status' => 'WARN',
+                'detail' => $summary . " - {$queue['soft_failed']} document(s) cannot be processed: a tool or the source file is unavailable",
+                'remediation' => 'php artisan rsx:documents:failed names what is missing (soffice, pdftotext, the sandbox image, a source file); once it is fixed the worker processes them on its next check, with no attempt lost',
             ];
         }
 
@@ -978,9 +1259,14 @@ class Document_Render_Service extends Rsx_Service_Abstract
     /**
      * The work queue in numbers.
      *
-     * @return array{due: int, retrying: int, deferred: int, failed: int, next_retry_at: ?string}
+     * due, retrying, soft_failed and deferred partition the queue: every blob in it is in exactly
+     * one of them.
+     *
+     * @return array{due: int, retrying: int, soft_failed: int, deferred: int, failed: int, next_retry_at: ?string}
      *   due            may be taken now.
      *   retrying       a failed attempt is waiting out its retry interval.
+     *   soft_failed    its last pass could not run (a tool or the source unavailable): nothing
+     *                  charged, waiting out its soft backoff before the next check.
      *   deferred       owes work that is switched off; offered again later, nothing charged.
      *   failed         render FAILED and out of the queue: attempts spent, an operator's to re-queue.
      *   next_retry_at  when the earliest waiting blob comes due, or null.
@@ -991,8 +1277,9 @@ class Document_Render_Service extends Rsx_Service_Abstract
 
         return [
             'due' => File_Storage_Model::work_due_query()->count(),
-            'retrying' => $waiting()->where('process_attempt_count', '>', 0)->count(),
-            'deferred' => $waiting()->where('process_attempt_count', 0)->count(),
+            'retrying' => $waiting()->where('process_soft_failure_count', 0)->where('process_attempt_count', '>', 0)->count(),
+            'soft_failed' => $waiting()->where('process_soft_failure_count', '>', 0)->count(),
+            'deferred' => $waiting()->where('process_soft_failure_count', 0)->where('process_attempt_count', 0)->count(),
             'failed' => File_Storage_Model::where('render_status_id', File_Storage_Model::RENDER_STATUS_FAILED)
                 ->whereNull('process_due_at')
                 ->count(),

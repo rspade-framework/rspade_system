@@ -7,12 +7,11 @@
 
 namespace App\RSpade\Core\TwoFactor;
 
-use Illuminate\Support\Facades\Log;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
+use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\TwoFactor\Passkeys;
 use App\RSpade\Core\TwoFactor\Portal_Two_Factor_Credential_Model;
 use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Abstract;
@@ -37,12 +36,11 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Abstract;
  *   global, so the site check is what keeps a passkey minted on one tenant's portal from
  *   signing its owner in to another's. A refusal answers exactly like a wrong answer.
  *
- *   RECORDING. The portal has no login history - _login_history is the staff identity's
- *   store. A failure feeds Login_Throttle::record_failure() directly (so the brute-force
- *   budget is shared with the portal's password form and spent exactly once), and a success
- *   records nothing beyond the last_login stamp Portal_Session::set_portal_user_id() writes.
- *   A passkey ENROLLMENT outcome (begun, enrolled, failed, abandoned) is one
- *   Log::info('Portal passkey enrollment') line where staff get a _login_history row.
+ *   RECORDING. Into the portal's own login history, Portal_Login_History
+ *   (_portal_login_history), under the same statuses staff write to theirs: a success and a
+ *   passkey ENROLLMENT outcome (begun, enrolled, failed, abandoned) are rows, a failure is
+ *   Portal_Login_History::record_failure() - which feeds Login_Throttle, so the brute-force
+ *   budget is shared with the portal's password form and spent exactly once.
  *
  *   IMPERSONATION. "View as Client" is Portal_Session::is_impersonating(), and every
  *   enrollment and removal refuses under it: a staff member viewing a client's portal must
@@ -191,16 +189,14 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
         return 'portal.two_factor.' . $name;
     }
 
-    /**
-     * Nothing to record: the portal has no login history. See the class docblock.
-     */
     protected static function __record_success(Rsx_Model_Abstract $identity, string $email): void
     {
+        Portal_Login_History::record_success((int) $identity->id, $email);
     }
 
     /**
-     * The throttle, directly - the portal's failures have no history store to feed it
-     * through. Exactly once per failure.
+     * Portal_Login_History::record_failure() - which ALREADY feeds Login_Throttle, so the
+     * throttle is never touched directly here.
      */
     protected static function __record_failure(
         string $email,
@@ -208,12 +204,11 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
         ?int $identity_id,
         ?string $reason = null
     ): void {
-        Login_Throttle::record_failure();
+        Portal_Login_History::record_failure($email, $status, $reason, $identity_id);
     }
 
     /**
-     * One log line - the portal has no login history to write a row to. See the class
-     * docblock.
+     * A _portal_login_history row - the portal user's history, where its sign-ins already are.
      */
     protected static function __record_passkey_enrollment(
         int $identity_id,
@@ -222,13 +217,6 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
         ?string $reason,
         array $client_context
     ): void {
-        Log::info('Portal passkey enrollment', [
-            'portal_user_id' => $identity_id,
-            'email' => $email,
-            'status' => $status,
-            'reason' => $reason,
-            'ip_address' => $client_context['ip_address'] ?? null,
-            'user_agent' => $client_context['user_agent'] ?? null,
-        ]);
+        Portal_Login_History::record_passkey_enrollment($identity_id, $email, $status, $reason, $client_context);
     }
 }

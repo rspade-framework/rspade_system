@@ -76,7 +76,8 @@ of framework classes:
 
     who is signed in where        Session::get_sessions_for_user()
     sign-in history               Login_History::list_page() (a grid page),
-                                  get_history_for_user() (the newest few)
+                                  get_history_for_user() (the newest few);
+                                  Portal_Login_History, the same, for portal users
     who performed a logged act    Session::get_audit_session()
     a record's change history     $record->revisions(), Revision_Model::diff()
     background runs               Task_Run_Model::find_page(), Rsx_Task
@@ -252,8 +253,9 @@ _ip_addresses
   Managed by: Ip_Address (rsx:man ip_addresses)
   Records: The address plus geocode fields (city, state, country, latitude,
            longitude), null until a geocoder fills them
-  Referenced by: _sessions, _login_history, _audit_sessions, _file_attachments,
-                 _api_request_log, _transactions (ON DELETE RESTRICT)
+  Referenced by: _sessions, _login_history, _portal_login_history,
+                 _audit_sessions, _file_attachments, _api_request_log,
+                 _transactions (ON DELETE RESTRICT)
   Lifecycle: Never deleted
   Developer API: Ip_Address::describe(), Ip_Address::join()
 
@@ -396,7 +398,7 @@ THE FRAMEWORK CONTRACT ON APPLICATION TABLES
 -------------------------------------------
 An application-owned table - one with no leading underscore - may be altered by
 the application that owns it. Seven of them are nonetheless MODELLED BY THE
-FRAMEWORK, which reads and writes named columns on them, joins them, and in six
+FRAMEWORK, which reads and writes named columns on them, joins them, and in seven
 places points a foreign key from one of its own `_`-prefixed tables into them:
 
   users, login_users, sites, portal_users, user_profiles, countries, regions
@@ -408,12 +410,13 @@ login_users.email and login_users.password (every sign-in),
 login_users.dark_mode and .timezone (the per-identity preferences),
 and sites.id 0 (the sessionless site).
 
-The six foreign keys INTO application-owned tables are the contract at its
+The seven foreign keys INTO application-owned tables are the contract at its
 strongest, because the framework's own storage cannot be written at all if the
 target is gone: _file_attachments.site_id -> sites.id,
 _sessions.portal_user_id -> portal_users.id,
 _sso_identities.login_user_id -> login_users.id,
 _two_factor_credentials.login_user_id -> login_users.id,
+_portal_login_history.portal_user_id -> portal_users.id,
 _user_permissions.user_id -> users.id and
 _portal_notifications.portal_user_id -> portal_users.id.
 

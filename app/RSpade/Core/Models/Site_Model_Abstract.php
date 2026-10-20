@@ -71,15 +71,6 @@ abstract class Site_Model_Abstract extends Rsx_Model_Abstract
     ];
 
     /**
-     * Column metadata for special handling
-     *
-     * @var array
-     */
-    protected $columnMeta = [
-        // No special metadata needed for sites table columns yet
-    ];
-
-    /**
      * Register model event guards.
      *
      * The Default site (id 0) is the FK target for sessionless (CLI / #[Task])

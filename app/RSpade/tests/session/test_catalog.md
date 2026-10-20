@@ -511,3 +511,41 @@ refuses a cross-site save or delete.
 | SESSION-IMP-05 | the daily task retires a staff impersonation older than `rsx.sessions.impersonation_max_days`, keeping whose identity it carried and who acted as them | php | impersonations started 8 and 6 days ago and the user's own session, limit 7 | the 8-day row inactive with both identities kept; the others active | implemented | 2026-10-11 |
 | SESSION-IMP-06 | an old portal View as Client loses its portal properties only | php | a staff row viewing as a portal user for 9 days | row active, staff identity kept, portal properties and impersonation columns null | implemented | 2026-10-11 |
 | SESSION-IMP-07 | `0` switches the impersonation age limit off | php | a 400-day impersonation, limit 0 | still active | implemented | 2026-10-11 |
+
+## Password_Reset_Required_Test (php, default isolation) - the staff refusal and the flag's lifecycle
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| prr-01 | a flagged identity's correct password throws, carrying the identity, and is recorded | password_reset_required set, right password | Auth_Password_Reset_Required_Exception (MESSAGE, ->identity); one FAILED_PASSWORD_RESET_REQUIRED row, no success row, no failure count; nobody signed in; the reader labels it | implemented |
+| prr-02 | the refusal is recorded even with record: false | the same, record: false | throws; the refusal row | implemented |
+| prr-03 | a wrong password on a flagged identity is an ordinary null | wrong password | null, no row, one failure count | implemented |
+| prr-04 | a flagged identity with no active membership is still null | membership disabled | null, no refusal row, counted (FAILED_DISABLED) | implemented |
+| prr-05 | an unflagged identity is unaffected | right password | the identity, one SUCCESS row | implemented |
+| prr-06 | a password change clears the staff flag in the same write | new hash saved | stored flag 0, instance false | implemented |
+| prr-07 | any other change keeps the staff flag | timezone saved | stored flag 1 | implemented |
+| prr-08 | a new password saved WITH the flag keeps it | temporary password + require_password_reset() | stored flag 1 | implemented |
+| prr-09 | the portal model clears its flag on a password change, and only then | status change, then set_password() + save | 1 after the status change, 0 after the password | implemented |
+
+## Portal_Login_History_Test (php, default isolation) - the portal binding of the history store
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| plh-01 | rows carry the portal user and its site; the reader answers them labelled, newest first, with no location | record_success + record_refusal outside a portal request | site_id from the portal user; two rows, refusal first, labels; location null; no failure count | implemented |
+| plh-02 | the realms never read each other's rows | a staff and a portal row under the same numeric id | each reader answers its own realm only | implemented |
+| plh-03 | list_page() takes 'portal_user_id' and refuses the staff key | three rows, limit 2; login_user_id | total 3, two rows; InvalidArgumentException naming Portal_Login_History::list_page | implemented |
+| plh-04 | the retention sweep prunes portal rows on the same window | one row aged 400 days | aged row gone, recent kept | implemented |
+| plh-05 | a user-agent string a portal row names survives the sweep | an enrollment row's agent aged 10 days | the _user_agents row kept | implemented |
+
+## Model_Never_Export_Union_Test (php, no DB) - $neverExport is one control, unioned up the chain
+
+Fixture chain `Never_Export_Fixture_Base_Model_Abstract` -> `Never_Export_Fixture_Model` (beside the
+test, built unsaved). User_Payload_Never_Export_Test covers the user invite columns.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| nexp-01 | a subclass list ADDS to its parent's | fixture leaf declaring one column, base another | never_exported_columns() has both; toArray() strips both, keeps the rest | implemented |
+| nexp-02 | a subclass list never leaks upward | the base's never_exported_columns() | the base's own column only | implemented |
+| nexp-03 | the identity secrets are on the list | Login_User_Model, Portal_User_Model | password + remember_token; password + metadata (membership, so an override may add) | implemented |
+| nexp-04 | makeVisible() cannot reveal a staff identity secret | makeVisible(['password','remember_token']) | neither key, no hash in the JSON | implemented |
+| nexp-05 | makeVisible() cannot reveal a portal password | makeVisible('password') | no password key | implemented |
+| nexp-06 | a portal user's metadata never serializes, server code still reads it | set_metadata() | no metadata key or value in toArray()/JSON; get_metadata() answers | implemented |

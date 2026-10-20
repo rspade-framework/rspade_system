@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
  *
  *     _sessions.ip_address_id                    the address that created the session row
  *     _login_history.ip_address_id               the address a sign-in came from
+ *     _portal_login_history.ip_address_id        the address a portal sign-in came from
  *     _audit_sessions.ip_address_id              the address of an acting context
  *     _file_attachments.created_by_ip_address_id the address an upload came from
  *     _api_request_log.ip_address_id             the address of an external API call

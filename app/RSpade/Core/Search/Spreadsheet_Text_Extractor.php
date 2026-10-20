@@ -203,4 +203,15 @@ class Spreadsheet_Text_Extractor extends Rsx_Text_Extractor_Abstract
 
         return mb_convert_encoding($text, 'UTF-8', 'UTF-8');
     }
+
+    /**
+     * The source cannot be read. Nothing else is checked: the reader is in-process.
+     *
+     * @param string $source_path
+     * @return string|null
+     */
+    public static function soft_failure(string $source_path): ?string
+    {
+        return static::source_unreadable($source_path);
+    }
 }

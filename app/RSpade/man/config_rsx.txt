@@ -624,8 +624,10 @@ FILE SUBSYSTEM
         'kill_seconds' => 60,         # SANCTIONED timeout: the document's child process
         'max_attempts' => 3,          # attempts per entry into the queue
         'retry_after_minutes' => 30,  # wait between a failed attempt and the next
+        'soft_retry_max_minutes' => 10080,   # longest wait between soft-failure checks
         'drain_yield_after_minutes' => 20,   # PACING: a pass yields after this long...
         'drain_resume_after_minutes' => 10,  # ...and sets its next pass this far ahead
+        'renderers' => [ mime-glob => Renderer_Class, ... ],  # the rendition step
     ]
 
     The document worker (Document_Render_Service::render_pending): preview
@@ -634,6 +636,22 @@ FILE SUBSYSTEM
     FAILED and retried retry_after_minutes later, and after max_attempts the blob
     stays FAILED until an operator re-queues it (rsx:documents:rerender /
     rsx:search:reindex).
+
+    A SOFT failure - the renderer's or extractor's soft_failure() check, asked
+    before the attempt, naming a tool or source that is not available - is
+    recorded FAILED but charges nothing, and the blob is checked again
+    retry_after_minutes later, the wait doubling after every consecutive soft
+    failure up to soft_retry_max_minutes (one week), for as long as it takes. A
+    pass that runs restarts the doubling. soft_retry_max_minutes is a schedule,
+    not a timeout; a whole number of minutes, never below retry_after_minutes
+    (either throws).
+
+    renderers maps a document's pipeline mime to a Rsx_Document_Renderer_Abstract,
+    resolved by MIME MAP PRECEDENCE (an application entry beats a framework one;
+    the most specific pattern wins). It is what makes a type previewable by
+    rendition: a type matching nothing gets none. Ships the workbook mimes ->
+    Spreadsheet_Document_Renderer (HTML grid) and the Office/ODF/RTF mimes ->
+    Libreoffice_Document_Renderer (PDF). See rsx:man documents, RENDERERS.
 
     stage_seconds and kill_seconds are SANCTIONED TIMEOUTS, justified in full
     beside the keys in config/rsx.php. Both bound a parse of ONE uploaded file -
@@ -690,7 +708,9 @@ FILE SUBSYSTEM
     Background full-text extraction into _search_indexes (keyed on the
     deduplicated blob), drained by the SAME worker that produces PDF renditions.
     'enabled' is also the kick switch for that worker. Bump extractor_version
-    then rsx:search:reindex --below-version=N to re-extract.
+    then rsx:search:reindex --below-version=N to re-extract. 'extractors'
+    resolves by MIME MAP PRECEDENCE (rsx:man documents): an application entry
+    beats a framework one, the most specific pattern wins.
 
     REMOVED 2026-08-22 - delete any override you carry: search.timeout.
     pdftotext is bounded by rsx.documents.stage_seconds.
@@ -698,15 +718,17 @@ FILE SUBSYSTEM
 
     'preview' => [
         'viewers' => [ mime-glob => Viewer_Component, ... ],  # '*' => Icon_Viewer
-        'convertible' => [ ...office mimes... ],
         'quota_max_bytes' => 200 * 1024 * 1024,   # 200MB LRU cap
     ]
 
     Server-side viewer resolution + the cached PDF rendition for the
-    Document_Preview component. First matching viewer glob wins. 'convertible'
-    is read TWICE: it decides whether a new attachment queues its blob for
-    rendering, and it decides what the rendition endpoint will serve. The
-    endpoint is serve-only - a web request never converts anything.
+    Document_Preview component. Viewers resolve by MIME MAP PRECEDENCE (rsx:man
+    documents): an application entry beats a framework one, the most specific
+    pattern wins, '*' is the fallback. Which types get a rendition - and so what
+    the rendition endpoint serves - is rsx.documents.renderers. The endpoint is
+    serve-only - a web request never converts anything. Setting the retired key
+    'convertible' in the application config is refused at boot, naming
+    rsx.documents.renderers.
 
     REMOVED 2026-08-22 - delete any override you carry: rendition_timeout.
     See: php artisan rsx:man document_search
@@ -727,11 +749,11 @@ FILE SUBSYSTEM
     Two-tier thumbnail cache: named presets + ad-hoc dynamic sizes, both
     LRU-evicted. presets ship profile/gallery/icon_small/icon_large.
 
-    'renderers' ships image/* and application/pdf, both Imagick_Thumbnail_Renderer.
-    OFFICE MIMES ARE DELIBERATELY ABSENT: their pixels come from the PDF rendition
-    the background worker produced, rasterized through the application/pdf entry.
-    A renderer entry for .docx would convert a document inside a web request.
-    Libreoffice_Thumbnail_Renderer no longer exists.
+    'renderers' ships image/* and application/pdf, both Imagick_Thumbnail_Renderer,
+    and resolves by MIME MAP PRECEDENCE (rsx:man documents). OFFICE MIMES ARE
+    DELIBERATELY ABSENT: their pixels come from the PDF rendition the background
+    worker produced, rasterized through the application/pdf entry. A renderer
+    entry for .docx would convert a document inside a web request.
     See: php artisan rsx:man thumbnails
 
 TASK SYSTEM

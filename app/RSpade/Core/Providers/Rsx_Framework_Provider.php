@@ -8,10 +8,12 @@
 namespace App\RSpade\Core\Providers;
 
 use Blade;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Request;
 use Illuminate\Support\ServiceProvider;
 use Log;
 use RuntimeException;
+use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Kernels\ManifestKernel;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -65,6 +67,34 @@ class Rsx_Framework_Provider extends ServiceProvider
     protected $defer = false;
 
     /**
+     * rsx config keys the framework has retired, each with what replaced it. An application
+     * config that still sets one is refused at boot (refuse_retired_config_keys()).
+     */
+    public const RETIRED_RSX_CONFIG_KEYS = [
+        'preview.convertible' => "Which types get a preview rendition is now rsx.documents.renderers, a map of"
+            . " mime pattern => renderer class: move each pattern there, naming 'Libreoffice_Document_Renderer'"
+            . ' for a document LibreOffice converts to a PDF. See rsx:man documents.',
+    ];
+
+    /**
+     * Throw when the merged rsx config sets a retired key (RETIRED_RSX_CONFIG_KEYS). The
+     * framework's own config sets none of them, so a hit is always an application file
+     * (rsx/resource/config/rsx.php) or RSX_ADDITIONAL_CONFIG.
+     *
+     * @param array $rsx_config The merged config('rsx') value.
+     * @return void
+     * @throws RuntimeException
+     */
+    public static function refuse_retired_config_keys(array $rsx_config): void
+    {
+        foreach (self::RETIRED_RSX_CONFIG_KEYS as $key => $replacement) {
+            if (Arr::has($rsx_config, $key)) {
+                throw new RuntimeException("rsx.{$key} is no longer read by the framework, and this application's config still sets it. {$replacement}");
+            }
+        }
+    }
+
+    /**
      * Register services
      *
      * @return void
@@ -78,6 +108,10 @@ class Rsx_Framework_Provider extends ServiceProvider
         // Merge framework config defaults
         $package_config = base_path('config/rsx.php');
         $this->mergeConfigFrom($package_config, 'rsx');
+
+        // The framework layer of the rsx config, kept before any application file is merged
+        // over it: Rsx_Mime_Map ranks an application's mime-map entries above the framework's.
+        Rsx_Mime_Map::record_framework_layer('rsx', config('rsx', []));
 
         // Merge application config overrides: every rsx/resource/config/<name>.php is
         // deep-merged over config('<name>') - rsx.php over the framework's rsx config,
@@ -101,6 +135,10 @@ class Rsx_Framework_Provider extends ServiceProvider
             $merged_config = array_merge_deep($current_config, $additional_config);
             config(['rsx' => $merged_config]);
         }
+
+        // A key the framework retired, still set by the application, is a setting that would
+        // silently do nothing - refuse it here, once, with where it went.
+        static::refuse_retired_config_keys(config('rsx', []));
 
         // Remove .claude/CLAUDE.md symlink if in framework developer mode
         // This allows dual CLAUDE.md files: one for framework dev, one for distribution

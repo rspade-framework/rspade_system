@@ -75,7 +75,7 @@ The APPLICATION half of the flow, which the framework deliberately does not own:
 
 - `man/two_factor.txt`
 - `man/two_factor_codes.txt` - the emailed-code recipe; `Two_Factor_Issued_Code_Test` pins the
-  engine half (`$accepts`, `issue_code()`, `pending_identity()`)
+  engine half (`$accepts`, `issue_code()` and its identity-scoped storage, `issued_code_expires_at()`, `pending_identity()`)
 
 ## Testable surface
 

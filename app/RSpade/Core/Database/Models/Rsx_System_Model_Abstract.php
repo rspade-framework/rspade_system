@@ -47,15 +47,4 @@ abstract class Rsx_System_Model_Abstract extends Rsx_Model_Abstract
             'description' => 'Internal system model - not exported to client'
         ];
     }
-    
-    /**
-     * Override to ensure all columns are marked as never export for system models
-     * 
-     * @return array
-     */
-    public function get_never_exported_columns()
-    {
-        // For system models, ALL columns should never be exported
-        return array_keys($this->getAttributes());
-    }
 }

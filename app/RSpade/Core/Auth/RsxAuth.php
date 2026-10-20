@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Auth;
 
 use Illuminate\Support\Facades\Hash;
+use App\RSpade\Core\Auth\Auth_Password_Reset_Required_Exception;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
@@ -68,9 +69,22 @@ class RsxAuth
      * STATUS_FAILED_DISABLED written to the audit trail - so a caller cannot tell the two apart and
      * an application never writes the check itself.
      *
-     * What the framework checks is therefore exactly three things: the address resolves to a live
-     * login identity, the password matches, and at least one active membership (enabled, on an
-     * enabled site) exists.
+     * What the framework checks is therefore exactly four things: the address resolves to a live
+     * login identity, the password matches, at least one active membership (enabled, on an
+     * enabled site) exists, and the identity is not waiting on a password reset.
+     *
+     * PASSWORD RESET REQUIRED - THE ONE REFUSAL THAT IS NOT null. login_users.password_reset_required
+     * (set by the application, or rsx:users:force_password_reset; cleared by the framework when
+     * the password changes) makes this THROW Auth_Password_Reset_Required_Exception, carrying the
+     * identity. It is asked LAST: only after the password matched AND a usable membership was
+     * found, so it discloses nothing to a guesser - an identity the installation would refuse
+     * anyway still answers null, indistinguishable from a wrong password. The refusal is recorded
+     * as a _login_history ROW (STATUS_FAILED_PASSWORD_RESET_REQUIRED, Login_History::record_refusal())
+     * EVEN WHEN $record IS false: the opt-out defers an outcome the caller will know better (a
+     * success that still owes a second factor), and this one is already final - nothing the
+     * caller does next can turn it into a sign-in. It is not a failure in the throttle's sense:
+     * nothing is counted. A login function catches it and points the visitor at the way to a new
+     * password.
      *
      * A SOFT-DELETED identity is therefore refused for free: Login_User_Model uses SoftDeletes, so
      * the global scope excludes trashed rows from the lookup below and a deleted account is
@@ -95,6 +109,8 @@ class RsxAuth
      * @param bool $record Whether to record the outcome to Login_History (default true)
      * @return Login_User_Model|null The identity the credentials prove, or null
      * @throws Auth_Throttled_Exception when this client IP is locked out
+     * @throws Auth_Password_Reset_Required_Exception when the credentials are correct and the
+     *         identity must reset its password first
      */
     public static function verify_credentials(array $credentials, bool $record = true): ?Login_User_Model
     {
@@ -150,6 +166,19 @@ class RsxAuth
             }
 
             return null;
+        }
+
+        // Only now - the password matched and the identity may use the installation - is the
+        // reset flag disclosed: whoever is told already proved they hold the password. Recorded
+        // whatever $record says, because this outcome is final (see the docblock).
+        if ($login_user->is_password_reset_required()) {
+            Login_History::record_refusal(
+                (int) $login_user->id,
+                $email,
+                Login_History::STATUS_FAILED_PASSWORD_RESET_REQUIRED
+            );
+
+            throw new Auth_Password_Reset_Required_Exception($login_user);
         }
 
         if ($record) {

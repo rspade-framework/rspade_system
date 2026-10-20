@@ -33,15 +33,20 @@ operator commands `rsx:documents:status|failed|rerender`).
 
 - `app/RSpade/Core/Files/Document_Render_Service.php` - the `#[Task] #[Exclusive]`
   10-minute worker (`render_pending`, which takes the earliest due blob until none is due),
-  `process_storage()` (charge the attempt, run the child under the kill limit, read the row back
-  and settle it: done / retry / failed / waiting / taken), the `render_storage()` unit of work
+  `process_storage()` (ask `soft_failure_for()` whether the pass can run here, charge the
+  attempt, run the child under the kill limit, read the row back and settle it: done / retry /
+  failed / waiting / soft_failed / taken), the `render_storage()` unit of work
   the child runs, the thumbnail-cache purge, the realtime notification, the `#[Health_Check]`,
   `queue_statistics()` and `get_statistics()`.
 - `app/RSpade/Core/Files/File_Storage_Model_Abstract.php` - the `render_status_id` enum
   (NOT_REQUIRED / PENDING / RENDERED / FAILED), `rendered_at`, `render_error`, the idempotent
   `request_render()`, and THE WORK QUEUE: `work_owed_values()` / `mark_work_owed()` (the one
   statement of "this blob owes work"), `work_due_query()`, the guarded `charge_work_attempt()`,
-  `close_work()` and `defer_work()`.
+  `close_work()` and `defer_work()`; and the soft-failure accounting beside it -
+  `record_soft_failure()` (no charge, a doubling backoff capped at
+  `rsx.documents.soft_retry_max_minutes`), `pull_work_forward()`, `is_soft_failed()`,
+  `work_soft_retry_max_minutes()`, and the `process_soft_failure_count` /
+  `process_last_attempt_at` columns.
 - `app/RSpade/Core/Files/Document_Stage_Bound.php` (+ `Document_Stage_Timeout_Exception`) - the
   per-stage wall-clock bound (a pcntl alarm whose handler throws; command line only) and
   `run_process()`, the one way an external document binary is run.
@@ -60,9 +65,19 @@ operator commands `rsx:documents:status|failed|rerender`).
   under `docker`, proves the client / daemon / image / one hardened run / the memory cap, beside
   its `#[Health_Heal('document-sandbox-image')]`. Every soffice and pdftotext spawn in the
   framework goes through it.
+- `app/RSpade/Core/Files/Rsx_Document_Renderer_Abstract.php` - the per-type renderer seam
+  (`render()`, `rendition_format()`, `is_enabled()`, the opt-in `soft_failure()`), its two
+  framework renderers `Libreoffice_Document_Renderer` (PDF through soffice) and
+  `Spreadsheet_Document_Renderer` (the HTML grid), and `Document_Soft_Checks` (the tool /
+  sandbox-image / readable-source checks a renderer's or extractor's `soft_failure()` is made
+  of). The registry is `rsx.documents.renderers`, resolved by `Document_Render_Service::
+  renderer_for_mime()` / `renderer_for_storage()`; `rendition_path()` puts a rendition where
+  its format says. `Rsx_Framework_Provider::refuse_retired_config_keys()` refuses an
+  application config that still sets the retired `rsx.preview.convertible`.
 - `app/RSpade/Core/Search/Search_Index_Service.php` - `extract_storage()` with its optional
   `$rendition_path` (a Writer document is extracted from the rendition by `pdftotext`
-  instead of a second soffice run).
+  instead of a second soffice run), and `extractor_for_pass()` - the extractor a pass will run,
+  from the same selection `extract_storage()` makes.
 - `app/RSpade/Core/Files/Markdown_Rendition.php` - markdown to sanitised HTML, the framework's
   one markdown-to-HTML call: league/commonmark (core + GFM) configured closed, then HTMLPurifier
   over the output with an explicit GFM allowlist. Two independent layers, because they fail
@@ -113,6 +128,8 @@ operator commands `rsx:documents:status|failed|rerender`).
 | Attempts: retry spacing, permanent failure at the third, the abandoned last attempt settled without running, a blob outside the queue never processed | php | implemented (`Document_Work_Queue_Test`) |
 | The child process: success, a failing document passed by the drain, a crashed child, the hard kill reaping a grandchild | php | implemented (`Document_Work_Queue_Test`; real children, misbehaviour from `Document_Worker_Fixture_Handler`) |
 | Paced passes: a drain that yields with work remaining and sets its own next run; no yield when the queue empties; the pacing config | php | implemented (`Document_Work_Queue_Test`; the twenty minutes are staged by setting `rsx.documents.drain_yield_after_minutes` to 0) |
+| Soft failures: soffice / pdftotext / sandbox image / source unavailable recorded before the charge and not charged, one soft part making the pass soft, the doubling backoff and its cap, the reset when a pass runs, hard failures unchanged, a renderer with no checks always hard, `pull_work_forward()`, the drain / queue / health reporting | php | implemented (`Document_Soft_Failure_Test`; tools broken through the binary-path config keys and `Document_Sandbox::_testing_set_image_present()`, which the PARENT's soft check reads) |
+| Retry on view (`Document_Render_Service::attend_view()`, run by `get_preview_info()`): an evicted rendition requeued; a soft failure re-checked in the request and retried at once when it passes; a hard failure pulled forward only a retry interval after its last counted attempt and never once spent; a switched-off renderer never retried; views never charge; the payload's `render_retrying` | php | implemented (`Document_Attend_View_Test`; in the rolled-back transaction - a kick is observed as the pending `render_pending` run row, since no worker is spawned under the suite) |
 | The stage bound: overrun, disarm, external binary stopped, both stages recorded FAILED | php | implemented (`Document_Stage_Bound_Test`, in-process with a one-second limit) |
 | A hard kill under the docker sandbox; `process_storage()` from a php-fpm request | php / http | planned |
 | Status-aware serving (placeholder `no-store`, rendition-sourced thumbnails, `?v=` changes, rendition 404 states, preview-info shape) | php | implemented |

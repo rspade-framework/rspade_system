@@ -34,15 +34,21 @@ require_once __DIR__ . '/../../helpers.php';
  * process pointed at another database - can never spend, clear or inherit the developer's
  * counters.
  *
- * VALUE ENCODING. Every key here holds a raw numeric string maintained by redis itself
+ * VALUE ENCODING. A counter or flag key holds a raw numeric string maintained by redis itself
  * (INCRBY, or a plain SET for a flag). Nothing in this database is ever serialize()d, so
- * there is no encoding to confuse and no payload sniffing to do.
+ * there is no encoding to confuse and no payload sniffing to do. The one other kind of entry
+ * is an OPAQUE VALUE (add_value() / value()): a string the caller encoded, with an absolute
+ * expiry, for short-lived state that belongs beside a counter - the second-factor engine keeps
+ * an identity's issued sign-in code here, next to the failure budget that governs it. Only
+ * value() reads one; a numeric read of it fails loud, exactly as before.
  *
  * MAINTENANCE MODE. Redis is deliberately stopped inside the maintenance window, so every
- * entry point here returns 0 / no-ops without touching it - exactly as RsxCache does.
+ * entry point here returns 0 / null / no-ops without touching it - exactly as RsxCache does.
  * A throttle built on this therefore fails OPEN for the duration, which costs nothing
  * because the web tier is answering 503. Login_Throttle relies on "0 means nothing was
- * counted, so there is nothing to act on".
+ * counted, so there is nothing to act on". The one exception is add_value(), which THROWS:
+ * its caller is about to hand out something it expects to read back, and a value silently
+ * not stored would be a secret that can never be redeemed.
  *
  * EVICTION. Database 3 lives on the same redis instance as everything else, and the
  * eviction policy is per INSTANCE (allkeys-lru in the shipped conf), not per database - a
@@ -250,11 +256,70 @@ class Rsx_Counter
     }
 
     /**
-     * Drop a counter or flag before its window runs out.
+     * Store an opaque string value with an ABSOLUTE expiry, unless the key already holds one.
      *
-     * For a test, and for an operator releasing a customer who locked themselves out.
+     * SET NX PXAT: the write and the existence check are one redis command, so two callers
+     * racing to create the same value cannot both succeed - the loser gets false and reads
+     * the winner's value with value(). The expiry is a point in time, not a duration, so the
+     * value disappears exactly when the caller said it stops being valid and no later write
+     * can extend it.
      *
-     * @param string $key Counter or flag key
+     * Unlike every other writer here, an unavailable store (maintenance mode) THROWS - see
+     * the class header.
+     *
+     * @param string $key Value key
+     * @param string $value The caller's encoded value (stored as given)
+     * @param int $expires_at_ms Unix time in milliseconds the value expires at (must be future)
+     * @return bool True when this call stored it; false when the key already held a value
+     */
+    public static function add_value(string $key, string $value, int $expires_at_ms): bool
+    {
+        if ($expires_at_ms <= (int) (microtime(true) * 1000)) {
+            throw new InvalidArgumentException(
+                "Rsx_Counter::add_value() requires a future expires_at_ms for key '{$key}',"
+                . " got {$expires_at_ms} - a value that is already expired is not transient state"
+            );
+        }
+
+        $redis = self::_init();
+
+        if ($redis === null) {
+            throw new RuntimeException(
+                "Rsx_Counter::add_value() cannot store key '{$key}': the counter store is unavailable"
+                . ' (maintenance mode has stopped redis)'
+            );
+        }
+
+        return $redis->set(self::_make_key($key), $value, ['nx', 'pxat' => $expires_at_ms]) === true;
+    }
+
+    /**
+     * Read a value written by add_value(). Null when it is absent, expired, or the store is
+     * unavailable.
+     *
+     * @param string $key Value key
+     * @return string|null
+     */
+    public static function value(string $key): ?string
+    {
+        $redis = self::_init();
+
+        if ($redis === null) {
+            return null;
+        }
+
+        $value = $redis->get(self::_make_key($key));
+
+        return $value === false ? null : (string) $value;
+    }
+
+    /**
+     * Drop a counter, flag or value before its window runs out.
+     *
+     * For a test, for an operator releasing a customer who locked themselves out, and for a
+     * value whose owner is done with it.
+     *
+     * @param string $key Counter, flag or value key
      * @return void
      */
     public static function reset(string $key): void

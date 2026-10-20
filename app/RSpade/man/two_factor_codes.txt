@@ -44,11 +44,12 @@ DESCRIPTION
     policy the application writes, from primitives the framework owns:
 
         THE FRAMEWORK (Rsx_Two_Factor / Rsx_Portal_Two_Factor)
-            mints the code (random_int), keeps only a keyed hash of it in the
-            pending challenge, replaces it when another is issued, verifies
-            it under the login throttle and the two attempt caps, records the
-            outcome, and signs the identity in. It enforces which kinds of
-            answer a challenge accepts.
+            mints the code (random_int), keeps ONE live code per identity
+            (encrypted, beside the identity's failure budget), re-sends those
+            same digits on a resend until the code expires, verifies it under
+            the login throttle and the two attempt caps, records the outcome,
+            and signs the identity in. It enforces which kinds of answer a
+            challenge accepts.
 
         THE APPLICATION
             decides which sign-ins owe a code, which other answers it will
@@ -82,13 +83,15 @@ THE FLOW
     5. The user types the code. The component posts it to the verification
        endpoint, which calls verify_challenge() - the same call as for a TOTP
        code - and answers {redirect}.
-    6. "Send a new code" calls the send endpoint again. The new code replaces
-       the old; only the latest works.
+    6. "Resend code" calls the send endpoint again. While the code is live,
+       issue_code() returns the SAME digits, so every message the user holds
+       carries the one code that works; after it expires the next send mints
+       a new one (LIFETIME).
 
 WHAT A CHALLENGE ACCEPTS
     begin_challenge()'s $accepts is the policy, enforced:
 
-        ANSWER_ISSUED_CODE     the code issue_code() minted for this challenge
+        ANSWER_ISSUED_CODE     the identity's live code from issue_code()
         ANSWER_TOTP            an authenticator app code
         ANSWER_PASSKEY         one of the identity's passkeys
         ANSWER_RECOVERY_CODE   an unspent recovery code
@@ -133,8 +136,13 @@ THE SEND ENDPOINT
                 return response_error(Ajax::ERROR_VALIDATION, 'Too many codes have been sent. Please sign in again.');
             }
 
+            // Asked BEFORE issuing: a live code means this send repeats it.
+            $again = Rsx_Portal_Two_Factor::issued_code_expires_at() !== null;
+
             $code = Rsx_Portal_Two_Factor::issue_code();
-            (new Portal_Sign_In_Code_Email($portal_user, $code))->to($portal_user->email)->send();
+            $expires_at = Rsx_Portal_Two_Factor::issued_code_expires_at();
+            (new Portal_Sign_In_Code_Email($portal_user, $code, $expires_at, $again))
+                ->to($portal_user->email)->send();
 
             return null;
         }
@@ -143,7 +151,15 @@ THE SEND ENDPOINT
     framework's attempt caps (rsx.two_factor.challenge_max_failures wrong
     answers per challenge, identity_max_failures per identity) whatever the
     resend count; a resend cap only keeps one sign-in from mailing an inbox
-    without limit. challenge_pending()['codes_issued'] is the count.
+    without limit. challenge_pending()['codes_issued'] is the count, and it
+    counts SENDS: a resend that re-sends the live code still counts.
+
+    "HERE IS YOUR CODE AGAIN". issued_code_expires_at() is when the pending
+    identity's live code stops working, or null when it has none. Asked
+    before issue_code(), non-null means the send repeats the code the user
+    already holds; asked after, it is the expiry to print in the message,
+    which a resend does not move - so "expires in 15 minutes" is wrong on a
+    resend, and the minutes left are right.
 
     A user-safe rejection renders inline on the challenge screen.
 
@@ -155,7 +171,12 @@ THE EMAIL
         {
             const CATEGORY = self::SECURITY;
 
-            public function __construct(public Portal_User_Model $portal_user, public string $code) {}
+            public function __construct(
+                public Portal_User_Model $portal_user,
+                public string $code,
+                public string $expires_at,
+                public bool $again = false
+            ) {}
 
             public function subject(): string { return 'Your sign-in code: ' . $this->code; }
 
@@ -163,7 +184,8 @@ THE EMAIL
             {
                 return [
                     'code' => $this->code,
-                    'expiry_minutes' => (int) config('rsx.two_factor.challenge_window_minutes'),
+                    'again' => $this->again,
+                    'expiry_minutes' => max(1, (int) ceil(Rsx_Time::seconds_until($this->expires_at) / 60)),
                 ];
             }
 
@@ -178,8 +200,8 @@ THE EMAIL
     rsx.mail.delivery still apply.
 
     THE CODE IS IN THE QUEUE ROW. data() is frozen into _email_queue for as
-    long as the row is retained. That is acceptable for a code that dies with
-    its challenge; never put a long-lived secret in an email's data().
+    long as the row is retained. That is acceptable for a code that dies
+    within minutes; never put a long-lived secret in an email's data().
 
 DELIVERY MUST BE LIVE
     rsx.mail.delivery defaults to 'suppressed': every message is rendered and
@@ -253,18 +275,44 @@ TRUSTING THE BROWSER
     entirely the application's call (rsx:man two_factor, TRUSTED BROWSERS).
 
 LIFETIME
-    A code lives exactly as long as its challenge:
-    rsx.two_factor.challenge_window_minutes (15). The window is a SECURITY
-    window, not a timeout - it bounds how long a proven password stays
-    redeemable, and expiry is a working outcome ("Your verification window
-    has expired. Please sign in again.").
+    A code belongs to the IDENTITY, not to the challenge or the browser, and
+    lives rsx.two_factor.challenge_window_minutes (15) from the moment it was
+    MINTED - an absolute life:
+
+        a resend while it lives        the same digits; the expiry does not move
+        a new sign-in, another browser the same digits (a fresh session cannot
+                                       mint a parallel code)
+        after it expires               the next issue_code() mints a new one
+        a correct answer               consumes it (any accepted answer - the
+                                       sign-in it was sent for is over)
+        a spent challenge, or the      destroys it; the next sign-in mints new
+        identity locked
+        Cancel (abandon_challenge())   leaves it: another browser of the same
+                                       identity may be answering it
+
+    So a resend can never keep a code alive past its first fifteen minutes,
+    and nothing but its expiry or its use retires it. The challenge has its
+    own window of the same length from the password, and both are SECURITY
+    windows, not timeouts - they bound how long a proven password and a
+    delivered code stay redeemable, and expiry is a working outcome ("Your
+    verification window has expired. Please sign in again.").
+
+    STORAGE. The code is kept in the transient-counter store (Redis, beside
+    the identity's failure count), ENCRYPTED with the application key - not
+    hashed, because re-sending the same digits means reading them back. A
+    copy of the store alone does not reveal a code without app.key. What
+    this gives up against a keyed hash is the case of an attacker holding
+    the application key and live read access to the store at once; that
+    exposure is bounded by the code's absolute life, and the password it
+    would complete still has to be known. The session's challenge holds
+    only which identity is pending and how many codes were sent.
 
 RSX VS LARAVEL
     Laravel: Fortify ships TOTP only; an emailed code is a hand-written
     notification, a code column or cache key, a verify route, and a
     throttle the author must remember to add - each app re-solving storage,
     expiry and brute-force protection.
-    RSX: the code, its hashed storage, its expiry, its attempt caps and the
+    RSX: the code, its encrypted storage, its expiry, its attempt caps and the
     sign-in belong to the challenge every second factor already uses; the
     application writes only its policy (begin_challenge's $accepts), one send
     endpoint and one email class.
@@ -281,8 +329,10 @@ TROUBLESHOOTING
         queue row in /_sys says which.
 
     "That code is not valid." for a code just received
-        A newer code was sent since (only the latest works), or the window
-        closed and a new sign-in began.
+        The code expired (LIFETIME - fifteen minutes from the FIRST send, not
+        the latest), or it was destroyed by a spent challenge or a locked
+        identity; a send after that mints a new one, and older messages
+        carry the dead code.
 
 SEE ALSO
     two_factor - the challenge, the facade, $accepts, issue_code(), the

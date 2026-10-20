@@ -71,6 +71,7 @@ class Documents_Status_Command extends Command
         $this->table(['State', 'Blobs'], [
             ['Due now', $queue['due']],
             ["Waiting for a retry (failed attempt, retried after {$retry_minutes} min)", $queue['retrying']],
+            ['Could not run: tool or source unavailable (nothing charged)', $queue['soft_failed']],
             ['Deferred (owed work is switched off)', $queue['deferred']],
             ["Failed, out of attempts ({$max_attempts}) - rsx:documents:failed", $queue['failed']],
         ]);

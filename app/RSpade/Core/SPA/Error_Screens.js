@@ -194,10 +194,12 @@ class Error_Screens {
 
         const $host = $('<div>');
         $target.append($host);
-        $host.component(component_name, args);
+        // The instance is read from the RETURNED element: a registered screen whose tag is not a
+        // div replaces $host with an element of its own tag.
+        const $screen = $host.component(component_name, args);
 
         console_debug('Spa', `Error_Screens rendered ${component_name}`);
 
-        return $host.component();
+        return $screen.component();
     }
 }

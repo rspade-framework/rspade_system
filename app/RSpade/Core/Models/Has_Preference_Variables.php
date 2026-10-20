@@ -39,6 +39,12 @@ use Illuminate\Support\Facades\DB;
  * one browser session and should vanish with it (a wizard's progress). A preference
  * variable is for something that should still be true on another device next month.
  *
+ * PORTAL USERS ALSO CARRY A metadata COLUMN (get_metadata() / set_metadata()), a JSON bag
+ * on the row itself. It is in $neverExport, so it never reaches a payload either, but it
+ * is part of the record - loaded with every read of the row and copied with it. Per-identity
+ * key/value state belongs in this store; reach for metadata only for something that is
+ * genuinely a property of the record.
+ *
  * WHAT IT DELIBERATELY IS NOT:
  *   - It is never in the record's payload: not in toArray(), not in fetch(), not in the user
  *     object printed onto every page. A value is read on demand, one key at a time.

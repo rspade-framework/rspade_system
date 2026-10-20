@@ -1,6 +1,6 @@
 ---
 name: document-preview
-description: "Previewing, rendering and searching inside documents in RSX - the ONE background render worker (Document_Render_Service) that produces a PDF rendition and extracts text in a single pass, the render_status_id state machine on the blob (NOT_REQUIRED/PENDING/RENDERED/FAILED), the worker's queue (process_due_at, charged attempts, retries, rsx.documents.stage_seconds / kill_seconds / max_attempts / retry_after_minutes), Document_Render_Service::process_storage(), mark_work_owed() / requeue_render(), the <Document_Preview> component with its \"Preparing preview...\" state and preview_loaded/page_changed events, its extracted-text sibling <Document_Text_Preview> with its \"(Extracting Text...)\" and \"(Document Text Unavailable)\" notices, the server-side viewer registry (Pdf_Viewer / Image_Viewer / Text_Viewer / Icon_Viewer) and how to override it, should_show_text_preview() and can_open_inline() as the two presentation questions an attachment answers, the three document.* resolve chains (extract_text, preview_rendition, thumbnail_render), EXTRACTED/FAILED/UNSUPPORTED extraction statuses, search_text() with mandatory site scoping, and rsx:documents:status/failed/rerender plus rsx:search:reindex triage. Use when showing a PDF or Office document in a page, searching inside uploaded files, plugging in a custom viewer or converter, showing a .txt / .csv / .log as itself, deciding whether to show extracted text beside a preview or offer an \"Open in Browser\" link, or debugging a document that shows a placeholder icon, a preview stuck on \"Preparing preview...\", a text panel stuck on \"(Extracting Text...)\", missing extracted text, a failure reading \"render exceeded 20 seconds\", \"text extraction exceeded 20 seconds\" or \"killed after 60 seconds\", or the LogicException \"runs only in a command-line process\" from render_storage() / extract_storage()."
+description: "Previewing, rendering and searching inside documents in RSX - the ONE background render worker (Document_Render_Service) that produces a PDF rendition and extracts text in a single pass, the render_status_id state machine on the blob (NOT_REQUIRED/PENDING/RENDERED/FAILED), the worker's queue (process_due_at, charged attempts, retries, rsx.documents.stage_seconds / kill_seconds / max_attempts / retry_after_minutes / soft_retry_max_minutes), soft failures (soft_failure() checks, OUTCOME_SOFT_FAILED, the uncharged backoff, retry on view with render_retrying), the per-type renderer registry rsx.documents.renderers with Rsx_Document_Renderer_Abstract, the Rsx_Mime_Map precedence every mime registry shares, Document_Render_Service::process_storage(), mark_work_owed() / requeue_render(), the <Document_Preview> component with its \"Preparing preview...\" state and preview_loaded/page_changed events, its extracted-text sibling <Document_Text_Preview> with its \"(Extracting Text...)\" and \"(Document Text Unavailable)\" notices, the server-side viewer registry (Pdf_Viewer / Image_Viewer / Text_Viewer / Icon_Viewer) and how to override it, should_show_text_preview() and can_open_inline() as the two presentation questions an attachment answers, the three document.* resolve chains (extract_text, preview_rendition, thumbnail_render), EXTRACTED/FAILED/UNSUPPORTED extraction statuses, search_text() with mandatory site scoping, and rsx:documents:status/failed/rerender plus rsx:search:reindex triage. Use when showing a PDF or Office document in a page, searching inside uploaded files, plugging in a custom viewer, renderer, extractor or converter, replacing the framework's preview pipeline for a file type, showing a .txt / .csv / .log as itself, deciding whether to show extracted text beside a preview or offer an \"Open in Browser\" link, or debugging a document that shows a placeholder icon, a preview stuck on \"Preparing preview...\", a text panel stuck on \"(Extracting Text...)\", missing extracted text, a failure reading \"render exceeded 20 seconds\", \"text extraction exceeded 20 seconds\", \"killed after 60 seconds\", \"is not installed or not executable\", \"the document sandbox image ... is not present\" or \"the source file is missing or unreadable\" (a soft fail - tool or source unavailable), the boot error \"rsx.preview.convertible is no longer read by the framework\", or the LogicException \"runs only in a command-line process\" from render_storage() / extract_storage()."
 ---
 
 # Document preview and search
@@ -11,7 +11,7 @@ Every part of this system keys its work on the **DEDUPLICATED blob** (`File_Stor
 
 ## The pipeline: one worker, three products
 
-`Document_Render_Service::render_pending` — `#[Exclusive]`, `#[Schedule('every 10 minutes')]`, kicked the moment a convertible document is uploaded — is the **only** thing that runs `soffice`. Per blob, in one pass, in a **child process of its own**: it produces the PDF **rendition**, extracts the **text** from it, and settles the blob's render state; the **thumbnail** is later rasterized from that same rendition. Nothing converts inside a web request.
+`Document_Render_Service::render_pending` — `#[Exclusive]`, `#[Schedule('every 10 minutes')]`, kicked the moment a document is uploaded — is the **only** thing that runs `soffice`. Per blob, in one pass, in a **child process of its own**: it produces the **rendition** through the type's renderer (`rsx.documents.renderers` — a PDF for Office documents, an HTML grid for workbooks), extracts the **text**, and settles the blob's render state; the **thumbnail** is later rasterized from that same PDF. Nothing converts inside a web request.
 
 **Render state lives on the blob**, `_file_storage.render_status_id`, read as `$attachment->get_render_status()`:
 
@@ -20,13 +20,13 @@ Every part of this system keys its work on the **DEDUPLICATED blob** (`File_Stor
 | `NOT_REQUIRED` (1) | Nothing to convert — an image, a plain PDF, a zip. The default. |
 | `PENDING` (2) | A rendition is owed and no attempt has reported yet. Shown as "Preparing preview…". |
 | `RENDERED` (3) | Rendition on disk, `rendered_at` set. |
-| `FAILED` (4) | The last attempt failed; `render_error` holds the reason. **The worker retries it** (below); whether another attempt is coming is the queue's answer, not this value's. Shown as "Preview could not be generated" either way. |
+| `FAILED` (4) | The last attempt failed — or a **soft** check found the box unable to run it; `render_error` holds the reason. **The worker retries it** (below); whether another attempt is coming is the queue's answer, not this value's. Shown as "Preview could not be generated" — or "Preparing preview…" while a retry this view started is under way. |
 
-An attachment flips its blob to `PENDING` on create/relink when its `pipeline_mime()` matches `config('rsx.preview.convertible')`. Dedup falls out: a blob already PENDING/RENDERED/FAILED is left alone, so re-uploading the same bytes converts nothing — and never hands a FAILED blob fresh attempts.
+An attachment flips its blob to `PENDING` on create/relink when a renderer in `config('rsx.documents.renderers')` matches its `pipeline_mime()` — that map is what makes a type previewable by rendition. Dedup falls out: a blob already PENDING/RENDERED/FAILED is left alone, so re-uploading the same bytes converts nothing — and never hands a FAILED blob fresh attempts.
 
 ### The work queue: one document cannot stop the rest
 
-The worker's queue is ONE column on the blob, `_file_storage.process_due_at` — `NULL` = nothing for the worker to do; a time = the blob owes work (a rendition, its text, or both) and may be attempted from then. `process_attempt_count` sits beside it. The drain takes the earliest due blob until none is due. A document is input the application does not control, so four rules bound what a bad one can cost (`config('rsx.documents')`):
+The worker's queue is ONE column on the blob, `_file_storage.process_due_at` — `NULL` = nothing for the worker to do; a time = the blob owes work (a rendition, its text, or both) and may be attempted from then. `process_attempt_count`, `process_last_attempt_at` and `process_soft_failure_count` sit beside it. The drain takes the earliest due blob until none is due. A document is input the application does not control, so four rules bound what a bad one can cost (`config('rsx.documents')`):
 
 | Rule | Key (default) | What you see |
 |---|---|---|
@@ -35,7 +35,11 @@ The worker's queue is ONE column on the blob, `_file_storage.process_due_at` —
 | Each **stage** in the child is bounded — render and text extraction separately | `stage_seconds` (20) | `render exceeded 20 seconds` / `text extraction exceeded 20 seconds` |
 | A fixed number of attempts, then FAILED for good | `max_attempts` (3) | `rsx:documents:failed`: `3 of 3`, `none - out of attempts` |
 
-Render and extraction share the one queue entry and the one counter. **Retries come from the drain only — a web request never grants an attempt**: a request for a FAILED document's thumbnail gets the placeholder, one for its rendition a 404, and neither changes anything. Owed work that is switched off (`rsx.libreoffice.enabled`, `rsx.search.enabled`) is *deferred* one interval with no attempt charged. After the last attempt only an operator puts the blob back (`rsx:documents:rerender`, `rsx:search:reindex` — each resets the attempts).
+Render and extraction share the one queue entry and the one counter. Owed work that is switched off (a renderer's `is_enabled()` — `rsx.libreoffice.enabled` for soffice — or `rsx.search.enabled`) is *deferred* one interval with no attempt charged. After the last attempt only an operator puts the blob back (`rsx:documents:rerender`, `rsx:search:reindex` — each resets the attempts).
+
+**A soft failure is recorded, not charged.** Before charging, the pass asks the renderer and extractor it would run their `soft_failure()` check — tool installed and executable, an operator's own sandbox image present (the framework's is built on first use), source readable; a check only LOOKS. A reason → FAILED with that reason, **no attempt, no child**, checked again after 30 min, doubling to `soft_retry_max_minutes` (10080 = a week), forever (`OUTCOME_SOFT_FAILED`). A pass that runs restarts the backoff. Checks are opt-in per renderer/extractor; everything else is **hard** (3 attempts, 30 min apart) — an encrypted or corrupt document included.
+
+**Opening the preview retries what may now succeed** (`Document_Render_Service::attend_view()`, from `get_preview_info()`): an evicted rendition is re-queued; a soft-failed document is re-checked on **every** view and, when the check passes, made due and the worker kicked; a hard-failed one is made due only when its last counted attempt is at least `retry_after_minutes` old. The worker charges that attempt — **a view never grants one**, never runs a tool in the request, and never revives a blob whose attempts are spent or whose renderer is switched off. Thumbnails never trigger it. The payload's `render_retrying` makes the widget say "Preparing preview…"; a realtime-frame refetch passes `attend: false` so a failed retry cannot loop.
 
 **A long backlog is drained in paced passes.** The pass sets no timeout and reports before every document, so the task system's silence limit never touches a working pass. After `drain_yield_after_minutes` (20), between two documents and only while work is still due, it sets its own next run `drain_resume_after_minutes` (10) ahead (`$task->run_again_in()`), says how many documents are still waiting (`Yielding after 20 minute(s): ... 1840 still waiting.`) and returns **successfully** - a voluntary yield so other scheduled work gets a turn. These two are pacing, not timeouts: nothing is cut short, nothing fails, every blob still due stays queued. A pass that empties the queue never yields; an upload's kick still starts one at once.
 
@@ -46,8 +50,8 @@ Render and extraction share the one queue entry and the one counter. **Retries c
 ```php
 // Process one blob NOW and wait for it - callable from a web request.
 $result = Document_Render_Service::process_storage($storage);
-// ['outcome' => OUTCOME_DONE|RETRY|FAILED|WAITING|TAKEN, 'reason', 'attempt',
-//  'max_attempts', 'next_attempt_at', 'render_label']
+// ['outcome' => OUTCOME_DONE|RETRY|FAILED|WAITING|SOFT_FAILED|TAKEN, 'reason', 'attempt',
+//  'max_attempts', 'soft_failures', 'next_attempt_at', 'render_label']
 
 $storage->requeue_render();          // PENDING, artifacts cleared, due now, attempts reset, worker kicked
 $storage->requeue_render(false);     // ... without kicking the worker
@@ -57,6 +61,8 @@ $storage->save();
 $storage->mark_work_owed();          // ... then that it IS: due now, attempts reset
 
 $storage->is_render_failed_for_good();   // FAILED and out of the queue
+$storage->is_soft_failed();              // waiting out a soft backoff
+Document_Render_Service::soft_failure_for($storage);   // what the next pass's soft checks say, recording nothing
 ```
 
 - **`Document_Render_Service::render_storage()` and `Search_Index_Service::extract_storage()` are command-line only.** They are the unit of work the child runs, and from a web request they throw `LogicException` ("… runs only in a command-line process …"). `process_storage()` is the route: it charges the attempt, runs the document in the child and settles the row.
@@ -92,6 +98,7 @@ Args: `$attachment_id` (**required** — the component throws without it), `$pag
 **States.** The component subscribes to the attachment in `on_create()` and reads `render_status_id` from `get_preview_info()`, so it repaints itself when the render lands:
 
 - `PENDING` → **"Preparing preview…"**. No rendition URL is returned, so the viewer is never asked to load one early.
+- `FAILED` with `render_retrying` → **"Preparing preview…"**: this view set a retry in motion; the worker's frame brings the outcome.
 - `FAILED` → a failed state. `render_error` is **never** sent to the browser; the operator reads it with `rsx:documents:failed`.
 - `RENDERED` / `NOT_REQUIRED` → `urls.rendition` is present and the viewer loads it.
 
@@ -195,18 +202,18 @@ Behind it is `File_Preview_Controller::get_extracted_text`, returning `{status, 
 
 ## Viewer resolution (server-side) and adding a viewer
 
-`Document_Preview` calls `File_Preview_Controller::get_preview_info()` in `on_load()`; the SERVER picks the viewer by mime from `config('rsx.preview.viewers')` — an ordered fnmatch map, first match wins, terminating in `'*' => 'Icon_Viewer'` so every mime resolves to something:
+`Document_Preview` calls `File_Preview_Controller::get_preview_info()` in `on_load()`; the SERVER picks the viewer by mime from `config('rsx.preview.viewers')` — an fnmatch map resolved by the shared **mime-map precedence** (below), with `'*' => 'Icon_Viewer'` as the fallback so every mime resolves to something:
 
 ```php
 'application/pdf'  => 'Pdf_Viewer',          // + Office mimes (via a PDF rendition)
 'application/vnd.ms-excel*' => 'Spreadsheet_Viewer',   // + the other workbook mimes
 'image/*'          => 'Image_Viewer',
-'text/markdown'    => 'Markdown_Viewer',     // ABOVE text/* - first match wins
+'text/markdown'    => 'Markdown_Viewer',     // exact mime - beats the text/* glob
 'text/*'           => 'Text_Viewer',         // the file's own characters
 '*'                => 'Icon_Viewer',
 ```
 
-**`Markdown_Viewer` shows a `.md` file as the DOCUMENT its author wrote** - GitHub-flavoured headings, tables, task lists, fenced code, autolinks - rather than as its source characters. Its entry sits ABOVE `text/*`, and since the map is first-match that ordering IS the feature: below it, every markdown file would render as raw text. The markup comes from `File_Preview_Controller::get_markdown_html`, which runs the same **content** gate cascade as `get_extracted_text`.
+**`Markdown_Viewer` shows a `.md` file as the DOCUMENT its author wrote** - GitHub-flavoured headings, tables, task lists, fenced code, autolinks - rather than as its source characters. Its entry is the exact mime, which beats the `text/*` glob that would otherwise render it as raw text. The markup comes from `File_Preview_Controller::get_markdown_html`, which runs the same **content** gate cascade as `get_extracted_text`.
 
 **It waits on nothing**, which makes it the odd one out among these viewers: there is no rendition on disk and no background worker, the parse happens inside the request over a source capped at `rsx.search.max_text_bytes`, and the endpoint's answer is always final. A source past the cap is reported (`truncated: true`), never silently shortened.
 
@@ -221,7 +228,7 @@ Because the markup is sanitised at the source, the component interpolates it wit
 
 Because it has a viewer, **`text/*` classifies as `FILE_TYPE_DOCUMENT`** (`FILE_TYPE_TEXT` survives as an enum value nothing assigns).
 
-Register your own in `rsx/resource/config/rsx.php` under the same key, for a mime the framework does not cover:
+Register your own in `rsx/resource/config/rsx.php` under the same key — for a mime the framework does not cover, or to take one away from the framework's viewer:
 
 ```php
 'preview' => ['viewers' => [
@@ -229,7 +236,7 @@ Register your own in `rsx/resource/config/rsx.php` under the same key, for a mim
 ]],
 ```
 
-Your entries merge in AFTER the framework's, and the terminal `'*'` is consulted last wherever it sits, so an added pattern wins over the icon - but a mime a framework pattern already matches (PDF, Office, `image/*`, `text/*`) keeps the framework's viewer.
+An application entry beats every framework entry for the mimes it matches (see **Replacing a framework pipeline** below); `'*'` is only the fallback.
 
 The built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{attachment_id, url, extension, file_name, page, fit}` (the framework's own `Spreadsheet_Viewer` and `Markdown_Viewer` take this path and read only `attachment_id`). So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `page_changed`.
 
@@ -251,7 +258,7 @@ class Cad_Viewer extends Component {
 
 **A viewer that never reports still does not strand the host**: once a dynamically instantiated viewer is `ready` and has said nothing, `Document_Preview` reports `loaded` for it (`pages` from `get_pages()`, else 1). That is a lifecycle fact, not a timer — and it is a safety net, not the contract: a viewer that fills itself in after `ready` without saying `preparing` is reported `loaded` early. A viewer whose lifecycle **throws** never becomes ready; that is a console error and nothing is reported for it.
 
-**PDF renditions**: `/_preview/pdf/:key` serves the PDF pdf.js actually loads, and it is **serve-only — it never converts**. A PDF blob is served as-is; a mime listed in `rsx.preview.convertible` is served from the cached rendition at `tmp/renditions/{blob-hash}.pdf` (LRU-swept to `rsx.preview.quota_max_bytes`) **but only when the blob is RENDERED** — otherwise it 404s naming the render state. Anything else is 415. A RENDERED blob whose rendition was LRU-evicted re-queues itself and 404s for that one request, rather than showing an error over a cache eviction. The route is **dual-gated** (`file.thumbnail.authorize` AND `file.download.authorize`), so your file-access hooks apply to previews exactly as they do to downloads. pdf.js itself is lazy-served from `/_preview/pdfjs.mjs` (+ `pdf_worker.mjs`) out of the committed `node_modules` and is **never bundled**.
+**PDF renditions**: `/_preview/pdf/:key` serves the PDF pdf.js actually loads, and it is **serve-only — it never converts**. A PDF blob is served as-is; a mime whose `rsx.documents.renderers` renderer produces a PDF (and is switched on) is served from the cached rendition at `tmp/renditions/{blob-hash}.pdf` (LRU-swept to `rsx.preview.quota_max_bytes`) **but only when the blob is RENDERED** — otherwise it 404s naming the render state. Anything else is 415. A RENDERED blob whose rendition was LRU-evicted re-queues itself and 404s for that one request, rather than showing an error over a cache eviction. The route is **dual-gated** (`file.thumbnail.authorize` AND `file.download.authorize`), so your file-access hooks apply to previews exactly as they do to downloads. pdf.js itself is lazy-served from `/_preview/pdfjs.mjs` (+ `pdf_worker.mjs`) out of the committed `node_modules` and is **never bundled**.
 
 ## Showing extracted text BESIDE a preview
 
@@ -284,9 +291,73 @@ public static function convert_cad($data)
 }
 ```
 
-Anything outside the contract fails loud. `preview_rendition` runs AFTER the auth gates; `thumbnail_render` runs BEFORE the framework renderer registry.
+Anything outside the contract fails loud. `preview_rendition` runs AFTER the auth gates; `thumbnail_render` runs BEFORE the framework renderer registry. **Prefer a registry entry** (next section) for anything decided by TYPE: the queue sees a renderer's switch and soft check, never a chain's code — the soft check cannot run an `extract_text` handler, so it asks the registry's extractor for the type.
 
 **Where they run.** `extract_text` fires **inside the render worker's child process** (command line, never a web request) and **inside the text-extraction stage bound**: the handler shares `rsx.documents.stage_seconds` (20s) with the rest of the extraction, and one still running at the bound is interrupted, the attempt recorded FAILED and retried. A handler that calls a slow external service answers inside the bound, or the site raises it. Its `path` is always the SOURCE BLOB (the rendition shortcut is applied only after the chain declines). `thumbnail_render` still runs FIRST — ahead of both the rendition path and the renderer registry — and its `path` is the source blob too, so a handler that takes over an Office mime behaves exactly as it always did; it is **not fired at all** for a PENDING or FAILED blob, which serve the placeholder without entering the render path. `preview_rendition`'s contract is unchanged; only the framework path behind it became serve-only, so a handler that converts on demand still works.
+
+---
+
+## Replacing a framework pipeline for a file type
+
+Four mime-keyed registries — `rsx.documents.renderers`, `rsx.search.extractors`, `rsx.preview.viewers`, `rsx.thumbnails.renderers` — resolve through ONE matcher, `Rsx_Mime_Map::match()`. **Precedence, lowest to highest: framework broad < framework specific < application broad < application specific.** An application entry matching the mime beats every framework entry however broad its glob; inside a layer an exact mime beats a glob, a glob with more literal characters beats a shorter one, and a tie goes to the later line. `'*'` is the fallback only. Line order means nothing else. So taking a type away from the framework is ONE line in `rsx/resource/config/rsx.php`.
+
+| Seam | Replaces |
+|---|---|
+| `rsx.documents.renderers` | how the worker makes the rendition (cached file, thumbnail source, what `/_preview/pdf` serves) — and whether the type gets one at all |
+| `rsx.preview.viewers` | which component `<Document_Preview>` shows. A new PDF-rendered type needs `'Pdf_Viewer'` here too, or it falls to `Icon_Viewer` |
+| `rsx.search.extractors` | how its text is extracted |
+| `rsx.thumbnails.renderers` | the raster step for a type whose picture does NOT come from a rendition |
+| `document.extract_text` / `.preview_rendition` / `.thumbnail_render` | a per-file / per-request decision (above) |
+
+A type the framework does not know must also reach the pipeline as its mime: add its extension to `rsx.files.document_mime_by_extension`. Contract tables: `rsx:man documents` (MIME MAP PRECEDENCE, RENDERERS, REPLACING A FRAMEWORK PIPELINE FOR A FILE TYPE).
+
+## Writing and registering a custom renderer (and a soft-fail check)
+
+A renderer extends `Rsx_Document_Renderer_Abstract` **directly** (it is `#[Monoprogenic]` — extending `Libreoffice_Document_Renderer` is refused; call its `render()` to reuse it). All static:
+
+- `render($source_path, $target_path, ?$extension)` — write the rendition (create the directory, publish by rename). The source is the extensionless blob; `$extension` is an attachment's. Runs in the worker's child under the render stage bound — spawn binaries with `Document_Stage_Bound::run_process($argv)`. **Any throw is HARD** (charged); it cannot report soft.
+- `rendition_format()` — `'pdf'` (default; feeds `Pdf_Viewer` and the thumbnail). `'html'` is reserved to the framework spreadsheet renderer.
+- `is_enabled()` — false = deferred, uncharged, never retried from a view.
+- `soft_failure($source_path): ?string` — **the opt-in.** Null = proceed; a string = recorded FAILED, not charged, checked again on the backoff and on every view. **Only look**: never run the tool, build an image or parse the file. `static::source_unreadable($path)` and `Document_Soft_Checks` cover the common checks.
+
+```php
+class Cad_Document_Renderer extends Rsx_Document_Renderer_Abstract
+{
+    const BINARY = '/usr/local/bin/dwg2pdf';
+
+    public static function render(string $source_path, string $target_path, ?string $extension): void
+    {
+        ensure_directory(dirname($target_path));
+        $tmp = $target_path . '.tmp.' . bin2hex(random_bytes(4));
+        $process = Document_Stage_Bound::run_process([self::BINARY, $source_path, $tmp]);
+        if (!$process->isSuccessful() || !is_file($tmp) || !rename($tmp, $target_path)) {
+            @unlink($tmp);
+            throw new \Exception('dwg2pdf failed: ' . trim($process->getErrorOutput()));
+        }
+    }
+
+    public static function soft_failure(string $source_path): ?string
+    {
+        if (!is_executable(self::BINARY)) {
+            return 'dwg2pdf is not installed or not executable';
+        }
+        return static::source_unreadable($source_path);
+    }
+}
+```
+
+A text extractor opts in the same way: `Rsx_Text_Extractor_Abstract` carries the same `soft_failure()` and `source_unreadable()`, and `extract($source_path, $mime)` throws for hard or `Rsx_Extraction_Unsupported_Exception` for "impossible by design" (worked `Cad_Text_Extractor`: `rsx:man document_search`, CUSTOM EXTRACTORS).
+
+Registration, all in `rsx/resource/config/rsx.php`:
+
+```php
+'files'     => ['document_mime_by_extension' => ['dwg' => 'application/x-dwg']],
+'documents' => ['renderers'  => ['application/x-dwg' => 'Cad_Document_Renderer']],
+'preview'   => ['viewers'    => ['application/x-dwg' => 'Pdf_Viewer']],
+'search'    => ['extractors' => ['application/x-dwg' => 'Cad_Text_Extractor']],
+```
+
+Uploaded while `dwg2pdf` is missing → FAILED "dwg2pdf is not installed or not executable", **no attempt spent**; install it and the next check — or the next person to open the preview — renders it. A drawing the tool cannot convert fails hard, three attempts. The document sandbox wraps only soffice/pdftotext; your converter runs on the host unless you contain it.
 
 ---
 
@@ -306,7 +377,7 @@ A row is the outcome of the last attempt, one of three:
 - **FAILED** — an extractor ran and genuinely failed (missing blob, broken binary), ran past the stage bound, or died with its process. With `is_indexed = 0` beside it the worker will retry; with `is_indexed = 1` the attempts are spent and only `rsx:search:reindex` re-queues it.
 - **UNSUPPORTED** — no configured extractor matched the mime. Images and archives land here, **not** in FAILED. There is no OCR.
 
-That distinction is the point: do not build retry or alerting logic around images. `config('rsx.search.extractors')` is the fnmatch mime map (PDF → pdftotext, Office/RTF → LibreOffice, `text/*`/csv/json → plain).
+That distinction is the point: do not build retry or alerting logic around images. `config('rsx.search.extractors')` is the fnmatch mime map (PDF → pdftotext, workbooks → PhpSpreadsheet, other Office/RTF → LibreOffice, `text/*`/csv/json → plain), resolved by the shared precedence. A word-processing document with a PDF rendition is always read by pdftotext from that rendition, ahead of the map.
 
 **A scanned PDF is the trap.** Its mime is `application/pdf`, so it matches pdftotext, runs successfully, and produces **EXTRACTED with EMPTY text** — a page of images has no text layer and there is no OCR to fall back on. It is not FAILED and not UNSUPPORTED. If "the document has no searchable text" matters to your UI, check the content, not just the status:
 
@@ -347,13 +418,13 @@ Dedup means one matching blob can back several attachments, so the builder can y
 
 ## Reindex and rerender triage
 
-**Two different failures, two different commands.** A RENDER failure is `soffice` unable to produce a PDF (`_file_storage.render_status_id = FAILED`, reason in `render_error`); an EXTRACTION failure is an extractor unable to pull text (a `_search_indexes` row with status FAILED). `rsx:documents:failed` prints both tables with each one's remedy underneath, so a wrong guess costs nothing.
+**Two different failures, two different commands.** A RENDER failure is the renderer unable to produce the rendition (`_file_storage.render_status_id = FAILED`, reason in `render_error`); an EXTRACTION failure is an extractor unable to pull text (a `_search_indexes` row with status FAILED). `rsx:documents:failed` prints both tables with each one's remedy underneath, so a wrong guess costs nothing — after a first table of **soft** failures (tool or source unavailable), whose only remedy is fixing what the reason names.
 
 `rsx:documents:*` — the render half (`rsx:man documents`):
 
 | Command | Use it when |
 |---|---|
-| `rsx:documents:status` | first: the work queue (due now / waiting for a retry / deferred / failed, out of attempts), render + extraction counts, rendition cache, next worker run |
+| `rsx:documents:status` | first: the work queue (due now / waiting for a retry / could not run: tool or source unavailable / deferred / failed, out of attempts), render + extraction counts, rendition cache, next worker run |
 | `rsx:documents:failed [--limit=N]` | a document shows the icon forever — the reason is printed with the attempts charged and the next attempt time, or `none - out of attempts` (`--limit=0` = all) |
 | `rsx:documents:rerender --failed` | after fixing the cause of render failures — every FAILED blob, due now with a full set of attempts |
 | `rsx:documents:rerender --storage=ID` / `--attachment=ID` | one document; open pages are notified immediately |
@@ -380,9 +451,7 @@ Start with `--status`. A large `UNSUPPORTED` count is usually correct (images); 
 
 `libreoffice poppler-utils fonts-liberation fonts-dejavu-core` — verified by `php artisan rsx:health` (exit 1 iff a FAIL; WARN/INFO are advisory). No poppler → PDFs go FAILED. No LibreOffice → Office extraction fails and Office previews return 415. Missing fonts → conversions render with substituted glyphs.
 
-**The binaries can be sandboxed, and on a site that accepts outside uploads they should be.** `LIBREOFFICE_SANDBOX=docker` (`rsx.libreoffice.sandbox`) routes every soffice and pdftotext spawn through `Document_Sandbox::command()`, which wraps it in one throwaway `docker run --rm` per file - no network, read-only root, `--cap-drop ALL`, no-new-privileges, memory and pid caps, tmpfs `/tmp`, the worker's own uid:gid, and the per-invocation work dir as the ONLY mount (bound at its own absolute path, so the argv is identical in both modes). The host then needs no LibreOffice and no poppler-utils; what it needs is a docker daemon the worker's user can reach. The image is the framework's own minimal converter image `rspade/rspade-docconvert` (soffice, pdftotext and fonts on a bare distribution base, nothing else), **built on first use** - so switching the posture on installs nothing, and `php artisan rsx:heal document-sandbox-image` is how you pay that cost during a deploy instead; an image of your own is yours to pull. `rsx:health` carries a **Document Sandbox** row - for `none`, a WARN in every mode once any live portal user exists (somebody outside the organisation can upload), otherwise INFO in development and WARN on a sealed box - and five rows (client, daemon, image, one real hardened run, memory cap) when it is on, of which an absent *framework* image is only a WARN. **Not covered**: PhpSpreadsheet (a workbook is read in-process, so there is no process to contain), and **PDF thumbnails** - Imagick rasterises page 1 through Ghostscript inside the PHP process, on the host in either mode, contained only by the shipped ImageMagick policy; take it over through the `document.thumbnail_render` chain if uploaded PDFs must never be parsed on the host. Details: `rsx:man libreoffice`.
-
-**There is no concurrency semaphore any more.** One `#[Exclusive]` worker is the sole caller of soffice, so invocations are serialized by construction. `rsx.libreoffice.max_concurrent`, `rsx.libreoffice.slot_wait_timeout`, `rsx.preview.rendition_timeout` and `rsx.search.timeout` were all removed on 2026-08-22 — **delete any override you carry.**
+**The binaries can be sandboxed, and on a site that accepts outside uploads they should be.** `LIBREOFFICE_SANDBOX=docker` (`rsx.libreoffice.sandbox`) routes every soffice and pdftotext spawn through `Document_Sandbox::command()`, which wraps it in one throwaway `docker run --rm` per file - no network, read-only root, `--cap-drop ALL`, no-new-privileges, memory and pid caps, tmpfs `/tmp`, the worker's own uid:gid, and the per-invocation work dir as the ONLY mount (bound at its own absolute path, so the argv is identical in both modes). The host then needs no LibreOffice and no poppler-utils; what it needs is a docker daemon the worker's user can reach. The image is the framework's own minimal converter image `rspade/rspade-docconvert` (soffice, pdftotext and fonts on a bare distribution base, nothing else). It is **built on first use** - the first sandboxed document pays for the build - or up front with `php artisan rsx:heal document-sandbox-image`. An image of your OWN is never built: until you pull it, every document needing soffice or pdftotext soft-fails ("the document sandbox image ... is not present", nothing spent) and is processed at the first check after it arrives. `rsx:health` carries a **Document Sandbox** row - for `none`, a WARN in every mode once any live portal user exists (somebody outside the organisation can upload), otherwise INFO in development and WARN on a sealed box - and five rows (client, daemon, image, one real hardened run, memory cap) when it is on, of which an absent *framework* image is a WARN. **Not covered**: PhpSpreadsheet (a workbook is read in-process, so there is no process to contain), and **PDF thumbnails** - Imagick rasterises page 1 through Ghostscript inside the PHP process, on the host in either mode, contained only by the shipped ImageMagick policy; take it over through the `document.thumbnail_render` chain if uploaded PDFs must never be parsed on the host. Details: `rsx:man libreoffice`.
 
 **No key under `rsx.libreoffice` bounds a conversion.** `soffice` and `pdftotext` carry no limit of their own: each runs inside one of the worker's two stages and is bounded with it, by `rsx.documents.stage_seconds` (see **The work queue** above). Under the sandbox, an expired stage also kills the named container, because the process PHP stops is only the docker client.
 
@@ -394,19 +463,21 @@ Start with `--status`. A large `UNSUPPORTED` count is usually correct (images); 
 - **Handler never fires on `loaded`** — you listened for the reserved lifecycle event; it is `preview_loaded`.
 - **`preview_loaded` fired but there is no picture** — it reports every outcome; check `state` (`preparing`, `failed` and `unavailable` are reports too).
 - **A custom viewer is reported `loaded` before its content appears** — it reached `ready` without reporting; await the work in `async on_ready()` or trigger `preparing` first.
-- **Preview stuck on "Preparing preview…"** — the blob is PENDING and no attempt has reported. `rsx:documents:status`: if "Due now" never falls the worker is not running (`rsx:task:process`, `rsx:health` "Document Render Backlog"); PENDING with nothing due means `rsx.libreoffice.enabled` is false and the blobs are deferred.
+- **Preview stuck on "Preparing preview…"** — the blob is PENDING (or FAILED with a retry this view started) and no attempt has reported. `rsx:documents:status`: if "Due now" never falls the worker is not running (`rsx:task:process`, `rsx:health` "Document Render Backlog"); PENDING with nothing due means `rsx.libreoffice.enabled` is false and the blobs are deferred.
 - **A document shows the extension icon forever** — that IS the correct picture for PENDING or FAILED. `rsx:documents:status` says which; `rsx:documents:failed` names the reason and whether the worker will try again by itself. Out of attempts → fix the cause, then `rsx:documents:rerender --failed`.
 - **`render exceeded 20 seconds` on every attempt** — the document needs longer than the stage bound on this hardware. If it is an ordinary document for the site, raise `rsx.documents.stage_seconds` (and `kill_seconds` above twice that), then rerender.
 - **`… runs only in a command-line process …`** — `render_storage()` / `extract_storage()` called from a web request. Call `Document_Render_Service::process_storage($storage)`.
 - **You set `is_indexed = 0` or PENDING and nothing happens** — the blob is not in the queue. `mark_work_owed()` / `requeue_render()`.
 - **404 from `/_preview/pdf/:key`** — not an error condition: the blob is not RENDERED yet and the body names the state. The viewer never requests it in that state.
-- **415 from `/_preview/pdf/:key`** — the mime is not in `rsx.preview.convertible`.
+- **415 from `/_preview/pdf/:key`** — no `rsx.documents.renderers` entry matches the pipeline mime, its renderer makes HTML (a workbook: `/_preview/sheet/:key`), or it is switched off.
+- **"… is not installed or not executable" / "the document sandbox image … is not present" / "the source file is missing or unreadable"** — a SOFT failure: no attempt spent. Fix what it names; the next check or the next preview view processes it. Nothing to re-queue.
+- **Your viewer / extractor / thumbnail renderer entry is ignored** — check the pipeline mime the type actually resolves to (`rsx.files.document_mime_by_extension`); an application entry always beats a framework one for a mime it matches. For extraction, a word-processing document with a rendition is read by pdftotext ahead of the map.
+- **Boot error "rsx.preview.convertible is no longer read by the framework"** — move each pattern into `rsx.documents.renderers` (`'pattern' => 'Libreoffice_Document_Renderer'`).
 - **403 on a preview that a download allows** — the route is dual-gated; check `file.thumbnail.authorize`, not just `file.download.authorize`.
 - **"File reads are disabled: no file.… gate handler is registered"** — both read gates are mandatory (`Rsx_File_Gates`); register a handler for the one named, even a bare `return true` for public files.
 - **`get_extracted_text()` returns null forever** — extraction is off (`rsx.search.enabled`), or the cron is not running; confirm with `rsx:search:reindex --status`.
 - **Extracted text is empty for a PDF** — scanned/image-only PDF (see above). No OCR exists.
 - **Search returns another tenant's files** — missing `where('site_id', ...)`.
-
 - **Text is pending right after an upload** — correct, not a symptom. The whole pipeline is asynchronous.
 
 Details: `php artisan rsx:man document_search` · `documents` · `libreoffice` · `thumbnails`. Related: `rspade:file-attachments`, `rspade:event-hooks`, `rspade:background-tasks`, `rspade:jqhtml`.

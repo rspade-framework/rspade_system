@@ -35,9 +35,15 @@ DESCRIPTION
     involved.
 
 HOW IT WORKS
-    1. An attachment whose pipeline mime matches config('rsx.preview.convertible')
-       flips its blob to PENDING on create and kicks the worker.
-    2. The worker stages the extensionless, content-addressed blob under its
+    1. An attachment whose pipeline mime config('rsx.documents.renderers') maps to
+       Libreoffice_Document_Renderer flips its blob to PENDING on create and kicks
+       the worker.
+    2. Before charging an attempt the worker asks the renderer's soft check: is
+       soffice installed and executable here (sandboxed: is the docker client present,
+       and an operator's own image), and can the source be opened? When not, the
+       document is recorded FAILED with that reason WITHOUT spending an attempt and
+       is checked again on a backoff (rsx:man documents, THE WORK QUEUE).
+    3. The worker stages the extensionless, content-addressed blob under its
        representative extension (soffice detects the input format from the filename)
        inside a private per-invocation work dir, then runs:
 
@@ -46,12 +52,12 @@ HOW IT WORKS
 
        The private user profile is what lets a fresh invocation never collide with a
        stale LibreOffice profile.
-    3. The produced PDF is published ATOMICALLY into the rendition cache: copied to a
+    4. The produced PDF is published ATOMICALLY into the rendition cache: copied to a
        temp file BESIDE tmp/renditions/{blob-hash}.pdf (same filesystem) and
        renamed over the destination. A half-written rendition is never observable.
-    4. The blob settles RENDERED, its poisoned thumbnail cache entries are purged, and
+    5. The blob settles RENDERED, its poisoned thumbnail cache entries are purged, and
        every attachment referencing it emits a realtime frame.
-    5. The thumbnail pipeline later rasterizes page 1 of that PDF with Imagick, through
+    6. The thumbnail pipeline later rasterizes page 1 of that PDF with Imagick, through
        the renderer registered for application/pdf - an ordinary PDF like any other.
 
     Text extraction for word-processing documents (doc/docx/odt/rtf) does NOT run
@@ -60,8 +66,8 @@ HOW IT WORKS
     fods/fodp), because the flat-XML route is the only one that reads every sheet and
     every slide - see rsx:man document_search.
 
-    FAIL LOUD, RECORD, MOVE ON. __convert_to_pdf() throws on any failure (missing
-    soffice, non-zero exit, no output, the stage bound expiring). The child records
+    FAIL LOUD, RECORD, MOVE ON. Libreoffice_Document_Renderer::render() throws on any
+    failure (non-zero exit, no output, the stage bound expiring). The child records
     render_status_id = FAILED with the message in render_error, attempts the extraction
     anyway (a document that cannot be rendered may still have text that can be read),
     and notifies open pages; the worker moves on to the next blob. A FAILED ATTEMPT IS
@@ -79,8 +85,12 @@ ENABLE / DISABLE
     - Enabled + conversion fails      -> FAILED recorded with its reason; the generic
                                         extension icon is served (uncacheable). The
                                         worker retries it on the queue's schedule.
-    - Disabled                        -> NO soffice call is ever made. Convertible
-                                        documents STAY PENDING and stay in the queue,
+    - Enabled + soffice missing       -> a SOFT failure: FAILED recorded with the
+                                        reason, no attempt spent, checked again on
+                                        a backoff up to a week. Installing soffice
+                                        is the whole remedy.
+    - Disabled                        -> NO soffice call is ever made. Documents
+                                        LibreOffice renders STAY PENDING and stay in the queue,
                                         DEFERRED: offered again every retry interval
                                         with no attempt charged, so the first pass
                                         after it is switched back on renders them. The
@@ -208,14 +218,17 @@ THE DOCUMENT SANDBOX
     in the same Dockerfile as the application images and shares no layer with
     them.
 
-    IT IS BUILT ON FIRST USE. Switching LIBREOFFICE_SANDBOX to 'docker' is a
-    posture, not an installation step: the first sandboxed invocation on a host
-    that does not have the image builds it (Document_Sandbox::ensure_image(),
-    once per process, inside the asynchronous render worker) and then converts.
-    Two ways to pay that cost deliberately instead:
+    IT IS BUILT ON FIRST USE. Document_Sandbox::ensure_image() builds the
+    framework image when a sandboxed invocation runs and finds it absent, so the
+    first document after switching the posture on pays for the build; a build
+    that fails is that attempt's hard failure. To pay for it up front instead:
 
         php artisan rsx:heal document-sandbox-image
         bash system/app/RSpade/resource/docker/build.sh docconvert
+
+    The soft check made before every attempt (rsx:man documents, THE WORK QUEUE)
+    therefore asks only whether the docker client is present for the framework
+    image (Document_Sandbox::client_present()). It never builds or pulls.
 
     AN OPERATOR'S OWN IMAGE IS NEVER BUILT. Point LIBREOFFICE_SANDBOX_IMAGE at an
     image of your own and it must carry soffice, pdftotext and fonts, and it is
@@ -276,11 +289,10 @@ THE DOCUMENT SANDBOX
                         when it could not.
 
                         THE IMAGE ROW SPLITS BY WHOSE IMAGE IT IS. An absent
-                        FRAMEWORK converter image is a WARN: it is built on
-                        demand, so the state resolves itself, but the first
-                        document conversion on that box takes a minute or two
-                        longer while the image builds - the row recommends
-                        building it once with `rsx:heal document-sandbox-image`.
+                        FRAMEWORK converter image is a WARN recommending
+                        `rsx:heal document-sandbox-image`; until it is built,
+                        documents soft-fail (recorded, nothing spent) and the
+                        "Document Render Backlog" row counts them.
                         That heal ALWAYS rebuilds, present or not; docker's
                         layer cache makes a rebuild of an unchanged image a
                         matter of seconds, and it keeps the tagged image in step
@@ -315,9 +327,11 @@ CONFIGURATION
     How long a conversion may run is config('rsx.documents.stage_seconds') - see
     TIME LIMITS above.
 
-    WHICH MIMES CONVERT is config('rsx.preview.convertible') - one list, read by the
-    attachment (to decide whether a new upload owes a render) and by the worker. It is
-    overridable in rsx/resource/config/rsx.php.
+    WHICH MIMES CONVERT is config('rsx.documents.renderers') - the entries naming
+    Libreoffice_Document_Renderer. One map, read by the attachment (to decide whether
+    a new upload owes a render), by the worker and by the rendition endpoint. An
+    application adds a type, or gives one to a renderer of its own, in
+    rsx/resource/config/rsx.php (rsx:man documents, RENDERERS).
 
     Office mimes are NOT registered in config('rsx.thumbnails.renderers'), by design:
     a renderer entry would mean converting a document inside a web request.
@@ -365,4 +379,4 @@ SEE ALSO
     rsx:man tasks            #[Exclusive], #[Schedule] and the worker pool
     docs.dev/reference/docker_container_additions_7_2_2026.md
 
-RSX Framework              Last updated 2026-10-11               LIBREOFFICE(1)
+RSX Framework              Last updated 2026-10-20               LIBREOFFICE(1)

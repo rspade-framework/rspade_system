@@ -38,7 +38,7 @@ class Two_Factor_Challenge extends Component {
 
             error: null,
 
-            // A user-facing note that is not an error - "A new code has been sent."
+            // A user-facing note that is not an error - "Your code has been sent."
             notice: null,
 
             // The user asked for the plain recovery-code box in place of the digit boxes.
@@ -151,7 +151,7 @@ class Two_Factor_Challenge extends Component {
     /**
      * Ask the host's send endpoint to issue and deliver a code, then re-read the challenge.
      *
-     * @param {boolean} announce Say "A new code has been sent." afterwards (a resend the
+     * @param {boolean} announce Say "Your code has been sent." afterwards (a resend the
      *                           user asked for; the automatic first send says nothing).
      */
     async _send_code(announce) {
@@ -168,7 +168,7 @@ class Two_Factor_Challenge extends Component {
         }
 
         if (announce) {
-            this.state.notice = 'A new code has been sent.';
+            this.state.notice = 'Your code has been sent.';
         }
 
         await this.reload();

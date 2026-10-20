@@ -11,13 +11,14 @@ use Throwable;
 use App\RSpade\Core\Auth\Staff_Authorizable;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Files\Blob_Referencing;
+use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Imagick_Policy;
 use App\RSpade\Core\Files\Rsx_File_Gates;
-use App\RSpade\Core\Files\Spreadsheet_Rendition;
+use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Files\Svg_Upload_Sanitizer;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
 use App\RSpade\Core\Portal\Portal_Authorizable;
@@ -188,7 +189,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      *
      * @var array
      */
-    protected $neverExport = [
+    public static $neverExport = [
         'created_by_ip_address_id',
     ];
 
@@ -427,8 +428,8 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     }
 
     /**
-     * True when this mime is a document the render pipeline converts to a PDF rendition
-     * (rsx.preview.convertible, fnmatch globs).
+     * True when this mime is a document the render worker produces a preview rendition for:
+     * a pattern in rsx.documents.renderers matches it (Rsx_Mime_Map).
      *
      * THE one implementation of "is this convertible" - the rendition endpoint, the render
      * worker's queueing decision and the thumbnail pipeline all route through it, so there is
@@ -443,13 +444,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
             return false;
         }
 
-        foreach (config('rsx.preview.convertible', []) as $pattern) {
-            if (fnmatch($pattern, $mime)) {
-                return true;
-            }
-        }
-
-        return false;
+        return Rsx_Mime_Map::match('rsx.documents.renderers', $mime) !== null;
     }
 
     /**
@@ -813,7 +808,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     public function get_preview_url()
     {
-        $route = Spreadsheet_Rendition::handles_mime($this->pipeline_mime()) ? 'sheet' : 'pdf';
+        $route = Document_Render_Service::rendition_format_for_mime($this->pipeline_mime()) === 'html' ? 'sheet' : 'pdf';
 
         return Rsx_Portal::internal_url("/_preview/{$route}/{$this->key}?v=" . $this->content_version());
     }

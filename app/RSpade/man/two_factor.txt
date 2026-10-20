@@ -283,10 +283,10 @@ HOW IT WORKS
         failure_reason carries when the ceremony began. A session deleted
         outright takes its marker with it, and that ceremony records no
         outcome beyond its begun row. Nothing here feeds the login throttle -
-        an enrollment is not a sign-in attempt. The PORTAL has no login
-        history and logs the same outcomes instead:
-        Log::info('Portal passkey enrollment', {portal_user_id, email,
-        status, reason, ip_address, user_agent}).
+        an enrollment is not a sign-in attempt. The PORTAL writes the same
+        outcomes as rows of its own history, `_portal_login_history`
+        (Portal_Login_History::record_passkey_enrollment(); rsx:man session,
+        PORTAL LOGIN HISTORY).
 
         READING "MY PASSKEY WOULD NOT SAVE". A begun row followed by an
         abandoned one, with no failed row, means no confirmation ever reached
@@ -579,13 +579,21 @@ THE FACADE
             has_recovery_codes, has_issued_code, codes_issued}, or null. accepts
             is what the challenge takes AND the identity can give; the has_*
             flags are the same answer per kind - what the screen may ask for.
-            codes_issued counts issue_code() calls.
+            codes_issued counts issue_code() calls (sends, not mints).
         issue_code(): string
-            Six random digits for the pending challenge, for the APPLICATION
-            to deliver. Only a keyed hash is kept; a later code replaces an
-            earlier one. Throws Two_Factor_Failed_Exception when nothing is
-            pending, RuntimeException when the challenge does not accept
+            The pending identity's LIVE code, minting six random digits when
+            it has none, for the APPLICATION to deliver. One code per
+            identity: a resend, another browser or a fresh sign-in gets the
+            same digits until the code expires (challenge_window_minutes from
+            mint; a resend extends nothing). Throws
+            Two_Factor_Failed_Exception when nothing is pending,
+            RuntimeException when the challenge does not accept
             ANSWER_ISSUED_CODE. See ISSUED CODES.
+        issued_code_expires_at(): ?string
+            When the pending identity's live code expires (ISO), or null when
+            it has none, nothing is pending, or the challenge does not accept
+            an issued code. Asked before issue_code(): non-null means the send
+            repeats the code already delivered. SERVER-SIDE.
         pending_identity(): ?identity
             Whom the pending challenge is for - the address a code is sent
             to. SERVER-SIDE ONLY; the browser reads challenge_pending(),
@@ -600,11 +608,13 @@ THE FACADE
 
                 1. require_not_throttled()   - throws Auth_Throttled_Exception
                 2. the pending identity, or the window has closed
-                2b. a LOCKED identity (is_locked()) is refused and its
-                   challenge discarded, before anything is tried
+                2b. a LOCKED identity (is_locked()) is refused, its
+                   challenge discarded and its issued code destroyed, before
+                   anything is tried
                 3. only the kinds the challenge ACCEPTS: a passkey assertion
                    when one was offered; otherwise the typed string against
-                   the issued code, then every confirmed TOTP credential,
+                   the identity's live issued code, then every confirmed TOTP
+                   credential,
                    and THEN the recovery codes - recovery LAST, so a string
                    that is a live TOTP code never burns a recovery code. An
                    answer of a kind not accepted is a wrong answer
@@ -615,9 +625,10 @@ THE FACADE
                    Two_Factor_Failed_Exception('That code is not valid.') -
                    or, when the challenge's cap is reached, destroy the
                    challenge and throw 'Too many incorrect codes. Please sign
-                   in again.'
+                   in again.' The failure that spends the challenge or locks
+                   the identity also destroys the identity's issued code
                 5. on success: forget the pending value, clear the identity's
-                   failure count, sign in through the
+                   failure count, consume its issued code, sign in through the
                    realm (staff: RsxAuth::login(); portal:
                    Portal_Session::set_portal_user_id()), record the success
                 6. an identity the realm will not admit (staff: no enabled
@@ -795,8 +806,8 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
                 the login page). Absent: no Cancel.
                 $send_controller, $send_method - the application endpoint that
                 issues and delivers a code (ISSUED CODES). With them, and a
-                challenge accepting an issued code, the screen offers "Send a
-                new code" and sends the FIRST code itself when none has been
+                challenge accepting an issued code, the screen offers "Resend
+                code" and sends the FIRST code itself when none has been
                 issued. Absent: no send link; the host issues the code.
                 $unstyled_controls (above).
         Posts:  {code: '...'} from the typed answer, or {assertion: {...}}
@@ -1079,10 +1090,11 @@ ISSUED CODES
     rsx:man two_factor_codes.
 
     THE SPLIT. Generating, storing, verifying and rate-limiting a code are
-    security work, so the framework does them: random_int digits, only a
-    keyed hash kept in the pending challenge (a copy of the session store
-    does not reveal them), a later code replacing an earlier one, and the
-    same throttle, attempt caps and recording as a TOTP code. Delivering it,
+    security work, so the framework does them: random_int digits, one live
+    code per identity kept encrypted with the application key (a copy of the
+    store alone does not reveal it), the same digits re-sent until the code
+    expires, and the same throttle, attempt caps and recording as a TOTP
+    code. Delivering it,
     wording it, capping resends and deciding who owes one are application
     work, so the framework does none of them.
 
@@ -1100,9 +1112,19 @@ ISSUED CODES
     rsx.mail.delivery still apply - in the default 'suppressed' mode the
     code is recorded and never leaves.
 
-    LIFETIME. The code lives exactly as long as its challenge
-    (rsx.two_factor.challenge_window_minutes, 15). codes_issued in
-    challenge_pending() lets the application cap "Send a new code".
+    ONE CODE PER IDENTITY. The code is held against the identity, not the
+    challenge, so session cycling cannot mint a parallel code, and a user
+    holding several messages holds one working code. A correct answer
+    consumes it; a spent challenge or a locked identity destroys it;
+    abandon_challenge() leaves it, because another browser of the same
+    identity may be answering it. issued_code_expires_at() lets the
+    application word a resend ("here is your code again").
+
+    LIFETIME. rsx.two_factor.challenge_window_minutes (15) from MINT, an
+    absolute life a resend does not extend; the next issue after it mints
+    anew. codes_issued in challenge_pending() counts sends, so the
+    application can cap "Resend code". Storage, and what encryption trades
+    against a keyed hash: rsx:man two_factor_codes, LIFETIME.
 
 TRUSTED BROWSERS
     A browser on which an identity passed a second factor may be TRUSTED for a
@@ -1236,12 +1258,11 @@ THE CLIENT PORTAL REALM
                     names its owner by a global id, so the site check is what
                     keeps one tenant's passkey from signing in on another's
                     portal. A refusal answers like a wrong answer.
-        recording   the portal has no login history (_login_history is the
-                    staff identity's store): each failure feeds
-                    Login_Throttle::record_failure() directly, exactly once,
-                    a success records nothing beyond the last_login stamp,
-                    and a passkey enrollment outcome is a
-                    Log::info('Portal passkey enrollment') line.
+        recording   the portal's own login history, Portal_Login_History
+                    (_portal_login_history), under the staff statuses: a
+                    success and a passkey enrollment outcome are rows, a
+                    failure is Portal_Login_History::record_failure(), which
+                    feeds Login_Throttle exactly once.
         rpId        the portal's HOST (Rsx_Portal_Url::host()) when PORTAL_URL
                     gives the portal a host of its own, otherwise the
                     application's hostname (shared with staff - safe, see

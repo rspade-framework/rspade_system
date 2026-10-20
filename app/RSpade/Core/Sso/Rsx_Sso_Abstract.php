@@ -379,8 +379,8 @@ abstract class Rsx_Sso_Abstract
      *  3. The state is compared with hash_equals, and the provider key with it.
      *  4. Only then is the code exchanged with the provider.
      *  5. Any failure is recorded ONCE through the realm - Login_History::record_failure()
-     *     with STATUS_FAILED_SSO for staff (which ALREADY feeds Login_Throttle), the throttle
-     *     directly for the portal (whose outcomes have no history store). Never both: one
+     *     or Portal_Login_History::record_failure() with STATUS_FAILED_SSO (which ALREADY
+     *     feeds Login_Throttle). Never twice: one
      *     failure counted twice halves the real budget, and the halving would only ever be
      *     discovered by a user locked out early.
      *
@@ -1275,8 +1275,8 @@ abstract class Rsx_Sso_Abstract
      * @param string $email The address attempted, '' when none is known.
      * @param string|null $reason Detail for the log, never for the screen.
      * @param int|null $identity_id The identity, when known.
-     * @param bool $refused True when the realm refused an otherwise verified identity (staff
-     *                      records that as STATUS_FAILED_DISABLED rather than FAILED_SSO).
+     * @param bool $refused True when the realm refused an otherwise verified identity (recorded
+     *                      as STATUS_FAILED_DISABLED rather than FAILED_SSO).
      * @return void
      */
     abstract protected static function __record_failure(

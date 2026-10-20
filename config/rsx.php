@@ -1189,6 +1189,18 @@ return [
     | - retry_after_minutes: how long a failed blob waits before its next attempt. This is
     |   a schedule, not a timeout: it decides when work is next offered, and ends nothing.
     |
+    | - soft_retry_max_minutes: the longest wait between two checks of a SOFT-FAILED blob.
+    |   A soft failure is the environment, not the document - the tool a pass needs is not
+    |   installed or not executable, the sandbox image is absent, the source blob cannot be
+    |   read - found by the renderer's or extractor's soft_failure() check BEFORE an attempt.
+    |   It is recorded like any failure but charges no attempt, and the blob is checked
+    |   again retry_after_minutes later, the wait doubling after every consecutive soft
+    |   failure (30 minutes, 1 hour, 2 hours ...) up to this cap, for as long as it takes:
+    |   a box repaired next month still renders what was uploaded today. A pass that
+    |   actually runs restarts the doubling. This is a schedule, not a timeout: it decides
+    |   when a check is next made, and ends nothing. 10080 = one week. Never below
+    |   retry_after_minutes.
+    |
     | - drain_yield_after_minutes / drain_resume_after_minutes: the PACING of a long drain.
     |   A pass of the worker (Document_Render_Service::render_pending) that has been
     |   draining for drain_yield_after_minutes and still finds work due stops BETWEEN two
@@ -1201,14 +1213,46 @@ return [
     |     is still in the queue, and the next pass (or the next upload's kick) takes it up.
     |     A pass that empties the queue first never yields.
     |
+    | - renderers: fnmatch map of mime pattern (glob) => renderer class (simple, manifest-
+    |   resolved name, a Rsx_Document_Renderer_Abstract), resolved for a document's PIPELINE
+    |   mime by Rsx_Mime_Map: an application entry beats a framework entry, and inside a layer
+    |   the most specific pattern wins (exact mime, then the glob with more literal characters,
+    |   then the later line). THIS MAP IS WHAT MAKES A TYPE PREVIEWABLE BY RENDITION: an
+    |   attachment whose type matches it queues its blob for the worker, and the rendition
+    |   endpoints serve what the worker produced. A type matching nothing gets no rendition.
+    |   Apps add a type, or replace the framework's renderer for one, in
+    |   rsx/resource/config/rsx.php - a renderer of their own produces a PDF. See rsx:man
+    |   documents.
+    |
     */
     'documents' => [
         'stage_seconds' => 20,
         'kill_seconds' => 60,
         'max_attempts' => 3,
         'retry_after_minutes' => 30,
+        'soft_retry_max_minutes' => 10080,
         'drain_yield_after_minutes' => 20,
         'drain_resume_after_minutes' => 10,
+
+        'renderers' => [
+            // SPREADSHEETS - their globs are longer than the two generic Office patterns below,
+            // so they win for a workbook (the most specific match wins). A workbook renders to
+            // an HTML GRID in-process (PhpSpreadsheet, no soffice), never to a PDF: a
+            // spreadsheet has no pages, and a PDF of one is LibreOffice's print view.
+            // The ms-excel glob takes the macro-enabled and template variants with the classic .xls.
+            'application/vnd.ms-excel*' => 'Spreadsheet_Document_Renderer',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.*' => 'Spreadsheet_Document_Renderer',
+            'application/vnd.oasis.opendocument.spreadsheet*' => 'Spreadsheet_Document_Renderer',
+
+            // Everything else Office-shaped converts to a PDF through headless LibreOffice
+            // (switched by rsx.libreoffice.enabled).
+            'application/msword' => 'Libreoffice_Document_Renderer',
+            'application/vnd.ms-word*' => 'Libreoffice_Document_Renderer',
+            'application/vnd.ms-powerpoint*' => 'Libreoffice_Document_Renderer',
+            'application/vnd.openxmlformats-officedocument.*' => 'Libreoffice_Document_Renderer',
+            'application/vnd.oasis.opendocument.*' => 'Libreoffice_Document_Renderer',
+            'application/rtf' => 'Libreoffice_Document_Renderer',
+        ],
     ],
 
     /*
@@ -1227,7 +1271,7 @@ return [
     | wait: nothing is competing for a pool any more.
     |
     | - enabled: master switch for RENDERING. When FALSE, no soffice call is ever made:
-    |   convertible documents stay PENDING (and render the day it is switched back on),
+    |   documents LibreOffice renders stay PENDING (and render the day it is switched back on),
     |   the rendition endpoint has nothing to serve, and thumbnails use the generic
     |   extension icon. Text extraction of non-LibreOffice formats keeps draining.
     | - binary_path: absolute path to the `soffice` binary. NULL = auto-detect on PATH and
@@ -1297,10 +1341,13 @@ return [
     | - extractor_version: the current pipeline generation. Bump this when an extractor
     |   changes in a way that should re-produce existing text; then
     |   `rsx:search:reindex --below-version=N` re-queues everything older.
-    | - extractors: ordered fnmatch map of mime pattern (glob) => extractor class (simple,
-    |   manifest-resolved name). First match wins. A mime matching nothing -> UNSUPPORTED
-    |   (not FAILED). Apps may override/extend this key in rsx/resource/config/rsx.php, or
-    |   intercept per-file with an #[OnEvent('document.extract_text')] handler.
+    | - extractors: fnmatch map of mime pattern (glob) => extractor class (simple,
+    |   manifest-resolved name), resolved by Rsx_Mime_Map: an application entry beats a
+    |   framework entry, and inside a layer the most specific pattern wins (exact mime, then
+    |   the glob with more literal characters, then the later line). A mime matching nothing
+    |   -> UNSUPPORTED (not FAILED). Apps add or replace entries in
+    |   rsx/resource/config/rsx.php, or intercept per-file with an
+    |   #[OnEvent('document.extract_text')] handler.
     | - pdftotext_binary_path: absolute path to `pdftotext` (poppler-utils). NULL = auto-
     |   detect on PATH and common install locations.
     | - max_text_bytes: extracted text is capped at this many bytes. Over-cap extraction is
@@ -1315,11 +1362,12 @@ return [
         'extractors' => [
             'application/pdf' => 'Pdftotext_Text_Extractor',
 
-            // SPREADSHEETS FIRST - first fnmatch match wins, and the two generic Office
-            // patterns below would otherwise swallow them. PhpSpreadsheet reads a workbook
-            // in-process (no soffice spawn, no worker slot) and indexes only the WORDS:
-            // numbers, dates and currency are excluded, because a date and a currency amount
-            // are numbers wearing a format and a full-text index is served worst by them.
+            // SPREADSHEETS - their globs are longer than the two generic Office patterns
+            // below, so they win for a workbook (the most specific match wins). PhpSpreadsheet
+            // reads a workbook in-process (no soffice spawn, no worker slot) and indexes only
+            // the WORDS: numbers, dates and currency are excluded, because a date and a
+            // currency amount are numbers wearing a format and a full-text index is served
+            // worst by them.
             // The ms-* globs cover the macro-enabled and template variants
             // (vnd.ms-excel.sheet.macroEnabled.12 and friends) beside the classic binary format.
             'application/vnd.ms-excel*' => 'Spreadsheet_Text_Extractor',
@@ -1353,16 +1401,15 @@ return [
     | when it is already a PDF, else the rendition Document_Render_Service produced in the
     | background - a web request never converts anything).
     |
-    | - viewers: ordered fnmatch map of mime pattern (glob) => viewer component (simple
-    |   name). First match wins; the '*' entry is the terminal Icon_Viewer, consulted
-    |   LAST wherever it sits, so every mime resolves to something. An application ADDS a
-    |   viewer for a mime no pattern here covers by listing it in
-    |   rsx/resource/config/rsx.php; its entries merge in after these, so a mime a
-    |   framework pattern already matches keeps the framework's viewer.
-    | - convertible: mimes the render worker converts to a PDF rendition via headless
-    |   LibreOffice (fnmatch globs). This list is also what makes a new attachment queue
-    |   its blob for rendering. A convertible mime is only converted when
-    |   rsx.libreoffice.enabled is true; otherwise the rendition endpoint returns 415.
+    | - viewers: fnmatch map of mime pattern (glob) => viewer component (simple name),
+    |   resolved by Rsx_Mime_Map: an application entry beats a framework entry, and inside
+    |   a layer the most specific pattern wins (exact mime, then the glob with more literal
+    |   characters, then the later line). The '*' entry is the terminal Icon_Viewer,
+    |   consulted only when nothing else matches, so every mime resolves to something. An
+    |   application adds a viewer, or replaces the framework's for a type, by listing the
+    |   pattern in rsx/resource/config/rsx.php.
+    | - Which types get a rendition at all, and how it is produced, is
+    |   rsx.documents.renderers.
     | - quota_max_bytes: LRU cap (bytes) on tmp/renditions, enforced by the
     |   File_Rendition_Service scheduled cleanup task (oldest mtime evicted first).
     |
@@ -1371,12 +1418,12 @@ return [
         'viewers' => [
             'application/pdf' => 'Pdf_Viewer',
 
-            // SPREADSHEETS FIRST - first match wins, and the two generic Office patterns below
-            // would otherwise take them. A workbook previews as a GRID (Spreadsheet_Viewer over
-            // the HTML rendition PhpSpreadsheet produces), never as a PDF: a spreadsheet has no
-            // pages, so a PDF of one is LibreOffice's PRINT view - page breaks through the data,
-            // no gridlines, no row or column headers - which is faithful to a print-out and
-            // unrecognisable as the thing being previewed.
+            // SPREADSHEETS - their globs are longer than the two generic Office patterns below,
+            // so they win for a workbook (the most specific match wins). A workbook previews as
+            // a GRID (Spreadsheet_Viewer over the HTML rendition PhpSpreadsheet produces), never
+            // as a PDF: a spreadsheet has no pages, so a PDF of one is LibreOffice's PRINT view -
+            // page breaks through the data, no gridlines, no row or column headers - which is
+            // faithful to a print-out and unrecognisable as the thing being previewed.
             'application/vnd.ms-excel*' => 'Spreadsheet_Viewer',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.*' => 'Spreadsheet_Viewer',
             'application/vnd.oasis.opendocument.spreadsheet*' => 'Spreadsheet_Viewer',
@@ -1390,29 +1437,19 @@ return [
 
             'image/*' => 'Image_Viewer',
 
-            // MARKDOWN ABOVE text/* - first fnmatch match wins, and the text/* line below
-            // would otherwise take it. A .md file previews as the DOCUMENT its author wrote
-            // (headings, tables, task lists), rendered server-side and sanitised twice; the
-            // source characters are still one click away in the file itself.
+            // MARKDOWN - an exact mime, so it beats the text/* glob below. A .md file previews
+            // as the DOCUMENT its author wrote (headings, tables, task lists), rendered
+            // server-side and sanitised twice; the source characters are still one click away
+            // in the file itself.
             'text/markdown' => 'Markdown_Viewer',
 
             // Plain text renders as ITSELF, in a scrolling text frame - it needs no
-            // conversion and gains nothing from one. Sits below the document patterns above
-            // (text/* must not shadow a more specific entry) and above the terminal '*',
-            // whose Icon_Viewer would otherwise answer for them.
+            // conversion and gains nothing from one. Any more specific entry (text/markdown
+            // above) wins over it; the terminal '*', whose Icon_Viewer would otherwise answer
+            // for them, never does.
             'text/*' => 'Text_Viewer',
 
             '*' => 'Icon_Viewer',
-        ],
-
-        'convertible' => [
-            'application/msword',
-            'application/vnd.ms-word*',
-            'application/vnd.ms-excel*',
-            'application/vnd.ms-powerpoint*',
-            'application/vnd.openxmlformats-officedocument.*',
-            'application/vnd.oasis.opendocument.*',
-            'application/rtf',
         ],
 
         // Mimes a BROWSER can display in a tab of its own, given Content-Disposition: inline
@@ -1469,10 +1506,12 @@ return [
         ],
 
         // Thumbnail renderer registry: the "produce a raster from bytes" step of the
-        // thumbnail pipeline, pluggable by mime type. Ordered map of mime pattern (fnmatch
-        // glob) => renderer class (simple, manifest-resolved name). First match wins.
-        // A mime with no registered renderer falls back to a generic extension icon.
-        // Apps may override/extend this key in rsx/resource/config/rsx.php.
+        // thumbnail pipeline, pluggable by mime type. Map of mime pattern (fnmatch glob) =>
+        // renderer class (simple, manifest-resolved name), resolved by Rsx_Mime_Map: an
+        // application entry beats a framework entry, and inside a layer the most specific
+        // pattern wins (exact mime, then the glob with more literal characters, then the
+        // later line). A mime with no registered renderer falls back to a generic extension
+        // icon. Apps add or replace entries in rsx/resource/config/rsx.php.
         //
         // Imagick_Thumbnail_Renderer: raster images (byte-identical to the historic path)
         //   and PDFs (first page, requires Imagick + Ghostscript).
@@ -1933,7 +1972,8 @@ return [
             'lockout_minutes' => 15,
         ],
 
-        // Days a `_login_history` row (successes only) is kept before the hourly
+        // Days a login-history row - `_login_history` (staff) and `_portal_login_history`
+        // (client portal) alike; failures are never rows - is kept before the hourly
         // Session_Cleanup_Service prunes it. Default: 1 year. Set to 0 or null to
         // disable the prune entirely (rows are then kept forever).
         'login_history_retention_days' => 365,

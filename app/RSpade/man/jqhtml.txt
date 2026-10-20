@@ -1813,6 +1813,25 @@ INSTANTIATION METHODS
         This allows parent components to add BEM-style classes for targeting
         (e.g., Parent__slot) that survive child component replacement.
 
+    The Element Can Be Replaced - Use The Return Value:
+        .component(name, args) RETURNS the element the component lives on.
+        When the component declares a tag the host does not have (a
+        tag="form" component mounted on a <div>) and the host is in the
+        document, jqhtml REPLACES the host with a new element of the right
+        tag - attributes (id and classes included), .data() and inner HTML
+        copied - and the old jQuery reference now points at a discarded
+        node, on which .component() answers null:
+
+            // WRONG: $slot is the discarded <div>
+            $slot.component('Rsx_Form', { controller, method });
+            const form = $slot.component();            // null
+
+            // RIGHT: chain the returned element (or re-query by $sid / id)
+            const form = $slot.component('Rsx_Form', { controller, method }).component();
+
+        A host that is not in the document keeps its tag (jqhtml cannot
+        replace a parentless node) and only logs a tag-mismatch warning.
+
     Client-side (HTML attributes):
         <div class="_Component_Init" data-component-init-name="User_Card"
              data-component-args='{"name": "John"}'>

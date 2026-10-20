@@ -20,6 +20,7 @@ DESCRIPTION
         _sessions.ip_address_id                    the address that created
                                                    the session row
         _login_history.ip_address_id               a recorded sign-in
+        _portal_login_history.ip_address_id        a recorded portal sign-in
         _audit_sessions.ip_address_id              an acting context
         _file_attachments.created_by_ip_address_id an upload
         _api_request_log.ip_address_id             an external API call

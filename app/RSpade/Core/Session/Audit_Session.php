@@ -159,7 +159,8 @@ class Audit_Session
      * null for no agent at all.
      *
      * _user_agents is PRIVATE to the framework: it exists to feed _sessions,
-     * _session_devices, _login_history and _audit_sessions, each of which stores this id
+     * _session_devices, _login_history, _portal_login_history and _audit_sessions, each of
+     * which stores this id
      * where it used to store a truncated copy of the string. The string is kept whole and
      * matched by the hash of the whole, so one browser is one row everywhere. Readers get
      * the string back through the framework's own answers (the session listings,

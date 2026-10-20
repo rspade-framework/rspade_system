@@ -195,7 +195,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      *
      * @var string[]
      */
-    protected $neverExport = ['invite_code', 'invite_accepted_at', 'invite_expires_at'];
+    public static $neverExport = ['invite_code', 'invite_accepted_at', 'invite_expires_at'];
 
     /**
      * Cached supplementary permissions for this user (avoids repeated DB queries)

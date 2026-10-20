@@ -108,7 +108,7 @@ abstract class Revision_Model_Abstract extends Rsx_Model_Abstract
      *
      * @var array
      */
-    protected $neverExport = ['changes'];
+    public static $neverExport = ['changes'];
 
     /**
      * What the write DID to the record.

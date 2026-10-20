@@ -111,8 +111,8 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * (Passkeys::challenge_window_seconds()).
  *
  * PASSKEY ENROLLMENT CEREMONIES ARE RECORDED - begun, enrolled, failed, abandoned - through
- * the realm (__record_passkey_enrollment(): _login_history rows for staff, log lines for the
- * portal). A browser that gives up on a ceremony tells the server nothing, so "begun" is
+ * the realm (__record_passkey_enrollment(): rows in the realm's login history, _login_history
+ * or _portal_login_history). A browser that gives up on a ceremony tells the server nothing, so "begun" is
  * written when the options are issued and a marker (the realm's PASSKEY_ENROLLMENT_KEY
  * session value, expiring with the challenge) is parked beside the challenge. The marker is
  * CLAIMED BY DELETION by exactly one of: the confirmation (enrolled / failed), the next begin
@@ -130,6 +130,20 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * included, until the window closes or clear_failures() runs). Both counters live in the
  * transient-counter store (Rsx_Counter), keyed by realm, so a staff identity and a portal
  * user with the same id never share one. config('rsx.two_factor.*').
+ *
+ * AN ISSUED CODE BELONGS TO THE IDENTITY, NOT TO THE CHALLENGE. issue_code() keeps at most one
+ * live code per identity per realm, in the transient-counter store beside the failure budget
+ * that governs it, for rsx.two_factor.challenge_window_minutes from the moment it was MINTED -
+ * an absolute life that no resend extends. Asking again while it lives returns the SAME
+ * digits, so a user holding three emails holds one code, not three where only the newest
+ * works; and because the code is not keyed to the session, signing in again from a fresh
+ * session (or another browser) reuses it rather than minting a parallel one. The session's
+ * challenge keeps only the pointer it needs - which identity, and how many sends. Re-sending
+ * the same digits means reading them back, so the code is stored ENCRYPTED with the
+ * application key rather than hashed: a copy of the store alone does not reveal it, and
+ * whatever it does reveal dies with the code's short absolute life. A correct answer consumes
+ * it; a spent challenge or a locked identity destroys it; abandoning one browser's challenge
+ * leaves it, because another browser of the same identity may be answering it.
  *
  * A TOTP SEED IS ENCRYPTED AT REST, NOT HASHED. A password is verified by hashing the guess,
  * so it never needs to be recoverable; a TOTP seed is recoverable BY DESIGN, because the
@@ -157,7 +171,7 @@ abstract class Rsx_Two_Factor_Abstract
     /** A challenge answer kind: one of the identity's unspent recovery codes. */
     public const ANSWER_RECOVERY_CODE = 'recovery_code';
 
-    /** A challenge answer kind: the code issue_code() minted for this challenge. */
+    /** A challenge answer kind: the identity's live code from issue_code(). */
     public const ANSWER_ISSUED_CODE = 'issued_code';
 
     /** Every answer kind, in the order the challenge screen offers them. */
@@ -1096,7 +1110,7 @@ abstract class Rsx_Two_Factor_Abstract
                 'accepts' => $accepts,
                 // issue_code() rewrites the value and must keep the window it was given.
                 'expires_at' => $expires_at,
-                'code_hash' => null,
+                // Sends, not mints: a resend that re-sends the live code still counts.
                 'codes_issued' => 0,
             ],
             $expires_at
@@ -1106,15 +1120,20 @@ abstract class Rsx_Two_Factor_Abstract
     }
 
     /**
-     * Mint a one-time code for the pending challenge and return it, for the application to
-     * deliver.
+     * The pending identity's live sign-in code, minting one when it has none, for the
+     * application to deliver.
      *
-     * Six random digits. Only a keyed hash is kept, in the pending challenge, and a later
-     * code REPLACES an earlier one - so "send me another code" leaves exactly one live
-     * answer. The code lives as long as the challenge does (rsx.two_factor.
-     * challenge_window_minutes). Every code issued is counted (challenge_pending()'s
-     * codes_issued), so the application can cap resends however it likes; the attempt caps
-     * on WRONG answers are the framework's and apply here exactly as they do to TOTP.
+     * Six random digits, held against the IDENTITY (see the class docblock): while a code
+     * lives, every call - a resend, a second browser, a fresh sign-in - returns the SAME
+     * digits, so however many messages the user holds they all carry the one code that works.
+     * A code lives rsx.two_factor.challenge_window_minutes from the moment it was minted, and
+     * a resend extends nothing; once it has expired the next call mints a new one.
+     * issued_code_expires_at() tells the two apart before the call, for an application whose
+     * message says "here is your code again".
+     *
+     * Every call is counted as a SEND (challenge_pending()'s codes_issued), so the
+     * application can cap resends however it likes; the attempt caps on WRONG answers are
+     * the framework's and apply here exactly as they do to TOTP.
      *
      * Delivery is the caller's: an email declared CATEGORY = SECURITY (which reaches an
      * address on the site block list and ignores the recipient opt-out), an SMS, anything.
@@ -1138,15 +1157,38 @@ abstract class Rsx_Two_Factor_Abstract
             );
         }
 
-        $code = str_pad((string) random_int(0, (10 ** self::ISSUED_CODE_DIGITS) - 1), self::ISSUED_CODE_DIGITS, '0', STR_PAD_LEFT);
+        $code = static::__live_or_minted_code($pending['identity_id']);
 
         $raw = Session::get_value(static::CHALLENGE_KEY);
-        $raw['code_hash'] = static::__issued_code_hash($pending['challenge_id'], $code);
         $raw['codes_issued'] = $pending['codes_issued'] + 1;
 
         Session::put_value(static::CHALLENGE_KEY, $raw, $pending['expires_at']);
 
         return $code;
+    }
+
+    /**
+     * When the pending identity's live sign-in code expires, or null when it has none.
+     *
+     * For the application's own wording: asked BEFORE issue_code(), non-null means the call
+     * will re-send the code the user already holds ("here is your code again"); asked after,
+     * it is the moment the delivered code stops working ("expires in 9 minutes"), which a
+     * resend does not move. Null too when nothing is pending or the challenge does not accept
+     * an issued code. Server-side; the digits themselves are never readable here.
+     *
+     * @return string|null ISO 8601 UTC
+     */
+    public static function issued_code_expires_at(): ?string
+    {
+        $pending = static::__pending_challenge();
+
+        if ($pending === null || !in_array(self::ANSWER_ISSUED_CODE, $pending['accepts'] ?? [], true)) {
+            return null;
+        }
+
+        $live = static::__live_issued_code($pending['identity_id']);
+
+        return $live === null ? null : $live['expires_at'];
     }
 
     /**
@@ -1250,20 +1292,23 @@ abstract class Rsx_Two_Factor_Abstract
      *     anything is tried, and its challenge is discarded - a correct answer would
      *     otherwise make the lock an oracle.
      *  3. Only the kinds the challenge ACCEPTS are tried. A passkey assertion is tried when
-     *     one was offered; otherwise a typed code is tried against the issued code, then
+     *     one was offered; otherwise a typed code is tried against the identity's live
+     *     issued code, then
      *     every confirmed TOTP credential, then the recovery codes. Recovery LAST, so a
      *     string that is a live TOTP code never burns a recovery code. An answer of a kind
      *     the challenge does not accept is a wrong answer.
      *  4. A failure is recorded ONCE, through the realm (Login_History::record_failure()
-     *     with STATUS_FAILED_2FA for staff, which already feeds Login_Throttle; the throttle
-     *     directly for the portal, whose outcomes have no history store). Never both: one
+     *     or Portal_Login_History::record_failure() with STATUS_FAILED_2FA, which already
+     *     feeds Login_Throttle). Never twice: one
      *     failure counted twice halves the real budget, and the halving would only be
      *     discovered by a user locked out early. The failure also counts once against
      *     the challenge and once against the identity (the attempt caps, independent of
-     *     IP); the answer that spends the challenge's budget destroys the challenge.
+     *     IP); the answer that spends the challenge's budget destroys the challenge, and
+     *     that answer or the one that locks the identity destroys its live issued code.
      *  5. On success the pending value is forgotten FIRST, the identity's failure count is
-     *     cleared, then the realm signs the identity
-     *     in, then the success is recorded.
+     *     cleared and its live issued code consumed (whichever kind of answer passed - the
+     *     sign-in it was sent for is over), then the realm signs the identity in, then the
+     *     success is recorded.
      *  6. The sign-in REFUSES an identity the realm will not admit - a staff identity holding
      *     no active site membership (users.is_enabled + sites.is_enabled), a portal user the portal's account
      *     vocabulary rejects (Portal_User_Model::can_login(), or a user of another site). A
@@ -1311,6 +1356,7 @@ abstract class Rsx_Two_Factor_Abstract
 
         if (static::is_locked($identity_id)) {
             static::abandon_challenge();
+            static::__forget_issued_code($identity_id);
 
             throw new Two_Factor_Failed_Exception(
                 'Too many incorrect codes have been entered for this account. Please try again later.',
@@ -1342,7 +1388,17 @@ abstract class Rsx_Two_Factor_Abstract
         if ($answer === null) {
             static::__record_failure($email, Login_History::STATUS_FAILED_2FA, $identity_id);
 
-            Rsx_Counter::increment(static::__identity_failure_key($identity_id), static::identity_failure_window_seconds());
+            $identity_failures = Rsx_Counter::increment(
+                static::__identity_failure_key($identity_id),
+                static::identity_failure_window_seconds()
+            );
+
+            // The identity is now locked: no answer will be accepted until the window closes,
+            // so the code it was sent is worthless to its owner and only useful to whoever
+            // reads it later.
+            if ($identity_failures >= static::identity_max_failures()) {
+                static::__forget_issued_code($identity_id);
+            }
 
             // The counter only has to outlive the challenge it counts, which lives exactly
             // the challenge window.
@@ -1353,6 +1409,10 @@ abstract class Rsx_Two_Factor_Abstract
 
             if ($challenge_failures >= static::challenge_max_failures()) {
                 static::abandon_challenge();
+
+                // The code goes with the challenge it was being guessed against: the next
+                // sign-in mints a new one, so the guesses already spent narrow nothing.
+                static::__forget_issued_code($identity_id);
 
                 // SOMEBODY WHO KNOWS THE PASSWORD FAILED THE SECOND FACTOR, REPEATEDLY. The
                 // caps make guessing slow; being noticed is what makes it hopeless, and this
@@ -1375,6 +1435,7 @@ abstract class Rsx_Two_Factor_Abstract
 
         static::abandon_challenge();
         static::clear_failures($identity_id);
+        static::__forget_issued_code($identity_id);
 
         // The second factor was answered correctly, and the realm still will not admit the
         // identity - so the sign-in is refused with the same message a wrong code gets. The
@@ -1394,6 +1455,12 @@ abstract class Rsx_Two_Factor_Abstract
 
     /**
      * Discard the pending challenge - the user pressed cancel, or the flow is done.
+     *
+     * The identity's live issued code is LEFT: it belongs to the identity, not to this
+     * browser's challenge, and another browser of the same identity may be answering it
+     * right now - cancelling here must not break the sign-in there. A code left behind
+     * still dies at the end of its absolute life, and signing in again from here re-sends
+     * it rather than minting a second one.
      *
      * @return void
      */
@@ -1736,11 +1803,12 @@ abstract class Rsx_Two_Factor_Abstract
         $identity_id = $pending['identity_id'];
         $code = trim($code);
 
-        if (in_array(self::ANSWER_ISSUED_CODE, $accepts, true)
-            && $pending['code_hash'] !== null
-            && hash_equals($pending['code_hash'], static::__issued_code_hash($pending['challenge_id'], $code))
-        ) {
-            return self::ANSWER_ISSUED_CODE;
+        if (in_array(self::ANSWER_ISSUED_CODE, $accepts, true)) {
+            $live = static::__live_issued_code($identity_id);
+
+            if ($live !== null && hash_equals($live['code'], $code)) {
+                return self::ANSWER_ISSUED_CODE;
+            }
         }
 
         if (in_array(self::ANSWER_TOTP, $accepts, true) && static::__try_totp($code, $identity_id)) {
@@ -1796,7 +1864,7 @@ abstract class Rsx_Two_Factor_Abstract
      * The pending challenge, validated into shape, or null.
      *
      * @return array|null {identity_id, email, challenge_id, accepts (array|null), expires_at,
-     *                    code_hash (string|null), codes_issued}
+     *                    codes_issued}
      */
     protected static function __pending_challenge(): ?array
     {
@@ -1812,7 +1880,6 @@ abstract class Rsx_Two_Factor_Abstract
             'challenge_id' => (string) $pending['challenge_id'],
             'accepts' => is_array($pending['accepts'] ?? null) ? array_values($pending['accepts']) : null,
             'expires_at' => (string) $pending['expires_at'],
-            'code_hash' => is_string($pending['code_hash'] ?? null) ? $pending['code_hash'] : null,
             'codes_issued' => (int) ($pending['codes_issued'] ?? 0),
         ];
     }
@@ -1881,17 +1948,93 @@ abstract class Rsx_Two_Factor_Abstract
         return $accepts;
     }
 
+    // -------------------------------------------------------------------------
+    // Issued-code storage
+    // -------------------------------------------------------------------------
+
     /**
-     * The keyed hash an issued code is kept as. Keyed by the application key and salted by
-     * the challenge, so a copy of the session store alone does not reveal the six digits.
+     * The identity's live code, or a freshly minted one stored in its place.
      *
-     * @param string $challenge_id
-     * @param string $code
+     * Read, then create-if-absent: the store's write is SET NX, so two requests minting for
+     * the same identity at once cannot both win - the loser goes round again and reads the
+     * winner's code. The loop ends because each pass either finds a live code or stores one;
+     * a store that cannot write throws rather than answering false.
+     *
+     * @param int $identity_id
+     * @return string The six digits.
+     */
+    protected static function __live_or_minted_code(int $identity_id): string
+    {
+        while (true) {
+            $live = static::__live_issued_code($identity_id);
+
+            if ($live !== null) {
+                return $live['code'];
+            }
+
+            $code = str_pad((string) random_int(0, (10 ** self::ISSUED_CODE_DIGITS) - 1), self::ISSUED_CODE_DIGITS, '0', STR_PAD_LEFT);
+            $expires_at = static::challenge_expires_at();
+
+            $stored = Rsx_Counter::add_value(
+                static::__issued_code_key($identity_id),
+                Crypt::encryptString(json_encode(['code' => $code, 'expires_at' => $expires_at])),
+                Rsx_Time::to_ms($expires_at)
+            );
+
+            if ($stored) {
+                return $code;
+            }
+        }
+    }
+
+    /**
+     * The identity's live issued code and when it expires, or null when it has none.
+     *
+     * The store expires the entry at the code's own expiry (an absolute time), so presence
+     * IS liveness. The entry is decrypted with the application key; one that does not decrypt
+     * or decode into the expected shape is corruption, and fails loud.
+     *
+     * @param int $identity_id
+     * @return array|null {code, expires_at}
+     */
+    protected static function __live_issued_code(int $identity_id): ?array
+    {
+        $stored = Rsx_Counter::value(static::__issued_code_key($identity_id));
+
+        if ($stored === null) {
+            return null;
+        }
+
+        $decoded = json_decode(Crypt::decryptString($stored), true);
+
+        if (!is_array($decoded) || !is_string($decoded['code'] ?? null) || !is_string($decoded['expires_at'] ?? null)) {
+            shouldnt_happen('The issued sign-in code stored for identity ' . $identity_id . ' (' . static::class . ') is malformed');
+        }
+
+        return ['code' => $decoded['code'], 'expires_at' => $decoded['expires_at']];
+    }
+
+    /**
+     * Destroy the identity's live issued code, if it has one.
+     *
+     * @param int $identity_id
+     * @return void
+     */
+    protected static function __forget_issued_code(int $identity_id): void
+    {
+        Rsx_Counter::reset(static::__issued_code_key($identity_id));
+    }
+
+    /**
+     * Where one identity's live issued code is kept, per realm - beside its failure counter,
+     * in the same store.
+     *
+     * @param int $identity_id
      * @return string
      */
-    protected static function __issued_code_hash(string $challenge_id, string $code): string
+    protected static function __issued_code_key(int $identity_id): string
     {
-        return hash_hmac('sha256', $challenge_id . ':' . $code, (string) config('app.key'));
+        return static::CHALLENGE_KEY . ':issued_code:identity:' . $identity_id;
     }
 
     /**

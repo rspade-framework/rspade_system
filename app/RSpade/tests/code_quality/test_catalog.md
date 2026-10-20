@@ -492,3 +492,17 @@ framework model's own record.
 | CONV-LAYOUT-01a | a layout in a module of either realm is clean: rsx/app/(module)/ and rsx/portal/(module)/, any depth | php | staff and portal layout paths | 0 findings | implemented (`Layout_Location_Rule_Test`) | 2026-10-16 |
 | CONV-LAYOUT-01b | a layout directly in a realm root, or outside both realms, is a convention finding naming where it belongs; a view that is not a layout is never examined | php | rsx/app/x_layout, rsx/portal/x_layout, rsx/lib/.../x_layout, a non-layout view | 1 / 1 / 1 / 0 | implemented (`Layout_Location_Rule_Test`) | 2026-10-16 |
 | RULE-SELF-GUARD-01 | no rule's `check()` keeps a function-level static: a tree-wide rule declares `KIND_CROSS_FILE` + `depends_on()` and the driver calls it once per pass, so a self-guard only ever skips the rule in a second pass (`Rule_Self_Guard_Test`, a structural sweep, nothing whitelisted) | php | every file under `CodeQuality/Rules/`, `check()` body tokenized, comments dropped | no file listed | implemented | 2026-10-19 |
+
+## MODEL-NEVER-EXPORT-01 - a secret-shaped column must be never-exported (`Model_Never_Export_Rule_Test`)
+
+The rule reads the live schema; its `evaluate_class($fqcn, $abs_file, $columns)` seam takes the
+column list, so each fixture model is a temp-file class judged against a stated list.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| NEXP-RULE-01 | an unlisted secret column is flagged | php | `api_token`, no declaration | 1 violation naming the column, remediation names `$neverExport` | implemented | 2026-10-20 |
+| NEXP-RULE-02 | a listed secret column passes | php | `public static $neverExport = ['api_token']` | 0 violations | implemented | 2026-10-20 |
+| NEXP-RULE-03 | the EFFECTIVE (unioned) list is judged: an override of Login_User_Model lists only its own column | php | subclass declaring `backup_secret`; columns include password, remember_token | 0 violations | implemented | 2026-10-20 |
+| NEXP-RULE-04 | the patterns are narrow | php | password/token/secret and their suffixes, plus is_/has_ flags, a `_` column, *_hash, *_code, *_key | exactly the six credential names | implemented | 2026-10-20 |
+| NEXP-RULE-05 | a marker naming a column with a reason excuses that column only | php | marker for `display_token`; `api_token` unlisted | 1 violation, for `api_token` | implemented | 2026-10-20 |
+| NEXP-RULE-06 | a marker with no reason excuses nothing | php | bare marker | 1 violation | implemented | 2026-10-20 |

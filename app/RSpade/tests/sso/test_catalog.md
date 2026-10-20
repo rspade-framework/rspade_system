@@ -110,6 +110,7 @@ and the portal's admission rule.
 | sso-portal-05 | the portal hook links and signs in; the link then signs in directly | consume_pending_and_login(portal_user) | portal signed in, gate payload carries portal_user, link on the declared site, second ceremony signs straight in | implemented |
 | sso-portal-06 | links are site-scoped | one subject linked on two sites | two rows; a ceremony on site A signs in site A's portal user | implemented |
 | sso-portal-07 | a suspended portal user is refused | linked, then suspended | redirect to the portal login, not signed in | implemented |
+| sso-portal-08 | a portal sign-in records into the portal history | a linked sign-in, then the same subject suspended | one SUCCESS row with the site; the refusal is no row and one portal failure count; no staff row | implemented |
 
 ## sso_http_surface.sh (http) - what only the dispatcher and the CSRF seam decide
 

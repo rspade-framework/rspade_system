@@ -40,6 +40,8 @@ use App\RSpade\Core\Search\Search_Index_Model;
  * @property int $is_indexed
  * @property int $process_attempt_count
  * @property string $process_due_at
+ * @property string $process_last_attempt_at
+ * @property int $process_soft_failure_count
  * @property string $render_error
  * @property int $render_status_id
  * @property string $rendered_at
@@ -129,13 +131,6 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
-
-    /**
-     * Column metadata for special handling
-     *
-     * @var array
-     */
-    protected $columnMeta = [];
 
     /**
      * Cascade cleanup: extracted-text index rows key on this blob (indexable =
@@ -533,7 +528,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      * second, tenth and hundredth attachment created over the same deduplicated bytes call this
      * freely and cost nothing - and an upload never hands a FAILED blob fresh attempts.
      *
-     * Called by File_Attachment_Model when its pipeline mime matches rsx.preview.convertible -
+     * Called by File_Attachment_Model when its pipeline mime matches rsx.documents.renderers -
      * the attachment is the only layer that knows the filename and extension.
      *
      * @return void
@@ -613,9 +608,17 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     // process_attempt_count is how many attempts have been charged since the blob last entered
     // the queue. An attempt is charged BEFORE it starts and pushes the due time forward by the
     // retry interval, so an attempt that dies without a word has still been counted, and the
-    // blob it was working on is no longer first in line.
+    // blob it was working on is no longer first in line. process_last_attempt_at is when the
+    // last one was charged.
     //
-    // Every write of these two columns is one of the methods below. The times are the
+    // A SOFT failure charges nothing. It is the environment, not the document - a tool the pass
+    // needs is not installed, the sandbox image is absent, the source cannot be read - found by
+    // a soft_failure() check BEFORE any attempt. process_soft_failure_count counts the soft
+    // failures in a row, and is the exponent of their backoff: the next check is
+    // retry_after_minutes * 2^count away (30 minutes, 1 hour, 2 hours ...), capped at
+    // soft_retry_max_minutes, with no end. A charged attempt restarts it.
+    //
+    // Every write of these four columns is one of the methods below. The times are the
     // DATABASE's clock (NOW(3)) on both sides of every comparison.
     // =========================================================================================
 
@@ -624,6 +627,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      *
      * THE one statement of it. Anything that makes a blob owe work - a render queued, its text
      * marked un-extracted - writes these beside it, in a set UPDATE or through mark_work_owed().
+     * The blob starts over: no attempts charged, none on record, no soft-failure backoff.
      *
      * @return array
      */
@@ -632,6 +636,8 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
         return [
             'process_due_at' => DB::raw('NOW(3)'),
             'process_attempt_count' => 0,
+            'process_soft_failure_count' => 0,
+            'process_last_attempt_at' => null,
         ];
     }
 
@@ -661,7 +667,8 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
 
     /**
      * Charge one attempt to this blob and push its due time one retry interval ahead - the
-     * step that comes BEFORE the attempt runs.
+     * step that comes BEFORE the attempt runs. The attempt's time is recorded, and a soft-failure
+     * backoff in progress ends: a pass that runs is not a soft failure.
      *
      * Guarded: it succeeds only if the row is still due and still carries the attempt count
      * this instance read, so two processes can never both charge - and run - the same attempt.
@@ -678,6 +685,8 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
             ->update([
                 'process_attempt_count' => DB::raw('process_attempt_count + 1'),
                 'process_due_at' => DB::raw("NOW(3) + INTERVAL {$minutes} MINUTE"),
+                'process_last_attempt_at' => DB::raw('NOW(3)'),
+                'process_soft_failure_count' => 0,
             ]);
 
         if ($charged !== 1) {
@@ -690,10 +699,66 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     }
 
     /**
+     * Record a SOFT failure: the environment cannot process this blob yet (a soft_failure()
+     * check answered before any attempt), so nothing is charged - process_attempt_count and
+     * process_last_attempt_at are untouched - and the blob is offered again on the soft
+     * backoff: retry_after_minutes * 2^(soft failures before this one), capped at
+     * soft_retry_max_minutes. The first soft failure waits one retry interval, the next twice
+     * that, and so on, for as long as the environment stays broken.
+     *
+     * The caller has already recorded WHAT failed (render_error, the index row).
+     *
+     * @return void
+     */
+    public function record_soft_failure(): void
+    {
+        $retry = static::work_retry_after_minutes();
+        $cap = static::work_soft_retry_max_minutes();
+
+        // The exponent is clamped so POW() stays a small finite number however long the
+        // failures run: 2^32 retry intervals is past any cap a config could sensibly hold, and
+        // LEAST() brings it down to the cap. MySQL applies a single-table UPDATE's assignments
+        // left to right, so the due time is computed from the count BEFORE the increment.
+        static::where('id', $this->id)->update([
+            'process_due_at' => DB::raw(
+                "NOW(3) + INTERVAL CAST(LEAST({$retry} * POW(2, LEAST(process_soft_failure_count, 32)), {$cap}) AS UNSIGNED) MINUTE"
+            ),
+            'process_soft_failure_count' => DB::raw('process_soft_failure_count + 1'),
+        ]);
+        $this->__reload_row();
+    }
+
+    /**
+     * Make this blob due now without charging anything - for a caller that has reason to
+     * believe the next attempt should not wait out its interval (a page viewing the document,
+     * once the cause of its failure has gone). The attempt the worker then makes is charged
+     * like any other.
+     *
+     * Guarded: it touches only a blob still in the queue whose due time is still ahead. A blob
+     * outside the queue (nothing owed, or its attempts spent) is never put back by this - that
+     * is requeue_render() / mark_work_owed(), an operator's decision.
+     *
+     * @return bool True when the due time was moved; false when the blob is not in the queue or
+     *              is already due.
+     */
+    public function pull_work_forward(): bool
+    {
+        $pulled = static::where('id', $this->id)
+            ->whereNotNull('process_due_at')
+            ->where('process_due_at', '>', DB::raw('NOW(3)'))
+            ->update(['process_due_at' => DB::raw('NOW(3)')]);
+
+        $this->__reload_row();
+
+        return $pulled === 1;
+    }
+
+    /**
      * Take this blob out of the queue. $attempts_spent says how it left: false = everything
      * owed was produced (the counter returns to 0), true = its attempts are spent and what is
      * still missing is failed for good (the counter stays at the limit, which is how a
-     * permanently failed blob reads).
+     * permanently failed blob reads). Either way no soft-failure backoff is left running;
+     * process_last_attempt_at is kept as the record of when it last ran.
      *
      * @param bool $attempts_spent
      * @return void
@@ -703,6 +768,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
         static::where('id', $this->id)->update([
             'process_due_at' => null,
             'process_attempt_count' => $attempts_spent ? static::work_max_attempts() : 0,
+            'process_soft_failure_count' => 0,
         ]);
         $this->__reload_row();
     }
@@ -713,6 +779,10 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      * with no attempt charged: the blob waits for the switch without holding the front of the
      * queue.
      *
+     * A deferral starts the blob's accounting over - no attempts, none on record, and no
+     * soft-failure backoff: the work was switched off, which is a decision, not a failure, and
+     * when it is switched back on the blob is owed a full set of attempts.
+     *
      * @return void
      */
     public function defer_work(): void
@@ -722,6 +792,8 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
         static::where('id', $this->id)->update([
             'process_due_at' => DB::raw("NOW(3) + INTERVAL {$minutes} MINUTE"),
             'process_attempt_count' => 0,
+            'process_soft_failure_count' => 0,
+            'process_last_attempt_at' => null,
         ]);
         $this->__reload_row();
     }
@@ -755,6 +827,42 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     public static function work_retry_after_minutes(): int
     {
         return max(1, (int) config('rsx.documents.retry_after_minutes'));
+    }
+
+    /**
+     * The longest wait between two checks of a soft-failed blob
+     * (rsx.documents.soft_retry_max_minutes): a whole number of minutes, never below the retry
+     * interval the backoff starts from.
+     *
+     * @return int
+     */
+    public static function work_soft_retry_max_minutes(): int
+    {
+        $minutes = config('rsx.documents.soft_retry_max_minutes');
+
+        if (!is_int($minutes) && !(is_string($minutes) && ctype_digit($minutes))) {
+            throw new \Exception('rsx.documents.soft_retry_max_minutes must be a whole number of minutes, got ' . var_export($minutes, true));
+        }
+
+        $minutes = (int) $minutes;
+        $retry = static::work_retry_after_minutes();
+
+        if ($minutes < $retry) {
+            throw new \Exception("rsx.documents.soft_retry_max_minutes ({$minutes}) must not be below rsx.documents.retry_after_minutes ({$retry}): it caps a backoff that starts at the retry interval");
+        }
+
+        return $minutes;
+    }
+
+    /**
+     * True when this blob's last pass failed SOFTLY and it is waiting to be checked again: it
+     * is in the queue with a soft failure on record.
+     *
+     * @return bool
+     */
+    public function is_soft_failed(): bool
+    {
+        return $this->process_due_at !== null && (int) $this->process_soft_failure_count > 0;
     }
 
     /**

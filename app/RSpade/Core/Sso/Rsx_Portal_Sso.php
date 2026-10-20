@@ -8,12 +8,12 @@
 namespace App\RSpade\Core\Sso;
 
 use RuntimeException;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
+use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\Sso\Portal_Sso_Identity_Model;
 use App\RSpade\Core\Sso\Rsx_Sso;
 use App\RSpade\Core\Sso\Rsx_Sso_Abstract;
@@ -51,9 +51,9 @@ use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
  *   SIGN-IN  a portal user Portal_User_Model::can_login() admits, of the declared site,
  *            through Portal_Session::set_portal_user_id(). Anything else is refused and
  *            answered like a denied gate.
- *   RECORDS  none beyond the throttle: the portal has no login history (_login_history is the
- *            staff identity's), so each failure feeds Login_Throttle::record_failure()
- *            directly, exactly once.
+ *   RECORDS  the portal's own login history, Portal_Login_History (STATUS_FAILED_SSO,
+ *            STATUS_FAILED_DISABLED, SUCCESS), which feeds Login_Throttle exactly once per
+ *            failure.
  *   2FA      Rsx_Portal_Two_Factor.
  *   IMPERSONATION  "View as Client" (Portal_Session::is_impersonating()) refuses linking and
  *            unlinking, as staff impersonation does on the staff side.
@@ -212,15 +212,15 @@ class Rsx_Portal_Sso extends Rsx_Sso_Abstract
         return true;
     }
 
-    /**
-     * Nothing to record: the portal has no login history.
-     */
     protected static function __record_success(Rsx_Model_Abstract $identity): void
     {
+        Portal_Login_History::record_success((int) $identity->id, (string) $identity->email);
     }
 
     /**
-     * The throttle, directly and exactly once.
+     * Portal_Login_History::record_failure() - which ALREADY feeds Login_Throttle. A sign-in
+     * step that refused the identity (can_login(), or a portal user of another site) is
+     * FAILED_DISABLED, as the portal's second-factor doors record it.
      */
     protected static function __record_failure(
         string $email,
@@ -228,6 +228,11 @@ class Rsx_Portal_Sso extends Rsx_Sso_Abstract
         ?int $identity_id,
         bool $refused = false
     ): void {
-        Login_Throttle::record_failure();
+        Portal_Login_History::record_failure(
+            $email,
+            $refused ? Portal_Login_History::STATUS_FAILED_DISABLED : Portal_Login_History::STATUS_FAILED_SSO,
+            $refused ? 'the portal refused the sign-in (can_login() or another site)' : $reason,
+            $identity_id
+        );
     }
 }

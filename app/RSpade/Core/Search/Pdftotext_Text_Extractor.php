@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Search;
 
 use Exception;
 use App\RSpade\Core\Files\Document_Sandbox;
+use App\RSpade\Core\Files\Document_Soft_Checks;
 use App\RSpade\Core\Files\Document_Stage_Bound;
 use App\RSpade\Core\Search\Rsx_Extraction_Unsupported_Exception;
 use App\RSpade\Core\Search\Rsx_Text_Extractor_Abstract;
@@ -104,5 +105,26 @@ class Pdftotext_Text_Extractor extends Rsx_Text_Extractor_Abstract
         }
 
         return null;
+    }
+
+    /**
+     * pdftotext cannot be run here - sandboxed, the docker client or the sandbox image is
+     * missing (Document_Soft_Checks::sandbox_unavailable()); on the host, no executable
+     * pdftotext is found - or the source cannot be read.
+     *
+     * @param string $source_path
+     * @return string|null
+     */
+    public static function soft_failure(string $source_path): ?string
+    {
+        if (Document_Sandbox::is_docker()) {
+            $tool = Document_Soft_Checks::sandbox_unavailable();
+        } else {
+            $tool = static::__find_pdftotext() === null
+                ? 'pdftotext (poppler-utils) is not installed or not executable'
+                : null;
+        }
+
+        return $tool ?? static::source_unreadable($source_path);
     }
 }
