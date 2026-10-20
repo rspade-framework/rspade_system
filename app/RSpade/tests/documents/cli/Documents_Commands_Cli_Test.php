@@ -306,7 +306,7 @@ class Documents_Commands_Cli_Test extends Rsx_Test_Abstract
         foreach (['Due now', 'Waiting for a retry', 'Could not run: tool or source unavailable', 'Deferred', 'Failed, out of attempts'] as $queue_state) {
             static::__assert_contains($queue_state, $output, 'the queue state is listed: ' . $queue_state);
         }
-        static::__assert_contains('PDF rendition cache', $output, 'the rendition cache section is present');
+        static::__assert_contains('Rendition cache (tmp/renditions', $output, 'the rendition cache section is present');
         static::__assert_contains('Worker schedule:', $output, 'the closing worker line is present');
     }
 

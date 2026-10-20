@@ -9,25 +9,26 @@ use App\RSpade\Core\Task\Task_Instance;
 /**
  * File_Rendition_Service
  *
- * Cache management for document PDF renditions produced by File_Preview_Controller.
+ * Cache management for the document renditions the document worker's renderers produce
+ * (rsx.documents.renderers).
  *
- * Storage Structure:
- * - tmp/renditions/{blob-hash}.pdf - cached PDF renditions the document worker's renderers
- *   produced (rsx.documents.renderers - soffice for Office docs). Content-addressed on the
- *   deduplicated blob hash, so identical bytes convert exactly once. PDF attachments are served
- *   directly and never cached here.
+ * Storage Structure - both kinds share one directory and one quota:
+ * - tmp/renditions/{blob-hash}.pdf - a PDF rendition (soffice, for Office documents).
+ * - tmp/renditions/{blob-hash}.grid.html - a spreadsheet's HTML grid (Spreadsheet_Rendition).
+ * Content-addressed on the deduplicated blob hash, so identical bytes convert exactly once. PDF
+ * attachments are served directly and never cached here.
  *
  * Cleanup Strategy:
  * - Runs every 30 minutes via scheduled task (mirrors File_Thumbnail_Service).
  * - LRU eviction (oldest mtime deleted first) down to rsx.preview.quota_max_bytes.
- * - The rendition serve path touch()'es each cache hit so hot renditions survive eviction.
+ * - Both serve paths touch() each cache hit so hot renditions survive eviction.
  * - #[Exclusive]: two overlapping runs would compute the same eviction set and race to
  *   delete it.
  */
 class File_Rendition_Service extends Rsx_Service_Abstract
 {
     /**
-     * Scheduled cleanup of the PDF rendition cache.
+     * Scheduled cleanup of the rendition cache.
      *
      * Runs every 30 minutes to enforce the rendition quota. Deletes oldest files (by mtime) until
      * under rsx.preview.quota_max_bytes.
@@ -35,7 +36,7 @@ class File_Rendition_Service extends Rsx_Service_Abstract
      * @param Task_Instance $task Task instance for logging
      * @param array $params Task parameters
      */
-    #[Task('Clean document PDF rendition cache (runs every 30 minutes)')]
+    #[Task('Clean the document rendition cache (runs every 30 minutes)')]
     #[Exclusive]
     #[Schedule('*/30 * * * *')]
     public static function cleanup_renditions(Task_Instance $task, array $params = [])
@@ -56,7 +57,7 @@ class File_Rendition_Service extends Rsx_Service_Abstract
         $total_size = 0;
         $files = [];
 
-        foreach (glob($dir . '*.pdf') as $file) {
+        foreach (static::__cached_renditions($dir) as $file) {
             $size = filesize($file);
             $mtime = filemtime($file);
             $total_size += $size;
@@ -126,7 +127,7 @@ class File_Rendition_Service extends Rsx_Service_Abstract
             ];
         }
 
-        $files = glob($dir . '*.pdf');
+        $files = static::__cached_renditions($dir);
         $file_count = count($files);
         $total_bytes = 0;
         $oldest = null;
@@ -153,5 +154,17 @@ class File_Rendition_Service extends Rsx_Service_Abstract
             'oldest' => $oldest,
             'newest' => $newest,
         ];
+    }
+
+    /**
+     * Every rendition file in the cache directory, of both kinds. The two kinds are ONE cache:
+     * a quota that counted only PDFs would never evict a spreadsheet grid.
+     *
+     * @param string $dir The rendition directory, with a trailing slash.
+     * @return array<int, string> Absolute paths.
+     */
+    private static function __cached_renditions(string $dir): array
+    {
+        return array_merge(glob($dir . '*.pdf') ?: [], glob($dir . '*.grid.html') ?: []);
     }
 }

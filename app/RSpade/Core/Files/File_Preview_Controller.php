@@ -256,6 +256,9 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             abort(404, 'Spreadsheet preview is being prepared.');
         }
 
+        // LRU: keep recently served renditions from being evicted (File_Rendition_Service).
+        touch($path);
+
         // Immutable only for a request naming the attachment's current content version.
         return File_Attachment_Controller::apply_content_version_cache_policy(Response::file($path, [
             'Content-Type' => 'text/html; charset=UTF-8',

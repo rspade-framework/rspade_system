@@ -196,7 +196,8 @@ DESCRIPTION
 
             RENDITION   Spreadsheet_Document_Renderer (rendition_format() 'html')
                         has Spreadsheet_Rendition write a self-contained, sanitized
-                        HTML grid to {hash}.grid.html beside the PDFs. It uses
+                        HTML grid to {hash}.grid.html beside the PDFs, under the same
+                        LRU quota (rsx.preview.quota_max_bytes). It uses
                         PhpSpreadsheet IN-PROCESS, so it needs no soffice and works
                         with rsx.libreoffice.enabled false.
             VIEWER      Spreadsheet_Viewer, in a SANDBOXED iframe - style isolation
@@ -524,7 +525,7 @@ RSX:DOCUMENTS:STATUS
         | Unsupported         | 10    |
         +---------------------+-------+
 
-        PDF rendition cache (tmp/renditions):
+        Rendition cache (tmp/renditions - PDFs and spreadsheet grids):
         +--------+---------------------------------------+
         | Metric | Value                                 |
         +--------+---------------------------------------+

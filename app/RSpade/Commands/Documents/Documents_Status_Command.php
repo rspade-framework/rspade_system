@@ -121,14 +121,14 @@ class Documents_Status_Command extends Command
     }
 
     /**
-     * The PDF rendition cache - the shared product of a render, LRU-evicted under quota.
+     * The rendition cache - PDFs and spreadsheet grids, one directory and one quota, LRU-evicted.
      *
      * @param array $renditions File_Rendition_Service::get_statistics().
      * @return void
      */
     private function __print_renditions(array $renditions): void
     {
-        $this->line('PDF rendition cache (tmp/renditions):');
+        $this->line('Rendition cache (tmp/renditions - PDFs and spreadsheet grids):');
 
         if (empty($renditions['exists'])) {
             $this->table(['Metric', 'Value'], [['Directory', 'not created yet (nothing rendered)']]);
