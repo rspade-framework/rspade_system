@@ -1,0 +1,191 @@
+JQHTML 2.3.75: STRICTER TEMPLATE COMPILER AND ONE LIFECYCLE LOCK PER COMPONENT
+Date: 2026-10-21
+
+IF YOU DO NOTHING: a template of yours using a construct the compiler now refuses (a multi-line <%= %> in an attribute value, the text "<script" anywhere, a closing tag on a void element) fails to compile and its bundle does not load; a component whose on_ready() re-renders itself never reaches ready, so it and every parent waiting on it hang; an array interpolated with <%= %> prints "(Array)". Your template app's own copies of rsx/app/dev/Dev_Spa_Layout.jqhtml and rsx/theme/components/notification/Notification_Dropdown.js are affected.
+
+SUMMARY
+    Category 2. The jqhtml runtime and template compiler shipped with the
+    framework moved to 2.3.75. Two families of change reach code you wrote:
+
+    - The COMPILER refuses constructs it used to accept (or mis-compile).
+      These fail loudly - the page's bundle reports the compile error with
+      the file and line - but only when a page using the template is loaded.
+    - The RUNTIME serializes every render(), redraw(), reload(), refresh() and
+      load() of a component behind ONE lifecycle lock, and no longer debounces
+      them. Most code is unaffected; the two shapes below hang or change
+      behaviour silently.
+
+THE CHANGE - COMPILER
+    Now compile errors:
+    - A <%= %> or <%!= %> inside a quoted attribute value that spans more than
+      one line. A $ argument takes JavaScript directly: use the bracketed
+      form, which may span lines - $items=(JSON.stringify([...])) - or a
+      method the template calls - $sections=this.nav_sections().
+    - <%br= %> inside an attribute value (use <%= %>).
+    - The text <script or </script ANYWHERE in a template: markup, a string in
+      a <% %> block, an attribute value, an HTML comment. Split a string that
+      must contain it: '<' + '/script>'. tag="script" / tag="style" on a
+      <Define:> or a component invocation.
+    - A closing tag on a void element: </input>, </br>, <img ...></img>.
+    - A stray or mismatched closing tag, a stray %>, a <Define:> nested inside
+      another, an attribute name with a character HTML does not allow, a slot
+      name that is not a JavaScript identifier, and non-slot content in a
+      <Define:> whose template uses slots.
+
+    Changed output:
+    - An ARRAY interpolated with <%= %>, <%!= %> or <%br= %> prints the literal
+      text "(Array)". Join it (<%= tags.join(', ') %>) or loop over it.
+    - content() and a named slot return a markup OBJECT when the caller
+      supplied content (still '' when it did not). Code that indexed it
+      (content()[0]) or treated it as an array no longer works; emit it with
+      <%= content() %> and test it for presence only.
+    - Character references in a quoted attribute literal (&amp;, &quot; ...)
+      are decoded at compile time, as a browser would.
+
+THE CHANGE - RUNTIME
+    - THE LIFECYCLE LOCK. Boot holds it until on_ready() returns; every
+      render()/redraw()/reload()/refresh()/load() takes it for its whole cycle,
+      its own on_ready() included. A call made from on_ready() and NOT awaited
+      runs after on_ready() returns; 'ready' fires only once every queued call
+      has run. A render() or reload() runs on_ready() again - so an on_ready()
+      that unconditionally re-renders its own component loops forever and
+      never fires 'ready'.
+    - Awaiting a render()/reload()/refresh()/load() of the component inside its
+      own on_loaded() waits for the cycle on_loaded() is part of: it hangs
+      (development warns). Called from on_create() or on_render(), such a call
+      no longer runs there; it warns and runs after the current step.
+    - No debounce. A call merges only into the LAST waiting call, and only when
+      identical (same method, same arguments). reload(); refresh(); reload();
+      runs three times, and a queued reload() no longer absorbs a refresh().
+    - on_load() leaving this.data anything but an object (an array counts)
+      throws - e.g. this.data = await Endpoint.call() where the endpoint can
+      answer null.
+    - A throwing on_load() calls the new hook on_load_error(error). Not
+      overridden, behaviour is as before (printed; a failed boot stops the
+      component, a failed reload()/refresh() rejects). on_load_error is now a
+      RESERVED method name: a method of yours by that name is now called on
+      every load failure.
+    - on_loaded() and the 'loaded' event fire for EVERY component, including
+      one with no on_load(). An on_loaded() written on a class without
+      on_load() used to be dead code; it now runs.
+    - Callbacks registered with .on() / .once() are called with this = the
+      component. A `function` callback that relied on a different `this` is
+      affected; arrow functions are not.
+    - <Define:X extends="Y"> whose Y is not one of the JS class's templated
+      ancestors THROWS when the component renders (it used to render one
+      parent's markup over another's methods). Name a templated ancestor of the
+      class, or remove extends= and let the prototype chain decide.
+    - The component cache key format changed, so every browser's cache starts
+      cold once after the update. Nothing to do.
+
+ACTION REQUIRED
+    1. The two template-app files known to be affected. Compare yours with the
+       reference app and port the change if you still have the original:
+
+       a. rsx/app/dev/Dev_Spa_Layout.jqhtml - the <Sidebar_Nav $sections="<%=
+          JSON.stringify([ ... ]) %>"> invocation spans many lines and no longer
+          compiles. The reference app moves the array into a nav_sections()
+          method on Dev_Spa_Layout (Dev_Spa_Layout.js) and invokes
+          <Sidebar_Nav $sections=this.nav_sections() />.
+          system/app/RSpade/resource/reference_app/app/dev/Dev_Spa_Layout.jqhtml
+          system/app/RSpade/resource/reference_app/app/dev/Dev_Spa_Layout.js
+
+       b. rsx/theme/components/notification/Notification_Dropdown.js - its
+          on_ready() called this.render() whenever the user had an unread
+          notification, which now loops: the header bell, and the staff layout
+          around it, never reach ready. The reference app deletes that
+          on_ready(), starts this.state.unread_count at null, and has the
+          template read the badge through _badge_count() (the refreshed count,
+          else this.data.initial_count):
+
+              // Notification_Dropdown.js - on_create(): unread_count: null,
+              // and in place of on_ready():
+              _badge_count() {
+                  return this.state.unread_count ?? this.data.initial_count ?? 0;
+              }
+
+              <%-- Notification_Dropdown.jqhtml - both unread_count tests --%>
+              <% if (this._badge_count() > 0) { %>
+                  ...
+                  <%= this._badge_count() > 99 ? '99+' : this._badge_count() %>
+
+          system/app/RSpade/resource/reference_app/theme/components/notification/Notification_Dropdown.js
+          system/app/RSpade/resource/reference_app/theme/components/notification/Notification_Dropdown.jqhtml
+
+    2. Find templates the compiler now refuses (quote the --include patterns):
+
+           # a <%= or <%!= opened in a quoted attribute and not closed on that line
+           grep -rnE '="<%(!)?=([^%]|%[^>])*$' rsx --include='*.jqhtml'
+
+           # the text <script / </script anywhere, and tag="script"/"style"
+           grep -rniE '</?script|tag="(script|style)"' rsx --include='*.jqhtml'
+
+           # closing tags on void elements
+           grep -rniE '</(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)>' \
+               rsx --include='*.jqhtml'
+
+           # <%br= inside an attribute value
+           grep -rnE '="[^"]*<%br=' rsx --include='*.jqhtml'
+
+       Every remaining compile error is reported by loading a page that uses
+       the template: php artisan rsx:debug <path> --user=<id> on each module's
+       pages lists it with file and line.
+
+    3. Find arrays printed directly and content() treated as an array:
+
+           grep -rnE '<%(!|br)?=[^%]*\.(map|filter|split|slice|concat)\(' rsx --include='*.jqhtml' \
+               | grep -v 'join('
+           grep -rnE 'content\([^)]*\)\s*\[' rsx --include='*.jqhtml' --include='*.js'
+
+       Read the hits: an expression that evaluates to an array needs
+       .join('') (markup) or .join(', ') (a list), or a loop. Also check
+       interpolations of this.data / this.args fields that hold arrays.
+
+    4. Find lifecycle calls in the hooks the lock constrains:
+
+           grep -rnE 'this\.(render|redraw|reload|refresh|load)\(' rsx --include='*.js'
+
+       For each hit, find the method it is written in. Calls inside a callback
+       (a click handler, a subscribe() callback, a child's .on()) are fine.
+       Called DIRECTLY in:
+       - on_ready(): if it re-renders its own component, remove it and render
+         the value from the template (read this.data, or a method preferring a
+         newer this.state value). An awaited call there runs at once and is
+         fine when it is conditional.
+       - on_loaded(): never awaited; move the work to on_ready().
+       - on_create() / on_render(): remove it; defaults belong in on_create(),
+         loaded data in on_load().
+       Also review code that called reload() or refresh() several times in a
+       row expecting them to coalesce into one: each now runs.
+
+    5. Find code the other runtime changes reach:
+
+           grep -rn 'on_load_error' rsx --include='*.js'        # now a reserved hook
+           grep -rln 'on_loaded()' rsx --include='*.js' | xargs grep -L 'on_load()'
+           grep -rnE 'extends="[A-Za-z_]+"' rsx --include='*.jqhtml'
+
+       - A method of yours named on_load_error: rename it.
+       - A class with on_loaded() and no on_load(): that on_loaded() now runs
+         on every boot and reload; make sure that is wanted.
+       - Each extends= target must be the JS class's own templated ancestor
+         (or the class has no templated ancestor at all).
+       - An on_load() that assigns an endpoint's answer to this.data whole
+         (this.data = await ...) must guarantee an object.
+
+VERIFICATION
+    - php artisan rsx:debug on each module's pages (staff, portal with --portal
+      --portal-user=<id>) loads with no compile error and no console error.
+    - With an unread notification for the user, every staff page reaches ready:
+
+          php artisan rsx:debug /dashboard --user=<id> --eval="return
+              \$('.Notification_Dropdown').component()._ready_state"
+
+      prints 4.
+    - php artisan rsx:check is clean.
+
+SEE ALSO
+    rsx:man jqhtml - THE LIFECYCLE LOCK, ON_LOAD() FAILURE: ON_LOAD_ERROR(),
+        ADVANCED: VALUE PRINTERS
+    skill rspade:jqhtml - rules 23, 26 and 27; reference/template-syntax.md,
+        "Other compile errors"
+    conformance jqhtml_component_design - the Hooks findings

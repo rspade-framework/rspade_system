@@ -18,23 +18,22 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * The audit session: the permanent record of an acting context that a logged act points
  * at instead of a session row.
  *
- * What is pinned: one context is one row however often it is asked for; a different
- * identity, tenant or impersonator is a different row and returning to the first context
- * returns its row; the record works with no session at all (this runner is a CLI process,
- * which is exactly the case a session id could never attribute); a row minted inside a
- * rolled-back transaction is not answered again; and the framework stamps the id on
- * every recorded unit of work.
+ * What is pinned: the KEY is the user session (a guest's act: the browser) x the site acted on
+ * x the client address x the user agent - one context is one row however often it is asked
+ * for, any of those changing is a different row, and returning to the first context returns
+ * its row; a process with no browser (this runner, a command, a task) records NONE unless an
+ * audit session was declared for it; a row minted inside a rolled-back transaction is not
+ * answered again; and the framework stamps the id on every recorded unit of work.
  *
- * Identity lives in process statics that a transaction rollback does not undo, so every
- * test resets it first.
+ * The test process runs a virtual session, so the keying is driven through
+ * Audit_Session::_id_for_context() with contexts of the test's own. A real browser request is
+ * http/audit_session.sh; an API key's calls are Api_Key_Session_Test.
  */
 class Audit_Session_Test extends Rsx_Test_Abstract
 {
-    private static function __start_clean(): void
+    public static function teardown()
     {
-        Session::logout();
-        Session::cli_set_impersonator_login_user_id(null);
-        static::__reset_session();
+        Audit_Session::_declare(null);
     }
 
     private static function __row(int $id): ?object
@@ -42,13 +41,49 @@ class Audit_Session_Test extends Rsx_Test_Abstract
         return DB::selectOne('SELECT * FROM _audit_sessions WHERE id = ?', [$id]);
     }
 
+    /**
+     * A signed-in staff context; $overrides replaces any member.
+     */
+    private static function __context(array $overrides = []): array
+    {
+        return array_merge([
+            'site_id' => 1,
+            'login_user_id' => 501,
+            'portal_user_id' => null,
+            'portal_site_id' => null,
+            'impersonator_login_user_id' => null,
+            'impersonator_user_id' => null,
+            'ip_address' => '10.0.0.1',
+            'session_id' => 900001,
+            'user_session_id' => 800001,
+            'user_agent_id' => Audit_Session::user_agent_id('audit-test/1.0'),
+            'session_type_id' => Session::TYPE_WEB,
+        ], $overrides);
+    }
+
+    public static function test_a_process_with_no_browser_records_none()
+    {
+        Session::impersonate(1, 502, 602);
+        $before = DB::table('_audit_sessions')->count();
+
+        static::__assert_null(Session::get_audit_session_id(), 'a virtual session has no audit session');
+        static::__assert_equals($before, DB::table('_audit_sessions')->count(), 'and asking minted none');
+        static::__assert_null(Session::get_session_id(), 'nor a session');
+    }
+
+    public static function test_a_declared_audit_session_is_answered()
+    {
+        $declared = Audit_Session::_id_for_context(static::__context());
+
+        Audit_Session::_declare($declared);
+
+        static::__assert_equals($declared, Session::get_audit_session_id());
+    }
+
     public static function test_one_context_is_one_row()
     {
-        static::__start_clean();
-        Session::impersonate(1, 501, 601);
-
-        $first = Session::get_audit_session_id();
-        $second = Session::get_audit_session_id();
+        $first = Audit_Session::_id_for_context(static::__context());
+        $second = Audit_Session::_id_for_context(static::__context());
 
         static::__assert_equals($first, $second);
 
@@ -57,69 +92,45 @@ class Audit_Session_Test extends Rsx_Test_Abstract
         static::__assert_equals(501, (int) $row->login_user_id);
         static::__assert_null($row->portal_user_id);
         static::__assert_null($row->impersonator_login_user_id);
-        static::__assert_equals(Session::TYPE_CLI, (int) $row->session_type_id);
+        static::__assert_equals(900001, (int) $row->session_id);
+        static::__assert_equals(800001, (int) $row->user_session_id);
+        static::__assert_equals(Session::TYPE_WEB, (int) $row->session_type_id);
+    }
+
+    public static function test_a_different_user_session_address_agent_or_site_is_a_different_row()
+    {
+        $first = Audit_Session::_id_for_context(static::__context());
+
+        $others = [
+            'user session' => Audit_Session::_id_for_context(static::__context(['user_session_id' => 800002])),
+            'address' => Audit_Session::_id_for_context(static::__context(['ip_address' => '10.0.0.2'])),
+            'user agent' => Audit_Session::_id_for_context(static::__context(['user_agent_id' => Audit_Session::user_agent_id('audit-test/2.0')])),
+            'site' => Audit_Session::_id_for_context(static::__context(['site_id' => 2])),
+        ];
+
+        foreach ($others as $what => $id) {
+            static::__assert_not_equals($first, $id, "a different {$what} is a different audit session");
+        }
+
+        static::__assert_equals(count($others), count(array_unique($others)), 'each is a row of its own');
+        static::__assert_equals($first, Audit_Session::_id_for_context(static::__context()), 'the first context is the first row again');
     }
 
     /**
-     * A command or a task has a context and no session. Asking for the audit session
-     * must not mint one.
+     * A guest has no user session: its acts are keyed on the browser.
      */
-    public static function test_a_process_with_no_session_is_attributable_and_mints_none()
+    public static function test_a_guest_is_keyed_on_its_browser()
     {
-        static::__start_clean();
-        Session::impersonate(1, 502, 602);
+        $guest = ['login_user_id' => null, 'site_id' => null, 'user_session_id' => null];
 
-        $had_session = Session::has_session();
-        $row = static::__row(Session::get_audit_session_id());
+        $one = Audit_Session::_id_for_context(static::__context($guest + ['session_id' => 900010]));
+        $again = Audit_Session::_id_for_context(static::__context($guest + ['session_id' => 900010]));
+        $other_browser = Audit_Session::_id_for_context(static::__context($guest + ['session_id' => 900011]));
 
-        static::__assert_null($row->session_row_id, 'no session row is recorded for a CLI process');
-        static::__assert_null($row->ip_address_id);
-        static::__assert_null($row->user_agent_id);
-        static::__assert_equals($had_session, Session::has_session(), 'asking created no session');
-    }
-
-    public static function test_a_different_identity_or_tenant_is_a_different_row()
-    {
-        static::__start_clean();
-
-        Session::impersonate(1, 503, 603);
-        $first = Session::get_audit_session_id();
-
-        Session::impersonate(1, 504, 604);
-        $other_identity = Session::get_audit_session_id();
-
-        Session::impersonate(2, 503, 603);
-        $other_site = Session::get_audit_session_id();
-
-        static::__assert_not_equals($first, $other_identity);
-        static::__assert_not_equals($first, $other_site);
-        static::__assert_not_equals($other_identity, $other_site);
-
-        Session::impersonate(1, 503, 603);
-        static::__assert_equals($first, Session::get_audit_session_id(), 'the first context is the first row again');
-    }
-
-    public static function test_nobody_signed_in_is_still_a_context()
-    {
-        static::__start_clean();
-
-        $row = static::__row(Session::get_audit_session_id());
-
-        static::__assert_null($row->login_user_id);
-        static::__assert_null($row->site_id);
-    }
-
-    public static function test_impersonation_is_recorded_as_its_own_context()
-    {
-        static::__start_clean();
-        Session::impersonate(1, 505, 605);
-        $own = Session::get_audit_session_id();
-
-        Session::cli_set_impersonator_login_user_id(999);
-        $impersonating = Session::get_audit_session_id();
-
-        static::__assert_not_equals($own, $impersonating);
-        static::__assert_equals(999, (int) static::__row($impersonating)->impersonator_login_user_id);
+        static::__assert_equals($one, $again);
+        static::__assert_not_equals($one, $other_browser, 'another browser is another audit session');
+        static::__assert_null(static::__row($one)->login_user_id);
+        static::__assert_null(static::__row($one)->user_session_id);
     }
 
     /**
@@ -128,16 +139,13 @@ class Audit_Session_Test extends Rsx_Test_Abstract
      */
     public static function test_a_row_rolled_back_is_not_answered_again()
     {
-        static::__start_clean();
-        Session::impersonate(1, 506, 606);
-
         DB::beginTransaction();
-        $rolled_back = Session::get_audit_session_id();
+        $rolled_back = Audit_Session::_id_for_context(static::__context(['user_session_id' => 800020]));
         DB::rollBack();
 
         static::__assert_null(static::__row($rolled_back), 'the rolled-back row is gone');
 
-        $again = Session::get_audit_session_id();
+        $again = Audit_Session::_id_for_context(static::__context(['user_session_id' => 800020]));
 
         static::__assert_not_null(static::__row($again), 'the context was minted again');
     }
@@ -170,20 +178,22 @@ class Audit_Session_Test extends Rsx_Test_Abstract
      */
     public static function test_an_audit_session_is_read_back_through_the_framework()
     {
-        static::__start_clean();
-        Session::impersonate(1, 508, 608);
-
-        $id = Session::get_audit_session_id();
-        $agent_id = Audit_Session::user_agent_id('audit-read-back/1.0');
-        DB::statement('UPDATE _audit_sessions SET user_agent_id = ? WHERE id = ?', [$agent_id, $id]);
+        $id = Audit_Session::_id_for_context(static::__context([
+            'login_user_id' => 508,
+            'user_session_id' => 800030,
+            'user_agent_id' => Audit_Session::user_agent_id('audit-read-back/1.0'),
+        ]));
 
         $read = Session::get_audit_session($id);
 
         static::__assert_equals($id, $read['id']);
         static::__assert_equals(508, $read['login_user_id']);
         static::__assert_equals(1, $read['site_id']);
+        static::__assert_equals('10.0.0.1', $read['ip_address']);
         static::__assert_equals('audit-read-back/1.0', $read['user_agent']);
-        static::__assert_equals(Session::TYPE_CLI, $read['session_type_id']);
+        static::__assert_equals(900001, $read['session_id']);
+        static::__assert_equals(800030, $read['user_session_id']);
+        static::__assert_equals(Session::TYPE_WEB, $read['session_type_id']);
         static::__assert_not_empty($read['first_seen_at']);
         static::__assert_null(Session::get_audit_session(0), 'no such audit session');
     }
@@ -195,12 +205,12 @@ class Audit_Session_Test extends Rsx_Test_Abstract
      */
     public static function test_join_adds_the_audit_fields_to_a_query_of_the_callers_own()
     {
-        static::__start_clean();
-        Session::impersonate(1, 509, 609);
-
-        $audit_session_id = Session::get_audit_session_id();
-        $agent_id = Audit_Session::user_agent_id('audit-join/1.0');
-        DB::statement('UPDATE _audit_sessions SET user_agent_id = ?, ip_address_id = ? WHERE id = ?', [$agent_id, Ip_Address::id('203.0.113.9'), $audit_session_id]);
+        $audit_session_id = Audit_Session::_id_for_context(static::__context([
+            'login_user_id' => 509,
+            'user_session_id' => 800040,
+            'ip_address' => '203.0.113.9',
+            'user_agent_id' => Audit_Session::user_agent_id('audit-join/1.0'),
+        ]));
 
         $attributed = DB::table('_login_history')->insertGetId([
             'login_user_id' => $audit_session_id, 'email_attempted' => 'join@rspade.test', 'ip_address_id' => Ip_Address::id('10.0.0.1'), 'status' => 'success',
@@ -222,7 +232,7 @@ class Audit_Session_Test extends Rsx_Test_Abstract
         static::__assert_equals('audit-join/1.0', $rows[0]->audit_user_agent);
         static::__assert_equals(509, (int) $rows[0]->audit_login_user_id);
         static::__assert_equals(1, (int) $rows[0]->audit_site_id);
-        static::__assert_equals(Session::TYPE_CLI, (int) $rows[0]->audit_session_type_id);
+        static::__assert_equals(Session::TYPE_WEB, (int) $rows[0]->audit_session_type_id);
         static::__assert_not_empty($rows[0]->audit_first_seen_at);
 
         static::__assert_null($rows[1]->audit_ip_address);
@@ -241,11 +251,11 @@ class Audit_Session_Test extends Rsx_Test_Abstract
      */
     public static function test_column_names_an_audit_field_for_filtering_and_sorting()
     {
-        static::__start_clean();
-        Session::impersonate(1, 510, 610);
-
-        $audit_session_id = Session::get_audit_session_id();
-        DB::statement('UPDATE _audit_sessions SET ip_address_id = ? WHERE id = ?', [Ip_Address::id('198.51.100.7'), $audit_session_id]);
+        $audit_session_id = Audit_Session::_id_for_context(static::__context([
+            'login_user_id' => 510,
+            'user_session_id' => 800050,
+            'ip_address' => '198.51.100.7',
+        ]));
 
         DB::table('_login_history')->insert([
             ['login_user_id' => $audit_session_id, 'email_attempted' => 'col-a@rspade.test', 'ip_address_id' => Ip_Address::id('x'), 'status' => 'success'],
@@ -274,8 +284,7 @@ class Audit_Session_Test extends Rsx_Test_Abstract
      */
     public static function test_join_works_on_an_eloquent_query()
     {
-        static::__start_clean();
-        Session::impersonate(1, 511, 611);
+        Audit_Session::_declare(Audit_Session::_id_for_context(static::__context(['login_user_id' => 511, 'user_session_id' => 800060])));
 
         $transaction_id = Revision::unit_of_work('audit join', fn () => Revision::transaction_id());
 
@@ -303,7 +312,6 @@ class Audit_Session_Test extends Rsx_Test_Abstract
         $session->user_agent = $long;
         $session->last_active = now();
         $session->active = true;
-        $session->site_id = 0;
         $session->type_id = Session::TYPE_WEB;
         $session->version = 1;
         $session->save();
@@ -315,12 +323,13 @@ class Audit_Session_Test extends Rsx_Test_Abstract
 
     /**
      * The revision lane is attributed by the framework itself: a recorded unit of work
-     * carries the audit session of whoever was acting when it was minted.
+     * carries the audit session of whoever was acting when it was minted - and none where
+     * nobody with a browser was.
      */
     public static function test_a_recorded_unit_of_work_carries_the_audit_session()
     {
-        static::__start_clean();
-        Session::impersonate(1, 507, 607);
+        $declared = Audit_Session::_id_for_context(static::__context(['login_user_id' => 507, 'user_session_id' => 800070]));
+        Audit_Session::_declare($declared);
 
         $transaction_id = Revision::unit_of_work('audit session stamp', function () {
             return Revision::transaction_id();
@@ -328,6 +337,14 @@ class Audit_Session_Test extends Rsx_Test_Abstract
 
         $stamped = DB::selectOne('SELECT audit_session_id FROM _transactions WHERE id = ?', [$transaction_id])->audit_session_id;
 
-        static::__assert_equals(Session::get_audit_session_id(), (int) $stamped);
+        static::__assert_equals($declared, (int) $stamped);
+
+        Audit_Session::_declare(null);
+
+        $unattributed = Revision::unit_of_work('no audit session', function () {
+            return Revision::transaction_id();
+        });
+
+        static::__assert_null(DB::selectOne('SELECT audit_session_id FROM _transactions WHERE id = ?', [$unattributed])->audit_session_id);
     }
 }

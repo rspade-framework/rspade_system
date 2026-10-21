@@ -78,30 +78,6 @@ enforced by the manifest build (see the `auth_gates` concern).
 | EAC-CONTROLLER-FLAGGED | RETIRED with PHP-AUTH-01 (2026-08-07) - replaced by the manifest-build validation matrix (`Auth_Validation_Test`) | php | - | - | retired | 2026-08-07 |
 | EAC-NON-CONTROLLER-SKIP | RETIRED with PHP-AUTH-01 (2026-08-07) | php | - | - | retired | 2026-08-07 |
 
-SESSION-ID-01 (SessionIdNullCheck_CodeQualityRule), via
-`Session_Id_Null_Check_Rule_Test`. A null-ish/zero-ish test on a
-`get_session_id()` result is dead code (the call always creates a session and is
-`: int`); `has_session()` is the question the author meant to ask.
-
-| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
-|----|--------------------------|------|-------|-------------------|--------|--------------|
-| SID-NULL-CMP | `=== null` / `!== null` / `== null` / `!= null`, either operand order, is flagged | php | 5 fixture bodies comparing the call to null | 1 violation each | implemented | 2026-08-09 |
-| SID-ZERO-CMP | `=== 0` / `== 0` / `!== 0` / `!= 0` / `>` / `>=` / `<` / `<= 0` is flagged | php | 9 fixture bodies comparing the call to 0 | 1 violation each | implemented | 2026-08-09 |
-| SID-ABSENCE-FUNCS | `is_null()`, `empty()`, `isset()` on the result is flagged | php | fixture bodies wrapping the call / the tracked variable | 1 violation each | implemented | 2026-08-09 |
-| SID-COALESCE-TERNARY | `??`, `?:` and a full ternary condition on the result is flagged | php | 3 fixture bodies | 1 violation each | implemented | 2026-08-09 |
-| SID-TRUTHINESS | `!call`, `if (call)`, `while (call)` is flagged | php | 3 fixture bodies | 1 violation each | implemented | 2026-08-09 |
-| SID-VARIABLE-FORM | a variable assigned exactly once from the call is tracked, and each test on it is flagged once | php | fixture assigning `$sid` then testing it | 1 (and 2 for two tests) violations | implemented | 2026-08-09 |
-| SID-REBOUND-VAR | a variable rebound after the call is NOT tracked (conservative: the rule is fatal) | php | fixture reassigning `$sid` before the test | 0 violations | implemented | 2026-08-09 |
-| SID-SCOPED-TRACKING | the same variable name assigned once in each of two methods is tracked per function body | php | fixture class with two methods | 2 violations | implemented | 2026-08-09 |
-| SID-PORTAL-FACADE | `Portal_Session::get_session_id()` is covered and the remediation names the portal `has_session()` | php | fixture using the portal facade | 1 violation naming Portal_Session | implemented | 2026-08-09 |
-| SID-FQCN-CALL | a namespace-qualified call resolves to the staff facade | php | fixture using the FQCN | 1 violation | implemented | 2026-08-09 |
-| SID-LEGIT-USE | arithmetic, string use, query arg, property assign, comparison to ANOTHER id are not flagged | php | 5 fixture bodies | 0 violations | implemented | 2026-08-09 |
-| SID-OTHER-ACCESSORS | `get_site_id()` / `get_csrf_token()` / an unrelated class are not flagged | php | 3 fixture bodies | 0 violations | implemented | 2026-08-09 |
-| SID-FACADE-EXCLUDED | `Core/Session/Session.php` and `Core/Portal/Portal_Session.php` are excluded (they produce the int) | php | fixtures written at those relative paths | 0 violations | implemented | 2026-08-09 |
-| SID-CQ-EXCLUDED | code-quality meta-code (`/CodeQuality/`) is excluded | php | fixture written under a CodeQuality path | 0 violations | implemented | 2026-08-09 |
-| SID-EXCEPTION-MARKER | `@SESSION-ID-01-EXCEPTION` suppresses (honored by the rule itself, since the manifest driver does not apply it) | php | fixture with the file-level marker | 0 violations | implemented | 2026-08-09 |
-| SID-FATAL-WIRING | the rule runs at manifest scan, is per-file, and emits `critical` - the combination that aborts the build | php | rule instance + one violating fixture | flags true, severity critical | implemented | 2026-08-09 |
-
 ## SEALED-01 - sealed property redeclaration (Sealed_Property_Rule_Test)
 
 Drives the rule's `evaluate_class_properties()` seam over synthetic fixture files forming
@@ -506,3 +482,44 @@ column list, so each fixture model is a temp-file class judged against a stated 
 | NEXP-RULE-04 | the patterns are narrow | php | password/token/secret and their suffixes, plus is_/has_ flags, a `_` column, *_hash, *_code, *_key | exactly the six credential names | implemented | 2026-10-20 |
 | NEXP-RULE-05 | a marker naming a column with a reason excuses that column only | php | marker for `display_token`; `api_token` unlisted | 1 violation, for `api_token` | implemented | 2026-10-20 |
 | NEXP-RULE-06 | a marker with no reason excuses nothing | php | bare marker | 1 violation | implemented | 2026-10-20 |
+
+## Application rules - discovered by class, APP- ids (`App_Rule_Discovery_Test`)
+
+The fixture `App_Rule_Discovery_Fixture_CodeQualityRule` lives in this directory and is
+indexed only under `rsx:test`; it matches no file pattern, so a pass that discovers it says
+nothing.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| APP-RULE-01 | a rule class outside `Rules/` is discovered through the manifest, joins the rule set, is instantiated by `discover_rules()`, and is fingerprinted by its own file | php | the fixture rule | present in `app_rule_files()` / `rule_files()` / discovered ids; absent from the disk walk | implemented | 2026-10-20 |
+| APP-RULE-02 | the selection excludes framework rules and class overrides of framework rules | php | synthetic class records + override map | only the plain application class, at its absolute path | implemented | 2026-10-20 |
+| APP-RULE-03 | an application rule id without `APP-` is refused, naming class, id, prefix and file; an `APP-` id is accepted | php | temp-loaded class declaring `RETIRED-VOCAB-01` | refusal text / null | implemented | 2026-10-20 |
+| APP-RULE-04 | the checker's CodeQuality skip asks the discovered rule set, not a directory literal | php | framework rule, the abstract, the fixture, a Support file | true / true / true / false | implemented | 2026-10-20 |
+
+## SCSS-PHANTOM-TOKEN-01 - no literal default on a custom property (`Scss_Phantom_Token_Rule_Test`)
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| SPT-01 | a hex default is flagged on its own line, naming token and literal, at high severity | php | `var(--brand, #2563eb)` | 1 violation | implemented | 2026-10-20 |
+| SPT-02 | every literal kind is flagged, and a default with nested parentheses is read whole | php | rgba(), length, number, keyword, Sass variable, empty default | 6 violations | implemented | 2026-10-20 |
+| SPT-03 | token names with digits are matched whole | php | `--cp-surface-2`, `--primary-rgb` | 2 violations naming the whole token | implemented | 2026-10-20 |
+| SPT-04 | a `var()` chain is clean; a chain ending in a literal is flagged at the inner read | php | `var(--a, var(--b))`; `var(--a, var(--b, #fff))` | 0; 1 naming `--b` | implemented | 2026-10-20 |
+| SPT-05 | a read with no default, and a literal default inside a comment, are clean | php | bare reads; line and block comments | 0 violations | implemented | 2026-10-20 |
+| SPT-06 | scope: vendored and minified stylesheets are skipped; framework core and `Sys/` are checked like any other | php | the same text at four paths | 0 / 0 / 1 / 1 | implemented | 2026-10-20 |
+| SPT-07 | the driver's file-level exception marker suppresses the rule | php | temp file with and without the marker | 1 / 0 | implemented | 2026-10-20 |
+
+## JS-RAW-HTML-01 - raw HTML written into the page (`Raw_Html_Write_Rule_Test`)
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| RHW-01 | every write kind with data is reported on its own line | php | `.html(v)`, innerHTML, outerHTML, insertAdjacentHTML, document.write, `+` and `${}` compositions with data | 7 violations, lines 3-9 | implemented | 2026-10-20 |
+| RHW-02 | a multi-line argument is one finding on the call's line | php | `.html(` with a 4-line concatenation | 1 violation, line 3 | implemented | 2026-10-20 |
+| RHW-03 | `.html('')` (and `""`, empty template) names `.empty()` | php | three empty forms | 1 each, message + remediation name `.empty()` | implemented | 2026-10-20 |
+| RHW-04 | the remediation teaches `.text()`, `.empty()`, `nl2brhtml()`, `html_to_text()`, a component, the marker | php | `.html(v)` | suggestion contains each | implemented | 2026-10-20 |
+| RHW-05 | literals, safe calls and compositions of only those are clean; the getter is clean | php | `'&nbsp;'`, literal markup, escape_html / sanitize_rich_text_html / nl2brhtml / nl2br(escape_html), escaped compositions, `.html()` | 0 violations | implemented | 2026-10-20 |
+| RHW-06 | `nl2br()` alone is not a safe call | php | `.html(nl2br(v))` | 1 violation | implemented | 2026-10-20 |
+| RHW-07 | the construct in a comment or a string is not a write | php | comment and string mentions | 0 violations | implemented | 2026-10-20 |
+| RHW-08 | a marker with a rationale on the same line, or the line before, suppresses that write | php | marker placements | 0 violations | implemented | 2026-10-20 |
+| RHW-09 | a bare marker suppresses nothing; a marker two lines up does not reach | php | bare marker; marker + unrelated line + write | 2; 1 | implemented | 2026-10-20 |
+| RHW-10 | through the real driver, one granted write does not hide an ungranted one in the same file | php | driver run, honor_exception_comments | 1 violation, the ungranted line | implemented | 2026-10-20 |
+| RHW-11 | scope: node scripts, resource/, tests/, vendor/ and `.min.js` are skipped | php | the same write at five paths | 0 each | implemented | 2026-10-20 |

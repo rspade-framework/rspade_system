@@ -32,7 +32,7 @@ row below.
 | Area | Type | Status |
 |---|---|---|
 | Per-session cap at the writer | php | implemented (`Flash_Alert_Cap_Test`) |
-| Realm resolution: a portal write mints exactly one session (the browser's) | php | implemented (`Flash_Alert_Realm_Test`) |
+| Realm resolution: a portal write resolves the browser's one session, minting no second row | php | implemented (`Flash_Alert_Realm_Test`) |
 | Experience scoping: a portal-queued alert is invisible to a staff read on the SAME session, and vice versa | php | implemented (`Flash_Alert_Realm_Test`) |
 | The cap is keyed per (session, experience) | php | implemented (`Flash_Alert_Cap_Test`) |
 | Cross-session invisibility (two browsers) | php | implemented (`Flash_Alert_Realm_Test`) |

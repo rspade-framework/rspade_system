@@ -38,12 +38,14 @@ use App\RSpade\Tests\TwoFactor\Php\Webauthn_Authenticator_Fixture;
  *  - an unknown credential is refused with the SAME message as every other failure, so the
  *    challenge cannot be used to enumerate which keys the server has seen.
  *
- * SESSIONS IN CLI: as in Two_Factor_Enrollment_Test, every test resets the process's CLI
- * session first so the row minted by Session::put_value() lives inside the current
- * transaction.
+ * SESSIONS: the ceremony parks its challenge in a session value, so every test acts as a
+ * browser ($acts_as_browser) - a fresh row inside the test's own transaction.
  */
 class Passkeys_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     public static function teardown()
     {
         Session::cli_set_impersonator_login_user_id(null);

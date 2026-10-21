@@ -1,0 +1,13 @@
+<%--
+_Sys_Portal_Users_Action - the Portal Users screen: every client-portal user on the install,
+across every site, in one grid (_Sys_Portal_Users_DataGrid, grid key "portal_users"). A row
+opens the portal user (_Sys_Portal_User_View_Action): its facts, live portal sessions,
+portal sign-in history and security state.
+--%>
+<Define:_Sys_Portal_Users_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Portal_Users_DataGrid />
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Portal_Users_Action>

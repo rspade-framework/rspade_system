@@ -39,6 +39,12 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
 class Rsx_Two_Factor extends Rsx_Two_Factor_Abstract
 {
     /**
+     * The session-value realm every value this realm's flows park lives in (Session::put_value()):
+     * cleared when the staff sign-in on the browser ends, untouched by the other realm's.
+     */
+    public const SESSION_REALM = 'staff';
+
+    /**
      * Session value key holding the identity that has passed its password and is waiting on
      * a second factor.
      */

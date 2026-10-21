@@ -373,7 +373,9 @@ DISPLAY VS. EDIT (ARCHITECTURAL RULE)
 
     Why the distinction matters:
         After on_load() the framework decides whether to re-render
-        by comparing JSON.stringify(this.data) before and after.
+        by comparing the cache serializer's text of this.data before
+        and after (the serializer that writes the cache, so a change
+        inside a Map or Set counts).
         Identical -> the second render is skipped. So a display path
         that reads from a this.state copy of this.data will not
         refresh when a reload returns the same values (e.g. a save
@@ -1034,9 +1036,16 @@ COMPONENT LIFECYCLE
          later save (see DISPLAY VS. EDIT below). A template that
          reads from a this.state copy of this.data will go stale
          on a reload returning identical values, because the
-         framework gates the post-load re-render on a
-         JSON.stringify(this.data) snapshot comparison.
+         framework gates the post-load re-render on a comparison
+         of the cache serializer's text of this.data.
        - Runs after on_load() re-render completes
+       - Runs for EVERY component, with or without on_load(), as
+         does the 'loaded' event (at the point a load would have
+         completed)
+       - Never AWAIT a render()/reload()/refresh()/load() of this
+         component here: it waits for the cycle on_loaded() is part
+         of and hangs forever (development warns). See THE
+         LIFECYCLE LOCK.
 
     6. on_ready() (bottom-up)
        - All children guaranteed ready
@@ -1059,6 +1068,10 @@ COMPONENT LIFECYCLE
     - on_create(), on_render(), on_stop(), on_attach(), on_detach() must be
       synchronous
     - on_load(), on_loaded(), and on_ready() can be async
+    - on_load() must leave this.data an object (an array counts); any
+      other value throws
+    - A throwing on_load() calls on_load_error(error) - see ON_LOAD()
+      FAILURE: ON_LOAD_ERROR()
 
     One auxiliary hook lives OUTSIDE these six stages: on_viewport_resize()
     (see its own section below) - fired after on_render()/on_ready() and on
@@ -1244,12 +1257,36 @@ PARALLEL LOADS IN ON_LOAD()
             this.data.tags = tags;
         }
 
-    Why the per-branch .catch() is not optional (verified 2026-09-02 against
-    jqhtml core 2.3.59): an on_load() that REJECTS aborts the whole load.
-    this.data stays at its on_create() defaults - including the branches that
-    SUCCEEDED - the component never reaches on_loaded()/on_ready(), and the
-    rejection surfaces through the unhandled-exception handler. A sidebar list
-    that 500s must not blank the record the page exists to show.
+    Why the per-branch .catch() is not optional: an on_load() that REJECTS
+    aborts the whole load. Unless on_load_error() is overridden (below), the
+    error is printed and the component is STOPPED: this.data stays at its
+    on_create() defaults - including the branches that SUCCEEDED - and it never
+    reaches on_loaded()/on_ready(). A sidebar list that 500s must not blank the
+    record the page exists to show.
+
+ON_LOAD() FAILURE: ON_LOAD_ERROR()
+    on_load_error(error) is called when on_load() throws, or when the
+    deduplicated load the component shared fails - on boot, reload(),
+    refresh() and load() alike.
+
+    The base implementation prints the error; the failure then takes its
+    course: a failed BOOT stops the component, a failed reload()/refresh()/
+    load() REJECTS its promise.
+
+    Overridden, the component continues: the override runs with on_load()'s
+    access (read this.args; write this.data, starting from the on_create()
+    snapshot), and the component renders the this.data it leaves, then fires
+    'ready'. It may call super.on_load_error(error) to keep the print; an
+    override that throws stops the component like the base.
+
+        on_load_error(error) {
+            super.on_load_error(error);
+            this.data.unavailable = true;   // the template renders that branch
+        }
+
+    After ANY failed load the instance neither reads nor writes the cache
+    again, even after a later successful load. on_load_error is a reserved
+    lifecycle hook name (see RESERVED NAMES).
 
     THE ONE GENUINE EXCEPTION - sequence only when the second call's ARGUMENTS
     come from the first call's RESULT:
@@ -1897,7 +1934,8 @@ LIFECYCLE EVENT CALLBACKS
         'render' - Fires after render phase completes
         'create' - Fires after create phase completes
         'load'   - Fires after load phase completes (data available)
-        'loaded' - Fires after on_loaded() completes (this.data set and frozen)
+        'loaded' - Fires after on_loaded() completes (this.data set and frozen);
+                   fires for every component, with or without on_load()
         'ready'  - Fires after ready phase completes (fully initialized)
         'attach' - Fires when the root is in the document: first after 'ready',
                    then every time it returns
@@ -1963,6 +2001,8 @@ LIFECYCLE EVENT CALLBACKS
         - .once(): Callback fires once then auto-removes
         - Multiple callbacks: Can register multiple for same event
         - Chaining: Both return this so you can chain calls
+        - this: a callback is called with `this` = the component (a
+          function callback can use it; an arrow function keeps its own)
 
     Example - Wait for component initialization:
         // React when dashboard component is ready
@@ -2262,7 +2302,7 @@ LIFECYCLE MANIPULATION METHODS
             - true (default): always re-render after on_load(), even if the
               fetched data is identical to what is on screen.
             - false: re-render ONLY if this.data actually changed after on_load()
-              (compared as a JSON snapshot). This is exactly what refresh() does
+              (compared as the cache serializer's text). This is exactly what refresh() does
               (below) - no repaint when nothing changed.
 
         Usage:
@@ -2293,8 +2333,8 @@ LIFECYCLE MANIPULATION METHODS
     refresh()
         Re-fetch data, re-render only if it changed - equivalent to
         reload(false). Calls on_load() exactly as reload() does, but re-renders
-        ONLY when this.data (its JSON snapshot) differs from what was last
-        rendered. A refetch that returns identical data repaints nothing.
+        ONLY when this.data (the cache serializer's text of it) differs from
+        what was last rendered. A refetch that returns identical data repaints nothing.
 
         This is the recommended callback for realtime subscriptions and any
         poll-style "check for updates" flow - a no-op notification causes no
@@ -2307,9 +2347,9 @@ LIFECYCLE MANIPULATION METHODS
             }
 
         Behavior:
-            - Same debounce queue as reload(); the two coalesce, and reload()
-              takes precedence (if a reload() is queued alongside a refresh(),
-              the component re-renders unconditionally)
+            - Queued on the lifecycle lock like reload(); a refresh() and a
+              reload() never merge, each runs in call order (see THE
+              LIFECYCLE LOCK)
             - Returns promise - await for completion
             - Use when: refetching to check for updates without forcing a repaint
 
@@ -2434,7 +2474,13 @@ LIFECYCLE MANIPULATION METHODS
         Behavior:
             - Returns promise that resolves when full lifecycle is complete
             - Waits for on_load() of this component AND all descendants
-            - Waits for on_ready() of this component AND all descendants
+            - Waits for on_ready() of this component AND all descendants,
+              and for every render()/reload()/refresh()/load() queued on it
+              meanwhile ('ready' fires once its lifecycle queue drains)
+            - RESOLVES when the component stops (a stopped or failed
+              component never fires 'ready' again, so a waiter is released
+              rather than left hanging); the optional callback runs only
+              when 'ready' itself fires
             - Use when: You need component to be fully interactive
 
     rendered()
@@ -2448,6 +2494,7 @@ LIFECYCLE MANIPULATION METHODS
         Behavior:
             - Returns promise that resolves after render phase completes
             - Does NOT wait for child components' on_load() or on_ready()
+            - Resolves when the component stops, like ready()
             - Use when: You need DOM structure but don't need child data
             - Faster than ready() when child data loading is unnecessary
 
@@ -2457,6 +2504,36 @@ LIFECYCLE MANIPULATION METHODS
             layout.$sid('nav').find('.active').removeClass('active');
             layout.$sid('nav').find(`[href="${url}"]`).addClass('active');
 
+THE LIFECYCLE LOCK
+    Every component has ONE lifecycle lock. Boot holds it from on_create()
+    until on_ready() RETURNS; render(), redraw(), reload(), refresh() and
+    load() each take it for their whole cycle, their own on_ready()
+    included. A call made while the lock is held waits:
+
+    - Waiting calls run in call order, one at a time. A new call merges only
+      into the LAST waiting call (never one already running), and only when
+      it is identical - same method, same arguments; the merged caller
+      settles with that call's result. While the lock is held,
+      reload(); reload(); runs once, and reload(); refresh(); reload(); runs
+      three times. No call outranks another.
+    - Called from on_ready() and NOT awaited, the call runs after on_ready()
+      returns. AWAITED (or chained) while on_ready() is still running, it is
+      pulled forward and runs at once, nested inside the running cycle.
+    - 'ready' fires only once the queue has drained.
+    - A render() or reload() made from on_ready() runs on_ready() again, so
+      an on_ready() that unconditionally re-renders its own component loops
+      forever: it never fires 'ready', and neither does any parent waiting
+      on it. Show loaded values from the template - read this.data, or a
+      method preferring a newer this.state value - never by re-rendering
+      from on_ready().
+    - Inside on_loaded(), AWAITING one deadlocks: it cannot start until
+      on_loaded() returns (development warns). Unawaited it runs later.
+    - From on_create() or on_render(), a call does not run there:
+      development warns and it queues behind the running step.
+
+    A render('sid') redraw does not disturb a parent's ready. ready(),
+    rendered() and the wait for children resolve when the component stops.
+
 RESERVED NAMES (METHODS AND EVENTS)
     Component authors add custom methods and fire custom events on the same
     class and event bus the framework uses. Two reserved namespaces exist;
@@ -2465,8 +2542,8 @@ RESERVED NAMES (METHODS AND EVENTS)
     Reserved METHOD names (the Jqhtml_Component surface, plus what RSpade
     adds to it):
         Lifecycle hooks:
-            on_create, on_render, on_load, on_loaded, on_ready, on_stop,
-            on_attach, on_detach, on_viewport_resize
+            on_create, on_render, on_load, on_load_error, on_loaded,
+            on_ready, on_stop, on_attach, on_detach, on_viewport_resize
         Lifecycle methods:
             reload, refresh, render, redraw, stop, ready, rendered,
             gate_load, is_attached
@@ -2487,7 +2564,7 @@ RESERVED NAMES (METHODS AND EVENTS)
         as a deliberate OOP-style override in unusual edge cases: same
         contract, calls the parent implementation, documented in the
         docblock. Defining refresh() "because the name fits" is a defect -
-        callers (and the framework's own debounce queue) expect the core
+        callers (and the framework's lifecycle queue) expect the core
         reload(false) semantics from that name.
 
     Reserved EVENT names:
@@ -3173,7 +3250,10 @@ ADVANCED: VALUE PRINTERS - INTERPOLATING AN OBJECT
 
     PRIMITIVES NEVER ENTER THE CHAIN. Compiled templates route only non-null,
     non-array objects to it, so ordinary interpolation costs exactly what it
-    always did. Arrays keep their existing coercion and are not printed.
+    always did. An ARRAY is never printed: <%= %>, <%!= %> and <%br= %>
+    given one print the literal text "(Array)". Join it yourself -
+    <%= this.data.tags.join(', ') %> - or loop over it. content() and a
+    slot return a markup buffer object, which is spliced, never printed.
 
     A RETURNED STRING IS TREATED AS A STRING LITERAL AT THAT SITE: escaped by
     <%= %>, raw under <%!= %>, escaped with line breaks under <%br= %>. A

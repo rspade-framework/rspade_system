@@ -64,10 +64,13 @@ A rule receives a path, the contents and the manifest metadata, and says what is
 - **Source_Cache** - the ONE reader/tokenizer/parser for a pass, LRU-bounded. A rule reaches
   it as `$this->source()` and NEVER calls `file_get_contents()`, `token_get_all()`,
   `PhpToken::tokenize()` or `new ParserFactory` itself.
-- **RuleDiscovery** - finds rule classes on disk once per process. The walk RECURSES
-  (`RecursiveIteratorIterator`): the predecessor was `glob('Rules/**' . '/*.php')`, and PHP's
-  `glob()` has no `**` - it matched exactly one directory level by accident, so a rule filed
-  two levels deep would silently never have run.
+- **RuleDiscovery** - finds rule classes from two places. FRAMEWORK rules are walked on disk
+  under `Rules/` once per process; the walk RECURSES (`RecursiveIteratorIterator`): the
+  predecessor was `glob('Rules/**' . '/*.php')`, and PHP's `glob()` has no `**` - it matched
+  exactly one directory level by accident, so a rule filed two levels deep would silently
+  never have run. APPLICATION rules are every other concrete class the manifest index says
+  extends `CodeQualityRule_Abstract` (in a real tree, classes under `rsx/`); each must declare
+  an `APP-` id, refused loudly otherwise. See "Application rules" below.
 - **Validation_Ledger** - the ONE store of "this file already passed this check", written by
   the DRIVER on a rule's behalf. A rule may NOT create a cache directory of its own, and may
   not declare a static property (both enforced by a test in `tests/code_quality/`).
@@ -77,7 +80,7 @@ A rule receives a path, the contents and the manifest metadata, and says what is
 
 ## Rule Categories
 
-147 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
+152 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
 Database, JavaScript, Jqhtml, Manifest, Meta, Models, PHP, Scss). The listings below are
 ILLUSTRATIVE SAMPLES of each category, not an inventory - the rule set is discovered from the
 filesystem, so `Rules/` itself is the authoritative list - read the directory for the full set.
@@ -152,6 +155,19 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
 7. **JsFallbackLegacyRule** (JS-FALLBACK-01)
    - JavaScript version of fallback/legacy detection
    - Severity: Critical
+
+8. **RawHtmlWrite_CodeQualityRule** (JS-RAW-HTML-01)
+   - `.html(x)`, `innerHTML =`, `outerHTML =`, `insertAdjacentHTML()`, `document.write()`
+     with an argument that is not a literal, `escape_html()` / `sanitize_rich_text_html()` /
+     `nl2brhtml()` / `nl2br(escape_html())`, or a `+`/template composition of only those;
+     `.html('')` is its own finding (use `.empty()`)
+   - AST detection in the node service (`quality.analyze_raw_html`, Babel); the service's
+     hash is the rule's `fingerprint_extra()`. Scope: browser JS under the scan directories,
+     minus `tests/`, `resource/`, vendored and `.min.js` files. rsx:check only
+   - Reads its own marker (`reads_own_exception_markers()`): `@JS-RAW-HTML-01-EXCEPTION
+     <rationale>` on the line or the line above covers that one write; a bare marker
+     covers nothing. Contract: `rsx:man coding_standards`, WRITING INTO THE PAGE
+   - Severity: High
 
 ### Database Rules (`Rules/Database/`)
 
@@ -361,6 +377,21 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
    - Severity: High, not manifest-fatal. Honors `@PATH-OWNER-01-EXCEPTION`; the remediation
      carries the owner's method table
 
+### Scss Rules (`Rules/Scss/`)
+
+1. **ScssPhantomToken_CodeQualityRule** (SCSS-PHANTOM-TOKEN-01)
+   - `var(--token, <literal>)`: the literal default hides an undefined token, so the surface
+     silently stops following the theme and dark mode. Any default that is not itself a
+     `var()` read is flagged (colour, length, number, keyword, Sass variable, empty); a
+     `var(--a, var(--b))` chain is not, and each `var()` is judged on its own
+   - Scope: every `.scss` the checker sees, the framework's own included, except `vendor/`,
+     `node_modules/` and `.min.scss`. A value that needs a default is declared once as a
+     custom property on `:root` and read bare - core's hooks do so (`Rsx_Form`'s
+     `--rsx-form-veil`, `Button_Utils`' loader knobs), and an app's theme redeclares them
+   - Comment-blanked text, a paren- and quote-aware scan for each default; file-level
+     `@SCSS-PHANTOM-TOKEN-01-EXCEPTION` via the driver
+   - Severity: High. Contract: `rsx:man scss`
+
 ## Configuration
 
 ### Config File (`config/rsx.php`)
@@ -480,6 +511,10 @@ copy - the marker lives in a comment, and the sanitizer blanks comments) and, if
 contains `@<RULE-ID>-EXCEPTION` anywhere in the file, skips that rule for that file. No rule
 has to opt in.
 
+A rule that answers `true` from `reads_own_exception_markers()` opts out of that file-level
+skip: the driver hands it every file and the rule decides per line itself (JS-RAW-HTML-01).
+That is what keeps one granted exception from silencing every other finding in the file.
+
 The MANIFEST-TIME pass does not apply it: a manifest-time rule is a build-breaking framework
 convention, and a rule that wants to be suppressible there implements the marker itself (which
 also buys it LINE granularity).
@@ -593,6 +628,23 @@ When you encounter a code quality violation, you are **FORBIDDEN** from granting
 - You are implementing a fix that the programmer has already approved
 
 **Exception grants are permanent code changes** - they suppress violations indefinitely and become part of the codebase. Do not make this decision autonomously.
+
+## Application rules
+
+An application adds `rsx:check` rules of its own: any concrete class extending
+`CodeQualityRule_Abstract` outside `Rules/` (in a real tree, under `rsx/`; conventionally
+`rsx/lib/code_quality/`) is discovered BY CLASS through the manifest
+(`RuleDiscovery::app_rule_files()`), with no registration. Its id MUST start with `APP-`, and
+two application rules may not share one: `discover_rules()` throws
+`YoureDoingItWrongException` otherwise, in `rsx:check` and the manifest-time pass alike (so
+the refusal poisons the manifest until fixed). Everything else is a framework rule's
+contract - severity, `kind()`/`depends_on()`, the driver's exception marker, the ledger, and
+`is_called_during_manifest_scan()`, which an application rule may opt into. The fingerprint
+covers the rule file plus any application base class between it and the abstract
+(`RuleDiscovery::files_for()`). A class OVERRIDE of a framework rule stays a framework rule.
+Downstream contract: `rsx:man coding_standards`, APPLICATION RULES. Tests:
+`tests/code_quality/php/App_Rule_Discovery_Test.php` (its fixture rule lives in the test tree,
+which is indexed under `rsx:test`, so discovery is exercised through the real manifest path).
 
 ## Development
 
@@ -781,7 +833,7 @@ Approved for manifest-time execution, by rule directory:
 - `Models/` - MODEL-AJAX-FETCH-01, MODEL-CARBON-01, MODEL-EXTENDS-01, MODEL-FETCH-DATE-01, TEXT-TYPE-01
 - `PHP/` - CONTROLLER-STATIC-01, PHP-ALIAS-01, PHP-CONTROLLER-REQUEST-01, PHP-MASS-01,
   PHP-ROUTE-QUERY-01, PHP-RSX-FQCN-01, PHP-STATIC-PROP-01, PHP-STRUCTURE-01,
-  SESSION-ID-01, TASK-RUN-AS-01
+  TASK-RUN-AS-01
 - `Scss/` - SCSS-SID-01
 
 The heaviest of these deserves its own note:
@@ -793,8 +845,6 @@ The heaviest of these deserves its own note:
 - **REVISION-01** (RevisionParent_CodeQualityRule): an incoherent `#[Revision_Parent]`. The attribute says "a revision on this child belongs to that parent's history", and the root pair it produces is written into every `_revisions` row AT WRITE TIME - so an incoherent declaration is never an error, it is a history that is quietly missing rows long after the change that caused it. Three checks: the child must declare `$revisions = true` (otherwise the attribute is inert and its author believes something that is not happening), the method must return a `belongsTo` (only a belongsTo names exactly one parent row, and a revision has exactly one root), and the parent must declare `$revisions = true` too (otherwise the child's writes are filed under a record whose own writes are never recorded - a half history). Cross-file (`kind() = KIND_CROSS_FILE`), AST-based, and deliberately silent on a target it cannot resolve statically. Full contract: `rsx:man revisions`.
 
 - **TEXT-TYPE-01** (TextTypeDeclaration_CodeQualityRule): a `$text_types` declaration the cast cannot honour. Three checks: every entry names a class extending `Rsx_Text_Abstract`; that type has a JS twin of the same simple name extending the JS `Rsx_Text_Abstract`; and no `$casts` default or `casts()` answer names a declared column - the text cast is attached only where no cast exists, so such an entry SHADOWS it and the column stores request markup unfiltered, a stored-XSS path with no error. Every mode is silent at runtime, hence fatal. Cross-file, REFLECTION-based over loaded classes (the entries and casts are values, not syntax); checks 1-2 reported at the class that declares `$text_types`, check 3 on every concrete model inheriting one. Deliberately silent on a `casts()` body that cannot be evaluated without a booted model; honors `@TEXT-TYPE-01-EXCEPTION` file-wide. Seam `evaluate_class($fqcn, $abs_file, $is_abstract)` (abstractness comes from the manifest, which cannot answer for a temp-loaded fixture); test `Text_Type_Declaration_Rule_Test`. Full contract: `rsx:man text_types`.
-
-- **SESSION-ID-01** (SessionIdNullCheck_CodeQualityRule): a null-ish/zero-ish TEST on a `Session::get_session_id()` / `Portal_Session::get_session_id()` result. Both calls CREATE a session and are declared `: int`, so the test is unreachable AND the session it was meant to prevent has already been created — a defect that is completely invisible at runtime, which is why it is fatal at build time rather than advisory. Per-file (`kind() = KIND_PER_FILE`), AST-based (nikic/php-parser), with a single-assignment variable-dataflow model deliberately kept conservative. The two Session facade files and `/CodeQuality/` meta-code are excluded; the rule honors `@SESSION-ID-01-EXCEPTION` itself (file-level or on/above the line), which is what gives it LINE granularity - the driver's generic file-level marker check runs for `rsx:check` only.
 
 All other rules must return `false` from `is_called_during_manifest_scan()`. Adding to this set
 needs explicit framework-maintainer approval - every manifest-time rule runs on every file change

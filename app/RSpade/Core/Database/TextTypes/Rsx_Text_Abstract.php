@@ -217,7 +217,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * plain text. This is what makes that true: every bare string assigned to a declared
      * column - an import, a seed, a CLI script, an /api/vN call, a plain form field - is
      * converted by it, and the type's sanitize_encoded() then runs on the result. For an HTML
-     * type this is `'<p>' . nl2br(htmlspecialchars($plain)) . '</p>'`, so `<`, `&` and line
+     * type this is `'<p>' . nl2brhtml($plain) . '</p>'`, so `<`, `&` and line
      * breaks survive as the text they were instead of being read as markup.
      *
      * Abstract for the same reason sanitize_encoded() is: a type whose encoding IS plain text

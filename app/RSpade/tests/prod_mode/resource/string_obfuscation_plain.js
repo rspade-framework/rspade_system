@@ -21,8 +21,7 @@ function __collect() {
     const card_args = { title: 'Card Title', flag: true };
     const card = template_Obf_Fixture_Card.render.call(
         { _cid: 'c1', args: card_args },
-        {}, card_args, null,
-        { escape_html: (value) => String(value), print_object: (value) => JSON.stringify(value) }
+        {}, card_args, null, jqhtml
     );
     return {
         plain_value: fixture_plain_value,
@@ -54,6 +53,6 @@ function __collect() {
         controller: Obf_Fixture_Controller.save(),
         controller_path: Obf_Fixture_Controller.save.path,
         card_name: template_Obf_Fixture_Card.name,
-        card_output: card[0]
+        card_output: card.instructions
     };
 }

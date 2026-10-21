@@ -86,10 +86,13 @@ function api_js_literal(value) {
  * Mark an unfilled path placeholder so a sample SHOWS what is missing.
  *
  * The placeholder is left in the sample rather than substituted with something plausible: a
- * sample that silently invented an id would look ready to run and would not be. Rendered as
- * raw HTML by the caller, so the value is escaped here.
+ * sample that silently invented an id would look ready to run and would not be. Returned as
+ * an element whose text and title are set as text, never as markup.
+ *
+ * @returns {jQuery}
  */
 function api_missing_marker(name) {
-    return '<span class="_Apidocs_Code_Samples__missing" title="' + escape_html(name) + ' is required">{'
-        + escape_html(name) + '}</span>';
+    return $('<span class="_Apidocs_Code_Samples__missing"></span>')
+        .attr('title', name + ' is required')
+        .text('{' + name + '}');
 }

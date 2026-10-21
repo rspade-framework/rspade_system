@@ -68,6 +68,12 @@ Methods start with `test_`. Helpers are `__`-prefixed/`protected`: `__assert_*`
 empty/not_empty, equals_approx, **throws**), `__acting_as_site/__acting_as_user/
 __reset_session`, `__pass/__fail/__skip`. See `Rsx_Test_Abstract`.
 
+The test process runs a VIRTUAL session: no browser, no session row, `get_session_id()`
+null, and `Session::put_value()` refuses. A test whose subject belongs to a browser (session
+values, a second-factor challenge, View as Client) acts as one: `__as_browser()` inserts a
+browser row and makes the session answer it, and `protected static $acts_as_browser = true;`
+does that before every test method of the class.
+
 Rules: snake_case methods/vars; no emoji/unicode; never the words "fallback" or
 "legacy" (code-quality rule rejects them); professional ASCII only.
 

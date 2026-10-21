@@ -62,6 +62,12 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Abstract;
 class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
 {
     /**
+     * The session-value realm every value this realm's flows park lives in (Session::put_value()):
+     * cleared when the portal sign-in on the browser ends, untouched by the other realm's.
+     */
+    public const SESSION_REALM = 'portal';
+
+    /**
      * Session value key holding the portal user who has passed their password and is waiting
      * on a second factor.
      */

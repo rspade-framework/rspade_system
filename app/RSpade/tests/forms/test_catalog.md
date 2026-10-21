@@ -126,3 +126,10 @@ Real keyboard input on a runtime-mounted widget on `/_sys`.
 | forms-fl-04 | a class extending a model answers through it | `class X extends User_Model` | the model's answer | implemented |
 | forms-fl-05 | missing data throws | `Rsx.__field_length_data = null`; `= {}` | a throw naming the model and the script, both times | implemented |
 
+
+## Form error messages are plain text (`playwright/form_errors_plain_text.js`)
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-pt-01 | a field error, an unmatched field error and a general error each render their message as text | messages carrying `<b>` and `<img onerror>` | element text = the message verbatim; no `b`/`img` inside | implemented |
+| forms-pt-02 | `Rsx.render_error()` renders the fatal box's file, line and message as text | a fatal error with markup in `file` and `error` | text shows them literally; no element from them | implemented |

@@ -1477,6 +1477,25 @@ function escape_html(string $text): string
 }
 
 /**
+ * Multi-line plain text in, HTML that shows it out: escape_html() and then PHP's nl2br(), in
+ * one step, so every line break becomes `<br />` and nothing in the text is markup.
+ *
+ * The twin of JS nl2brhtml(). PHP's own nl2br() does not escape; this is the call for text a
+ * user typed.
+ *
+ * @param string|null $text Plain text
+ * @return string Escaped HTML with `<br />` at each line break; '' for null
+ */
+function nl2brhtml(?string $text): string
+{
+    if ($text === null) {
+        return '';
+    }
+
+    return nl2br(escape_html($text));
+}
+
+/**
  * Sanitize rich-text HTML (WYSIWYG editor output) with HTMLPurifier: untrusted HTML in, HTML
  * holding only the rich-text allow-list out.
  *
@@ -1501,7 +1520,8 @@ function sanitize_rich_text_html(string $html): string
     static $purifier = null;
 
     if ($purifier === null) {
-        require_once base_path('vendor/ezyang/htmlpurifier/library/HTMLPurifier.auto.php');
+        // HTMLPurifier loads through composer's classmap. Its own HTMLPurifier.auto.php is never
+        // included: it prepends a second autoloader in front of Class_Override_Loader.
 
         $config = HTMLPurifier_Config::createDefault();
 

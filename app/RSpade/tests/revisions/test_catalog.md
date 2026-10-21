@@ -96,6 +96,24 @@ tables. Fixtures: `Revision_Fixture_Model` (opt-in, soft-deleting, `$revision_ex
 | RR-25 | a real recorded revision stores compressed | php | end-to-end write | LENGTH(changes) < raw JSON (RC-12) | implemented | 2026-08-28 |
 | RR-26 | diff() round-trips from storage | php | re-read row | the recorded pair comes back | implemented | 2026-08-28 |
 
+## Revision_Redaction_Test (php)
+
+A never-exported column in the revision lane. Fixture: `Revision_Secret_Fixture_Model`
+(`api_token` plain secret, `secret_note` secret with a declared text type, `rotating_secret`
+in both `$neverExport` and `$revision_exclude`). Absence is asserted on the STORED payload,
+decoded from the `changes` column.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RX-01 | a create records each secret as the marker on both sides | php | new record with secrets | `api_token` = [REDACTED, REDACTED]; marker is `__RSX_REDACTED__`; ordinary column untouched; no secret in the stored document | implemented | 2026-10-20 |
+| RX-02 | an update records the change without either value | php | token rotated | diff is exactly `api_token` = [REDACTED, REDACTED]; neither token stored | implemented | 2026-10-20 |
+| RX-03 | an untouched secret is not mentioned | php | name edited | diff is exactly the name pair | implemented | 2026-10-20 |
+| RX-04 | clearing a secret is recorded redacted | php | token set to null | [REDACTED, REDACTED]; no secret stored | implemented | 2026-10-20 |
+| RX-05 | a declared text type secret is never encoded | php | create with `secret_note` | marker pair; no `<p>` and no `__TEXT` in the stored document | implemented | 2026-10-20 |
+| RX-06 | `$revision_exclude` wins over redaction | php | create, then edit only `rotating_secret` | absent on the create; no revision for the edit | implemented | 2026-10-20 |
+| RX-07 | delete and restore carry no secret | php | delete(), restore() | empty delete document; restore without `api_token`; no secret stored | implemented | 2026-10-20 |
+| RX-08 | diff() hands back the marker and is_redacted() answers | php | re-read row | both sides is_redacted(); an ordinary value and null are not | implemented | 2026-10-20 |
+
 ## Revision_Unit_Of_Work_Test (php)
 
 The public unit-of-work seam, `Revision::begin_unit_of_work()` / `unit_of_work()`, and the

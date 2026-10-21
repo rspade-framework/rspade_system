@@ -337,8 +337,9 @@ COMPONENT DESIGN RULES
 
     2. Tokens only. No hardcoded hex in component SCSS. If a value has no
        token, DEFINE the token - do not reference a token via an inline
-       fallback (var(--foo, #123456)); that hides an undefined token. Porting
-       an old value verbatim is correct; porting it untokenized is not.
+       fallback (var(--foo, #123456)); that hides an undefined token
+       (rsx:check reports it as SCSS-PHANTOM-TOKEN-01). Porting an old
+       value verbatim is correct; porting it untokenized is not.
 
     3. Docblock contract. The first line of the component's jqhtml header
        comment is "Component_Name - <summary, 12 words or fewer>", then its
@@ -561,7 +562,8 @@ PITFALLS
 
     P6 - Phantom tokens. var(--foo, #123456) fallbacks hide undefined tokens.
     Grep token names against the variables file; define missing tokens once and
-    strip the inline fallbacks.
+    strip the inline fallbacks. rsx:check reports every one (SCSS-PHANTOM-TOKEN-01,
+    rsx:man scss).
 
     P7 - Responsive stacking must not hide functionality. When the sidebar
     stacks under the main column on mobile, no affordance that lived in a

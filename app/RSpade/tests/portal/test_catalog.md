@@ -24,9 +24,9 @@ Notes:
 
 | ID | Purpose | Type | Input | Expected | Status | Last updated |
 |----|---------|------|-------|----------|--------|--------------|
-| PORTAL-TERM-01 | a portal user terminates their OWN session | php | a _sessions row carrying the caller's portal identity | true, portal properties cleared, ROW survives | implemented | 2026-08-10 |
-| PORTAL-TERM-02 | another portal user's session id is fail-closed | php | row owned by a different portal_user_id | false, row intact | implemented | 2026-08-05 |
-| PORTAL-TERM-03 | a caller with no portal identity terminates nothing | php | logged out, any row | false, row intact | implemented | 2026-08-05 |
+| PORTAL-TERM-01 | a portal user ends their OWN portal sign-in on another browser | php | a browser signed into the portal as the caller | true; portal user session signed out, portal pointer cleared, ROW survives | implemented | 2026-10-21 |
+| PORTAL-TERM-02 | another portal user's user session id is fail-closed | php | a browser signed in as a different portal user | false, still signed in | implemented | 2026-10-21 |
+| PORTAL-TERM-03 | a caller with no portal identity terminates nothing | php | logged out, any portal user session | false, still signed in | implemented | 2026-10-21 |
 
 ## Portal_Site_Declaration_Test (php) - the portal site contract (set_site_id)
 
@@ -52,25 +52,25 @@ Notes:
 
 ## Portal_Session_Realm_Test (php) - PROPERTY isolation on the one session row
 
-There is one session per browser and no realm discriminator. The staff and portal
-identities are two sets of COLUMNS on that row, and both being set at once is legal.
-These rows hold the property boundary that replaced the old row boundary.
+There is one session per browser. The staff and portal sign-ins are two USER SESSIONS
+the row points at, and both being signed in at once is legal. These rows hold the realm
+boundary.
 
 | ID | Purpose | Type | Input | Expected | Status | Last updated |
 |----|---------|------|-------|----------|--------|--------------|
-| PORTAL-PROP-01 | a portal identity sets no staff property | php | row with portal_user_id | login_user_id null, site_id 0, portal_site_id set | implemented | 2026-08-10 |
-| PORTAL-PROP-02 | both identities on ONE row is legal | php | row with both ids | both readable | implemented | 2026-08-10 |
-| PORTAL-PROP-03 | View as Client writes only portal properties | php | Session::_apply_portal_impersonation() on a row with a staff login | portal_user_id/portal_site_id/impersonator_user_id/impersonation_started_at set; login_user_id intact, impersonator_login_user_id null | implemented | 2026-10-01 |
-| PORTAL-PROP-04 | a session with no portal identity is not a portal session | php | staff-only row token | Portal_Session::find_by_token null; Session::find_by_token finds it | implemented | 2026-08-10 |
+| PORTAL-PROP-01 | a portal sign-in sets no staff pointer | php | a browser signed into the portal | portal user session carries portal_user_id/portal_site_id, no login_user_id; staff pointer null | implemented | 2026-10-21 |
+| PORTAL-PROP-02 | both realms on ONE row is legal | php | a browser signed into both | both user sessions readable through the two pointers | implemented | 2026-10-21 |
+| PORTAL-PROP-03 | View as Client moves only the portal pointer | php | Session::_apply_portal_impersonation() on a browser signed into staff | portal pointer -> a user session with portal_user_id/portal_site_id/impersonator_user_id/started_at; staff pointer and its user session untouched | implemented | 2026-10-21 |
+| PORTAL-PROP-04 | a browser with no portal sign-in is not a portal session | php | staff-only browser token | Portal_Session::find_by_token null; Session::find_by_token finds it | implemented | 2026-10-21 |
 | PORTAL-PROP-05 | a portal session resolves through both facades | php | portal row token | both find it - it is one row | implemented | 2026-08-10 |
-| PORTAL-PROP-06 | the staff session list never returns a portal-only row | php | portal row, staff list for the same integer | empty | implemented | 2026-08-10 |
-| PORTAL-PROP-07 | the portal session list never returns a staff-only row | php | staff row, portal list for the same integer | empty | implemented | 2026-08-10 |
-| PORTAL-PROP-08 | portal termination never reaches a staff-only row | php | terminate a staff-only row id | false, row intact | implemented | 2026-08-10 |
-| PORTAL-PROP-09 | staff termination never reaches a portal-only row | php | terminate_all_sessions_for_user | 0 affected, row active | implemented | 2026-08-10 |
-| PORTAL-PROP-10 | portal termination preserves the staff login on the SAME row | php | row with both ids, terminate | portal props cleared, login_user_id + active intact | implemented | 2026-08-10 |
-| PORTAL-PROP-11 | the portal cap CLEARS the oldest beyond the limit | php | 3 sessions, cap 2 | oldest row survives with portal_user_id null | implemented | 2026-08-10 |
-| PORTAL-PROP-12 | the portal cap never counts or evicts harness sessions | php | 1 playwright + 2 web, cap 2 | all three keep their portal identity | implemented | 2026-08-10 |
-| PORTAL-PROP-13 | the portal cap never touches a staff property | php | staff row with the same integer | login_user_id + active intact | implemented | 2026-08-10 |
+| PORTAL-PROP-06 | the staff session list never returns a portal user session | php | portal sign-in, staff list for the same integer | empty | implemented | 2026-10-21 |
+| PORTAL-PROP-07 | the portal session list never returns a staff user session | php | staff sign-in, portal list for the same integer | empty | implemented | 2026-10-21 |
+| PORTAL-PROP-08 | portal termination never reaches a staff user session | php | terminate a staff user session id | false, still signed in | implemented | 2026-10-21 |
+| PORTAL-PROP-09 | staff termination never reaches a portal user session | php | _deactivate_sessions_for_user | 0 affected, portal sign-in intact | implemented | 2026-10-21 |
+| PORTAL-PROP-10 | portal termination preserves the staff sign-in on the SAME row | php | a browser signed into both, terminate the portal one | portal pointer cleared; staff pointer + active intact | implemented | 2026-10-21 |
+| PORTAL-PROP-11 | the portal cap signs out the oldest beyond the limit | php | 3 portal sign-ins, cap 2 | oldest portal user session signed out; its browser row survives | implemented | 2026-10-21 |
+| PORTAL-PROP-12 | the portal cap never counts or evicts harness sessions | php | 1 playwright + 2 web, cap 2 | all three still signed in | implemented | 2026-10-21 |
+| PORTAL-PROP-13 | the portal cap never touches a staff user session | php | staff sign-in with the same integer | still signed in | implemented | 2026-10-21 |
 
 ## Portal_Realm_Site_Seams_Test (php) - "which site is this?" forks on the EXPERIENCE (B-76)
 
@@ -172,10 +172,10 @@ by `Portal_Impersonation_Grant_Fixture` (the check is the application's rule).
 
 | ID | Purpose | Type | Input | Expected | Status | Last updated |
 |----|---------|------|-------|----------|--------|--------------|
-| PORTAL-IMP-01 | same host: the impersonation is written onto the caller's own row | php | blank PORTAL_URL, granted staff caller | `/_portal/`; portal_user_id/portal_site_id/impersonator_user_id/impersonation_started_at on the row, login_user_id intact; is_impersonating() | implemented | 2026-10-01 |
+| PORTAL-IMP-01 | same host: the caller's own row points at the impersonation | php | blank PORTAL_URL, granted staff caller | `/_portal/`; the portal pointer names a user session with portal_user_id/portal_site_id/impersonator_user_id/started_at; staff pointer untouched; is_impersonating() | implemented | 2026-10-21 |
 | PORTAL-IMP-02 | same host under another prefix lands under it | php | PORTAL_URL = APP_URL + /clients | `/clients/` | implemented | 2026-10-01 |
 | PORTAL-IMP-03 | begin never touches the target's last_login | php | begin | last_login still null | implemented | 2026-10-01 |
-| PORTAL-IMP-04 | separate host: leg 1 on the portal origin under its prefix, code stored as its hash, nothing applied yet | php | PORTAL_URL https://portal.example.test/x | URL `https://portal.example.test/x/_session_link/open?c=..&s=..`; no session token in it; `_session_links` row bound to the caller's row; no portal props on the row | implemented | 2026-10-01 |
+| PORTAL-IMP-04 | separate host: leg 1 on the portal origin under its prefix, code stored as its hash, nothing applied yet | php | PORTAL_URL https://portal.example.test/x | URL `https://portal.example.test/x/_session_link/open?c=..&s=..`; no session token in it; `_session_links` row bound to the caller's row; no portal pointer on the row | implemented | 2026-10-21 |
 | PORTAL-IMP-05 | a caller whose can_impersonate denies is refused | php | grant false | AjaxUnauthorizedException; nothing started | implemented | 2026-10-01 |
 | PORTAL-IMP-06 | the impersonator id must be the signed-in staff user | php | someone else's id | RuntimeException | implemented | 2026-10-01 |
 | PORTAL-IMP-07 | is_impersonating()/get_impersonator_user_id() follow the CLI flag | php | cli_set_impersonator_user_id | true / id | implemented | 2026-10-01 |

@@ -395,7 +395,7 @@ class Actor_Model_Test extends Rsx_Test_Abstract
 
     public static function test_portal_account_has_no_staff_side_profile_page()
     {
-        // Staff realm: RSpade ships no per-portal-user detail screen.
+        // Staff realm: RSpade ships no per-portal-user screen an application may link to.
         $portal_user = self::__make_portal_user();
 
         static::__assert_null(

@@ -1,0 +1,253 @@
+ONE SESSION PER BROWSER, USER SESSIONS FOR "WHERE YOU'RE SIGNED IN", NO SESSION IN COMMANDS AND TASKS
+Date: 2026-10-21
+
+IF YOU DO NOTHING: a column of yours that stores Session::get_session_id() or Session::get_audit_session_id() fails its NOT NULL constraint the first time a command or a task writes a row (both are null there now); code that calls ->format() on a Session::get_sessions_for_user() date throws (the dates are ISO strings); and an rsx.sessions override of anonymous_timeout_minutes in rsx/resource/config/rsx.php is silently ignored.
+
+SUMMARY
+    Category 2, with Category 3 port guidance for the session screens your fork
+    copied from the template.
+
+    The session model was rebuilt around three records:
+
+        _sessions        ONE ROW PER BROWSER. Its tokens rotate in place at
+                         every sign-in and sign-out; it points at the current
+                         staff and portal sign-in. get_session_id() is its id
+                         and no longer changes when somebody signs in.
+        _user_sessions   "Where you're signed in": one row per browser x
+                         account x site x impersonator, reused when that
+                         account signs in there again, stamped with a sign-out
+                         reason when it ends. get_sessions_for_user() and the
+                         terminate functions speak these.
+        _audit_sessions  user session x site x address x user agent.
+
+    A command, a task and a test now run a VIRTUAL session: no row, no audit
+    session. Session values carry a realm and are cleared when that realm signs
+    out. The default sign-in limits are shorter. Full contract:
+    rsx:man session (PART ONE - BASIC, then PART TWO - ADVANCED).
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/ and applied by migrate - nothing to do:
+    the tables and the data migration (one surviving row per browser, user
+    sessions built from the live rows; command, task, API, Playwright and
+    superseded rows deleted), in-place token rotation, the lifetimes and the
+    hourly/daily cleanup, one session row per API key, harness rows reused by
+    rsx:debug, the /_sys session screens, and the framework's own callers of
+    everything below.
+
+WHAT CHANGED, AND WHAT YOU MUST DO
+
+    1. get_session_id() AND get_audit_session_id() MAY BE NULL.
+
+       Session::get_session_id(): ?int and Session::get_audit_session_id(): ?int
+       answer null in an artisan command, a task (except a #[Run_As_Dispatcher]
+       one, which answers the dispatching browser and audit session) and a
+       test. Session::get_session() and put_value() THROW there. A command or a
+       task used to get a throwaway TYPE_CLI row and an audit session of type
+       CLI; neither exists any more.
+
+       - Every column of yours that stores either id becomes NULLABLE (a
+         migration: ALTER TABLE ... MODIFY COLUMN session_id BIGINT NULL, and
+         the same for audit_session_id). A foreign key to _sessions stays
+         ON DELETE CASCADE.
+       - Every screen or export that shows one tolerates null (show "system",
+         or nothing).
+       - Code that called get_session_id() in a command or task to get "a
+         session" for something must pass what it needs another way - there is
+         no browser there.
+       - A test whose subject belongs to a browser (session values, a parked
+         challenge, two-factor trust) calls static::__as_browser() first, or
+         declares protected static $acts_as_browser = true.
+
+    2. get_sessions_for_user() AND THE TERMINATE FUNCTIONS SPEAK USER SESSIONS.
+
+       Session::get_sessions_for_user() / Portal_Session::get_sessions_for_user()
+       answer USER SESSIONS: one entry per browser x site (x impersonator) the
+       account signed in on, never another account's sign-ins on the same
+       browser - and SIGNED-OUT entries too (those signed out within
+       rsx.sessions.unused_session_days, 30), each with its reason.
+
+       - An entry's `id` is a USER SESSION id. terminate_session(),
+         terminate_session_for_user(), terminate_all_sessions_for_user()'s
+         $except, developer_terminate_sessions() and the portal twins take user
+         session ids. Code that passed an id it got from the listing keeps
+         working; code that passed get_session_id() or a stored _sessions id
+         now matches nothing (false / 0).
+       - Filter on `is_signed_in` where a screen means "signed in now"; show
+         `signed_out_at` / `sign_out_reason` otherwise.
+       - DATES ARE ISO STRINGS: last_active, created_at, signed_in_at,
+         first_seen, signed_out_at, impersonation_started_at. Format them with
+         Rsx_Time::format_datetime() (PHP) or Rsx_Time in the browser - never
+         ->format().
+       - `device_id` is gone (one browser is one row now: use `session_id`).
+         New: session_id, user_id, signed_out_at, sign_out_reason,
+         is_signed_in, impersonator_id, impersonation_started_at,
+         sign_in_count, type_id, is_api (an API key's use is listed once; the
+         terminate functions do not end it - revoking the key does).
+       - The `session.terminated` event payload gains user_session_id;
+         session_id in it is the browser.
+       - RECOMMENDED: list only the entries active within a bounded window.
+         The template keeps 3 months (rsx/lib/sessions/session_listing.php,
+         below) and so should you, unless you have a reason to show more.
+
+    3. SESSION VALUES ARE REALM-TAGGED AND CLEARED AT SIGN-OUT.
+
+       Session::put_value($key, $value, $expires_at = null, $realm = null),
+       get_value($key, $default = null, $realm = null),
+       forget_value($key, $realm = null). Realm 'staff', 'portal' or 'guest';
+       null = the request's experience. A realm's sign-out - logout, a sign-in
+       limit, an ending from another device, another account signing in on the
+       browser - CLEARS that realm's values. 'guest' values are the browser's
+       own and survive.
+
+       - A value that must outlive a sign-out (a dismissed banner, a chosen
+         language) is written with realm 'guest'.
+       - A value read in a different experience from the one that wrote it
+         passes the realm explicitly on both sides.
+       - Anything you kept in session values that is real per-browser data
+         moves to a table of your own keyed on get_session_id() (nullable,
+         FOREIGN KEY ... REFERENCES _sessions (id) ON DELETE CASCADE).
+       - put_value() throws in a command, a task and an API request; all three
+         calls throw in a #[Run_As_Dispatcher] task.
+
+    4. PARK A VALUE AFTER begin_challenge(), NOT BEFORE.
+
+       Rsx_Two_Factor::begin_challenge() and Rsx_Portal_Two_Factor::
+       begin_challenge() sign the realm out FIRST, then park the pending
+       identity. A value your login function writes BEFORE begin_challenge()
+       (an invite code, a destination) is cleared by that sign-out whenever
+       somebody was still signed in. Move every such put_value() to AFTER the
+       begin_challenge() call. The template's two login controllers are the
+       worked example:
+
+           File: rsx/app/login/login_controller.php
+           -------------------------------------------------------------------
+               if (Rsx_Two_Factor::is_enabled($login_user)) {
+                   Rsx_Two_Factor::begin_challenge($login_user);
+
+                   static::__park_invite_code($invite_code);
+
+                   return redirect(Rsx::Route('Login_Controller::verify'));
+               }
+
+           File: rsx/portal/auth/Portal_Login_Controller.php
+           -------------------------------------------------------------------
+               Rsx_Portal_Two_Factor::begin_challenge($portal_user, $accepts);
+
+               Portal_Session::put_value(static::CLIENT_ID_KEY, $client_id,
+                   Rsx_Portal_Two_Factor::challenge_expires_at());
+
+    5. CONFIG KEYS RENAMED AND REMOVED, AND NEW DEFAULT LIFETIMES.
+
+       In rsx/resource/config/rsx.php, under 'sessions':
+
+           anonymous_timeout_minutes   -> guest_expiry_minutes (same meaning:
+                                          a browser nobody ever signed in on is
+                                          deleted after this long unused)
+           cli_timeout_minutes         removed (a command has no row)
+           api_timeout_minutes         removed (an API key's row lives as long
+                                          as the key)
+           playwright_timeout_minutes  removed (harness rows are reused)
+           unused_session_days         NEW, 30: a browser unused this long is
+                                          made inactive and what was signed in
+                                          on it is signed out
+
+       The default sign-in limits changed from 30 days each to:
+
+           staff  => ['max_length_minutes' => 10080, 'max_idle_minutes' => 480],
+           portal => ['max_length_minutes' => 10080, 'max_idle_minutes' => 480],
+
+       (7 days from the sign-in, 8 hours from the last page view). If your
+       application does not set them, its users are now signed out after 8
+       idle hours. To keep the previous behaviour, set them explicitly:
+
+           'sessions' => [
+               'staff'  => ['max_length_minutes' => 43200, 'max_idle_minutes' => 43200],
+               'portal' => ['max_length_minutes' => 43200, 'max_idle_minutes' => 43200],
+           ],
+
+    6. AUDIT SESSION FIELDS.
+
+       Session::get_audit_session() and Audit_Session::join() answer
+       session_id (the browser) and user_session_id in place of
+       session_row_id and device_id; Audit_Session::column('session_row_id')
+       and column('device_id') now throw. A grouping "every act of this
+       sign-in" uses user_session_id; "every act from this browser" uses
+       session_id.
+
+THE TEMPLATE SCREENS YOUR FORK OWNS (port guidance)
+    Your rsx/ has its own copies of the screens that list sessions; the
+    reference app was rebuilt on user sessions and is release-current on your
+    disk under system/app/RSpade/resource/reference_app/. Port what you use:
+
+    rsx/lib/sessions/session_listing.php (NEW)
+        Session_Listing: recent() keeps the entries active within 3 months,
+        row() is the one payload (with can_sign_out: signed in, not an API
+        key's use, not this browser), find() is the record rule for an id an
+        endpoint is handed. Copy it to rsx/lib/sessions/.
+
+    rsx/app/frontend/settings/user_management/
+        settings_user_management_controller.php: get_user() returns `sessions`
+        (Session_Listing rows, this site, impersonations included and
+        labelled) where it returned `recent_sessions`; new endpoints
+        get_user_session, get_user_session_activity (the user session's audit
+        sessions, Audit_Session::list_page_for_user_session()),
+        terminate_user_session and terminate_all_user_sessions take
+        user_session_id. view/settings_user_management_view_action.* render the
+        list with state, reason, sign-in count and Sign out; the new
+        session_view/ directory is the detail page.
+
+    rsx/app/frontend/settings/password_security/
+        The "Active Sessions" section is real: get_sessions,
+        sign_out_session({user_session_id}) and sign_out_other_sessions
+        replace the placeholder revoke_session endpoint, and the "Last
+        Password Change" box is gone.
+
+    rsx/portal/settings/
+        portal_settings_controller.php: get_sessions answers Session_Listing
+        rows; terminate_session takes `user_session_id` (it took
+        `session_id`) and accepts only an id the screen lists with
+        can_sign_out. Portal_Settings_Action.js/.jqhtml send the new parameter
+        and show the signed-out entries' reason.
+
+    Place each where your application's own navigation and permissions put
+    it; the endpoints' #[Auth] gates in the reference files are the minimum.
+
+FINDING YOUR CALL SITES
+    grep -rn "get_session_id\|get_audit_session_id" rsx/ --include=*.php
+        - each one: is the column it lands in nullable? can this run in a
+          command or task?
+    grep -rn "session_id\|audit_session_id" rsx/resource/migrations/
+        - every column storing either id: make it NULL-able
+    grep -rn "get_sessions_for_user\|terminate_session\|terminate_all_\|developer_terminate_sessions\|recent_sessions\|device_id" rsx/
+        - the listing and termination call sites (item 2)
+    grep -rn "put_value\|get_value\|forget_value" rsx/
+        - the realm and the order relative to begin_challenge() (items 3, 4)
+    grep -rn "begin_challenge" rsx/
+        - anything parked before it (item 4)
+    grep -rn "session_row_id\|device_id" rsx/
+        - audit-session fields (item 6)
+    grep -n "anonymous_timeout_minutes\|cli_timeout_minutes\|api_timeout_minutes\|playwright_timeout_minutes\|max_idle_minutes\|max_length_minutes" rsx/resource/config/rsx.php
+        - item 5
+
+VERIFICATION
+    - php artisan migrate for your own nullable-column migrations, then run a
+      command and a task that write those tables: no NOT NULL failure.
+    - php artisan rsx:check and your application tests pass.
+    - Sign in as A in a browser, out, in as B, out, in as A: A's "where you're
+      signed in" screen shows ONE entry for that browser (sign-in count 2) and
+      never B's; B's shows only B's.
+    - "Sign out" on an entry from another browser signs that browser out on
+      its next request; the entry shows "Ended from another device".
+    - A second-factor sign-in that carries an invite code still lands where
+      the code says, with somebody already signed in on the browser.
+    - php artisan rsx:debug / --user=<id> renders, and a second run reuses the
+      same harness session (nothing new in the sessions list).
+
+SEE ALSO
+    rsx:man session - the whole model: BASIC, then ADVANCED
+    rsx:man config_rsx - the rsx.sessions block
+    rsx:man two_factor - the challenge and what it parks
+    skill rspade:session-auth - session screens, termination, lifetimes
+    skill rspade:audit-session - audit sessions and list_page_for_user_session()
+    run_as_dispatcher_tasks_10_21.txt - which of your tasks must run as their
+        dispatcher

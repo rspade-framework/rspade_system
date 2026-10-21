@@ -275,7 +275,7 @@ class Rsx_Form extends Component {
 
         if (typeof data === 'string') {
             try {
-                const decoded = $('<textarea>').html(data).text();
+                const decoded = decode_html_entities(data);
                 data = json_decode(decoded);
             } catch (e) {
                 console.error('Rsx_Form: failed to parse $data JSON string', e);

@@ -1,512 +1,1006 @@
 NAME
-    session - RSX session management and authentication system
+    session - RSX session management: the browser, who is signed in on it, and
+    the record of what they did
 
 SYNOPSIS
-    Static session interface with lazy initialization and CLI mode support
+    if (Session::is_logged_in()) {
+        $user = Session::get_user();          // site-scoped User_Model
+        $site_id = Session::get_site_id();
+    }
+
+    RsxAuth::login($login_user);              // sign in on this browser
+    Session::logout();                        // sign the staff account out
+
+    Session::put_value('wizard.step', 3);     // a value on this browser
+    $step = Session::get_value('wizard.step', 1);
+
+    $log->audit_session_id = Session::get_audit_session_id();   // who did it, from where
 
 DESCRIPTION
-    The RSX Session class provides a unified interface for session management
-    and authentication. Unlike Laravel's session() helper which returns a
-    session store, RSX uses static methods for direct access to session data.
+    Session is a static facade. Unlike Laravel's session() store or Auth guard,
+    RSX has no key/value session bag and no "remember me": a browser holds one
+    long-lived cookie, and the framework answers who is signed in on it through
+    typed accessors. Portal_Session is the same facade for the client portal
+    (rsx:man portal).
 
-    There is no "remember me" option. The cookie is always long-lived and it is
-    the session ROW that expires: every session is stamped with a TYPE at
-    creation and is deleted once it has gone unused for that type's window
-    (SESSION TYPES + GARBAGE COLLECTION below). An in-use session therefore
-    lives indefinitely, and an abandoned one does not accumulate. The framework
-    handles session creation, authentication, and security automatically.
+    This page has two parts.
 
-    ONE SESSION PER BROWSER. A session identifies a BROWSER - one session cookie
-    (`__Host-rsx`; see SECURITY, Cookie Settings), one _sessions row, per cookie jar - and NOT an authentication realm. There is
-    no realm discriminator and no second cookie. The row is a PROPERTY BAG,
-    consumed by different parts of the site:
+    PART ONE - BASIC is the programmer contract: what to call, what it returns,
+    and the handful of rules application code must respect. Most applications
+    never need more.
 
-        staff properties    login_user_id, site_id, impersonator_login_user_id
-        portal properties   portal_user_id, portal_site_id, impersonator_user_id,
-                            impersonation_started_at
-
-    The EXPERIENCE is a property of the REQUEST - Rsx_Portal::is_portal_request()
-    (where PORTAL_URL places the portal - rsx:man portal) - and all it decides is which of the
-    row's properties get consulted. BOTH IDENTITIES SET AT ONCE IS NORMAL: the
-    same human, in the same browser, signed into the staff app and the client
-    portal. site_id is STAFF-only, which is why portal_site_id exists - a browser
-    can legitimately be looking at a different tenant in each experience.
-
-    Session owns the row (and THE one activation path); Portal_Session is a
-    FACADE over the portal-property subset, reaching them through
-    framework-internal seams on Session (_get/_set_portal_*,
-    _clear_portal_properties, _portal_query). Application code never names those
-    seams; it calls the facade. The session id, the session token and the CSRF
-    token are SHARED - Portal_Session::get_session_id()/get_csrf_token() report
-    the same values Session does.
-
-    A portal on its OWN host (PORTAL_URL) is reached through a separate cookie
-    jar, so the browser holds a session cookie per host, and ordinarily each names
-    its own row - the portal host's with the staff properties null. The one
-    place the two are joined is staff "View as Client": the linked-session
-    handshake (rsx:man portal, IMPERSONATION) ends with the portal host's cookie
-    naming the SAME row as the staff host's, through the framework-internal
-    Session::_clone_session_to_this_host(). One row then serves both hosts
-    through two cookies - the same shape as the same-host layout: reset() on
-    either host retires it for both, and a logout on either clears only its own
-    experience's properties. The handshake's one-time codes live in
-    _session_links (code_hash, leg, session_id, nonce_hash, payload, expires_at;
-    ON DELETE CASCADE with the session) and its URLs are signed by
-    Rsx_Signed_Url (HMAC-SHA256, key derived from app.key); the session token
-    never appears in a URL.
-
-    Consequence worth stating outright: portal logout, terminating a portal
-    device session and the portal sign-in cap CLEAR THE PORTAL PROPERTIES. They
-    never delete or deactivate the row - it is the browser's session and may
-    carry a staff login.
+    PART TWO - ADVANCED is the reference for application developers building
+    session screens, background work or authentication flows, and for framework
+    maintainers: the three records behind a session, token rotation, the sign-out
+    reasons, lifetimes and cleanup, the machine sessions (commands, tasks, the
+    test harness, API keys), audit sessions, tasks that run as their dispatcher,
+    and which methods own what.
 
     Key differences from Laravel:
-    - Laravel: session()->put('user_id', $id) or Auth::login($user)
-    - RSX: Session::set_login_user_id($user_id)
+    - Laravel: Auth::login($user), session()->put('k', 'v'), Auth::user()
+    - RSX: RsxAuth::login($login_user), Session::put_value('k', 'v'),
+      Session::get_user()
+    - Laravel starts a session on every request; RSX creates one only when
+      something asks for it.
 
-    Benefits:
-    - Static interface accessible from anywhere
-    - Automatic session creation only when needed
-    - CSRF token management built-in
-    - Secure cookie settings by default
-    - CLI mode support (identity overrides; a session row only on demand)
-    - No session overhead until actually used
+==============================================================================
+PART ONE - BASIC
+==============================================================================
 
-LAZY INITIALIZATION
-    Critical Concept:
-        Sessions are NOT created until a method forces them to exist. Simply
-        calling Session::get_user_id() or Session::get_site_id() will NOT
-        create a session if none exists - they return null/0.
+THE SESSION IN ONE PARAGRAPH
+    A SESSION is a browser. It is created the first time something asks for one
+    and kept for as long as the browser keeps using it. Any number of accounts
+    may sign in and out on it over its life; at any moment it carries at most
+    one staff sign-in and one portal sign-in. Who is signed in, on which site,
+    is read through the accessors below. A command and a task have no browser,
+    so they have no session of their own (COMMANDS AND TASKS below).
 
-    Session is created when:
-        - Session::set_login_user_id() is called (web mode; in CLI this only
-          declares the identity - see CLI MODE)
-        - Session::get_session_id() is called
-        - Session::get_session() is called
+get_session_id() AND has_session()
+    Session::get_session_id(): ?int
+        The id of this browser's session, CREATING it if the browser has none
+        yet. Call it only when you want a session to exist - for a guest it
+        mints a row and sets a cookie. It answers NULL where there is no
+        browser: in a command, in a task, and in a test. In a task declared
+        #[Run_As_Dispatcher] it answers the id of the browser whose request
+        dispatched the task. On an external API request it answers the API
+        key's own session.
 
-    Session is NOT created by set_site_id() in web mode:
-        If no session exists yet, set_site_id() stores the value as a
-        request-scoped override only (no database write). A session is created
-        on the next call to set_login_user_id(), get_session_id(), or
-        get_session().
+    Session::has_session(): bool
+        Whether a session exists. Creates nothing. Ask this when you only want
+        to know.
 
-    Session is NOT created when:
-        - Session::get_user_id() - returns null if no session
-        - Session::get_site_id() - returns 0 if no session
-        - Session::get_user() - returns null if no session
-        - Session::get_site() - returns null if no session
-        - Session::is_logged_in() - returns false if no session
-        - Session::has_session() - returns false if no session
-        - Session::has_api_access() - returns false if no session
-        - Session::is_developer() - returns false if no session
-        - Session::init() - only loads existing session, never creates
+        // WRONG for a guest - creates the session you were asking about
+        if (Session::get_session_id() === null) { ... }
 
-    Example Flow:
-        // Page load - no session created yet
-        $user_id = Session::get_user_id();  // null, no session created
+        // RIGHT
+        if (!Session::has_session()) { return; }
 
-        // User logs in - NOW session is created
-        Session::set_login_user_id(123);    // Creates session, sets login_user_id=123
+    A table of yours that stores get_session_id() makes the column NULLABLE,
+    and a screen that shows it tolerates null: a row written by a command or a
+    task has no browser to name. A record of what somebody DID stores
+    get_audit_session_id() instead (AUDIT SESSIONS in part two).
 
-        // Subsequent requests load the existing session
-        $login_user_id = Session::get_login_user_id();  // 123, loads from cookie
+WHO IS SIGNED IN
+    None of these create a session.
 
-    This lazy initialization prevents unnecessary database writes for
-    unauthenticated visitors who never log in or interact with site-specific
-    features.
-
-    get_session_id() vs has_session() - THE distinction:
-        get_session_id() answers "give me the session's id, making one if I
-        have to". It is declared `: int`, it CREATES, and it NEVER returns
-        null. By the time you hold the value, the session it names exists.
-
-        has_session() answers "is there a session?" and creates NOTHING. It
-        returns false for an anonymous visitor and leaves them anonymous.
-
-        So a null-ish or zero-ish test on a get_session_id() result is dead
-        code that reads like a guard:
-
-            // WRONG - the branch can never run, and getting here already
-            // created the session (a DB row + a Set-Cookie) the branch was
-            // supposed to prevent
-            $session_id = Session::get_session_id();
-            if ($session_id === null) { return; }
-
-            // RIGHT - ask the question you meant to ask
-            if (!Session::has_session()) { return; }
-            $session_id = Session::get_session_id();
-
-        SESSION-ID-01 (code-quality rule, FATAL at manifest build) enforces
-        this on both facades: === null / !== null / == null / != null,
-        is_null(), empty(), isset(), ?? , ??=, ?: , a bare truthiness test,
-        and === 0 / == 0 / > 0 / <= 0 (and friends) - applied to the call or
-        to a local variable assigned once from it. Using the value
-        (arithmetic, a query, a comparison to ANOTHER id) is never flagged.
-
-        This holds in EVERY mode. CLI is not an exception: the first demand
-        mints a real TYPE_CLI row for the process (CLI MODE below).
-
-        ONE context returns 0 rather than a real id, and it does not make an
-        absence test correct - has_session() answers that too: a Bearer API
-        request, whose cookie-less headless identity is backed by no session
-        row today. That 0 is a placeholder; when the public API grows a real
-        identity session it will be resolved from the bearer token, and the
-        branch goes away.
-
-CLI MODE
-    Two separate things, and conflating them is the usual mistake:
-
-        IDENTITY   who the process is acting as - site, login user, site user.
-                   Declared by the caller (set_site_id / set_login_user_id /
-                   impersonate) and held in static overrides. Costs nothing and
-                   creates nothing.
-        SESSION    an actual _sessions row. Minted only when something DEMANDS
-                   one, exactly as in web mode.
-
-    The session row:
-        The first call to get_session_id() / get_session() mints a REAL
-        _sessions row for the process:
-
-        - type_id = Session::TYPE_CLI, so retention can tell a command's
-          throwaway row from a browser's (GARBAGE COLLECTION below)
-        - no ip_address and no user_agent: no request created the row
-        - a real session_token + csrf_token, minted and NEVER transmitted:
-          there is no response, so no cookie and no header are emitted
-        - seeded from whatever identity is declared at that moment, and kept
-          in step with it afterwards - a later set_login_user_id() lands on
-          the row
-        - held for the whole process; every later call returns the same id
-
-        The process IS the session's lifetime. Nothing can resume a row nobody
-        was given a cookie for, so it is DELETED when the process ends (a
-        shutdown hook registered at mint time, which also runs after a fatal).
-        The TYPE_CLI inactivity window is the backstop for a process that was
-        killed before its hook could run.
-
-        reset() and reset_impersonation() also drop it: a CLI reset deletes the
-        row outright rather than deactivating it, since deactivation only means
-        anything to a cookie that could come back.
-
-    Still true in CLI:
-        - no cookie operations, no HTTP headers
-        - get_client_ip() returns null (no request); the row records no address
-        - nothing is loaded from a cookie, so init() has nothing to resume
-
-    Usage in CLI:
-        // Declare the identity for this command - creates NO session row
-        Session::set_login_user_id(123);
-        Session::set_site_id(456);
-
-        // All getter methods work normally, and mint nothing
-        $login_user_id = Session::get_login_user_id();  // 123
-        $site_id = Session::get_site_id();              // 456
-        $logged_in = Session::is_logged_in();           // true
-
-        // has_session() is true once EITHER an identity is declared or a row
-        // has been minted (it never creates one)
-        $has_session = Session::has_session();          // true (site_id set)
-
-        // THIS is what mints the row (and attaches login/site to it)
-        $session_id = Session::get_session_id();
-
-    CLI mode automatically detects when running via php_sapi_name() === 'cli'.
-    Identity is not inferred: a command that needs one declares it.
-
-BASIC USAGE
-    Check Authentication:
-        use App\RSpade\Core\Session\Session;
-
-        // Check if user is logged in
-        if (Session::is_logged_in()) {
-            $user = Session::get_user();
-            $user_id = Session::get_user_id();
-        }
-
-        // Check if session exists at all
-        if (Session::has_session()) {
-            // A session row exists, or CLI identity overrides are set
-        }
-
-    Login User:
-        // Log in by login_user_id (cross-site authentication identity)
-        Session::set_login_user_id(123);
-
-        // Calling set_login_user_id():
-        // - Creates session if none exists (web mode) - the ONLY time a token
-        //   string is minted
-        // - On an existing session: a PURE RECORD UPDATE (login_user_id + version).
-        //   The token is NOT regenerated (the same-value cookie still re-emits
-        //   per response for sliding expiry).
-        // - Updates login_user's last_login timestamp
-
-    Realtime refresh on identity change:
-        Mutating a session's identity to a confirmed-different value - login/
-        logout (set_login_user_id), a tenant switch (set_site_id), or the portal
-        equivalents - pushes a targeted "reload" to every live browser connection
-        holding THAT session id, so open tabs re-sync at once. Re-saving the same
-        value emits nothing. No-op when realtime is disabled; automatic (no caller
-        wiring). See rsx:man realtime (SESSION REFRESH PUSH).
-
-    Logout:
-        Session::logout();
-        // OR
-        Session::set_login_user_id(null);
-
-        // The session row stays ACTIVE and keeps the SAME token - the browser
-        // continues as an anonymous session. Session::reset() is the
-        // invalidation primitive. See API REFERENCE (Logout semantics).
-
-    Site Management:
-        // Get current site
-        $site_id = Session::get_site_id();  // Returns 0 if not set
-        $site = Session::get_site();        // Returns Site_Model or null
-
-        // Set site
-        Session::set_site_id(456);
-
-    CSRF Protection:
-        // Get CSRF token for forms
-        $token = Session::get_csrf_token();
-
-        // Verify submitted token
-        if (Session::verify_csrf_token($submitted_token)) {
-            // Token is valid
-        }
-
-API REFERENCE
-    Authentication Methods:
         Session::is_logged_in(): bool
-            Returns true if login_user_id is set, false otherwise.
-            Does NOT create session if none exists.
+        Session::get_login_user_id(): ?int      the identity (login_users.id),
+                                                one across every site
+        Session::get_login_user(): ?Login_User_Model
+        Session::get_user_id(): ?int            the membership on the current
+                                                site (users.id)
+        Session::get_user(): ?User_Model
+        Session::get_site_id(): int             0 when none
+        Session::get_site(): ?Site_Model
+        Session::is_impersonating(): bool
+        Session::is_developer(): bool           login_users.is_developer
+        Session::has_api_access(): bool         users.is_api_access_enabled
 
-        Session::has_session(): bool
-            Returns true if a session row exists (either mode) or, in CLI, if
-            site_id/user_id identity overrides are set. Does NOT create a
-            session if none exists - this is the non-creating question that
-            get_session_id() is not.
+    On a portal request the portal identity is Portal_Session's to answer
+    (get_portal_user_id(), get_user(), get_site_id()) - rsx:man portal.
 
-    User Methods:
-        Session::get_user_id(): int|null
-            Returns current user ID or null. Does NOT create session.
+SIGNING IN AND OUT
+    RsxAuth::login($login_user)
+        THE way into a session: signs the identity in on this browser
+        (Session::set_login_user_id() underneath). A login function checks
+        the password with RsxAuth::verify_credentials() first; whatever else
+        the sign-in owes (a second factor, an account question of your own)
+        runs between the two, with the visitor still signed out. rsx:man auth.
 
-        Session::get_user(): User_Model|null
-            Returns User_Model for current user or null. Caches result.
-            Does NOT create session.
+    Session::logout()
+        Sign the staff account out of this browser. The browser keeps its
+        session (and any portal sign-in on it); the staff realm's session
+        values are cleared. Portal_Session::logout() is the portal twin.
 
-        Session::has_api_access(): bool
-            Whether the current identity may use the external API, read from
-            users.is_api_access_enabled. Does NOT create session - returns
-            false immediately when no session exists, so asking the question
-            never mints one.
+    Session::set_site_id(int $site_id)
+        Move the staff sign-in to another site (a site switch keeps the
+        sign-in's clocks). With nobody signed in it declares the tenant for
+        this request only and writes nothing.
 
-            The headless Bearer tier is consulted FIRST, ahead of that
-            early-out: an API identity is backed by no session row, so
-            has_session() is false for it by contract and an early-out would
-            refuse every API request. Api_Dispatcher applies this same
-            predicate before it establishes the identity, so a user whose
-            access is off gets the uniform "Invalid or expired API key" 401
-            from every key they hold.
+    Session::set_temporary_site_id(int) / clear_temporary_site_id()
+        Declare the tenant for the rest of this script, writing nothing
+        anywhere - for a first-run request, a webhook that names its tenant,
+        a script. Outranks everything but an API identity.
 
-            JS twin: Permission.has_api_access() - see rsx:man acls.
+    Session::begin_impersonation($login_user_id) / stop_impersonation()
+        "Sign in as this user" from the current staff sign-in, and back.
+        IMPERSONATION in part two.
 
-        Session::is_developer(): bool
-            Whether the signed-in identity is a developer of this installation,
-            read from login_users.is_developer. Does NOT create session - false
-            for an anonymous caller and false for the headless Bearer tier.
+    Every sign-in and sign-out gives the browser a new session token and CSRF
+    token. A page that signed in through an Ajax call is handed the new CSRF
+    token in that call's envelope; nothing else needs doing.
 
-            Never a role and never a hostname; set only by hand in the database.
-            See ACCOUNT STATE below. JS twin: window.rsxapp.is_developer, which
-            is present only when it is true.
+SESSION VALUES
+    Small values that belong to this browser rather than to a user or a record:
+    a parked second-factor challenge, a half-finished wizard, a dismissed
+    banner.
 
-        Session::enforce_enabled_membership(): bool
-            Framework seam, called once per request by the staff dispatcher and
-            once per CALL by the Ajax channel, ahead of the #[Auth] gates. Returns
-            true when the request may proceed; LOGS THE SESSION OUT and returns
-            false when the users row for (login_user_id, site_id) is missing or
-            not active (User_Model::is_active(): its is_enabled is false, or its
-            site is disabled or deleted). Creates nothing and costs at most two
-            queries, the membership and its site (it reuses get_user()'s cache). True for an anonymous caller, for a
-            caller with no tenant, and for the headless Bearer tier. See SITE
-            MEMBERSHIP under ACCOUNT STATE below; an application does not call it.
+        Session::put_value(string $key, $value, ?string $expires_at = null,
+                           ?string $realm = null): void
+        Session::get_value(string $key, $default = null, ?string $realm = null)
+        Session::forget_value(string $key, ?string $realm = null): void
 
-        Session::set_login_user_id(int|null $login_user_id,
-                                   bool $touch_last_login = true): void
-            Log in or out by cross-site login identity ID. Pass null to logout.
-            CREATES session in web mode if none exists. A REAL SIGN-IN
-            ($touch_last_login true) moves the browser to a NEW session row with a
-            new token and CSRF token, and supersedes the row it arrived with - see
-            SECURITY, Sign-In Rotation. It also starts the session's clocks
-            (SESSION LIFETIME). A swap that is not a sign-in ($touch_last_login
-            false) is a pure record update on the live row.
+    put_value() is a writer (it creates the session for a guest); the other two
+    create nothing. Values are JSON-encoded, so types round-trip.
 
-            $touch_last_login says whether this IS a sign-in. True (the default)
-            stamps login_users.last_login, rotates the session row and starts
-            its clocks; pass FALSE whenever the identity change is not somebody
-            signing in - an impersonation identity swap, the rsx:debug dev-auth
-            harness.
+    EVERY VALUE HAS A REALM, and the realm decides when it is cleared:
 
-            IN CLI THIS NEVER STAMPS. The CLI branch declares the identity
-            override and returns before reaching the stamp, whatever the flag
-            says - a command declaring who it acts as has not logged anybody in.
-            So last_login behavior can only be observed over HTTP.
+        'staff'    cleared when this browser's staff sign-in ends
+        'portal'   cleared when this browser's portal sign-in ends
+        'guest'    the browser's own - kept through every sign-out
 
-        Session::logout(): void
-            Clears login_user_id from session. Same as set_login_user_id(null).
+    Null (the default) is the realm of the request: 'portal' on a portal
+    request, 'staff' otherwise. Read and forget in the realm you wrote.
+    Portal_Session::put_value() / get_value() / forget_value() are these in the
+    'portal' realm.
 
-        GET /logout is BLESSED (owner ruling 2026-08-12):
-            The template's logout route answers GET, deliberately, and that is not
-            an oversight to "fix" with a POST form. The worst a forged logout link
-            can do is sign somebody out - nothing is disclosed, nothing is
-            destroyed, and the session row survives as an anonymous session
-            (Logout semantics above). Weigh that against making every logout link
-            in every layout a form, and the plain link wins. This is the ONE
-            sanctioned mutating GET in the auth surface; everything else follows
-            the usual rule (conformance audit get_routes_write_nothing).
+    THEY ARE NOT STORAGE. A value lasts no longer than the sign-in it belongs
+    to, and the framework's own uses are second-factor challenges and small
+    guest preferences. Real per-browser data belongs in a table of your own
+    keyed on get_session_id() (with the foreign key in SYSTEM TABLES ARE
+    PRIVATE), and anything a user should still have on another device belongs
+    on the user (rsx:man user_preference_variables).
 
-        Logout semantics (owner ruling 2026-08-05):
-            logout() does NOT invalidate the session row, by design. The row
-            stays active and keeps the SAME session_token; the browser simply
-            carries on as a now-ANONYMOUS session. Signing in again moves it to
-            a new row (SECURITY, Sign-In Rotation), so the token it held while
-            signed out never becomes a signed-in one.
+    put_value() THROWS where there is no browser - a command, a task, an API
+    request - and every one of the three throws inside a #[Run_As_Dispatcher]
+    task. get_value() answers the default where there is no browser.
 
-            Session::reset() is the invalidation primitive (active=false, cookie
-            expired), and logout() deliberately does not route through it. An
-            app that wants "logout destroys the session" calls reset() itself.
-            This is the intended semantics, ruled 2026-08-05 - do not
-            re-litigate.
+HOW SESSIONS TIME OUT
+    A SIGN-IN has two limits, per realm, in config('rsx.sessions'):
 
-    Site Methods:
-        Session::get_site_id(): int
-            Returns current site ID or 0. Does NOT create session.
+        staff.max_length_minutes    10080 (7 days)   from the sign-in
+        staff.max_idle_minutes        480 (8 hours)  from the last page view
+        portal.*                    the same two, for a portal sign-in
+        0                           no limit
 
-        Session::get_site(): Site_Model|null
-            Returns Site_Model for current site or null. Caches result.
-            Does NOT create session.
+    A page view is a rendered page or an SPA navigation - never an Ajax or
+    API call, so a tab that polls does not keep a sign-in alive. The limits
+    are checked on every request: a page navigation past a limit signs out and
+    redirects to the sign-in screen saying why; an Ajax call keeps working for
+    ajax_grace_minutes (120) past the limit so an open form can still save,
+    then answers the session_expired envelope. The hourly cleanup task signs
+    out the sign-ins whose browser never comes back.
 
-        Session::set_site_id(int $site_id): void
-            Set current site ID. In web mode, if no session exists yet, stores
-            as a request-scoped override (no DB write). In CLI mode, sets the
-            identity override (and updates the process's session row if one
-            has already been minted). Does NOT create a session on its own.
+    A BROWSER unused for unused_session_days (30) is made inactive: whatever
+    was signed in on it is signed out, and its next visit starts a new
+    session. A guest browser nobody ever signed in on is deleted after
+    guest_expiry_minutes (30 days).
 
-        Session::set_temporary_site_id(int $site_id): void
-        Session::clear_temporary_site_id(): void
-        Session::has_temporary_site_id(): bool
-            DECLARE the tenant for the rest of this script, writing nothing
-            anywhere. For code that must run in a site's context when there is
-            no session and none should be created - a first-run request
-            creating the initial user, a webhook that names its tenant, a
-            script. Unlike set_site_id() it:
-              - never creates a _sessions row and never emits a cookie;
-              - never writes to an existing row: a browser mid-session keeps
-                the tenant it had, and has it back when this is cleared;
-              - behaves identically in CLI and web (it is static state).
-            Until clear_temporary_site_id() or the end of the script,
-            get_site_id() answers this value and has_session() answers true
-            (site-scoped code guards on has_session() before trusting the site).
-            It OUTRANKS the stored session and every override. Refused inside
-            an external API request, whose identity is immutable.
-            Staff realm, site only: there is no temporary USER declaration, and
-            the portal declares its site with Portal_Session::set_site_id().
+    Set the limits in rsx/resource/config/rsx.php. Never implement "remember
+    me" or a timeout of your own. The application's one job is the dialog the
+    page shows when its sign-in is gone:
 
-    Session Access Methods:
-        Session::get_session_id(): int
-            Returns session record ID. CREATES the session if none exists,
-            in EVERY mode - in CLI that is a TYPE_CLI row minted for the
-            process (see CLI MODE). NEVER returns null. Returns 0 only in a
-            Bearer API request, where no session row backs the headless
-            identity yet (a placeholder until the public API resolves a
-            session from the bearer token). Do NOT test the result for
-            null/zero - that is SESSION-ID-01, a fatal manifest-build
-            violation; use has_session() (see LAZY INITIALIZATION).
+        // from a static on_app_modules_define()
+        Rsx.set_session_expired_handler(function (info) { ... });
 
-        Session::get_session(): Session
-            Returns Session model. CREATES session if none exists.
-            Throws in an API request (no session row is backing it).
+    Unregistered, the page reloads. Worked example:
+    system/app/RSpade/resource/reference_app/lib/modal/modal.js
+    (_on_session_expired).
 
-    CSRF Methods:
-        Session::get_csrf_token(): string|null
-            Returns CSRF token for current session or null.
-            Does NOT create session.
+LISTING AND ENDING SESSIONS
+    Session::get_sessions_for_user($login_user_id = null) answers "where is this
+    account signed in": one entry per browser and site the account has signed in
+    on, signed in or recently signed out, most recently active first - never
+    another account's sign-ins on the same browser. Each entry's `id` is a USER
+    SESSION id, which is what terminate_session() (your own, on another
+    browser), terminate_all_other_sessions() ("sign out everywhere else"),
+    terminate_session_for_user() and terminate_all_sessions_for_user() (an
+    administrator's, authorized by role - a refusal THROWS) take. A screen
+    shows the entries active within a bounded window (the template: 3 months,
+    rsx/lib/sessions/session_listing.php). Portal_Session has the same family
+    for portal accounts. SESSION MANAGEMENT in part two has the whole contract.
 
-        Session::verify_csrf_token(string $token): bool
-            Verifies submitted CSRF token using constant-time comparison.
-            Returns false if no session exists.
+CSRF
+    Every internal transport (Ajax, uploads, @csrf forms) checks the CSRF token
+    for you, portal included - rsx:man csrf. Session::get_csrf_token() and
+    verify_csrf_token($token) exist for a hand-built form; get_csrf_token()
+    answers null for a guest who has no session yet and creates nothing.
 
-    Termination Methods:
-        Full treatment, including the authorization rule and the throw-vs-false
-        contract, is in SESSION MANAGEMENT (Terminate Sessions) below.
+COMMANDS AND TASKS
+    A command, a task and a test have no browser. Their session is VIRTUAL:
+    no row is written, get_session_id() and get_audit_session_id() answer null,
+    and session values throw. A command that acts as somebody declares it:
 
-        Session::terminate_session(int $session_id): bool
-            Terminate one of the CURRENT user's OWN sessions. Self-only and
-            fail-closed; false for anything it will not do. Refuses the caller's
-            current session (that is logout()'s job).
+        Session::set_login_user_id($login_user_id);    // writes nothing
+        Session::set_site_id($site_id);
 
-        Session::terminate_all_other_sessions(): int
-            Terminate every OTHER session of the current user, keeping this one.
-            "Sign out my other devices". Unchanged by the 2026-08-12 rework.
+    and every accessor then answers that identity. A task worker starts every
+    run blank. A task that is a person's request moved off the request thread
+    declares #[Run_As_Dispatcher] and runs as that person - TASKS RUN AS THEIR
+    DISPATCHER in part two, and rsx:man tasks.
 
-        Session::terminate_session_for_user(int $login_user_id,
-                                            int $session_id): bool
-            The ADMIN primitive: terminate one session belonging to another (or
-            the same) user. Authorizes first - REFUSAL THROWS
-            AjaxUnauthorizedException; false means only "no such active row".
+RSX VS LARAVEL
+    Laravel                             RSX
+    session()->put('k', 'v')            Session::put_value('k', 'v')
+    Auth::login($user)                  RsxAuth::login($login_user)
+    Auth::logout()                      Session::logout()
+    Auth::user() / Auth::id()           Session::get_user() / get_user_id()
+    Auth::check()                       Session::is_logged_in()
+    a session on every request          a session only when asked for
+    remember-me option                  one long-lived cookie; the sign-in
+                                        limits end a sign-in
+    @csrf + middleware                  the same, and every Ajax call too
 
-        Session::terminate_all_sessions_for_user(int $login_user_id,
-                                                 ?int $except_session_id = null): int
-            The bulk admin primitive ("sign this user out everywhere"). Same
-            guard, same throw; a return of 0 means the user had no active
-            sessions.
+    get_login_user_id() is the cross-site identity (login_users.id);
+    get_user_id() is the membership on the current site (users.id).
 
-        Session::developer_terminate_sessions(int $login_user_id,
-                                              ?int $session_id = null): int
-            The DEVELOPER primitive: end one session of any login identity, or
-            (null) every one except the caller's own current session.
-            Authorized by Session::is_developer() alone - no role, any site.
-            REFUSAL THROWS AjaxUnauthorizedException for a non-developer; 0 means
-            only "no such active row" (or the caller's own current session).
+TROUBLESHOOTING
+    A guest gets a session row on every visit
+        Something calls get_session_id(), get_session() or put_value() for
+        every visitor. Ask has_session() instead, and never put either in a
+        layout.
 
-        Session::_deactivate_sessions_for_user(int $login_user_id,
-                                               ?int $except_session_id = null,
-                                               string $scope = 'internal',
-                                               ?int $actor_login_user_id = null,
-                                               ?int $only_session_id = null): int
-            FRAMEWORK-INTERNAL, NO AUTHORIZATION. For callers with no acting user
-            to authorize against - CLI maintenance, or an app-internal flow that
-            has already applied its own authorization and is executing the
-            consequence. Anything driven by a signed-in operator uses the guarded
-            functions above.
+    "session values belong to a browser" thrown from a command or task
+        Session values have no home there. Pass what the work needs as
+        parameters, or keep it in a table of your own.
 
-    Administrative Methods:
-        Session::find_by_token(string $token): Session|null
-            Find active session by token (for API/external access).
+    "this task runs as the user who dispatched it" thrown from a task
+        A #[Run_As_Dispatcher] task tried to change who it acts as, or to touch
+        session values. Pass what it needs in its params.
 
-        Session::purge_playwright_sessions(string $created_since): int
-            Delete the TYPE_PLAYWRIGHT sessions a harness RUN created, in both
-            sessions. Called by rsx:debug as it exits - see HARNESS SESSIONS
-            below for why the run, and not the request, is the unit. Also
-            collects harness rows idle longer than 5 minutes, so the occasional
-            row that lands just after the sweep (a request the server was still
-            finishing when the browser closed) is collected by the next run
-            rather than waiting out the playwright window. Never touches
-            TYPE_WEB.
+    A column storing get_session_id() fails NOT NULL from a task
+        Make it nullable; a task has no browser. If the row records an act,
+        store get_audit_session_id() instead.
 
-        Session::get($key) DOES NOT EXIST - and is trapped. Session is the
-            Eloquent model for the _sessions table, not a session-variable
-            bag; a bare Session::get('site_id') would otherwise fall through
-            to Eloquent's full-table Model::get() (a memory bomb at scale).
-            The framework shadows it with a guard that throws immediately,
-            naming the correct accessor (get_site_id(), get_user_id(), ...).
-            Query-builder reads (Session::where(...)->get()) are unaffected.
-            Portal_Session carries the same guard - not because it is a model
-            (it is a facade, and has no query builder), but because the misuse
-            is a habit and "undefined method" explains nothing.
+    Signed out unexpectedly
+        The sign-in passed a limit (rsx.sessions.staff / .portal - 8 hours
+        idle and 7 days by default), was ended from another browser or by an
+        administrator, the membership or site was disabled, or another account
+        signed in on the same browser. get_sessions_for_user() shows the
+        reason on the signed-out entry.
 
-        Session::reset(): void
-            Logout and clear all session data. Marks session inactive.
-            Clears cookie. THE invalidation primitive - logout() does not call
-            it (see Logout semantics above).
+    A value written before begin_challenge() is gone
+        Starting a second-factor challenge signs the realm out first, which
+        clears the realm's values. Write the value after begin_challenge(), or
+        in the 'guest' realm.
+
+    CSRF check fails after signing in
+        The CSRF token changes at every sign-in and sign-out. A page holding a
+        token from before the change must reload; an Ajax sign-in is handed
+        the new one automatically.
+
+==============================================================================
+PART TWO - ADVANCED
+==============================================================================
+
+THE THREE RECORDS
+    A session is three kinds of row, each answering a different question. All
+    three are framework tables (SYSTEM TABLES ARE PRIVATE).
+
+    _sessions - THE BROWSER
+        One row per browser (one cookie jar). It holds the session token (the
+        cookie) and the CSRF token, the session values, its type, when it was
+        last used, whether it is active, the hash of the token it last
+        replaced, when anybody first signed in on it (first_signed_in_at; null
+        = a guest that never signed in) and two POINTERS:
+
+            staff_user_session_id    the staff sign-in current on it, or null
+            portal_user_session_id   the portal sign-in current on it, or null
+
+        Which pointer a request consults is decided by the REQUEST's experience
+        (Rsx_Portal::is_portal_request()). Both set at once is normal: the same
+        person, in the same browser, in the staff app and the client portal.
+        get_session_id() is this row's id.
+
+    _user_sessions - "WHERE YOU'RE SIGNED IN"
+        One row per browser x realm x account x site x impersonator. Its
+        identity never changes: a staff user session is a login identity (with
+        its membership) on one site, optionally with an impersonator behind it;
+        a portal one is a portal user on its site, optionally with a staff
+        member viewing as them; an API one is an API key's owner (API KEY
+        SESSIONS). The same account signing in again on the same browser and
+        site REUSES its row. It records first_signed_in_at, signed_in_at (this
+        sign-in), started_at (when it last became current), last_page_view_at,
+        last_active_at, sign_in_count, and signed_out_at + sign_out_reason_id
+        once it ends. The sign-in limits are measured on it.
+        get_user_session_id() is the current one's id, and get_sessions_for_user()
+        lists them.
+
+    _audit_sessions - THE ACTING CONTEXT
+        One row per user session x site x client address x user agent (a
+        guest's act: per browser). Immutable apart from last_seen_at, minted
+        when something asks for it, never deleted. What a record of an act
+        points at (AUDIT SESSIONS).
+
+    Nothing about a past sign-in is deleted: a browser that has ever had a
+    sign-in is made inactive when it goes unused, never removed, because its
+    user sessions are the history of where an account signed in.
+
+ONE BROWSER, THREE SIGN-INS
+    The model, walked through. One browser; accounts A and B; staff realm.
+
+    1. A guest visits. Nothing asks for a session: no row. The first thing that
+       needs one for the visitor - put_value(), a flash alert, get_session_id(),
+       a sign-in - mints the _sessions row (TYPE_WEB, both pointers null) and
+       sets the cookie.
+
+    2. A signs in. The user session (browser, A, site 1) is created,
+       sign_in_count 1; the staff pointer names it; the browser's tokens
+       rotate; first_signed_in_at is stamped. get_sessions_for_user(A) lists
+       one entry, signed in.
+
+    3. A signs out. The user session is stamped signed_out_at, reason
+       SIGN_OUT_SIGNED_OUT; the pointer is cleared; the staff values are
+       cleared; the tokens rotate. The browser is a guest again - same row.
+
+    4. B signs in. A different tuple, so a NEW user session (browser, B, site
+       1). get_sessions_for_user(A) still lists only A's entry (signed out);
+       get_sessions_for_user(B) lists only B's.
+
+    5. B signs out, then A signs in again. A's ORIGINAL user session is reused:
+       sign_in_count 2, signed_in_at and the clocks restart, the sign-out is
+       cleared. Still one _sessions row; two user sessions; the token differed
+       at every step.
+
+    Had A signed in at step 4 without B signing out first, B's user session
+    would have been signed out with SIGN_OUT_REPLACED and the staff values
+    cleared - another account taking a browser over ends what was there.
+
+    A site switch moves the pointer to the user session for the new site (one
+    is created or reused) and signs the old one out with SIGN_OUT_SITE_SWITCHED,
+    carrying the sign-in's clocks: switching site never restarts the session
+    lifetime and never rotates the token.
+
+TOKEN ROTATION
+    Every sign-in and every sign-out on the browser making the request gives
+    its row a NEW session token and CSRF token, in place, and the response
+    carries the new cookie. The token the browser presented may be held by
+    somebody else too - a copied cookie, or one planted before the visitor
+    signed in - and after a rotation it matches nothing: the row, its values,
+    its trust and its other realm's sign-in carry on under a token nobody else
+    has seen. The address and user agent on the row are refreshed with it.
+
+    A rotation is skipped when this request minted the row or has already
+    rotated it (that token has not left the server), and never happens on an
+    API request or in a virtual session (no cookie).
+
+    THE REPLACED TOKEN. The row keeps the hash of the token it last replaced
+    (previous_token_hash). A request carrying that token was in flight when the
+    rotation happened:
+
+        - an Ajax call or a sub-resource (an image, a download, an iframe) is
+          REFUSED - the Ajax call with the session_expired envelope
+          (metadata.cause 'rotated'), a sub-resource with 401 - and no session
+          cookie is sent with the answer, so it can never overwrite the cookie
+          the rotation just sent;
+        - a PAGE NAVIGATION carrying it is an ordinary guest, so a browser that
+          missed its new cookie recovers on its next page load.
+
+    Any older token matches nothing and is an ordinary guest.
+
+    WHAT DOES NOT ROTATE. A site switch, an impersonation starting or stopping,
+    and View as Client - nobody re-authenticated. Ending a sign-in on ANOTHER
+    browser (an administrator, the session cap, "sign out everywhere else", the
+    cleanup sweeps) stamps the user session and moves that browser's pointer,
+    and leaves its token alone: the row now grants nothing it would not grant a
+    guest, and its next sign-in rotates it.
+
+SIGN-OUT REASONS
+    A user session that ends is stamped signed_out_at and one reason
+    (Session::SIGN_OUT_*). get_sessions_for_user() answers the label;
+    Session::sign_out_reason_label($id) answers it for any id.
+
+        SIGN_OUT_SIGNED_OUT            Signed out             logout()
+        SIGN_OUT_TIMED_OUT_LENGTH      Sign-in expired        max_length_minutes
+        SIGN_OUT_TIMED_OUT_IDLE        Signed out after       max_idle_minutes
+                                       inactivity
+        SIGN_OUT_ENDED_BY_USER         Ended from another     terminate_session(),
+                                       device                 terminate_all_other_sessions()
+        SIGN_OUT_ENDED_BY_ADMIN        Ended by an            the admin and developer
+                                       administrator          terminate functions
+        SIGN_OUT_ENDED_BY_SYSTEM       Ended by the system    _deactivate_sessions_for_user()
+                                                              (rsx:users:password:set)
+        SIGN_OUT_SESSION_CAP           Too many sessions      max_web_sessions_per_user
+        SIGN_OUT_REPLACED              Another account        another account signed in
+                                       signed in              on the browser
+        SIGN_OUT_SITE_SWITCHED         Switched site          set_site_id()
+        SIGN_OUT_MEMBERSHIP_DISABLED   Membership disabled    enforce_enabled_membership()
+        SIGN_OUT_IMPERSONATION_ENDED   Impersonation ended    stop_impersonation(), the
+                                                              impersonation age limit
+        SIGN_OUT_SESSION_RESET         Session reset          reset()
+        SIGN_OUT_API_KEY_REVOKED       API key revoked        the key was revoked
+        SIGN_OUT_API_KEY_EXPIRED       API key expired        the key passed expires_at
+        SIGN_OUT_BROWSER_UNUSED        Browser unused for     unused_session_days
+                                       N days
+
+    Every sign-out runs through one path (Session::_sign_out_user_sessions()),
+    so the rules hold everywhere: a staff sign-in that ends takes the
+    impersonations riding it on the same browser with it; every browser
+    pointer naming an ended user session moves (back to the impersonator's own
+    sign-in when an impersonation ended, otherwise to null); a realm left
+    signed out on a browser - or taken over by another account - loses that
+    realm's session values; and each browser touched gets a realtime refresh
+    push for that realm (except the cap and the unused-browser retirement).
+
+SESSION VALUES, IN FULL
+    _session_values, one row per (browser, realm, key), UNIQUE on the three, ON
+    DELETE CASCADE from _sessions. put_value() is an upsert.
+
+    THE REALM AT SIGN-IN. Null resolves to the request's experience whether or
+    not anybody is signed in yet, so a value a signed-out visitor parks before
+    signing in - across a second-factor challenge - is still there after the
+    sign-in, and goes when that sign-in ends. A site switch and an impersonation
+    starting or ending keep the realm's values (the same person); another
+    account signing in over the realm clears them (SIGN_OUT_REPLACED).
+
+    THE ORDER WITH A CHALLENGE. Rsx_Two_Factor::begin_challenge() signs the
+    realm out FIRST and parks its pending identity after - so a value written
+    before begin_challenge() is cleared by that sign-out whenever somebody was
+    still signed in. Write a value that must ride the challenge after
+    begin_challenge() (the template's login controller parks its invite code
+    that way), or in the 'guest' realm.
+
+    EXPIRY IS OPTIONAL. $expires_at null means "as long as the realm keeps it".
+    An expired value reads as absent the instant it expires (the read filters
+    on it); Session_Values_Cleanup_Service (hourly) only reclaims the space.
+
+    WHERE THEY THROW. put_value() throws in a virtual session and on an API
+    request ("session values belong to a browser"); all three throw inside a
+    #[Run_As_Dispatcher] task, whose browser is not the request the run stands
+    for. A test whose subject is a value acts as a browser
+    (Rsx_Test_Abstract::__as_browser()).
+
+    reset() clears every value of every realm.
+
+LIFETIMES, CLEANUP AND DEACTIVATION
+    config('rsx.sessions'), every key app-overridable in
+    rsx/resource/config/rsx.php:
+
+        staff.max_length_minutes     10080   sign-in limit, from the sign-in
+        staff.max_idle_minutes         480   idle limit, from the last page view
+        portal.max_length_minutes    10080
+        portal.max_idle_minutes        480
+        ajax_grace_minutes             120   how long past a limit a non-page
+                                             request still works
+        unused_session_days             30   a browser unused this long is made
+                                             inactive; also how long a
+                                             signed-out user session stays in
+                                             get_sessions_for_user()
+        guest_expiry_minutes         43200   a never-signed-in browser unused
+                                             this long is deleted
+        impersonation_max_days           7   an impersonation older than this
+                                             is ended
+        max_web_sessions_per_user       25   signed-in browsers per account,
+                                             per realm
+        login_history_retention_days   365   rows kept in the login histories
+
+    A limit of 0 turns that limit off.
+
+    AT REQUEST TIME. Session::enforce_timeouts($strict) and
+    Portal_Session::enforce_timeouts($strict), called by the dispatcher (a
+    page: strict) and the Ajax entry point (not strict: the grace applies),
+    ahead of the #[Auth] gates. A sign-in past a limit is signed out
+    (SIGN_OUT_TIMED_OUT_LENGTH / _IDLE - the earlier expiry wins; a staff
+    impersonation takes the impersonator's own sign-in with it, since it ran
+    on the impersonator's clocks) and the tokens rotate; the request continues
+    signed out and its channel answers - the sign-in redirect with a flash for
+    a page ("Your session has expired. Please sign in again." / "You were
+    signed out after a period of inactivity. Please sign in again."), the
+    session_expired envelope for an Ajax call. An SPA navigation is judged as
+    a page. The two realms are judged independently, each on its own requests.
+
+    PAGE VIEWS. Session::touch_page_view() / Portal_Session::touch_page_view(),
+    called by a bundle render and by the SPA's navigation report
+    (Rsx_Session_Controller::page_view), stamp the current user session's
+    last_page_view_at at most once a minute, with the account's last_seen
+    (not while impersonating). An application whose page renders no bundle may
+    call them.
+
+    LOOKUP. init() loads the row the cookie names only while it is ACTIVE. A
+    row whose last_active is older than unused_session_days is retired there
+    and treated as absent: nothing is minted until something asks for a
+    session again. last_active (the row) and last_active_at (its current user
+    sessions) are written at most once a minute.
+
+    THE CLEANUP TASKS (Session_Cleanup_Service; each needs the rsx:task:process
+    cron tick - rsx:man tasks):
+
+        cleanup_sessions              hourly. DELETES guest browsers -
+                                      first_signed_in_at null, TYPE_WEB - unused
+                                      for guest_expiry_minutes, with their
+                                      values; signs out the CURRENT sign-ins
+                                      past a limit PLUS ajax_grace_minutes
+                                      (a request would not end them sooner, and
+                                      an open form may still save), under the
+                                      reason a request would record; signs out
+                                      the user sessions of expired API keys.
+        deactivate_unused_sessions    daily maintenance. Signs out everything
+                                      still signed in on a browser unused for
+                                      unused_session_days
+                                      (SIGN_OUT_BROWSER_UNUSED) and makes it
+                                      inactive. Never an API key's row.
+        end_stale_impersonations      daily maintenance. impersonation_max_days.
+        cleanup_trusted_devices       daily maintenance. Expired 2FA trust.
+        cleanup_session_links         hourly. Expired View as Client handshake
+                                      codes.
+        cleanup_login_history         hourly. login_history_retention_days.
+        cleanup_user_agents           weekly maintenance. User-agent strings
+                                      nothing names.
+
+    A sign-in suspended behind an impersonation is not judged by the sweep: its
+    clocks are not running (the impersonation's are), and it is judged when the
+    browser returns to it. Every sweep is chunked and #[Exclusive]; nothing but
+    a guest browser is ever deleted.
+
+SESSION TYPES
+    _sessions.type_id is stamped by the writer that creates the row and never
+    inferred afterwards (a user-agent string is attacker-influenced):
+
+        Session::TYPE_WEB          a browser
+        Session::TYPE_PLAYWRIGHT   the rsx:debug / Playwright harness
+                                   (HARNESS SESSIONS)
+        Session::TYPE_API          an API key's own row (API KEY SESSIONS)
+        Session::TYPE_CLI          names no row: a command or a task runs a
+                                   virtual session. Kept in the enum because
+                                   older audit sessions carry it.
+
+VIRTUAL SESSIONS (COMMANDS, TASKS, TESTS)
+    Every CLI process - an artisan command, a task worker, the test runner -
+    runs a VIRTUAL session from boot to exit: no _sessions row, no user
+    session, no audit session, no cookie. Detected from php_sapi_name().
+
+        get_session_id(), get_user_session_id()   null
+        get_audit_session_id()                    null
+        has_session()                             true once an identity or a
+                                                  site is declared
+        set_login_user_id(), set_site_id(),
+        impersonate(), begin_impersonation()      write in-memory statics only;
+                                                  never a row, never last_login
+        put_value()                               throws
+        get_client_ip()                           null
+
+    Session::impersonate($site_id, $login_user_id, $user_id) and
+    reset_impersonation() are the CLI/test pair that declare a whole context in
+    one call; Rsx_Test_Abstract::__acting_as_user() uses them. They are
+    unrelated to web impersonation.
+
+    THE TASK RUNNER'S BOUNDARY. A worker runs unrelated tasks back to back, so
+    Task_Runner::execute() starts every run it executes outside its caller's
+    process (a worker, rsx:task:process --once) with Session::_begin_virtual()
+    - a blank context, or the frozen one of a #[Run_As_Dispatcher] task - and
+    ends it with Session::_end_virtual(), which blanks the identity, site,
+    impersonation, declared tenant, portal identity, declared audit session,
+    request realm, and every resolution keyed on them (the timezone cache, the
+    dark-mode memo, the second factors passed). Nothing one run was reaches the
+    next. Task::internal() runs in its caller's context and SAVES and RESTORES
+    it around the call (Session::_snapshot_context() / _restore_context()), so
+    the caller gets back exactly what it had.
+
+    TESTS ACTING AS A BROWSER. A test whose subject belongs to a browser
+    (session values, two-factor trust, a challenge between two calls) calls
+    Rsx_Test_Abstract::__as_browser(), which inserts a browser row and makes
+    get_session_id(), has_session(), the session values and get_session()
+    answer it; protected static $acts_as_browser = true does it before every
+    test method. Identity stays the virtual session's. rsx:man testing.
+
+HARNESS SESSIONS (rsx:debug / Playwright)
+    rsx:debug signs in through signed dev-auth headers on its first request
+    (Dispatcher::__handle_dev_auth()). The harness keeps ONE TYPE_PLAYWRIGHT
+    row per staff account and site (per portal user and site), shared by every
+    run:
+
+        - the browser's cookie already names a harness row signed in as that
+          identity (the run's own later requests): kept;
+        - otherwise an active harness row signed in as that identity is
+          REUSED - the cookie is pointed at it - provided its sign-in is within
+          the realm's ordinary limits and the row within unused_session_days;
+          a candidate past a limit is signed out with that reason and passed
+          over;
+        - otherwise a new harness row is minted.
+
+    A harness row is never listed with an account's sessions, never counted by
+    the session cap, never deleted by the guest cleanup, and its traffic
+    records no audit session. Nothing purges harness rows when a run ends: the
+    next run reuses them.
+
+API KEY SESSIONS
+    A request authenticated by `Authorization: Bearer rsx_...`
+    (Rsx_Api_Bearer, rsx:man external_api) runs as the key's owner through
+    Session::_set_api_identity(), which installs an immutable identity for the
+    request - no cookie read, no Set-Cookie, and every identity setter throws.
+
+    ONE SESSION ROW PER KEY. The key's first call mints a _sessions row of
+    TYPE_API (api_key_id, unique) and a user session for the owner in the API
+    realm (REALM_API); every later call reuses both, stamping them at most once
+    a minute with the caller's address and user agent. So:
+
+        - get_session_id() answers the key's row; get_user_session_id() its
+          user session; has_session() answers false (it is not a browser);
+        - the owner's get_sessions_for_user() lists the key's use as one entry
+          (is_api); the terminate functions do not end it - the key is the
+          credential;
+        - each new caller address or user agent is a new audit session;
+        - revoking the key signs its user session out (SIGN_OUT_API_KEY_REVOKED);
+          a key past expires_at is refused and its user session signed out
+          (SIGN_OUT_API_KEY_EXPIRED), by the refused call or the hourly sweep;
+        - deleting the key deletes its row and user session (ON DELETE CASCADE).
+
+    An identity installed with no key (Api_Tester_Key asking which endpoints a
+    user's gates admit) writes nothing and answers get_session_id() null.
+
+AUDIT SESSIONS
+    A record of something somebody DID - an activity log row, an export record,
+    a revision - has to say who did it and from where, for as long as the record
+    exists. A _sessions row cannot: it is the browser, whoever is signed in on
+    it changes, and a guest's is deleted. Store an audit session:
+
+        $log->audit_session_id = Session::get_audit_session_id();
+
+    TWO IDS, TWO JOBS - never one for the other:
+
+        get_session_id()         the browser. For state that BELONGS TO THE
+                                 BROWSER and should die with it.
+        get_audit_session_id()   a permanent row describing the acting context.
+                                 For the historical record of an act.
+
+    Session::get_audit_session_id(): ?int
+        The id of the _audit_sessions row for the act happening now, minted on
+        first use. The key:
+
+            the acting user session (a guest: the browser row, or nothing for a
+            visitor with no row) x the site acted on x client address x user
+            agent
+
+        The user session is the request realm's (staff, or portal on a portal
+        request); an API call's is the key owner's REALM_API one. The site is
+        part of the key because a declared tenant (set_temporary_site_id()) can
+        differ from the user session's. When any of them changes - a sign-in, a
+        site switch, an impersonation, a new address - the next act belongs to a
+        new row. The row also DESCRIBES the context: the acting realm's identity,
+        site and impersonator, the address and user agent, the browser
+        (session_id), the user session and the session type.
+
+        NULL in a command, a task and the rsx:debug harness - a context with no
+        person in it has nothing to attribute - EXCEPT a #[Run_As_Dispatcher]
+        task, whose runner declares the dispatching request's audit session, so
+        the run's writes count under the requester's own context.
+
+        One resolution per context per process; last_seen_at advances at most
+        once a minute. A failure to record is loud. Two requests minting the
+        same context at once get the same id (one statement on a unique key).
+
+    _audit_sessions IS NEVER DELETED. session_id and user_session_id on it are
+    CORRELATION NUMBERS, not foreign keys: "every act from this browser" and
+    "every act of this sign-in" are equality tests among audit rows that keep
+    working whatever happens to the sessions. The session token is never
+    stored.
+
+    Reading back:
+
+        Session::get_audit_session(int $id): ?array
+            {id, site_id, login_user_id, portal_user_id, portal_site_id,
+             impersonator_login_user_id, impersonator_user_id, ip_address,
+             user_agent, session_id, user_session_id, session_type_id,
+             first_seen_at, last_seen_at} - null for no such row.
+
+        Audit_Session::list_page_for_user_session([
+            'user_session_id' => $id,       // required: a get_sessions_for_user() id
+            'filter' => '203.0.113',        // IP address or user agent
+            'sort' => 'last_seen_at',       // last_seen_at | first_seen_at | ip_address
+            'order' => 'desc',
+            'offset' => 0,
+            'limit' => 25,                  // 1..200
+        ])
+            One page of the audit sessions of ONE user session - the addresses
+            and user agents that sign-in acted from - for a "where was this
+            sign-in used" detail screen. {rows, total, offset, limit}; each row
+            is get_audit_session()'s shape plus device_summary. Ungated: the
+            calling endpoint first decides whether the caller may see that user
+            session (normally: the id is one of the entries it lists). An audit
+            session is minted when something asks for the acting context - a
+            revision-recorded write, a dispatched task - so browsing alone adds
+            nothing here.
+
+        Audit_Session::join($query, 'table.audit_session_id')
+        Audit_Session::column(string $name)
+            Join every published field onto a query of your own as audit_<name>
+            (a LEFT join), and spell a condition or ordering on one, without
+            naming a system table:
+
+                $query = Action_Log_Model::query();
+                Audit_Session::join($query, 'action_logs.audit_session_id');
+                $query->where(Audit_Session::column('ip_address'), 'like', $like);
+
+    The framework stamps every recorded unit of work itself
+    (_transactions.audit_session_id, nullable - rsx:man revisions). Skill
+    rspade:audit-session.
+
+    User agents and addresses. Each distinct user-agent string is stored once
+    in _user_agents and each client address once in _ip_addresses; _sessions,
+    _audit_sessions and the login histories hold their ids. The strings come
+    back wherever the framework answers one (`user_agent` / `ip_address` in the
+    session listings, the login histories and get_audit_session();
+    `$session->user_agent` / `$session->ip_address` on a Session row). A
+    user-agent string nothing names any more is deleted weekly
+    (cleanup_user_agents) once it has gone a day unseen; an address row is
+    never deleted (rsx:man ip_addresses).
+
+TASKS RUN AS THEIR DISPATCHER
+    A task declared #[Run_As_Dispatcher] is the asynchronous stand-in for a
+    user's Ajax endpoint: moving the request off the request thread changes
+    WHEN it runs, never WHO did it. Step by step:
+
+    1. DISPATCH. Task::dispatch() (and every other insert, through
+       Task_Runner::insert_row()) stamps the run with the requester's user
+       session (_tasks.user_session_id = get_user_session_id() - a staff or
+       portal sign-in, or an API key's) and audit session, and the claim tier
+       PRIORITY_RUN_AS_DISPATCHER. Dispatched where there is no sign-in - a
+       guest, a command, a plain task - it is refused with an exception.
+
+    2. CLAIM. Workers claim dispatcher runs first, then other on-demand runs,
+       then scheduled ones, oldest first within a tier, and tick no schedule
+       while an on-demand run is due (rsx:man tasks).
+
+    3. RUN. Task_Dispatcher_Context::begin() loads the user session and starts
+       a FROZEN, BOUND virtual session from it:
+
+           identity, site, realm    the user session's - a staff sign-in's login
+                                    identity, membership and site; a portal
+                                    sign-in's portal user and site (portal
+                                    realm); an API key's owner - even if that
+                                    browser has signed out since or signed into
+                                    another account
+           impersonation            the impersonator, when the user session had
+                                    one
+           get_session_id()         the dispatching browser's row
+           get_user_session_id()    the user session
+           get_audit_session_id()   the dispatch's audit session, so the run's
+                                    revisions and logs count under it
+           timezone                 the dispatcher's (Rsx_Time's cache is
+                                    cleared on the way in and out)
+
+       FROZEN: set_login_user_id(), logout(), set_site_id(),
+       set_temporary_site_id(), begin/stop_impersonation(), impersonate(),
+       reset(), the portal setters, and all three session-value calls THROW
+       ("this task runs as the user who dispatched it ...").
+
+    4. REFUSAL. Before anything executes, the dispatcher must still be allowed
+       to act: the login identity exists and, on a site, the membership is
+       active (users.is_enabled and sites.is_enabled); a portal user exists,
+       may sign in and its site is active; the user session still exists.
+       Otherwise the run FAILS with the reason as its error and the method
+       never runs. Account statuses your application defines are yours to
+       check in the task.
+
+    5. RESET. However the run ended, Session::_end_virtual() blanks the process
+       (VIRTUAL SESSIONS).
+
+    A #[Run_As_Dispatcher] task cannot be started by hand: rsx:task:run (and a
+    #[Command] alias, which the build already refuses - TASK-RUN-AS-01) exits 1
+    with a message saying it must be dispatched from a request; #[Schedule] on
+    it is a build FATAL too. Inline in a request, Task::internal() runs it in
+    the request's own context. ANY TASK THAT IS THE ASYNCHRONOUS STAND-IN FOR A
+    USER'S AJAX ENDPOINT MUST CARRY IT: without it the run acts as nobody, its
+    writes are attributed to nobody and its site scope is empty. rsx:man tasks,
+    RUNNING AS THE DISPATCHER.
+
+REALTIME SESSION REFRESH AND THE SESSION HASH
+    Realtime connections are stamped with the browser's _sessions id and the
+    realm of the page that opened them. A sign-in, a sign-out, a site switch,
+    an impersonation starting or ending, and every sign-out of another
+    browser's user session push a targeted "reload" to the live connections of
+    that browser in that realm (Realtime::push_session_refresh($realm,
+    $session_id)), so an open tab never sits on a page for an identity that is
+    gone. No-op when realtime is off. rsx:man realtime, SESSION REFRESH PUSH.
+
+    window.rsxapp.session_hash is an HMAC of the session token the page was
+    rendered with (Session::_client_session_hash() - the token itself never
+    reaches the page). Rsx.validate_session(), run after every SPA navigation,
+    compares it with the server's current one and reloads on a difference -
+    how a page notices a rotation that happened in another tab without
+    realtime.
+
+TRUSTED BROWSERS (TWO-FACTOR)
+    A browser that passed a second factor may be trusted for a window
+    (rsx.two_factor.trusted_device_days) so the next sign-in on it is excused.
+    The trust is keyed on the BROWSER row (_two_factor_trusted_devices.session_id),
+    so it survives every sign-in and sign-out on that browser and is lost with
+    its cookie, or when the browser goes unused long enough to be made
+    inactive. A password change, removing a factor, and
+    terminate_all_other_sessions() forget it. rsx:man two_factor.
+
+VIEW AS CLIENT ACROSS HOSTS
+    Staff "View as Client" (Portal_Session::begin_impersonation_from_staff())
+    is a PORTAL user session on the staff member's own browser - the portal
+    user, its site, and the staff users.id as impersonator - that the browser's
+    portal pointer names while it lasts; the browser's own portal sign-in, if
+    any, stays signed in behind it. Nothing rotates.
+
+    A portal on its OWN host (PORTAL_URL) is reached through a separate cookie
+    jar, so the browser holds a session cookie per host, each ordinarily naming
+    its own row. View as Client joins them: the linked-session handshake
+    (Session_Link; one-time codes in _session_links, URLs signed by
+    Rsx_Signed_Url) proves both hosts are the same browser, applies the
+    impersonation to the staff host's row, and points the portal host's cookie
+    at that SAME row (Session::_clone_session_to_this_host(), which makes the
+    portal host's previous row inactive). Ending the view signs that user
+    session out (SIGN_OUT_IMPERSONATION_ENDED) and the portal pointer falls
+    back. The session token never appears in a URL. rsx:man portal.
+
+CONCURRENT SESSION CAP
+    rsx.sessions.max_web_sessions_per_user (default 25; 0 or null = off) is the
+    most browsers one account may be signed in on at once, per realm. At every
+    sign-in - the only moment the count grows - the account's signed-in user
+    sessions beyond that number, least recently active first, are signed out
+    (SIGN_OUT_SESSION_CAP). Only TYPE_WEB browsers count and are evicted (a
+    harness run never signs a developer out), impersonations of the account
+    are not counted, and only that realm's sign-in on an evicted browser ends.
+    Capacity management, not termination: no event, no refresh push - the
+    evicted browser learns at its next request.
+
+SESSION MANAGEMENT
+    Listing - where an account is signed in:
+
+        Session::get_sessions_for_user(?int $login_user_id = null,
+                                       ?int $site_id = null,
+                                       bool $include_impersonations = false): array
+        Portal_Session::get_sessions_for_user(?int $portal_user_id = null,
+                                              bool $include_impersonations = false): array
+
+        The account's USER SESSIONS, most recently active first: every one
+        still signed in, plus those signed out within unused_session_days
+        (every signed-out one when that is 0), so a screen can show "signed out
+        2 days ago". Never another account's, never a harness browser's. The
+        staff listing includes each API key of the account that has been used,
+        as one entry (is_api). $site_id narrows to one site - a tenant's view
+        of an identity that may belong to several. The whole set is returned:
+        a user cannot end a session they were not shown.
+
+        An IMPERSONATION is somebody else acting as the user from somebody
+        else's browser, and is left out unless $include_impersonations asks for
+        it - an administrator's view, where is_impersonation labels it.
+
+        Each entry: id (the user session - what the terminate functions take),
+        session_id (the browser), site_id, user_id, ip_address, user_agent,
+        user_agent_parsed, device_summary, location, last_active, created_at,
+        signed_in_at, first_seen, signed_out_at, sign_out_reason (a label or
+        null), is_signed_in, is_current, is_impersonation, impersonator_id,
+        impersonation_started_at, sign_in_count, type_id (the browser's),
+        is_api. The address and user agent are the browser's, refreshed at
+        every sign-in on it.
+
+        RECOMMENDED: a screen lists the entries active within a bounded window
+        rather than everything answered - the template keeps 3 months and
+        decides which rows offer "Sign out" in one place
+        (system/app/RSpade/resource/reference_app/lib/sessions/session_listing.php).
+        A detail screen per entry pages its audit sessions
+        (Audit_Session::list_page_for_user_session()).
+
+        Session::get_current_session_info(): ?array
+            The current staff sign-in, shaped like an entry; null when none.
+
+        Session::get_user_session_id(): ?int
+            The user session this request is signed in through (staff, or the
+            portal one on a portal request; an API key's on an API request).
+            Null when signed out and in a virtual session (a
+            #[Run_As_Dispatcher] task answers the one it is bound to). What a
+            dispatched task binds to; a screen marking "this device" compares
+            against an entry's is_current instead.
+
+    Ending - pick by WHOSE sign-ins and WHO is asking. Every function takes
+    USER SESSION ids and ends only signed-in user sessions; the other realm's
+    sign-in on the same browser is never touched.
+
+        // SELF, one sign-in on another browser. Fail-closed (the owning
+        // account is part of the lookup); anything on this browser is refused
+        // - that is logout()'s job.
+        $ok = Session::terminate_session($user_session_id);
+
+        // SELF, everything else - "sign out everywhere else". Also forgets
+        // every other browser's two-factor trust.
+        $count = Session::terminate_all_other_sessions();
+
+        // ANOTHER USER, one sign-in - the ADMIN primitive. Authorized first.
+        $ok = Session::terminate_session_for_user($login_user_id, $user_session_id);
+
+        // ANOTHER USER, everything, optionally sparing one user session.
+        $count = Session::terminate_all_sessions_for_user($login_user_id, $except_id);
+
+        // ANY IDENTITY - the DEVELOPER primitive for an install-wide operator
+        // screen (/_sys). Authorized by Session::is_developer() alone; null
+        // ends every sign-in but those on the caller's own browser.
+        $count = Session::developer_terminate_sessions($login_user_id, $user_session_id);
+
+        // FRAMEWORK-INTERNAL, NO AUTHORIZATION - a caller with no acting user
+        // (CLI maintenance), or an app flow that has already authorized and is
+        // executing the consequence. Reason SIGN_OUT_ENDED_BY_SYSTEM.
+        $count = Session::_deactivate_sessions_for_user($login_user_id);
+
+        Portal twins: Portal_Session::terminate_session($user_session_id),
+        terminate_all_other_sessions(), terminate_all_sessions_for_user(
+        $portal_user_id, $except_user_session_id) - the last unguarded, for an
+        admin action or a password change the caller has authorized.
+
+    The authorization rule (the cross-user staff functions). Two ways to be
+    authorized, and only two:
+
+        1. THE TARGET IS THE ACTOR. Managing your own sign-ins needs no role.
+        2. THE ACTOR'S ROLE MAY ADMINISTER THE TARGET'S -
+           Permission::can_admin_role() against the target's users.role_id on
+           the ACTING site. That list is equal-or-lower (rsx:man acls), so a
+           superior is refused by construction and a peer is permitted.
+
+        A target with no users row on the acting site is refused; no acting
+        identity is refused. The rule is framework vocabulary only (core never
+        names an #[Auth_Check]); the SURFACE gate stays yours.
+
+    REFUSAL THROWS; ABSENCE RETURNS FALSE:
+
+            refused                      AjaxUnauthorizedException (403 on Ajax)
+            no such signed-in user       false / 0 - wrong id, wrong owner,
+            session                      already signed out
+            on the actor's own browser   false - an admin screen never signs
+                                         the operator out of the browser they
+                                         are working in
+
+        The shape exists because a single overloaded false once hid an admin
+        "terminate" button that never worked: an exception surfaces a wiring
+        bug the day it is written.
+
+    SINGLE-TENANT ASSUMPTION. A sign-in belongs to a login identity, which is
+    cross-site; a role lives on a per-site users row. The guard resolves the
+    target's role on the actor's own site and ends sign-ins on any site. On a
+    one-site deployment that is exactly right; on a genuinely multi-tenant one
+    the target may hold a higher role elsewhere. The multi-tenant model is
+    BACKLOG B-92 and is deliberately not approximated here.
+
+    What every ended user session triggers: the realtime refresh push to its
+    browser (SIGN-OUT REASONS) and, for a staff user session ended by a
+    terminate function, the audit event once per user session:
+
+        Rsx::trigger_action('session.terminated', [
+            'actor_login_user_id'  => ?int,   // null on the internal path
+            'target_login_user_id' => int,
+            'user_session_id'      => int,
+            'session_id'           => int,    // the browser
+            'scope'                => 'self' | 'admin' | 'internal',
+        ]);
+
+        The event stream is NOT a record of every sign-out - the cap, the
+        lifetimes and the sweeps fire none. The user sessions themselves are
+        that record (signed_out_at + reason).
+
+USER MANAGEMENT PAGES
+    THE DECISION RULE, FIRST: your TENANCY MODEL determines what a user
+    management page is permitted to do.
+
+    SINGLE-TENANT (one site - the firm administers real accounts):
+        The page legitimately carries the user's sessions (get_sessions_for_user()
+        for this site) with per-session and all-sessions sign-out
+        (terminate_session_for_user, terminate_all_sessions_for_user), each
+        entry's detail of audit sessions, login history and the windowed
+        failed-attempt count, role editing, and enable/disable
+        (users.is_enabled). The framework refuses a superior target underneath
+        your own #[Auth] gate. Worked example:
+        system/app/RSpade/resource/reference_app/app/frontend/settings/user_management/
+
+    MULTI-TENANT SaaS (accounts are self-managed):
+        An admin's only control is WHO MAY JOIN THEIR SITE - invitation and
+        membership revocation. Session termination, password mechanics, email
+        changes and account deletion belong to the ACCOUNT HOLDER, whose
+        identity spans tenants your admin cannot see. Show membership, role
+        within this site and last activity; nothing that reaches the identity
+        itself (and see SINGLE-TENANT ASSUMPTION, B-92).
 
 CONTROLLER AUTHENTICATION
     Authorization is DECLARATIVE, and pre_dispatch() is not where it happens.
@@ -670,24 +1164,25 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
 
     When the session names a login user and a site, and the users row for that pair
     is MISSING or not active (its is_enabled is false, or the SITE is disabled or
-    deleted), the session is LOGGED OUT and false is
-    returned. The staff dispatcher calls it once per request immediately before the
+    deleted), the staff sign-in is SIGNED OUT (SIGN_OUT_MEMBERSHIP_DISABLED) and false
+    is returned. The staff dispatcher calls it once per request immediately before the
     #[Auth] gates, and the Ajax channel calls it for every call before its gates;
     both then answer response_auth_required() through their ordinary channel - a
     redirect to login with the intended URL captured for a page, the auth_required
-    envelope for an Ajax call. Disabling an account therefore ends the sessions
-    that were already open, and disabling a site ends every session serving it -
+    envelope for an Ajax call. Disabling an account therefore ends the sign-ins
+    that were already open, and disabling a site ends every sign-in serving it -
     which is the only reading of "disabled" worth having. An identity's
     memberships on OTHER sites are unaffected: it still signs in to those.
 
-    The EFFECTIVE identity is what is checked. Under impersonation the session
-    carries the target, so disabling an account ends an impersonation of it exactly
-    as it ends that account's own sessions.
+    The EFFECTIVE identity is what is checked. Under impersonation the browser's
+    user session is the target's, so disabling an account ends an impersonation of
+    it exactly as it ends that account's own sign-ins.
 
     The external API tier is enforced separately and earlier - Rsx_Api_Bearer
     refuses a key whose membership is not active (User_Model::is_active(), so a
-    disabled site's keys stop working too) before it mints an identity - and CLI
-    processes have no session row to enforce against.
+    disabled site's keys stop working too) before it installs an identity - and a
+    command or a task has no browser to enforce against (a #[Run_As_Dispatcher]
+    task is refused at run time instead - TASKS RUN AS THEIR DISPATCHER).
 
     STAFF ONLY. The portal realm does not read either switch: a portal's site is
     the application's own declaration (Portal_Session::set_site_id(), rsx:man
@@ -802,8 +1297,8 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
            RsxAuth::login($login_user);
            Login_History::record_success((int) $login_user->id, $params['email']);
 
-    2. MID-SESSION - because the gate only runs at login, and a session lives
-       for months. An account suspended at 10am must not keep working until its
+    2. MID-SESSION - because the gate only runs at login, and a sign-in lives
+       for days. An account suspended at 10am must not keep working until its
        owner next signs in. The hook is Main::pre_dispatch(), which HALTS
        dispatch when it returns non-null:
 
@@ -880,17 +1375,10 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     session on its very next request.
 
 SECURITY
-    Automatic Security Features:
-        - Session tokens: 64-character cryptographically secure random
-        - A token STRING never changes on a row; every SIGN-IN moves the browser
-          to a new row with a new token - see Sign-In Rotation below
-        - Constant-time token comparison prevents timing attacks
-        - Secure cookie flags: httponly, secure, samesite=Lax
-        - CSRF tokens generated automatically, one per row (so a sign-in
-          changes it along with the session token)
-        - A sign-in has a maximum length and a maximum idle time, enforced
-          when a request arrives (SESSION LIFETIME)
-        - Unused rows are collected per session type (GARBAGE COLLECTION)
+    Session tokens and CSRF tokens are 64-character random hex, compared in
+    constant time, and both rotate at every sign-in and sign-out (TOKEN
+    ROTATION). A sign-in has a maximum length and a maximum idle time, checked
+    on every request (LIFETIMES, CLEANUP AND DEACTIVATION).
 
     Cookie Settings:
         - Name: `__Host-rsx` whenever the cookie is Secure - every request in
@@ -904,231 +1392,142 @@ SECURITY
         - Secure: true - unconditionally in debug and production mode. In
           DEVELOPMENT mode only, the flag follows the request scheme, so the
           plain-http loopback harness (rsx:debug, Playwright) can hold a
-          session at all; on an https dev page the flag is set exactly as
-          before. The one cookie's attributes come from one helper,
+          session at all. The one cookie's attributes come from one helper,
           App\RSpade\Core\Session\Rsx_Session_Cookie.
         - SameSite: Lax (CSRF protection)
         - Path: /
-        - Expires: 365 days, sliding - the SAME token cookie is re-emitted on
-          every response, so the browser-side expiry refreshes with activity.
-          The COOKIE lifetime is deliberately longer than any retention window:
-          the server-side row is what actually expires (GARBAGE COLLECTION),
-          and last_active is what it expires against.
-
-    Sign-In Rotation:
-        A _sessions row is the browser's credential for ONE sign-in. Every real
-        sign-in - Session::set_login_user_id() with a user, a portal sign-in,
-        and so RsxAuth::login(), a passed second factor, a passkey or SSO
-        sign-in - does this:
-
-            1. a NEW row is minted, with a new session token and a new CSRF
-               token, and the response replaces the session cookie with it;
-            2. everything the old row held rides across: the tenant, the other
-               experience's identity and its clocks, session values
-               (Session::put_value()) and pending flash alerts;
-            3. the row the browser arrived with is RETIRED: marked inactive and
-               pointed at its successor (superseded_by_id), with everything it
-               recorded left in place. It is dead - it resumes nothing - and it
-               stays in the table, until it is collected, as the record of who
-               it belonged to.
-
-        A REQUEST STILL CARRYING A RETIRED ROW'S TOKEN IS REFUSED: a page answers
-        401 "This session has ended", an Ajax call the session_expired envelope
-        (metadata.cause "retired"), and no session cookie is sent with either, so
-        it cannot replace the successor's. Such a request was in flight when the
-        browser was moved, or comes from a copy of the old cookie. It never runs
-        as an anonymous visitor and nothing is created for it.
-
-        WHY: the row the browser presents at sign-in may be held by somebody
-        else too - a copied cookie, or a token planted before the visitor
-        signed in. Writing the identity onto that row would authenticate every
-        holder at once, and a forced re-login (SESSION LIFETIME) would hand a
-        stolen cookie straight back. After a rotation the old token names a
-        dead row, permanently.
-
-        WHAT DOES NOT ROTATE. No token STRING on a row ever changes; the
-        browser moves to a different row. logout(), a site switch and an
-        impersonation begin/stop are pure record updates on the live row -
-        nobody re-authenticated, so there is nothing to re-key. A sign-in in
-        the same request that minted the row (a first visit that signs in)
-        writes onto it in place: that token has not left the server yet.
-
-        THE RACE THIS DESIGN AVOIDS. A request still in flight with the old
-        token when the sign-in lands finds its row (now anonymous) rather than
-        no row, so it mints nothing and is sent no cookie - it cannot overwrite
-        the cookie the sign-in just set. A page that signed in through an Ajax
-        call is handed the new CSRF token in that call's envelope.
-
-        DEVICES. The rows one browser goes through are tied together by
-        _sessions.device_id, a _session_devices record created at the browser's
-        first sign-in and inherited by every later row. It is what lets a
-        "where you're signed in" screen show one browser as one entry with a
-        first-seen date, however many times it has signed in (SESSION
-        MANAGEMENT). A browser whose cookies were cleared starts a new device.
-
-        A portal on its own host that is being viewed through "View as Client"
-        shares the staff browser's row; a new staff sign-in moves the staff
-        host to a new row and ends that view.
+        - Expires: 365 days, sliding - the same token cookie is re-emitted on
+          every response. The cookie outlives every server-side limit on
+          purpose: the server decides when a sign-in ends.
 
     Session Fixation:
         Planting a token in a victim's browser gains nothing: the victim's
-        sign-in lands on a new row, and the planted token stays anonymous. The
-        cookie NAME is the second line. A browser accepts a `__Host-` cookie
-        only when it is Secure, has Path=/, carries NO Domain attribute and
-        arrives from a secure origin - so a sibling subdomain
-        (Domain=example.com), a narrower path (Path=/login, which the browser
-        would send first) and a plain-http response all cannot set or shadow
-        it. Do not serve a session-bearing page over plain http outside
-        development, and never relax the cookie's attributes in a class
-        override of Rsx_Session_Cookie - each one is load-bearing.
+        sign-in rotates the token, and the planted one then matches nothing.
+        The cookie NAME is the second line. A browser accepts a `__Host-`
+        cookie only when it is Secure, has Path=/, carries NO Domain attribute
+        and arrives from a secure origin - so a sibling subdomain, a narrower
+        path and a plain-http response all cannot set or shadow it. Do not
+        serve a session-bearing page over plain http outside development, and
+        never relax the cookie's attributes in a class override of
+        Rsx_Session_Cookie - each one is load-bearing.
 
         Renaming the cookie signs every browser out once: a cookie under the
         previous name is never read.
 
+    Choosing the limits:
+        max_idle_minutes ends a sign-in nobody is using. It does NOT bound
+        somebody who has taken over a sign-in - they are never idle.
+        max_length_minutes is the limit that does: with it at 8 hours, a copied
+        cookie is useful for at most 8 hours from the real person's sign-in,
+        and ends sooner if they sign in again on that browser (the rotation).
+        An application that holds sensitive records sets both to hours and
+        turns on a second factor, so every re-entry is a full
+        re-authentication:
+
+            'sessions' => [
+                'staff' => ['max_length_minutes' => 480, 'max_idle_minutes' => 60],
+            ],
+
+    Logout:
+        GET /logout is BLESSED (owner ruling 2026-08-12): the template's logout
+        route answers GET, deliberately. The worst a forged logout link can do
+        is sign somebody out - nothing is disclosed or destroyed. This is the
+        ONE sanctioned mutating GET in the auth surface; everything else
+        follows the usual rule (conformance audit get_routes_write_nothing).
+
+        logout() ends the realm's sign-in and keeps the browser's row active;
+        Session::reset() is the invalidation primitive - every sign-in on the
+        browser signed out (SIGN_OUT_SESSION_RESET), every value cleared, the
+        row made inactive and the cookie expired, so the browser starts over as
+        a stranger.
+
 IMPERSONATION
-    Overview:
-        The main Session supports "log in as another user" - a staff/admin user
-        temporarily assuming another login user's identity to see and debug what
-        that user sees. Unlike the portal's "View as Client" (rsx:man portal),
-        which writes a PORTAL identity onto the row - through a linked-session
-        handshake when the portal has its own host - the main case is a
-        same-cookie, in-place swap of the STAFF identity: same session row,
-        same cookie, no extra route. Begin
-        remembers the current login_user_id, swaps it to the target, and can swap
-        it back.
+    Staff "Sign in as this user" - a staff account assuming another login
+    identity to see what that user sees. Full read/write: core exposes
+    is_impersonating() and nothing else, and restricting anything is the
+    application's call. (The portal's View as Client is read-only by framework
+    mandate - rsx:man portal.)
 
-        Staff impersonation is intentionally FULL READ/WRITE - the point is to act
-        as the user. There is no framework read-only mandate (that distinguishes
-        it from portal impersonation, which is read-only-by-mandate). Core exposes
-        only the is_impersonating() flag; restricting anything is entirely the
-        app's call.
-
-        Identity is tracked at login_user_id granularity (the main session's
-        native identity), NOT the site-specific users.id. Apps that think in a
-        site User_Model pass $target_user->login_user_id in and resolve names out.
-
-        NOTE: This is distinct from Session::impersonate() /
-        reset_impersonation(), which are a CLI/test-only pair that set static
-        overrides for command/test session setup. They serve a different purpose
-        (test seeding; they declare identity and mint no session row of their
-        own) and are unrelated to the web impersonation described here. Do not
-        conflate the two.
-
-    Schema (_sessions columns):
-        impersonator_login_user_id  BIGINT NULL - the real principal's
-                                    login_user_id to restore on stop. NULL means
-                                    this is a normal (non-impersonation) session.
-        impersonation_started_at    TIMESTAMP(3) NULL - when impersonation began.
+    An impersonation is a USER SESSION of its own on the impersonator's
+    browser: the target's login identity, the current site, and
+    impersonator_login_user_id = the impersonator. The browser points at it
+    while it lasts; the impersonator's own sign-in stays signed in behind it,
+    SUSPENDED (not current, its clocks not running).
 
     Methods:
         Session::begin_impersonation(int $target_login_user_id): void
-            Begin impersonating the target from the CURRENT session. Records the
-            current login_user_id as the impersonator and swaps login_user_id to the
-            target in place - a PURE RECORD UPDATE on the live row (an
-            impersonation is not a sign-in, so nothing rotates). Keeps site_id.
-            Does NOT bump the target's last_login (impersonation is not a real login).
-            Throws if there is no active logged-in session, if already
-            impersonating (non-recursive - one level only), or if the target
-            equals the current login_user_id (self).
+            From the CURRENT staff sign-in. The user session (this browser, the
+            target, the current site, the impersonator) is found or created
+            and made current. It runs on the impersonator's clocks
+            (signed_in_at and last_page_view_at carried over) - nobody
+            re-authenticated, so nothing rotates and the target's last_login
+            is untouched. Throws when nobody is signed in, when already
+            impersonating (one level only), and for the current identity
+            itself.
 
         Session::stop_impersonation(): bool
-            End the current impersonation, restoring the real principal's
-            login_user_id. Clears both impersonation columns and swaps login_user_id
-            back - a PURE RECORD UPDATE on the live row. Does NOT bump last_login on
-            restore. Returns true if an impersonation was ended, false (no-op) when
-            the session was not impersonating.
+            Signs the impersonation out (SIGN_OUT_IMPERSONATION_ENDED) and
+            points the browser back at the impersonator's own sign-in, which
+            takes over the impersonation's last page view. Nothing rotates.
+            False (no-op) when not impersonating.
 
         Session::is_impersonating(): bool
-            True if the current main session is an impersonation session.
-
         Session::get_impersonator_login_user_id(): ?int
-            The real principal's login_user_id behind the impersonation, or null.
-
         Session::get_impersonator_login_user(): ?Login_User_Model
-            The real principal as a Login_User_Model, or null when not
-            impersonating.
-
         Session::get_impersonation_started_at(): ?string
-            When the current impersonation started (ISO 8601 string), or null.
+        Session::cli_set_impersonator_login_user_id(?int): void
+            (test seeding; a virtual session's raw setter)
 
-        Session::cli_set_impersonator_login_user_id(?int $login_user_id): void
-            Raw CLI/test seam (mirrors cli_set_* on Portal_Session). Sets the
-            impersonator id with no side effects.
+    Semantics:
+        - logout() is the hard exit: it signs out the impersonation AND the
+          impersonator's own sign-in behind it. A sign-in limit passing does
+          the same, since the impersonation ran on the impersonator's clocks.
+        - Another account signing in on the browser ends both, too.
+        - A site switch while impersonating moves the impersonation to that
+          site and keeps the impersonator's sign-in behind it.
+        - The impersonator's own sign-in signing out (from another browser, an
+          administrator) takes the impersonations riding it with it.
+        - rsx.sessions.impersonation_max_days (7; 0 = never): the daily
+          end_stale_impersonations task signs out impersonations older than
+          that, with the impersonator's own sign-in; a View as Client is
+          signed out alone. The audit record is permanent either way.
+        - get_user() resolves the target's membership on the current site; a
+          target with no membership there answers null, so validate before
+          beginning.
+        - get_sessions_for_user() leaves an impersonation out of the target's
+          own list ($include_impersonations shows it to an administrator), and
+          the target's terminate_all_other_sessions() still ends it.
 
-    Semantics / edge cases:
-        - logout() / reset() HARD-CLEAR impersonation. Logging out ends the whole
-          session and clears the impersonation columns alongside login_user_id -
-          you cannot be mid-impersonation across a logout. stop_impersonation() is
-          the graceful "return to admin"; logout() is the hard exit.
-        - AN IMPERSONATION ENDS AFTER rsx.sessions.impersonation_max_days (7; 0 =
-          never). It has no sign-in of its own to expire - it rides the
-          impersonator's browser session - so a daily task
-          (Session_Cleanup_Service::end_stale_impersonations) ends the ones
-          older than that. A staff impersonation's row is RETIRED: inactive,
-          still recording whose identity it carried and who was acting as them,
-          and the impersonator signs in again as themselves. A portal View as
-          Client loses its portal identity and the staff session carries on.
-          The audit record of the impersonation is permanent either way.
-        - Non-recursive: begin_impersonation() throws while already impersonating.
-        - Throws on self-impersonation (target == current login_user_id).
-        - NO rotation on begin or stop - both are pure record updates on the live
-          row, and the session clocks keep running from the impersonator's own
-          sign-in (SESSION LIFETIME).
-        - last_login is untouched on both begin and stop.
-        - site_id is untouched. get_user() continues to resolve the site-specific
-          user from (site_id, effective login_user_id). If the target login user
-          has no User_Model in the current site, get_user() returns null - the app
-          must validate this before calling begin_impersonation().
-
-    Client exposure (window.rsxapp):
-        When impersonating, the framework surfaces a block so an app can render
-        an "impersonation active" banner synchronously:
-
-            window.rsxapp.impersonation = {
-                impersonator_login_user_id: 42,
-                impersonator_email: "dev@example.com",
-                started_at: "2026-07-09T15:04:05.000Z"
-            }   // or null when not impersonating
-
-        The impersonator is named by LOGIN IDENTITY (login_users id and email);
-        a richer display name is the app's to resolve (it owns User_Model).
-        window.rsxapp.user already reflects the EFFECTIVE (target) user during
-        impersonation; that stays correct and unchanged.
+    Client exposure:
+        window.rsxapp.impersonation = {impersonator_login_user_id,
+        impersonator_email, started_at} while impersonating, null otherwise;
+        window.rsxapp.user is the EFFECTIVE (target) user.
 
     The system panel's entry and exit:
         The framework's own caller is the /_sys panel's "Sign in as this user"
         on a Users detail (rsx:man sys_panel, IMPERSONATION) - developers only,
         never onto a developer, onto one of the identity's ACTIVE memberships.
-        It stores the developer's current site in the session value store
-        (Session::put_value('sys.impersonation.return_site', <site id>)), calls
-        set_site_id(<chosen site>) and then begin_impersonation(), and loads
-        `/`. GET /_sys/stop-impersonating
-        (Rsx.Route('_Sys_Impersonation_Controller::stop'), published into every
-        bundle) requires the IMPERSONATOR to be a developer, calls
-        stop_impersonation(), restores and forgets the stored site, and lands
-        on /_sys/users/<id>. It is the one panel route gated is_logged_in
-        rather than is_sysadmin, since the effective identity is not a
-        developer while impersonating.
+        It stores the developer's current site as a session value
+        ('sys.impersonation.return_site'), calls set_site_id(<chosen site>)
+        and then begin_impersonation(), and loads `/`. GET
+        /_sys/stop-impersonating (Rsx.Route('_Sys_Impersonation_Controller::stop'),
+        published into every bundle) requires the IMPERSONATOR to be a
+        developer, calls stop_impersonation(), restores and forgets the stored
+        site, and lands on /_sys/users/<id>. It is the one panel route gated
+        is_logged_in rather than is_sysadmin, since the effective identity is
+        not a developer while impersonating.
 
         THE APP'S SITE DECLARATION WINS. A Main::init() that calls
         set_site_id() on every request (the single-tenant template's
-        Session::set_site_id(1)) moves the session off the chosen site on the
+        Session::set_site_id(1)) moves the impersonation to that site on the
         very next request, and enforce_enabled_membership() then checks the
-        EFFECTIVE identity on the declared site: an active membership there
-        continues the impersonation on that site; none signs the whole session
-        out (logout() is the hard exit, so the developer's own sign-in ends
-        too).
+        target on it: an active membership continues the impersonation there;
+        none signs it out together with the developer's own sign-in.
 
-    Usage:
-        Authorization - who may impersonate - is the APP's responsibility, not
-        core's (same policy as the portal). The app resolves the target user to a
-        login_user_id, gates the action with its own ACL, and calls begin.
+    Usage - authorization (who may impersonate) is the APPLICATION's:
 
-            // App-owned authorization gate: an #[Auth_Check] the application
-            // declares (rsx:man auth_gates). The template declares none for
-            // staff impersonation - its one entry point is the /_sys panel.
             #[Ajax_Endpoint]
-            #[Auth('can_impersonate_staff')]
+            #[Auth('can_impersonate_staff')]     // an #[Auth_Check] you declare
             public static function impersonate(Request $request, array $params = [])
             {
                 $target = User_Model::find($params['user_id']);
@@ -1140,947 +1539,9 @@ IMPERSONATION
                 return ['redirect' => Rsx::Route('Dashboard_Index_Action')];
             }
 
-        Render the banner from window.rsxapp.impersonation plus an app-resolved
-        name, with an "exit" control that calls stop_impersonation(). The
-        template's banner (Impersonation_Banner) links the panel's stop route
-        instead, because the panel is what began the impersonation there.
-
-EXAMPLES
-    Login Form Processing:
-        #[Route('/login')]
-        public static function login(Request $request, array $params = [])
-        {
-            if ($request->method() === 'POST') {
-                $email = $request->input('email');
-                $password = $request->input('password');
-
-                $user = User_Model::where('email', $email)->first();
-
-                if ($user && password_verify($password, $user->password)) {
-                    // Login successful - this creates/regenerates session
-                    Session::set_login_user_id($user->id);
-
-                    Rsx::flash_success('Login successful!');
-                    return redirect('/dashboard');
-                }
-
-                Rsx::flash_error('Invalid credentials');
-                return redirect('/login');
-            }
-
-            return view('auth/login');
-        }
-
-    Require Authentication:
-        #[Route('/dashboard')]
-        #[Auth('is_logged_in')]
-        public static function dashboard(Request $request, array $params = [])
-        {
-            // The gate ran before this method; an unidentified caller was
-            // already redirected to login with the intended URL captured.
-            $user = Session::get_user();
-
-            return view('dashboard/index', [
-                'user' => $user,
-            ]);
-        }
-
-    Multi-tenant Site Selection:
-        public static function select_site(Request $request, array $params = [])
-        {
-            $site_id = $params['site_id'] ?? null;
-
-            // Verify user has access to this site
-            $site_user = Site_User_Model::where('user_id', Session::get_user_id())
-                ->where('site_id', $site_id)
-                ->first();
-
-            if (!$site_user) {
-                Rsx::flash_error('Access denied to this site');
-                return redirect('/sites');
-            }
-
-            // Set active site
-            Session::set_site_id($site_id);
-
-            Rsx::flash_success('Switched to ' . $site_user->site->name);
-            return redirect('/dashboard');
-        }
-
-    CSRF Protection in Forms:
-        In controller:
-            return view('forms/example', [
-                'csrf_token' => Session::get_csrf_token(),
-            ]);
-
-        In Blade view:
-            <form method="POST">
-                <input type="hidden" name="csrf_token" value="{{ $csrf_token }}">
-                <!-- form fields -->
-            </form>
-
-        In POST handler:
-            $submitted = $request->input('csrf_token');
-            if (!Session::verify_csrf_token($submitted)) {
-                Rsx::flash_error('Invalid CSRF token');
-                return redirect()->back();
-            }
-
-    CLI Command with User Context:
-        namespace App\Console\Commands;
-
-        use Illuminate\Console\Command;
-        use App\RSpade\Core\Session\Session;
-
-        class ProcessUserData extends Command
-        {
-            protected $signature = 'data:process {user_id}';
-
-            public function handle()
-            {
-                $user_id = $this->argument('user_id');
-
-                // Set CLI session context
-                Session::set_login_user_id($user_id);
-
-                // Now all code that checks Session::get_login_user_id() will work
-                $this->process_data();
-
-                $this->info('Processed data for user ' . $user_id);
-            }
-
-            private function process_data()
-            {
-                // This works because we set login_user_id above
-                $login_user_id = Session::get_login_user_id();
-                // ... process data for user ...
-            }
-        }
-
-RSX VS LARAVEL
-    Session Access:
-        Laravel:
-            session()->put('key', 'value');
-            $value = session()->get('key');
-            session()->forget('key');
-
-        RSX:
-            Session::set_login_user_id(123);
-            $login_user_id = Session::get_login_user_id();
-            Session::logout();
-
-        RSX uses typed methods instead of generic key/value storage.
-
-    Authentication:
-        Laravel:
-            Auth::login($user);
-            Auth::logout();
-            $user = Auth::user();
-            $id = Auth::id();
-            if (Auth::check()) { }
-
-        RSX:
-            Session::set_login_user_id($user->id);
-            Session::logout();
-            $user = Session::get_user();
-            $login_user_id = Session::get_login_user_id();
-            $site_user_id = Session::get_user_id();
-            if (Session::is_logged_in()) { }
-
-        RSX combines session and auth into one unified interface.
-        Note: get_login_user_id() returns the cross-site login identity (login_users.id).
-        get_user_id() returns the site-specific user id (users.id).
-
-    Session Creation:
-        Laravel:
-            Session starts automatically on every request via middleware.
-
-        RSX:
-            Session only created when explicitly needed via
-            set_login_user_id(), get_session_id(), or get_session(). Getter
-            methods and set_site_id() do NOT create sessions.
-
-        This prevents unnecessary database writes for unauthenticated traffic.
-
-    CSRF Protection:
-        Laravel:
-            @csrf in Blade templates
-            $request->session()->token()
-            Automatic verification via middleware
-
-        RSX:
-            Session::get_csrf_token() in controllers
-            Session::verify_csrf_token($token) manual verification
-            Manual implementation gives explicit control
-
-    Remember Me:
-        Laravel:
-            Auth::login($user, $remember = true);
-            Optional remember functionality
-
-        RSX:
-            All sessions are persistent; the row expires by inactivity
-            No "remember me" checkbox needed
-
-TROUBLESHOOTING
-    Session Not Persisting Across Requests:
-        Problem: Session data is lost between requests
-
-        Solutions:
-        - Check that cookies are enabled in browser
-        - Verify HTTPS is being used (secure flag requires HTTPS)
-        - Check session token in cookie named: __Host-rsx (plain `rsx` only on
-          a development-mode http request)
-        - Verify session record exists in database
-        - Check last_active timestamp is being updated
-
-    User Logged Out Unexpectedly:
-        Problem: User is logged out without calling logout()
-
-        Solutions:
-        - Check the sign-in limits (rsx.sessions.staff / .portal - SESSION
-          LIFETIME): 30 days from sign-in and 30 days idle by default
-        - Verify session.active = true in database
-        - Check for code calling Session::reset() or Session::logout()
-        - Verify session token hasn't changed
-
-    CSRF Token Validation Failing:
-        Problem: verify_csrf_token() returns false
-
-        Solutions:
-        - Ensure token is being submitted in POST data
-        - Check session exists (get_csrf_token returns null if no session)
-        - The csrf token belongs to the session row, and a sign-in moves the
-          browser to a new row: a page that held a token from before the
-          sign-in must reload (an Ajax sign-in is handed the new one)
-
-    CLI Commands Not Working:
-        Problem: Session methods return null/0 in artisan commands
-
-        Solution:
-        - Explicitly set login_user_id/site_id in CLI context:
-            Session::set_login_user_id($login_user_id);
-            Session::set_site_id($site_id);
-
-        - CLI mode requires manual context setting - there is no cookie to
-          load an identity from. get_session_id() still yields a real session
-          row; it just is not tied to any particular user until you say so.
-
-    Session Created for Anonymous Users:
-        Problem: Every visitor gets a session record
-
-        Solution:
-        - Only call methods that CREATE sessions when needed:
-            CREATES: set_login_user_id(), get_session_id(), get_session()
-            NO CREATE: get_user_id(), get_site_id(), is_logged_in(), set_site_id()
-
-        - Don't call get_session_id() or get_session() in templates/layouts
-        - Use has_session() to check without creating
-        - Never "guard" with `if (get_session_id() === null)` - the guard is
-          dead code AND it created the session (SESSION-ID-01)
-
-SESSION-SCOPED KEY/VALUE STORAGE
-    For data that belongs to a BROWSER SESSION rather than to a user or a
-    record: a wizard's half-finished input, a chosen filter, the API key the
-    /apidocs tester is using.
-
-        Session::put_value(string $key, $value, ?string $expires_at = null): void
-        Session::get_value(string $key, $default = null)
-        Session::forget_value(string $key): void
-
-    Stored in _session_values, one row per (session, key), with an ON DELETE
-    CASCADE to _sessions. The lifetime is INTRINSIC: logout, admin termination
-    and session garbage collection reclaim the values with the session, so a
-    value can never outlive the session that owned it and no sweeper is involved
-    in the common case.
-
-    put_value() is a WRITER and establishes a session if there is not one, like
-    every other Session writer. get_value() and forget_value() are READERS and
-    never create one - asking whether a value exists must not mint a session row
-    for every anonymous visitor. With no session, get_value() returns $default.
-
-    Values are JSON-encoded, so scalars and arrays round-trip by type: false
-    comes back as false and is not confused with unset.
-
-    put() is an UPSERT (UNIQUE on session_id + value_key), not an append.
-
-    EXPIRY IS OPTIONAL and defaults to null, meaning "as long as the session
-    lives". Pass one only when a value must die SOONER than its session; the
-    framework never invents an expiry. An expired value reads as ABSENT the
-    instant it expires, because get_value() filters on expires_at rather than
-    trusting a sweep to have run - Session_Values_Cleanup_Service (hourly) only
-    reclaims the space, so a missed run is harmless.
-
-    ONE SESSION SERVES BOTH EXPERIENCES. A browser has one session row shared by
-    the staff app and the portal, so namespace keys ('apidocs.tester_key_id')
-    rather than assuming an experience owns the key space.
-
-    WHAT IT IS NOT. Not a cache (RsxCache - volatile, not session-scoped), not
-    configuration (Rsx_Settings - declared and site-scoped), and not for
-    anything a user should still have on another device.
-
-SESSION TYPES
-    Every session row carries a type_id, stamped by the writer at the moment the
-    row is created and never re-derived afterwards:
-
-        Session::TYPE_WEB   an ordinary browser session
-        Session::TYPE_PLAYWRIGHT
-                            a session minted by the rsx:debug / Playwright
-                            harness - a real browser, driven by a test run, so
-                            the row belongs to the run and not to a person
-        Session::TYPE_API   reserved. A Bearer-authenticated API request runs a
-                            cookie-less headless identity and creates NO row
-                            (get_session_id() == 0), so nothing writes this
-                            today; the type exists so the classifier stays total
-                            if API handling ever grows a session.
-        Session::TYPE_CLI   a session minted by a CLI process (artisan command,
-                            task worker, test) on first demand. Deleted when
-                            that process ends; the window below only mops up
-                            after a process that was killed. See CLI MODE.
-
-    One row per browser, so the type describes what CREATED that browser session
-    (there is no portal TYPE_API - the external API is a staff surface).
-
-    Type is a WRITER-SIDE FACT, deliberately. The previous design inferred
-    "automated" from the user-agent string, which is attacker-influenced, wrong
-    about anything that does not announce itself, and - as a retention input -
-    exactly what let tens of thousands of harness sessions masquerade as browser
-    sessions. If you add a new way to create a session, classify it where you
-    create it (Session::__classify_session_type).
-
-HARNESS SESSIONS (rsx:debug / Playwright)
-    Every request the harness makes mints a TYPE_PLAYWRIGHT session, and
-    rsx:debug deletes them as the RUN exits (Session::purge_playwright_sessions).
-    The playwright inactivity window only mops up runs that died first.
-
-    The unit is the RUN, not the request, and that is not an arbitrary choice.
-    The dev-auth token is an HMAC over the NAVIGATION url, so it authenticates
-    only the first request of a run; every XHR the page then fires is
-    authenticated purely by the session cookie that first request established.
-    Deleting the row when the first request ends therefore signs the page out of
-    its own Ajax, and every SPA screen fails with "You do not have permission to
-    perform this action". A per-request shutdown hook was implemented, observed
-    to do exactly that, and reverted (2026-08-08). If you are tempted to make
-    harness sessions request-scoped, this is the wall you will hit.
-
-CONCURRENT SESSION CAP
-    rsx.sessions.max_web_sessions_per_user (default 25) is the ceiling on how
-    many WEB sessions one user may hold at once. On every sign-in - the only
-    moment the count grows - the user's web sessions beyond that number, ordered
-    by last_active, are signed out. The two caps do different amounts of damage,
-    deliberately: the STAFF cap DEACTIVATES the row (active = 0, which ends it,
-    since init() only loads an active row - "sign this device out"), while the
-    PORTAL cap CLEARS THE PORTAL PROPERTIES and leaves the row alone, because
-    that row is some other browser's session and may carry a staff login.
-
-    Set to 0 or null to disable entirely - no session is ever signed out on
-    login.
-
-    PLAYWRIGHT and API sessions are excluded from both the count and the
-    eviction. A test run must never sign a developer out of their own browser,
-    and machine sessions have their own much shorter retention.
-
-    The hook is Session::set_login_user_id() / Portal_Session::set_portal_user_id(),
-    so it covers every sign-in path automatically - the login controller,
-    invitation acceptance, portal registration - with no per-caller wiring.
-    Impersonation inherits it (it delegates to the same setter); logout does not
-    (there is no new session to make room for).
-
-SESSION LIFETIME
-    A sign-in does not last forever. Each experience has two limits, in
-    config('rsx.sessions'):
-
-        'staff'  => ['max_length_minutes' => 43200, 'max_idle_minutes' => 43200],
-        'portal' => ['max_length_minutes' => 43200, 'max_idle_minutes' => 43200],
-        'ajax_grace_minutes' => 120,
-
-    max_length_minutes   measured from the SIGN-IN. The hard ceiling: the
-                         sign-in ends this long after it began however active
-                         it is, and the person signs in again - facing their
-                         second factor again, if they have one.
-    max_idle_minutes     measured from the last PAGE VIEW.
-    0                    no limit.
-
-    The defaults are 30 days each. Both are overridden in
-    rsx/resource/config/rsx.php.
-
-    What a page view is:
-        A page rendering its bundle (any server-rendered page, and the first
-        load of an SPA), and each completed SPA navigation - which the browser
-        reports itself, since it reaches no page route. Nothing else: an Ajax
-        call, a file download, a thumbnail and an external API request are not
-        somebody looking at a page, so a tab left open that polls or refetches
-        does not keep a sign-in alive.
-
-        A page view is written at most once a minute per session. The same
-        write stamps last_seen on the account: users.last_seen and
-        login_users.last_seen for staff, portal_users.last_seen for the portal
-        (not while impersonating - the account's owner was not there).
-
-    What happens at a limit:
-        Limits are enforced when a request arrives, ahead of the #[Auth] gates.
-        No sweeper is involved, so they hold on a box with no cron tick.
-
-        AN EXPIRED SESSION IS DEAD. Its row is RETIRED exactly as a sign-in
-        retires one (Sign-In Rotation): marked inactive with its record intact -
-        whose it was, in which tenant, since when - and the browser is moved to a
-        successor row on which the expired sign-in is ended. A sign-in of the
-        OTHER experience on the same browser rides to the successor and is judged
-        by its own limits.
-
-        A PAGE NAVIGATION past a limit retires the row, redirects to the sign-in screen
-        with the intended URL captured, and flashes why: "Your session has
-        expired. Please sign in again." or "You were signed out after a period
-        of inactivity. Please sign in again."
-
-        ANY OTHER REQUEST - an Ajax call, a thumbnail, a download, an iframe's
-        document - keeps working for ajax_grace_minutes past the limit. The
-        page that sends it was open before the limit passed, and should still
-        be able to finish what it was doing, such as saving the form on screen.
-        The first such request after the grace signs out; an Ajax call then
-        answers the session_expired envelope, and so does every later call
-        carried by the same request.
-
-        AN SPA NAVIGATION gets no grace: the browser's page-view report is
-        judged like a page, so somebody who only ever moves around inside the
-        SPA meets the limit at their next navigation.
-
-        The two experiences are independent. One browser session can carry a
-        staff and a portal identity; each is judged by its own limits, on its
-        own requests, and ending one leaves the other signed in.
-
-    The browser's side:
-        When the server reports that a page's sign-in is gone - the
-        session_expired envelope, or auth_required on a page that was rendered
-        signed in (the session was ended from another device or by an
-        administrator) - the framework announces it ONCE per page to the
-        handler the application registered:
-
-            // from a static on_app_modules_define()
-            Rsx.set_session_expired_handler(function (info) {
-                // info.message is the server's sentence
-            });
-
-        The page behind it is a signed-in page nobody is signed in to, so the
-        usual handler opens a dialog that cannot be dismissed, with one button
-        that reloads the page; the server then redirects to the sign-in screen
-        and returns the user to this URL afterwards. With NO handler registered
-        the framework reloads at once. Worked example:
-        system/app/RSpade/resource/reference_app/lib/modal/modal.js
-        (_on_session_expired).
-
-    Choosing the limits:
-        max_idle_minutes ends a session nobody is using. It does NOT bound
-        somebody who has taken over a session - they are never idle.
-        max_length_minutes is the limit that does: with it set to 8 hours, a
-        copied cookie is useful for at most 8 hours from the real person's
-        sign-in, ends sooner if they sign in again on that browser (Sign-In
-        Rotation retires the row the copy names), and never comes back. An
-        application that holds sensitive records sets both to hours and turns
-        on a second factor, so every re-entry is a full re-authentication:
-
-            'sessions' => [
-                'staff' => ['max_length_minutes' => 480, 'max_idle_minutes' => 60],
-            ],
-
-        Never implement "Remember Me": the cookie is always long-lived, and
-        these limits are what end a sign-in.
-
-    API:
-        Session::enforce_timeouts(bool $strict): ?string
-        Portal_Session::enforce_timeouts(bool $strict): ?string
-            Called by the dispatcher and the Ajax entry point; an application
-            does not call them. Answer 'length' or 'idle' when the sign-in was
-            just ended.
-
-        Session::touch_page_view(): void
-        Portal_Session::touch_page_view(): void
-            Record a page view. Called by the bundle render and by
-            Rsx_Session_Controller::page_view (the SPA's report). An application
-            whose page deliberately renders no bundle may call it.
-
-GARBAGE COLLECTION
-    Automatic Session Cleanup:
-        Sessions are expired by ONE hourly task,
-        Session_Cleanup_Service::cleanup_sessions. Like every #[Schedule] task
-        it only runs when the rsx:task:process cron tick is installed (see
-        rsx:man tasks) - a server without that crontab entry accumulates
-        sessions indefinitely, which is precisely the failure this design
-        exists to bound.
-
-        This task only COLLECTS rows nobody has come back to. Whether a sign-in
-        is still valid is decided when a request arrives (SESSION LIFETIME), not
-        here. A row is judged on last_active; a BROWSER session (TYPE_WEB) on
-        whether it carries an IDENTITY - login_user_id OR portal_user_id, since
-        one row serves both experiences - and the machine types keep their own
-        short backstops whatever they carry:
-
-            TYPE_WEB with an identity   the LONGER of
-              in EITHER column          rsx.sessions.staff.max_idle_minutes and
-                                        .portal.max_idle_minutes, plus
-                                        ajax_grace_minutes - once it is past
-                                        that, no sign-in on it could still be
-                                        used. Never collected for age when
-                                        either idle limit is 0 (unlimited).
-            anonymous_timeout_minutes    43200   (30 days)   TYPE_WEB with
-                                                             neither
-            api_timeout_minutes          10080   (7 days)    TYPE_API
-            playwright_timeout_minutes    1440   (1 day)     TYPE_PLAYWRIGHT
-            cli_timeout_minutes           1440   (1 day)     TYPE_CLI
-
-        The identity test spans BOTH columns because the row does: a browser
-        signed into the client portal and never into the staff app is a real,
-        in-use session, and a rule that only looked at login_user_id would
-        collect it at the anonymous window.
-
-        A _session_devices record is deleted once no session row names it.
-
-        User-agent strings are swept separately and weekly - see AUDIT
-        SESSIONS, User agents.
-
-        Identity-less rows are minted for any visitor issued a CSRF token,
-        crawlers included, which is why they go first.
-
-        Rows are permanently deleted. Deletes run in bounded chunks, so the
-        first run against a large backlog (months of rows piled up while cron
-        was not running) never issues one giant DELETE; the task is
-        #[Exclusive], so a slow backlog-recovery run never overlaps its own
-        next tick.
-
-        rsx:debug additionally deletes the harness sessions its own run
-        created, as the run exits - see HARNESS SESSIONS above.
-
-        Implementation:
-            Service:  Session_Cleanup_Service::cleanup_sessions() (hourly)
-            Requires: the standard rsx:task:process cron entry
-
-        Linked-session codes: Session_Cleanup_Service::cleanup_session_links()
-        (hourly, #[Exclusive]) deletes the _session_links rows whose 120-second
-        window has passed. A code is unredeemable the instant it expires and a
-        redeemed one is deleted by its redemption, so this only reclaims links
-        nobody finished.
-
-        Manual Trigger:
-            To manually run cleanup outside the schedule:
-
-                php artisan rsx:task:run Session_Cleanup_Service cleanup_sessions
-
-            This is useful for:
-            - Testing cleanup logic
-            - Emergency cleanup when disk space is low
-            - One-time cleanup after changing retention policies
-
-AUDIT SESSIONS
-    A record of something somebody DID - an activity log row, an export record,
-    a revision - has to say who did it and from where, and keep saying it for
-    as long as the record exists.
-
-    NEVER STORE Session::get_session_id() FOR THAT. A _sessions row is
-    operational state: its identity and site change in place, every sign-in
-    replaces it (SECURITY, Sign-In Rotation), a command's row is deleted the
-    moment the process ends, and idle rows are collected. A stored session id
-    stops resolving - and for a command, a task or an API call it never
-    resolved at all.
-
-    Store an audit session instead:
-
-        $log->audit_session_id = Session::get_audit_session_id();
-
-    TWO IDS, TWO JOBS - never one for the other:
-
-        Session::get_session_id()
-            The browser's CURRENT session row. For supplemental state that
-            BELONGS TO THE SESSION and should die with it: a preference for
-            this browser, a half-finished wizard, a chosen filter. The row is
-            deleted by the cleanup task, by a command ending, and replaced at
-            every sign-in, so a table of yours that stores it declares
-
-                FOREIGN KEY (session_id) REFERENCES _sessions (id)
-                    ON DELETE CASCADE
-
-            and lets its rows go with the session. THAT FOREIGN KEY IS THE ONE
-            REFERENCE AN APPLICATION MAKES TO A SYSTEM TABLE - every other
-            `_`-prefixed table is a black box (rsx:man
-            database_schema_architecture). It is a constraint, not a query:
-            you still never read _sessions.
-
-            Reach for Session::put_value() first (SESSION-SCOPED KEY/VALUE
-            STORAGE): it is this, already built, and its values FOLLOW THE
-            BROWSER ACROSS A SIGN-IN. Rows in a table of your own do not - a
-            sign-in gives the browser a new session id, and rows keyed to the
-            old one stay with the row it left.
-
-        Session::get_audit_session_id()
-            A different number entirely - not the session id, but the id of a
-            permanent record minted on demand for the acting context. For the
-            HISTORICAL record of what somebody did, tied to the session
-            instance, address and user agent it was done from. Never deleted,
-            so it needs no cascade and its meaning never changes.
-
-    Session::get_audit_session_id(): int
-        The id of a row in _audit_sessions describing the ACTING CONTEXT:
-
-            site_id, login_user_id, portal_user_id, portal_site_id,
-            impersonator_login_user_id, impersonator_user_id, ip_address,
-            session_row_id, user_agent_id
-
-        The same context answers the same id. When any member changes - a
-        sign-in, a site switch, an impersonation, a new address, a different
-        browser - the next call answers a different row. A row is minted the
-        first time a context is asked for, so a visitor who logs nothing
-        leaves nothing; it is immutable apart from last_seen_at (advanced at
-        most once a minute).
-
-        Works everywhere, and creates no session: a browser request, a
-        Bearer-key API call (session_row_id null), a command or a task
-        (session_row_id, ip_address and user_agent_id null). session_type_id
-        says which - Session::TYPE_WEB / _API / _CLI / _PLAYWRIGHT.
-
-        One resolution per context per process, so a request that writes forty
-        log rows asks the database once.
-
-    Three ways to group what was done:
-
-        _audit_sessions.id     one acting context
-        session_row_id         one sign-in (every context of that session row)
-        device_id              one browser across its sign-ins
-
-    session_row_id and device_id are CORRELATION NUMBERS, deliberately not
-    foreign keys: grouping audit rows by them is an equality test among audit
-    rows and never needs the session or the device to still exist. The session
-    token is not stored - it identifies nothing the row id does not, and it is
-    a credential.
-
-    _audit_sessions IS NEVER GARBAGE-COLLECTED. It is the audit trail's own
-    memory; no retention sweep touches it, so a stored id always resolves.
-
-    Reading one back:
-
-        Session::get_audit_session(int $audit_session_id): ?array
-            {id, site_id, login_user_id, portal_user_id, portal_site_id,
-             impersonator_login_user_id, impersonator_user_id, ip_address,
-             user_agent, session_row_id, device_id, session_type_id,
-             first_seen_at, last_seen_at} - user_agent as the full string.
-            Null for an id that does not exist.
-
-        The table itself is the framework's (every `_`-prefixed table is). An
-        application stores the id in a column of its own and asks the framework
-        what it means; it does not query _audit_sessions.
-
-    Reading many at once - joining onto a query of your own:
-
-        A grid of logged acts usually wants the address and the browser beside
-        each row, searchable and sortable. Audit_Session::join() adds them to
-        your query without your code naming a system table:
-
-            use App\RSpade\Core\Session\Audit_Session;
-
-            $query = Action_Log_Model::query();
-            Audit_Session::join($query, 'action_logs.audit_session_id');
-
-            // conditions and ordering use column(), never a table name
-            $query->where(Audit_Session::column('ip_address'), 'like', $like)
-                  ->orderBy(Audit_Session::column('first_seen_at'), 'desc');
-
-            foreach ($query->limit(25)->get() as $log) {
-                $log->audit_ip_address;
-                $log->audit_user_agent;        // the full string
-                $log->audit_login_user_id;
-            }
-
-        Audit_Session::join($query, string $column)
-            $column is YOUR qualified column holding the audit session id
-            ('table.column'). A LEFT join, so a row with no audit session is
-            still listed with null audit_* values. Every field of
-            get_audit_session() is selected as audit_<name>; a query that
-            selected nothing explicitly keeps its own table's columns. Works on
-            an Eloquent builder and a query builder. Once per query.
-
-        Audit_Session::column(string $name): string
-            The expression for one audit field, for where() / orderBy() /
-            groupBy(). $name is a get_audit_session() key; anything else
-            throws.
-
-        The names are the contract. The tables and columns behind them are
-        not: where a value is stored can change between releases (the address
-        and the user-agent string already live in tables of their own), and
-        get_audit_session() and join() are what keep answering when it does.
-        They are the only supported ways to read an audit session.
-
-    The framework attributes its own lane: every recorded unit of work carries
-    _transactions.audit_session_id (rsx:man revisions).
-
-    User agents:
-        Each distinct user-agent string is stored once, whole, in _user_agents,
-        and _sessions, _session_devices, _login_history and _audit_sessions
-        hold its id. So one browser is the same value in all four, whatever the
-        length of its string. That table is private to the framework and has no
-        application interface; the string comes back wherever the framework
-        answers one - `user_agent` in Session::get_sessions_for_user(),
-        Portal_Session::get_sessions_for_user(), get_current_session_info(),
-        Login_History::get_history_for_user() and get_audit_session(), and
-        `$session->user_agent` on a Session row. An application that wants to
-        record a browser on a table of its own stores the string there.
-
-        A string that no session, device, login-history row or audit session
-        names any more is deleted by Session_Cleanup_Service::
-        cleanup_user_agents, weekly (Sunday, in the maintenance window), once it has gone a day
-        without being presented. One an audit session names is kept for good.
-
-    Client addresses:
-        Each distinct client IP address is stored once in _ip_addresses, and
-        _sessions, _login_history, _audit_sessions, _file_attachments,
-        _api_request_log and _transactions hold its id. The address comes back
-        as a string wherever the framework answers one - `ip_address` in the
-        session listings, Login_History and get_audit_session(),
-        `$session->ip_address` on a Session row. Rows are never deleted: each
-        carries geocode fields (city, state, country, latitude, longitude)
-        that a geocoder will fill, and every record naming the address shares
-        them. Reading an address of your own, and joining one onto a query:
-        rsx:man ip_addresses.
-
-    get_audit_session_id() fails loudly, like every other framework write: a
-    database that cannot record the audit session cannot record the audit row
-    either. Two requests minting the same context at the same moment is not a
-    failure - the find-or-create is one statement on a unique key, and both
-    get the same id.
-
-SESSION MANAGEMENT
-    Multi-Device Session Tracking:
-        RSX tracks all active sessions for each user, allowing users to view
-        and manage their active sessions across devices.
-
-    Get All Sessions for a User:
-        // Every ACTIVE session for the current user, most recent first
-        $sessions = Session::get_sessions_for_user();
-
-        // For a specific user (admin use)
-        $sessions = Session::get_sessions_for_user($login_user_id);
-
-        // Only that user's sessions currently on one site - a tenant's view of
-        // an identity that may belong to several
-        $sessions = Session::get_sessions_for_user($login_user_id, $site_id);
-
-        // An administrator's view: impersonations of that user included
-        $sessions = Session::get_sessions_for_user($login_user_id, null, true);
-
-        Each entry: id, device_id, site_id, ip_address, user_agent, user_agent_parsed,
-        device_summary, location, last_active, created_at, signed_in_at,
-        first_seen, is_current, is_impersonation. `id` is the session to pass to the terminate
-        functions. One browser is one entry however often it has signed in:
-        a sign-in moves it to a new row (SECURITY, Sign-In Rotation), and
-        device_id and first_seen - when that browser FIRST signed in - stay
-        the same across them, while signed_in_at is the current sign-in.
-
-        Returns only ACTIVE sessions, and deliberately returns the WHOLE set of
-        them - it backs a "where you're signed in" security screen, and a user
-        cannot terminate a session they were not shown. Deactivated rows are
-        excluded: they are already signed out, and offering to terminate an
-        already-terminated session is noise.
-
-        Two things keep the set small, neither of them a cap on this query:
-          - rsx.sessions.max_web_sessions_per_user (default 25) signs out the
-            user's oldest web sessions on every sign-in, so the live count per
-            user has a ceiling (CONCURRENT SESSION CAP above);
-          - a sign-in ends at its limits (SESSION LIFETIME) and idle rows are
-            collected by type (GARBAGE COLLECTION above).
-
-        An IMPERSONATION is not one of the user's sessions and is left out.
-        Impersonating puts the target's identity on the impersonator's own
-        browser row, so that row carries the target's identity - and the
-        impersonator's address and device - while it lasts. It is not a
-        sign-in by the user, so their own "where you're signed in" screen
-        never lists it. The third argument, $include_impersonations, answers
-        those rows too, each with is_impersonation true: that is for an
-        administrator's view of somebody's sessions, which labels them.
-        terminate_all_other_sessions() called by the user still ends an
-        impersonation of them - it matches every row carrying their identity.
-
-        The 62,617-row incident that prompted this review was harness sessions
-        nothing ever expired - now TYPE_PLAYWRIGHT, deleted as each run ends - a
-        retention bug, not a query bug.
-        Portal_Session::get_sessions_for_user() is the same query narrowed on
-        portal_user_id instead of login_user_id, with the same rule for a
-        staff member viewing the portal as that user (View as Client): left
-        out unless its second argument, $include_impersonations, is true. A row with no
-        portal identity never appears there, and vice versa: that is PROPERTY
-        isolation, and it is what replaced the old row isolation.
-
-    Get Current Session Info:
-        $info = Session::get_current_session_info();
-        // Returns same structure as above, or null if not logged in
-
-    Terminate Sessions:
-        Five public functions and one internal one. Pick by WHOSE sessions you
-        are ending and WHO is asking:
-
-        // SELF, one device. Fail-closed: the owning-user predicate is inside the
-        // statement, so another user's session id matches zero rows -> false.
-        // Refuses the caller's CURRENT session (that is logout()'s job).
-        $ok = Session::terminate_session($session_id);
-
-        // SELF, everything else. "Sign out my other devices" - the primitive a
-        // password change wants. Unchanged by the 2026-08-12 rework.
-        $count = Session::terminate_all_other_sessions();
-
-        // ANOTHER USER, one device - the ADMIN primitive. Authorized first.
-        $ok = Session::terminate_session_for_user($login_user_id, $session_id);
-
-        // ANOTHER USER, everything ("sign this user out everywhere"), optionally
-        // sparing one session. Same authorization.
-        $count = Session::terminate_all_sessions_for_user($login_user_id);
-        $count = Session::terminate_all_sessions_for_user($login_user_id, $except_id);
-
-        // ANY IDENTITY, ONE DEVICE OR EVERYTHING - the DEVELOPER primitive, for
-        // an install-wide operator surface (the /_sys panel). Authorized by
-        // Session::is_developer() alone, so it answers across every site where
-        // the admin rule below cannot. null ends every session but the caller's
-        // own current one.
-        $count = Session::developer_terminate_sessions($login_user_id, $session_id);
-        $count = Session::developer_terminate_sessions($login_user_id);
-
-        // FRAMEWORK-INTERNAL, NO AUTHORIZATION. For a caller with no acting user
-        // to authorize against: CLI maintenance, or an app-internal flow that has
-        // already applied its own authorization and is executing the consequence.
-        $count = Session::_deactivate_sessions_for_user($login_user_id);
-
-    The Authorization Rule (the two cross-user functions):
-        Two ways to be authorized, and only two.
-
-        1. THE TARGET IS THE ACTOR. Managing your own device list needs no role.
-        2. THE ACTOR'S ROLE MAY ADMINISTER THE TARGET'S -
-           Permission::can_admin_role() against the target's per-site
-           users.role_id. That list is EQUAL-OR-LOWER - the actor's own role and
-           the roles below it (rsx:man acls) - so a SUPERIOR is refused by
-           construction and a PEER is permitted: two Site Admins may sign each
-           other out, exactly as they may edit each other.
-
-        A target with no users row on the ACTING site is refused too - the
-        actor's site cannot see that identity, so there is nothing to authorize
-        against. No acting identity at all is refused.
-
-        The rule is framework vocabulary only. can_admin_role() is a primitive on
-        Permission_Abstract; core never names an #[Auth_Check] like
-        can_manage_users, because a check name that exists in one app and not
-        another would make the function undefined behavior downstream. Division
-        of labour: the SURFACE gate stays yours (#[Auth] on the endpoint), the
-        TARGET rule is the framework's.
-
-    REFUSAL THROWS; ABSENCE RETURNS FALSE:
-        These are different questions and must never collapse into one value.
-
-            refused         AjaxUnauthorizedException (403 on the Ajax channel)
-            no such row     false / 0 - wrong id, wrong owner, or already
-                            terminated
-            the actor's own CURRENT session id
-                            false - an admin screen must never sign the operator
-                            out of the browser they are working in
-
-        developer_terminate_sessions() keeps the same contract with a different
-        rule: a caller that is not a developer is REFUSED by the throw, and 0
-        means only that no active row matched (the caller's own current session
-        included - it is never ended from there).
-
-        This shape exists because the alternative already cost a release: an
-        admin "terminate session" button wired to the SELF-ONLY
-        terminate_session() matched zero rows for every other user's session and
-        reported a generic failure, so a feature that had never worked looked
-        like an ordinary error for months. A `false` you cannot interpret hides
-        wiring bugs; an exception surfaces them the day they are written.
-
-    SINGLE-TENANT ASSUMPTION (read before reusing the rule):
-        A session belongs to a login_users row, which is CROSS-SITE; a role lives
-        on a users row, which is PER-SITE. The guard resolves the target's role in
-        the ACTOR'S OWN site and terminates sessions that are scoped to no site at
-        all. On a deployment with ONE site those are the same population and the
-        rule is exactly right. On a genuinely multi-tenant deployment they are
-        not: the target may hold a lower role on the actor's site and a higher one
-        elsewhere, and ending the shared session reaches that other tenant too.
-
-        The multi-tenant model - membership-scoped termination, per-site session
-        affinity, and whatever tenancy declaration it needs - is BACKLOG B-92 and
-        is deliberately NOT approximated here. Do not "improve" this into a
-        half-tenant-aware rule.
-
-    PORTAL SESSIONS ARE ENDED TOO, AND THAT IS INTENDED:
-        One _sessions row is one BROWSER's session and may carry a portal identity
-        alongside the staff one. Terminating it deactivates the WHOLE row, portal
-        identity included (owner ruling 2026-08-12). There is no realm parameter
-        and none is planned: the row is the device, and "sign this device out"
-        means the device. It matches the staff session cap, which evicts the same
-        way. The portal twins (Portal_Session::terminate_*) are a separate realm
-        with membership-based authorization and are not affected by any of this.
-
-    What every terminated row triggers:
-        - A REALTIME REFRESH PUSH to the browser holding it
-          (Realtime::push_session_refresh('staff', $session_id)), so that tab
-          reloads into anonymity immediately instead of sitting on a live-looking
-          dead page. No-op when realtime is disabled. Bulk paths pluck the ids
-          BEFORE the UPDATE (an UPDATE reports only a count); the set is bounded
-          by the concurrent-session cap.
-        - The AUDIT EVENT, once per row:
-
-              Rsx::trigger_action('session.terminated', [
-                  'actor_login_user_id'  => ?int,   // null on the internal path
-                  'target_login_user_id' => int,
-                  'session_id'           => int,
-                  'scope'                => 'self' | 'admin' | 'internal',
-              ]);
-
-          Listen with #[OnEvent('session.terminated')]. 'self' is a user managing
-          their own devices, 'admin' is one user ending another's (through the
-          admin primitives or developer_terminate_sessions()), 'internal' is
-          the unchecked framework path (actor null - "the framework did this, no
-          operator was involved").
-
-        CAVEAT - the event stream is NOT a complete record of deactivations. The
-        concurrent-session cap (CONCURRENT SESSION CAP above) evicts rows on
-        sign-in and deliberately fires NO event and NO push: it is capacity
-        management, not termination, there is no actor terminating anyone, and the
-        evicted browser learns at its next request. If you are building "every
-        time a session ended" reporting, account for that separately.
-
-    Use Cases:
-        - "Sign out all other devices" button -> terminate_all_other_sessions()
-        - A user's own security page listing devices -> terminate_session()
-        - An admin ending one of another user's sessions ->
-          terminate_session_for_user()
-        - Forcing a user out everywhere after a password reset, a role change or
-          a suspension -> terminate_all_sessions_for_user()
-        - A developer-only, install-wide operator screen (the /_sys panel's
-          Users screen) -> developer_terminate_sessions()
-        - An unattended job (CLI cleanup, a queued consequence of an already
-          authorized action) -> _deactivate_sessions_for_user()
-
-USER MANAGEMENT PAGES
-    THE DECISION RULE, FIRST: your TENANCY MODEL determines what a user
-    management page is permitted to do. Build the one that matches; they are not
-    variations of each other.
-
-    SINGLE-TENANT (one site - the firm administers real accounts):
-        The page legitimately carries:
-        - the user's active sessions, with per-session terminate
-          (terminate_session_for_user) and terminate-all
-          (terminate_all_sessions_for_user)
-        - login history (successes) and the windowed failed-attempt count
-        - role editing
-        - enable / disable (users.is_enabled)
-
-        The invariant, enforced framework-side and not by your UI: the target is
-        the actor, or the actor's role may administer the target's (its own role
-        or below). NEVER a superior. Your endpoint still declares its own #[Auth] gate; the
-        framework refuses the target rule underneath it.
-
-    MULTI-TENANT SaaS (accounts are self-managed):
-        An admin's only control is WHO MAY JOIN THEIR SITE - invitation and
-        membership revocation. Session termination, password mechanics, email
-        changes and account deletion belong to the ACCOUNT HOLDER, whose identity
-        spans other tenants your admin cannot see. The page must not offer them.
-        Show membership, role within this site, and last activity; nothing that
-        reaches the identity itself.
-
-        (The cross-user termination functions assume single-tenant today - see
-        SINGLE-TENANT ASSUMPTION above, and B-92.)
+        Render the banner from window.rsxapp.impersonation with an exit control
+        that calls stop_impersonation(). The template's Impersonation_Banner
+        links the panel's stop route, because the panel began it there.
 
 LOGIN HISTORY
     Class: App\RSpade\Core\Session\Login_History (staff, `_login_history`)
@@ -2559,26 +2020,127 @@ LOCATION (GEOCODING)
     _login_history.location_city / location_region / location_country, which
     nothing populates; it answers null.
 
+INTERNALS MAP
+    For framework maintainers: which method owns which job. Every
+    underscore-prefixed method is FRAMEWORK INTERNAL - an application never
+    calls one.
+
+    The browser row (Session):
+        init()                         load the active row the cookie names;
+                                       retire one unused past
+                                       unused_session_days; detect the
+                                       just-replaced token
+        __activate()                   THE one creation path for a browser row
+                                       (get_session_id(), get_session(),
+                                       put_value(), set_login_user_id(),
+                                       _set_portal_identity())
+        __mint_browser_row()           a new row with fresh tokens + cookie
+        __rotate_tokens()              in-place rotation, previous_token_hash
+        _arrived_on_rotated_token()    asked by the dispatcher and the Ajax
+                                       entry point; refuses the in-flight
+                                       request
+        __stamp_last_active()          last_active / last_active_at, once a
+                                       minute
+        _rotated_csrf_token()          the new CSRF token the Ajax envelope
+                                       carries
+        _client_session_hash()         rsxapp.session_hash
+        reset()                        the invalidation primitive
+
+    User sessions (Session):
+        __activate_user_session()      find-or-create one tuple (tuple_hash,
+                                       one statement); stamps the browser's
+                                       first_signed_in_at
+        __sign_in()                    activate + point + dispose of the
+                                       previous one
+        __point()                      move a browser's realm pointer
+        _sign_out_user_sessions()      THE one sign-out (reasons, riding
+                                       impersonations, pointers, realm values,
+                                       refresh pushes)
+        _sign_out_current()            this browser's realm sign-out + rotation
+        enforce_timeouts(), _timeout_expiry(), _timeout_reason()
+                                       the request-time lifetimes
+        _end_timed_out_user_sessions() the sweep's lifetimes
+        _enforce_session_cap()         max_web_sessions_per_user
+        _deactivate_browsers()         unused-browser retirement
+        _end_stale_impersonations()    impersonation_max_days
+        _list_user_sessions(), get_sessions_for_user(), get_current_session_info()
+                                       the listing
+        _signed_in_user_session_ids()  what the terminate family may end
+
+    Machine sessions (Session):
+        _set_api_identity(), _end_api_key_session(),
+        _end_expired_api_key_sessions(), _reset_api_identity()
+                                       API key sessions
+        _use_harness_session(), _use_portal_harness_session()
+                                       harness row reuse
+        _begin_virtual(), _end_virtual(), _is_virtual(), _is_frozen(),
+        _refuse_if_frozen(), _snapshot_context(), _restore_context()
+                                       virtual sessions and the task boundary
+        _testing_reset(), $_browser_session_id_for_tests
+                                       the test runner's seams
+
+    Portal seams (Session, for Portal_Session and Session_Link only):
+        _set_portal_identity(), _apply_portal_impersonation(),
+        _end_portal_impersonation(), _get_portal_*(), _portal_query(),
+        _clone_session_to_this_host(), _current_browser_session_id()
+
+    Elsewhere:
+        Audit_Session                  audit sessions (current_id(), describe(),
+                                       list_page_for_user_session(), join(),
+                                       _declare() for a dispatcher task)
+        Task_Dispatcher_Context        binds a #[Run_As_Dispatcher] run
+        Task_Runner::insert_row()      stamps user_session_id, audit session,
+                                       priority
+        Session_Cleanup_Service        the sweeps
+        Session_Link                   View as Client across hosts
+        Rsx_Two_Factor_Abstract        trusted browsers (session_id), the
+                                       challenge in the realm's values
+
+SYSTEM TABLES ARE PRIVATE
+    _sessions, _user_sessions, _audit_sessions, _session_values, _session_links,
+    _user_agents, _ip_addresses and the login histories are framework tables.
+    Application code never queries one, joins one or depends on a column of
+    one; a system table's schema is not a contract. Reach what they hold
+    through the interfaces on this page: get_sessions_for_user(),
+    get_current_session_info(), get_user_session_id(), get_audit_session(),
+    Audit_Session::list_page_for_user_session(), Audit_Session::join(),
+    Login_History.
+
+    The one reference an application makes is a constraint, not a query: a
+    table of BROWSER-scoped state of your own (a preference for this browser, a
+    half-finished import) declares
+
+        FOREIGN KEY (session_id) REFERENCES _sessions (id) ON DELETE CASCADE
+
+    with session_id NULLABLE when anything but a browser request may write the
+    row. A browser that has had a sign-in is never deleted (only made inactive),
+    so the cascade reaches a guest's rows and the rows of a key's deleted API
+    session. When an interface does not answer what you need, ask for it to be
+    extended (rsx:man database_schema_architecture).
+
 SEE ALSO
+    skill rspade:session-auth - login pages, session screens, termination,
+                                impersonation, lifetimes
     skill rspade:audit-session - recording, reading and joining audit sessions
-    rsx:man ip_addresses      - client addresses stored once; the geocode
-                                fields; Ip_Address::join()
     rsx:man auth              - identity model (login_users + users), the RsxAuth
                                 facade, invitations
-    rsx:man two_factor        - second factors: TOTP, passkeys, recovery codes,
-                                the challenge state machine, rsx:users:2fa:*
-    rsx:man sso               - federated sign-in: the ceremony, the policy
-                                hooks, STATUS_FAILED_SSO, rsx:users:sso:*
-    rsx:man user_preference_variables - get_variable() / set_variable() on the
-                                user records, and when a session value or a
-                                column is the right home instead
-    rsx:man auth_gates        - #[Auth] gates on every surface, #[Auth_Check]
-                                vocabulary, can_access, the error screens
+    rsx:man portal            - Portal_Session, View as Client, the linked-session
+                                handshake
+    rsx:man tasks             - RUNNING AS THE DISPATCHER, the claim order
+    rsx:man external_api      - bearer keys and the key's session
+    rsx:man two_factor        - second factors, the challenge, trusted browsers
+    rsx:man sso               - federated sign-in
+    rsx:man rsx_debug         - the harness and its reused sessions
+    rsx:man testing           - virtual sessions in tests, __as_browser()
+    rsx:man realtime          - the session refresh push
+    rsx:man revisions         - _transactions.audit_session_id
+    rsx:man ip_addresses      - client addresses stored once; Ip_Address::join()
+    rsx:man database_schema_architecture - system tables, readers, the one
+                                foreign key an application makes
+    rsx:man config_rsx        - the rsx.sessions block
+    rsx:man user_preference_variables - per-account preferences, and when a
+                                session value or a column is the right home
+    rsx:man auth_gates        - #[Auth] gates, #[Auth_Check], can_access
     rsx:man event_hooks       - #[OnEvent] handlers, incl. session.terminated
-    rsx:man realtime          - the session refresh push a termination emits
-    rsx:man routing           - Type-safe URL generation
-    rsx:man model_fetch       - Ajax ORM with security
-    rsx:man module_organization - RSX application structure
-    rsx:man acls              - Roles, permissions, Permission facade
-    rsx:man portal            - Portal session + portal-side impersonation
-                                (read-only; linked-session handshake)
+    rsx:man csrf              - the CSRF checks every transport makes
+    rsx:man acls              - roles, permissions, can_admin_role()

@@ -14,15 +14,17 @@ use App\RSpade\Core\Session\Session_Cleanup_Service;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Tests for Session::find_by_token(),
- * Session::purge_playwright_sessions(), and the Session_Cleanup_Service hourly task
- * (identity-aware + per-type inactivity windows + chunked deletes).
+ * Tests for Session::find_by_token() and the Session_Cleanup_Service sweeps: the hourly guest
+ * cleanup (chunked deletes), the daily retirement of unused browsers, and the retention
+ * prunes.
  *
- * There is ONE session per browser and no realm column. A TYPE_WEB row is judged on
- * whether it carries an IDENTITY - login_user_id OR portal_user_id, since one row
- * serves both experiences - and the machine types keep their own short backstops. The
- * portal cases below exist because a rule that only looked at login_user_id would read
- * a portal-only browser session as anonymous and collect it far too soon.
+ * There is ONE session per browser. A TYPE_WEB row is deleted only when nobody has EVER
+ * signed in on it - _sessions.first_signed_in_at is null - and it has gone unused for
+ * rsx.sessions.guest_expiry_minutes; a browser that has had a sign-in is never deleted (its
+ * user sessions are the record of where an account signed in), and neither is a machine
+ * row. It is made inactive instead once unused for rsx.sessions.unused_session_days. The
+ * portal cases exist because a rule that only looked at the staff realm would read a
+ * portal-only browser as a guest's.
  *
  * The sweeps perform DELETEs that must COMMIT to be observable, so
  * per-test transaction rollback is disabled and a DB reset runs first.
@@ -33,31 +35,32 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
     protected static $use_database_transactions = false;
 
     /**
-     * Insert a _sessions row with the given age/identity and return its token.
+     * Insert a browser row of the given age - with a staff sign-in (login_user_id), a portal
+     * one (portal_user_id), or none - and return its token. 'signed_out' records the sign-in
+     * as already ended.
      */
     private static function __insert_session(array $overrides = []): string
     {
-        $token = bin2hex(random_bytes(16));
-        $age_days = $overrides['age_days'] ?? 0;
-        $when = now()->subDays($age_days);
+        $when = now()->subDays($overrides['age_days'] ?? 0);
+        $sign_out = !empty($overrides['signed_out'])
+            ? ['signed_out_at' => $when, 'sign_out_reason_id' => Session::SIGN_OUT_SIGNED_OUT]
+            : [];
 
-        DB::table('_sessions')->insert([
-            'session_token' => $token,
-            'csrf_token'    => bin2hex(random_bytes(16)),
-            'active'        => 1,
-            'site_id'       => 0,
-            'type_id'       => $overrides['type_id'] ?? Session::TYPE_WEB,
-            'version'       => 1,
-            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('10.0.0.9'),
-            'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id($overrides['user_agent'] ?? 'test-browser'),
-            'login_user_id' => $overrides['login_user_id'] ?? null,
-            'portal_user_id' => $overrides['portal_user_id'] ?? null,
-            'last_active'   => $overrides['last_active'] ?? $when,
-            'created_at'    => $overrides['created_at'] ?? $when,
-            'updated_at'    => $when,
-        ]);
+        $options = [
+            'type_id' => $overrides['type_id'] ?? Session::TYPE_WEB,
+            'last_active' => $overrides['last_active'] ?? $when,
+            'created_at' => $overrides['created_at'] ?? $when,
+        ];
 
-        return $token;
+        if (isset($overrides['login_user_id'])) {
+            $options['staff'] = array_merge(['login_user_id' => $overrides['login_user_id'], 'site_id' => 1, 'last_active_at' => $when], $sign_out);
+        }
+
+        if (isset($overrides['portal_user_id'])) {
+            $options['portal'] = array_merge(['portal_user_id' => $overrides['portal_user_id'], 'portal_site_id' => 1, 'last_active_at' => $when], $sign_out);
+        }
+
+        return static::__insert_session_fixture($options)['token'];
     }
 
 
@@ -96,7 +99,6 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'session_token' => $token,
             'csrf_token'    => $csrf,
             'active'        => 1,
-            'site_id'       => 0,
             'version'       => 1,
             'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('127.0.0.1'),
             'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test'),
@@ -119,7 +121,6 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
             'session_token' => $token,
             'csrf_token'    => $csrf,
             'active'        => 0,
-            'site_id'       => 0,
             'version'       => 1,
             'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('127.0.0.1'),
             'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test'),
@@ -136,114 +137,67 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
     // Session_Cleanup_Service::cleanup_sessions() (the scheduled task)
     // -------------------------------------------------------------------------
 
+    public static function test_cleanup_sessions_task_deletes_only_guests_past_their_window()
+    {
+        // Past the 30-day guest window: a guest's browser, and browsers that HAVE had a
+        // sign-in (signed in now, or long since signed out).
+        $old_guest = static::__insert_session(['age_days' => 40]);
+        $old_signed_in = static::__insert_session(['age_days' => 200, 'login_user_id' => 12345]);
+        $old_signed_out = static::__insert_session(['age_days' => 200, 'login_user_id' => 12345, 'signed_out' => true]);
+        // Within it.
+        $fresh_guest = static::__insert_session(['age_days' => 2]);
+
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
+
+        static::__assert_greater_than(0, $result['guest_deleted'], 'a guest browser past its window deleted');
+
+        $remaining = DB::table('_sessions')
+            ->whereIn('session_token', [$old_guest, $old_signed_in, $old_signed_out, $fresh_guest])
+            ->pluck('session_token')
+            ->all();
+
+        static::__assert_false(in_array($old_guest, $remaining, true), 'guest beyond 30 days gone');
+        static::__assert_true(in_array($old_signed_in, $remaining, true), 'a browser with a sign-in is never deleted here');
+        static::__assert_true(in_array($old_signed_out, $remaining, true), 'nor one whose sign-in has ended: it is the history');
+        static::__assert_true(in_array($fresh_guest, $remaining, true), 'guest within 30 days kept');
+    }
+
     /**
-     * A signed-in row is collected once it has been untouched for longer than the longer
-     * of the two idle limits plus the Ajax grace. The cases below set both limits to 90
-     * days, so a 40-day-old row separates "identified" from "anonymous" (30 days).
+     * The guest predicate is the browser's own first_signed_in_at, not a look at its user
+     * sessions: a browser stamped as signed in once is kept even with no user session row
+     * left, and a guest's session values go with it.
      */
-    private static function __ninety_day_idle_limits(): void
+    public static function test_cleanup_sessions_task_reads_first_signed_in_at()
     {
-        config([
-            'rsx.sessions.staff.max_idle_minutes' => 129600,
-            'rsx.sessions.portal.max_idle_minutes' => 129600,
-        ]);
+        $stamped = static::__insert_session(['age_days' => 40]);
+        DB::table('_sessions')->where('session_token', $stamped)->update(['first_signed_in_at' => now()->subDays(50)]);
+
+        $guest = static::__insert_session(['age_days' => 40]);
+        $guest_id = (int) DB::table('_sessions')->where('session_token', $guest)->value('id');
+        DB::table('_session_values')->insert(['session_id' => $guest_id, 'realm_id' => Session::REALM_GUEST, 'value_key' => 'k', 'value' => '1']);
+
+        static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
+
+        static::__assert_equals(1, DB::table('_sessions')->where('session_token', $stamped)->count(), 'a browser that once had a sign-in is kept');
+        static::__assert_equals(0, DB::table('_sessions')->where('session_token', $guest)->count(), 'the guest is deleted');
+        static::__assert_equals(0, DB::table('_session_values')->where('session_id', $guest_id)->count(), 'with its values');
     }
 
-    public static function test_cleanup_sessions_task_applies_per_type_windows()
+    /**
+     * The sweep deletes guests only. A harness row is reused by every rsx:debug run of its
+     * account, an API key's row lives as long as the key, and a command has no row at all -
+     * so an old harness row with no sign-in left on it is not a guest's, and stays.
+     */
+    public static function test_cleanup_sessions_task_leaves_harness_rows_alone()
     {
-        static::__ninety_day_idle_limits();
-
-        // Beyond every window...
-        $old_web = static::__insert_session(['age_days' => 200, 'login_user_id' => 12345]);
-        $old_anonymous = static::__insert_session(['age_days' => 40]);
-        // ...and within them (identified web 90 days here, anonymous 30 days).
-        $mid_web = static::__insert_session(['age_days' => 40, 'login_user_id' => 12345]);
-        $fresh_anonymous = static::__insert_session(['age_days' => 2]);
-
-        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
-
-        static::__assert_greater_than(0, $result['web'], 'web session past its window deleted');
-        static::__assert_greater_than(0, $result['anonymous'], 'never-authenticated session past its window deleted');
-
-        $remaining = DB::table('_sessions')
-            ->whereIn('session_token', [$old_web, $old_anonymous, $mid_web, $fresh_anonymous])
-            ->pluck('session_token')
-            ->all();
-
-        static::__assert_false(in_array($old_web, $remaining, true), 'identified web session beyond the idle limit gone');
-        static::__assert_false(in_array($old_anonymous, $remaining, true), 'anonymous beyond 30 days gone');
-        static::__assert_true(in_array($mid_web, $remaining, true), 'identified web session within the idle limit kept (40d only passes the ANONYMOUS cutoff)');
-        static::__assert_true(in_array($fresh_anonymous, $remaining, true), 'anonymous within 30 days kept');
-    }
-
-    public static function test_cleanup_sessions_task_expires_playwright_on_its_own_window()
-    {
-        // A PLAYWRIGHT (harness) session one day past its own window, and an authenticated
-        // WEB session of the SAME age - which is nowhere near the 3-month web window. The
-        // split proves the sweep reads the type column, not the age alone.
-        $stale_harness = static::__insert_session([
-            'type_id'       => Session::TYPE_PLAYWRIGHT,
-            'login_user_id' => 12345,
-            'age_days'      => 2,
-        ]);
-        $same_age_web = static::__insert_session([
-            'login_user_id' => 12345,
-            'age_days'      => 2,
-        ]);
-        // A harness session inside its window survives.
-        $fresh_harness = static::__insert_session([
-            'type_id'       => Session::TYPE_PLAYWRIGHT,
-            'login_user_id' => 12345,
-            'last_active'   => now()->subMinutes(10),
+        $old_harness = static::__insert_session([
+            'type_id'  => Session::TYPE_PLAYWRIGHT,
+            'age_days' => 400,
         ]);
 
-        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
+        static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
 
-        static::__assert_greater_than(0, $result['playwright'], 'stale harness session deleted');
-
-        $remaining = DB::table('_sessions')
-            ->whereIn('session_token', [$stale_harness, $same_age_web, $fresh_harness])
-            ->pluck('session_token')
-            ->all();
-
-        static::__assert_false(in_array($stale_harness, $remaining, true), 'harness session past 1 day deleted');
-        static::__assert_true(in_array($same_age_web, $remaining, true), 'web session of the same age untouched');
-        static::__assert_true(in_array($fresh_harness, $remaining, true), 'recent harness session kept');
-    }
-
-    public static function test_cleanup_sessions_task_expires_cli_on_its_own_window()
-    {
-        // A CLI session normally deletes itself when its process ends; this window is
-        // the backstop for a process that was killed first. Same shape as the harness
-        // case above: a stale CLI row goes, a WEB row of the same age stays, and a CLI
-        // row inside the window survives.
-        $stale_cli = static::__insert_session([
-            'type_id'       => Session::TYPE_CLI,
-            'login_user_id' => 12345,
-            'age_days'      => 2,
-        ]);
-        $same_age_web = static::__insert_session([
-            'login_user_id' => 12345,
-            'age_days'      => 2,
-        ]);
-        $fresh_cli = static::__insert_session([
-            'type_id'       => Session::TYPE_CLI,
-            'login_user_id' => 12345,
-            'last_active'   => now()->subMinutes(10),
-        ]);
-
-        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
-
-        static::__assert_greater_than(0, $result['cli'], 'stale CLI session deleted');
-
-        $remaining = DB::table('_sessions')
-            ->whereIn('session_token', [$stale_cli, $same_age_web, $fresh_cli])
-            ->pluck('session_token')
-            ->all();
-
-        static::__assert_false(in_array($stale_cli, $remaining, true), 'CLI session past 1 day deleted');
-        static::__assert_true(in_array($same_age_web, $remaining, true), 'web session of the same age untouched');
-        static::__assert_true(in_array($fresh_cli, $remaining, true), 'recent CLI session kept');
+        static::__assert_equals(1, DB::table('_sessions')->where('session_token', $old_harness)->count(), 'a harness row is never swept as a guest');
     }
 
     public static function test_cleanup_sessions_task_chunked_delete_clears_backlog()
@@ -257,10 +211,265 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
 
         $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions', ['chunk_size' => 5]);
 
-        static::__assert_true($result['anonymous'] >= 12, 'all backlog rows deleted across chunks');
+        static::__assert_true($result['guest_deleted'] >= 12, 'all backlog rows deleted across chunks');
 
         $remaining = DB::table('_sessions')->whereIn('session_token', $tokens)->count();
         static::__assert_equals(0, $remaining, 'no backlog row survives the chunked delete');
+    }
+
+    // -------------------------------------------------------------------------
+    // cleanup_sessions(): sign-ins past their limits
+    // -------------------------------------------------------------------------
+
+    /**
+     * Run cleanup_sessions under known limits: 7 days from the sign-in, 8 hours idle and a
+     * 2-hour Ajax grace, in both realms.
+     */
+    private static function __run_cleanup_with_limits(array $params = []): array
+    {
+        $original = config('rsx.sessions');
+
+        try {
+            config([
+                'rsx.sessions.staff' => ['max_length_minutes' => 10080, 'max_idle_minutes' => 480],
+                'rsx.sessions.portal' => ['max_length_minutes' => 10080, 'max_idle_minutes' => 480],
+                'rsx.sessions.ajax_grace_minutes' => 120,
+            ]);
+
+            return static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions', $params);
+        } finally {
+            config(['rsx.sessions' => $original]);
+        }
+    }
+
+    /**
+     * A sign-in whose browser never came back is signed out once it is past a limit PLUS the
+     * Ajax grace, under the reason a request would have recorded: the pointer is cleared,
+     * the realm's values go, the browser keeps its token. One still inside the grace, and
+     * one inside its limits, stay signed in.
+     */
+    public static function test_cleanup_sessions_signs_out_sign_ins_past_their_limits()
+    {
+        $length = static::__insert_session_fixture([
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1, 'signed_in_at' => now()->subDays(8), 'last_page_view_at' => now()->subMinutes(5)],
+        ]);
+        $idle = static::__insert_session_fixture([
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1, 'signed_in_at' => now()->subDay(), 'last_page_view_at' => now()->subHours(11)],
+        ]);
+        $in_grace = static::__insert_session_fixture([
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1, 'signed_in_at' => now()->subDay(), 'last_page_view_at' => now()->subHours(9)],
+        ]);
+        $fresh = static::__insert_session_fixture([
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1],
+        ]);
+        DB::table('_session_values')->insert([
+            ['session_id' => $idle['id'], 'realm_id' => Session::REALM_STAFF, 'value_key' => 'wizard_step', 'value' => '3'],
+            ['session_id' => $idle['id'], 'realm_id' => Session::REALM_GUEST, 'value_key' => 'banner', 'value' => '1'],
+        ]);
+
+        $result = static::__run_cleanup_with_limits();
+
+        static::__assert_true($result['timed_out_signed_out'] >= 2, 'both expired sign-ins counted');
+
+        $user_session = fn (array $fixture) => DB::table('_user_sessions')->where('id', $fixture['staff_user_session_id'])->first();
+
+        static::__assert_equals(Session::SIGN_OUT_TIMED_OUT_LENGTH, (int) $user_session($length)->sign_out_reason_id, 'past 7 days + grace from the sign-in');
+        static::__assert_equals(Session::SIGN_OUT_TIMED_OUT_IDLE, (int) $user_session($idle)->sign_out_reason_id, 'past 8 hours + grace from the last page view');
+        static::__assert_null($user_session($in_grace)->signed_out_at, 'past the idle limit but inside the Ajax grace: an open page may still save');
+        static::__assert_null($user_session($fresh)->signed_out_at, 'inside its limits');
+
+        static::__assert_null(DB::table('_sessions')->where('id', $idle['id'])->value('staff_user_session_id'), 'the browser points at nobody');
+        static::__assert_equals($idle['token'], DB::table('_sessions')->where('id', $idle['id'])->value('session_token'), 'a remote browser keeps its token');
+        static::__assert_equals(0, DB::table('_session_values')->where('session_id', $idle['id'])->where('realm_id', Session::REALM_STAFF)->count(), 'the staff values went with the sign-in');
+        static::__assert_equals(1, DB::table('_session_values')->where('session_id', $idle['id'])->where('realm_id', Session::REALM_GUEST)->count(), 'the guest values stay');
+    }
+
+    /**
+     * Found by either clock, a sign-in is recorded under the EARLIER expiry, as a request
+     * would record it: here the idle limit passed days before the sign-in limit did.
+     */
+    public static function test_cleanup_sessions_records_the_earlier_expiry()
+    {
+        $both = static::__insert_session_fixture([
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1, 'signed_in_at' => now()->subDays(7)->subHours(3), 'last_page_view_at' => now()->subDays(7)->subHours(2)],
+        ]);
+
+        static::__run_cleanup_with_limits();
+
+        static::__assert_equals(
+            Session::SIGN_OUT_TIMED_OUT_IDLE,
+            (int) DB::table('_user_sessions')->where('id', $both['staff_user_session_id'])->value('sign_out_reason_id')
+        );
+    }
+
+    /**
+     * Only the sign-in a browser POINTS AT runs its clocks: the impersonator's own sign-in,
+     * suspended behind a live impersonation, is not signed out for idleness while the
+     * impersonation is in use. An impersonation past its limits takes that sign-in with it.
+     */
+    public static function test_cleanup_sessions_judges_only_the_current_sign_in()
+    {
+        $live = static::__insert_session_fixture([
+            'staff_own' => ['login_user_id' => 777, 'site_id' => 1, 'last_page_view_at' => now()->subDays(2)],
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1, 'impersonator_login_user_id' => 777],
+        ]);
+        $expired = static::__insert_session_fixture([
+            'staff_own' => ['login_user_id' => 778, 'site_id' => 1, 'last_page_view_at' => now()->subDays(2)],
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1, 'impersonator_login_user_id' => 778, 'last_page_view_at' => now()->subHours(11)],
+        ]);
+
+        static::__run_cleanup_with_limits();
+
+        $signed_out_at = fn ($id) => DB::table('_user_sessions')->where('id', $id)->value('signed_out_at');
+
+        static::__assert_null($signed_out_at($live['staff_own_user_session_id']), 'a suspended sign-in is judged when the browser returns to it');
+        static::__assert_null($signed_out_at($live['staff_user_session_id']), 'the live impersonation stays');
+        static::__assert_not_null($signed_out_at($expired['staff_user_session_id']), 'an idle impersonation is signed out');
+        static::__assert_not_null($signed_out_at($expired['staff_own_user_session_id']), 'with the impersonator\'s own sign-in behind it');
+    }
+
+    /**
+     * The portal realm runs the same sweep on its own limits, and a backlog larger than one
+     * batch clears.
+     */
+    public static function test_cleanup_sessions_times_out_portal_sign_ins_across_batches()
+    {
+        $portal_user_id = static::__make_portal_user_id();
+        $fixtures = [];
+
+        for ($i = 0; $i < 7; $i++) {
+            $fixtures[] = static::__insert_session_fixture([
+                'portal' => ['portal_user_id' => $portal_user_id, 'portal_site_id' => 1, 'last_page_view_at' => now()->subHours(12)],
+            ]);
+        }
+
+        static::__run_cleanup_with_limits(['chunk_size' => 3]);
+
+        $ids = array_column($fixtures, 'portal_user_session_id');
+
+        static::__assert_equals(7, DB::table('_user_sessions')->whereIn('id', $ids)->where('sign_out_reason_id', Session::SIGN_OUT_TIMED_OUT_IDLE)->count(), 'every portal sign-in past its idle limit, across batches');
+        static::__assert_equals(0, DB::table('_sessions')->whereIn('id', array_column($fixtures, 'id'))->whereNotNull('portal_user_session_id')->count(), 'no browser still points at one');
+    }
+
+    /** A limit of 0 is no limit: the sweep reads nothing for that clock. */
+    public static function test_cleanup_sessions_leaves_sign_ins_alone_when_the_limits_are_off()
+    {
+        $old = static::__insert_session_fixture([
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1, 'signed_in_at' => now()->subDays(60), 'last_page_view_at' => now()->subDays(20)],
+        ]);
+        $original = config('rsx.sessions.staff');
+
+        try {
+            config(['rsx.sessions.staff' => ['max_length_minutes' => 0, 'max_idle_minutes' => 0]]);
+            static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
+        } finally {
+            config(['rsx.sessions.staff' => $original]);
+        }
+
+        static::__assert_null(DB::table('_user_sessions')->where('id', $old['staff_user_session_id'])->value('signed_out_at'));
+    }
+
+    // -------------------------------------------------------------------------
+    // Session_Cleanup_Service::deactivate_unused_sessions() (the daily retirement)
+    // -------------------------------------------------------------------------
+
+    /**
+     * A browser unused past rsx.sessions.unused_session_days (30) is made inactive - signed-in
+     * history or not - and never deleted; a browser in use, and an API key's row however old,
+     * stay active.
+     */
+    public static function test_deactivate_unused_sessions_retires_only_browsers_past_the_window()
+    {
+        $old_signed_in = static::__insert_session(['age_days' => 40, 'login_user_id' => 12345]);
+        $old_guest = static::__insert_session(['age_days' => 31]);
+        $fresh = static::__insert_session(['age_days' => 2, 'login_user_id' => 12345]);
+        $old_api = static::__insert_session(['age_days' => 90, 'type_id' => Session::TYPE_API]);
+
+        $result = static::__run_task_method(Session_Cleanup_Service::class, 'deactivate_unused_sessions');
+
+        $active = fn (string $token) => (int) DB::table('_sessions')->where('session_token', $token)->value('active');
+
+        static::__assert_true($result['deactivated'] >= 2, 'both browsers past the window counted');
+        static::__assert_equals(0, $active($old_signed_in), 'a browser unused for 40 days is inactive');
+        static::__assert_equals(0, $active($old_guest), 'a guest unused for 31 days is inactive');
+        static::__assert_equals(1, $active($fresh), 'a browser in use stays active');
+        static::__assert_equals(1, $active($old_api), 'an API key\'s row is not a browser and is left alone');
+        static::__assert_equals(1, DB::table('_sessions')->where('session_token', $old_signed_in)->count(), 'retired, never deleted');
+    }
+
+    /**
+     * Retiring a browser signs out what is still signed in on it (SIGN_OUT_BROWSER_UNUSED): the
+     * user session leaves the "signed in" set, the pointer is cleared and the realm's values go
+     * with it. A sign-in on a browser still in use is untouched.
+     */
+    public static function test_deactivate_unused_sessions_signs_out_what_is_signed_in_there()
+    {
+        $old = static::__insert_session_fixture([
+            'last_active' => now()->subDays(40),
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1, 'last_active_at' => now()->subDays(40)],
+        ]);
+        $fresh = static::__insert_session_fixture([
+            'last_active' => now()->subDays(2),
+            'staff' => ['login_user_id' => 12345, 'site_id' => 1],
+        ]);
+        DB::table('_session_values')->insert([
+            'session_id' => $old['id'],
+            'realm_id' => Session::REALM_STAFF,
+            'value_key' => 'wizard_step',
+            'value' => json_encode(3),
+        ]);
+
+        static::__run_task_method(Session_Cleanup_Service::class, 'deactivate_unused_sessions');
+
+        $retired = DB::table('_user_sessions')->where('id', $old['staff_user_session_id'])->first();
+        static::__assert_not_null($retired->signed_out_at, 'the sign-in on the unused browser is signed out');
+        static::__assert_equals(Session::SIGN_OUT_BROWSER_UNUSED, (int) $retired->sign_out_reason_id);
+        static::__assert_null(DB::table('_sessions')->where('id', $old['id'])->value('staff_user_session_id'), 'the browser points at nobody');
+        static::__assert_equals(0, DB::table('_session_values')->where('session_id', $old['id'])->count(), 'the realm values went with the sign-in');
+        static::__assert_equals(0, (int) DB::table('_sessions')->where('id', $old['id'])->value('active'));
+
+        static::__assert_null(DB::table('_user_sessions')->where('id', $fresh['staff_user_session_id'])->value('signed_out_at'), 'a browser in use keeps its sign-in');
+        static::__assert_not_contains_signed_in($old['staff_user_session_id']);
+
+        $days = (int) config('rsx.sessions.unused_session_days');
+        static::__assert_equals("Browser unused for {$days} days", Session::sign_out_reason_label(Session::SIGN_OUT_BROWSER_UNUSED));
+    }
+
+    /** The retired sign-in no longer counts as signed in for its account (the session cap's set). */
+    private static function __assert_not_contains_signed_in(int $user_session_id): void
+    {
+        static::__assert_false(
+            in_array($user_session_id, Session::_signed_in_user_session_ids(Session::REALM_STAFF, 12345, null, false), true),
+            'a retired sign-in is not counted among the account\'s signed-in sessions'
+        );
+    }
+
+    public static function test_deactivate_unused_sessions_clears_a_backlog_across_chunks()
+    {
+        $tokens = [];
+        for ($i = 0; $i < 12; $i++) {
+            $tokens[] = static::__insert_session(['age_days' => 45, 'login_user_id' => 12345]);
+        }
+
+        static::__run_task_method(Session_Cleanup_Service::class, 'deactivate_unused_sessions', ['chunk_size' => 5]);
+
+        static::__assert_equals(0, DB::table('_sessions')->whereIn('session_token', $tokens)->where('active', 1)->count(), 'every backlog row retired across chunks');
+    }
+
+    public static function test_deactivate_unused_sessions_is_off_at_zero_days()
+    {
+        $old = static::__insert_session(['age_days' => 400, 'login_user_id' => 12345]);
+        $original = config('rsx.sessions.unused_session_days');
+
+        try {
+            config(['rsx.sessions.unused_session_days' => 0]);
+            $result = static::__run_task_method(Session_Cleanup_Service::class, 'deactivate_unused_sessions');
+        } finally {
+            config(['rsx.sessions.unused_session_days' => $original]);
+        }
+
+        static::__assert_equals(0, $result['deactivated']);
+        static::__assert_equals(1, (int) DB::table('_sessions')->where('session_token', $old)->value('active'), '0 never retires a browser');
     }
 
     // -------------------------------------------------------------------------
@@ -320,53 +529,6 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
     }
 
     // -------------------------------------------------------------------------
-    // Session::purge_playwright_sessions() (rsx:debug self-cleanup)
-    // -------------------------------------------------------------------------
-
-    public static function test_purge_playwright_sessions_takes_only_harness_rows_from_this_run()
-    {
-        $since = now()->subMinute();
-
-        $run_harness = static::__insert_session(['type_id' => Session::TYPE_PLAYWRIGHT]);
-        $run_web = static::__insert_session([]);
-        // A harness row from another run, recent enough to still be in flight.
-        $other_run_harness = static::__insert_session([
-            'type_id'     => Session::TYPE_PLAYWRIGHT,
-            'created_at'  => now()->subMinutes(5),
-            'last_active' => now()->subSeconds(30),
-        ]);
-
-        $deleted = Session::purge_playwright_sessions($since->format('Y-m-d H:i:s.v'));
-
-        static::__assert_greater_than(0, $deleted, 'the run\'s own harness session was deleted');
-
-        $remaining = DB::table('_sessions')
-            ->whereIn('session_token', [$run_harness, $run_web, $other_run_harness])
-            ->pluck('session_token')
-            ->all();
-
-        static::__assert_false(in_array($run_harness, $remaining, true), 'this run\'s harness session deleted');
-        static::__assert_true(in_array($run_web, $remaining, true), 'a browser session created in the same window is never touched');
-        static::__assert_true(in_array($other_run_harness, $remaining, true), 'a concurrent run\'s live harness session survives');
-    }
-
-    public static function test_purge_playwright_sessions_collects_stale_rows_from_earlier_runs()
-    {
-        // A harness row left behind by an earlier run - created before this run's window
-        // and idle past the grace period. It must not wait out the playwright window.
-        $abandoned = static::__insert_session([
-            'type_id'     => Session::TYPE_PLAYWRIGHT,
-            'created_at'  => now()->subHours(3),
-            'last_active' => now()->subHours(3),
-        ]);
-
-        Session::purge_playwright_sessions(now()->format('Y-m-d H:i:s.v'));
-
-        $count = DB::table('_sessions')->where('session_token', $abandoned)->count();
-        static::__assert_equals(0, $count, 'abandoned harness session collected by the next run');
-    }
-
-    // -------------------------------------------------------------------------
     // A PORTAL identity counts as an identity
     // -------------------------------------------------------------------------
 
@@ -392,105 +554,21 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         return static::__insert_session($overrides + ['portal_user_id' => static::__make_portal_user_id()]);
     }
 
-    public static function test_a_portal_identity_is_not_read_as_anonymous()
+    public static function test_a_portal_sign_in_is_not_read_as_a_guest()
     {
-        static::__ninety_day_idle_limits();
-
-        // 40 days idle: past the 30-day anonymous window, well inside the 90-day
-        // window an IDENTIFIED session gets here. Only the portal_user_id half of the
-        // identity test saves it.
+        // 40 days idle: past the 30-day guest window. Only the portal sign-in saves it.
         $portal = static::__insert_portal_session(['age_days' => 40]);
-        $anonymous = static::__insert_session(['age_days' => 40]);
+        $guest = static::__insert_session(['age_days' => 40]);
 
         static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
 
         $remaining = DB::table('_sessions')
-            ->whereIn('session_token', [$portal, $anonymous])
+            ->whereIn('session_token', [$portal, $guest])
             ->pluck('session_token')
             ->all();
 
-        static::__assert_true(in_array($portal, $remaining, true), 'a portal-only session is an IDENTIFIED session');
-        static::__assert_false(in_array($anonymous, $remaining, true), 'the identity-less row of the same age IS collected');
-    }
-
-    public static function test_a_portal_identity_expires_on_the_idle_limit()
-    {
-        static::__ninety_day_idle_limits();
-
-        $stale = static::__insert_portal_session(['age_days' => 200]);
-        $fresh = static::__insert_portal_session(['age_days' => 40]);
-
-        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
-
-        static::__assert_greater_than(0, $result['web'], 'identified session past the idle limit deleted');
-
-        $remaining = DB::table('_sessions')
-            ->whereIn('session_token', [$stale, $fresh])
-            ->pluck('session_token')
-            ->all();
-
-        static::__assert_false(in_array($stale, $remaining, true), 'portal session beyond the idle limit gone');
-        static::__assert_true(in_array($fresh, $remaining, true), 'portal session within the idle limit kept');
-    }
-
-    /**
-     * The collection window follows the LONGER idle limit plus the Ajax grace: with the
-     * limits at 30 days each, a signed-in row 29 days old is kept and one 31 days old goes.
-     */
-    public static function test_identified_rows_follow_the_configured_idle_limit()
-    {
-        config([
-            'rsx.sessions.staff.max_idle_minutes' => 43200,
-            'rsx.sessions.portal.max_idle_minutes' => 43200,
-            'rsx.sessions.ajax_grace_minutes' => 120,
-        ]);
-
-        $inside = static::__insert_session(['age_days' => 29, 'login_user_id' => 12345]);
-        $outside = static::__insert_session(['age_days' => 31, 'login_user_id' => 12345]);
-
-        static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
-
-        $remaining = DB::table('_sessions')->whereIn('session_token', [$inside, $outside])->pluck('session_token')->all();
-
-        static::__assert_true(in_array($inside, $remaining, true), 'a signed-in row inside the idle limit is kept');
-        static::__assert_false(in_array($outside, $remaining, true), 'a signed-in row past the idle limit and the grace is collected');
-    }
-
-    /**
-     * An idle limit of 0 means a sign-in never goes idle, so no signed-in row may be
-     * collected for its age - in either experience, because one row can carry both.
-     */
-    public static function test_an_unlimited_idle_window_collects_no_identified_row()
-    {
-        config([
-            'rsx.sessions.staff.max_idle_minutes' => 43200,
-            'rsx.sessions.portal.max_idle_minutes' => 0,
-        ]);
-
-        $ancient = static::__insert_session(['age_days' => 900, 'login_user_id' => 12345]);
-
-        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
-
-        static::__assert_equals(0, $result['web']);
-        static::__assert_true(DB::table('_sessions')->where('session_token', $ancient)->exists(), 'the row is still there');
-    }
-
-    /**
-     * A device record lives exactly as long as some session row still names it.
-     */
-    public static function test_a_device_no_row_names_is_collected()
-    {
-        $orphan = DB::table('_session_devices')->insertGetId(['user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('orphan')]);
-        $in_use = DB::table('_session_devices')->insertGetId(['user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('in use')]);
-
-        $token = static::__insert_session(['age_days' => 1, 'login_user_id' => 12345]);
-        DB::table('_sessions')->where('session_token', $token)->update(['device_id' => $in_use]);
-
-        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
-
-        static::__assert_greater_than(0, $result['devices']);
-        static::__assert_false(DB::table('_session_devices')->where('id', $orphan)->exists(), 'the orphan is gone');
-        static::__assert_true(DB::table('_session_devices')->where('id', $in_use)->exists(), 'the device in use is kept');
+        static::__assert_true(in_array($portal, $remaining, true), 'a portal-only browser has had a sign-in');
+        static::__assert_false(in_array($guest, $remaining, true), 'the guest browser of the same age IS collected');
     }
 
     // -------------------------------------------------------------------------
@@ -511,20 +589,18 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A string nothing names is deleted; one named by ANY of the four referencing tables
-     * is kept - each of them, so a table left out of the sweep's list would show here.
+     * A string nothing names is deleted; one named by ANY of the referencing tables is kept -
+     * each of them, so a table left out of the sweep's list would show here.
      */
     public static function test_cleanup_user_agents_deletes_only_what_nothing_names()
     {
         $orphan = static::__insert_user_agent('sweep-orphan', 10);
         $by_session = static::__insert_user_agent('sweep-session', 10);
-        $by_device = static::__insert_user_agent('sweep-device', 10);
         $by_login = static::__insert_user_agent('sweep-login', 10);
         $by_audit = static::__insert_user_agent('sweep-audit', 10);
 
         $token = static::__insert_session(['age_days' => 1, 'login_user_id' => 12345]);
         DB::table('_sessions')->where('session_token', $token)->update(['user_agent_id' => $by_session]);
-        DB::table('_session_devices')->insert(['user_agent_id' => $by_device]);
         DB::table('_login_history')->insert([
             'email_attempted' => 'sweep@rspade.test',
             'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('127.0.0.1'),
@@ -540,14 +616,13 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_user_agents');
 
         $remaining = DB::table('_user_agents')
-            ->whereIn('id', [$orphan, $by_session, $by_device, $by_login, $by_audit])
+            ->whereIn('id', [$orphan, $by_session, $by_login, $by_audit])
             ->pluck('id')
             ->all();
 
         static::__assert_greater_than(0, $result['total_deleted']);
         static::__assert_false(in_array($orphan, $remaining), 'the string nothing names is gone');
         static::__assert_true(in_array($by_session, $remaining), 'named by a session: kept');
-        static::__assert_true(in_array($by_device, $remaining), 'named by a device: kept');
         static::__assert_true(in_array($by_login, $remaining), 'named by a login-history row: kept');
         static::__assert_true(in_array($by_audit, $remaining), 'named by an audit session: kept');
     }
@@ -578,46 +653,5 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
         static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_user_agents');
 
         static::__assert_true(DB::table('_user_agents')->where('id', $old)->exists());
-    }
-
-    public static function test_the_playwright_backstop_ignores_which_identity_a_row_carries()
-    {
-        $portal_harness = static::__insert_portal_session([
-            'type_id'  => Session::TYPE_PLAYWRIGHT,
-            'age_days' => 2,
-        ]);
-        $same_age_portal_web = static::__insert_portal_session(['age_days' => 2]);
-
-        $result = static::__run_task_method(Session_Cleanup_Service::class, 'cleanup_sessions');
-
-        static::__assert_greater_than(0, $result['playwright'], 'stale harness session deleted');
-
-        $remaining = DB::table('_sessions')
-            ->whereIn('session_token', [$portal_harness, $same_age_portal_web])
-            ->pluck('session_token')
-            ->all();
-
-        static::__assert_false(in_array($portal_harness, $remaining, true), 'a harness row past 1 day is deleted whatever it carries');
-        static::__assert_true(in_array($same_age_portal_web, $remaining, true), 'a real browser session of the same age untouched');
-    }
-
-    public static function test_purge_playwright_sessions_collects_harness_rows_whatever_they_carry()
-    {
-        $since = now()->subMinute();
-
-        $staff_harness = static::__insert_session(['type_id' => Session::TYPE_PLAYWRIGHT, 'login_user_id' => 12345]);
-        $portal_harness = static::__insert_portal_session(['type_id' => Session::TYPE_PLAYWRIGHT]);
-        $portal_web = static::__insert_portal_session([]);
-
-        Session::purge_playwright_sessions($since->format('Y-m-d H:i:s.v'));
-
-        $remaining = DB::table('_sessions')
-            ->whereIn('session_token', [$staff_harness, $portal_harness, $portal_web])
-            ->pluck('session_token')
-            ->all();
-
-        static::__assert_false(in_array($staff_harness, $remaining, true), 'a staff-identity harness session deleted');
-        static::__assert_false(in_array($portal_harness, $remaining, true), 'a portal-identity harness session deleted too - TYPE_PLAYWRIGHT is the whole predicate');
-        static::__assert_true(in_array($portal_web, $remaining, true), 'a real browser session is never touched');
     }
 }

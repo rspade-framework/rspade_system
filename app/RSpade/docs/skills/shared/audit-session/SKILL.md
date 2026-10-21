@@ -1,6 +1,6 @@
 ---
 name: audit-session
-description: "Attributing logged activity to who did it and from where - Session::get_audit_session_id() to record, Session::get_audit_session() to read one back, Audit_Session::join() and Audit_Session::column() to show, search and sort audit fields (IP address, user agent, identity, impersonator) in a datagrid query. Use when building an activity log, action log, audit trail or export record; adding an audit_session_id column; showing the IP address or browser behind a logged action; deciding between get_session_id() and get_audit_session_id(); or when a stored session id no longer resolves."
+description: "Attributing logged activity to who did it and from where - Session::get_audit_session_id() to record (keyed on user session x site x address x user agent; null in a command or plain task), Session::get_audit_session() to read one back, Audit_Session::join() and Audit_Session::column() to show, search and sort audit fields (IP address, user agent, identity, impersonator) in a datagrid query, and Audit_Session::list_page_for_user_session() for a per-sign-in detail screen. Use when building an activity log, action log, audit trail or export record; adding an audit_session_id column; showing the IP address or browser behind a logged action; building the detail page of a \"where you're signed in\" entry; deciding between get_session_id() and get_audit_session_id(); or when get_audit_session_id() answers null in a command or task."
 ---
 
 # Audit sessions
@@ -11,30 +11,30 @@ A record of something somebody **did** - an activity log row, an export record, 
 
 | | `Session::get_session_id()` | `Session::get_audit_session_id()` |
 |---|---|---|
-| what it is | the browser's CURRENT session row | a separate number - a permanent record of the acting context |
-| for | state that belongs to the session and should die with it (a per-browser preference, a half-finished wizard) | the HISTORY of what somebody did |
-| lifetime | deleted by cleanup, deleted when a command ends, **replaced at every sign-in** | **never deleted** |
-| works in a command / task / API call | no usable id | yes |
-| a table of yours storing it | `FOREIGN KEY (session_id) REFERENCES _sessions (id) ON DELETE CASCADE` - the ONE reference an application makes to a system table | a plain `BIGINT` column; no foreign key |
+| what it is | the BROWSER (one row per browser; whoever is signed in on it changes) | a permanent record of the acting context |
+| for | state that belongs to the browser and should die with it (a per-browser preference, a half-finished import) | the HISTORY of what somebody did |
+| lifetime | a guest's is deleted; one that has had a sign-in is kept but made inactive when unused | **never deleted** |
+| in a command / plain task | null | null - nobody is acting |
+| in a `#[Run_As_Dispatcher]` task | the dispatching browser | the dispatching request's audit session |
+| on an API call | the key's own session | yes - per caller address and agent |
+| a table of yours storing it | nullable, `FOREIGN KEY (session_id) REFERENCES _sessions (id) ON DELETE CASCADE` - the ONE reference an application makes to a system table | a plain nullable `BIGINT`; no foreign key |
 
-**Never store `get_session_id()` on a record of activity.** The id stops resolving - and for a command, a task or an API call it never resolved at all.
-
-For session-scoped state, reach for `Session::put_value()` before a table of your own: its values follow the browser across a sign-in, and rows keyed to a session id do not (the browser gets a new one).
+**Never store `get_session_id()` on a record of activity** - it names a browser, not who used it.
 
 ## Recording
 
 ```php
 $log = new Action_Log_Model();
 $log->description = 'exported contacts';
-$log->audit_session_id = Session::get_audit_session_id();   // int, always
+$log->audit_session_id = Session::get_audit_session_id();   // ?int
 $log->save();
 ```
 
 - Creates **no session**. Safe on any code path.
-- **Works everywhere**: a browser request, a Bearer-key API call, a command, a task.
-- **The same context answers the same id.** A context is the site, the staff identity, the portal identity and its site, both impersonators, the client address, the session row and the user agent. When any of them changes - a sign-in, a site switch, an impersonation, a new address, a different browser - the next call answers a new audit session.
-- One request resolves its context once, however many rows it writes.
-- The framework stamps it on every recorded unit of work itself (`_transactions.audit_session_id` - skill `rspade:revisions`).
+- **The key**: the acting USER SESSION (the request realm's sign-in - staff, or portal on a portal request; on an API call the key owner's API user session) x the site acted on x the client address x the user agent. A guest's act is keyed on the browser row instead (or on nothing, for a visitor with no row). When any of them changes - a sign-in, a site switch, an impersonation, a new address - the next call answers a new audit session. The row also records the identity, both impersonators, the browser (`session_id`) and the session type.
+- **NULL where nobody is acting**: a command, a plain task and the `rsx:debug` harness record none. **A column storing it is nullable**, and a screen shows a null as "system" or blank. A `#[Run_As_Dispatcher]` task answers the audit session stamped at dispatch, so its writes count under the requester's own context (address, agent, browser).
+- One process resolves a context once, however many rows it writes; `last_seen_at` advances at most once a minute.
+- The framework stamps it on every recorded unit of work itself (`_transactions.audit_session_id`, nullable - skill `rspade:revisions`).
 
 Migration for your own table: `audit_session_id BIGINT NULL` with an index. Nothing more.
 
@@ -52,7 +52,7 @@ $context = Session::get_audit_session($log->audit_session_id);   // array, or nu
 id, site_id, login_user_id, portal_user_id, portal_site_id,
 impersonator_login_user_id, impersonator_user_id,
 ip_address, user_agent (the full string),
-session_row_id, device_id, session_type_id,
+session_id (the browser), user_session_id, session_type_id,
 first_seen_at, last_seen_at
 ```
 
@@ -95,24 +95,42 @@ foreach ($query->limit(25)->get() as $log) {
 
 A table of your own that records a bare client address (not a whole acting context) stores `Ip_Address::id($ip)` and reads it back with `Ip_Address::join($query, 'table.column', 'prefix')` or `describe()` - `rsx:man ip_addresses`.
 
+### The audit sessions of one sign-in - a detail screen
+
+A "where you're signed in" entry (a `get_sessions_for_user()` row - its `id` is a user session id) opens onto the addresses and user agents that sign-in acted from:
+
+```php
+$page = Audit_Session::list_page_for_user_session([
+    'user_session_id' => $user_session_id,   // REQUIRED
+    'filter' => $search,                     // IP address or user agent
+    'sort' => 'last_seen_at',                // last_seen_at | first_seen_at | ip_address
+    'order' => 'desc',
+    'offset' => 0,
+    'limit' => 25,                           // 1..200
+]);
+// ['rows' => [get_audit_session() shape + device_summary], 'total' => int, 'offset' => 0, 'limit' => 25]
+```
+
+**It is ungated** - your endpoint first decides whether the caller may see that user session (the id must be one of the entries the screen lists for the account). Invalid input throws `InvalidArgumentException`. Rows exist only for contexts something ASKED for (a revision-recorded write, a dispatched task, your own log): a sign-in that only browsed has none. Worked examples: the `/_sys` user session detail (`_Sys_Audit_Sessions_DataGrid`) and the template's `settings/user_management/session_view/`.
+
 ## Grouping what was done
 
 | scope | by | answers |
 |---|---|---|
-| one acting context | the audit session id itself | this identity, from this address, in this session |
-| one sign-in | `session_row_id` | everything done during one signed-in session |
-| one browser across sign-ins | `device_id` | the whole picture for an investigation |
+| one acting context | the audit session id itself | this sign-in, from this address and browser, on this site |
+| one sign-in | `user_session_id` | everything one account did through one sign-in on one browser (all its sign-ins there, since a user session is reused) |
+| one browser | `session_id` | every account's acts from that browser - the picture for an investigation |
 
-`session_row_id` and `device_id` are correlation numbers, not references: they keep grouping correctly after the session and the device record are gone. In a joined query they are `Audit_Session::column('session_row_id')` / `column('device_id')`.
+Both are correlation numbers, not references: they keep grouping correctly whatever happens to the sessions. In a joined query they are `Audit_Session::column('user_session_id')` / `column('session_id')`.
 
 ## Gotchas
 
-- **It is not the session id.** Do not compare an audit session id with `get_session_id()`, and do not pass one to the session-termination functions.
-- **`null` user agent and address are normal** - a command or a task has neither. `session_type_id` says which kind of caller it was (`Session::TYPE_WEB` / `_API` / `_CLI` / `_PLAYWRIGHT`).
+- **It is not the session id, nor a user session id.** Do not compare an audit session id with `get_session_id()`, and do not pass one to the session-termination functions (they take a user session id).
+- **A null audit session id is normal** - a command or a plain task records none. `session_type_id` on a row says which kind of caller it was (`Session::TYPE_WEB` for a browser, `Session::TYPE_API` for an API key).
 - **Under impersonation** the audit session carries BOTH the identity being acted as and the impersonator. Show the impersonator; that is who did it.
-- **It fails loudly.** `get_audit_session_id()` returns an `int` and throws if the database cannot record it - the audit row could not have been written either.
+- **It fails loudly.** Where an audit session exists, `get_audit_session_id()` throws if the database cannot record it - the audit row could not have been written either.
 - **No foreign key into `_audit_sessions`.** The row is never deleted, so there is nothing for a constraint to protect.
 
 ## Full reference
 
-`php artisan rsx:man session` (AUDIT SESSIONS). Related: `rspade:session-auth` (sessions, sign-in, lifetime), `rspade:revisions` (the change history the framework attributes itself).
+`php artisan rsx:man session` (AUDIT SESSIONS, THE THREE RECORDS). Related: `rspade:session-auth` (sessions, sign-in, lifetime), `rspade:revisions` (the change history the framework attributes itself).

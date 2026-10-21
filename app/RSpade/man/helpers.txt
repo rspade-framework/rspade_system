@@ -124,9 +124,13 @@ API REFERENCE
         string - a declared text column takes Type::from_untrusted_encoded()
         instead. rsx:man sanitize_rich_text_html.
 
+    nl2brhtml(?string $text): string
+        Multi-line plain text in, HTML that shows it out: escape_html() then
+        nl2br(), so every line break becomes <br />. '' for null. The twin of
+        JS nl2brhtml().
+
     nl2br() is PHP's own and does NOT escape: it is safe only on text that is
-    already HTML-safe, so plain text with line breaks is
-    nl2br(escape_html($text)).
+    already HTML-safe, so plain text with line breaks is nl2brhtml($text).
 
     snake_to_camel(string $string, bool $capitalize_first = false): string
     camel_to_snake(string $string): string
@@ -327,7 +331,7 @@ EXAMPLES
     Escaping vs sanitizing - a security decision, not a style one:
 
         // The field is PLAIN TEXT the user typed. Escape it; keep line breaks.
-        $notes_html = nl2br(escape_html($record->notes));
+        $notes_html = nl2brhtml($record->notes);
 
         // The field came from a WYSIWYG editor and is SUPPOSED to be markup.
         $body_html = sanitize_rich_text_html($record->body_html);

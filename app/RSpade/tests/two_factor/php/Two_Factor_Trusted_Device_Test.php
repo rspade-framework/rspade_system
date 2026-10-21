@@ -34,15 +34,18 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
  *  - trust ends on a password change, on factor removal, on ending one's other sessions
  *    (this browser kept), and the cleanup task removes what has expired.
  *
- * The "browser" is a _session_devices row named through Session::$_device_id_for_tests (a
- * CLI process has no session row). Rows roll back with the per-test transaction.
+ * The "browser" is a _sessions row named through Session::$_browser_session_id_for_tests (a
+ * CLI process has no browser). Rows roll back with the per-test transaction.
  */
 class Two_Factor_Trusted_Device_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     public static function teardown()
     {
         Login_Throttle::reset('CLI');
-        Session::$_device_id_for_tests = null;
+        Session::$_browser_session_id_for_tests = null;
         Rsx_Two_Factor::_reset_request_state();
         Portal_Session::cli_set_portal_user_id(0);
         Rsx_Portal::set_portal_request(false);
@@ -54,10 +57,10 @@ class Two_Factor_Trusted_Device_Test extends Rsx_Test_Abstract
 
     private static function __device(): int
     {
-        $device_id = (int) DB::table('_session_devices')->insertGetId(['user_agent_id' => null]);
-        Session::$_device_id_for_tests = $device_id;
+        $session_id = static::__insert_session_fixture()['id'];
+        Session::$_browser_session_id_for_tests = $session_id;
 
-        return $device_id;
+        return $session_id;
     }
 
     private static function __make_login_user(): Login_User_Model
@@ -139,7 +142,7 @@ class Two_Factor_Trusted_Device_Test extends Rsx_Test_Abstract
         static::__device();
         static::__assert_false(Rsx_Two_Factor::device_is_trusted($login_user), 'another browser is not trusted');
 
-        Session::$_device_id_for_tests = $device_id;
+        Session::$_browser_session_id_for_tests = $device_id;
         DB::table('_two_factor_trusted_devices')->update(['trusted_until' => now()->subMinute()->format('Y-m-d H:i:s.v')]);
         static::__assert_false(Rsx_Two_Factor::device_is_trusted($login_user), 'trust ends at trusted_until');
 
@@ -226,7 +229,7 @@ class Two_Factor_Trusted_Device_Test extends Rsx_Test_Abstract
         static::__assert_equals(1, Rsx_Two_Factor::forget_trusted_devices($login_user, true));
         static::__assert_true(Rsx_Two_Factor::device_is_trusted($login_user), 'this browser is kept');
 
-        Session::$_device_id_for_tests = $first;
+        Session::$_browser_session_id_for_tests = $first;
         static::__assert_false(Rsx_Two_Factor::device_is_trusted($login_user), 'the other is forgotten');
         static::__assert_true($second !== $first);
     }

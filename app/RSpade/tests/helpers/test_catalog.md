@@ -24,3 +24,12 @@ Type: php. Last updated: 2026-10-11.
 | helpers-qr-06 | recommended sizes grow with the text | a long string | 4 px and 0.02 in per module, above the one-inch minimum | implemented |
 | helpers-qr-07 | text outside ASCII is encoded | accented and CJK text | a drawn code | implemented |
 | helpers-qr-08 | empty text is refused | `''` | InvalidArgumentException | implemented |
+
+## nl2brhtml / html_to_text (`playwright/html_text_helpers.js`)
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| helpers-h2t-01 | `nl2brhtml()` escapes and turns each line break (LF, CRLF) into `<br />`; null/undefined give '' | `'a<b>\nc & d'`, `'x\r\ny'`, null, undefined, 42 | `'a&lt;b&gt;<br />\nc &amp; d'`, `'x<br />\r\ny'`, '', '', '42' | implemented |
+| helpers-h2t-02 | `html_to_text()` drops tags and decodes entities | markup, an entity-encoded JSON string, `<p><br></p>`, null | the text; the decoded JSON; ''; '' | implemented |
+| helpers-h2t-03 | `html_to_text()` parses inertly - an `<img>` in the input is never fetched | markup with an `<img>` at a watched URL | no request for it | implemented |
+| helpers-h2t-04 | PHP `nl2brhtml()` escapes and breaks lines like the JS twin; null gives '' (`php/Nl2brhtml_Test.php`) | the same LF and CRLF strings; null; an `<img>` | identical output; ''; no `<img` | implemented |

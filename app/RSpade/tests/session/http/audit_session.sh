@@ -90,8 +90,8 @@ if grep -qi '^Set-Cookie: rsx=' "$headers"; then
     fail "asking for the audit session set a session cookie"
 fi
 rm -f "$headers"
-row="$(sql "SELECT a.session_row_id, a.login_user_id, i.ip_address, u.user_agent, a.session_type_id FROM _audit_sessions a LEFT JOIN _user_agents u ON u.id = a.user_agent_id LEFT JOIN _ip_addresses i ON i.id = a.ip_address_id WHERE a.id = ${anon_id}")"
-echo "$row" | grep -qE '"session_row_id": *null' || fail "a cookie-less context recorded a session row: $row"
+row="$(sql "SELECT a.session_id, a.login_user_id, i.ip_address, u.user_agent, a.session_type_id FROM _audit_sessions a LEFT JOIN _user_agents u ON u.id = a.user_agent_id LEFT JOIN _ip_addresses i ON i.id = a.ip_address_id WHERE a.id = ${anon_id}")"
+echo "$row" | grep -qE '"session_id": *null' || fail "a cookie-less context recorded a browser: $row"
 echo "$row" | grep -qE '"login_user_id": *null' || fail "a cookie-less context recorded an identity: $row"
 echo "$row" | grep -qE '"ip_address": *"[0-9a-f.:]+"' || fail "no client address recorded: $row"
 echo "$row" | grep -q 'audit-session-http.\{1,2\}one' || fail "the user agent was not recorded: $row"
@@ -111,7 +111,7 @@ other="$(audit_id "$(curl -s -A 'audit-session-http/two' "$PROBE" 2>/dev/null)")
 echo "[TEST] 3. OK" >&2
 
 # ---------------------------------------------------------------------------
-# 4. Signed in: identity, tenant, session row and device.
+# 4. Signed in: identity, tenant, the browser and its user session.
 # ---------------------------------------------------------------------------
 echo "[TEST] 4. A signed-in browser's audit session names who and which session..." >&2
 curl -s -o /dev/null -c "$JAR" "${BASE}/ssr-test/session-get-session-id" 2>/dev/null
@@ -125,21 +125,21 @@ status="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -c "$JAR" \
     "${BASE}/login" 2>/dev/null)"
 [ "$status" = "302" ] || fail "login returned $status (expected 302)"
 token="$(grep -w rsx "$JAR" | awk '{print $7}')"
-session="$(sql "SELECT id, login_user_id, device_id FROM _sessions WHERE session_token = '${token}'")"
+session="$(sql "SELECT s.id, s.staff_user_session_id, u.login_user_id FROM _sessions s JOIN _user_sessions u ON u.id = s.staff_user_session_id WHERE s.session_token = '${token}'")"
 session_id="$(echo "$session" | grep -oE '"id": *[0-9]+' | grep -oE '[0-9]+$' || true)"
+user_session_id="$(echo "$session" | grep -oE '"staff_user_session_id": *[0-9]+' | grep -oE '[0-9]+$' || true)"
 login_user_id="$(echo "$session" | grep -oE '"login_user_id": *[0-9]+' | grep -oE '[0-9]+$' || true)"
-device_id="$(echo "$session" | grep -oE '"device_id": *[0-9]+' | grep -oE '[0-9]+$' || true)"
-[ -n "$session_id" ] && [ -n "$login_user_id" ] && [ -n "$device_id" ] || fail "could not read the signed-in session row: $session"
+[ -n "$session_id" ] && [ -n "$user_session_id" ] && [ -n "$login_user_id" ] || fail "could not read the signed-in session row: $session"
 
 signed_id="$(audit_id "$(curl -s -b "$JAR" -A 'audit-session-http/one' "$PROBE" 2>/dev/null)")"
 [ -n "$signed_id" ] && [ "$signed_id" != "$anon_id" ] || fail "signing in did not change the audit session ($signed_id)"
-row="$(sql "SELECT session_row_id, login_user_id, device_id, site_id FROM _audit_sessions WHERE id = ${signed_id}")"
-echo "$row" | grep -qE "\"session_row_id\": *${session_id}\b" || fail "the audit session does not name session row ${session_id}: $row"
+row="$(sql "SELECT session_id, user_session_id, login_user_id, site_id FROM _audit_sessions WHERE id = ${signed_id}")"
+echo "$row" | grep -qE "\"session_id\": *${session_id}\b" || fail "the audit session does not name browser ${session_id}: $row"
+echo "$row" | grep -qE "\"user_session_id\": *${user_session_id}\b" || fail "the audit session does not name user session ${user_session_id}: $row"
 echo "$row" | grep -qE "\"login_user_id\": *${login_user_id}\b" || fail "the audit session does not name the identity: $row"
-echo "$row" | grep -qE "\"device_id\": *${device_id}\b" || fail "the audit session does not name the device: $row"
 echo "[TEST] 4. OK" >&2
 
-(cd "$PROJECT_DIR" && php artisan db:query "DELETE FROM _sessions WHERE device_id = ${device_id}" >/dev/null 2>&1)
+(cd "$PROJECT_DIR" && php artisan db:query "DELETE FROM _sessions WHERE id = ${session_id}" >/dev/null 2>&1)
 
 echo "PASS: $TEST_NAME"
 exit 0

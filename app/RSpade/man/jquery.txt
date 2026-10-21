@@ -477,7 +477,8 @@ BUTTON BUSY-STATE (Button_Utils)
     Loader theming (downstream apps)
         The loader is styled in the framework's Button_Utils.scss and restyled
         entirely via CSS custom properties - an app never edits or overrides
-        the core styles themselves. Defaults:
+        the core styles themselves. Each is declared on :root in
+        Button_Utils.scss with its default:
             --btn-submitting-loader-color      currentColor
             --btn-submitting-loader-size       1em
             --btn-submitting-loader-thickness  2px

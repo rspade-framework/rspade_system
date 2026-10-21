@@ -11,7 +11,7 @@ use RuntimeException;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\RSpade\Core\Revisions\Revision;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Concurrency;
@@ -35,11 +35,13 @@ use App\RSpade\Core\Task\Task_Runner;
  *
  *   1. Pool lock. If the pool already holds its cap of OTHER members: unlock and exit 0.
  *      Otherwise join.
- *   2. Still under the lock: claim the next run - a due PENDING run (dispatched work), or, in
- *      the scheduled pool when no dispatched work is due, a due #[Schedule], whose run row is
- *      created here - marked RUNNING with this worker's pool identity (worker_id +
- *      worker_generation), worker_host and worker_pid. Unlock.
- *   3. Run the task - no pool lock held.
+ *   2. Still under the lock: claim the next run - a due PENDING run (#[Run_As_Dispatcher]
+ *      runs first, then other on-demand runs, then scheduled-origin runs; oldest first within
+ *      each), or, in the scheduled pool when no on-demand work is due, a due #[Schedule],
+ *      whose run row is created here - marked RUNNING with this worker's pool identity
+ *      (worker_id + worker_generation), worker_host and worker_pid. Unlock.
+ *   3. Run the task - no pool lock held. Each run gets a context of its own and leaves the
+ *      process blank (Task_Runner::execute()), so nothing one run was reaches the next.
  *   4. Pool lock. Record the outcome, then claim the next run (back to 2). When nothing is
  *      claimable, or --max-time has passed: leave, unlock, exit.
  *
@@ -116,6 +118,11 @@ class Task_Worker_Command extends Command
 
             return 0;
         }
+
+        // Every run ends with the process blank (Session::_end_virtual()). A spawned worker
+        // starts blank, so this restores nothing; a caller running the worker IN-PROCESS
+        // (Artisan::call) gets back the context it called with.
+        $launch_context = Session::_snapshot_context();
 
         try {
             // Admission, under the pool lock: count() is the OTHER members, so a full pool is
@@ -225,6 +232,8 @@ class Task_Worker_Command extends Command
             Task_Pool::disconnect();
 
             throw $e;
+        } finally {
+            Session::_restore_context($launch_context);
         }
 
         $this->info("[WORKER] Worker finished. Processed {$this->tasks_processed} task(s)");
@@ -233,8 +242,8 @@ class Task_Worker_Command extends Command
     }
 
     /**
-     * Claim the next run: a due pending run (dispatched work, oldest due first) in either pool;
-     * then, in the scheduled pool only, a due schedule.
+     * Claim the next run: a due pending run in either pool - by claim tier, then oldest due
+     * first (claim_pending_run()); then, in the scheduled pool only, a due schedule.
      *
      * UNDER THE POOL LOCK, and it never releases it. Everything here is THE RULE's allowance:
      * task-table reads and writes, plus a NON-BLOCKING try of the identity run lock.
@@ -262,7 +271,18 @@ class Task_Worker_Command extends Command
     }
 
     /**
-     * The oldest due PENDING run, claimed by a guarded write.
+     * The next due PENDING run, claimed by a guarded write.
+     *
+     * CLAIM ORDER: by claim tier (_tasks.priority, stamped at insert by Task_Runner::insert_row())
+     * - a #[Run_As_Dispatcher] run first (somebody's request, waiting), then every other
+     * on-demand run, then scheduled-origin runs - and within a tier the OLDEST due first
+     * (scheduled_for, then id). Read through idx_tasks_claim_priority (status_id, priority,
+     * scheduled_for, id), whose order is the ORDER BY: the first due row in index order is the
+     * answer, with no sort.
+     *
+     * A run set aside this pass (skip_ids: its run lock is held) is passed over, whatever its
+     * tier, so a blocked high-priority run never holds up the runs behind it; it is looked at
+     * again after the next settle.
      */
     private function claim_pending_run(array $identity)
     {
@@ -272,6 +292,7 @@ class Task_Worker_Command extends Command
             ->when($this->skip_ids, function ($query) {
                 $query->whereNotIn('id', $this->skip_ids);
             })
+            ->orderBy('priority')
             ->orderBy('scheduled_for')
             ->orderBy('id')
             ->first(['id', 'class', 'method', 'params_hash']);
@@ -323,9 +344,30 @@ class Task_Worker_Command extends Command
      * run is claimed by claim_pending_run() under every run lock it needs, like any other
      * pending run. The tick is then CLAIM_SKIPPED, and the next claim pass picks the run up if
      * its locks are free.
+     *
+     * ON-DEMAND WORK FIRST: no schedule is ticked while a due on-demand run (priority below
+     * PRIORITY_SCHEDULED) is pending and claimable this pass - it is claimed first
+     * (claim_next_task() asks claim_pending_run() before this, and this re-asks in case one
+     * was dispatched since). A run set aside this pass because its run lock is held does not
+     * count: it cannot run now, and a schedule must not wait behind it.
      */
     private function claim_due_schedule(array $identity)
     {
+        $now = now()->format('Y-m-d H:i:s.v');
+
+        $on_demand_due = DB::table('_tasks')
+            ->where('status_id', Task_Run_Model::STATUS_PENDING)
+            ->where('priority', '<', Task_Runner::PRIORITY_SCHEDULED)
+            ->where('scheduled_for', '<=', $now)
+            ->when($this->skip_ids, function ($query) {
+                $query->whereNotIn('id', $this->skip_ids);
+            })
+            ->exists();
+
+        if ($on_demand_due) {
+            return self::CLAIM_SKIPPED;
+        }
+
         $schedule = DB::table('_task_schedules')
             ->where('next_run_at', '<=', now()->format('Y-m-d H:i:s.v'))
             ->orderBy('next_run_at')
@@ -458,11 +500,8 @@ class Task_Worker_Command extends Command
         $instance = Task_Instance::find($task_id);
         $this->info("[WORKER] Executing task {$task_id}: {$instance->get_class()}::{$instance->get_method()}");
 
-        // One task is one unit of work for revision history. A worker is a LONG-LIVED
-        // process running unrelated tasks back to back; without this, every revision the
-        // worker ever recorded would be filed under the first task's transaction.
-        Revision::_reset_request_state('task', $instance->get_class() . '::' . $instance->get_method());
-
+        // Each run gets a context of its own and ends blank (Task_Runner::execute()): a fresh
+        // revision unit and virtual session before, Session::_end_virtual() after.
         return [$instance, Task_Runner::execute($instance, true, true)];
     }
 }

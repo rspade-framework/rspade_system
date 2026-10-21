@@ -22,10 +22,12 @@ the application half lives in `rsx/portal/` (which has its own CLAUDE.md).
 ## Invariants worth stating out loud
 
 - **ONE session per browser.** One session cookie, one `_sessions` row, shared by
-  the staff app and the portal. The row is a PROPERTY BAG; the EXPERIENCE is a
-  property of the REQUEST. Both identities set at once is NORMAL. Never mix the
-  two facades' properties, and never delete or deactivate the row on portal
-  logout — clear the portal properties.
+  the staff app and the portal. The row points at the browser's current staff
+  sign-in and current portal sign-in, each a `_user_sessions` row; the EXPERIENCE
+  is a property of the REQUEST. Both signed in at once is NORMAL. Never mix the
+  two facades, and never delete or deactivate the row on portal logout — sign
+  the portal user session out (`Session::_sign_out_current('portal', ...)`), which
+  clears the portal pointer and the portal realm's session values.
 - **Identity is not experience.** App code that must fork forks on
   `Rsx_Portal::is_portal_request()`, never on `is_logged_in()`.
 - **RSpade never resolves the portal's site.** The application declares it with

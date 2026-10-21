@@ -85,30 +85,28 @@ class Session_Temporary_Site_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * An existing session row is NOT rewritten - the declaration is ambient, not a
-     * mutation. A browser mid-session keeps the tenant it had, and gets it back when
-     * the declaration is cleared.
+     * An existing session is NOT rewritten - the declaration is ambient, not a mutation. A
+     * process whose own tenant is declared keeps it, and gets it back when the temporary
+     * declaration is cleared; the session row and its user sessions are not touched.
      */
     public static function test_an_existing_row_is_left_untouched()
     {
         self::__fresh();
 
         Session::impersonate(9, null, null);
-        $session_id = Session::get_session_id();
-
-        $before = DB::table('_sessions')->where('id', $session_id)->value('site_id');
-        static::__assert_equals(9, (int) $before);
+        $session_id = static::__as_browser();
+        $before = (array) DB::table('_sessions')->where('id', $session_id)->first();
 
         Session::set_temporary_site_id(4242);
 
-        $after = DB::table('_sessions')->where('id', $session_id)->value('site_id');
-        static::__assert_equals(9, (int) $after, 'the stored row must not be rewritten');
+        static::__assert_equals($before, (array) DB::table('_sessions')->where('id', $session_id)->first(), 'the stored row must not be rewritten');
+        static::__assert_equals(0, DB::table('_user_sessions')->where('session_id', $session_id)->count(), 'no user session is written');
 
         // ...and the declaration still wins for the reader.
         static::__assert_equals(4242, Session::get_site_id());
 
         Session::clear_temporary_site_id();
-        static::__assert_equals(9, Session::get_site_id(), 'clearing returns to the stored row');
+        static::__assert_equals(9, Session::get_site_id(), 'clearing returns to the tenant the process declared');
     }
 
     // =====================================================================

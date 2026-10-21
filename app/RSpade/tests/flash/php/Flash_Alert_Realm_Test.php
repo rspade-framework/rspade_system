@@ -31,6 +31,9 @@ use App\RSpade\Lib\Flash\Flash_Alert_Model;
  */
 class Flash_Alert_Realm_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     private static int $_session_a_id = 0;
 
     private static int $_session_b_id = 0;
@@ -60,7 +63,6 @@ class Flash_Alert_Realm_Test extends Rsx_Test_Abstract
         $session->session_token = $tag . '-' . bin2hex(random_bytes(16));
         $session->csrf_token = bin2hex(random_bytes(16));
         $session->active = true;
-        $session->site_id = 0;
         $session->type_id = Session::TYPE_WEB;
         $session->version = 1;
         $session->ip_address = '10.0.0.9';
@@ -100,11 +102,10 @@ class Flash_Alert_Realm_Test extends Rsx_Test_Abstract
     // =====================================================================
 
     /**
-     * A portal-context write mints ONE session - the browser's - and never a second
-     * one alongside it. (The two-row design this replaced was what made a portal flash
-     * write mint an extra staff session and set an extra cookie.)
+     * A portal-context write resolves the browser's ONE session and never mints a second
+     * row alongside it: the portal facade answers the same row the staff facade does.
      */
-    public static function test_portal_context_write_mints_exactly_one_session()
+    public static function test_portal_context_write_resolves_the_browsers_one_session()
     {
         static::__reset_session();
         Rsx_Portal::set_portal_request(true);
@@ -114,9 +115,9 @@ class Flash_Alert_Realm_Test extends Rsx_Test_Abstract
         $session_id = static::__invoke_protected('_resolve_session_id', []);
 
         static::__assert_equals(
-            $before + 1,
+            $before,
             static::__session_row_count(),
-            'exactly one session row is created'
+            'the browser this test acts as already has its row - nothing else is created'
         );
         static::__assert_equals(
             (int) Session::get_session_id(),

@@ -48,8 +48,9 @@ DESCRIPTION
     administrators do with tenants, billing or customers. Those are application
     concepts and they stay in the application.
 
-    It has eight screens, in sidebar order: Dashboard, Debug Flags, Tasks,
-    Task Workers, Email & SMS, Logs, Sites and Users, each described below. A screen over
+    It has nine screens, in sidebar order: Dashboard, Debug Flags, Tasks,
+    Task Workers, Email & SMS, Logs, Sites, Users and Portal Users, each
+    described below. A screen over
     site-scoped data reads EVERY site, never the developer's own tenant. What
     an application has to coexist with is the panel's SHAPE - the tree, the
     URL, the gate, the switch and the reserved namespace - covered in the
@@ -287,10 +288,23 @@ DESCRIPTION
                  the membership is enabled, whether it is ACTIVE, whether it
                  requires a second factor, whether it may use the API, and
                  its invitation state (pending, accepted, expired).
-      Sessions   its live sessions (Session::get_sessions_for_user()): device,
-                 IP, site, session type, signed in, last active, and for an
-                 impersonated session the identity doing it. "This browser"
-                 marks the developer's own session on their own identity.
+      Sessions   where it is signed in (Session::get_sessions_for_user()):
+                 one row per user session - one browser's sign-in on one site,
+                 however often it signed in there - signed in, and signed out
+                 within rsx.sessions.unused_session_days with the reason; its
+                 API keys in use, marked; never an rsx:debug harness browser.
+                 Device, state, last IP, site, signed in, last active, sign-in
+                 count, and for an impersonation the identity doing it. "This
+                 browser" marks the developer's own session on their own
+                 identity. A row opens the session
+                 (`/_sys/users/<id>/sessions/<user_session_id>`; an id that
+                 is not one of the identity's listed sessions is not found):
+                 its facts, End session while it is signed in, and its
+                 activity - every address and browser it did something
+                 attributed to it from (its audit sessions,
+                 Audit_Session::list_page_for_user_session()), last seen
+                 first, a page at a time, searched by IP or browser. Viewing
+                 pages records no activity.
       Sign-ins   its whole _login_history, newest first, a page at a time
                  (outcome, IP, device, location, the email given), searched
                  by IP or browser. The table holds what Login_History stores -
@@ -319,15 +333,16 @@ DESCRIPTION
       End all sessions (header)
                  signs every browser holding the identity out now (each is
                  pushed to reload). On your own identity it spares the browser
-                 you are using.
+                 you are using. An API key's use is not ended: revoking the
+                 key ends it.
       Enable / Disable (a membership row)
                  the membership's own switch (users.is_enabled): a disabled
                  membership cannot sign in to its site and a session on it
                  ends on its next request. Refused for the membership your own
                  session is on.
-      End (a session row)
+      End (a signed-in session row, and the session screen)
                  signs that one browser out. Refused for the session you are
-                 using - sign out instead.
+                 using - sign out instead - and for an API key's use.
       Remove / Remove all (Security, second factors)
                  the calls rsx:users:2fa:remove makes: one factor (its recovery
                  codes go with the last one), or every factor and recovery
@@ -343,6 +358,42 @@ DESCRIPTION
     model records revisions. Removing a factor or disconnecting a provider is
     recorded nowhere. There is no delete, and is_developer is never editable
     here (it is set by hand in the database).
+
+    Portal Users (`/_sys/portal-users`) lists the CLIENT-PORTAL users
+    (portal_users, rsx:man portal) on every site, with id, email, site,
+    status (Active, Inactive, Suspended; "Reset required" beside it while a
+    password reset is required), verified, last sign-in and created date;
+    filtered by status and by site, searched by email. A portal user belongs
+    to exactly one site. Its printed name (Portal_User_Model::
+    get_printed_name()) is shown under the email when the application's
+    model override makes it something other than the email. A soft-deleted
+    portal user is not listed. A row opens the portal user
+    (`/_sys/portal-users/<id>`, the portal_users id; a soft-deleted or
+    missing id is not found), in four tabs:
+
+      Overview   its facts: the site (linking to the Sites screen), status,
+                 verified, whether a portal sign-in is admitted
+                 (Portal_User_Model::can_login(): active AND verified), whether
+                 a password reset is required, last sign-in, last seen.
+      Sessions   where it is signed in to the portal
+                 (Portal_Session::get_sessions_for_user()): one row per
+                 browser, signed in and recently signed out with the reason;
+                 device, state, last IP, signed in, last active, sign-in
+                 count; a staff member's View as Client session is included,
+                 marked and names the staff member. A row opens the session
+                 (`/_sys/portal-users/<id>/sessions/<user_session_id>`): its
+                 facts and its activity, as on the Users screen.
+      Sign-ins   its whole _portal_login_history, newest first, a page at a
+                 time through Portal_Login_History::list_page() (outcome, IP,
+                 device, the email given), searched by the email given, IP or
+                 browser. No location: the portal table records none.
+      Security   the portal realm's second factors and connected sign-in
+                 providers (Rsx_Portal_Two_Factor, Rsx_Portal_Sso), with the
+                 same metadata-only rule as the Users screen.
+
+    The Portal Users screen is READ-ONLY. It changes no status, ends no
+    session, removes no factor and offers no View as Client: portal accounts
+    are administered by the application that invites them.
 
     On a narrow screen (below 768px) the panel's sidebar collapses behind a
     menu button in the top bar.
@@ -525,7 +576,7 @@ THE RESERVED NAMESPACE
     and `@rsx_include` alike, in PHP, JavaScript, jqhtml and Blade. So does a
     call to a framework `_`- or `__`-prefixed STATIC METHOD on a class whose own
     name is perfectly ordinary (`Ajax::_is_internal_call()`,
-    `Rsx._escape_html(...)`).
+    `Rsx._serialize_hash(...)`).
 
     The manifest is the whole scope, which is what keeps the rule from being a
     blanket underscore ban: your own `static::__helper()` calls, `__construct`,

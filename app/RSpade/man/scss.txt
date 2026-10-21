@@ -277,6 +277,43 @@ COLOURS - RUNTIME TOKENS, NOT SCSS VARIABLES
     which maps a prebuilt third-party stylesheet onto these same tokens so
     one set of rules serves both themes.
 
+    NO LITERAL DEFAULT ON A TOKEN (SCSS-PHANTOM-TOKEN-01)
+
+    Read a token bare - var(--bs-body-bg) - never with a literal default:
+
+        // WRONG - if --brand-ink is not declared, #2563eb is painted and
+        // nothing says so; the surface ignores every other theme
+        color: var(--brand-ink, #2563eb);
+
+        // RIGHT - an undeclared token shows up at once
+        color: var(--brand-ink);
+
+        // RIGHT - a chain reads a second token, never a literal
+        color: var(--brand-ink, var(--bs-primary));
+
+    A token either exists or it does not. When it exists the literal is
+    dead code; when it does not (a typo, a rename, a token never declared)
+    the literal wins, looks right in the theme it was written against, and
+    hides the missing token from every other theme and from dark mode. A
+    token composed into a larger value - hsl(var(--primary-hsl) / 0.1) -
+    is worse: without its literal the whole declaration is invalid and
+    paints nothing, with no error anywhere.
+
+    rsx:check reports every var() whose default is not itself a var()
+    read: a colour, a length, a number, a keyword, a Sass variable, or an
+    empty default (var(--x,)). Each var() is judged on its own, so a chain
+    that ends in a literal - var(--a, var(--b, #fff)) - is reported at the
+    inner read. Vendored trees (any vendor/ directory) and minified files
+    are not checked; the framework's own stylesheets are held to the rule
+    like any other. A value that needs a default is DECLARED once as a
+    custom property and read bare - a magic number becomes a named,
+    reusable constant: core declares its hooks (--rsx-form-veil, the
+    --btn-submitting-loader-* knobs) on :root, and an application's theme
+    redeclares them. A token that is
+    missing is declared in rsx/theme/ with its dark value beside it. A
+    deliberately optional knob is granted per file with
+    // @SCSS-PHANTOM-TOKEN-01-EXCEPTION <why it may be absent>.
+
 SCSS VARIABLES
 
     SCSS variable declarations ($var: value;) are allowed OUTSIDE the

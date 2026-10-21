@@ -53,6 +53,9 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  */
 class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     /** Raw counter keys created by these tests, deleted in teardown. */
     private static array $counter_keys_used = [];
 
@@ -359,7 +362,7 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
         $first_session_id = Session::get_session_id();
         $code = Rsx_Two_Factor::issue_code();
 
-        Session::_cli_end_session();
+        static::__as_browser();
 
         Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
 
@@ -383,7 +386,7 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
         Rsx_Two_Factor::begin_challenge($owner, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
         $code = Rsx_Two_Factor::issue_code();
 
-        Session::_cli_end_session();
+        static::__as_browser();
 
         Rsx_Two_Factor::begin_challenge($other, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
 

@@ -378,15 +378,18 @@ class Dispatcher
             return static::__transform_response($realm, $bearer_refusal, $original_method, $request);
         }
 
-        // --- A retired session token ---
-        // The row this request's cookie names was replaced by a successor (a sign-in, or
-        // an expiry) and is dead. The request was in flight when that happened, or comes
-        // from a copy of the old cookie: it is refused here, before the gates and before
-        // any application code, and no session cookie is sent with the answer.
-        if (Session::_arrived_on_retired_token()) {
+        // --- A rotated session token ---
+        // The browser's latest sign-in or sign-out rotated its tokens, and this SUB-RESOURCE
+        // request (an image, a download, an iframe's document) still carries the token that
+        // rotation replaced: it was in flight when that happened. It is refused here, before
+        // the gates and before any application code, and no session cookie is sent with the
+        // answer - answered as a guest, it would mint a row and overwrite the cookie the
+        // rotation just gave the browser. A page NAVIGATION on that token is never flagged:
+        // Session::init() answers it as an ordinary guest, so the browser recovers.
+        if (Session::_arrived_on_rotated_token()) {
             return static::__transform_response(
                 $realm,
-                Error_Screens::http_status($request, 401, 'This session has ended. Reload the page to continue.'),
+                Error_Screens::http_status($request, 401, 'This session has changed. Reload the page to continue.'),
                 $original_method,
                 $request
             );
@@ -774,7 +777,8 @@ class Dispatcher
         $dev_auth_user_id = $request->header('X-Dev-Auth-User-Id');
         $dev_auth_token = $request->header('X-Dev-Auth-Token');
 
-        if (!$dev_auth_user_id || !$dev_auth_token) {
+        // A request on a rotated token is refused further on, and nothing may mint for it.
+        if (!$dev_auth_user_id || !$dev_auth_token || Session::_arrived_on_rotated_token()) {
             return;
         }
 
@@ -798,15 +802,22 @@ class Dispatcher
             return;
         }
 
-        // A harness login is not a real login, so it must not stamp last_login. login()
-        // refuses an identity with no ENABLED site membership, and the harness is not an
-        // exemption from that: a disabled account renders anonymous here, named, because a
-        // harness run against a disabled account is a fixture problem.
-        if (!\App\RSpade\Core\Auth\RsxAuth::login($user, touch_last_login: false)) {
+        // login() refuses an identity with no ENABLED site membership, and the harness is not
+        // an exemption from that: a disabled account renders anonymous here, named, because a
+        // harness run against a disabled account is a fixture problem. Asked BEFORE the
+        // harness row is chosen, so a refused account mints nothing.
+        if (!\App\RSpade\Core\Auth\RsxAuth::has_enabled_membership($user)) {
             console_debug('AUTH', 'DEV AUTH REJECTED: login user ' . (int) $user->id
                 . ' holds no enabled site membership - rendering anonymous');
             return;
         }
+
+        // The harness signs in on ITS row for this account and site - the run's own, a
+        // reusable one within the ordinary sign-in limits, or a new one - never on whatever
+        // browser row the request carried. A harness login is not a real login, so it does
+        // not stamp last_login; on a row already signed in as the account it is a no-op.
+        Session::_use_harness_session((int) $user->id);
+        \App\RSpade\Core\Auth\RsxAuth::login($user, touch_last_login: false);
 
         console_debug('AUTH', "DEV AUTH: Authenticated as user {$user->id} via signed X-Dev-Auth-Token");
     }
@@ -832,7 +843,7 @@ class Dispatcher
         }
 
         $portal_user_id = $request->header('X-Dev-Auth-Portal-User-Id');
-        if (!$portal_user_id) {
+        if (!$portal_user_id || Session::_arrived_on_rotated_token()) {
             return;
         }
 
@@ -871,6 +882,9 @@ class Dispatcher
             );
         }
 
+        // The harness's row for this portal user (see Session::_use_harness_session()); on a
+        // row already signed in as it, the sign-in below is a no-op.
+        Session::_use_portal_harness_session((int) $portal_user_id, $declared_site_id);
         Portal_Session::set_portal_user_id((int) $portal_user_id);
 
         console_debug('PORTAL', "Dev auth: Logged in as portal user {$portal_user_id}");

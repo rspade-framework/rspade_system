@@ -17,8 +17,12 @@ They compose; use as many as the component needs.
 chain. `extends=""` is consulted only when the child body is slot-only; a child template
 containing real markup renders its own markup and ignores it.
 
-If both the JS class and the template name a parent, they must name the SAME parent. Nothing
-validates this - each chain resolves independently and a divergence is silently wrong.
+If both the JS class and the template name a parent, they must agree: `extends=` must name one
+of the JS class's ancestors that has a template of its own (any of them, so a template may skip
+an intermediate layer). A conflict THROWS when the component renders - `<Define:X extends="Y">
+conflicts with its JS class`, listing the class's templated ancestors - and the component is
+stopped. Name a templated ancestor, or drop `extends=` and let the prototype chain decide. A
+class that extends `Component` directly (or through plain helper classes) cannot conflict.
 
 ## Building an abstract base
 

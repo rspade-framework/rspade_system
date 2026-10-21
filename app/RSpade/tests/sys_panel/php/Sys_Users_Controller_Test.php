@@ -220,9 +220,32 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * RP-USERS-03 - sessions answers the identity's ACTIVE sessions (an inactive one is
-     * gone) from Session::get_sessions_for_user(), each with its site, type label and
-     * impersonation columns, datetimes as ISO UTC, and no token.
+     * An API key of $login_user_id in use on $site_id, as Session records one: a browser-less
+     * TYPE_API row and the owner's REALM_API user session on it. Returns the user session id.
+     */
+    private static function __api_key_use(int $login_user_id, int $site_id): int
+    {
+        $session_id = static::__insert_session_fixture(['type_id' => Session::TYPE_API])['id'];
+        $identity = ['login_user_id' => $login_user_id, 'site_id' => $site_id, 'impersonator_login_user_id' => null];
+        $now = now()->format('Y-m-d H:i:s.v');
+
+        return (int) DB::table('_user_sessions')->insertGetId(array_merge($identity, [
+            'session_id' => $session_id,
+            'realm_id' => Session::REALM_API,
+            'tuple_hash' => Session::_user_session_tuple_hash($session_id, Session::REALM_API, $identity),
+            'first_signed_in_at' => $now,
+            'signed_in_at' => $now,
+            'started_at' => $now,
+            'last_active_at' => '2026-02-01 00:00:00',
+        ]));
+    }
+
+    /**
+     * RP-USERS-03 - sessions answers where the identity is signed in from
+     * Session::get_sessions_for_user(): signed in AND recently signed out (with the reason),
+     * most recently active first, an impersonation included with the impersonator's id and
+     * email, an API key's use marked is_api and refused End, the rsx:debug harness's browser
+     * never; each with its site, type label, sign-in count, ISO datetimes, and no token.
      */
     public static function test_sessions_shape()
     {
@@ -231,44 +254,114 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
         $id = static::__identity("sys-users-sessions-{$tag}@example.com");
         $impersonator = static::__identity("sys-users-imp-{$tag}@example.com");
 
-        $session = function (array $columns) use ($id) {
-            return (int) DB::table('_sessions')->insertGetId(array_merge([
-                'active' => 1,
-                'login_user_id' => $id,
-                'session_token' => 'sys-users-' . uniqid('', true),
-                'csrf_token' => 'sys-users-csrf-' . uniqid('', true),
+        $session = function (array $staff, array $options = []) use ($id) {
+            $fixture = static::__insert_session_fixture(array_merge($options, [
+                'staff' => array_merge(['login_user_id' => $id], $staff),
+            ]));
+
+            DB::table('_sessions')->where('id', $fixture['id'])->update([
                 'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('203.0.113.7'),
                 'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0'),
-                'last_active' => '2026-02-03 04:05:06',
-            ], $columns));
+            ]);
+
+            return $fixture['staff_user_session_id'];
         };
 
-        $plain = $session(['site_id' => $site->id, 'last_active' => '2026-02-03 04:05:06']);
+        $plain = $session(['site_id' => $site->id, 'last_active_at' => '2026-02-03 04:05:06']);
         $impersonated = $session([
             'site_id' => $site->id,
-            'last_active' => '2026-02-04 04:05:06',
+            'last_active_at' => '2026-02-04 04:05:06',
             'impersonator_login_user_id' => $impersonator,
-            'impersonation_started_at' => '2026-02-04 04:00:00',
+            'started_at' => '2026-02-04 04:00:00',
         ]);
-        $session(['active' => 0]);
+        $signed_out = $session([
+            'site_id' => $site->id,
+            'signed_out_at' => now()->subHour(),
+            'sign_out_reason_id' => Session::SIGN_OUT_ENDED_BY_ADMIN,
+            'last_active_at' => now()->subHour(),
+        ]);
+        $session(['site_id' => $site->id, 'last_active_at' => now()], ['type_id' => Session::TYPE_PLAYWRIGHT]);
+        $api = static::__api_key_use($id, $site->id);
 
         $rows = array_column(static::__endpoint('sessions', ['id' => $id])['sessions'], null, 'id');
 
-        static::__assert_equals([$impersonated, $plain], array_keys($rows), 'the active sessions, most recently active first');
+        static::__assert_equals([$signed_out, $impersonated, $plain, $api], array_keys($rows), 'signed in and signed out, most recently active first; the harness browser never');
         static::__assert_equals('Sys Users Sessions Site', $rows[$plain]['site_name'], 'the session\'s site');
         static::__assert_equals($site->id, $rows[$plain]['site_id'], 'its id');
         static::__assert_equals('Web', $rows[$plain]['type_label'], 'the session type');
         static::__assert_equals('203.0.113.7', $rows[$plain]['ip_address'], 'the IP');
         static::__assert_equals('Firefox on Windows', $rows[$plain]['device_summary'], 'the parsed device');
         static::__assert_true(str_ends_with($rows[$plain]['last_active'], 'Z'), 'last_active leaves as ISO UTC');
+        static::__assert_true($rows[$plain]['is_signed_in'], 'signed in');
+        static::__assert_equals(1, $rows[$plain]['sign_in_count'], 'the sign-in count');
         static::__assert_false($rows[$plain]['is_current'], 'not the session reading it');
+        static::__assert_false($rows[$plain]['is_api'], 'a browser');
+        static::__assert_null($rows[$plain]['terminate_refusal'], 'End is allowed');
         static::__assert_null($rows[$plain]['impersonator_login_user_id'], 'not impersonated');
         static::__assert_equals($impersonator, $rows[$impersonated]['impersonator_login_user_id'], 'the impersonating identity');
         static::__assert_equals("sys-users-imp-{$tag}@example.com", $rows[$impersonated]['impersonator_email'], 'and its email');
         static::__assert_true(str_ends_with($rows[$impersonated]['impersonation_started_at'], 'Z'), 'impersonation_started_at as ISO UTC');
+        static::__assert_false($rows[$signed_out]['is_signed_in'], 'a signed-out session is listed');
+        static::__assert_equals('Ended by an administrator', $rows[$signed_out]['sign_out_reason'], 'with its reason');
+        static::__assert_true($rows[$api]['is_api'], 'an API key\'s use is marked');
+        static::__assert_true(is_string($rows[$api]['terminate_refusal']), 'and refuses End: revoking the key ends it');
 
-        foreach (['session_token', 'csrf_token'] as $key) {
+        foreach (['session_token', 'csrf_token', 'session_id'] as $key) {
             static::__assert_false(array_key_exists($key, $rows[$plain]), "{$key} never leaves");
+        }
+    }
+
+    /**
+     * RP-USERS-11 - session_detail answers one listed session of the identity (the entry
+     * sessions lists) with the identity's id and email; audit_sessions_fetch pages that
+     * session's audit sessions only, most recently seen first, its site named, searchable on
+     * the IP, through Audit_Session::list_page_for_user_session(). Another identity's
+     * session, a harness browser, a malformed id and a missing identity are not_found on both.
+     */
+    public static function test_session_detail_and_activity()
+    {
+        $tag = uniqid();
+        $site = static::__site('Sys Users Session Detail');
+        $id = static::__identity("sys-users-detail-{$tag}@example.com");
+        $other = static::__identity("sys-users-detail-other-{$tag}@example.com");
+
+        $mine = static::__insert_session_fixture(['staff' => ['login_user_id' => $id, 'site_id' => $site->id]])['staff_user_session_id'];
+        $theirs = static::__session_row($other);
+        $harness = static::__insert_session_fixture([
+            'type_id' => Session::TYPE_PLAYWRIGHT,
+            'staff' => ['login_user_id' => $id, 'site_id' => $site->id],
+        ])['staff_user_session_id'];
+
+        $detail = static::__endpoint('session_detail', ['id' => $id, 'user_session_id' => $mine]);
+        static::__assert_equals(['id' => $id, 'email' => "sys-users-detail-{$tag}@example.com"], $detail['user'], 'the identity');
+        static::__assert_equals($mine, $detail['session']['id'], 'the session');
+        static::__assert_equals('Sys Users Session Detail', $detail['session']['site_name'], 'as the list shows it');
+
+        $context = fn (int $user_session_id, string $ip) => [
+            'site_id' => $site->id, 'login_user_id' => $id, 'portal_user_id' => null, 'portal_site_id' => null,
+            'impersonator_login_user_id' => null, 'impersonator_user_id' => null, 'ip_address' => $ip,
+            'session_id' => null, 'user_session_id' => $user_session_id,
+            'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test-browser'), 'session_type_id' => Session::TYPE_WEB,
+        ];
+        $older = \App\RSpade\Core\Session\Audit_Session::_id_for_context($context($mine, '198.51.100.1'));
+        $newer = \App\RSpade\Core\Session\Audit_Session::_id_for_context($context($mine, '198.51.100.2'));
+        \App\RSpade\Core\Session\Audit_Session::_id_for_context($context($theirs, '198.51.100.3'));
+        DB::table('_audit_sessions')->where('id', $older)->update(['last_seen_at' => '2026-02-01 00:00:00']);
+        DB::table('_audit_sessions')->where('id', $newer)->update(['last_seen_at' => '2026-02-02 00:00:00']);
+
+        $page = static::__endpoint('audit_sessions_fetch', ['login_user_id' => $id, 'user_session_id' => $mine]);
+        static::__assert_equals([$newer, $older], array_column($page['records'], 'id'), 'this session\'s audit sessions only, most recently seen first');
+        static::__assert_equals('198.51.100.2', $page['records'][0]['ip_address'], 'the address');
+        static::__assert_equals('Sys Users Session Detail', $page['records'][0]['site_name'], 'the site named');
+
+        $found = static::__endpoint('audit_sessions_fetch', ['login_user_id' => $id, 'user_session_id' => $mine, 'filter' => '100.1']);
+        static::__assert_equals([$older], array_column($found['records'], 'id'), 'searched on the IP');
+
+        foreach (['session_detail' => 'id', 'audit_sessions_fetch' => 'login_user_id'] as $endpoint => $key) {
+            static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint($endpoint, [$key => $id, 'user_session_id' => $theirs]), "{$endpoint}: another identity's session");
+            static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint($endpoint, [$key => $id, 'user_session_id' => $harness]), "{$endpoint}: a harness browser");
+            static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint($endpoint, [$key => $id, 'user_session_id' => 'x']), "{$endpoint}: a malformed id");
+            static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint($endpoint, [$key => 0, 'user_session_id' => $mine]), "{$endpoint}: a missing identity");
         }
     }
 
@@ -380,25 +473,18 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * An active _sessions row of $login_user_id; returns its id.
+     * A browser signed in as $login_user_id; returns its staff user session id.
      */
     private static function __session_row(int $login_user_id): int
     {
-        return (int) DB::table('_sessions')->insertGetId([
-            'active' => 1,
-            'login_user_id' => $login_user_id,
-            'site_id' => 1,
-            'session_token' => 'sys-users-' . uniqid('', true),
-            'csrf_token' => 'sys-users-csrf-' . uniqid('', true),
-            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('203.0.113.9'),
-            'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('sys-users-actions'),
-            'last_active' => now(),
-        ]);
+        return static::__insert_session_fixture([
+            'staff' => ['login_user_id' => $login_user_id, 'site_id' => 1],
+        ])['staff_user_session_id'];
     }
 
-    private static function __session_active(int $session_id): bool
+    private static function __session_active(int $user_session_id): bool
     {
-        return (bool) DB::table('_sessions')->where('id', $session_id)->value('active');
+        return DB::table('_user_sessions')->where('id', $user_session_id)->value('signed_out_at') === null;
     }
 
     /**
@@ -472,12 +558,13 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * RP-USERS-08 - terminate_session ends one session (through
+     * RP-USERS-08 - terminate_session ends one signed-in user session (through
      * Session::developer_terminate_sessions(), so session.terminated fires with the
      * developer as actor), answers not_found for an ended, unknown or other identity's
-     * session, and refuses the session the panel is used from; terminate_all_sessions ends
-     * every session of an identity, and on the acting identity spares the current one.
-     * sessions publishes terminate_refusal on the current session only.
+     * session, and refuses the session the panel is used from and an API key's use (which
+     * stays signed in); terminate_all_sessions ends every signed-in session of an identity,
+     * and on the acting identity spares the current one. sessions publishes
+     * terminate_refusal on the current session, never on another browser's.
      */
     public static function test_terminate_sessions_and_the_current_session_refusal()
     {
@@ -488,7 +575,11 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
         $two = static::__session_row($id);
         $three = static::__session_row($id);
         $others_row = static::__session_row($other);
-        $current = Session::get_session_id();
+
+        // The browser the panel is being used from: the acting developer's own sign-in.
+        $current_fixture = static::__insert_session_fixture(['staff' => ['login_user_id' => 1, 'site_id' => 1]]);
+        Session::$_browser_session_id_for_tests = $current_fixture['id'];
+        $current = $current_fixture['staff_user_session_id'];
 
         $captured = [];
 
@@ -499,7 +590,7 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
         ]);
 
         try {
-            $result = static::__endpoint('terminate_session', ['id' => $id, 'session_id' => $one]);
+            $result = static::__endpoint('terminate_session', ['id' => $id, 'user_session_id' => $one]);
         } finally {
             Event_Registry::_clear_test_handlers();
         }
@@ -511,13 +602,18 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
         static::__assert_equals($id, $captured[0]['target_login_user_id'], 'target = the identity');
         static::__assert_equals('admin', $captured[0]['scope'], 'scope admin');
 
-        static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('terminate_session', ['id' => $id, 'session_id' => $one]), 'an already-ended session');
-        static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('terminate_session', ['id' => $id, 'session_id' => $others_row]), 'another identity\'s session');
+        static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('terminate_session', ['id' => $id, 'user_session_id' => $one]), 'an already-ended session');
+        static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('terminate_session', ['id' => $id, 'user_session_id' => $others_row]), 'another identity\'s session');
         static::__assert_true(static::__session_active($others_row), 'which is untouched');
-        static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('terminate_session', ['id' => $id, 'session_id' => 'x']), 'a malformed session id');
+        static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('terminate_session', ['id' => $id, 'user_session_id' => 'x']), 'a malformed session id');
         static::__assert_error(Ajax::ERROR_NOT_FOUND, static::__endpoint('terminate_all_sessions', ['id' => 0]), 'a missing identity');
 
-        $refused = static::__assert_error(Ajax::ERROR_VALIDATION, static::__endpoint('terminate_session', ['id' => 1, 'session_id' => $current]), 'the current session');
+        $api = static::__api_key_use($id, 1);
+        $api_refused = static::__assert_error(Ajax::ERROR_VALIDATION, static::__endpoint('terminate_session', ['id' => $id, 'user_session_id' => $api]), 'an API key\'s use');
+        static::__assert_true(str_contains($api_refused->get_metadata()['_message'], 'revoked'), 'the refusal says how it ends');
+        static::__assert_true(static::__session_active($api), 'which stays signed in');
+
+        $refused = static::__assert_error(Ajax::ERROR_VALIDATION, static::__endpoint('terminate_session', ['id' => 1, 'user_session_id' => $current]), 'the current session');
         static::__assert_true(str_contains($refused->get_metadata()['_message'], 'Sign out instead'), 'the refusal says why');
         static::__assert_true(static::__session_active($current), 'the current session is untouched');
 

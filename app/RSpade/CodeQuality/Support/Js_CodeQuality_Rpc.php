@@ -13,6 +13,7 @@ use App\RSpade\Core\JsParsers\Rsx_Node_Service;
  * RPC Methods:
  *   - quality.lint: Check JavaScript syntax using Babel parser
  *   - quality.analyze_this: Analyze 'this' usage patterns using Acorn
+ *   - quality.analyze_raw_html: Find raw HTML writes into the DOM (JS-RAW-HTML-01) using Babel
  */
 class Js_CodeQuality_Rpc
 {
@@ -46,6 +47,41 @@ class Js_CodeQuality_Rpc
         Rsx_Node_Service::ensure();
 
         return static::_analyze_this_via_rpc($file_path);
+    }
+
+    /**
+     * Find the raw HTML writes in a JavaScript file (JS-RAW-HTML-01).
+     *
+     * Every failure is LOUD: an analysis that could not run must never read as a clean file.
+     *
+     * @param string $file_path Path to the JavaScript file
+     * @return array<int,array{line:int,kind:string}> One entry per write
+     */
+    public static function analyze_raw_html(string $file_path): array
+    {
+        Rsx_Node_Service::ensure();
+
+        $data = Rsx_Node_Service::request('quality.analyze_raw_html', [
+            'files' => [$file_path],
+        ]);
+
+        if (isset($data['error'])) {
+            throw new \RuntimeException("JS-RAW-HTML-01 analysis RPC error for {$file_path}: " . $data['error']);
+        }
+
+        $result = $data['results'][$file_path] ?? null;
+
+        if ($result === null) {
+            throw new \RuntimeException("JS-RAW-HTML-01 analysis returned no result for {$file_path}");
+        }
+
+        if ($result['status'] !== 'success') {
+            throw new \RuntimeException(
+                "JS-RAW-HTML-01 analysis failed for {$file_path}: " . ($result['error']['message'] ?? 'unknown error')
+            );
+        }
+
+        return $result['violations'] ?? [];
     }
 
     /**

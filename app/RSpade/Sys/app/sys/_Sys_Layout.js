@@ -7,24 +7,17 @@
  * the panel's pages are few and their titles are static.
  *
  * PAGE ACTIONS. An action that defines page_actions() puts buttons in the top bar,
- * beside the title:
+ * beside the title, by naming a COMPONENT that draws them:
  *
  *     page_actions() {
- *         return `<button class="btn btn-primary btn-sm" data-action="rerun">Re-run</button>`;
+ *         return {component: '_Sys_Rerun_Page_Actions', args: {on_rerun: () => this.reload()}};
  *     }
  *
- * It returns an HTML string (or a jQuery element), may be async, and is asked again
- * on every navigation; the bar is emptied first, so an action without the method
- * leaves it empty. The markup lives in the LAYOUT, not in the action's element, so
- * the action binds its handlers on the layout's bar - namespaced, and removed in
- * on_stop():
- *
- *     on_ready() {
- *         Spa.layout.$sid('page_actions').on('click.my_page', '[data-action=rerun]', () => this.reload());
- *     }
- *     on_stop() {
- *         Spa.layout.$sid('page_actions').off('click.my_page');
- *     }
+ * It returns {component, args} (args optional) or null, may be async, and is asked again
+ * on every navigation; the bar is emptied first, so an action without the method leaves
+ * it empty. The layout instantiates the component in the bar, and the component owns its
+ * markup and its handlers - the action passes callbacks in its args rather than binding
+ * on the layout's element.
  */
 class _Sys_Layout extends Spa_Layout {
     on_create() {
@@ -80,6 +73,12 @@ class _Sys_Layout extends Spa_Layout {
                             icon: 'bi-person-badge',
                             route: '_Sys_Users_Action',
                             href: Rsx.Route('_Sys_Users_Action'),
+                        },
+                        {
+                            label: 'Portal Users',
+                            icon: 'bi-person-vcard',
+                            route: '_Sys_Portal_Users_Action',
+                            href: Rsx.Route('_Sys_Portal_Users_Action'),
                         },
                     ],
                 },
@@ -142,7 +141,8 @@ class _Sys_Layout extends Spa_Layout {
 
     /**
      * Fill the top bar's action cluster from the current action's page_actions().
-     * Not wrapped: a page_actions() that throws is a broken page and fails loud.
+     * Not wrapped: a page_actions() that throws, or returns anything but
+     * {component, args} or null, is a broken page and fails loud.
      */
     async _render_page_actions() {
         const $actions = this.$sid('page_actions');
@@ -154,17 +154,21 @@ class _Sys_Layout extends Spa_Layout {
             return;
         }
 
-        const html = await action.page_actions();
+        const spec = await action.page_actions();
 
         // A slower page_actions() from an earlier navigation must not paint over the
         // current action's bar.
-        if (this.action !== action) {
+        if (this.action !== action || !spec) {
             return;
         }
 
-        if (html) {
-            $actions.empty().append(html);
+        if (typeof spec !== 'object' || typeof spec.component !== 'string') {
+            throw new Error(
+                action.constructor.name + '.page_actions() must return {component, args} or null'
+            );
         }
+
+        $('<div></div>').appendTo($actions).component(spec.component, spec.args || {});
     }
 
     /**

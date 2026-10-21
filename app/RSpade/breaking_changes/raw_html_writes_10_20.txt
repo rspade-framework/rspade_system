@@ -1,0 +1,228 @@
+RAW HTML WRITES: JS-RAW-HTML-01, PLAIN-TEXT MESSAGES, AND PAGE ACTIONS AS COMPONENTS
+Date: 2026-10-20
+
+IF YOU DO NOTHING: your forked Frontend_Spa_Layout keeps painting the page title with $title.html(title) - a stored XSS, since a title is often a record's own name (a client named <img src=x onerror=...> runs script in every staff browser that opens its page) - and rsx:check reports JS-RAW-HTML-01 on that line and on every other .html(<variable>) write in your rsx/ JavaScript.
+
+SUMMARY
+    jQuery's .html(x), innerHTML =, outerHTML =, insertAdjacentHTML() and
+    document.write() parse their argument as markup. The framework removed every
+    such write of data from its own code and from the reference app, and added a
+    rule that reports them. Four things reach a downstream application:
+
+    1. A NEW RULE. rsx:check reports JS-RAW-HTML-01 (high) on such a write in
+       your own JavaScript. Nothing fails at build time - it is rsx:check only.
+    2. FORM ERROR MESSAGES AND FLASH MESSAGES ARE PLAIN TEXT. Both were written
+       into the page as markup; both are now written with .text(). A message your
+       code built with markup in it now shows the tags literally.
+    3. page_actions() NAMES A COMPONENT. The reference app's layout, and the
+       /_sys panel's, now take {component, args} from an action's page_actions()
+       instead of an HTML string. Your fork's layout and actions are your code:
+       they keep working as they are until you port this, and the port is what
+       clears their JS-RAW-HTML-01 findings.
+    4. TWO NEW HELPERS: nl2brhtml() (JS and PHP) and html_to_text() (JS).
+
+    Categories: 2 for items 2 and 4 (a framework contract moved under code you
+    call), 3-style port guidance for item 3 and for the page-title fix, which
+    live in template files your fork owns.
+
+THE CHANGE
+
+  1. JS-RAW-HTML-01
+    Reported, by AST, over browser JavaScript in the manifest's scan directories
+    (tests/, resource/, vendored and .min.js files excluded):
+
+        .html(x)  innerHTML = x  outerHTML = x  insertAdjacentHTML(pos, x)
+        document.write(x)
+
+    ALLOWED with no comment: a string literal (including '&nbsp;', and a template
+    literal with no ${}); escape_html(...), sanitize_rich_text_html(...),
+    nl2brhtml(...), nl2br(escape_html(...)); a + or template composition of only
+    those. .html('') is reported on its own: use .empty().
+
+    A write that genuinely needs raw HTML carries
+        // @JS-RAW-HTML-01-EXCEPTION <rationale>
+    on the same line or the line before. It covers that one write; a marker with
+    no rationale covers nothing; a marker elsewhere in the file does not silence
+    the file.
+
+  2. Plain-text messages
+    - Form_Utils.apply_form_errors() - the renderer every <Rsx_Form>,
+      Modal.form() and bare-markup page reaches - writes field errors, unmatched
+      field errors and general messages with .text().
+    - Flash_Alert (JS Flash_Alert.success()/error()/info()/warning(), and every
+      PHP Flash_Alert::*() delivered to the page) writes the message with .text().
+    - Rsx.render_error() builds its alert from nodes; the fatal box's file and
+      line are text too.
+    No framework or reference-app caller put markup in either. An application
+    that did - a <strong> in a response_form_error() message, an <a> in a flash -
+    now sees the tags as text.
+
+  3. page_actions()
+    BEFORE (an HTML string the layout inserted with .html()):
+
+        page_actions() {
+            return `
+                <div class="d-flex gap-2">
+                    <a href="${Rsx.Route('Clients_Index_Action')}" class="btn btn-secondary btn-sm">
+                        <i class="bi bi-arrow-left"></i> Back
+                    </a>
+                    <a href="${Rsx.Route('Clients_Edit_Action', this.args.id)}" class="btn btn-primary btn-sm">
+                        <i class="bi bi-pencil"></i> Edit
+                    </a>
+                </div>
+            `;
+        }
+
+    AFTER (a component the layout instantiates in the header):
+
+        page_actions() {
+            return {
+                component: 'Record_Page_Actions',
+                args: {
+                    back_href: Rsx.Route('Clients_Index_Action'),
+                    edit_href: Rsx.Route('Clients_Edit_Action', this.args.id),
+                },
+            };
+        }
+
+    page_actions() returns {component, args} (args optional) or null, and may
+    be async. Anything else throws. A button that calls back into the action
+    receives a function in args - the component owns its handlers, so nothing
+    binds on the layout's element and no document-level handler is needed.
+
+    In the /_sys panel (framework code) _Sys_Layout takes the same shape. No
+    framework action defined page_actions(), so nothing there changes for you.
+
+  4. Helpers
+    nl2brhtml(str)     JS and PHP. Escapes, then <br /> at each line break: the
+                       safe way to show multi-line plain text as markup.
+    html_to_text(html) JS. The text a browser shows for an HTML string, parsed
+                       inertly with DOMParser - replaces $('<div>').html(x).text()
+                       (which fetches the string's images) and
+                       $('<textarea>').html(x).text().
+
+THE FIX
+    Informational - arrives with the framework:
+    - system/app/RSpade/CodeQuality/Rules/JavaScript/RawHtmlWrite_CodeQualityRule.php
+      and quality.analyze_raw_html in the code-quality node service
+    - Core/Js/Form_Utils.js, Lib/Flash/Flash_Alert.js, Core/Js/Rsx.js
+      (render_error), Core/SPA/Spa_Layout.js (show_debug_exception),
+      Core/Debug/JS_Tree_Debug_Node.js, Core/Ui/Button_Utils.js (the busy state
+      now detaches and re-attaches the button's own nodes), Core/Forms/Rsx_Form.js
+    - Core/Js/functions.js (nl2brhtml, html_to_text), helpers.php (nl2brhtml)
+    - Sys/app/sys/_Sys_Layout.js (page_actions takes {component, args})
+
+ACTION REQUIRED
+
+  A. Fix the page title in your forked layout - the security item.
+    File: rsx/app/frontend/Frontend_Spa_Layout.js, _update_page_title()
+    -------------------------------------------------------------------------
+        const paint = (title) => {
+            $title.html(title);          // BEFORE
+            $title.text(title);          // AFTER
+            document.title = 'RSX - ' + title;
+        };
+
+    Do the same in every other layout of yours that paints a title (a portal
+    layout, a sublayout). The reference implementation is
+    system/app/RSpade/resource/reference_app/app/frontend/Frontend_Spa_Layout.js.
+
+  B. Find your raw writes - run rsx:check, or:
+
+        grep -rnE "\.html\([^)'\"]|innerHTML\s*=|outerHTML\s*=|insertAdjacentHTML|document\.write" rsx --include='*.js'
+
+    and convert each:
+
+        Showing text                  $el.text(value)
+        Clearing                      $el.empty()            (never .html(''))
+        Multi-line plain text         $el.html(nl2brhtml(value))
+        Text out of an HTML string    html_to_text(html)
+        A few elements around text    $('<li></li>').text(msg).appendTo($list)
+        A piece of UI                 $(target).component('Name', args), the
+                                      markup in a .jqhtml template
+        Escaped, then .html()'d       drop the escape and use .text()
+        Genuinely raw (a plugin)      // @JS-RAW-HTML-01-EXCEPTION <rationale>
+
+  C. Audit messages for markup:
+
+        grep -rnE "(Flash_Alert(::|\.)(success|error|info|warning)|response_form_error|response_error)\(" rsx | grep -E "<[a-z]"
+
+    A message that relied on markup becomes plain text (reword it), or, where
+    the formatting is the point, the UI moves into a component.
+
+  D. Port page_actions() to components (Category 3-style: the reference
+    implementation is the map; your layout and actions decide where it lands).
+
+    The layout. Replace your Frontend_Spa_Layout._render_page_actions() with the
+    reference app's:
+
+        system/app/RSpade/resource/reference_app/app/frontend/Frontend_Spa_Layout.js
+
+        const spec = await action.page_actions();
+        if (this.action !== action || !spec) return;
+        if (typeof spec !== 'object' || typeof spec.component !== 'string') {
+            throw new Error(action.constructor.name + '.page_actions() must return {component, args} or null');
+        }
+        $('<div></div>').appendTo($actions).component(spec.component, spec.args || {});
+
+    The components. Copy the two the reference app ships, or write your own:
+
+        system/app/RSpade/resource/reference_app/theme/components/page/record_page_actions.jqhtml
+            Record_Page_Actions  $back_href, $back_label (default "Back"), $edit_href
+        system/app/RSpade/resource/reference_app/theme/components/page/list_page_actions.jqhtml
+        system/app/RSpade/resource/reference_app/theme/components/page/list_page_actions.js
+            List_Page_Actions    $new_href, $new_label (default "New"),
+                                 $on_export (a callback; Export shown when given),
+                                 $reports (true shows Reports)
+
+    The actions. Mapping from the old string form:
+
+        Back (+ Edit when an id)      {component: 'Record_Page_Actions',
+                                       args: {back_href, edit_href}}
+        "Back to X"                   ... args: {back_href, back_label: 'Back to X'}
+        New + Export + Reports        {component: 'List_Page_Actions',
+                                       args: {new_href, on_export, reports: true}}
+        New only ("New Task")         ... args: {new_href, new_label: 'New Task'}
+        Anything else (a dropdown)    a small component beside the action, e.g.
+            system/app/RSpade/resource/reference_app/app/frontend/party/list/party_index_page_actions.jqhtml
+        return ''                     delete the method
+
+    The Export button. The list actions bound a document-level click on
+    '.js-page-export' in on_ready() and removed it in on_stop(). Delete both; move
+    the handler body into a method and pass it as on_export:
+
+        page_actions() {
+            const can_export = Permission.has_permission(User_Model.PERM_DATA_EXPORT);
+            return {
+                component: 'List_Page_Actions',
+                args: {
+                    new_href: Rsx.Route('Clients_Edit_Action'),
+                    on_export: can_export ? () => this.export_all() : null,
+                    reports: true,
+                },
+            };
+        }
+
+        export_all() {
+            const grid = this.sid('grid');
+            grid.export_selection(grid.whole_set_selection());
+        }
+
+    Worked examples: rsx/app/frontend/{clients,contacts,projects}/list/,
+    {clients,contacts,projects,tasks,party}/view/ and edit/, the */history/
+    actions, clients/portal/request_thread/, action_logs/view/, tasks/, party/list/
+    - all under system/app/RSpade/resource/reference_app/app/frontend/.
+
+    A layout of yours that takes the component form and an action that still
+    returns a string throws at that page naming the action, so convert the
+    layout and its actions together.
+
+VERIFICATION
+    - php artisan rsx:check reports no JS-RAW-HTML-01 finding you have not
+      deliberately marked.
+    - Open a record page whose name contains <b>x</b>: the header shows the tags
+      as text, and the browser tab title matches.
+    - Submit a form with a missing required field: the message appears under the
+      field and in the top alert, as plain text.
+    - Each converted page shows its header buttons; Back/Edit/New navigate; Export
+      on a list page exports, and leaving the page leaves no click handler behind.

@@ -124,6 +124,22 @@ abstract class CodeQualityRule_Abstract
     }
 
     /**
+     * Whether this rule reads its own `@<RULE-ID>-EXCEPTION` markers.
+     *
+     * By default the driver honors a marker anywhere in a file by skipping the rule for that
+     * whole file. A rule that answers true here is handed every file regardless, and decides
+     * per line itself - which is what lets one granted exception leave the rest of the file
+     * checked, and lets the rule refuse a marker that carries no rationale.
+     *
+     * @return bool
+     */
+    #[Replaceable]
+    public function reads_own_exception_markers(): bool
+    {
+        return false;
+    }
+
+    /**
      * Check if this rule should be called during manifest scan
      *
      * IMPORTANT: This method should ALWAYS return false unless explicitly requested

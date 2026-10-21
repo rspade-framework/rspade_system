@@ -125,6 +125,20 @@ OUTPUT CONTRACT
        writes its lines to the database only. A task's own code cannot tell the
        difference and must not try to.
 
+       A console run executes in the command's VIRTUAL session (rsx:man session): it acts
+       as nobody until the task declares an identity (Session::set_login_user_id(),
+       set_site_id()), get_session_id() and get_audit_session_id() answer null, and
+       session values throw. A task's writes therefore record no audit session.
+
+       A #[Run_As_Dispatcher] task CANNOT run from the command line - a command line is
+       nobody's request. rsx:task:run refuses it before anything runs, exit 1:
+
+           [ERROR] Bulk_Service::set_status runs as the user who dispatched it and can
+           only be started from a request: dispatch it with Task::dispatch() from an Ajax
+           endpoint
+
+       and #[Command] beside #[Run_As_Dispatcher] is a build FATAL (TASK-RUN-AS-01).
+
        A #[Command] run is an inline run, so #[Exclusive]/#[Debounce] hold: a
        single-instance task waits for a running instance of its identity to finish before
        it starts. Being inline, it is never killed for time: the silence limit applies
@@ -148,6 +162,11 @@ BUILD-TIME RULES
        A name beginning 'rsx:'
              "The 'rsx:' prefix belongs to the framework"
              Name the command after the application.
+
+       #[Command] beside #[Run_As_Dispatcher]
+             TASK-RUN-AS-01, reported by the code-quality rule at manifest build. A task
+             that runs as the user who dispatched it has no user on a command line.
+             Remove the #[Command], or the #[Run_As_Dispatcher].
 
        A name already taken
              "One command name names exactly one task" (another #[Command]), or

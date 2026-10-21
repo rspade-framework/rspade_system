@@ -12,11 +12,11 @@ use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Session::terminate_session() is a SELF-SERVICE device-session action: it deactivates one of
- * the CURRENT login user's own sessions. The owning-user predicate is part of the statement, so
- * another user's session id matches zero rows and the method returns false - the caller does not
- * have to remember to pre-scope. Cross-user (admin) termination lives in
- * terminate_all_sessions_for_user().
+ * Session::terminate_session() is a SELF-SERVICE action: it signs out one of the CURRENT login
+ * identity's own user sessions on another browser. The owning-account predicate is part of the
+ * lookup, so another account's user session id matches nothing and the method returns false -
+ * the caller does not have to remember to pre-scope. Cross-user (admin) termination lives in
+ * terminate_session_for_user() / terminate_all_sessions_for_user().
  *
  * Runs in the default per-test transaction.
  */
@@ -26,28 +26,18 @@ class Session_Terminate_Ownership_Test extends Rsx_Test_Abstract
     private const OTHER_LOGIN_USER_ID = 770002;
 
     /**
-     * Insert an active _sessions row owned by $login_user_id and return its id.
+     * A browser signed in as $login_user_id; answers the fixture.
      */
-    private static function __insert_session(?int $login_user_id): int
+    private static function __sign_in(int $login_user_id): array
     {
-        return (int) DB::table('_sessions')->insertGetId([
-            'session_token' => bin2hex(random_bytes(16)),
-            'csrf_token'    => bin2hex(random_bytes(16)),
-            'active'        => 1,
-            'site_id'       => 0,
-            'version'       => 1,
-            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('10.0.0.7'),
-            'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('terminate-ownership-test'),
-            'login_user_id' => $login_user_id,
-            'last_active'   => now(),
-            'created_at'    => now(),
-            'updated_at'    => now(),
+        return static::__insert_session_fixture([
+            'staff' => ['login_user_id' => $login_user_id, 'site_id' => 1],
         ]);
     }
 
-    private static function __is_active(int $session_id): bool
+    private static function __is_signed_in(int $user_session_id): bool
     {
-        return (bool) DB::table('_sessions')->where('id', $session_id)->value('active');
+        return DB::table('_user_sessions')->where('id', $user_session_id)->value('signed_out_at') === null;
     }
 
     private static function __act_as_owner(): void
@@ -60,41 +50,54 @@ class Session_Terminate_Ownership_Test extends Rsx_Test_Abstract
     public static function test_own_session_is_terminated()
     {
         self::__act_as_owner();
-        $session_id = self::__insert_session(self::OWNER_LOGIN_USER_ID);
+        $fixture = self::__sign_in(self::OWNER_LOGIN_USER_ID);
 
         static::__assert_true(
-            Session::terminate_session($session_id),
-            'a user may terminate their own session'
+            Session::terminate_session($fixture['staff_user_session_id']),
+            'a user may end their own session'
         );
-        static::__assert_false(self::__is_active($session_id), 'the row is deactivated');
+        static::__assert_false(self::__is_signed_in($fixture['staff_user_session_id']), 'the user session is signed out');
+        static::__assert_equals(
+            Session::SIGN_OUT_ENDED_BY_USER,
+            (int) DB::table('_user_sessions')->where('id', $fixture['staff_user_session_id'])->value('sign_out_reason_id')
+        );
+        static::__assert_null(
+            DB::table('_sessions')->where('id', $fixture['id'])->value('staff_user_session_id'),
+            "the other browser's pointer is cleared"
+        );
+        static::__assert_equals(
+            1,
+            (int) DB::table('_sessions')->where('id', $fixture['id'])->value('active'),
+            'the other browser row is kept'
+        );
     }
 
     public static function test_another_users_session_is_untouched_and_returns_false()
     {
         self::__act_as_owner();
-        $foreign_session_id = self::__insert_session(self::OTHER_LOGIN_USER_ID);
+        $foreign = self::__sign_in(self::OTHER_LOGIN_USER_ID);
 
         static::__assert_false(
-            Session::terminate_session($foreign_session_id),
-            'terminating a session you do not own must report failure'
+            Session::terminate_session($foreign['staff_user_session_id']),
+            'ending a session you do not own must report failure'
         );
         static::__assert_true(
-            self::__is_active($foreign_session_id),
-            'the other user session row must be intact'
+            self::__is_signed_in($foreign['staff_user_session_id']),
+            'the other account stays signed in'
         );
     }
 
     /**
-     * An anonymous session row (no login_user_id) is owned by nobody and is likewise
-     * unreachable through this method.
+     * A signed-out user session is not a live session to end.
      */
-    public static function test_anonymous_session_is_not_terminable()
+    public static function test_signed_out_session_is_not_terminable()
     {
         self::__act_as_owner();
-        $anonymous_session_id = self::__insert_session(null);
+        $fixture = static::__insert_session_fixture([
+            'staff' => ['login_user_id' => self::OWNER_LOGIN_USER_ID, 'site_id' => 1, 'signed_out_at' => now(), 'sign_out_reason_id' => Session::SIGN_OUT_SIGNED_OUT],
+        ]);
 
-        static::__assert_false(Session::terminate_session($anonymous_session_id));
-        static::__assert_true(self::__is_active($anonymous_session_id), 'the row is intact');
+        static::__assert_false(Session::terminate_session($fixture['staff_user_session_id']));
     }
 
     /**
@@ -106,10 +109,10 @@ class Session_Terminate_Ownership_Test extends Rsx_Test_Abstract
         Session::logout();
         static::__reset_session();
 
-        $session_id = self::__insert_session(self::OWNER_LOGIN_USER_ID);
+        $fixture = self::__sign_in(self::OWNER_LOGIN_USER_ID);
 
-        static::__assert_false(Session::terminate_session($session_id));
-        static::__assert_true(self::__is_active($session_id), 'the row is intact');
+        static::__assert_false(Session::terminate_session($fixture['staff_user_session_id']));
+        static::__assert_true(self::__is_signed_in($fixture['staff_user_session_id']), 'the user session is intact');
     }
 
     public static function teardown(): void

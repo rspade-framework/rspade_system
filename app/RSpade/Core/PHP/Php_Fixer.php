@@ -774,7 +774,7 @@ class Php_Fixer
      * GUARD 2 (backlog B-68). A deletion is a claim that a class no longer exists, and the
      * only evidence for it is "the manifest cannot see it". That evidence is worthless
      * while the manifest itself is incomplete - and a partial index is a NORMAL state, not
-     * an exotic one: any manifest-FATAL rule (SESSION-ID-01, POLY-01, SEALED-01,
+     * an exotic one: any manifest-FATAL rule (POLY-01, SEALED-01,
      * PHP-PARENT-CHAIN-01, the auth-gate validator) aborts a build mid-index, and the next
      * rebuild then runs against what survived.
      *

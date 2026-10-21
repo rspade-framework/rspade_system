@@ -7,7 +7,10 @@ use App\RSpade\SchemaQuality\SchemaViolation;
 abstract class Schema_Rule_Abstract
 {
     protected array $violations = [];
-    protected array $excluded_tables = ['_migrations', '_sessions', \App\RSpade\Core\Database\Migrate_Dump_Rollback::RUNS_TABLE];
+    // _sessions and _user_sessions are the session concern's own tables: their session_id /
+    // pointer columns are the structure itself (a user session cannot exist without its
+    // browser), not the ephemeral app-side session_id SCHEMA-FK-01 is about.
+    protected array $excluded_tables = ['_migrations', '_sessions', '_user_sessions', \App\RSpade\Core\Database\Migrate_Dump_Rollback::RUNS_TABLE];
     
     /**
      * Get the unique rule identifier

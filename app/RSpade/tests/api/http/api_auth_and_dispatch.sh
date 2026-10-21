@@ -6,9 +6,10 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # HTTP integration test - runs against the LIVE dev server + dev database (rspade).
 # The external API dispatcher can only be exercised over real HTTP: Bearer auth, the
-# absence of Set-Cookie, real HTTP status codes, and the _api_request_log side effect.
-# This test mints its own temporary API key (bootstrapping the framework), exercises the
-# pipeline, and cleans up every row it created via a trap.
+# absence of Set-Cookie, real HTTP status codes, the key's one session row and the
+# _api_request_log side effect. This test mints its own temporary API key (bootstrapping the
+# framework), exercises the pipeline, and cleans up every row it created via a trap - the
+# key's session row and user session are deleted with the key.
 #
 # EVERY ENDPOINT IT CALLS IS THE FRAMEWORK'S OWN - /api/v1/me (the identity endpoint,
 # which declares no parameters, so any query parameter is an undeclared one) and
@@ -171,13 +172,19 @@ rm -f /tmp/api_test_400_body.txt
 echo "[TEST] 7. OK" >&2
 
 # ---------------------------------------------------------------------------
-# Test 8: An authed call creates NO _sessions row
+# Test 8: The key has ONE session row (TYPE_API), with its owner's REALM_API user
+# session, and further calls reuse it
 # ---------------------------------------------------------------------------
-echo "[TEST] 8. Authed call does not create a session..." >&2
+echo "[TEST] 8. The key's calls share one session row..." >&2
+key_rows=$(dev_db "SELECT COUNT(*) FROM _sessions WHERE api_key_id = $KEY_ID AND type_id = 3")
+[ "$key_rows" = "1" ] || fail "expected exactly one TYPE_API session row for the key, found $key_rows"
+user_session_rows=$(dev_db "SELECT COUNT(*) FROM _user_sessions u JOIN _sessions s ON s.id = u.session_id WHERE s.api_key_id = $KEY_ID AND u.realm_id = 3 AND u.signed_out_at IS NULL")
+[ "$user_session_rows" = "1" ] || fail "expected one signed-in REALM_API user session on the key's row, found $user_session_rows"
 sessions_before=$(dev_db "SELECT COUNT(*) FROM _sessions")
 curl -s -o /dev/null -H "Authorization: Bearer $KEY" "$BASE/api/v1/me"
+curl -s -o /dev/null -H "Authorization: Bearer $KEY" -H 'X-Forwarded-For: 10.20.30.40' "$BASE/api/v1/me"
 sessions_after=$(dev_db "SELECT COUNT(*) FROM _sessions")
-[ "$sessions_before" = "$sessions_after" ] || fail "session count changed ($sessions_before -> $sessions_after)"
+[ "$sessions_before" = "$sessions_after" ] || fail "a later call created a session row ($sessions_before -> $sessions_after)"
 echo "[TEST] 8. OK" >&2
 
 # ---------------------------------------------------------------------------

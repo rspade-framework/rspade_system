@@ -112,10 +112,10 @@ class _Apidocs_Code_Samples extends Component {
     /**
      * Write each sample into its <pre>, highlight it, then mark unfilled path placeholders.
      *
-     * The marking happens AFTER highlighting because highlight.js replaces innerHTML: a span
-     * inserted first would be destroyed. The placeholder text survives highlighting intact
-     * (it sits inside a string literal, which hljs emits as one node), so a targeted replace
-     * on the highlighted HTML is safe.
+     * The marking happens AFTER highlighting because highlight.js replaces the <pre>'s
+     * contents: a span inserted first would be destroyed. The placeholder text survives
+     * highlighting intact (it sits inside a string literal, which hljs emits as one text
+     * node), so the marking splits text nodes and never re-parses the highlighted markup.
      */
     _paint() {
         const samples = this.state.samples;
@@ -134,13 +134,65 @@ class _Apidocs_Code_Samples extends Component {
                 hljs.highlightElement(this);
             }
 
-            for (const name of missing) {
-                const needle = '{' + name + '}';
-                const marker = api_missing_marker(name);
-
-                this.innerHTML = this.innerHTML.split(needle).join(marker);
-            }
+            _Apidocs_Code_Samples.__mark_missing(this, missing);
         });
+    }
+
+    /**
+     * Replace every "{name}" placeholder in the text under `pre` with its marker element.
+     *
+     * Each text node holding a placeholder is split into plain text nodes and markers, so
+     * nothing in the sample is ever read back as markup.
+     *
+     * @param {Element} pre
+     * @param {string[]} names - the unfilled path parameters
+     */
+    static __mark_missing(pre, names) {
+        if (names.length === 0) {
+            return;
+        }
+
+        const text_nodes = $(pre).find('*').addBack().contents()
+            .filter((index, node) => node.nodeType === Node.TEXT_NODE)
+            .toArray();
+
+        for (const node of text_nodes) {
+            const pieces = [];
+            let rest = node.nodeValue;
+
+            for (;;) {
+                // The earliest placeholder left in what remains of this text node
+                let at = -1;
+                let found = null;
+                for (const name of names) {
+                    const position = rest.indexOf('{' + name + '}');
+                    if (position !== -1 && (at === -1 || position < at)) {
+                        at = position;
+                        found = name;
+                    }
+                }
+
+                if (found === null) {
+                    break;
+                }
+
+                if (at > 0) {
+                    pieces.push(document.createTextNode(rest.slice(0, at)));
+                }
+                pieces.push(api_missing_marker(found)[0]);
+                rest = rest.slice(at + found.length + 2);
+            }
+
+            if (pieces.length === 0) {
+                continue;
+            }
+
+            if (rest !== '') {
+                pieces.push(document.createTextNode(rest));
+            }
+
+            $(node).replaceWith(pieces);
+        }
     }
 
     _activate(idx) {

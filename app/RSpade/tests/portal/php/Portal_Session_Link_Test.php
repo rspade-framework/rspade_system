@@ -52,6 +52,9 @@ use App\RSpade\Tests\Portal\Php\Portal_Impersonation_Grant_Fixture;
  */
 class Portal_Session_Link_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     private const SITE_ID = 1;
 
     private const PORTAL_HOST = 'portal.example.test';
@@ -204,11 +207,19 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
         static::__assert_contains(Session_Link::FAILURE_MESSAGE, (string) $response->getContent(), "{$label}: the one message");
     }
 
+    /**
+     * The portal user session a browser row's portal pointer names, or null.
+     */
+    private static function __portal_user_session(int $row_id): ?object
+    {
+        $id = Session::find($row_id)->portal_user_session_id;
+
+        return $id === null ? null : DB::table('_user_sessions')->where('id', $id)->first();
+    }
+
     private static function __assert_not_linked(int $row_id, string $label): void
     {
-        $row = Session::find($row_id);
-        static::__assert_null($row->portal_user_id, "{$label}: no portal identity applied");
-        static::__assert_null($row->impersonator_user_id, "{$label}: no impersonator applied");
+        static::__assert_null(static::__portal_user_session($row_id), "{$label}: no portal sign-in or impersonation applied");
     }
 
     /**
@@ -295,7 +306,7 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
         static::__assert_equals(self::PREFIX . '/_session_link', $nonce_cookie->getPath(), 'scoped to the portal legs under the prefix');
         static::__assert_true($nonce_cookie->isHttpOnly(), 'HttpOnly');
         static::__assert_equals('lax', strtolower((string) $nonce_cookie->getSameSite()), 'SameSite=Lax');
-        static::__assert_null(Session::find($begin['row_id'])->portal_user_id, 'leg 1 applies nothing');
+        static::__assert_null(static::__portal_user_session($begin['row_id']), 'leg 1 applies nothing');
 
         $nonce_row = DB::table('_session_links')->where('leg', Session_Link::LEG_CONFIRM)->where('session_id', $begin['row_id'])->first();
         static::__assert_equals(hash('sha256', $leg1['nonce']), $nonce_row->nonce_hash, 'only the nonce\'s hash is stored');
@@ -309,12 +320,12 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
             'leg 2 sends the browser back to the portal host, under the prefix; got ' . $leg3_url
         );
 
-        $row = Session::find($begin['row_id']);
-        static::__assert_equals($begin['target']->id, (int) $row->portal_user_id, 'leg 2 applied the portal identity to the staff row');
-        static::__assert_equals(self::SITE_ID, (int) $row->portal_site_id, 'and its tenant');
-        static::__assert_equals($begin['staff']->id, (int) $row->impersonator_user_id, 'and the impersonator');
-        static::__assert_not_null($row->impersonation_started_at, 'and the start time');
-        static::__assert_equals($begin['staff']->login_user_id, (int) $row->login_user_id, 'the staff login is untouched');
+        $view = static::__portal_user_session($begin['row_id']);
+        static::__assert_equals($begin['target']->id, (int) $view->portal_user_id, 'leg 2 pointed the staff row at the portal identity');
+        static::__assert_equals(self::SITE_ID, (int) $view->portal_site_id, 'and its tenant');
+        static::__assert_equals($begin['staff']->id, (int) $view->impersonator_user_id, 'and the impersonator');
+        static::__assert_not_null($view->started_at, 'and the start time');
+        static::__assert_null(Session::find($begin['row_id'])->staff_user_session_id, 'the staff pointer is untouched');
 
         // Leg 3 - portal host, the nonce cookie leg 1 set.
         $session_id = Session_Link::complete(static::__on($leg3_url, [Session_Link::NONCE_COOKIE => $leg1['nonce']]));
@@ -426,22 +437,13 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
         $begin = static::__begin();
         $leg1 = static::__leg1($begin['leg1']);
 
-        $other = new Session();
-        $other->session_token = bin2hex(random_bytes(32));
-        $other->csrf_token = bin2hex(random_bytes(32));
-        $other->ip_address = '10.0.0.12';
-        $other->user_agent = 'session-link-test';
-        $other->last_active = now();
-        $other->active = true;
-        $other->site_id = self::SITE_ID;
-        $other->login_user_id = $begin['staff']->login_user_id;
-        $other->type_id = Session::TYPE_WEB;
-        $other->version = 1;
-        $other->save();
+        $other = static::__insert_session_fixture([
+            'staff' => ['login_user_id' => (int) $begin['staff']->login_user_id, 'site_id' => self::SITE_ID],
+        ]);
 
-        static::__assert_refused(static::__leg2($leg1['location'], $other->session_token), 'another browser');
+        static::__assert_refused(static::__leg2($leg1['location'], $other['token']), 'another browser');
         static::__assert_not_linked($begin['row_id'], 'another browser');
-        static::__assert_not_linked($other->id, 'another browser (its own row)');
+        static::__assert_not_linked($other['id'], 'another browser (its own row)');
     }
 
     public static function test_leg2_refuses_a_browser_with_no_staff_cookie()

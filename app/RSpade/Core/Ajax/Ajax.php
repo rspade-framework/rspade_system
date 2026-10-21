@@ -623,8 +623,8 @@ class Ajax
         $envelope['_server_time'] = Rsx_Time::now_iso();
         $envelope['_user_timezone'] = Rsx_Time::get_user_timezone();
 
-        // A sign-in made by this request moved the browser to a new session row, with a
-        // new CSRF token; the page that asked still holds the old one.
+        // A sign-in or sign-out made by this request rotated the browser's tokens; the page
+        // that asked still holds the old CSRF token.
         $rotated_csrf_token = Session::_rotated_csrf_token();
         if ($rotated_csrf_token !== null) {
             $envelope['_csrf'] = $rotated_csrf_token;
@@ -847,22 +847,23 @@ class Ajax
      * the page that sent it may have been open when the limit passed, and should still be
      * able to save what is on screen. The first call after that window ends the sign-in and
      * answers the session_expired envelope, which the client turns into its "you have been
-     * signed out" handling (Rsx.set_session_expired_handler()).
+     * signed out" handling (Rsx.set_session_expired_handler()). A call on a rotated token is
+     * answered the same envelope, cause 'rotated'.
      *
      * @param int $console_mark
      * @return array|null The session_expired envelope, or null to proceed
      */
     private static function __timeout_refusal(int $console_mark): ?array
     {
-        // A call carrying the token of a session row that has since been replaced (a
-        // sign-in or an expiry on this browser, or a copied cookie): the row is dead, so
-        // the call is refused exactly as an expired one is.
-        if (Session::_arrived_on_retired_token()) {
+        // A call carrying the token the browser's latest sign-in or sign-out replaced: it was
+        // in flight when the tokens rotated. Refused exactly as an expired one is, and its
+        // response carries no session cookie (Session::_arrived_on_rotated_token()).
+        if (Session::_arrived_on_rotated_token()) {
             return static::__side_channels([
                 '_success' => false,
                 'error_code' => self::ERROR_SESSION_EXPIRED,
-                'reason' => 'This session has ended. Reload the page to continue.',
-                'metadata' => ['cause' => 'retired'],
+                'reason' => 'This session has changed. Reload the page to continue.',
+                'metadata' => ['cause' => 'rotated'],
             ], $console_mark, false);
         }
 

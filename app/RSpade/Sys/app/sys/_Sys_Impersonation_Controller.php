@@ -33,7 +33,9 @@ class _Sys_Impersonation_Controller extends _Sys_Endpoint_Controller_Abstract
 {
     /**
      * The session-value key holding the site the developer's session was on when the
-     * impersonation began (Session::put_value()), restored by stop().
+     * impersonation began (Session::put_value(), staff realm - an impersonation starting or
+     * ending moves the staff pointer without ending the developer's sign-in, so it is
+     * kept across both), restored by stop().
      */
     public const RETURN_SITE_KEY = 'sys.impersonation.return_site';
 
@@ -68,8 +70,8 @@ class _Sys_Impersonation_Controller extends _Sys_Endpoint_Controller_Abstract
 
         Session::stop_impersonation();
 
-        $return_site_id = Session::get_value(self::RETURN_SITE_KEY);
-        Session::forget_value(self::RETURN_SITE_KEY);
+        $return_site_id = Session::get_value(self::RETURN_SITE_KEY, null, 'staff');
+        Session::forget_value(self::RETURN_SITE_KEY, 'staff');
 
         if ($return_site_id !== null) {
             Session::set_site_id((int) $return_site_id);

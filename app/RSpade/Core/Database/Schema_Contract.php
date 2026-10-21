@@ -203,7 +203,7 @@ class Schema_Contract
             'portal_users' => [
                 'migration' => '2026_01_29_180540_create_portal_users_table',
                 'columns' => [
-                    'id' => ['where' => 'Portal_Session; FK target of _sessions.portal_user_id'],
+                    'id' => ['where' => 'Portal_Session; FK target of _user_sessions.portal_user_id'],
                     'site_id' => ['where' => 'Portal_Session::get_site_id() scoping'],
                     'email' => ['where' => 'Portal_User_Model::find_by_email() - stored lower-cased and trimmed'],
                     'password' => ['where' => 'Portal_Auth::verify_credentials() Hash::check'],
@@ -303,11 +303,11 @@ class Schema_Contract
                 'why' => 'every uploaded file is scoped to a tenant by the framework, not by the app',
             ],
             [
-                'table' => '_sessions',
+                'table' => '_user_sessions',
                 'column' => 'portal_user_id',
                 'references' => 'portal_users',
                 'referenced_column' => 'id',
-                'why' => 'the one session row carries the portal identity',
+                'why' => 'a portal sign-in is a user session of a portal user',
             ],
             [
                 'table' => '_sso_identities',

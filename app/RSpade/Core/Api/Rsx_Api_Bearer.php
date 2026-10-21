@@ -59,7 +59,8 @@ class Rsx_Api_Bearer
     }
 
     /**
-     * Authenticate the Bearer key and establish the headless Session identity.
+     * Authenticate the Bearer key and establish the Session identity, on the key's own
+     * session row (Session::_set_api_identity()).
      *
      * Resolves the key's user WITHOUT site scope (no site identity exists yet), and refuses
      * unless that user is BOTH active (User_Model::is_active(): the membership and its site both
@@ -96,7 +97,7 @@ class Rsx_Api_Bearer
             return ['error' => ['unauthorized', 'Invalid or expired API key'], 'key' => null, 'user' => null];
         }
 
-        Session::_set_api_identity((int) $user->login_user_id, (int) $user->site_id, (int) $user->id);
+        Session::_set_api_identity((int) $user->login_user_id, (int) $user->site_id, (int) $user->id, (int) $key->id);
         static::touch_last_used($key);
 
         return ['error' => null, 'key' => $key, 'user' => $user];

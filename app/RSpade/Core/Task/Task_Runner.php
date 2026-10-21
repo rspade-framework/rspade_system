@@ -14,6 +14,8 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Revisions\Revision;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Dispatcher_Context;
 use App\RSpade\Core\Task\Task_Instance;
@@ -32,14 +34,28 @@ use App\RSpade\Core\Task\Task_Run_Outcome;
 class Task_Runner
 {
     /**
+     * The claim tiers (_tasks.priority): a worker claims the lowest first, and the oldest due
+     * run within a tier (Task_Worker_Command::claim_pending_run()).
+     */
+    const PRIORITY_RUN_AS_DISPATCHER = 0;
+    const PRIORITY_ON_DEMAND = 1;
+    const PRIORITY_SCHEDULED = 2;
+
+    /**
      * Insert a run's row and return its id.
      *
      * The row records who started it, for which site and from what acting context - the
      * signed-in identity of the current realm (Rsx_Model_Abstract::_resolve_context_actor()),
-     * the current site and Session::get_audit_session_id() - so an application's view gate can
-     * show users the runs they started, and a task declared #[Run_As_Dispatcher] can run as
-     * them (Task_Dispatcher_Context). Such a task dispatched with nobody signed in is refused
+     * the current site, the sign-in it came from (Session::get_user_session_id() - a browser's
+     * staff or portal sign-in, or an API key's) and Session::get_audit_session_id() - so an
+     * application's view gate can show users the runs they started, and a task declared
+     * #[Run_As_Dispatcher] runs bound to that sign-in (Task_Dispatcher_Context). Such a task
+     * started where there is no sign-in (nobody signed in, a command, a plain task) is refused
      * here: it would otherwise run as nobody.
+     *
+     * The run's claim tier is stamped too (priority): a scheduled-origin run is
+     * PRIORITY_SCHEDULED, a #[Run_As_Dispatcher] run - somebody's request, waiting -
+     * PRIORITY_RUN_AS_DISPATCHER, every other run PRIORITY_ON_DEMAND.
      *
      * `timeout` stays NULL unless $fields names one: NULL is "no hard limit - the silence rule
      * applies" (rsx.tasks.silent_timeout), a number is a hard limit somebody asked for.
@@ -50,13 +66,21 @@ class Task_Runner
     {
         $now = now()->format('Y-m-d H:i:s.v');
         $actor = Rsx_Model_Abstract::_resolve_context_actor();
+        $user_session_id = Session::get_user_session_id();
+        $as_dispatcher = Task_Dispatcher_Context::is_declared($class, $method);
 
-        if ($actor === null && Task_Dispatcher_Context::is_declared($class, $method)) {
+        if ($as_dispatcher && $user_session_id === null) {
             throw new \RuntimeException(
-                "{$class}::{$method} runs as the person who dispatched it (#[Run_As_Dispatcher]), and it was "
-                . 'dispatched with nobody signed in. Dispatch it from a signed-in request.'
+                class_basename($class) . "::{$method} runs as the user who dispatched it (#[Run_As_Dispatcher]) and can only be "
+                . 'started from a signed-in request: dispatch it with Task::dispatch() from an Ajax endpoint. There is no sign-in here.'
             );
         }
+
+        $priority = match (true) {
+            $origin_id === Task_Run_Model::ORIGIN_SCHEDULED => self::PRIORITY_SCHEDULED,
+            $as_dispatcher => self::PRIORITY_RUN_AS_DISPATCHER,
+            default => self::PRIORITY_ON_DEMAND,
+        };
 
         $row = [
             'class' => $class,
@@ -68,7 +92,9 @@ class Task_Runner
             'site_id' => static::__current_site_id(),
             'dispatched_by_id' => $actor['id'] ?? null,
             'dispatched_by_type' => $actor !== null ? Type_Ref_Registry::class_to_id($actor['type']) : null,
-            'audit_session_id' => \App\RSpade\Core\Session\Session::get_audit_session_id(),
+            'audit_session_id' => Session::get_audit_session_id(),
+            'user_session_id' => $user_session_id,
+            'priority' => $priority,
             'scheduled_for' => $now,
             'created_at' => $now,
             'updated_at' => $now,
@@ -86,15 +112,28 @@ class Task_Runner
      * Service::pre_task() runs first; a non-null return from it ends the run with that value as
      * the return.
      *
+     * A run executed OUTSIDE its caller's process ($own_context: a worker, rsx:task:process
+     * --once) gets a context of its own, and every such run ends the same way:
+     *
+     *   - before: a fresh unit of work for revision history, and a fresh virtual session - a
+     *     plain one (nobody, no site; identity settable) for an ordinary task, the frozen one
+     *     bound to the dispatching sign-in for #[Run_As_Dispatcher]
+     *     (Task_Dispatcher_Context::begin(); a refusal there is the run's failure, and the
+     *     method never runs);
+     *   - after, however it ended: Session::_end_virtual() - the process is blank again, so
+     *     nothing one run was (identity, site, realm, impersonation, audit context, timezone)
+     *     is inherited by the next run on the same worker.
+     *
+     * An inline run (Task::internal()) executes in its caller's own context, which
+     * Task::internal() keeps around the call.
+     *
      * @param bool $release_leaked_locks A WORKER runs unrelated tasks back to back in one long
      *        process, so it hands back every lock the task took and left held (loudly - that
      *        is a defect in the task). An inline caller keeps its own locks.
-     * @param bool $as_recorded_dispatcher The run executes in a process other than the one that
-     *        dispatched it (a worker, rsx:task:process --once), so a task declared
-     *        #[Run_As_Dispatcher] has its dispatcher's context put back for the call
-     *        (Task_Dispatcher_Context). An inline run is already in its dispatcher's context.
+     * @param bool $own_context The run executes in a process other than its caller's (a
+     *        worker, rsx:task:process --once): it gets a context of its own, described above.
      */
-    public static function execute(Task_Instance $instance, bool $release_leaked_locks, bool $as_recorded_dispatcher = false): Task_Run_Outcome
+    public static function execute(Task_Instance $instance, bool $release_leaked_locks, bool $own_context = false): Task_Run_Outcome
     {
         $class = $instance->get_class();
         $method = $instance->get_method();
@@ -119,15 +158,27 @@ class Task_Runner
                 return $class::$method($instance, $params);
             });
 
-            $value = $as_recorded_dispatcher && Task_Dispatcher_Context::is_declared($class, $method)
-                ? Task_Dispatcher_Context::run($instance->get_id(), $invoke)
-                : $invoke();
+            if ($own_context) {
+                // One task is one unit of work for revision history: a worker is a LONG-LIVED
+                // process running unrelated tasks back to back.
+                Revision::_reset_request_state('task', $class . '::' . $method);
 
-            $outcome = Task_Run_Outcome::from_return($value);
+                if (Task_Dispatcher_Context::is_declared($class, $method)) {
+                    Task_Dispatcher_Context::begin($instance->get_id());
+                } else {
+                    Session::_begin_virtual();
+                }
+            }
+
+            $outcome = Task_Run_Outcome::from_return($invoke());
         } catch (Throwable $e) {
             // Throwable, not Exception: a TypeError inside a task is a failed run like any other.
             $outcome = Task_Run_Outcome::from_throwable($e);
         } finally {
+            if ($own_context) {
+                Session::_end_virtual();
+            }
+
             if ($release_leaked_locks) {
                 foreach (RsxLocks::_release_since($lock_checkpoint) as $lock_name) {
                     $message = "Task ended still holding {$lock_name} - released by the worker. Release your locks in a finally block.";

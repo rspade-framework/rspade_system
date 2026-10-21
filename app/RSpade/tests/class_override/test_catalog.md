@@ -81,13 +81,14 @@ the drift analyzer knowing a split pair has nothing to compare.
 | CO-L08 | A key that leaves the map gives composer its own answer back | php | map set, then restored | `findFile()` answers the framework file | implemented | 2026-10-14 |
 | CO-L09 | The include seam refuses a shadowed framework file | php | `include_declaration(shell)` | RuntimeException; file not included | implemented | 2026-10-14 |
 | CO-L10 | The map artifact round-trips, a missing one is empty, an unchanged one is not rewritten | php | tmp artifact | equal map; same mtime; no temp file | implemented | 2026-10-14 |
+| CO-L11 | The HTML sanitizers' first use (HTMLPurifier, loaded on demand through composer) leaves the override loader first | php | `sanitize_rich_text_html()`, `Markdown_Rendition::render()` | `spl_autoload_functions()[0]` is `Class_Override_Loader::load` | implemented | 2026-10-21 |
 | CO-LC01 | A fresh process on the committed OPTIMISED classmap resolves real framework FQCNs (a copy-and-replace class and a split model) to probe overrides | cli | child requiring `system/vendor/autoload.php`, map in a scratch `--_rsx-build-root` | probes resolve; trip-wire in composer; shells never included | implemented | 2026-10-14 |
 | CO-LC02 | The same with an AUTHORITATIVE classmap | cli | child sets `setClassMapAuthoritative(true)` | same | implemented | 2026-10-14 |
 | CO-LC03 | With the override loader unregistered, composer hits the trip-wire, never the framework file | cli | child unregisters the loader | message names both classes; nothing declared | implemented | 2026-10-14 |
 | CO-LC04 | No map file is an empty map; the framework class loads as itself | cli | scratch build root without a map | empty map; framework FQCN | implemented | 2026-10-14 |
 | CO-LC05 | A framework base whose signature names its own overridable class, redeclared by the override with its own name, fails loud: by the override's name with the loader's explanation, by the framework name with PHP's "is not available" | cli | fixture base + override, two children | non-zero exit, nothing after the declaration ran, the named message | implemented | 2026-10-14 |
 
-CO-L01..L10 (`Override_Loader_Test`) and CO-LC01..LC05 (`tests/class_override/cli/Override_Loader_Cli_Test`)
+CO-L01..L11 (`Override_Loader_Test`) and CO-LC01..LC05 (`tests/class_override/cli/Override_Loader_Cli_Test`)
 cover the override loader. Two PHP rules shape it: PHP's inheritance check
 DOES autoload when the two spellings of a type differ, so an aliased framework name satisfies it; PHP's
 parameter and return type checks do NOT autoload, which is why the alias is made the moment the override

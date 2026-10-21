@@ -49,13 +49,14 @@ RESPONSE FORMATS
 
     "session_expired" is the framework's own: the sign-in outlived
     rsx.sessions.* and was just ended (metadata.cause is "length" or "idle"), or
-    the call carried the token of a session row that has since been replaced
-    (metadata.cause "retired").
+    the call carried the session token a sign-in or sign-out on this browser has
+    just replaced - it was in flight when the tokens rotated (metadata.cause
+    "rotated"; no cookie is sent with it).
     Nothing in an application returns or handles it per call. The client
     announces it - and "auth_required" on a page that was rendered signed in -
     once per page to the handler registered with
     Rsx.set_session_expired_handler(), or reloads the page when there is none.
-    See rsx:man session (SESSION LIFETIME).
+    See rsx:man session (HOW SESSIONS TIME OUT; TOKEN ROTATION).
 
     Fatal PHP Errors (Uncaught Exceptions)
     ---------------------------------------
@@ -496,8 +497,9 @@ TRANSPORT
 
         1. Session lifetime (rsx.sessions.*). Once a call answers
            session_expired, every later call in the request answers the
-           same envelope. A cookie naming a replaced session row answers
-           session_expired with metadata.cause "retired".
+           same envelope. A cookie carrying the token the browser's latest
+           rotation replaced answers session_expired with metadata.cause
+           "rotated".
         2. Staff site membership: a disabled membership ends the session
            and the call answers auth_required.
         3. The realm's Main::pre_dispatch (Portal_Main on the portal), once

@@ -991,7 +991,7 @@ SUBSYSTEM PRIMERS
       Error_Context),
       Core/SPA/Error_Screens.js, Core/Rsx.php, Core/Portal/Rsx_Portal.php,
       Core/Base/Main_Abstract.php.
-      Skills: rspade:auth-gates, rspade:spa, rspade:portal.
+      Skills: rspade:auth-gates, rspade:spa, rspade:portal-core.
 
   3. THE AJAX ENVELOPE AND HANDLERS
     An Ajax endpoint is a public static method with #[Ajax_Endpoint] and its
@@ -1111,30 +1111,34 @@ SUBSYSTEM PRIMERS
       Skills: rspade:ajax-error-handling, rspade:model-fetch.
 
   4. SESSIONS, CSRF AND THE PORTAL REALM
-    ONE COOKIE, ONE ROW, TWO IDENTITIES. A single cookie names a single row
-    in _sessions, and that row carries BOTH identity sets side by side: the
-    staff login user with its site and impersonator, and the portal user with
-    its own site and impersonator. Both being populated at once is normal,
-    not a bug - one browser, one session, two experiences.
+    ONE COOKIE, ONE ROW, TWO SIGN-INS. A single cookie names a single
+    _sessions row - the BROWSER - which points at its current staff sign-in and
+    its current portal sign-in, each a row of _user_sessions (browser x account
+    x site x impersonator, reused when that account signs in there again).
+    Both set at once is normal, not a bug - one browser, one session, two
+    experiences. _audit_sessions (user session x site x address x agent) is
+    the acting context a record of an act points at. rsx:man session, PART TWO,
+    is the whole model and its internals map.
 
     Session is unusual in that the model IS the facade: the class extends the
     system model base and every static reader and writer hangs off it.
-    Portal_Session is NOT a model - it is a static facade over the portal
-    property subset, and its CSRF methods delegate straight to Session,
-    because there is exactly one token.
+    Portal_Session is NOT a model - it is a static facade over the browser's
+    portal sign-in, and its CSRF methods delegate straight to Session, because
+    there is exactly one token.
 
-    TOKEN IMMUTABILITY. The session token is minted exactly once, when the
-    session row is created. Resuming re-emits the SAME value, which only
-    refreshes browser-side expiry and can never desync from the row. The CSRF
-    token is minted once the same way. An identity change - login, logout,
-    impersonation - is a RECORD UPDATE, not a new token.
+    TOKENS ROTATE IN PLACE. Every sign-in and sign-out on the browser making
+    the request replaces the row's session and CSRF tokens; the hash of the
+    replaced token is kept so an in-flight Ajax call or sub-resource carrying
+    it is refused (a page navigation on it is a guest). A site switch and an
+    impersonation do not rotate. Ending a sign-in on ANOTHER browser leaves
+    that browser's token alone.
 
     READERS CREATE NOTHING; WRITERS CREATE A SESSION IF NEEDED. The class
     header lists which is which, and the distinction is load-bearing:
-    get_session_id() is a writer, returns int, and is NEVER null, so a
-    null-ish test on it is dead code that already created the session it
-    meant to prevent - a manifest-build FATAL enforces that. "Is there a
-    session?" is has_session(), which creates nothing.
+    get_session_id() creates the browser's row for a guest, so "is there a
+    session?" is has_session(), which creates nothing. get_session_id() is
+    ?int - NULL in a command, a task and a test, which run a row-less virtual
+    session.
 
     THE PORTAL FORK is Rsx_Portal::is_portal_request(), memoized per process,
     resolved from where PORTAL_URL places the portal (its own host, or its
@@ -1182,7 +1186,7 @@ SUBSYSTEM PRIMERS
       Portal_Main_Abstract.php),
       Core/Auth/ (RsxAuth.php, Login_Throttle.php, Login_History.php),
       Core/Js/Rsx_Csrf.js.
-      Skills: rspade:session-auth, rspade:portal, rspade:permissions-acl.
+      Skills: rspade:session-auth, rspade:portal-core, rspade:permissions-acl.
 
   5. FILE STORAGE, THUMBNAILS, RENDER, PREVIEW AND SEARCH
     One idea explains the whole subsystem: identical bytes are stored,
@@ -1942,7 +1946,7 @@ SUBSYSTEM PRIMERS
       Spa_Decorators.js, Error_Screens.js, Spa_App.blade.php,
       Spa_ManifestSupport.php, Spa_Session_Controller.php, Default_Layout),
       Core/Js/Rsx.js.
-      Skills: rspade:spa, rspade:jqhtml, rspade:crud-patterns.
+      Skills: rspade:spa, rspade:jqhtml, app skill crud-patterns.
 
   9. REALTIME
     PHP publishes to Redis, a Node relay holds the browser sockets, the

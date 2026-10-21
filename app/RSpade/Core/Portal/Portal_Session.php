@@ -12,25 +12,21 @@ use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\Session_Link;
-use App\RSpade\Core\Session\User_Agent;
 
 /**
  * Portal_Session - authentication for external portal users.
  *
- * A STATIC FACADE over the PORTAL PROPERTIES of the ONE session RSpade gives a
- * browser. There is no portal session row, no portal cookie and no portal table: a
- * session identifies a BROWSER (one `rsx` cookie, one `_sessions` row, per cookie
- * jar), the row is a property bag, and this class reads and writes the portal-shaped
- * properties on it through the framework-internal seams on Session:
+ * A STATIC FACADE over the PORTAL SIGN-IN of the ONE session RSpade gives a browser.
+ * There is no portal session row and no portal cookie: a session identifies a BROWSER
+ * (one `rsx` cookie, one `_sessions` row, per cookie jar), and its portal sign-in is a
+ * USER SESSION (_user_sessions, realm portal: the portal user, its site, and the staff
+ * users.id when it is a "View as Client") that the row's portal pointer names. This class
+ * reads and moves that pointer through the framework-internal seams on Session.
  *
- *     portal_user_id, portal_site_id, impersonator_user_id,
- *     impersonation_started_at
- *
- * The staff facade (Session) owns the row itself and the staff properties
- * (login_user_id, site_id, impersonator_login_user_id). BOTH IDENTITIES SET AT ONCE
- * IS NORMAL - the same human, in the same browser, signed into the staff app and the
- * client portal. Which set a given request consults is decided by the REQUEST's
- * experience (Rsx_Portal::is_portal_request()), never by the row.
+ * The staff facade (Session) owns the row itself and the staff pointer. BOTH SIGNED IN AT
+ * ONCE IS NORMAL - the same human, in the same browser, signed into the staff app and the
+ * client portal. Which a given request consults is decided by the REQUEST's experience
+ * (Rsx_Portal::is_portal_request()), never by the row.
  *
  * A portal on its own host (PORTAL_URL) sits behind a separate cookie jar, so ordinarily
  * the browser holds its own row there, with the staff properties null. Staff "View as
@@ -38,9 +34,9 @@ use App\RSpade\Core\Session\User_Agent;
  * at the staff browser's row (see begin_impersonation_from_staff()).
  *
  * Consequences worth stating outright:
- * - Portal logout, terminating a portal device session and the portal sign-in cap all
- *   CLEAR THE PORTAL PROPERTIES. They never delete or deactivate the row - it is the
- *   browser's session and may carry a staff login too.
+ * - Portal logout, ending a portal session and the portal sign-in cap sign out the PORTAL
+ *   user session only. They never delete or deactivate the row - it is the browser's
+ *   session and may carry a staff sign-in too.
  * - The session id, the session token and the CSRF token are SHARED with the staff
  *   facade. get_session_id() / get_csrf_token() here are the same values Session
  *   reports; they are kept as facade methods so portal code never has to know that.
@@ -107,8 +103,7 @@ class Portal_Session
      * once per CLASS and therefore does NOT survive this, so each test declares its own site.)
      *
      * Called by Rsx_Test_Abstract between test methods, and never by application code. Ending
-     * a portal identity on a live request is `Session::_clear_portal_properties()`, which is
-     * what the logout paths use.
+     * a portal sign-in on a live request is logout().
      *
      * @return void
      */
@@ -154,9 +149,8 @@ class Portal_Session
      *   Portal_Session::set_site_id((int) config('rsx.portal.site_id'));
      *
      * Semantics:
-     * - Request-scoped, and RECORDED on the session row's portal_site_id when the
-     *   browser already has a row (so the row says which tenant its portal identity
-     *   belongs to). It creates no session.
+     * - Request-scoped. It creates no session; the tenant is recorded on the portal user
+     *   session when somebody signs in.
      * - Idempotent for the same id; a DIFFERENT id throws. A portal never offers a
      *   site switcher, so two answers in one request means two subsystems disagree
      *   about the tenant - a bug, not a switch. (This is the deliberate difference
@@ -184,6 +178,8 @@ class Portal_Session
 
         // CLI: no request, no session, no cookie - just the declaration.
         if (self::__is_cli()) {
+            Session::_refuse_if_frozen('Portal_Session::set_site_id()');
+
             self::$_declared_site_id = $site_id;
             self::$_site = null;
 
@@ -212,17 +208,13 @@ class Portal_Session
 
         self::$_declared_site_id = $site_id;
         self::$_site = null;
-
-        // Record it on the row when the browser already has one. Creates nothing:
-        // declaring a tenant is not asking for a session.
-        Session::_set_portal_site_id($site_id);
     }
 
     /**
      * Get site ID for the current portal request.
      *
-     * Resolution order: the session's own portal tenant (stamped when the portal
-     * identity was established), then the application's set_site_id() declaration.
+     * Resolution order: the portal sign-in's own tenant (its user session's site), then
+     * the application's set_site_id() declaration.
      * Nothing else - there is no detection and no default. When neither exists this
      * THROWS, which is the contract: a portal that does not know its tenant must not
      * quietly pick one.
@@ -348,46 +340,21 @@ class Portal_Session
      */
     public static function get_session(): Session
     {
-        $session = Session::get_session();
-
-        self::__persist_declared_site();
-
-        return $session;
+        return Session::get_session();
     }
 
     /**
-     * Get current session ID (creates session if needed).
+     * Get current session ID (creates session if needed) - or null where there is no
+     * browser (a command, a task). See Session::get_session_id().
      *
      * The SAME id the staff facade reports: one browser, one session. Portal code
      * calls it through this facade so it never has to know that.
      *
-     * @return int
+     * @return int|null
      */
-    public static function get_session_id(): int
+    public static function get_session_id(): ?int
     {
-        $session_id = Session::get_session_id();
-
-        self::__persist_declared_site();
-
-        return $session_id;
-    }
-
-    /**
-     * Record the application's site declaration on the row once one exists.
-     *
-     * Called after any activation this facade triggers, so a row minted during a
-     * portal request carries the tenant that request serves. A no-op when nothing
-     * was declared, when no row exists, or when the value already matches.
-     *
-     * @return void
-     */
-    private static function __persist_declared_site(): void
-    {
-        if (self::__is_cli() || self::$_declared_site_id === null) {
-            return;
-        }
-
-        Session::_set_portal_site_id(self::$_declared_site_id);
+        return Session::get_session_id();
     }
 
     /**
@@ -420,29 +387,29 @@ class Portal_Session
     // =====================================================================
 
     /**
-     * Store a value against this browser's session - the SAME store Session::put_value()
-     * writes, exposed here so portal code never reaches for the staff facade.
+     * Store a value against this browser's session in the PORTAL realm - Session::put_value()
+     * with realm 'portal', exposed here so portal code never reaches for the staff facade.
      *
-     * The store belongs to the browser's one session row, not to either identity, so a
-     * value written here is readable from a staff request on the same browser and the
-     * reverse. Portal code namespaces its keys ('portal_...') for exactly that reason. A
-     * value survives a portal logout (the row survives it), which is what lets a login flow
-     * park something across a second-factor challenge. See Session::put_value() for the
-     * writer semantics and the optional expiry.
+     * A portal value is cleared when the browser's portal sign-in ends (signed out, timed out,
+     * ended from elsewhere, or another portal account signed in over it); a staff sign-out
+     * never touches it, and a value a signed-out visitor parks before signing in (across a
+     * second-factor challenge) is still there after the sign-in. A value that must outlive
+     * every sign-out is the browser's own: Session::put_value($key, $value, null, 'guest').
+     * See Session::put_value() for the writer semantics and the optional expiry.
      *
      * @param string $key
      * @param mixed $value
-     * @param string|null $expires_at ISO datetime, or null to live as long as the session
+     * @param string|null $expires_at ISO datetime, or null to live as long as the realm keeps it
      * @return void
      */
     public static function put_value(string $key, $value, ?string $expires_at = null): void
     {
-        Session::put_value($key, $value, $expires_at);
+        Session::put_value($key, $value, $expires_at, 'portal');
     }
 
     /**
-     * Read a value stored against this browser's session. A reader: creates nothing. An
-     * expired value reads as absent. See Session::get_value().
+     * Read a value stored against this browser's session in the portal realm. A reader:
+     * creates nothing. An expired value reads as absent. See Session::get_value().
      *
      * @param string $key
      * @param mixed $default
@@ -450,23 +417,24 @@ class Portal_Session
      */
     public static function get_value(string $key, $default = null)
     {
-        return Session::get_value($key, $default);
+        return Session::get_value($key, $default, 'portal');
     }
 
     /**
-     * Remove a value stored against this browser's session. See Session::forget_value().
+     * Remove a value stored against this browser's session in the portal realm. See
+     * Session::forget_value().
      *
      * @param string $key
      * @return void
      */
     public static function forget_value(string $key): void
     {
-        Session::forget_value($key);
+        Session::forget_value($key, 'portal');
     }
 
     /**
-     * Log the portal user out: clears the portal properties, leaving the browser's
-     * session (and any staff login on it) intact.
+     * Sign the portal account out of this browser, leaving the browser's session (and any
+     * staff sign-in on it) intact. Under a View as Client this ends the view instead.
      *
      * @return void
      */
@@ -476,13 +444,11 @@ class Portal_Session
     }
 
     /**
-     * End the portal sign-in on this browser's session when it has outlived
-     * rsx.sessions.portal, and say why. The portal twin of Session::enforce_timeouts():
-     * same two clocks (portal_login_at, portal_last_page_view_at), same Ajax grace, and
-     * the same retirement - the expired row is marked inactive with its record intact and
-     * the browser moves to a successor, on which only the portal properties are cleared.
-     * A staff login is carried to the successor and is judged by its own limits, on staff
-     * requests.
+     * End the portal sign-in on this browser when it has outlived rsx.sessions.portal, and
+     * say why. The portal twin of Session::enforce_timeouts(): the same two clocks on the
+     * portal user session (signed_in_at, last_page_view_at), the same Ajax grace, and the
+     * same sign-out (SIGN_OUT_TIMED_OUT_*, tokens rotated). A staff sign-in on the same
+     * browser is untouched and is judged by its own limits, on staff requests.
      *
      * @param bool $strict True for a page; false gives the Ajax grace
      * @return string|null 'length' or 'idle' when the sign-in was just ended, else null
@@ -492,17 +458,16 @@ class Portal_Session
         $reason = Session::_timeout_reason('portal', $strict);
 
         if ($reason !== null) {
-            Session::_retire_expired_row();
-            self::logout();
+            Session::_sign_out_current('portal', Session::timeout_sign_out_reason($reason));
         }
 
         return $reason;
     }
 
     /**
-     * Record a PAGE VIEW for the portal identity on this browser's session, and
+     * Record a PAGE VIEW for the portal sign-in on this browser (its user session), and
      * last_seen on the portal account. See Session::touch_page_view(). Under View as
-     * Client the session is stamped and the account is not.
+     * Client the user session is stamped and the account is not.
      *
      * @return void
      */
@@ -525,23 +490,31 @@ class Portal_Session
     }
 
     /**
-     * Set portal user ID for current session (login/logout)
-     * In CLI mode: sets static CLI property only, no database
+     * Sign a portal account in on this browser, or (null) sign it out.
      *
-     * Logging in activates the browser's session (minting the row through THE
-     * activation path if this is a fresh browser) and stamps the portal identity onto
-     * it, together with the tenant the application declared with set_site_id().
-     * Declare the site before calling this (Portal_Main::init or the login flow
-     * itself); an undeclared site throws.
+     * SIGN-IN: activates the browser's session (minting the row through THE activation path
+     * if this is a fresh browser) and finds or creates the portal user session for (this
+     * browser, the account, the tenant the application declared with set_site_id()); the
+     * browser points at it, its clocks start, the tokens rotate and the account's session
+     * cap is applied. Declare the site before calling this (Portal_Main::init or the login
+     * flow itself); an undeclared site throws. Re-stating the account the browser is already
+     * signed in as is not a sign-in and changes nothing.
      *
-     * Logging out CLEARS every portal property. The row survives - it is the
-     * browser's session, and may also carry a staff login.
+     * SIGN-OUT: the portal user session is signed out (SIGN_OUT_SIGNED_OUT), the browser's
+     * tokens rotate and its PORTAL values are cleared (the staff and guest values stay).
+     * The row survives: it is the browser's session, and may carry a staff
+     * sign-in. Under a View as Client, signing out of the portal ENDS THE VIEW instead
+     * (stop_impersonation()): the staff member never signed into the portal.
+     *
+     * In CLI mode: sets the static CLI property only, no database.
      *
      * @param int|null $portal_user_id Portal user ID, or null to logout
      * @return void
      */
     public static function set_portal_user_id(?int $portal_user_id): void
     {
+        Session::_refuse_if_frozen(empty($portal_user_id) ? 'Portal_Session::logout()' : 'Portal_Session::set_portal_user_id()');
+
         // Logout if null/0
         if (empty($portal_user_id)) {
             // CLI mode: clear static property only
@@ -554,19 +527,8 @@ class Portal_Session
                 return;
             }
 
-            // has_session() creates nothing: an anonymous visitor logging out has
-            // nothing to clear.
-            if (Session::has_session()) {
-                // Confirmed-different gating: only a real logged-in -> logged-out transition
-                // pushes a refresh (an already-anonymous session emits nothing).
-                $old_portal_user_id = Session::_get_portal_user_id();
-                $session_id = Session::get_session_id();
-
-                Session::_clear_portal_properties();
-
-                if (!empty($old_portal_user_id)) {
-                    Realtime::push_session_refresh('portal', $session_id);
-                }
+            if (!Session::_end_portal_impersonation()) {
+                Session::_sign_out_current('portal', Session::SIGN_OUT_SIGNED_OUT);
             }
 
             self::$_portal_user = null;
@@ -588,37 +550,21 @@ class Portal_Session
         // BEFORE activation so a misconfigured portal fails before it mints anything.
         $site_id = self::get_site_id();
 
-        // Confirmed-different gating for the refresh push: capture prior identity first.
-        $old_portal_user_id = Session::_get_portal_user_id();
-
-        $push_session_id = Session::has_session() ? Session::get_session_id() : null;
-
-        // A SIGN-IN MOVES THE BROWSER TO A NEW ROW (Session::__rotate_for_sign_in()): the
-        // identity is written onto a row whose token nobody has seen, any staff login
-        // rides across with it, and the row the browser arrived with can never
-        // authenticate again. See rsx:man session (SIGN-IN ROTATION).
-        $superseded_id = Session::_set_portal_identity($portal_user_id, $site_id);
-
-        if ($superseded_id !== null) {
-            $push_session_id = $superseded_id;
+        if (!Session::_set_portal_identity($portal_user_id, $site_id)) {
+            return;
         }
 
-        // Clear cached portal_user/site
         self::$_portal_user = null;
         self::$_site = null;
 
-        // Identity changed to a confirmed-different value -> push a refresh to every live
-        // PORTAL-stamped connection on this session (re-setting the same value emits
-        // nothing). Staff tabs on the same session are untouched: the realm stamp on a
-        // connection records which EXPERIENCE its page was minted on.
-        // The connections to tell are the ones opened on the row the browser ARRIVED with.
-        if ((int) $old_portal_user_id !== (int) $portal_user_id) {
-            Realtime::push_session_refresh('portal', $push_session_id ?? Session::get_session_id());
-        }
+        // Push a refresh to every live PORTAL-stamped connection on this browser. Staff tabs
+        // on the same browser are untouched: the realm stamp on a connection records which
+        // EXPERIENCE its page was minted on.
+        Realtime::push_session_refresh('portal', Session::get_session_id());
 
         // Sign-in is the moment this user's session count grows, so it is where the
         // concurrent-session cap is applied.
-        self::__enforce_web_session_cap((int) $portal_user_id);
+        Session::_enforce_session_cap(Session::REALM_PORTAL, (int) $portal_user_id);
 
         // Update portal user's last login timestamp
         $portal_user = self::get_user();
@@ -626,64 +572,6 @@ class Portal_Session
             $portal_user->last_login = now();
             $portal_user->save();
         }
-    }
-
-    /**
-     * Sign this portal user out of their oldest sessions beyond the configured cap.
-     *
-     * The portal twin of Session::__enforce_web_session_cap(), same trigger and same
-     * rsx.sessions.max_web_sessions_per_user setting, with one difference: eviction
-     * CLEARS THE PORTAL PROPERTIES instead of retiring the row. An evicted row is
-     * some other browser's session and may carry a staff login - ending the portal
-     * identity is exactly as much as this is entitled to do.
-     *
-     * PLAYWRIGHT sessions are excluded from the count and the eviction.
-     * Disabled entirely when the setting is 0 or null.
-     *
-     * @param int $portal_user_id
-     * @return void
-     */
-    private static function __enforce_web_session_cap(int $portal_user_id): void
-    {
-        $max = config('rsx.sessions.max_web_sessions_per_user');
-
-        if (empty($max)) {
-            return;
-        }
-
-        // The ids to KEEP - "the N most recent" is exactly the cap, and N is small
-        // and config-bounded.
-        $keep = self::__device_session_query($portal_user_id)
-            ->where('type_id', Session::TYPE_WEB)
-            ->orderBy('last_active', 'desc')
-            ->orderBy('id', 'desc')
-            ->limit((int) $max)
-            ->pluck('id')
-            ->all();
-
-        $evict = self::__device_session_query($portal_user_id)
-            ->where('type_id', Session::TYPE_WEB)
-            ->whereNotIn('id', $keep)
-            ->pluck('id')
-            ->all();
-
-        Session::_clear_portal_properties_on($evict);
-    }
-
-    /**
-     * The rows that count as this portal user's DEVICE sessions: live browser sessions
-     * carrying their portal identity.
-     *
-     * Excludes deactivated rows, which cannot be resumed.
-     *
-     * @param int $portal_user_id
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
-    private static function __device_session_query(int $portal_user_id)
-    {
-        return Session::_portal_query()
-            ->where('portal_user_id', $portal_user_id)
-            ->where('active', true);
     }
 
     /**
@@ -705,9 +593,9 @@ class Portal_Session
     }
 
     /**
-     * Find a session by token, narrowed to sessions that actually carry a PORTAL
-     * identity. A browser session with no portal login resolves to null here - it is
-     * not a portal session, whatever else it may be.
+     * Find a session by token, narrowed to browsers SIGNED INTO THE PORTAL. A browser
+     * session with no portal sign-in resolves to null here - it is not a portal session,
+     * whatever else it may be.
      *
      * @param string $token
      * @return Session|null
@@ -735,6 +623,8 @@ class Portal_Session
      */
     public static function cli_set_portal_user_id(int $portal_user_id): void
     {
+        Session::_refuse_if_frozen('Portal_Session::cli_set_portal_user_id()');
+
         self::$_cli_portal_user_id = $portal_user_id;
         self::$_portal_user = null;
     }
@@ -744,21 +634,19 @@ class Portal_Session
     // =========================================================================
 
     /**
-     * Get all sessions carrying this portal user's identity, most recently active
-     * first, formatted for display (device parsing included).
+     * Where a portal account is signed in: its PORTAL user sessions, most recently active
+     * first, formatted for display - signed in, or signed out within
+     * rsx.sessions.unused_session_days. The same entries as Session::get_sessions_for_user()
+     * (site_id is the portal site, impersonator_id a staff users.id).
      *
-     * Returns the WHOLE set, for the same reason as the staff twin: a user cannot
-     * terminate a session they were not shown.
-     *
-     * What keeps the set small: rsx.sessions.max_web_sessions_per_user (default 25)
-     * on every sign-in, plus retention on idle rows.
-     * See Session::get_sessions_for_user().
+     * Returns the WHOLE set, for the same reason as the staff twin: a user cannot end a
+     * session they were not shown.
      *
      * @param int|null $portal_user_id If null, uses current logged-in user
-     * @param bool $include_impersonations Also answer the rows on which a staff member is
-     *                          viewing the portal as this user (each entry carries
-     *                          `is_impersonation`). False for the user's own screen.
-     * @return array Array of session info
+     * @param bool $include_impersonations Also answer the View as Client sessions of this
+     *                          account (each entry carries `is_impersonation`). False for the
+     *                          user's own screen.
+     * @return array
      */
     public static function get_sessions_for_user(?int $portal_user_id = null, bool $include_impersonations = false): array
     {
@@ -770,78 +658,36 @@ class Portal_Session
             return [];
         }
 
-        $current_session_id = self::has_session() && !self::__is_cli() ? Session::get_session_id() : null;
-
-        // A staff member viewing the portal as this user is on THEIR OWN browser row, which
-        // carries this portal identity while it lasts: not one of the user's sessions.
-        $sessions = self::__device_session_query((int) $portal_user_id)
-            ->when(!$include_impersonations, fn ($query) => $query->whereNull('impersonator_user_id'))
-            ->orderBy('last_active', 'desc')
-            ->get();
-
-        $first_seen = Session::_device_first_seen($sessions->pluck('device_id')->all());
-
-        return $sessions
-            ->map(function ($session) use ($current_session_id, $first_seen) {
-                $parsed_ua = User_Agent::parse($session->user_agent);
-
-                return [
-                    'id' => $session->id,
-                    'device_id' => $session->device_id,
-                    'ip_address' => $session->ip_address,
-                    'user_agent' => $session->user_agent,
-                    'user_agent_parsed' => $parsed_ua,
-                    'device_summary' => $parsed_ua['summary'],
-                    'last_active' => $session->last_active,
-                    'created_at' => $session->created_at,
-                    'signed_in_at' => $session->portal_login_at,
-                    'first_seen' => $first_seen[$session->device_id] ?? $session->created_at,
-                    'is_current' => $session->id === $current_session_id,
-                    'is_impersonation' => $session->impersonator_user_id !== null,
-                ];
-            })
-            ->toArray();
+        return Session::_list_user_sessions(Session::REALM_PORTAL, (int) $portal_user_id, null, $include_impersonations);
     }
 
     /**
-     * Sign one of the CURRENT portal user's own devices out of the portal, by session ID.
-     * Cannot terminate the current session (use logout() instead).
+     * Sign one of the CURRENT portal account's own portal sessions out, on another browser.
+     * Anything on the browser this request is on is refused (that is logout()'s job). The
+     * other browser's staff sign-in, if it has one, is untouched.
      *
-     * CLEARS THE PORTAL PROPERTIES on that row; the row itself survives, because it is
-     * that browser's session and may carry a staff login. Ending someone's portal
-     * access is not license to end their staff session.
+     * Fail-closed: the owning-account predicate is part of the lookup, so a user session
+     * belonging to anyone else matches nothing and returns false.
      *
-     * Fail-closed: the owning-user predicate is part of the statement, so a session id
-     * belonging to anyone else matches zero rows and returns false. Cross-user (admin)
-     * termination is deliberately NOT supported here - see terminate_all_sessions_for_user().
-     *
-     * @param int $session_id
-     * @return bool True if the caller's own portal session was ended, false otherwise
+     * @param int $user_session_id A portal user session id (get_sessions_for_user()'s `id`)
+     * @return bool True if one of the caller's own portal sessions was ended
      */
-    public static function terminate_session(int $session_id): bool
+    public static function terminate_session(int $user_session_id): bool
     {
-        // Don't allow terminating current session
-        if (!self::__is_cli() && Session::has_session() && Session::get_session_id() === $session_id) {
-            return false;
-        }
-
         $portal_user_id = self::get_portal_user_id();
         if (empty($portal_user_id)) {
             return false;
         }
 
-        $ids = self::__device_session_query((int) $portal_user_id)
-            ->where('id', $session_id)
-            ->pluck('id')
-            ->all();
+        $ids = Session::_signed_in_user_session_ids(Session::REALM_PORTAL, (int) $portal_user_id, $user_session_id, true);
 
-        return Session::_clear_portal_properties_on($ids) > 0;
+        return !empty(Session::_sign_out_user_sessions($ids, Session::SIGN_OUT_ENDED_BY_USER));
     }
 
     /**
-     * End the portal identity on every session of the current user except this one.
+     * Sign the current portal account out of every OTHER browser, keeping this one.
      *
-     * @return int Number of sessions ended
+     * @return int Number of portal sessions ended
      */
     public static function terminate_all_other_sessions(): int
     {
@@ -850,49 +696,43 @@ class Portal_Session
             return 0;
         }
 
-        $query = self::__device_session_query((int) $portal_user_id);
-
         // "Sign out everywhere else" also ends every other browser's two-factor trust.
         \App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor::forget_trusted_devices((int) $portal_user_id, true);
 
-        // Exclude current session if we have one
-        if (!self::__is_cli() && Session::has_session()) {
-            $query->where('id', '!=', Session::get_session_id());
-        }
+        $ids = Session::_signed_in_user_session_ids(Session::REALM_PORTAL, (int) $portal_user_id, null, true);
 
-        return Session::_clear_portal_properties_on($query->pluck('id')->all());
+        return count(Session::_sign_out_user_sessions($ids, Session::SIGN_OUT_ENDED_BY_USER));
     }
 
     /**
-     * End the portal identity on every session of a specific portal user.
-     * Useful for admin actions or password changes.
+     * Sign a specific portal account out of every browser (optionally sparing one portal user
+     * session). For admin actions or a password change.
      *
      * @param int $portal_user_id
-     * @param int|null $except_session_id Optional session ID to exclude
-     * @return int Number of sessions ended
+     * @param int|null $except_user_session_id A portal user session to spare
+     * @return int Number of portal sessions ended
      */
-    public static function terminate_all_sessions_for_user(int $portal_user_id, ?int $except_session_id = null): int
+    public static function terminate_all_sessions_for_user(int $portal_user_id, ?int $except_user_session_id = null): int
     {
-        $query = self::__device_session_query($portal_user_id);
+        $ids = Session::_signed_in_user_session_ids(Session::REALM_PORTAL, $portal_user_id, null, false);
 
-        if ($except_session_id !== null) {
-            $query->where('id', '!=', $except_session_id);
+        if ($except_user_session_id !== null) {
+            $ids = array_values(array_diff($ids, [$except_user_session_id]));
         }
 
-        return Session::_clear_portal_properties_on($query->pluck('id')->all());
+        return count(Session::_sign_out_user_sessions($ids, Session::SIGN_OUT_ENDED_BY_ADMIN));
     }
 
     // =========================================================================
     // IMPERSONATION (staff "View as Client")
     //
-    // A staff member views the portal AS a portal user. The impersonation is four
-    // PROPERTIES on the browser's session row - the portal identity, its tenant, the
-    // staff users.id doing the viewing and when it began - written by
-    // begin_impersonation_from_staff():
+    // A staff member views the portal AS a portal user. The impersonation is a portal USER
+    // SESSION on the staff member's own browser - the portal account, its tenant and the
+    // staff users.id doing the viewing - that the browser's portal pointer names while it
+    // lasts (begin_impersonation_from_staff()):
     //
     //   - portal under a prefix on the application host: one cookie, one row, so the
-    //     properties go straight onto the caller's own row and the portal reads them on
-    //     the next page;
+    //     pointer moves on the caller's own row and the portal reads it on the next page;
     //   - portal on its own host: the browser holds a different cookie there, so the
     //     linked-session handshake (Session_Link) proves both hosts are the same browser
     //     and points the portal host's cookie at the caller's row. Both hosts then share
@@ -904,15 +744,15 @@ class Portal_Session
     //
     // impersonator_user_id is a STAFF users.id, a different id space from the staff
     // experience's own impersonator_login_user_id (login_users.id) - which is exactly
-    // why the row keeps both columns instead of collapsing them.
+    // why a user session keeps both columns instead of collapsing them.
     // =========================================================================
 
     /**
      * Start viewing the portal as a portal user, from a staff request, and return the
      * URL the staff page opens (normally in a new tab).
      *
-     * Same host (the portal under a prefix on APP_URL's host): the impersonation is
-     * written onto the caller's own session row, and the portal's landing URL is returned.
+     * Same host (the portal under a prefix on APP_URL's host): the impersonation becomes
+     * the caller's own browser's portal sign-in, and the portal's landing URL is returned.
      * Separate host: a linked-session handshake is started for the caller's row and its
      * first leg's URL is returned (absolute, on the portal's origin); the impersonation is
      * applied on the handshake's staff leg, after the browser has proved itself.
@@ -930,6 +770,8 @@ class Portal_Session
      */
     public static function begin_impersonation_from_staff(int $portal_user_id, int $impersonator_user_id, int $portal_site_id): string
     {
+        Session::_refuse_if_frozen('Portal_Session::begin_impersonation_from_staff()');
+
         if ($portal_user_id <= 0 || $impersonator_user_id <= 0 || $portal_site_id <= 0) {
             shouldnt_happen('begin_impersonation_from_staff() requires portal_user_id, impersonator_user_id and portal_site_id');
         }
@@ -945,6 +787,10 @@ class Portal_Session
         }
 
         $session_id = Session::get_session_id();
+
+        if ($session_id === null) {
+            shouldnt_happen('begin_impersonation_from_staff(): View as Client moves a browser\'s portal sign-in, and this process has no browser session');
+        }
 
         if (Rsx_Portal_Url::is_separate_host()) {
             return Session_Link::begin_impersonation($session_id, $portal_user_id, $portal_site_id, $impersonator_user_id);
@@ -997,14 +843,17 @@ class Portal_Session
     }
 
     /**
-     * End the current impersonation: clear the portal properties on this browser's
-     * session. The staff member's own staff login on that same session is untouched -
-     * it lives in different columns. No-op when not impersonating.
+     * End the current View as Client: its portal user session is signed out and the
+     * browser's portal pointer returns to the browser's own portal sign-in, if it has one.
+     * The staff member's own staff sign-in is untouched, and nothing rotates (the same row may
+     * be serving the staff host through another cookie). No-op when not impersonating.
      *
      * @return void
      */
     public static function stop_impersonation(): void
     {
+        Session::_refuse_if_frozen('Portal_Session::stop_impersonation()');
+
         if (self::__is_cli()) {
             self::$_cli_impersonator_user_id = null;
             self::$_cli_portal_user_id = null;
@@ -1014,11 +863,9 @@ class Portal_Session
             return;
         }
 
-        if (empty(Session::_get_portal_impersonator_user_id())) {
+        if (!Session::_end_portal_impersonation()) {
             return;
         }
-
-        Session::_clear_portal_properties();
 
         self::$_portal_user = null;
         self::$_site = null;
@@ -1026,8 +873,8 @@ class Portal_Session
 
     /**
      * End a portal identity declared in CLI mode: the portal user, the impersonator and the
-     * declared site. FRAMEWORK INTERNAL - Task_Dispatcher_Context calls it after a run it
-     * executed as a portal user.
+     * declared site. FRAMEWORK INTERNAL - Session::_end_virtual() calls it, which is how every
+     * task run ends.
      *
      * @return void
      */
@@ -1041,6 +888,59 @@ class Portal_Session
     }
 
     /**
+     * Declare the portal identity of a virtual session - the portal user, its site and a View as
+     * Client impersonator - in one step, past the frozen guard the public setters carry.
+     *
+     * FRAMEWORK INTERNAL - Session::_begin_virtual(), which declares a run's whole context
+     * before freezing it.
+     *
+     * @param int|null $portal_user_id
+     * @param int|null $site_id
+     * @param int|null $impersonator_user_id Staff users.id
+     * @return void
+     */
+    public static function _declare_virtual_identity(?int $portal_user_id, ?int $site_id, ?int $impersonator_user_id): void
+    {
+        self::$_cli_portal_user_id = $portal_user_id;
+        self::$_declared_site_id = $site_id;
+        self::$_cli_impersonator_user_id = $impersonator_user_id;
+        self::$_site = null;
+        self::$_portal_user = null;
+    }
+
+    /**
+     * The portal facade's declarations - the declared site, the virtual portal user and its
+     * impersonator - as a value for _restore_context(). FRAMEWORK INTERNAL - the portal half of
+     * Session::_snapshot_context().
+     *
+     * @return array
+     */
+    public static function _snapshot_context(): array
+    {
+        return [
+            'declared_site_id' => self::$_declared_site_id,
+            'cli_portal_user_id' => self::$_cli_portal_user_id,
+            'cli_impersonator_user_id' => self::$_cli_impersonator_user_id,
+        ];
+    }
+
+    /**
+     * Put back what _snapshot_context() took, dropping the resolved site and portal user.
+     * FRAMEWORK INTERNAL - the portal half of Session::_restore_context().
+     *
+     * @param array $snapshot
+     * @return void
+     */
+    public static function _restore_context(array $snapshot): void
+    {
+        self::$_declared_site_id = $snapshot['declared_site_id'];
+        self::$_cli_portal_user_id = $snapshot['cli_portal_user_id'];
+        self::$_cli_impersonator_user_id = $snapshot['cli_impersonator_user_id'];
+        self::$_site = null;
+        self::$_portal_user = null;
+    }
+
+    /**
      * Set impersonator user id in CLI mode (test seeding; mirrors
      * cli_set_portal_user_id).
      *
@@ -1049,6 +949,8 @@ class Portal_Session
      */
     public static function cli_set_impersonator_user_id(?int $impersonator_user_id): void
     {
+        Session::_refuse_if_frozen('Portal_Session::cli_set_impersonator_user_id()');
+
         self::$_cli_impersonator_user_id = $impersonator_user_id;
     }
 }

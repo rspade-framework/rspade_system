@@ -62,7 +62,7 @@ Component subscriptions are **ref-counted** (N components on the same topic+filt
 
 ## `refresh()`, not `reload()`
 
-**`refresh()` = `reload(false)`: identical refetch, but repaints only if `this.data`'s JSON snapshot changed.** `reload()` refetches and repaints unconditionally - child DOM destroyed and recreated, handlers rebound, transient UI state lost (open menus, scroll position, text selection).
+**`refresh()` = `reload(false)`: identical refetch, but repaints only if the cache serializer's text of `this.data` changed.** `reload()` refetches and repaints unconditionally - child DOM destroyed and recreated, handlers rebound, transient UI state lost (open menus, scroll position, text selection).
 
 Notifications are content-free hints, deduped per record, and often arrive for changes that do not alter THIS component's payload (another field, a hash-diffed emitter re-kick, a resync on reconnect). With `refresh()` all of those are free. **With `reload()`, every notification visibly churns the component for no reason, and a busy model turns the page into a strobe.**
 
@@ -71,7 +71,7 @@ this.subscribe(Client_Model, id, () => this.refresh());          // SERVER says 
 async save() { await Controller.save(...); this.reload(); }      // USER did something
 ```
 
-**Rule of thumb: the SERVER telling you something may have changed -> `refresh()`; the USER doing something that must be reflected -> `reload()`.** They share one debounce queue, and a queued `reload()` outranks a queued `refresh()`.
+**Rule of thumb: the SERVER telling you something may have changed -> `refresh()`; the USER doing something that must be reflected -> `reload()`.** Both queue on the component's lifecycle lock and run in call order - one never outranks or absorbs the other; only an identical call still waiting merges (skill `rspade:jqhtml`, rule 26).
 
 ### Write every callback as an idempotent refetch
 

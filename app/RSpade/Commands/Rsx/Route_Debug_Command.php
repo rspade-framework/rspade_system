@@ -20,8 +20,6 @@ use App\RSpade\Core\Portal\Portal_User_Model;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
-use App\RSpade\Core\Session\Session;
-use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * RSX Route Debug Command
@@ -607,13 +605,6 @@ class Route_Debug_Command extends Command
         // Add 10 seconds buffer to the Process timeout to allow Playwright to timeout first
         $process_timeout = ($timeout / 1000) + 10;
 
-        // Every request the harness makes mints a TYPE_PLAYWRIGHT session, and the
-        // session must OUTLIVE each request (dev-auth only signs in the navigation;
-        // the page's XHRs authenticate by that session's cookie). So the RUN owns
-        // them, and the run deletes them here. The minute of slack absorbs
-        // PHP-vs-MySQL clock skew and can only ever reach other harness rows.
-        $run_started_at = Rsx_Time::to_database(Rsx_Time::subtract(Rsx_Time::now(), 60));
-
         // The harness browser must not inherit this run's rsx_debug flock: a Chromium that
         // outlived the run would hold the lock forever and wedge every later rsx:debug.
         $process = new Process(
@@ -628,8 +619,6 @@ class Route_Debug_Command extends Command
             // Output directly to console
             echo $buffer;
         });
-
-        Session::purge_playwright_sessions($run_started_at);
 
         // Rotate logs after test to clean slate for next run
         Debugger::logrotate();

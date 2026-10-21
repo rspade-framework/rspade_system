@@ -47,6 +47,9 @@ class Form_Utils {
      * - Array of strings: Multiple errors shown as bulleted alert
      * - Object: Field names mapped to errors, shown inline (unmatched shown as alert)
      *
+     * Every message is PLAIN TEXT and is written with .text(): markup in a message is
+     * shown literally, never rendered.
+     *
      * @param {string} parent_selector - jQuery selector for parent element
      * @param {string|Object|Array} errors - Error messages to display
      * @returns {Promise} Promise that resolves when all animations complete
@@ -318,7 +321,7 @@ class Form_Utils {
                 continue;
             }
 
-            const $error = $('<div class="invalid-feedback d-block"></div>').html(error_message);
+            const $error = $('<div class="invalid-feedback d-block"></div>').text(error_message);
 
             // The message lands inside the field container when there is one; a bare
             // input (no Form_Field wrapper — the contract allows label-less layouts)
@@ -365,7 +368,7 @@ class Form_Utils {
             const $list = $('<ul class="mb-0"></ul>');
             for (const field_name in unmatched_errors) {
                 const error_msg = unmatched_errors[field_name];
-                $('<li></li>').html(error_msg).appendTo($list);
+                $('<li></li>').text(error_msg).appendTo($list);
             }
             $list.appendTo($alert);
         }
@@ -410,7 +413,7 @@ class Form_Utils {
 
             messages.forEach((msg) => {
                 const text = (msg + '').trim() || 'An error has occurred';
-                $('<li></li>').html(text).appendTo($list);
+                $('<li></li>').text(text).appendTo($list);
             });
 
             if ($error_container.length > 0) {

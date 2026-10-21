@@ -50,7 +50,7 @@ class Button_Utils {
     // jQuery .data() keys used to stash original state during a busy cycle.
     // Stored in jQuery's internal cache (not written to the DOM), so an object
     // value is safe and there are no serialization concerns.
-    static _DATA_HTML = 'button_utils_original_html';
+    static _DATA_CONTENTS = 'button_utils_original_contents';
     static _DATA_STYLE = 'button_utils_original_style';
 
     // The registered loader renderer, or null for the framework spinner.
@@ -92,7 +92,7 @@ class Button_Utils {
     }
 
     /**
-     * Enter the busy state: lock the rendered size, stash inner HTML, show the
+     * Enter the busy state: lock the rendered size, set the content aside, show the
      * loader (the registered renderer's markup, or the framework spinner).
      * Idempotent - a no-op on an element already submitting. Returns $el.
      */
@@ -121,8 +121,10 @@ class Button_Utils {
                 box_sizing: el.style.boxSizing,
             });
 
-            // Stash the original content
-            $btn.data(Button_Utils._DATA_HTML, $btn.html());
+            // Set the original child nodes aside, detached rather than serialized: they
+            // come back as the same nodes, with their own data and handlers, and nothing is
+            // re-parsed from markup on the way.
+            $btn.data(Button_Utils._DATA_CONTENTS, $btn.contents().detach());
 
             el.style.width = rect.width + 'px';
             el.style.height = rect.height + 'px';
@@ -135,7 +137,7 @@ class Button_Utils {
     }
 
     /**
-     * Leave the busy state: restore inner HTML, remove the class, unlock the
+     * Leave the busy state: put the original nodes back, remove the class, unlock the
      * size. No-op when the element is not submitting. Returns $el.
      */
     static clear_submitting($el) {
@@ -145,13 +147,13 @@ class Button_Utils {
                 return; // not submitting - nothing to restore
             }
 
-            const original_html = $btn.data(Button_Utils._DATA_HTML);
+            const $original_contents = $btn.data(Button_Utils._DATA_CONTENTS);
             const original_style = $btn.data(Button_Utils._DATA_STYLE) || {};
 
             $btn.removeClass(Button_Utils.SUBMITTING_CLASS);
 
-            if (typeof original_html === 'string') {
-                $btn.html(original_html);
+            if ($original_contents) {
+                $btn.empty().append($original_contents);
             }
 
             // Restore original inline size props (empty string removes the prop)
@@ -159,7 +161,7 @@ class Button_Utils {
             el.style.height = original_style.height || '';
             el.style.boxSizing = original_style.box_sizing || '';
 
-            $btn.removeData(Button_Utils._DATA_HTML);
+            $btn.removeData(Button_Utils._DATA_CONTENTS);
             $btn.removeData(Button_Utils._DATA_STYLE);
         });
         return $el;

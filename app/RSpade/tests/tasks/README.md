@@ -72,6 +72,11 @@ They exist only while the suite runs (the test trees enter the manifest only the
   (php - default isolation; `Task_Definition_Test`)
 - Dispatch and internal(): the pending row's columns and options, the dispatcher identity, the
   settled inline row, rethrow after settle. (php - commits; `Task_Dispatch_Test`)
+- `#[Run_As_Dispatcher]`: the user session, audit session and claim tier stamped at dispatch,
+  the frozen virtual session a worker runs it in (bound to the dispatching sign-in, setters
+  and session values refused), the refusals, every worker run ending blank, `Task::internal()`
+  keeping its caller's context, the rsx:task:run refusal and the claim order (tier, then
+  oldest). (php; `Task_Run_As_Dispatcher_Test`)
 - The return contract and the console exit code. (php; `Task_Return_Contract_Test`)
 - Single-instance identities: coalescing primitives, dispatch coalescing, the run lock held by
   another process for an inline run and a worker claim. (php; `Task_Concurrency_Test`,

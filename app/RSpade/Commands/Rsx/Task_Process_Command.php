@@ -10,6 +10,7 @@ namespace App\RSpade\Commands\Rsx;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Task\Cron_Parser;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Instance;
@@ -572,15 +573,19 @@ class Task_Process_Command extends Command
     }
 
     /**
-     * Run one due dispatched task inline. Testing aid for --once; the normal path spawns
-     * detached workers. This run is no pool member, so its row carries no worker_id and the
-     * reaper judges it by its pid, on this host.
+     * Run one due pending task inline - the one a worker would claim next (claim tier, then
+     * oldest due first). Testing aid for --once; the normal path spawns detached workers. This
+     * run is no pool member, so its row carries no worker_id and the reaper judges it by its
+     * pid, on this host. It runs as a worker's run does (Task_Runner::execute()): in a context
+     * of its own - bound to its dispatcher for #[Run_As_Dispatcher] - and the process is blank
+     * after it.
      */
     private function process_one_task(): void
     {
         $row = DB::table('_tasks')
             ->where('status_id', Task_Run_Model::STATUS_PENDING)
             ->where('scheduled_for', '<=', now()->format('Y-m-d H:i:s.v'))
+            ->orderBy('priority')
             ->orderBy('scheduled_for')
             ->orderBy('id')
             ->first(['id']);
@@ -600,7 +605,16 @@ class Task_Process_Command extends Command
         $instance = Task_Instance::find((int) $row->id);
         $this->info("[ONCE MODE] Executing task {$row->id}: {$instance->get_class()}::{$instance->get_method()}");
 
-        $outcome = Task_Runner::execute($instance, false, true);
+        // The run leaves the process blank; a caller running --once IN-PROCESS (Artisan::call)
+        // gets back the context it called with.
+        $launch_context = Session::_snapshot_context();
+
+        try {
+            $outcome = Task_Runner::execute($instance, false, true);
+        } finally {
+            Session::_restore_context($launch_context);
+        }
+
         Task_Runner::settle($instance, $outcome);
 
         if ($outcome->success) {

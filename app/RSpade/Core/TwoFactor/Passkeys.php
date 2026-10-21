@@ -229,7 +229,7 @@ class Passkeys
             excludeCredentialIds: $existing
         );
 
-        self::_store_challenge($server, $realm::WEBAUTHN_CHALLENGE_KEY);
+        self::_store_challenge($server, $realm, $realm::WEBAUTHN_CHALLENGE_KEY);
 
         return self::_to_array($args);
     }
@@ -249,7 +249,7 @@ class Passkeys
      */
     public static function verify_registration(string $realm, array $attestation): array
     {
-        $challenge = self::_consume_challenge($realm::WEBAUTHN_CHALLENGE_KEY);
+        $challenge = self::_consume_challenge($realm, $realm::WEBAUTHN_CHALLENGE_KEY);
 
         if (!isset($attestation['clientDataJSON'], $attestation['attestationObject'])) {
             throw new Two_Factor_Failed_Exception('That security key response was incomplete. Please try again.');
@@ -308,7 +308,7 @@ class Passkeys
 
         $args = $server->getGetArgs($credential_ids, timeout: self::CEREMONY_TIMEOUT_SECONDS);
 
-        self::_store_challenge($server, $realm::WEBAUTHN_CHALLENGE_KEY);
+        self::_store_challenge($server, $realm, $realm::WEBAUTHN_CHALLENGE_KEY);
 
         return self::_to_array($args);
     }
@@ -337,7 +337,7 @@ class Passkeys
 
         $args = $server->getGetArgs([], timeout: self::CEREMONY_TIMEOUT_SECONDS, requireUserVerification: true);
 
-        self::_store_challenge($server, $realm::PASSKEY_LOGIN_CHALLENGE_KEY);
+        self::_store_challenge($server, $realm, $realm::PASSKEY_LOGIN_CHALLENGE_KEY);
 
         return self::_to_array($args);
     }
@@ -370,6 +370,7 @@ class Passkeys
     public static function verify_assertion(string $realm, array $assertion, bool $passwordless = false): Rsx_Model_Abstract
     {
         $challenge = self::_consume_challenge(
+            $realm,
             $passwordless ? $realm::PASSKEY_LOGIN_CHALLENGE_KEY : $realm::WEBAUTHN_CHALLENGE_KEY
         );
 
@@ -458,15 +459,17 @@ class Passkeys
      * prompt has given up on it.
      *
      * @param WebAuthn $server
+     * @param string $realm The realm facade - its SESSION_REALM holds the value.
      * @param string $key The session value key this ceremony parks under.
      * @return void
      */
-    private static function _store_challenge(WebAuthn $server, string $key): void
+    private static function _store_challenge(WebAuthn $server, string $realm, string $key): void
     {
         Session::put_value(
             $key,
             self::base64url_encode($server->getChallenge()->getBinaryString()),
-            self::challenge_expires_at()
+            self::challenge_expires_at(),
+            $realm::SESSION_REALM
         );
     }
 
@@ -478,15 +481,16 @@ class Passkeys
      * attempt leaves it live for a retry, which is precisely the replay a challenge exists
      * to prevent.
      *
+     * @param string $realm The realm facade - its SESSION_REALM holds the value.
      * @param string $key The session value key the ceremony parked under.
      * @return string The raw challenge bytes.
      * @throws Two_Factor_Failed_Exception When there is nothing in flight.
      */
-    private static function _consume_challenge(string $key): string
+    private static function _consume_challenge(string $realm, string $key): string
     {
-        $stored = Session::get_value($key);
+        $stored = Session::get_value($key, null, $realm::SESSION_REALM);
 
-        Session::forget_value($key);
+        Session::forget_value($key, $realm::SESSION_REALM);
 
         if (!is_string($stored) || $stored === '') {
             throw new Two_Factor_Failed_Exception('That security key request has expired. Please try again.');

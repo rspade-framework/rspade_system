@@ -1245,19 +1245,22 @@ SESSION REFRESH PUSH
 
     Two triggers, both server-driven and automatic:
 
-    1. SESSION MUTATION. When a session row is mutated to a confirmed-different
-       state -- logged-in -> logged-out, login_user_id/portal_user_id changed to
-       a different value, or site_id (tenant) changed -- every live connection
-       holding THAT session id is pushed to reload. Re-saving the same value
-       emits NOTHING (the mutation sites compare the prior persisted value and
-       only push on an actual change). Wired at the explicit mutation points:
-       Session::set_login_user_id() / set_site_id() / logout() and
-       Portal_Session::set_portal_user_id() / logout(). Web impersonation
-       begin/stop inherit it (they delegate to set_login_user_id). Starting a
-       portal "View as Client" (Session::_apply_portal_impersonation(), behind
-       Portal_Session::begin_impersonation_from_staff() and the linked-session
-       handshake) deliberately does NOT push: the browser that asked is already
-       navigating to the impersonated portal.
+    1. SESSION MUTATION. A connection is stamped with the BROWSER's _sessions
+       id (one row per browser) and the realm of the page that opened it. When a
+       sign-in on a browser changes - a sign-in, a sign-out, a site switch, a
+       staff impersonation beginning or ending, or any sign-out of that
+       browser's user session from elsewhere (an administrator, "sign out
+       everywhere else", the lifetimes ending it) - every live connection of that browser IN THAT REALM is pushed to
+       reload. Re-stating the same sign-in emits nothing. Wired once, in
+       Session's sign-in paths and its one sign-out path
+       (Session::_sign_out_user_sessions()), so every caller inherits it. Two
+       sign-outs deliberately push nothing: the session cap and the retirement
+       of a browser unused for rsx.sessions.unused_session_days (the evicted
+       browser learns at its next request; an unused one has no live page).
+       Starting a portal "View as Client" (Session::_apply_portal_impersonation(),
+       behind Portal_Session::begin_impersonation_from_staff() and the
+       linked-session handshake) does NOT push either: the browser that asked
+       is already navigating to the impersonated portal.
 
     2. USER RECORD. When a staff user's record changes an identity-affecting
        field (first_name, last_name, role_id, is_enabled) or is soft-deleted, or
@@ -1267,10 +1270,10 @@ SESSION REFRESH PUSH
        at once. Only confirmed-different field changes qualify (a phone-only edit
        is silent).
 
-    REALM. The connection token carries realm: 'staff' | 'portal'. Staff and
-    portal session ids come from different tables with overlapping integer
-    ranges, so a session-targeted frame matches realm AND session_id -- a staff
-    logout never reloads a portal tab that happens to share the integer id.
+    REALM. The connection token carries realm: 'staff' | 'portal'. One browser
+    has ONE session id, shared by its staff tabs and its portal tabs, so a
+    session-targeted frame matches realm AND session_id -- a staff sign-out
+    reloads the browser's staff tabs and never its portal tabs.
 
     PHP API (framework-internal; the wiring above calls these for you -- no-ops
     when realtime is disabled, and they ride the SAME transactional outbox as

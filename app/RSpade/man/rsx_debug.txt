@@ -288,10 +288,16 @@ This feature is:
   because a development-mode site may be serving the public: "it is only
   reachable in dev" is not a mitigation.)
 - Useful for testing protected routes
-- DOES establish a real session: the dev-auth path calls RsxAuth::login() ->
-  Session::set_login_user_id(), creating a persisted _sessions row + cookie for
-  the headless browser context, exactly like a normal login (it is not a
-  read-only override)
+- DOES establish a real session: the dev-auth path signs the account in on a
+  harness browser row (type Playwright) and gives the headless browser its
+  cookie, exactly like a normal login (it is not a read-only override). The
+  harness keeps ONE such row per account and site (portal: per portal user),
+  REUSED by every later run while its sign-in is within the ordinary limits
+  (rsx.sessions.staff / .portal) - a run past a limit signs that one out and
+  mints a new row. Nothing is purged when a run ends. A harness row is never
+  listed in "where you're signed in", never counted by the session cap, and
+  records no audit session, so a write made through rsx:debug carries no
+  audit_session_id. rsx:man session, HARNESS SESSIONS.
 
 ERROR HANDLING
 

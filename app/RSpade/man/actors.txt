@@ -190,7 +190,8 @@ WHAT THE FRAMEWORK ACTORS ANSWER TODAY
         name    email -> "Portal User #id"  (portal_users has no name columns - the
                 person's name is app data; an app override returns it)
         url     portal realm, own record: the portal account screen
-                anything else: null (RSpade ships no per-portal-user staff screen)
+                anything else: null (RSpade ships no per-portal-user staff screen
+                an application may link to; the /_sys panel's is reserved)
 
     Login_User_Model
         name    email -> "Login User #id"

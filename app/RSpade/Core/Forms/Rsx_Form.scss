@@ -2,8 +2,13 @@
    voice (spacing, buttons, palette) stays with the app.
 
    --rsx-form-veil is the ONE colour this file reads, and the app owns it: core has no
-   palette and cannot know whether the surface behind the overlay is light or dark. The
-   fallback is a light-surface veil, so a form works before an app declares anything. */
+   palette and cannot know whether the surface behind the overlay is light or dark. It is
+   DECLARED here once, on :root, as a light-surface veil so a form works before an app
+   declares anything; the app's theme redeclares it (and its dark value) and wins. */
+:root {
+    --rsx-form-veil: rgba(255, 255, 255, 0.65);
+}
+
 .Rsx_Form {
     position: relative;
 
@@ -14,7 +19,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: var(--rsx-form-veil, rgba(255, 255, 255, 0.65));
+        background: var(--rsx-form-veil);
         cursor: progress;
     }
 

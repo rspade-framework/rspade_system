@@ -14,6 +14,7 @@ use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Cron_Parser;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
@@ -38,6 +39,14 @@ class Task
      * The run is recorded like any other (origin Inline): its row, its reports, its output.
      * A task that is #[Exclusive] or #[Debounce] waits for a running instance of its identity
      * to finish first - an inline run is a run, and the single-instance guarantee holds.
+     *
+     * THE CALLER'S CONTEXT. The task runs as whoever the caller is acting as - a request's
+     * signed-in user, a command's declared identity, the dispatcher of a #[Run_As_Dispatcher]
+     * run that calls another task - and after it the caller's whole acting context (identity,
+     * site, realm, impersonation, declared audit session, timezone) is put back as it was
+     * (Session::_snapshot_context()), whatever the task declared meanwhile. A
+     * #[Run_As_Dispatcher] task needs a sign-in to run as: inline from a command or a plain
+     * task, with no sign-in behind it, it is refused (Task_Runner::insert_row()).
      *
      * The return value is the run's row, settled. A task that THROWS is settled FAILED and the
      * exception is rethrown to the caller; a task that returns a failure code is settled
@@ -98,10 +107,17 @@ class Task
         $previous_revision_state = Revision::_snapshot_request_state();
         Revision::_reset_request_state('task', $service_class . '::' . $rsx_task);
 
+        // The run executes in the CALLER's context (who, which site, which realm, which audit
+        // session - a #[Run_As_Dispatcher] task inline in a request runs as that request), and
+        // whatever the task declared on its way through is undone after it: the caller gets
+        // back exactly the context it called with, never a blank one.
+        $caller_context = Session::_snapshot_context();
+
         try {
             $outcome = Task_Runner::execute($instance, false);
             Task_Runner::settle($instance, $outcome, $run_lock);
         } finally {
+            Session::_restore_context($caller_context);
             Revision::_restore_request_state($previous_revision_state);
         }
 

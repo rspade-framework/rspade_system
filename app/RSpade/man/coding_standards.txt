@@ -59,7 +59,7 @@ NAMING CONVENTIONS
             <_Sys_Section>...</_Sys_Section>           // no (jqhtml/blade)
             @rsx_extends('_Apidocs_App')               // no (blade)
             Ajax::_is_internal_call()                  // no
-            Rsx._escape_html('x')                      // no (JS)
+            Rsx._serialize_hash(state)                 // no (JS)
 
         The rule is scoped by the MANIFEST, not by the character: a name is
         its business only when the framework actually declares that name (or
@@ -270,6 +270,35 @@ STRING MANIPULATION PHILOSOPHY
         - Add metadata to manifest cache for runtime analysis
         - Use reflection and AST data instead of pattern matching
         - Consult user before any source code parsing implementation
+
+WRITING INTO THE PAGE (JS-RAW-HTML-01)
+    jQuery's .html(x), innerHTML =, outerHTML =, insertAdjacentHTML() and
+    document.write() PARSE their argument as markup. With data anywhere in
+    the string - a record's name, a server message - that is an XSS hole, and
+    it is almost never what the code needed. What it needed instead:
+
+        $el.text(value)                    show text (nothing is markup)
+        $el.empty()                        clear an element, never .html('')
+        $el.html(nl2brhtml(value))         multi-line plain text, breaks kept
+        html_to_text(html)                 the text out of an HTML string,
+                                           parsed inertly (DOMParser)
+        $('<li></li>').text(msg)           a few elements: build the nodes and
+                                           set the text on them
+        $(target).component('Name', args)  a piece of UI: a jqhtml component,
+                                           whose template escapes every <%= %>
+
+    rsx:check reports every such write (JS-RAW-HTML-01, high) over the browser
+    JavaScript in the manifest's scan directories, by AST. Allowed with no
+    comment: a string literal (including '&nbsp;', and a template with no
+    ${}), escape_html(...), sanitize_rich_text_html(...), nl2brhtml(...),
+    nl2br(escape_html(...)), and a + / template composition of only those.
+    .html('') is reported on its own, with .empty() as the answer.
+
+    A write that genuinely needs raw HTML - an effects plugin, a renderer
+    whose every part is escaped but not in a form the rule can see - carries
+    '@JS-RAW-HTML-01-EXCEPTION <rationale>' on the same line or the line
+    before. The marker covers that one write, and a marker with no rationale
+    covers nothing.
 
 FUNCTION ORGANIZATION PHILOSOPHY
     Prefer Inline Code with Comments:
@@ -522,6 +551,129 @@ EXAMPLES
             return $filename;
         }
 
+APPLICATION RULES (rsx:check)
+    php artisan rsx:check enforces the conventions in this page and the
+    other man pages. Every finding names its rule id and carries its own
+    remediation text. An application adds rules of its own for conventions
+    only it has - retired vocabulary after a refactor, a house pattern, a
+    banned import - and they run in rsx:check exactly like the framework's.
+
+    An application rule is any concrete class in rsx/ that extends
+    App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract. It is found by
+    CLASS through the manifest: no registration, no config key, no
+    required directory. rsx/lib/code_quality/ is the conventional home.
+    The class name ends _CodeQualityRule and the file name follows the
+    rsx/ convention (retired_vocabulary_codequalityrule.php).
+
+    Contract:
+        get_id()               The rule id. MUST start with APP- (e.g.
+                               APP-RETIRED-VOCAB-01), so no application
+                               rule can collide with a framework rule id.
+                               Anything else - or two application rules
+                               declaring one id - is refused loudly by
+                               every rsx:check and every manifest build
+                               until it is fixed.
+        get_name()             Human-readable name.
+        get_description()      What it checks and why.
+        get_file_patterns()    Basename globs: ['*.scss'], ['*.php', '*.js'].
+                               An empty list matches nothing.
+        check($file_path, $contents, $metadata)
+                               Report with $this->add_violation($file,
+                               $line, $message, $snippet, $remediation,
+                               $severity). $contents is the SANITIZED text
+                               under rsx:check (comments blanked; in
+                               JavaScript string contents blanked too);
+                               $this->source()->content($file_path) is
+                               the raw file. Never open, tokenize or parse
+                               a file yourself, and never declare a static
+                               property: the pass owns reading and memory.
+        get_default_severity() critical, high, medium or low (default
+                               medium).
+
+    Optional:
+        kind()                 KIND_PER_FILE (default): check() runs once
+                               per changed matching file, and a file that
+                               passed is not judged again until it or the
+                               rule changes. KIND_CROSS_FILE: check() runs
+                               once per pass and judges the tree through
+                               the Manifest API; declare what it reads in
+                               depends_on() (a manifest section name, or
+                               'files:<glob>') or it runs on every pass.
+        fingerprint_extra()    A hash of anything outside the rule's own
+                               source that decides its verdicts (a config
+                               value, a word list file). Editing the rule
+                               file, or an application base class between
+                               it and CodeQualityRule_Abstract, already
+                               retires every verdict it recorded.
+        is_called_during_manifest_scan()
+                               true makes the rule FATAL at manifest build:
+                               a violation aborts the build and re-fires
+                               on every load until the source is fixed.
+                               Reserve it for code that is broken, never
+                               for style. The @APP-...-EXCEPTION marker is
+                               NOT applied at manifest time; a manifest-time
+                               rule that wants one reads it itself.
+
+    Exceptions: a comment @<RULE-ID>-EXCEPTION <rationale> anywhere in a
+    file skips that rule for that file under rsx:check - no code in the
+    rule is needed. A rule that wants line granularity checks the marker
+    itself before add_violation().
+
+    Worked example - an application's retired vocabulary:
+
+        <?php
+
+        namespace Rsx\Lib\CodeQuality;
+
+        use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+
+        // @APP-RETIRED-VOCAB-01-EXCEPTION this file is where the retired words are listed
+
+        class Retired_Vocabulary_CodeQualityRule extends CodeQualityRule_Abstract
+        {
+            private const RETIRED = '/\b(page-content--wide|use_promoted_title)\b/';
+
+            public function get_id(): string { return 'APP-RETIRED-VOCAB-01'; }
+            public function get_name(): string { return 'Retired vocabulary'; }
+            public function get_description(): string
+            {
+                return 'Names a system that has been deleted.';
+            }
+            public function get_file_patterns(): array
+            {
+                return ['*.scss', '*.jqhtml', '*.js', '*.php'];
+            }
+            public function get_default_severity(): string { return 'high'; }
+
+            public function check(string $file_path, string $contents, array $metadata = []): void
+            {
+                foreach (explode("\n", $contents) as $index => $line) {
+                    if (preg_match(self::RETIRED, $line, $match)) {
+                        $this->add_violation(
+                            $file_path,
+                            $index + 1,
+                            "'{$match[1]}' belongs to the deleted page-width system.",
+                            trim($line),
+                            'Remove it; page width is the layout\'s job now.',
+                            'high'
+                        );
+                    }
+                }
+            }
+        }
+
+    (File: rsx/lib/code_quality/retired_vocabulary_codequalityrule.php;
+    the manifest keeps the namespace line matched to the path.) A pattern that only a string literal would contain is better
+    matched against $this->source()->content($file_path), because the
+    sanitized JavaScript text has its string contents blanked.
+
+    Testing one: put the offending construct in a scratch file and run
+    php artisan rsx:check <that file>; then delete it. An application test
+    under rsx/tests can construct the rule with a ViolationCollector, call
+    check() on a fixture string and assert on
+    $collector->get_by_rule('APP-...').
+
 SEE ALSO
     error_handling - Error handling patterns and shouldnt_happen()
+    js_functions - escape_html(), nl2brhtml(), html_to_text()
     config_rsx - Framework configuration standards

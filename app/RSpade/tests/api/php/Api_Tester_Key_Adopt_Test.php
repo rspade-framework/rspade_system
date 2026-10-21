@@ -25,6 +25,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  */
 class Api_Tester_Key_Adopt_Test extends Rsx_Test_Abstract
 {
+    /** The adopted key is parked as a session value, which belongs to a browser. */
+    protected static $acts_as_browser = true;
+
     private const USER_ID = 1;
 
     public static function test_an_anonymous_caller_is_refused()

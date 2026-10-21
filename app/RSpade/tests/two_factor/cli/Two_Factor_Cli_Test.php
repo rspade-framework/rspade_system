@@ -44,6 +44,9 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  */
 class Two_Factor_Cli_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     private const PASSWORD = 'correct-horse-battery-staple';
 
     public static function teardown()

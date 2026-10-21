@@ -267,7 +267,6 @@ HTTP
 CLIENT PORTAL
     'portal' => [
         'url' => env('PORTAL_URL', ''),    # where the portal is served
-        'session_lifetime_days' => 30,
         'invitation_expiry_days' => 14,
         'password_min_length' => 8,
         'password_reset_expiry_hours' => 1,
@@ -320,6 +319,55 @@ TURNSTILE
     SANCTIONED timeout, owner-approved 2026-08-12: expiry degrades to FAIL
     CLOSED (rejected, user retries), never to an accepted-without-
     verification pass. See: php artisan rsx:man turnstile
+
+SESSIONS
+    'sessions' => [
+        'staff'  => ['max_length_minutes' => 10080, 'max_idle_minutes' => 480],
+        'portal' => ['max_length_minutes' => 10080, 'max_idle_minutes' => 480],
+        'unused_session_days' => 30,
+        'ajax_grace_minutes' => 120,
+        'guest_expiry_minutes' => 43200,
+        'impersonation_max_days' => 7,
+        'max_web_sessions_per_user' => 25,
+        'login_throttle' => ['enabled' => true, 'attempts' => 10,
+                             'window_minutes' => 15, 'lockout_minutes' => 15],
+        'login_history_retention_days' => 365,
+    ]
+
+    How long a sign-in lasts and how long the session records are kept. Every
+    key is a default; an application overrides any of them in
+    rsx/resource/config/rsx.php (deep-merged, so one key leaves its siblings).
+
+    staff / portal - a SIGN-IN's two limits, per experience, measured on the
+    user session: max_length_minutes from the sign-in (7 days - the limit that
+    bounds a sign-in somebody else got hold of), max_idle_minutes from the last
+    page view (8 hours; an Ajax or API call is not a page view). 0 = no limit.
+    Checked on every request; the hourly cleanup signs out the ones nobody
+    comes back to. To keep sign-ins longer, set both higher - e.g. 43200 each
+    for 30 days.
+
+    ajax_grace_minutes - how long past a limit a non-page request (Ajax, a
+    thumbnail, a download) still works, so an open form can still save.
+
+    unused_session_days - a BROWSER unused this long is made inactive (whatever
+    was signed in on it is signed out); also how long a signed-out sign-in stays
+    in Session::get_sessions_for_user(). 0 = never.
+
+    guest_expiry_minutes - a browser nobody ever signed in on is deleted after
+    going unused this long (hourly).
+
+    impersonation_max_days - impersonations and View as Client older than this
+    are ended daily. 0 = never.
+
+    max_web_sessions_per_user - signed-in browsers per account, per realm; older
+    ones are signed out at each sign-in. 0 or null = off.
+
+    login_throttle, login_history_retention_days - the brute-force throttle
+    and the login-history prune.
+
+    All are SECURITY or RETENTION WINDOWS, not operation timeouts: nothing waits
+    on them. See: php artisan rsx:man session (HOW SESSIONS TIME OUT;
+    LIFETIMES, CLEANUP AND DEACTIVATION)
 
 TWO-FACTOR AUTHENTICATION
     'two_factor' => [

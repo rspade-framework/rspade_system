@@ -1034,10 +1034,11 @@ OPERATIONS
         php artisan rsx:task:run Mail_Queue_Service send_pending_queue
         php artisan rsx:task:run Mail_Queue_Service cleanup
 
-    The reference app's admin screens (copy them, or read them as worked examples):
-        system/app/RSpade/resource/reference_app/app/frontend/system/email_config/
-        system/app/RSpade/resource/reference_app/app/frontend/system/email_queue/
-        system/app/RSpade/resource/reference_app/app/frontend/system/email_recipients/
+    The operator's screens are the /_sys panel's Email & SMS screen (/_sys/email): the
+    queue install-wide with a tile per status, each row's detail and rendered body, and
+    resend (rsx:man sys_panel). Its controller,
+    system/app/RSpade/Sys/app/sys/email/_Sys_Email_Controller.php, is a worked example of
+    reading the queue through the models.
 
 TESTING
 

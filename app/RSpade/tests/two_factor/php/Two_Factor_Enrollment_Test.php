@@ -37,15 +37,16 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * begin_impersonation() records on a real session row, and it is the seam this harness
  * supports. It is cleared in teardown and by static::__reset_session().
  *
- * SESSIONS IN CLI. Identity is declared through Session::set_login_user_id(), which in CLI
- * sets a static and creates nothing. The session ROW arrives on demand, at the first
- * Session::put_value() - so every test calls static::__reset_session() first, which ends
- * the process's cached CLI session. Without that reset the row minted inside one test's
- * transaction would be rolled back while its id stayed cached, and the next put_value()
- * would insert against a session that no longer exists.
+ * SESSIONS. Identity is declared through Session::set_login_user_id(), which in the test
+ * process's virtual session sets a static and creates nothing. The pending enrollment is a
+ * session value, which belongs to a browser, so every test acts as one ($acts_as_browser):
+ * a fresh row inside the test's own transaction.
  */
 class Two_Factor_Enrollment_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     private const PASSWORD = 'correct-horse-battery-staple';
 
     public static function teardown()

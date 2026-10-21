@@ -6,7 +6,7 @@
 2. **render** - the template executes (top-down: parent before children)
 3. **`on_render()`** - fires after render, BEFORE children are ready (top-down, sync)
 4. **`on_load()`** - fetch data into `this.data` (bottom-up, parallel siblings, async)
-5. **`on_loaded()`** - runs on the real component (not a detached proxy)
+5. **`on_loaded()`** - runs on the real component (not a detached proxy); every component gets it, with or without an `on_load()`
 6. **`on_ready()`** - all children guaranteed ready (bottom-up, async)
 
 Plus **`on_stop()`** - teardown when the component is destroyed (sync) - and **`on_attach()`** / **`on_detach()`** - the root entered / left the document (sync; see "In and out of the document").
@@ -46,9 +46,11 @@ The `create -> render -> on_render` chain is synchronous and recurses through th
 
 ## on_loaded
 
-Runs on the real component, not the detached proxy. `this.data` is frozen (read-only) there, but `this.$`, `this.state` and `this.args` are accessible. Use it sparingly, for one-off post-load setup that needs `this.$`/`this.state` access.
+Runs on the real component, not the detached proxy. `this.data` is frozen (read-only) there, but `this.$`, `this.state` and `this.args` are accessible. Use it sparingly, for one-off post-load setup that needs `this.$`/`this.state` access. `on_loaded()` and the `loaded` event fire for EVERY component, including one with no `on_load()` (at the point a load would have completed), so a base class may rely on them.
 
-**Render from `this.data` directly.** Clone `this.data` -> `this.state` only when the user is about to edit and later save (see Display vs. edit). The post-load re-render is gated on `JSON.stringify(this.data)` changing, so a template reading from a `this.state` copy of `this.data` goes stale on a reload that returns identical values.
+**Never `await` a `render()`/`reload()`/`refresh()`/`load()` of this component inside `on_loaded()`** - the call queues behind the running lifecycle step, which cannot finish until `on_loaded()` returns: it hangs forever (development warns). Unawaited, it runs after the current cycle; anything that needs the call's result belongs in `on_ready()`.
+
+**Render from `this.data` directly.** Clone `this.data` -> `this.state` only when the user is about to edit and later save (see Display vs. edit). The post-load re-render is gated on the cache serializer's text of `this.data` changing (the same serializer that writes the cache, so a change inside a Map or Set counts), so a template reading from a `this.state` copy of `this.data` goes stale on a reload that returns identical values.
 
 ## The state triad
 
@@ -135,6 +137,30 @@ async on_load() {
 
 **NEVER call `this.render()` in `on_load()`** - the automatic re-render happens.
 
+**`on_load()` must leave `this.data` an object** (an array counts). Assigning a string, number or
+null to `this.data` throws.
+
+### When `on_load()` throws: `on_load_error(error)`
+
+A rejected `on_load()` (or a failed deduplicated load the component shared) calls
+`on_load_error(error)`. The base implementation prints the error, and the failure then takes its
+course: **a failed boot STOPS the component** (it never reaches `on_loaded()`/`on_ready()`, and
+`this.data` stays at its `on_create()` defaults), and a failed `reload()`/`refresh()`/`load()`
+REJECTS. Override it to recover: it runs with `on_load()`'s access (read `this.args`, write
+`this.data` from the `on_create()` snapshot), and the component renders whatever `this.data` the
+override leaves, then reaches ready.
+
+```javascript
+on_load_error(error) {
+    super.on_load_error(error);          // keep the printed error (optional)
+    this.data.unavailable = true;        // the template renders an "unavailable" branch
+}
+```
+
+An override that throws stops the component like the base. After ANY failed load the instance
+neither reads nor writes the cache again, even after a later successful load. `on_load_error` is
+a lifecycle hook name: never use it for anything else.
+
 ## Loading pattern
 
 ```javascript
@@ -169,7 +195,7 @@ async _save() { await Foo_Controller.save_all(this.state.edits); this.state.edit
 // Template: <% const rows = this.state.edits || this.data.values; %>
 ```
 
-The framework skips the post-`on_load` re-render when `JSON.stringify(this.data)` is unchanged, so a display path that reads from `this.state` will not refresh after a save that returns identical values.
+The framework skips the post-`on_load` re-render when the cache serializer's text of `this.data` is unchanged, so a display path that reads from `this.state` will not refresh after a save that returns identical values.
 
 **Exception**: a component whose docblock declares the **Standalone** tier renders from `this.state` by design - do not "fix" it into `on_load()` conformance.
 
@@ -450,11 +476,11 @@ async on_load() {
 }
 ```
 
-**Why the per-branch `.catch` is not optional** (verified 2026-09-02 against jqhtml core 2.3.59):
-an `on_load()` that rejects aborts the whole load. `this.data` stays at its `on_create()` defaults
-- including the branches that SUCCEEDED - the component never reaches `on_loaded()`/`on_ready()`,
-and the rejection surfaces through the unhandled-exception handler. A sidebar list that 500s must
-not blank the record the page exists to show.
+**Why the per-branch `.catch` is not optional**: an `on_load()` that rejects aborts the whole
+load. Unless `on_load_error()` is overridden (see "When `on_load()` throws"), the error is printed
+and the component is stopped: `this.data` stays at its `on_create()` defaults - including the
+branches that SUCCEEDED - and it never reaches `on_loaded()`/`on_ready()`. A sidebar list that
+500s must not blank the record the page exists to show.
 
 **The one genuine exception - sequence only when the second call's ARGUMENTS come from the first
 call's RESULT:**
@@ -550,12 +576,40 @@ your component, never the component the markup is rendered inside. Write `this.m
 
 ## Re-render methods
 
-- **`reload()`** - reset `this.data` to `on_create()` defaults -> `on_load()` -> `render()` -> `on_ready()`. Use when `this.args` changed or data must be refetched. Debounced: rapid repeated calls coalesce into ONE execution.
+- **`reload()`** - reset `this.data` to `on_create()` defaults -> `on_load()` -> `render()` -> `on_ready()`. Use when `this.args` changed or data must be refetched. Each call runs (see "The lifecycle lock"): only an identical call still waiting merges.
 - **`refresh()`** - `reload()` that SKIPS the re-render and `on_ready()` when `this.data` came back unchanged. The right tool for any polling or interval refresh, not just realtime callbacks - it is what prevents flicker on every tick.
 - **`load()`** - re-runs `on_load()` only: no render, no `on_ready()`. Returns `true`/`false` for whether `this.data` changed, so you decide what to redraw next.
 - **`render()` / `redraw()`** - re-execute the template -> wait for children -> `on_ready()`. Does NOT re-run `on_load()`. UI-only updates.
 - **`render('sid')`** - re-render ONLY the element carrying that `$sid`, which must be marked `$redrawable` in the template. Child DOM elsewhere is untouched - use for counters, badges and live fragments instead of a full `render()`.
 - **`stop()`** - destroy the component and all children: fires `detach` (and `on_detach()`) first when attached, then `on_stop()`, then `stop`. You rarely call it - **every jQuery removal stops the components it removes** (`.remove()`, `.empty()`, `.html(x)`, `.text(x)`, `.replaceWith()`, `.replaceAll()`), as does a parent's re-render. NATIVE DOM removal (`element.remove()`, `innerHTML = ''`) and jQuery `.detach()` do NOT stop anything; a natively removed component still fires `detach`.
+
+### The lifecycle lock
+
+Every component has ONE lifecycle lock. Boot holds it from `on_create()` until `on_ready()`
+RETURNS, and every `render()` / `redraw()` / `reload()` / `refresh()` / `load()` takes it for
+its whole cycle, its own `on_ready()` included. A call made while the lock is held waits:
+
+- **Waiting calls run in call order, one at a time.** A new call merges only into the LAST
+  waiting call (never one already running), and only when it is identical (same method, same
+  arguments); the merged caller settles with that call's result. While the lock is held,
+  `reload(); reload();` runs once and `reload(); refresh(); reload();` runs three times.
+  Nothing outranks anything else.
+- **Called from `on_ready()`, unawaited: it runs after `on_ready()` returns.** Awaited (or
+  chained) while `on_ready()` is still running, it is pulled forward and runs at once, nested.
+- **`ready` fires only once the queue has drained**, so `await c.ready()` sees the component
+  after the calls its own `on_ready()` queued.
+- **A `render()`/`reload()` made from `on_ready()` runs `on_ready()` again.** One that does so
+  unconditionally loops forever and the component never reaches `ready` - nor does any parent
+  waiting on it. Show loaded values from the template (read `this.data`, or a method that
+  prefers a newer `this.state` value), never by re-rendering from `on_ready()`.
+- **Never `await` one inside `on_loaded()`** - it waits for the cycle `on_loaded()` is part of:
+  a permanent hang (development warns).
+- **Never call one from `on_create()` or `on_render()`** - development warns, and the call does
+  not run there: it queues behind the running step.
+
+`ready()`, `rendered()` and the wait for children RESOLVE when the component stops, so awaiting
+a component that was stopped or failed to load never hangs (check `_stopped` if it matters). A
+`render('sid')` redraw does not disturb a parent's ready.
 
 ### In and out of the document
 

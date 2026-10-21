@@ -18,7 +18,7 @@ use App\RSpade\Core\Session\Session;
  * session (Session::put_value(SESSION_KEY)) and it layers over config('rsx.console_debug')
  * - after the config file and the environment - for that browser only. Nothing is
  * written to .env or to any config file, so no other browser, no other developer and no
- * CLI process sees it, and it dies with the session.
+ * CLI process sees it, and it dies with the browser's staff sign-in (a staff-realm value).
  *
  * It applies ONLY while the session's identity is a developer (Session::is_developer())
  * AT REQUEST TIME, so an override left behind by a developer whose flag was since
@@ -46,6 +46,13 @@ class Console_Debug_Override
 {
     /** The _session_values key the override is stored under. */
     public const SESSION_KEY = 'sys.console_debug';
+
+    /**
+     * The override is the signed-in developer's, so it lives in the STAFF realm's values:
+     * it goes when that sign-in ends and is never left behind for whoever uses the browser
+     * next. Read in the same realm on a portal request too.
+     */
+    private const SESSION_REALM = 'staff';
 
     /** console_debug's filter modes, in the order a picker offers them. */
     public const FILTER_MODES = ['all', 'whitelist', 'blacklist', 'specific'];
@@ -89,7 +96,7 @@ class Console_Debug_Override
      */
     public static function stored(): ?array
     {
-        $value = Session::get_value(self::SESSION_KEY);
+        $value = Session::get_value(self::SESSION_KEY, null, self::SESSION_REALM);
 
         if ($value === null) {
             return null;
@@ -112,7 +119,7 @@ class Console_Debug_Override
     {
         $normalized = static::normalize($override);
 
-        Session::put_value(self::SESSION_KEY, $normalized);
+        Session::put_value(self::SESSION_KEY, $normalized, null, self::SESSION_REALM);
 
         return $normalized;
     }
@@ -122,7 +129,7 @@ class Console_Debug_Override
      */
     public static function clear(): void
     {
-        Session::forget_value(self::SESSION_KEY);
+        Session::forget_value(self::SESSION_KEY, self::SESSION_REALM);
     }
 
     /**

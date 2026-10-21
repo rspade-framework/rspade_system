@@ -24,18 +24,24 @@ says what is in this DIRECTORY and what must stay true when editing it.
   lock, unlock, and spawn only below the cap - `rsx:task:killer` for the kill pool,
   `rsx:task:worker --pool=` otherwise) and the process switch `spawn_workers(bool)` (OFF by
   default under the test suite).
-- `Task_Dispatcher_Context.php` — `#[Run_As_Dispatcher]`: `run($task_id, $call)` restores a
-  run's recorded dispatcher (staff via `Session::impersonate()`, portal via `Portal_Session`
-  + the portal realm, the impersonator from the dispatch's audit session, and
-  `Audit_Session::_declare()` for the acting context), re-checks the account first (refusal =
-  a failed run, nothing executed) and clears everything after. `Task_Runner::execute()`
-  calls it only when its third argument says the run executes outside its dispatcher's
+- `Task_Dispatcher_Context.php` — `#[Run_As_Dispatcher]`: `begin($task_id)` loads the run's
+  `_tasks.user_session_id` (the dispatching sign-in - staff, portal or an API key's) and
+  starts a FROZEN, BOUND virtual session from it (`Session::_begin_virtual()`: identity, site,
+  realm, impersonator, `get_session_id()` = that browser, `get_user_session_id()` = that user
+  session, the dispatch's audit session) - even when that sign-in has ended since. It refuses
+  first (a throw = a failed run, nothing executed): no user session, the login identity
+  deleted, the membership or site not active, the portal user unable to sign in or its site
+  not active. `Task_Runner::execute()` calls it only for a run executing outside its caller's
   process (the worker, `rsx:task:process --once`); `Task::internal()` does not.
 - `Task_Runner.php` — the one path every run takes: `insert_row()` (stamps `dispatched_by`
-  from `Rsx_Model_Abstract::_resolve_context_actor()`, the current `site_id` and
-  `audit_session_id`; refuses a `#[Run_As_Dispatcher]` task dispatched with nobody signed in),
+  from `Rsx_Model_Abstract::_resolve_context_actor()`, the current `site_id`,
+  `Session::get_user_session_id()`, `audit_session_id` and the claim tier `priority` -
+  `PRIORITY_RUN_AS_DISPATCHER` 0, `PRIORITY_ON_DEMAND` 1, `PRIORITY_SCHEDULED` 2 for a
+  scheduled-origin run; refuses a `#[Run_As_Dispatcher]` task with no user session behind it),
   `execute()` (`pre_task()`, the method, echo captured line by line as stdout, a throw is an
-  outcome, a worker's leaked locks released and named), `settle()` (flush, guarded
+  outcome, a worker's leaked locks released and named; with `$own_context` - worker and
+  `--once` - a fresh revision unit and virtual session before, `Session::_end_virtual()`
+  after), `settle()` (flush, guarded
   RUNNING -> COMPLETED/STOPPED/FAILED, schedule statistics, run lock release + re-anchor of a
   coalesced pending run, THEN the lifecycle frame - the waiters it tells must read the lock
   free), `settle_abandoned_inline()`, `running_fields()`.
@@ -131,6 +137,19 @@ says what is in this DIRECTORY and what must stay true when editing it.
 
 ## Invariants to keep when editing here
 
+- **Every worker run ends blank.** A run executed outside its caller's process starts in a
+  virtual session of its own (plain, or frozen and bound for `#[Run_As_Dispatcher]`) and ends
+  with `Session::_end_virtual()` - the ONE blanking entry point (Session + Portal_Session
+  identity, binding and freeze, declared audit session, request realm, `Rsx_Time` timezone
+  cache, `Rsx_Dark_Mode`, second factors passed). The worker and `--once` snapshot their
+  launch context and restore it on exit, so an in-process caller (`Artisan::call`) gets its
+  context back; `Task::internal()` snapshots and restores its caller's context
+  (`Session::_snapshot_context()`) and never blanks it. Anything new that memoizes on the
+  acting identity is cleared in `_end_virtual()`.
+- **Claim order is tier, then age.** `claim_pending_run()` orders by `priority`,
+  `scheduled_for`, `id` (served by `idx_tasks_claim_priority`, no sort); `claim_due_schedule()`
+  ticks nothing while a due on-demand run (priority < 2) is pending and not set aside this
+  pass - a run set aside because its lock is held never holds the schedules up.
 - **Every execution is a run row.** Dispatched, scheduled (created by the claiming
   scheduled-pool worker in the same transaction that advances `next_run_at` - RUNNING for an
   unmanaged task, a coalesced PENDING run due at the schedule's due time for a managed one,

@@ -51,7 +51,7 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 | `Ajax::ERROR_UNAUTHORIZED` | User lacks permission |
 | `Ajax::ERROR_AUTH_REQUIRED` | User not logged in |
 | `Ajax::ERROR_FATAL` | Uncaught PHP exceptions |
-| `Ajax::ERROR_SESSION_EXPIRED` | The sign-in outlived its limits, or the cookie names a replaced session row; announced once per page to `Rsx.set_session_expired_handler()` |
+| `Ajax::ERROR_SESSION_EXPIRED` | The sign-in outlived its limits (`metadata.cause` `length`/`idle`), or the call carried the session token a sign-in or sign-out just rotated away (`rotated`); announced once per page to `Rsx.set_session_expired_handler()` |
 | `Ajax::ERROR_QUESTION` | Not a failure: a pending question (`response_form_question($key, $question)`); the form engine answers it, a non-form caller reads `metadata.key`/`metadata.question`, an in-process `Ajax::internal()` raises `AjaxQuestionException`. `rsx:man form_conventions`, QUESTIONS |
 
 Constants available in both PHP (`Ajax::ERROR_*`) and JavaScript (`Ajax.ERROR_*`). The client raises three of its own: `Ajax.ERROR_SERVER` (`server_error`), `Ajax.ERROR_NETWORK` (`network_error`), and `Ajax.ERROR_PHP_EXCEPTION` (`php_exception` - a fatal carrying file/line, for a developer caller).

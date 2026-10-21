@@ -1,8 +1,9 @@
 EXTERNAL_API(1)                   RSpade Manual                   EXTERNAL_API(1)
 
 NAME
-    external_api - attribute-declared external REST API: bearer auth over a
-    cookie-less headless Session, declarative param validation, bare-JSON
+    external_api - attribute-declared external REST API: bearer auth running
+    as the key's owner on one session per key, declarative param validation,
+    bare-JSON
     responses, auto-generated docs/tester page, and an LLM-readable catalog
 
 SYNOPSIS
@@ -71,14 +72,15 @@ DESCRIPTION
 
     - Laravel: route file entry           RSX: #[Api_Endpoint] on the method
     - Laravel: Sanctum/Passport guard     RSX: framework-owned Bearer auth that
-                                               establishes a headless Session
+                                               runs as the key's owner on the
+                                               key's own session
     - Laravel: FormRequest rules          RSX: #[Api_Param] specs (also drive docs)
     - Laravel: API Resource / transformer RSX: the model's redacting toArray()
 
     A request to /api/vN/... is its own channel: the front controller
     classifies it before assets, Ajax and pages (rsx:man dispatch) and hands it
-    to Api_Dispatcher, NOT the page dispatcher: there is no cookie read, no
-    _sessions row, and no Set-Cookie on any response. The bearer key resolves to a real user + site,
+    to Api_Dispatcher, NOT the page dispatcher: there is no cookie read and no
+    Set-Cookie on any response. The bearer key resolves to a real user + site,
     and from then on Session:: reports that identity to ordinary controller code
     exactly as a browser session would - so a model's global site scope, an
     endpoint's Permission:: checks, and Rsx::Route() all work unchanged.
@@ -234,7 +236,7 @@ PARAMETERS AND VALIDATION
         plain text    any ordinary string. Assigned to the column it is a
                       bare string, which a declared column treats as PLAIN
                       TEXT: the type escapes it into its encoding (for
-                      Rich_Text, nl2br(htmlspecialchars(...)) in a <p>) and
+                      Rich_Text, nl2brhtml(...) in a <p>) and
                       then filters it. "a < b" stores as the text "a < b".
 
         encoded       the value's envelope, JSON-ENCODED INTO THE STRING:
@@ -327,16 +329,30 @@ AUTHENTICATION
 
     On success the dispatcher resolves the key's user WITHOUT site scope
     (User_Model::without_site_scope() - there is no site identity yet to scope
-    by), then establishes a headless identity:
+    by), then installs the key's identity:
 
-        Session::_set_api_identity($login_user_id, $site_id, $user_id)
+        Session::_set_api_identity($login_user_id, $site_id, $user_id, $api_key_id)
 
     From that point site scope applies everywhere (the user's own site), and the
     key's last_used_at is touched at most once per 60 seconds (throttled).
 
-    HEADLESS SESSION SEMANTICS. The API identity is a distinct tier consulted
-    ahead of the CLI/web tiers in every Session accessor. It is COOKIE-LESS and
-    IMMUTABLE for the request:
+    ONE SESSION PER KEY. The key's first call mints a _sessions row of type API
+    (api_key_id, unique - never a browser) and a user session for the key's
+    owner in the API realm; every later call reuses both, stamping them used at
+    most once a minute with the caller's address and user agent. So the key's
+    use is listed as ONE entry (is_api) where its owner is signed in
+    (Session::get_sessions_for_user()) - the terminate functions do not end it,
+    revoking the key does - and every act through it is attributed to an audit
+    session per caller address and user agent (Session::get_audit_session_id()).
+    Revoking the key signs its user session out ("API key revoked"); a key past
+    expires_at is refused and its user session signed out ("API key expired"),
+    at the refused call or by the hourly session sweep; deleting the key
+    (--purge) deletes its session and user session (ON DELETE CASCADE).
+    rsx:man session, API KEY SESSIONS.
+
+    THE IDENTITY. The API identity is a distinct tier consulted ahead of the
+    CLI/web tiers in every Session accessor. It is COOKIE-LESS and IMMUTABLE for
+    the request:
 
         Session::is_logged_in()        true
         Session::get_user()            the resolved User_Model (site-specific)
@@ -344,12 +360,15 @@ AUTHENTICATION
         Session::get_login_user_id()   the login-user id
         Session::get_site_id()         the key's site id
         Session::is_api_request()      true
-        Session::get_session_id()      0        (no _sessions row is ever created)
-        Session::has_session()         false
+        Session::get_session_id()      the key's own session row
+        Session::get_user_session_id() the key owner's API user session
+        Session::get_audit_session_id() one per key x caller address x agent
+        Session::has_session()         false    (not a browser)
         Session::get_csrf_token()      null
         Session::get_session()         THROWS   (shouldnt_happen)
         Session::set_login_user_id(..) THROWS   (identity is immutable in API mode)
         Session::set_site_id(..)       THROWS
+        Session::put_value(..)         THROWS   (session values belong to a browser)
 
     A browser cookie riding along on a tester fetch() is never read and never
     re-set. No API response ever carries Set-Cookie. Calling _set_api_identity()
@@ -365,8 +384,8 @@ AUTHENTICATION
     "twice in one request" throw above is unaffected, because scoping says the
     request ENDED, not that a second identity may be installed inside it.
 
-    get_session_id() being 0 does NOT disable the file-attachment flow. The
-    unattached-upload -> claim handshake never keyed on the session id:
+    The file-attachment flow does not depend on the session either. The
+    unattached-upload -> claim handshake never keys on the session id:
     can_user_assign_this_file() asks exactly two questions - is this attachment
     still unclaimed, and is its site_id the current request's site. A bearer
     identity has a real site_id, so the claim succeeds. See FILE ENDPOINTS below
@@ -1342,8 +1361,9 @@ DOCS AND TESTER PAGE
     HOW THE FILTER KNOWS. Auth checks are parameterless and evaluate against the
     current session, so the only way to ask "would this gate pass for the key's
     user" is to become that user for the duration of the question.
-    Api_Tester_Key::accessible_targets() establishes the same headless identity
-    Api_Dispatcher uses (Session::_set_api_identity), evaluates
+    Api_Tester_Key::accessible_targets() installs the same identity
+    Api_Dispatcher uses (Session::_set_api_identity, with no key - nothing is
+    written and get_session_id() answers null), evaluates
     Auth_Gates::can_access per endpoint, and tears the identity down in a
     finally. The identity fence is the whole fence: Auth_Gates evaluates every
     check live, so the answers follow whichever identity is installed at the
@@ -1631,7 +1651,7 @@ ENVIRONMENT INTERACTIONS AND CAVEATS
                        "message": "This account may not use the API at this time."}}
 
     because an API client cannot follow a redirect or an interstitial. The
-    identity is headless: Session::is_api_request() is true, and the session
+    identity is the key's: Session::is_api_request() is true, and the session
     writers (Session::logout() and friends) are unavailable, so a hook that ends
     a browser session branches on it first. An endpoint's OWN controller
     pre_dispatch(Request, $params) runs next and IS honored (a non-null return
@@ -1664,17 +1684,17 @@ TEMPLATE ENDPOINTS
     Notes worth copying: the mutation URLs use explicit action segments
     (/create, /:id/update, /:id/delete) - fitting the GET/POST-only philosophy,
     since there is no PUT/PATCH/DELETE. There is NO manual site_id scoping - the
-    models carry a global site scope and the headless identity supplies the site,
+    models carry a global site scope and the key's identity supplies the site,
     so a cross-site id simply misses the scope and returns 404. Explicit field
     assignment only (never mass assignment). Email/URL fields are validated at
     the endpoint and return validation_error on failure.
 
 TESTING
     Framework tests live in the 'api' concern (system/app/RSpade/tests/api/):
-    ten PHP classes (scan enforcement, the validator matrix, catalog
+    PHP classes (among them scan enforcement, the validator matrix, catalog
     resolution, key model, request log, cleanup, serialization, response
-    helpers, the OpenAPI projection, and the headless-session identity
-    accessors) plus one live-server
+    helpers, the OpenAPI projection, the key's session identity accessors and
+    the one-session-per-key reuse) plus one live-server
     shell script (http/api_auth_and_dispatch.sh) asserting the 401/200/405/404/
     422/400 shapes, that NO response carries Set-Cookie, that a cookie+bearer
     request uses the bearer identity, and that log rows are written. Run:
@@ -1710,8 +1730,9 @@ RSX VS LARAVEL
     Auth:
         Laravel: Sanctum/Passport guard + auth:api middleware; a token model.
         RSX:     framework-owned Bearer auth in the dispatcher; the key resolves
-                 to a cookie-less headless Session so ordinary Session:: code and
-                 model site-scope work with zero endpoint awareness.
+                 to the key owner's identity on the key's own session, so
+                 ordinary Session:: code and model site-scope work with zero
+                 endpoint awareness.
     Validation:
         Laravel: a FormRequest class with rules(), separate from the docs.
         RSX:     #[Api_Param] specs on the method - the SAME declaration drives
@@ -1788,7 +1809,7 @@ TROUBLESHOOTING
 SEE ALSO
     rsx:man file_upload - attachments, the upload gate, the claim window
     rsx:man auth_gates       the mandatory #[Auth] gate on every endpoint
-    rsx:man session          headless identity, impersonation, Session accessors
+    rsx:man session          API KEY SESSIONS, audit sessions, Session accessors
     rsx:man acls             Permission:: checks, role_id, the reserved override
     rsx:man model_fetch      redacting toArray(), enum magic properties
     rsx:man text_types       declared text columns: plain vs encoded writes

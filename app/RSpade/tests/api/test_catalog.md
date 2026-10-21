@@ -51,7 +51,14 @@ paths there are inert literals that resolve to nothing.
 | SESS-ACCESSORS | API identity serves login/site/user ids | php | _set_api_identity(1,1,1) | accessors return 1/1/1 | implemented | 2026-07-23 |
 | SESS-LOGGED-IN | is_logged_in true under API identity | php | established | true | implemented | 2026-07-23 |
 | SESS-IS-API | is_api_request true under API identity | php | established | true | implemented | 2026-07-23 |
-| SESS-SESSION-ID-ZERO | get_session_id() == 0 in API mode | php | established | 0 | implemented | 2026-07-23 |
+| SESS-SESSION-ID-NO-KEY | an identity installed with no key has no row: get_session_id(), get_user_session_id(), get_audit_session_id() null | php | established without a key | null x3 | implemented | 2026-10-21 |
+| KEY-SESSION-MINT | a key's first call mints its own TYPE_API row and a REALM_API user session for its owner, which get_session_id() / get_user_session_id() answer | php | authenticate() with a fresh key | row type 3, api_key_id set; user session realm 3, login user 1, signed in; has_session() false | implemented (`Api_Key_Session_Test`) | 2026-10-21 |
+| KEY-SESSION-TWO-IPS | two calls from two addresses are one session row and two audit sessions; the first address again is the first audit session | php | authenticate() from 10.40.0.1, 10.40.0.2, 10.40.0.1 | one row, one user session (count 1); two audit ids, each keyed on the row + user session, TYPE_API, the owner | implemented (`Api_Key_Session_Test`) | 2026-10-21 |
+| KEY-SESSION-LISTED | the key's use is one entry of its owner's sessions | php | get_sessions_for_user(1) | one entry, is_api, signed in | implemented (`Api_Key_Session_Test`) | 2026-10-21 |
+| KEY-SESSION-REVOKE | revoking the key signs its user session out | php | revoke() | signed_out_at set, reason SIGN_OUT_API_KEY_REVOKED | implemented (`Api_Key_Session_Test`) | 2026-10-21 |
+| KEY-SESSION-EXPIRED | presenting an expired key is refused and signs its user session out | php | expires_at moved into the past, authenticate() | error; signed_out_at set, reason SIGN_OUT_API_KEY_EXPIRED, label "API key expired" | implemented (`Api_Key_Session_Test`) | 2026-10-21 |
+| KEY-SESSION-EXPIRED-SWEEP | the hourly cleanup_sessions signs out an expired key nobody presents again, and leaves a live key alone | php | two keys used, one expired, run the task | expired one reason 14; live one signed in; state counts it | implemented (`Api_Key_Session_Test`) | 2026-10-21 |
+| KEY-SESSION-DELETE | deleting the key deletes its row and user session | php | DELETE the _api_keys row | both gone (cascade) | implemented (`Api_Key_Session_Test`) | 2026-10-21 |
 | SESS-CSRF-NULL | get_csrf_token() null in API mode | php | established | null | implemented | 2026-07-23 |
 | SESS-HAS-SESSION-FALSE | has_session() false in API mode | php | established | false | implemented | 2026-07-23 |
 | SESS-GET-SESSION-THROWS | get_session() throws in API mode | php | established | RuntimeException "API request" | implemented | 2026-07-23 |
@@ -103,7 +110,7 @@ paths there are inert literals that resolve to nothing.
 | HTTP-404 | unknown endpoint -> 404 not_found | http | bearer /api/v9/nope | 404, not_found | implemented | 2026-07-23 |
 | HTTP-422 | undeclared param -> 422 with fields | http | ?bogus=1 | 422, fields, bogus named | implemented | 2026-07-23 |
 | HTTP-400 | invalid JSON body -> 400 invalid_json | http | POST bad json | 400, invalid_json | implemented | 2026-07-23 |
-| HTTP-NO-SESSION | an authed call creates no _sessions row | http | bearer GET | session count unchanged | implemented | 2026-07-23 |
+| HTTP-KEY-SESSION | the key's calls share one TYPE_API row with one signed-in REALM_API user session, and later calls (another address included) mint nothing | http | bearer GETs | one row for the key, one user session; session count unchanged | implemented | 2026-10-21 |
 | HTTP-COOKIE-BEARER | cookie + bearer -> 200, bearer identity, no Set-Cookie | http | cookie + bearer | 200, no cookie | implemented | 2026-07-23 |
 | HTTP-LOGGED | 401 (null key) and 200 (populated key) rows written | http | after the run | both log rows present | implemented | 2026-07-23 |
 | SCOPE-VALID-LITERAL | validate accepts literal paths | php | /api/v1/me, /api/v1/clients/42/view | no throw | implemented | 2026-09-01 |

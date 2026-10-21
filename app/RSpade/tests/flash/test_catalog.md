@@ -99,3 +99,9 @@ SKIPs when `PORTAL_URL` names a host of its own, where a cookie per host is the 
 | ID | Purpose | Type | Reason | Status |
 |----|---------|------|--------|--------|
 | flash-02 | client queue persistence across navigation (sessionStorage) | playwright | browser-level behavior | deferred |
+
+## Flash messages are plain text (`playwright/flash_plain_text.js`)
+
+| ID | Purpose | Type | Input | Expected | Status |
+|----|---------|------|-------|----------|--------|
+| flash-pt-01 | a flash message renders as text | playwright | `Flash_Alert.success()` with `<b>` and `<img onerror>` | alert text = the message verbatim; no `b`/`img` inside; no page errors | implemented |

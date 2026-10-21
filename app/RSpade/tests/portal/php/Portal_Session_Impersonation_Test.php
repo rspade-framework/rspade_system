@@ -39,6 +39,9 @@ use App\RSpade\Tests\Portal\Php\Portal_Impersonation_Grant_Fixture;
  */
 class Portal_Session_Impersonation_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     private const SITE_ID = 1;
 
     private const PORTAL_HOST = 'portal.example.test';
@@ -136,11 +139,12 @@ class Portal_Session_Impersonation_Test extends Rsx_Test_Abstract
         static::__assert_equals('/_portal/', $url, 'the portal landing page, on this host');
 
         $row = Session::find(Session::get_session_id());
-        static::__assert_equals($target->id, (int) $row->portal_user_id, 'the target portal user, on the caller\'s own row');
-        static::__assert_equals(self::SITE_ID, (int) $row->portal_site_id, 'its tenant');
-        static::__assert_equals($staff->id, (int) $row->impersonator_user_id, 'the staff impersonator');
-        static::__assert_not_null($row->impersonation_started_at, 'the start time');
-        static::__assert_equals($staff->login_user_id, (int) $row->login_user_id, 'the staff login on that row is untouched');
+        $view = DB::table('_user_sessions')->where('id', $row->portal_user_session_id)->first();
+        static::__assert_equals($target->id, (int) $view->portal_user_id, 'the target portal user, on the caller\'s own row');
+        static::__assert_equals(self::SITE_ID, (int) $view->portal_site_id, 'its tenant');
+        static::__assert_equals($staff->id, (int) $view->impersonator_user_id, 'the staff impersonator');
+        static::__assert_not_null($view->started_at, 'the start time');
+        static::__assert_null($row->staff_user_session_id, 'the staff pointer on that row is untouched');
 
         static::__assert_equals($target->id, Portal_Session::get_portal_user_id(), 'the portal identity is in force');
         static::__assert_true(Portal_Session::is_impersonating(), 'and it is an impersonation');
@@ -196,8 +200,7 @@ class Portal_Session_Impersonation_Test extends Rsx_Test_Abstract
         static::__assert_equals(Session::get_session_id(), (int) $link->session_id, 'bound to the caller\'s row');
 
         $row = Session::find(Session::get_session_id());
-        static::__assert_null($row->portal_user_id, 'nothing is applied until the staff leg');
-        static::__assert_null($row->impersonator_user_id);
+        static::__assert_null($row->portal_user_session_id, 'nothing is applied until the staff leg');
     }
 
     // =====================================================================

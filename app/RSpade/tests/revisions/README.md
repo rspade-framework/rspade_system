@@ -28,7 +28,7 @@ retention task, and the REVISION-01 declaration rule.
   seam over them, `begin_unit_of_work()` / `unit_of_work()`.
 - `system/script.php` - the one-unit-per-run boundary of an external script.
 - `app/RSpade/Core/Revisions/Transaction_Model.php`, `Revision_Model.php` - the two models,
-  their type-ref pairs, their enums, and `Revision_Model::diff()`.
+  their type-ref pairs, their enums, `Revision_Model::diff()` and `is_redacted()`.
 - `app/RSpade/Core/Revisions/Revision_Parent_Registry.php` - `#[Revision_Parent]` discovery.
 - `app/RSpade/Core/Revisions/Revision_Cleanup_Service.php` - the retention task.
 - `app/RSpade/Core/Database/Models/Rsx_Model_Abstract.php` - `$revisions`,
@@ -72,6 +72,11 @@ retention task, and the REVISION-01 declaration rule.
   change fields. A restore is recorded as its own operation.
 - **Excluded always**: `updated_at` and the `updated_by` pair (they move on every write) and
   every `_`-prefixed system column. Excluded by declaration: `$revision_exclude`.
+- **A never-exported column is REDACTED, not excluded**: its change is recorded as
+  `[Revision::REDACTED, Revision::REDACTED]` on create, update and clear, decided before
+  `_revision_value()` so a declared text type is never encoded; an untouched one is not
+  mentioned; `$revision_exclude` wins when a column is in both lists.
+  `Revision_Model::is_redacted()` is the reader's test.
 - **Bulk**: `where()->update()` records one revision per affected record (it runs `save()`);
   `raw_bulk()`, `DB::table()` and raw SQL record nothing - the same rule realtime follows.
 - **REVISION-01 is a manifest-build FATAL** on an incoherent `#[Revision_Parent]`: a child
@@ -96,6 +101,7 @@ retention task, and the REVISION-01 declaration rule.
 | `migrate` / `migrate:restore` seams | php (source structure) | yes |
 | The four operations (create / update / delete / undelete) and their diffs | php | yes |
 | Exclusions: `$revision_exclude`, `_`-prefixed, `updated_*` | php | yes |
+| Redaction of never-exported columns, `Revision::REDACTED`, `is_redacted()` | php | yes |
 | Transaction grouping, sequences, `revision_count`, source, actor, `describe()` | php | yes |
 | Unit boundaries (`_reset_request_state`) | php | yes |
 | The root pair and `#[Revision_Parent]` | php | yes |

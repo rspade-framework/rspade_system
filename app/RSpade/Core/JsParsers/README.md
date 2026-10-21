@@ -90,7 +90,7 @@ They cannot drift, because there is no second list.
 | `concat` | `Core/Bundle/resource/concat-service.js` | `Concatenator` | `concat` (js and css) |
 | `jqhtml` | `Integrations/Jqhtml/resource/jqhtml-service.js` | `JqhtmlWebpackCompiler` | `compile` |
 | `sanitize` | `CodeQuality/Support/resource/sanitize-service.js` | `FileSanitizer` | `sanitize` |
-| `quality` | `CodeQuality/Support/resource/quality-service.js` | `Js_CodeQuality_Rpc` | `lint`, `analyze_this` |
+| `quality` | `CodeQuality/Support/resource/quality-service.js` | `Js_CodeQuality_Rpc` | `lint`, `analyze_this`, `analyze_raw_html` |
 | `scss` | `Integrations/Scss/resource/scss-service.js` | `Scss_Compiler` | `compile` |
 
 ### Communication protocol

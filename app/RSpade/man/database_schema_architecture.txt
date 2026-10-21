@@ -74,7 +74,12 @@ An application reaches what those tables hold through the interfaces the
 framework publishes for it - the facade functions and the documented methods
 of framework classes:
 
-    who is signed in where        Session::get_sessions_for_user()
+    who is signed in where        Session::get_sessions_for_user(),
+                                  Portal_Session::get_sessions_for_user(),
+                                  get_current_session_info(),
+                                  get_user_session_id()
+    where one sign-in was used    Audit_Session::list_page_for_user_session()
+                                  (a grid page)
     sign-in history               Login_History::list_page() (a grid page),
                                   get_history_for_user() (the newest few);
                                   Portal_Login_History, the same, for portal users
@@ -97,11 +102,14 @@ at run time, with nothing at build time to say so.
 TWO SANCTIONED CONTACTS, AND NO OTHERS:
 
     A FOREIGN KEY TO _sessions. A table of yours that holds state belonging to
-    a browser session stores Session::get_session_id() and declares
+    a BROWSER stores Session::get_session_id() and declares
     FOREIGN KEY (session_id) REFERENCES _sessions (id) ON DELETE CASCADE, so
-    its rows are removed with the session. A constraint, never a query - and
-    the only foreign key an application points at a system table. (Prefer
-    Session::put_value(), which needs no table; rsx:man session.)
+    its rows are removed with the browser's row. The column is NULLABLE when a
+    command or a task may write the row - get_session_id() is null there. A
+    constraint, never a query - and the only foreign key an application points
+    at a system table. A record of what somebody DID stores
+    Session::get_audit_session_id() instead, with no foreign key (rsx:man
+    session, SYSTEM TABLES ARE PRIVATE).
 
     A JOIN THROUGH A FRAMEWORK CALL. Audit_Session::join($query, $column)
     joins the audit session onto your own query for a grid, and
@@ -181,9 +189,10 @@ is a design decision to record here first.
 3. A BOUNDED SET - returns everything
 
    Where the framework itself caps the set, a pager is ceremony.
-   Session::get_sessions_for_user() answers every signed-in device because
-   rsx.sessions.max_web_sessions_per_user bounds them, and a screen that hid
-   one could not offer to sign it out. A "newest N" convenience
+   Session::get_sessions_for_user() answers every signed-in user session
+   because rsx.sessions.max_web_sessions_per_user bounds them (and the
+   signed-out ones within rsx.sessions.unused_session_days), and a screen that
+   hid one could not offer to sign it out. A "newest N" convenience
    (Login_History::get_history_for_user($id, $limit)) is the same kind: the
    cap is in its signature.
 
@@ -267,9 +276,8 @@ _flash_alerts
              expiry at 1 minute; an hourly sweep deletes anything past 30 minutes
              (Flash_Alert_Cleanup_Service).
   Schema: session_id, type_id, message, timestamps
-  Notes: session_id is the ONLY session FK in the schema (-> _sessions, ON DELETE
-         CASCADE). It carries the realm too: portal sessions are rows in the same
-         table, and ids are globally unique, so no realm column exists.
+  Notes: session_id -> _sessions (the browser), ON DELETE CASCADE. is_portal
+         says which experience queued it: one browser carries both.
 
 _email_queue
   Purpose: Outbound email queue - one row per message
@@ -413,7 +421,7 @@ and sites.id 0 (the sessionless site).
 The seven foreign keys INTO application-owned tables are the contract at its
 strongest, because the framework's own storage cannot be written at all if the
 target is gone: _file_attachments.site_id -> sites.id,
-_sessions.portal_user_id -> portal_users.id,
+_user_sessions.portal_user_id -> portal_users.id,
 _sso_identities.login_user_id -> login_users.id,
 _two_factor_credentials.login_user_id -> login_users.id,
 _portal_login_history.portal_user_id -> portal_users.id,
@@ -535,7 +543,7 @@ Q: Would changing the schema break the developer-facing API?
    NO -> System table (underscore prefix) - implementation detail
 
 Examples:
-- User login sessions? System (_login_sessions) - API is Session:: methods
+- Where a user is signed in? System (_sessions, _user_sessions) - API is Session:: methods
 - User accounts? Core (users) - developers extend and query this
 - Search index? System (_search_indexes) - API is Search::query()
 - Client records? Application (clients) - business domain entity

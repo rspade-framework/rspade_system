@@ -207,6 +207,13 @@ Laravel's $hidden is advisory - makeVisible() removes a column from it - and is
 for tidiness only. getAttributes() and attribute reads ($model->password)
 bypass both: they are server-side raw access, never a payload.
 
+The same declaration covers the REVISION lane. On a model with $revisions, a
+change to a never-exported column is recorded with BOTH sides replaced by
+Revision::REDACTED, so a history still says the column changed and the stored
+document never holds its value (rsx:man revisions, REDACTED COLUMNS). A secret
+therefore needs no $revision_exclude entry; one named in both lists is not
+recorded at all.
+
 A column named password, token or secret (or ending _password, _token,
 _secret) that is missing from the effective list is flagged by rsx:check
 (MODEL-NEVER-EXPORT-01, read from the live schema). A column exported on
@@ -620,7 +627,7 @@ How site_id is Determined:
 
     PORTAL request - the site the application DECLARED for the portal
     (Portal_Session::set_site_id, normally in Portal_Main::init). It is a different
-    column (portal_site_id) from the staff site, on the same one session row, and an
+    site from the staff one - the portal sign-in's, on the same one browser - and an
     undeclared portal site THROWS rather than scoping to 0. See: rsx:man portal.
 
 See: php artisan rsx:man auth (for complete authentication/site selection flow)

@@ -1,6 +1,6 @@
 ---
 name: rsx-stdlib
-description: "The RSpade shared utility library in both languages - JS global functions (type checks, escape_html/sanitize_rich_text_html, foreach/clone/coalesce), async helpers (sleep, debounce, rwlock), hash/deep_equal, browser helpers, Rsx_Storage, URL hash state, PHP helpers (response_*, array_*, bytes_to_human, random_hash, rsxrealpath), and the Manifest reflection API. Use before writing any utility by hand - debouncing, deep comparison, HTML escaping, dot-path array access, byte/duration formatting, class-hierarchy lookups - and when you need the exact signature of one of these functions."
+description: "The RSpade shared utility library in both languages - JS global functions (type checks, escape_html/sanitize_rich_text_html/nl2brhtml/html_to_text, foreach/clone/coalesce), async helpers (sleep, debounce, rwlock), hash/deep_equal, browser helpers, Rsx_Storage, URL hash state, PHP helpers (response_*, array_*, bytes_to_human, random_hash, rsxrealpath), and the Manifest reflection API. Use before writing any utility by hand - debouncing, deep comparison, HTML escaping, dot-path array access, byte/duration formatting, class-hierarchy lookups - and when you need the exact signature of one of these functions."
 ---
 
 # RSpade standard library
@@ -12,12 +12,12 @@ Before hand-rolling anything, search first:
 | Where | What |
 |---|---|
 | `php artisan rsx:man helpers` | **PHP** globals (`helpers.php`): `response_*`, `array_*`, string/HTML, filesystem/paths, `exec_safe`, formatting, `random_hash`, debug and `shouldnt_happen`. |
-| `php artisan rsx:man js_functions` | **JS** globals (`functions.js`, `async.js`, `hash.js`, `error.js`, `browser.js`): type checks and conversion, `escape_html`/`sanitize_rich_text_html`, collections, `sleep`/`debounce`/`rwlock`, `hash`/`deep_equal`, browser helpers. |
+| `php artisan rsx:man js_functions` | **JS** globals (`functions.js`, `async.js`, `hash.js`, `error.js`, `browser.js`): type checks and conversion, `escape_html`/`sanitize_rich_text_html`/`nl2brhtml`/`html_to_text`, collections, `sleep`/`debounce`/`rwlock`, `hash`/`deep_equal`, browser helpers. |
 | `Manifest.php` (below) | reflection - **check for an existing manifest function before hand-rolling any of it.** |
 
 Those two man pages carry the full rosters with exact signatures. The judgment worth repeating here:
 
-- **`escape_html()` vs `sanitize_rich_text_html()` is a security decision, not a style one.** Escape by default; sanitize only content that is SUPPOSED to be markup (WYSIWYG output). Same names, same rule in PHP. `nl2br()` does NOT escape - plain text with line breaks is `nl2br(escape_html($text))`. The sanitizer returns a STRING: markup bound for a declared text column goes through `Type::from_untrusted_encoded()`, never a sanitized string (a string is plain text there).
+- **`escape_html()` vs `sanitize_rich_text_html()` is a security decision, not a style one.** Escape by default; sanitize only content that is SUPPOSED to be markup (WYSIWYG output). Same names, same rule in PHP. `nl2br()` does NOT escape - plain text with line breaks is `nl2brhtml($text)` (both languages: escape, then `<br />` per line). One line of text in JS needs no markup at all: `.text(value)`. Reading the text OUT of an HTML string in JS is `html_to_text(html)` (inert DOMParser) - never `$('<div>').html(x).text()`, which builds live elements and fetches their images. The sanitizer returns a STRING: markup bound for a declared text column goes through `Type::from_untrusted_encoded()`, never a sanitized string (a string is plain text there).
 - **`debounce(fn, delay)` - always use it, never a hand-rolled timer.** The behavioural gotcha: the delay timer starts AFTER your callback completes, so a slow callback cannot stack up behind itself. Decorator form `@debounce(250)` (with the `/** @decorator */` comment). **250 ms is the recommended delay for almost everything** - pick another only for a compelling, stated reason.
 - **`clone()` is SHALLOW** and **`empty(0)` is true** - these globals follow PHP semantics, not JavaScript ones.
 - **`hash()` ignores the `$` key by default**, because jqhtml component data carries a jQuery reference that would otherwise hash the DOM. Supplying your own `ignored_keys` REPLACES that default.

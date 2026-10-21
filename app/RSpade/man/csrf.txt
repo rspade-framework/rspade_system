@@ -28,11 +28,12 @@ DESCRIPTION
        without a token while every authenticated action is protected.
 
 THE TOKEN
-    A 32-byte random token is minted ONCE when a session is created and stored
-    on the session row (_sessions.csrf_token). It is stable for the life of the
-    session - it is NOT rotated on login, identity change, or impersonation
-    (consistent with RSpade's session-token immutability). It is never exported
-    to JavaScript except as window.rsxapp.csrf.
+    A 32-byte random token is minted when the browser's session is created and
+    stored on its row (_sessions.csrf_token). It ROTATES with the session token
+    at every sign-in and sign-out on that browser (rsx:man session, TOKEN
+    ROTATION); a site switch and an impersonation leave it alone. A sign-in made
+    by an Ajax call is handed the new token in that call's envelope. It is
+    never exported to JavaScript except as window.rsxapp.csrf.
 
     window.rsxapp.csrf is populated on page render ONLY when a session already
     exists; on an anonymous first-visit page it is null (no session is created
@@ -115,8 +116,8 @@ PROTECTION (threat model)
         this host's Origin and passes.
 
     External API (#[Api_Endpoint], /api/vN/*): exempt. It authenticates with a
-        Bearer token and a cookie-less headless Session - there is no ambient
-        cookie to forge, and the request is branched off before the CSRF seam.
+        Bearer token on the key's own session, with no cookie - there is no
+        ambient cookie to forge, and the request is branched off before the CSRF seam.
 
     GET requests: never checked - reads do not mutate, and same-origin policy
         already prevents a cross-site attacker from reading a response.

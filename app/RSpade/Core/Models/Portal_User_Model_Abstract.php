@@ -346,9 +346,11 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      * - Portal realm, someone else's record: null. Portal users do not browse each
      *   other's accounts; what one client's people may see about another is app
      *   policy expressed in app screens, never a framework-shipped link.
-     * - Staff realm: null. RSpade ships no per-portal-user detail screen (portal
-     *   accounts are administered from the client they belong to), so there is no
-     *   destination to name. An app that builds one overrides this model.
+     * - Staff realm: null. RSpade ships no per-portal-user staff screen an
+     *   application may link to (portal accounts are administered from the client
+     *   they belong to; the /_sys panel's read-only Portal Users screen is
+     *   framework-reserved and developer-only), so there is no destination to name.
+     *   An app that builds one overrides this model.
      *
      * Never memoized: staff and the account owner get different answers for the same
      * record, in the same process.

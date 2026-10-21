@@ -555,9 +555,10 @@ LOADING
 
         Core/Forms/Rsx_Form.scss reads ONE colour, --rsx-form-veil, and the
         application owns it: core has no palette and cannot know whether the
-        surface behind the overlay is light or dark. The fallback is a
-        light-surface veil, so a form works before an app declares anything; a
-        dark theme that does not declare the dark value flashes white.
+        surface behind the overlay is light or dark. Core declares it once on
+        :root as a light-surface veil, so a form works before an app declares
+        anything; the app's theme redeclares it, and a dark theme that does
+        not declare the dark value flashes white.
 
             :root          { --rsx-form-veil: rgba(255, 255, 255, 0.65); }
             html.rsx-dark  { --rsx-form-veil: rgba(16, 21, 27, 0.7); }

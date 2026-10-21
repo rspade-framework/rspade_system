@@ -1,0 +1,59 @@
+<%--
+_Sys_Portal_Users_DataGrid - the Portal Users screen's grid: every client-portal user on the
+install, on every site, newest first. A portal user belongs to exactly one site; its printed
+name is the email unless the application's Portal_User_Model names the person, in which case
+the name is shown under the email.
+
+Server half: _Sys_Portal_Users_DataGrid.php (filters status = active | inactive | suspended
+and site = a site id, search on email). State lives in the URL hash under the grid key
+"portal_users": Rsx.Route('_Sys_Portal_Users_Action', {}, {portal_users_f_site: 3}).
+
+Every row links to its detail screen (_Sys_Portal_User_View_Action).
+--%>
+<Define:_Sys_Portal_Users_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="portal_users"
+    $data_source=_Sys_Portal_Users_Controller.datagrid_fetch
+    $sort="id"
+    $order="desc"
+    $per_page=25
+    $search="Search email..."
+    $filters=([
+        {key: 'status', label: 'All statuses', options: _Sys_Portal_Users_Controller.status_options},
+        {key: 'site', label: 'All sites', options: _Sys_Portal_Users_Controller.site_options},
+    ])>
+    <Slot:header>
+        <tr>
+            <th data-sortby="id">ID</th>
+            <th data-sortby="email">Email</th>
+            <th data-sortby="site_id">Site</th>
+            <th data-sortby="status_id">Status</th>
+            <th>Verified</th>
+            <th data-sortby="last_login">Last sign-in</th>
+            <th data-sortby="created_at">Created</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr data-href="<%= Rsx.Route('_Sys_Portal_User_View_Action', row.id) %>">
+            <td class="_Sys_Portal_Users_DataGrid__mono"><%= row.id %></td>
+            <td>
+                <%= row.email %>
+                <% if (row.printed_name && row.printed_name !== row.email) { %>
+                    <span class="_Sys_Portal_Users_DataGrid__dim"><%= row.printed_name %></span>
+                <% } %>
+            </td>
+            <td><span class="_Sys_Portal_Users_DataGrid__mono">#<%= row.site_id %></span> <%= row.site_name || '(deleted site)' %></td>
+            <td>
+                <_Sys_Status_Badge $status=row.status $label=row.status_label />
+                <% if (row.password_reset_required) { %>
+                    <_Sys_Status_Badge $status="warn" $label="Reset required" />
+                <% } %>
+            </td>
+            <td><%= row.is_verified ? 'Yes' : 'No' %></td>
+            <td><%= row.last_login ? Rsx_Time.format_datetime(row.last_login) : 'Never' %></td>
+            <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-person-vcard" $title="No portal users" $body="Nobody can sign in to the client portal on this install yet." />
+    </Slot:empty>
+</Define:_Sys_Portal_Users_DataGrid>

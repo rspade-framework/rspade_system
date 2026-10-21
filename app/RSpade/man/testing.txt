@@ -214,11 +214,31 @@ API REFERENCE
 
   Session, site and user context
 
-    A CLI run has no browser session, but site-scoped models read
-    Session::get_site_id() and audit stamping reads Session::get_user_id().
-    These helpers set that context as process-level overrides. They create no
-    session row of their own; a test that needs a real row calls
-    Session::get_session_id(), which mints a TYPE_CLI row for the process.
+    A test process runs a VIRTUAL session (rsx:man session, VIRTUAL SESSIONS):
+    no browser, no _sessions row, no audit session - Session::get_session_id()
+    and get_audit_session_id() answer null and Session::put_value() throws. Site-
+    scoped models still read Session::get_site_id() and audit stamping reads
+    Session::get_user_id(), so these helpers declare that context as in-memory
+    overrides, writing nothing.
+
+    A test whose SUBJECT belongs to a browser - session values, two-factor
+    trust, a challenge parked between two calls, View as Client - acts as one:
+
+        __as_browser(array $options = []): int
+            Inserts a browser row (no sign-in on it; options as
+            __insert_session_fixture()) and makes get_session_id(),
+            has_session(), the session values and get_session() answer it for
+            the rest of the test. Identity stays the virtual session's - declare
+            it with __acting_as_user(). Returns the row id; call again for a
+            second browser.
+
+        protected static $acts_as_browser = true;
+            Does __as_browser() before every test method of the class.
+
+        __insert_session_fixture(array $options = []): array
+            A browser row with user sessions on it (a staff, a portal and a
+            suspended own sign-in, with any clocks), for tests of the session
+            records themselves; answers the ids and the token.
 
         __acting_as_site(int $site_id)
             Site context for everything that follows: the site scope on
@@ -244,8 +264,8 @@ API REFERENCE
             Prefer calling the endpoint's static method directly.
 
     __acting_as_site() is the STAFF facade. A portal test declares its own
-    tenant with Portal_Session::set_site_id() - the two are different property
-    sets on the same session row and never substitute for each other.
+    tenant with Portal_Session::set_site_id() - the two are different realms of
+    the same virtual session and never substitute for each other.
 
   Outcome helpers
 
@@ -550,12 +570,12 @@ PER-TEST STATE RESET
     by the next test - in this class and in every class that runs after it:
 
         Session::_testing_reset()          returns Session to virgin, pre-init
-                                           state: the CLI session row and its
-                                           handle (the row vanished with the
-                                           rollback; the static must not survive
-                                           pointing at it), the API identity
-                                           tier, the loader flags and every
-                                           resolved cache
+                                           state: the browser a test was acting
+                                           as (__as_browser()), a frozen or
+                                           bound virtual session left by a
+                                           dispatcher-task test, the API
+                                           identity tier, the loader flags and
+                                           every resolved cache
         Portal_Session::_testing_reset()   clears the portal facade's declared
                                            site, portal user and impersonator
         Rsx_Turnstile::_reset_request_state()

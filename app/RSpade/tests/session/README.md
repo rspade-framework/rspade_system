@@ -4,12 +4,14 @@
 
 Session management: the static `Session` facade that backs all authentication
 and tenant context in RSpade. It resolves the current login identity, the
-site-specific user, the active site (tenant), the portal properties, and
-CSRF state. In web context it is cookie-backed. In CLI/test context IDENTITY is
-declared through static overrides (creating nothing), while a SESSION row is
-minted on demand: the first `get_session_id()` creates a real `TYPE_CLI`
-`_sessions` row for the process, held for its lifetime and deleted when it
-ends. Site-scoped models and audit
+site-specific user, the active site (tenant), the portal sign-in, and
+CSRF state. In web context it is cookie-backed: ONE `_sessions` row per browser,
+pointing at the staff and portal USER SESSIONS (`_user_sessions`) signed in on it. A
+CLI/test process runs a VIRTUAL session: identity is declared through static overrides
+and nothing is ever written - no `_sessions`, `_user_sessions` or `_audit_sessions` row,
+and `get_session_id()` answers null (a test whose subject belongs to a browser acts as one
+with `__as_browser()` / `$acts_as_browser`). An API key has one row of its own and the
+rsx:debug harness one row per account. Site-scoped models and audit
 attribution read `Session::get_site_id()` / `get_user_id()`, so the correctness
 of this subsystem underpins multi-tenant isolation across the whole framework.
 
@@ -27,6 +29,8 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   establish a CLI identity through `Session::impersonate()` (`Ajax_Debug_Identity_Test`, with
   the fixture endpoint `Ajax_Debug_Identity_Fixture_Controller` beside it)
 - `app/RSpade/Core/Session/User_Agent.php` - user-agent parsing
+- `app/RSpade/Core/Session/Audit_Session.php` - the acting-context record and its readers
+  (`describe()`, `join()`, `list_page_for_user_session()`)
 - `app/RSpade/Core/Session/Login_History_Abstract.php` - the history store, written once for both realms;
   `Login_History.php` (staff, `_login_history`) and `Portal_Login_History.php` (portal,
   `_portal_login_history`) bind it
@@ -53,9 +57,10 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 - The developer flag: `login_users.is_developer` on the initial user, its absence from
   an ordinary identity's `toArray()` payload, and `Session::is_developer()` reading it
   from the signed-in login identity. (php - default isolation)
-- The CLI session ROW: on-demand minting, the TYPE_CLI stamp, laziness (nothing
-  minted until demanded), identity syncing onto the row, and end-of-process
-  deletion. (php - default isolation)
+- The virtual session: no row of any kind however the process signs in, out, switches
+  site or records history; `_begin_virtual()` / `_end_virtual()`; values refused with no
+  browser; the test-browser seam. (php - default isolation)
+- The rotated-token refusal and the harness row reuse, over real HTTP (`http/`).
 - Login history: success rows + queries, failures as ephemeral counters (no row),
   window-bounded failed-attempt counting, retention prune; the portal binding's rows, site,
   scope key and separation from the staff rows. (php)
@@ -96,19 +101,35 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 - Web-mode session creation, cookie round-trip, token regeneration, CSRF against
   a stored token, multi-device session management. (http - live server)
 
-### Session lifetime, sign-in rotation and devices
+### Session lifetime, sign-in rotation and user sessions
 
-- http (`session_sign_in_rotation.sh`): a sign-in moves the browser to a new row and token;
-  the old row is retired (inactive, its record intact), a request on its token is refused
-  (401 / session_expired cause retired) and never re-cookied; the rows share a device.
-  `session_lifetime.sh` asserts the same retirement for an expired sign-in.
-- http (`session_lifetime.sh`): the two limits against real rows whose clocks were moved
-  back - page navigation vs. the Ajax grace, the session_expired envelope, the page-view
-  report, last_seen, and what does and does not count as a page view.
+- http (`session_sign_in_rotation.sh`): one browser row throughout; a sign-in and a sign-out
+  rotate its tokens in place; the just-replaced token is refused for Ajax and sub-resources
+  and is a guest for a page navigation; an older token is a stranger; signing out stamps the
+  user session and clears the browser's staff values (its guest value stays); A/B/A on one
+  browser reuses A's user session (sign_in_count 2) and replaces B's.
+- php (`Session_User_Sessions_Test`): the engine those flows are built from - find-or-create
+  on the unique tuple, the migration's tuple hash, the first-sign-in stamp on the browser,
+  per-realm value clearing (a realm's sign-out or replacement clears that realm's values),
+  impersonation suspension and its return, the riding-impersonation rule.
+- http (`session_lifetime.sh`): the two limits against real user sessions whose clocks were
+  moved back - page navigation vs. the Ajax grace, the session_expired envelope, the
+  page-view report, last_seen, what does and does not count as a page view, the once-a-minute
+  last_active write and the 30-day unused-browser retirement at lookup.
 - playwright (`session_expired.js`): the client announces a lost sign-in once per page to the
   registered handler (or reloads), and reports SPA page views at most once a minute.
-- php (`Session_Cleanup_Test`): signed-in rows are collected on the longer idle limit plus
-  the grace, never under an unlimited one; orphan device records go.
+- php (`Session_Cleanup_Test`): only guest browsers (`first_signed_in_at` null) are
+  collected; a browser with a sign-in, current or ended, is kept; the hourly sweep signs out
+  the current sign-ins past a limit plus the Ajax grace (per realm, the earlier expiry's
+  reason, never a sign-in suspended behind an impersonation); the daily maintenance step
+  makes browsers unused past `unused_session_days` inactive (never an API key's row), signing
+  out what is still signed in on them (`SIGN_OUT_BROWSER_UNUSED`).
+- php (`Audit_Session_List_Page_Test`): `Audit_Session::list_page_for_user_session()`, the
+  display-page reader the session screens page a user session's audit sessions through -
+  scope, order, published sorts, the address/agent filter, validation.
+- php (`Session_Values_Test`): the value store - reads never mint, expiry at read time, and
+  the three realms (staff, portal, guest) as separate namespaces, null = the request's
+  experience.
 
 ## Documents
 

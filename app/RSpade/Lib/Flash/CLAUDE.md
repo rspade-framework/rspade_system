@@ -31,6 +31,10 @@ Flash_Alert::info('Your session will expire in 5 minutes');
 Flash_Alert::warning('This action cannot be undone');
 ```
 
+**A message is PLAIN TEXT.** The client writes it into the alert with `.text()`, so markup
+in a message - from PHP or from a JS `Flash_Alert.*()` call - is shown literally, never
+rendered. There is no HTML form of a flash message.
+
 ### How It Works
 
 **Storage:**
@@ -105,9 +109,8 @@ In console context (tasks, tests, artisan commands) a flash alert:
 - error and warning ALSO reach the Laravel log (`Log::error` / `Log::warning`); success
   and info are terminal-only
 
-This is deliberate policy, not a limitation. The guard predates CLI sessions and used to
-be a consequence of there being no session to attach to; a CLI process now mints a real
-`_sessions` row on demand, and flash still refuses to use it. A flash alert is a message
+This is deliberate policy, not a limitation: a CLI process runs a virtual session with no
+`_sessions` row to attach to (`get_session_id()` is null there). A flash alert is a message
 for a browser that is about to render; a command has an operator reading its output right
 now, and that terminal is the honest delivery channel (owner ruling 2026-08-09).
 

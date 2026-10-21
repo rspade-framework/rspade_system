@@ -87,6 +87,7 @@ echo "[TEST] 1. Portal login POST sets rsx, and no second cookie..." >&2
 login_status="$(curl -s -o /dev/null -w '%{http_code}' -c "$JAR" -D "$H_LOGIN" \
     --data-urlencode "email=${FIXTURE_EMAIL}" \
     --data-urlencode "password=${FIXTURE_PASSWORD}" \
+    --data-urlencode "__turnstile=inactive" \
     "${BASE}${PORTAL_PREFIX}/login" 2>/dev/null)"
 if [ "$login_status" != "302" ]; then
     fail "portal login returned $login_status (expected 302); the fixture credentials or the portal prefix are wrong"
@@ -156,7 +157,8 @@ fi
 row_out="$(cd /var/www/html && RSX_TEST_SESSION_TOKEN="$session_token" php artisan tinker --execute='
     $t = getenv("RSX_TEST_SESSION_TOKEN");
     $rows = \App\RSpade\Core\Session\Session::where("session_token", $t)->get();
-    echo "ROWS:" . $rows->count() . " PORTAL:" . (int) ($rows->first()->portal_user_id ?? 0);
+    $us = $rows->isEmpty() ? null : \Illuminate\Support\Facades\DB::table("_user_sessions")->where("id", $rows->first()->portal_user_session_id)->first();
+    echo "ROWS:" . $rows->count() . " PORTAL:" . (int) ($us->portal_user_id ?? 0);
 ' 2>&1)" || fail "session row lookup failed: $row_out"
 
 if ! printf '%s' "$row_out" | grep -q 'ROWS:1'; then

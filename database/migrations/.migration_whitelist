@@ -751,6 +751,31 @@
             "created_at": "2026-10-20T14:10:47+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_password_reset_required_to_identities"
+        },
+        "2026_10_21_035848_create_user_sessions_and_browser_sessions.php": {
+            "created_at": "2026-10-21T03:58:48+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe create_user_sessions_and_browser_sessions"
+        },
+        "2026_10_21_035849_add_user_session_and_priority_to_tasks.php": {
+            "created_at": "2026-10-21T03:58:48+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_user_session_and_priority_to_tasks"
+        },
+        "2026_10_21_051508_add_previous_token_hash_to_sessions.php": {
+            "created_at": "2026-10-21T05:15:08+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_previous_token_hash_to_sessions"
+        },
+        "2026_10_21_060545_session_index_coverage_and_realm_values.php": {
+            "created_at": "2026-10-21T06:05:45+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe session_index_coverage_and_realm_values"
+        },
+        "2026_10_21_072625_user_session_timeout_sweep_indexes.php": {
+            "created_at": "2026-10-21T07:26:25+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe user_session_timeout_sweep_indexes"
         }
     }
 }

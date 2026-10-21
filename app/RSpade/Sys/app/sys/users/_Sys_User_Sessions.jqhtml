@@ -1,18 +1,22 @@
 <%--
-_Sys_User_Sessions - an identity's Sessions tab: its live (active) sessions, most
-recently active first, from Session::get_sessions_for_user().
+_Sys_User_Sessions - an identity's Sessions tab: where it is signed in - one row per user
+session (one browser x site, x impersonator), signed in and recently signed out, most
+recently active first, plus its API keys in use - from Session::get_sessions_for_user().
 
 $login_user_id - the identity (required)
 $email         - its email, for the confirm text (required)
 
-Self-loading (_Sys_Users_Controller.sessions); Refresh reloads this region only. Each
-row's End button signs that browser out (_Sys_Users_Controller.terminate_session) after
-a confirm, and reloads the region; the row the page is read from carries a
-terminate_refusal the button explains instead. Ending every session is the page
-header's action (_Sys_User_View_Action), which reloads this region.
-"This browser" marks the session the page is being read with - it appears only on
-your own identity. An impersonated session names the identity doing the
-impersonating, linked to its own detail screen.
+Self-loading (_Sys_Users_Controller.sessions); Refresh reloads this region only. A
+signed-out row shows when and why; an API row (an API key acting as the identity) is
+marked and has no End - revoking the key ends it. Each signed-in row's End signs that
+sign-in out (_Sys_Users_Controller.terminate_session) after a confirm, and reloads the
+region; the row the page is read from carries a terminate_refusal the button explains
+instead. Ending every session is the page header's action (_Sys_User_View_Action), which
+reloads this region. Each row's Device links to the session screen
+(_Sys_User_Session_View_Action), which lists the addresses and browsers it acted from.
+"This browser" marks the session the page is being read with - it appears only on your
+own identity. An impersonated session names the identity doing the impersonating, linked
+to its own detail screen.
 --%>
 <Define:_Sys_User_Sessions>
 <% if (this.data.loading) { %>
@@ -33,18 +37,19 @@ impersonating, linked to its own detail screen.
         </Slot:actions>
         <Slot:body>
             <% if (!_rows.length) { %>
-                <_Sys_Empty_State $icon="bi-laptop" $title="No live sessions" $body="This identity is not signed in anywhere." />
+                <_Sys_Empty_State $icon="bi-laptop" $title="No sessions" $body="This identity is not signed in anywhere and has not signed out recently." />
             <% } else { %>
                 <div class="table-responsive">
                     <table class="table mb-0">
                         <thead>
                             <tr>
                                 <th>Device</th>
-                                <th>IP</th>
+                                <th>State</th>
+                                <th>Last IP</th>
                                 <th>Site</th>
-                                <th>Type</th>
                                 <th>Signed in</th>
                                 <th>Last active</th>
+                                <th>Sign-ins</th>
                                 <th>Impersonation</th>
                                 <th></th>
                             </tr>
@@ -53,9 +58,20 @@ impersonating, linked to its own detail screen.
                             <% for (const row of _rows) { %>
                                 <tr>
                                     <td>
-                                        <span title="<%= row.user_agent || '' %>"><%= row.device_summary %></span>
+                                        <a href="<%= Rsx.Route('_Sys_User_Session_View_Action', {id: this.args.login_user_id, user_session_id: row.id}) %>" title="<%= row.user_agent || '' %>"><%= row.device_summary %></a>
+                                        <% if (row.is_api) { %>
+                                            <span class="_Sys_User_Sessions__note">API key</span>
+                                        <% } %>
                                         <% if (row.is_current) { %>
                                             <span class="_Sys_User_Sessions__note">this browser</span>
+                                        <% } %>
+                                    </td>
+                                    <td>
+                                        <% if (row.is_signed_in) { %>
+                                            <_Sys_Status_Badge $status="ok" $label="Signed in" />
+                                        <% } else { %>
+                                            <_Sys_Status_Badge $status="muted" $label=(row.sign_out_reason || 'Signed out') />
+                                            <span class="_Sys_User_Sessions__dim"><%= Rsx_Time.relative(row.signed_out_at) %></span>
                                         <% } %>
                                     </td>
                                     <td class="_Sys_User_Sessions__mono"><%= row.ip_address %></td>
@@ -64,9 +80,9 @@ impersonating, linked to its own detail screen.
                                             <span class="_Sys_User_Sessions__mono">#<%= row.site_id %></span> <%= row.site_name || '' %>
                                         <% } %>
                                     </td>
-                                    <td><%= row.type_label %></td>
-                                    <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+                                    <td><%= row.signed_in_at ? Rsx_Time.format_datetime(row.signed_in_at) : '' %></td>
                                     <td><%= row.last_active ? Rsx_Time.relative(row.last_active) : '' %></td>
+                                    <td><%= row.sign_in_count %></td>
                                     <td>
                                         <% if (row.impersonator_login_user_id) { %>
                                             by <a href="<%= Rsx.Route('_Sys_User_View_Action', row.impersonator_login_user_id) %>"><%= row.impersonator_email || ('#' + row.impersonator_login_user_id) %></a>
@@ -76,7 +92,9 @@ impersonating, linked to its own detail screen.
                                         <% } %>
                                     </td>
                                     <td class="_Sys_User_Sessions__actions">
-                                        <button type="button" class="btn btn-sm btn-danger" data-action="terminate" data-session-id="<%= row.id %>">End</button>
+                                        <% if (row.is_signed_in && !row.is_api) { %>
+                                            <button type="button" class="btn btn-sm btn-danger" data-action="terminate" data-user-session-id="<%= row.id %>">End</button>
+                                        <% } %>
                                     </td>
                                 </tr>
                             <% } %>

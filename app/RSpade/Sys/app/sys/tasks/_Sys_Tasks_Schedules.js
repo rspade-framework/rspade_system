@@ -59,9 +59,9 @@ class _Sys_Tasks_Schedules extends Component {
             const result = await _Sys_Tasks_Controller.run_schedule_now({ class: row.class, method: row.method });
 
             if (result.outcome === 'coalesced') {
-                Flash_Alert.info(escape_html(name) + ' is ' + result.concurrency + ' and already has a queued run (task #' + result.id + '); nothing new was queued.');
+                Flash_Alert.info(name + ' is ' + result.concurrency + ' and already has a queued run (task #' + result.id + '); nothing new was queued.');
             } else {
-                Flash_Alert.success('Dispatched ' + escape_html(name) + ' as task #' + result.id + '.');
+                Flash_Alert.success('Dispatched ' + name + ' as task #' + result.id + '.');
             }
 
             that.trigger('tasks_changed');

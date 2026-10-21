@@ -41,6 +41,10 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
         '/_sys/sites/:id'   => '_Sys_Site_View_Action',
         '/_sys/users'       => '_Sys_Users_Action',
         '/_sys/users/:id'   => '_Sys_User_View_Action',
+        '/_sys/users/:id/sessions/:user_session_id' => '_Sys_User_Session_View_Action',
+        '/_sys/portal-users'     => '_Sys_Portal_Users_Action',
+        '/_sys/portal-users/:id' => '_Sys_Portal_User_View_Action',
+        '/_sys/portal-users/:id/sessions/:user_session_id' => '_Sys_Portal_User_Session_View_Action',
     ];
 
     private static function __routes(): array

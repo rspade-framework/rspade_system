@@ -47,13 +47,6 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   navigation bug through that hole: the portal is browsed under /_portal/,
   Spa.dispatch strips the prefix to MATCH but writes history verbatim, and only
   Rsx_Portal.Route() puts it back.
-- `system/app/RSpade/CodeQuality/Rules/PHP/SessionIdNullCheck_CodeQualityRule.php`
-  (SESSION-ID-01) - flags a null-ish/zero-ish TEST on a
-  `Session::get_session_id()` / `Portal_Session::get_session_id()` result. Both
-  calls CREATE a session and are declared `: int`, so the test is unreachable AND
-  the session it was meant to prevent has already been created. `has_session()` is
-  the question the author meant to ask. FATAL at manifest build.
-
 - `system/app/RSpade/CodeQuality/Rules/Convention/NameReservedReference_CodeQualityRule.php`
   (NAME-RESERVED-02) - the REFERENCE direction of the reserved framework-application
   prefix. Application code under `rsx/` may not name a `_`-prefixed class, jqhtml
@@ -70,6 +63,20 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   "this file already passed this check", replacing the per-file `.lintpass` flag
   directories. Keyed by the file's sha1 rather than by path+mtime, so a verdict
   survives a manifest clear.
+- `system/app/RSpade/CodeQuality/Support/RuleDiscovery.php` - application rules.
+  Every concrete `CodeQualityRule_Abstract` subclass outside `Rules/` (downstream,
+  a class under `rsx/`) is discovered by class through the manifest and must
+  declare an `APP-` id. `App_Rule_Discovery_Test` exercises the real manifest path
+  with an inert fixture rule in this directory (indexed under `rsx:test`), the pure
+  selection over class records, the prefix refusal (through
+  `app_rule_id_problem()`, on a temp-loaded class - the thrown form poisons the
+  manifest by design), and the rule-source test the checker's CodeQuality skip
+  uses in place of a directory literal.
+- `system/app/RSpade/CodeQuality/Rules/Scss/ScssPhantomToken_CodeQualityRule.php`
+  (SCSS-PHANTOM-TOKEN-01) - `var(--token, <literal>)`: the literal default hides
+  an undefined token. Any default that is not itself a `var()` read is flagged; a
+  chain is not; vendored, minified and framework-core stylesheets are out of
+  scope, `Sys/` is in (`Scss_Phantom_Token_Rule_Test`).
 
 ## Testable surface
 
@@ -89,18 +96,6 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   name must be a real manifest class (that is what the lineage lookup resolves) while
   the fixture supplies the members. One row also pins the RETIREMENT: an unguarded
   `fetch()` raises nothing here, because gate presence is a manifest-build fatal.
-- **Session-id absence tests (implemented):** `Session_Id_Null_Check_Rule_Test`
-  drives SESSION-ID-01's public `check()` over synthetic fixture files (the rule
-  has no per-process guard, so the real entry point IS the unit). Coverage: every
-  detected spelling fires; the single-assignment variable form fires and is scoped
-  per function body; a rebound variable does not; legitimate USE of the value never
-  fires; the two facades' own files and `/CodeQuality/` meta-code are excluded; the
-  file-level `@SESSION-ID-01-EXCEPTION` marker suppresses (the rule honors it
-  itself, because the manifest-time driver does not apply the checker's generic
-  exception handling). The call expressions live in string constants assembled into
-  fixtures, so this test file - which the manifest also scans - contains no real
-  call of its own.
-
 - **Bundle includes of the framework application tree (implemented):**
   `Bundle_Include_Path_Rule_Test` drives CONV-BUNDLE-02's critical half - an `rsx/`
   bundle may not name anything under `app/RSpade/Sys` (the system control panel), by
@@ -142,6 +137,15 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   over both migration directories, so the enumeration - migrations are outside the
   manifest, and the rule reads the runner's own file list - is covered along with the
   tree's cleanliness.
+
+- **raw HTML write tests (implemented):** `Raw_Html_Write_Rule_Test` drives
+  JS-RAW-HTML-01 (`Rules/JavaScript/RawHtmlWrite_CodeQualityRule.php`) through the
+  real node-service analysis (`quality.analyze_raw_html`). Coverage: every write kind
+  with data fires; a multi-line argument is one finding on the call line; `.html('')`
+  names `.empty()`; literals and the safe calls (and compositions of only those) are
+  clean; `nl2br()` alone is not safe; comments and strings never fire; the marker is
+  per line, needs a rationale, and - through the real driver - does not suppress the
+  rest of the file; out-of-scope paths are skipped.
 
 - **eval / new Function tests (implemented):** `Eval_Usage_Rule_Test` drives
   JS-EVAL-01's public `check()` over synthetic JavaScript fixtures. Coverage: all

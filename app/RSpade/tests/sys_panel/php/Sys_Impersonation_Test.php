@@ -41,6 +41,9 @@ use App\RSpade\Sys\App\Sys\_Sys_Impersonation_Controller;
  */
 class Sys_Impersonation_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     /**
      * Every test starts as the developer (user 1) with no impersonation. setup() runs once
      * per CLASS and the runner keeps the CLI identity declaration between tests, while a

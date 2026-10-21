@@ -13,17 +13,16 @@ use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Portal_Session::terminate_session() is a SELF-SERVICE device-session action: it ends the portal
- * identity on one of the CURRENT portal user's own sessions. The owning-user predicate is part of
- * the statement, so another portal user's session id matches zero rows and the method returns
- * false - the caller does not have to remember to pre-scope. Cross-user (admin) termination lives
- * in terminate_all_sessions_for_user().
+ * Portal_Session::terminate_session() is a SELF-SERVICE action: it signs out one of the CURRENT
+ * portal account's own portal user sessions on another browser. The owning-account predicate is
+ * part of the lookup, so another portal user's user session id matches nothing and the method
+ * returns false - the caller does not have to remember to pre-scope. Cross-user (admin)
+ * termination lives in terminate_all_sessions_for_user().
  *
- * It CLEARS THE PORTAL PROPERTIES and never deletes the row: there is one session per browser, and
- * that row may also carry a staff login. "Terminated" therefore means portal_user_id is gone, not
- * that the row is. The column keeps its FK to portal_users, so real Portal_User_Model rows are
- * seeded. Site-scoped seeding aligns the STAFF Session site via __acting_as_site(); the portal
- * IDENTITY is set through the Portal_Session CLI setters. Default per-test transaction.
+ * It signs out the PORTAL user session and never deletes the browser row: there is one session
+ * per browser, and it may also carry a staff sign-in. The portal user session keeps its FK to
+ * portal_users, so real Portal_User_Model rows are seeded. The portal IDENTITY of the caller is
+ * set through the Portal_Session CLI setters. Default per-test transaction.
  */
 class Portal_Session_Terminate_Ownership_Test extends Rsx_Test_Abstract
 {
@@ -47,32 +46,24 @@ class Portal_Session_Terminate_Ownership_Test extends Rsx_Test_Abstract
         return $user;
     }
 
-    private static function __insert_session(int $portal_user_id): int
+    /** A browser signed into the portal as $portal_user_id; answers the fixture. */
+    private static function __insert_session(int $portal_user_id): array
     {
-        $session = new Session();
-        $session->active = true;
-        $session->version = 1;
-        $session->site_id = 0;
-        $session->type_id = Session::TYPE_WEB;
-        $session->portal_user_id = $portal_user_id;
-        $session->portal_site_id = self::SITE_ID;
-        $session->session_token = bin2hex(random_bytes(16));
-        $session->csrf_token = bin2hex(random_bytes(16));
-        $session->ip_address = '10.0.0.8';
-        $session->user_agent = 'portal-terminate-ownership-test';
-        $session->last_active = now();
-        $session->save();
-
-        return (int) $session->id;
+        return static::__insert_session_fixture([
+            'portal' => ['portal_user_id' => $portal_user_id, 'portal_site_id' => self::SITE_ID],
+        ]);
     }
 
     /**
-     * Whether the row still carries a portal identity - which is what "the session
-     * exists" means to the portal. The ROW always survives.
+     * Whether the portal user session is still signed in - which is what "the session exists"
+     * means to the portal. The browser ROW always survives.
      */
-    private static function __exists(int $session_id): bool
+    private static function __exists(array $fixture): bool
     {
-        return Session::_portal_query()->where('id', $session_id)->exists();
+        return \Illuminate\Support\Facades\DB::table('_user_sessions')
+            ->where('id', $fixture['portal_user_session_id'])
+            ->whereNull('signed_out_at')
+            ->exists();
     }
 
     private static function __act_as(int $portal_user_id): void
@@ -86,16 +77,16 @@ class Portal_Session_Terminate_Ownership_Test extends Rsx_Test_Abstract
         $owner = static::__make_portal_user();
         static::__act_as($owner->id);
 
-        $session_id = static::__insert_session($owner->id);
+        $fixture = static::__insert_session($owner->id);
 
         static::__assert_true(
-            Portal_Session::terminate_session($session_id),
-            'a portal user may terminate their own session'
+            Portal_Session::terminate_session($fixture['portal_user_session_id']),
+            'a portal user may end their own session'
         );
-        static::__assert_false(static::__exists($session_id), 'the portal identity is cleared');
+        static::__assert_false(static::__exists($fixture), 'the portal user session is signed out');
         static::__assert_true(
-            Session::where('id', $session_id)->exists(),
-            'the ROW survives - it is that browser session'
+            Session::where('id', $fixture['id'])->where('active', true)->whereNull('portal_user_session_id')->exists(),
+            'the ROW survives, its portal pointer cleared - it is that browser\'s session'
         );
     }
 
@@ -105,14 +96,14 @@ class Portal_Session_Terminate_Ownership_Test extends Rsx_Test_Abstract
         $other = static::__make_portal_user();
         static::__act_as($owner->id);
 
-        $foreign_session_id = static::__insert_session($other->id);
+        $foreign = static::__insert_session($other->id);
 
         static::__assert_false(
-            Portal_Session::terminate_session($foreign_session_id),
-            'terminating a session you do not own must report failure'
+            Portal_Session::terminate_session($foreign['portal_user_session_id']),
+            'ending a session you do not own must report failure'
         );
         static::__assert_true(
-            static::__exists($foreign_session_id),
+            static::__exists($foreign),
             'the other portal user identity must be intact'
         );
     }
@@ -124,12 +115,12 @@ class Portal_Session_Terminate_Ownership_Test extends Rsx_Test_Abstract
     public static function test_logged_out_caller_terminates_nothing()
     {
         $owner = static::__make_portal_user();
-        $session_id = static::__insert_session($owner->id);
+        $fixture = static::__insert_session($owner->id);
 
         Portal_Session::logout();
 
-        static::__assert_false(Portal_Session::terminate_session($session_id));
-        static::__assert_true(static::__exists($session_id), 'the row is intact');
+        static::__assert_false(Portal_Session::terminate_session($fixture['portal_user_session_id']));
+        static::__assert_true(static::__exists($fixture), 'the user session is intact');
     }
 
     public static function teardown(): void

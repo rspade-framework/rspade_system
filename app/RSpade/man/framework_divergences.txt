@@ -307,23 +307,29 @@ SESSIONS
 
     Session Configuration Replaced Wholesale
         Change          Laravel's config/session.php does not exist. Session
-                        retention is configured under rsx.php 'sessions', and
-                        the model is an IDLE TIMEOUT reaped by a scheduled
-                        task - not a fixed cookie lifetime.
-        Reason          A single long-lived cookie plus a server-side idle
-                        window gives a better experience than repeated
-                        surprise logouts, while still expiring abandoned
-                        sessions and keeping the table bounded.
+                        lifetimes are configured under rsx.php 'sessions', and
+                        a session is a BROWSER with sign-ins on it: the cookie
+                        is long-lived and the server ends each SIGN-IN by its
+                        own limits - not a fixed cookie lifetime.
+        Reason          A single long-lived cookie plus server-side sign-in
+                        limits gives a better experience than repeated
+                        surprise logouts, keeps a record of where each account
+                        signed in, and still expires abandoned browsers.
         Current values  sessions.staff / sessions.portal: max_length_minutes
-                        = 43200 and max_idle_minutes = 43200 (30 days from
-                        sign-in, 30 days idle), enforced at request time;
-                        sessions.anonymous_timeout_minutes = 43200 (30 days)
-                        for a session carrying no identity;
+                        = 10080 (7 days from sign-in) and max_idle_minutes =
+                        480 (8 hours from the last page view), enforced at
+                        request time with an ajax_grace_minutes (120) window;
+                        sessions.unused_session_days = 30 (a browser unused
+                        that long is made inactive);
+                        sessions.guest_expiry_minutes = 43200 (30 days) for a
+                        browser nobody ever signed in on;
                         sessions.max_web_sessions_per_user = 25, which signs
-                        out a user's oldest WEB sessions at each sign-in.
-        Implementation  Session_Cleanup_Service (hourly, chunked) deletes idle
-                        rows. Machine session types (api, playwright, cli) keep
-                        their own shorter backstops.
+                        out an account's oldest signed-in browsers at each
+                        sign-in.
+        Implementation  Session_Cleanup_Service: hourly, deletes expired guest
+                        browsers and signs out sign-ins past their limits;
+                        daily, makes unused browsers inactive. A command or a
+                        task has no session row (a virtual session).
         See also        rsx:man session
 
     Laravel's session() Helper Prohibited

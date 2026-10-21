@@ -50,7 +50,6 @@ class Flash_Alert_Sweep_Test extends Rsx_Test_Abstract
         $session->session_token = $tag . '-' . bin2hex(random_bytes(16));
         $session->csrf_token = bin2hex(random_bytes(16));
         $session->active = true;
-        $session->site_id = 0;
         $session->type_id = Session::TYPE_WEB;
         $session->version = 1;
         $session->ip_address = '10.0.0.9';

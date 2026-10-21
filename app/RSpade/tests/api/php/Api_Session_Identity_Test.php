@@ -11,8 +11,10 @@ use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * The headless, cookie-less API identity seam on Session (_set_api_identity /
- * _reset_api_identity and the accessor tier that consults it FIRST - even in CLI).
+ * The cookie-less API identity seam on Session (_set_api_identity / _reset_api_identity and
+ * the accessor tier that consults it FIRST - even in CLI), installed with NO key: the form
+ * Api_Tester_Key uses, which writes nothing. The key-backed form - the key's own session row -
+ * is Api_Key_Session_Test.
  *
  * Every test resets the identity in setup() AND teardown() so a failing assertion
  * cannot leave the static identity set and poison a later test (the API tier wins over
@@ -20,7 +22,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * The identity is (login_user_id, site_id, user_id) = (1, 1, 1), which are the real
  * seeded ids in the test database, though every assertion here is served from the static
- * identity or a guard throw - no row is queried.
+ * identity or a guard throw - no row is queried or written.
  */
 class Api_Session_Identity_Test extends Rsx_Test_Abstract
 {
@@ -79,13 +81,15 @@ class Api_Session_Identity_Test extends Rsx_Test_Abstract
     }
 
     // -------------------------------------------------------------------------
-    // Cookie/session machinery is dead in API mode
+    // The browser cookie machinery is dead in API mode
     // -------------------------------------------------------------------------
 
-    public static function test_session_id_is_zero()
+    public static function test_an_identity_with_no_key_has_no_session_row()
     {
         static::__establish();
-        static::__assert_equals(0, Session::get_session_id());
+        static::__assert_null(Session::get_session_id(), 'no key, no row: get_session_id() answers null');
+        static::__assert_null(Session::get_user_session_id());
+        static::__assert_null(Session::get_audit_session_id(), 'and no audit session is recorded for it');
     }
 
     public static function test_csrf_token_is_null()

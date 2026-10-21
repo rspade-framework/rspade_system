@@ -32,11 +32,17 @@ class Api_Tester_Key
     private const SESSION_KEY = 'apidocs.tester_key_id';
 
     /**
+     * The adopted key is the signed-in staff user's choice, so it is a STAFF-realm value:
+     * it goes when that sign-in ends, and the next person on the browser starts without it.
+     */
+    private const SESSION_REALM = 'staff';
+
+    /**
      * Remember which key this browser session is using.
      */
     public static function adopt(Api_Key_Model $key): void
     {
-        Session::put_value(self::SESSION_KEY, (int) $key->id);
+        Session::put_value(self::SESSION_KEY, (int) $key->id, null, self::SESSION_REALM);
     }
 
     /**
@@ -44,7 +50,7 @@ class Api_Tester_Key
      */
     public static function forget(): void
     {
-        Session::forget_value(self::SESSION_KEY);
+        Session::forget_value(self::SESSION_KEY, self::SESSION_REALM);
     }
 
     /**
@@ -56,7 +62,7 @@ class Api_Tester_Key
      */
     public static function current(): ?Api_Key_Model
     {
-        $id = Session::get_value(self::SESSION_KEY);
+        $id = Session::get_value(self::SESSION_KEY, null, self::SESSION_REALM);
 
         if ($id === null) {
             return null;

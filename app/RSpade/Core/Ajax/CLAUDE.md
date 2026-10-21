@@ -59,9 +59,10 @@ POST, no query string - through, in order:
 
 1. **Session lifetime** for the request's own experience: `Session::enforce_timeouts(false)` /
    `Portal_Session::enforce_timeouts(false)`. Not strict - an Ajax call gets
-   `rsx.sessions.ajax_grace_minutes` past the limit. A cookie naming a RETIRED session row
-   (`Session::_arrived_on_retired_token()` - replaced by a sign-in or an expiry) answers
-   `session_expired` with cause `retired`. Once a call gets `session_expired`, every later
+   `rsx.sessions.ajax_grace_minutes` past the limit. A cookie carrying the token the
+   browser's latest rotation replaced (`Session::_arrived_on_rotated_token()` - a sign-in or
+   sign-out happened while the call was in flight) answers `session_expired` with cause
+   `rotated`, and the response sets no session cookie. Once a call gets `session_expired`, every later
    call in the request answers the same envelope.
 2. **Site membership**, staff realm only: `Session::enforce_enabled_membership()` ends a
    session whose membership was disabled; the call answers `auth_required`.
@@ -78,7 +79,7 @@ site switch) and the next call is judged as the identity it runs under.
 
 `Rsx_Session_Controller::page_view` (the SPA's page-view report) enforces the lifetime
 strictly in its own body. A request that signed somebody in carries `_csrf` in its
-envelope: the sign-in moved the browser to a new session row, and the client swaps
+envelope: the sign-in rotated the browser's tokens, and the client swaps
 `window.rsxapp.csrf` for it.
 
 ## One envelope

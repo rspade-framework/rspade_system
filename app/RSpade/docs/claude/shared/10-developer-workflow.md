@@ -6,7 +6,7 @@
 
 | Command | What it does |
 |---|---|
-| `rsx:check` | Code-quality pass. Run before commits; every finding carries its own remediation text. |
+| `rsx:check` | Code-quality pass. Run before commits; every finding carries its own remediation text. An app adds its own `APP-` rules as `rsx/` classes extending `CodeQualityRule_Abstract` (`rsx:man coding_standards`). |
 | `rsx:debug /path` | Render a route through Playwright with full JS execution. Skill: `rspade:rsx-debug`. |
 | `rsx:test` | Run the test suite (class name, `--filter=`, `--group=` narrow it). Skill: `rspade:rsx-testing`. |
 | `rsx:man <topic>` | Framework documentation. **With no argument it lists every topic** — never work from a memorized list. |

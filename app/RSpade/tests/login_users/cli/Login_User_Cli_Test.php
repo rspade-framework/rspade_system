@@ -82,26 +82,18 @@ class Login_User_Cli_Test extends Rsx_Test_Abstract
         return (int) $site->id;
     }
 
+    /** A browser signed in as $login_user_id; answers its staff user session id. */
     private static function __insert_session(int $login_user_id): int
     {
-        return (int) DB::table('_sessions')->insertGetId([
-            'session_token' => bin2hex(random_bytes(16)),
-            'csrf_token' => bin2hex(random_bytes(16)),
-            'active' => 1,
-            'site_id' => self::SITE_ID,
-            'version' => 1,
-            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('10.0.0.9'),
-            'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('login-user-cli-test'),
-            'login_user_id' => $login_user_id,
-            'last_active' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        return static::__insert_session_fixture([
+            'staff' => ['login_user_id' => $login_user_id, 'site_id' => self::SITE_ID],
+        ])['staff_user_session_id'];
     }
 
-    private static function __is_active(int $session_id): bool
+    /** Whether that sign-in is still on. */
+    private static function __is_active(int $user_session_id): bool
     {
-        return (bool) DB::table('_sessions')->where('id', $session_id)->value('active');
+        return DB::table('_user_sessions')->where('id', $user_session_id)->value('signed_out_at') === null;
     }
 
     /**

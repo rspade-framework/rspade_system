@@ -99,7 +99,8 @@ class Markdown_Rendition
      */
     protected static function __purify(string $html): string
     {
-        require_once base_path('vendor/ezyang/htmlpurifier/library/HTMLPurifier.auto.php');
+        // HTMLPurifier loads through composer's classmap. Its own HTMLPurifier.auto.php is never
+        // included: it prepends a second autoloader in front of Class_Override_Loader.
 
         $config = HTMLPurifier_Config::createDefault();
 

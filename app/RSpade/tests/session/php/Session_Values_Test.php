@@ -8,6 +8,9 @@
 namespace App\RSpade\Tests\Session\Php;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Debug\Rsx_Caller_Exception;
+use App\RSpade\Core\Portal\Portal_Session;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -18,13 +21,17 @@ use App\RSpade\Core\Time\Rsx_Time;
  * The properties that matter are the ones a caller would otherwise have to assume: that a
  * READ never mints a session (asking a question must not create a row for every anonymous
  * visitor), that an EXPIRED value reads as absent the instant it expires rather than when a
- * prune task next runs, that values round-trip by type, and that the row dies with its
- * session via the FK cascade.
+ * prune task next runs, that values round-trip by type, that the row dies with its
+ * session via the FK cascade, and that every value lives in a REALM (staff, portal, guest)
+ * which is its own namespace - null meaning the request's experience.
  */
 class Session_Values_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     /**
-     * A CLI run mints a TYPE_CLI session row on the first Session::get_session_id().
+     * The browser row this test acts as ($acts_as_browser).
      */
     private static function __session_id(): int
     {
@@ -43,6 +50,7 @@ class Session_Values_Test extends Rsx_Test_Abstract
     public static function test_get_without_a_session_returns_the_default()
     {
         static::__reset_session();
+        Session::$_browser_session_id_for_tests = null;
 
         static::__assert_equals('fallback', Session::get_value('nothing_here', 'fallback'));
     }
@@ -50,6 +58,7 @@ class Session_Values_Test extends Rsx_Test_Abstract
     public static function test_get_without_a_session_creates_no_session_row()
     {
         static::__reset_session();
+        Session::$_browser_session_id_for_tests = null;
 
         $before = Session::count();
         Session::get_value('nothing_here');
@@ -60,6 +69,7 @@ class Session_Values_Test extends Rsx_Test_Abstract
     public static function test_forget_without_a_session_creates_no_session_row()
     {
         static::__reset_session();
+        Session::$_browser_session_id_for_tests = null;
 
         $before = Session::count();
         Session::forget_value('nothing_here');
@@ -206,5 +216,86 @@ class Session_Values_Test extends Rsx_Test_Abstract
             ->count();
 
         static::__assert_equals(0, $other, 'the value belongs to exactly one session');
+    }
+
+    // -------------------------------------------------------------------------
+    // Realms
+    // -------------------------------------------------------------------------
+
+    /**
+     * One key may hold a value in each realm, and each is read and forgotten in its own.
+     */
+    public static function test_each_realm_is_its_own_namespace()
+    {
+        $id = static::__session_id();
+
+        Session::put_value('shared_key', 'staff value', null, 'staff');
+        Session::put_value('shared_key', 'portal value', null, 'portal');
+        Session::put_value('shared_key', 'guest value', null, 'guest');
+
+        static::__assert_equals('staff value', Session::get_value('shared_key', null, 'staff'));
+        static::__assert_equals('portal value', Session::get_value('shared_key', null, 'portal'));
+        static::__assert_equals('guest value', Session::get_value('shared_key', null, 'guest'));
+        static::__assert_equals(3, static::__row_count($id), 'three rows, one per realm');
+
+        Session::forget_value('shared_key', 'portal');
+
+        static::__assert_null(Session::get_value('shared_key', null, 'portal'), 'forgotten in its realm');
+        static::__assert_equals('staff value', Session::get_value('shared_key', null, 'staff'), 'the others untouched');
+        static::__assert_equals('guest value', Session::get_value('shared_key', null, 'guest'));
+
+        $realms = DB::table('_session_values')->where('session_id', $id)->orderBy('realm_id')->pluck('realm_id')->map(fn ($r) => (int) $r)->all();
+        static::__assert_equals([Session::REALM_STAFF, Session::REALM_GUEST], $realms, 'stored under the realm ids');
+    }
+
+    /**
+     * No realm means the request's experience: staff on a staff request, portal on a portal
+     * request - whoever is or is not signed in.
+     */
+    public static function test_the_default_realm_is_the_requests_experience()
+    {
+        static::__session_id();
+
+        Session::put_value('experience', 'from staff');
+        static::__assert_equals('from staff', Session::get_value('experience', null, 'staff'), 'a staff request writes the staff realm');
+
+        try {
+            Rsx_Portal::set_portal_request(true);
+
+            static::__assert_null(Session::get_value('experience'), 'a portal request reads the portal realm');
+            Session::put_value('experience', 'from portal');
+            static::__assert_equals('from portal', Session::get_value('experience', null, 'portal'));
+        } finally {
+            Rsx_Portal::set_portal_request(false);
+        }
+
+        static::__assert_equals('from staff', Session::get_value('experience'), 'back on staff, the staff value');
+    }
+
+    /**
+     * Portal_Session's three methods are the portal realm, whatever request asks.
+     */
+    public static function test_portal_session_values_are_the_portal_realm()
+    {
+        static::__session_id();
+
+        Portal_Session::put_value('portal_key', 42);
+
+        static::__assert_equals(42, Session::get_value('portal_key', null, 'portal'));
+        static::__assert_null(Session::get_value('portal_key', null, 'staff'), 'not the staff realm');
+        static::__assert_equals(42, Portal_Session::get_value('portal_key'));
+
+        Portal_Session::forget_value('portal_key');
+
+        static::__assert_null(Session::get_value('portal_key', null, 'portal'));
+    }
+
+    public static function test_an_unknown_realm_throws()
+    {
+        static::__session_id();
+
+        static::__assert_throws(Rsx_Caller_Exception::class, fn () => Session::put_value('k', 1, null, 'api'));
+        static::__assert_throws(Rsx_Caller_Exception::class, fn () => Session::get_value('k', null, 'Staff'));
+        static::__assert_throws(Rsx_Caller_Exception::class, fn () => Session::forget_value('k', 'nobody'));
     }
 }

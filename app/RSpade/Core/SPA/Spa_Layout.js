@@ -102,25 +102,21 @@ class Spa_Layout extends Component {
             message = String(exception);
         }
 
-        // Create error box with inline styles (no framework dependencies)
-        const error_html = `
-            <div style="border: 2px solid #dc3545; background-color: #ffe6e6; color: #000; padding: 15px; margin-bottom: 20px;">
-                <strong>Unhandled Error:</strong> ${this._escape_html(message)}
-            </div>
-        `;
+        // Create error box with inline styles (no framework dependencies). The message is
+        // written with .text(), so whatever the exception carries is shown, never parsed.
+        const $error = $('<div></div>')
+            .css({
+                border: '2px solid #dc3545',
+                'background-color': '#ffe6e6',
+                color: '#000',
+                padding: '15px',
+                'margin-bottom': '20px',
+            })
+            .append($('<strong></strong>').text('Unhandled Error:'))
+            .append($('<span></span>').text(' ' + message));
 
         // Prepend to content area
-        $content.prepend(error_html);
-    }
-
-    /**
-     * Escape HTML to prevent XSS
-     * @private
-     */
-    _escape_html(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        $content.prepend($error);
     }
 
     /**

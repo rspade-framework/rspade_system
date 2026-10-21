@@ -234,6 +234,7 @@ class Manifest_Rule_Driver
                 // be the SANITIZED copy (comments blanked), and the marker lives in a
                 // comment - checking the sanitized text would find it in no file at all.
                 if ($this->honor_exception_comments
+                    && !$rule->reads_own_exception_markers()
                     && str_contains($this->source->content($absolute, $hash), '@' . $id . '-EXCEPTION')) {
                     continue;
                 }
@@ -559,13 +560,24 @@ class Manifest_Rule_Driver
     }
 
     /**
-     * md5 of the rule's own source, plus whatever else the rule says decides its verdict.
+     * md5 of the rule's own source (and of any application base class between it and
+     * CodeQualityRule_Abstract), plus whatever else the rule says decides its verdict.
      */
     private static function __fingerprint(CodeQualityRule_Abstract $rule): string
     {
-        $file = RuleDiscovery::file_for(get_class($rule));
+        $digests = [];
 
-        $own = ($file !== null && is_file($file)) ? md5_file($file) : get_class($rule);
+        foreach (RuleDiscovery::files_for(get_class($rule)) as $file) {
+            if (is_file($file)) {
+                $digests[] = md5_file($file);
+            }
+        }
+
+        $own = match (count($digests)) {
+            0 => get_class($rule),
+            1 => $digests[0],
+            default => md5(implode('|', $digests)),
+        };
 
         return substr(md5($own . '|' . $rule->fingerprint_extra()), 0, 16);
     }

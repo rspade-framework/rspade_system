@@ -1622,7 +1622,12 @@ class Rsx {
         // Clear existing content
         $container.empty();
 
-        let html = '';
+        // Every message is plain text: the alert is built from nodes and each string is
+        // written with .text(), so nothing an error carries is ever read as markup.
+        const alert = (tone) => $('<div role="alert"></div>').addClass('alert alert-' + tone);
+        const paragraph = (text) => $('<p class="mb-0"></p>').text(text);
+
+        let $alert = null;
 
         // Handle different error types
         if (error.type === 'fatal' && error.details) {
@@ -1632,69 +1637,42 @@ class Rsx {
             const line = details.line || '?';
             const message = details.error || error.message || 'Fatal error occurred';
 
-            html = `
-                <div class="alert alert-danger" role="alert">
-                    <h5>Uncaught Fatal Error in ${file}:${line}:</h5>
-                    <p class="mb-0">${Rsx._escape_html(message)}</p>
-                </div>
-            `;
+            $alert = alert('danger')
+                .append($('<h5></h5>').text(`Uncaught Fatal Error in ${file}:${line}:`))
+                .append(paragraph(message));
         } else if (error.code === Ajax.ERROR_VALIDATION && error.metadata) {
             // Validation errors - show unmatched errors only
             // (matched errors should be handled by Form_Utils.apply_form_errors)
             const errors = error.metadata;
-            const error_list = [];
+            const $list = $('<ul class="mb-0"></ul>');
 
             for (const field in errors) {
-                error_list.push(errors[field]);
+                $list.append($('<li></li>').text(errors[field]));
             }
 
-            if (error_list.length > 0) {
-                html = `
-                    <div class="alert alert-warning" role="alert">
-                        <h5>Validation Errors:</h5>
-                        <ul class="mb-0">
-                            ${error_list.map((err) => `<li>${Rsx._escape_html(err)}</li>`).join('')}
-                        </ul>
-                    </div>
-                `;
+            if ($list.children().length > 0) {
+                $alert = alert('warning')
+                    .append($('<h5></h5>').text('Validation Errors:'))
+                    .append($list);
             }
         } else if (error.type === 'auth_required' || error.type === 'unauthorized') {
             // Authentication/authorization errors
-            const message = error.message || 'Authentication required';
-            html = `
-                <div class="alert alert-warning" role="alert">
-                    <p class="mb-0">${Rsx._escape_html(message)}</p>
-                </div>
-            `;
+            $alert = alert('warning').append(paragraph(error.message || 'Authentication required'));
         } else if (error.type === 'network') {
             // Network errors
-            const message = error.message || 'Unable to reach server. Please check your connection.';
-            html = `
-                <div class="alert alert-danger" role="alert">
-                    <p class="mb-0">${Rsx._escape_html(message)}</p>
-                </div>
-            `;
+            $alert = alert('danger').append(
+                paragraph(error.message || 'Unable to reach server. Please check your connection.')
+            );
         } else {
             // Generic/unknown error
-            const message = error.message || error.toString() || 'An unknown error occurred';
-            html = `
-                <div class="alert alert-danger" role="alert">
-                    <p class="mb-0">${Rsx._escape_html(message)}</p>
-                </div>
-            `;
+            $alert = alert('danger').append(
+                paragraph(error.message || error.toString() || 'An unknown error occurred')
+            );
         }
 
-        $container.html(html);
-    }
-
-    /**
-     * Escape HTML to prevent XSS in error messages
-     * @private
-     */
-    static _escape_html(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        if ($alert) {
+            $container.append($alert);
+        }
     }
 
     /**

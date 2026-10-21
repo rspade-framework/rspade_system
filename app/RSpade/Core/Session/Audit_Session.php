@@ -3,37 +3,47 @@
 namespace App\RSpade\Core\Session;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Database\Rsx_Page_Query;
 use App\RSpade\Core\Portal\Portal_Session;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Session\User_Agent;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Audit_Session - the durable record of an ACTING CONTEXT.
  *
  * Anything that records what somebody did - a revision, an application's activity log -
  * needs to say who did it and from where, and needs that to stay true for as long as the
- * record exists. A _sessions row cannot be what it points at: it is operational state,
- * rewritten as the browser signs in, switches site and impersonates, replaced at every
- * sign-in, deleted the moment a CLI process ends and collected when idle.
+ * record exists. A _sessions row cannot be what it points at: it is the BROWSER, and who is
+ * signed in on it changes with every sign-in, site switch and impersonation, and a guest's is
+ * collected.
  *
- * An audit session is one row in _audit_sessions per distinct context:
+ * An audit session is one row in _audit_sessions per
  *
- *     site, staff identity, portal identity and its site, both impersonators,
- *     client address, session row, user agent
+ *     user session x client address x user agent
  *
- * When any of those changes, the next act belongs to a different row. A row is minted
- * only when something asks for it, so a visitor who logs nothing leaves nothing. It is
- * immutable apart from last_seen_at, and NEVER garbage-collected - it is the audit
- * trail's own memory.
+ * - the user session of the realm the request serves (staff, or portal on a portal request;
+ * an API call's is the key owner's REALM_API one, on the key's own session row). A guest's
+ * act has no user session and is keyed on the browser row instead (or on no row at all, for
+ * a visitor who has none). The site acted on is part of the key as well, because a declared
+ * tenant (Session::set_temporary_site_id()) can differ from the user session's. When any of
+ * them changes, the next act belongs to a different row. A row is minted only when something
+ * asks for it, so a visitor who logs nothing leaves nothing. It is immutable apart from
+ * last_seen_at, and NEVER garbage-collected - it is the audit trail's own memory.
  *
- * session_row_id and device_id are correlation numbers, not references: "every act of
- * this sign-in" and "every act from this browser" are equality tests among audit rows,
- * which keep working after the session and the device are gone. The session TOKEN is
- * never stored - it identifies nothing the row id does not, and it is a credential.
+ * The row also DESCRIBES the context for its readers: the acting realm's identity, site and
+ * impersonator (the other realm's columns are null), the address and user agent as ids, the
+ * browser (session_id) and the session type. session_id and user_session_id are correlation
+ * numbers, not references: "every act from this browser" and "every act of this sign-in" are
+ * equality tests among audit rows, which keep working whatever happens to the sessions. The
+ * session TOKEN is never stored - it is a credential.
  *
- * Works with no session at all: a command, a task and a Bearer-key API call each have a
- * context (session_row_id null), which is exactly the case a session id could never
- * record.
+ * NOT EVERY CONTEXT HAS ONE. A command, a task and the rsx:debug harness record none
+ * (current_id() answers null), unless the task runner DECLARED the dispatching request's
+ * (_declare(), a #[Run_As_Dispatcher] task) - a context with no person in it has nothing to
+ * attribute.
  *
  * Reached through Session::get_audit_session_id() (record) and
  * Session::get_audit_session() (read back). Both tables are the framework's own; an
@@ -78,15 +88,16 @@ class Audit_Session
     private static ?int $declared_id = null;
 
     /**
-     * The id of the audit session for whoever is acting right now, minting the row if
-     * this context has not been seen before.
+     * The id of the audit session for whoever is acting right now, minting the row if this
+     * context has not been seen before - or null where no audit session exists (a virtual
+     * session with nothing declared, the rsx:debug harness).
      *
      * A WRITER on _audit_sessions (and _user_agents, _ip_addresses), and on nothing
      * else: it reads the session accessors, which create no session.
      *
-     * @return int
+     * @return int|null
      */
-    public static function current_id(): int
+    public static function current_id(): ?int
     {
         if (self::$declared_id !== null) {
             return self::$declared_id;
@@ -94,19 +105,33 @@ class Audit_Session
 
         $context = self::__current_context();
 
-        // The tuple: everything that makes this a DIFFERENT context when it changes.
-        // device_id and session_type_id are recorded but are not part of it - a device
-        // is only assigned at a session's first sign-in, and going from none to one is
-        // not a new context; the type cannot change for a given session row.
+        return $context === null ? null : self::_id_for_context($context);
+    }
+
+    /**
+     * The id of the audit session for one acting context, minting the row if the context
+     * has not been seen before. current_id() is this over the context read from the session
+     * accessors; the audit tests drive it with contexts of their own, since the test process
+     * runs a virtual session and has none.
+     *
+     * FRAMEWORK INTERNAL.
+     *
+     * @param array $context site_id, login_user_id, portal_user_id, portal_site_id,
+     *        impersonator_login_user_id, impersonator_user_id, ip_address (a string),
+     *        session_id, user_session_id, user_agent_id, session_type_id
+     * @return int
+     */
+    public static function _id_for_context(array $context): int
+    {
+        // The key: the user session (or, for a guest, the browser), the site acted on (the
+        // staff site, or on a portal request the portal's), the address and the user agent.
+        // The rest of the row only describes the context.
         $tuple = [
+            $context['session_id'],
+            $context['user_session_id'],
             $context['site_id'],
-            $context['login_user_id'],
-            $context['portal_user_id'],
             $context['portal_site_id'],
-            $context['impersonator_login_user_id'],
-            $context['impersonator_user_id'],
             $context['ip_address'],
-            $context['session_row_id'],
             $context['user_agent_id'],
         ];
 
@@ -118,19 +143,17 @@ class Audit_Session
         }
 
         // One statement finds or creates: a concurrent request with the same context
-        // lands on the unique key and both read the same id. The first device seen for
-        // the context is kept. The tuple hashes the address itself; the row stores the
-        // id of its _ip_addresses row.
+        // lands on the unique key and both read the same id. The tuple hashes the address
+        // itself; the row stores the id of its _ip_addresses row.
         DB::statement(
             'INSERT INTO _audit_sessions
                 (tuple_hash, site_id, login_user_id, portal_user_id, portal_site_id,
-                 impersonator_login_user_id, impersonator_user_id, ip_address_id, session_row_id,
-                 user_agent_id, device_id, session_type_id)
+                 impersonator_login_user_id, impersonator_user_id, ip_address_id, session_id,
+                 user_session_id, user_agent_id, session_type_id)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
-                last_seen_at = CURRENT_TIMESTAMP(3),
-                device_id = COALESCE(device_id, VALUES(device_id))',
+                last_seen_at = CURRENT_TIMESTAMP(3)',
             [
                 $hash,
                 $context['site_id'],
@@ -140,9 +163,9 @@ class Audit_Session
                 $context['impersonator_login_user_id'],
                 $context['impersonator_user_id'],
                 Ip_Address::id($context['ip_address']),
-                $context['session_row_id'],
+                $context['session_id'],
+                $context['user_session_id'],
                 $context['user_agent_id'],
-                $context['device_id'],
                 $context['session_type_id'],
             ]
         );
@@ -159,7 +182,7 @@ class Audit_Session
      * null for no agent at all.
      *
      * _user_agents is PRIVATE to the framework: it exists to feed _sessions,
-     * _session_devices, _login_history, _portal_login_history and _audit_sessions, each of
+     * _login_history, _portal_login_history and _audit_sessions, each of
      * which stores this id
      * where it used to store a truncated copy of the string. The string is kept whole and
      * matched by the hash of the whole, so one browser is one row everywhere. Readers get
@@ -234,10 +257,112 @@ class Audit_Session
     {
         $row = DB::selectOne('SELECT * FROM _audit_sessions WHERE id = ?', [$audit_session_id]);
 
-        if ($row === null) {
-            return null;
+        return $row === null ? null : self::__present($row);
+    }
+
+    /** The most rows one list_page_for_user_session() page may hold. */
+    private const LIST_PAGE_MAX_LIMIT = 200;
+
+    /** Rows per list_page_for_user_session() page when the caller names none. */
+    private const LIST_PAGE_DEFAULT_LIMIT = 25;
+
+    /**
+     * One PAGE of the audit sessions of ONE user session - every address and user agent that
+     * sign-in did something attributed to it from (a row is minted when something asks for
+     * the acting context: a revision-recorded write, a dispatched task; browsing mints none) -
+     * for a "where was this sign-in used" detail screen. The standard
+     * display-page reader (Rsx_Page_Query; rsx:man database_schema_architecture, READERS
+     * OVER SYSTEM TABLES).
+     *
+     *     $query = [
+     *         'user_session_id' => 41,        // REQUIRED - a get_sessions_for_user() entry's id
+     *         'filter' => '203.0.113',        // IP address or user agent
+     *         'sort'   => 'last_seen_at',     // last_seen_at | first_seen_at | ip_address
+     *         'order'  => 'desc',
+     *         'offset' => 0,
+     *         'limit'  => 25,                 // 1..200
+     *     ];
+     *
+     * Answers ['rows' => [...], 'total' => int, 'offset' => int, 'limit' => int], most
+     * recently seen first by default; total counts every match before the page is cut. Each
+     * row is describe()'s shape plus device_summary (User_Agent::parse()'s summary, the label
+     * the session listings print): id, site_id, login_user_id, portal_user_id,
+     * portal_site_id, impersonator_login_user_id, impersonator_user_id, ip_address,
+     * user_agent, device_summary, session_id, user_session_id, session_type_id,
+     * first_seen_at, last_seen_at (ISO). Anything invalid throws InvalidArgumentException.
+     *
+     * A user session's audit sessions are bounded by the addresses and agents it used, but
+     * one sign-in kept for months on a phone that roams can gather many - hence the page.
+     *
+     * Ungated, like every reader here: whether the caller may see this user session is the
+     * calling endpoint's question, answered first (normally: is the id one of the
+     * get_sessions_for_user() entries of the account the screen is about).
+     *
+     * @param array $query
+     * @return array{rows: array, total: int, offset: int, limit: int}
+     */
+    public static function list_page_for_user_session(array $query): array
+    {
+        $reader = 'Audit_Session::list_page_for_user_session';
+
+        $parsed = Rsx_Page_Query::parse(
+            $query,
+            $reader,
+            [
+                'last_seen_at' => 'a.last_seen_at',
+                'first_seen_at' => 'a.first_seen_at',
+                'ip_address' => 'ip.ip_address',
+            ],
+            'last_seen_at',
+            'desc',
+            self::LIST_PAGE_MAX_LIMIT,
+            self::LIST_PAGE_DEFAULT_LIMIT,
+            ['user_session_id']
+        );
+
+        // The address is joined for ordering; the filter reaches it through a subquery.
+        $matching = DB::table('_audit_sessions as a')
+            ->select('a.*')
+            ->leftJoin('_ip_addresses as ip', 'ip.id', '=', 'a.ip_address_id')
+            ->where('a.user_session_id', Rsx_Page_Query::require_id($query, 'user_session_id', $reader));
+
+        if ($parsed['filter'] !== '') {
+            $like = Rsx_Page_Query::like($parsed['filter']);
+
+            $matching->where(function ($where) use ($like) {
+                $where->whereIn('a.ip_address_id', fn ($addresses) => $addresses->select('id')->from('_ip_addresses')->where('ip_address', 'like', $like))
+                    ->orWhereIn('a.user_agent_id', fn ($agents) => $agents->select('id')->from('_user_agents')->where('user_agent', 'like', $like));
+            });
         }
 
+        $total = (clone $matching)->count();
+
+        // id breaks ties, so two rows that sort equal keep one order from page to page.
+        $rows = $matching
+            ->orderBy($parsed['sort_column'], $parsed['order'])
+            ->orderBy('a.id', $parsed['order'])
+            ->offset($parsed['offset'])
+            ->limit($parsed['limit'])
+            ->get()
+            ->map(function ($row) {
+                $presented = self::__present($row);
+                $presented['device_summary'] = User_Agent::parse($presented['user_agent'])['summary'];
+
+                return $presented;
+            })
+            ->all();
+
+        return Rsx_Page_Query::result($rows, $total, $parsed);
+    }
+
+    /**
+     * One _audit_sessions row as describe() answers it.
+     *
+     * @param object $row
+     * @return array
+     */
+    private static function __present(object $row): array
+    {
         $int = fn ($value) => $value === null ? null : (int) $value;
 
         return [
@@ -250,11 +375,11 @@ class Audit_Session
             'impersonator_user_id' => $int($row->impersonator_user_id),
             'ip_address' => Ip_Address::address($int($row->ip_address_id)),
             'user_agent' => self::user_agent_string($int($row->user_agent_id)),
-            'session_row_id' => $int($row->session_row_id),
-            'device_id' => $int($row->device_id),
+            'session_id' => $int($row->session_id),
+            'user_session_id' => $int($row->user_session_id),
             'session_type_id' => (int) $row->session_type_id,
-            'first_seen_at' => \App\RSpade\Core\Time\Rsx_Time::to_iso($row->first_seen_at),
-            'last_seen_at' => \App\RSpade\Core\Time\Rsx_Time::to_iso($row->last_seen_at),
+            'first_seen_at' => Rsx_Time::to_iso($row->first_seen_at),
+            'last_seen_at' => Rsx_Time::to_iso($row->last_seen_at),
         ];
     }
 
@@ -272,8 +397,8 @@ class Audit_Session
         'impersonator_user_id' => 'audit_session.impersonator_user_id',
         'ip_address' => 'audit_ip.ip_address',
         'user_agent' => 'audit_user_agent.user_agent',
-        'session_row_id' => 'audit_session.session_row_id',
-        'device_id' => 'audit_session.device_id',
+        'session_id' => 'audit_session.session_id',
+        'user_session_id' => 'audit_session.user_session_id',
         'session_type_id' => 'audit_session.session_type_id',
         'first_seen_at' => 'audit_session.first_seen_at',
         'last_seen_at' => 'audit_session.last_seen_at',
@@ -356,7 +481,9 @@ class Audit_Session
     /**
      * Declare (an id) or end (null) the acting context current_id() answers.
      *
-     * FRAMEWORK INTERNAL - Task_Dispatcher_Context is the one caller.
+     * FRAMEWORK INTERNAL - Session's virtual session (_begin_virtual(), _end_virtual(),
+     * _restore_context()) is the one caller: a #[Run_As_Dispatcher] task declares the
+     * dispatching request's audit session there.
      *
      * @param int|null $audit_session_id
      * @return void
@@ -364,6 +491,17 @@ class Audit_Session
     public static function _declare(?int $audit_session_id): void
     {
         self::$declared_id = $audit_session_id;
+    }
+
+    /**
+     * The audit session _declare() set, or null when none is declared. FRAMEWORK INTERNAL -
+     * Session::_snapshot_context().
+     *
+     * @return int|null
+     */
+    public static function _declared_id(): ?int
+    {
+        return self::$declared_id;
     }
 
     /**
@@ -385,27 +523,47 @@ class Audit_Session
     }
 
     /**
-     * Who is acting right now, read from the session accessors. Creates no session.
+     * Who is acting right now, read from the session accessors, or null when this context
+     * records no audit session (Session::_audit_context()). Creates no session.
      *
-     * @return array<string, int|string|null>
+     * The identity columns are the ACTING realm's: a portal request records the portal
+     * account, its site and its View as Client impersonator, every other request the staff
+     * account (or the API key's owner), the site and the staff impersonator.
+     *
+     * @return array<string, int|string|null>|null
      */
-    private static function __current_context(): array
+    private static function __current_context(): ?array
     {
-        $is_cli = php_sapi_name() === 'cli';
-        $session = !$is_cli && !Session::is_api_request() && Session::has_session() ? Session::get_session() : null;
+        $sessions = Session::_audit_context();
 
-        return [
-            'site_id' => Session::get_site_id() ?: null,
-            'login_user_id' => Session::get_login_user_id() ?: null,
-            'portal_user_id' => Portal_Session::get_portal_user_id() ?: null,
-            'portal_site_id' => $session ? ($session->portal_site_id ?: null) : null,
-            'impersonator_login_user_id' => Session::get_impersonator_login_user_id() ?: null,
-            'impersonator_user_id' => Portal_Session::get_impersonator_user_id() ?: null,
+        if ($sessions === null) {
+            return null;
+        }
+
+        $context = [
+            'site_id' => null,
+            'login_user_id' => null,
+            'portal_user_id' => null,
+            'portal_site_id' => null,
+            'impersonator_login_user_id' => null,
+            'impersonator_user_id' => null,
             'ip_address' => Session::get_client_ip(),
-            'session_row_id' => $session ? (int) $session->id : null,
-            'user_agent_id' => $is_cli ? null : self::user_agent_id($_SERVER['HTTP_USER_AGENT'] ?? null),
-            'device_id' => $session ? ($session->device_id ?: null) : null,
-            'session_type_id' => Session::_current_session_type(),
+            'session_id' => $sessions['session_id'],
+            'user_session_id' => $sessions['user_session_id'],
+            'user_agent_id' => self::user_agent_id($_SERVER['HTTP_USER_AGENT'] ?? null),
+            'session_type_id' => $sessions['session_type_id'],
         ];
+
+        if (!Session::is_api_request() && Rsx_Portal::is_portal_request()) {
+            $context['portal_user_id'] = Portal_Session::get_portal_user_id() ?: null;
+            $context['portal_site_id'] = Session::_get_portal_site_id();
+            $context['impersonator_user_id'] = Portal_Session::get_impersonator_user_id() ?: null;
+        } else {
+            $context['site_id'] = Session::get_site_id() ?: null;
+            $context['login_user_id'] = Session::get_login_user_id() ?: null;
+            $context['impersonator_login_user_id'] = Session::get_impersonator_login_user_id() ?: null;
+        }
+
+        return $context;
     }
 }

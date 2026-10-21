@@ -121,11 +121,20 @@ seed_out="$(tinker '
         $s->user_agent = "session-link-http";
         $s->last_active = now();
         $s->active = true;
-        $s->site_id = $login_user_id ? $site_id : 0;
-        $s->login_user_id = $login_user_id;
         $s->type_id = \App\RSpade\Core\Session\Session::TYPE_WEB;
         $s->version = 1;
         $s->save();
+        if ($login_user_id) {
+            $identity = ["login_user_id" => $login_user_id, "site_id" => $site_id, "impersonator_login_user_id" => null];
+            $now = now()->format("Y-m-d H:i:s.v");
+            $us_id = \Illuminate\Support\Facades\DB::table("_user_sessions")->insertGetId([
+                "session_id" => $s->id, "realm_id" => \App\RSpade\Core\Session\Session::REALM_STAFF,
+                "tuple_hash" => \App\RSpade\Core\Session\Session::_user_session_tuple_hash($s->id, \App\RSpade\Core\Session\Session::REALM_STAFF, $identity),
+                "login_user_id" => $login_user_id, "user_id" => $user->id, "site_id" => $site_id,
+                "first_signed_in_at" => $now, "signed_in_at" => $now, "started_at" => $now, "last_page_view_at" => $now, "last_active_at" => $now,
+            ]);
+            \Illuminate\Support\Facades\DB::table("_sessions")->where("id", $s->id)->update(["staff_user_session_id" => $us_id]);
+        }
         $rows[$kind] = $s;
     }
 
@@ -191,13 +200,15 @@ grep -i '^set-cookie: rsx_link=' "$H3" | grep -qiE 'max-age=0|expires=.*19[0-9]{
 echo "[TEST] 3. OK - one rsx cookie, the staff token" >&2
 
 # ---------------------------------------------------------------------------
-# Step 4: the database - one row carrying the impersonation, the replaced row retired.
+# Step 4: the database - one row whose portal pointer names the impersonation, the replaced
+# row retired.
 # ---------------------------------------------------------------------------
 echo "[TEST] 4. The staff row carries the impersonation; the replaced row is inactive..." >&2
 rows_out="$(tinker '
     $s = \App\RSpade\Core\Session\Session::find('"$STAFF_ROW"');
     $p = \App\RSpade\Core\Session\Session::find('"$PORTAL_ROW"');
-    echo "ROWS portal_user=" . (int) $s->portal_user_id . " impersonator=" . (int) $s->impersonator_user_id
+    $us = \Illuminate\Support\Facades\DB::table("_user_sessions")->where("id", $s->portal_user_session_id)->first();
+    echo "ROWS portal_user=" . (int) ($us->portal_user_id ?? 0) . " impersonator=" . (int) ($us->impersonator_user_id ?? 0)
         . " staff_active=" . (int) $s->active . " replaced_active=" . (int) $p->active
         . " links=" . \Illuminate\Support\Facades\DB::table("_session_links")->where("session_id", '"$STAFF_ROW"')->count();
 ')"

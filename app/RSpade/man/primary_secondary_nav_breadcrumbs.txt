@@ -464,26 +464,34 @@ PAGE HEADER STRUCTURE
         </header>
 
     Action Buttons:
-        Actions define page_actions() to provide header buttons:
+        An action's optional page_actions() names a jqhtml COMPONENT that draws
+        the header buttons. It returns {component, args} (args optional) or
+        null for none, and may be async:
 
         class Contacts_View_Action extends Spa_Action {
             page_actions() {
-                return `
-                    <div class="d-flex gap-2">
-                        <a href="${Rsx.Route('Contacts_Index_Action')}"
-                           class="btn btn-secondary btn-sm">
-                            <i class="bi bi-arrow-left"></i> Back
-                        </a>
-                        <a href="${Rsx.Route('Contacts_Edit_Action', this.args.id)}"
-                           class="btn btn-primary btn-sm">
-                            <i class="bi bi-pencil"></i> Edit
-                        </a>
-                    </div>
-                `;
+                return {
+                    component: 'Record_Page_Actions',
+                    args: {
+                        back_href: Rsx.Route('Contacts_Index_Action'),
+                        edit_href: Rsx.Route('Contacts_Edit_Action', this.args.id),
+                    },
+                };
             }
         }
 
-        The layout renders these via _render_page_actions().
+        The layout's _render_page_actions() asks on every navigation, empties
+        the $sid="page_actions" host (stopping the previous page's component)
+        and instantiates the named component inside it. The component owns its
+        markup and its handlers; an action that needs a button to call back
+        into it passes a function in args (List_Page_Actions' $on_export). A
+        return of anything else throws.
+
+        The template app ships Record_Page_Actions (Back, optional Edit) and
+        List_Page_Actions (New, optional Export and Reports) in
+        rsx/theme/components/page/; a page with buttons of its own declares a
+        small component beside the action
+        (system/app/RSpade/resource/reference_app/app/frontend/party/list/party_index_page_actions.jqhtml).
 
 BREADCRUMB CHAIN EXAMPLE
     For URL /contacts/edit/1, the breadcrumb chain resolves as:

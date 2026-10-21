@@ -34,9 +34,10 @@ use App\RSpade\Tests\TwoFactor\Php\Webauthn_Authenticator_Fixture;
  * SESSION OUT. Between the two steps the browser must be NOT authenticated, because a
  * session that stayed logged in while carrying a "needs 2FA" flag is a session where every
  * surface in the application has to remember to honour that flag, and forgetting it
- * anywhere makes the second factor optional. The pending state is inert data instead. The
- * mechanism that makes this work is that _session_values rows survive a logout - the
- * _sessions row is not deleted, only its identity is cleared - and that is pinned below.
+ * anywhere makes the second factor optional. The pending state is inert data instead: the
+ * realm is signed out FIRST and the challenge is parked after, in the realm's session values
+ * on the same browser row (a sign-out clears that realm's values, so the other order would
+ * lose it whenever somebody was signed in) - and that is pinned below.
  *
  * ALSO PINNED:
  *  - the window is a SECURITY window: an expired pending state reads as absent and cannot
@@ -57,6 +58,9 @@ use App\RSpade\Tests\TwoFactor\Php\Webauthn_Authenticator_Fixture;
  */
 class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     private const PASSWORD = 'correct-horse-battery-staple';
 
     /**

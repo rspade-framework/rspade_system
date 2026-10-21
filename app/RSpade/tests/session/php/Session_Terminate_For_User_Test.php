@@ -36,11 +36,13 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * named as role constants, so the class is portable to an application whose User_Model
  * declares an entirely different role vocabulary.
  *
- * Sessions are inserted as raw rows (the ownership test's approach) because these
- * functions only ever read login_user_id + active; minting real sessions would add
- * cookie/token machinery the contract does not involve. Acting identity is established
- * through the CLI impersonation seam (__acting_as_user), which is what makes
- * Session::get_user() - and therefore Permission::can_admin_role() - resolve.
+ * Each "session" is a browser row plus the staff user session signed in on it, inserted
+ * directly (__insert_session_fixture()) - minting real ones would add cookie/token machinery
+ * the contract does not involve. The ids the functions take and the event names are USER
+ * SESSION ids. Acting identity is established through the CLI impersonation seam
+ * (__acting_as_user), which is what makes Session::get_user() - and therefore
+ * Permission::can_admin_role() - resolve; "the browser the actor is using" is the
+ * Session::$_browser_session_id_for_tests seam.
  *
  * Runs in the default per-test transaction (rolled back afterward).
  */
@@ -94,28 +96,33 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Insert an active _sessions row owned by $login_user_id and return its id.
+     * A browser signed in as $login_user_id; returns the user session id.
      */
-    private static function __insert_session(?int $login_user_id): int
+    private static function __insert_session(int $login_user_id): int
     {
-        return (int) DB::table('_sessions')->insertGetId([
-            'session_token' => bin2hex(random_bytes(16)),
-            'csrf_token'    => bin2hex(random_bytes(16)),
-            'active'        => 1,
-            'site_id'       => self::SITE_ID,
-            'version'       => 1,
-            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('10.0.0.9'),
-            'user_agent_id'    => \App\RSpade\Core\Session\Audit_Session::user_agent_id('terminate-for-user-test'),
-            'login_user_id' => $login_user_id,
-            'last_active'   => now(),
-            'created_at'    => now(),
-            'updated_at'    => now(),
-        ]);
+        return static::__insert_session_fixture([
+            'staff' => ['login_user_id' => $login_user_id, 'site_id' => self::SITE_ID],
+        ])['staff_user_session_id'];
     }
 
-    private static function __is_active(int $session_id): bool
+    private static function __is_active(int $user_session_id): bool
     {
-        return (bool) DB::table('_sessions')->where('id', $session_id)->value('active');
+        return DB::table('_user_sessions')->where('id', $user_session_id)->value('signed_out_at') === null;
+    }
+
+    /**
+     * Sign the actor in on a browser of their own and make it the browser this process is
+     * "using"; returns that user session's id.
+     */
+    private static function __current_session(User_Model $actor): int
+    {
+        $fixture = static::__insert_session_fixture([
+            'staff' => ['login_user_id' => (int) $actor->login_user_id, 'site_id' => self::SITE_ID],
+        ]);
+
+        Session::$_browser_session_id_for_tests = $fixture['id'];
+
+        return $fixture['staff_user_session_id'];
     }
 
     private static function __act_as(User_Model $user): void
@@ -196,7 +203,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
         self::__act_as($me);
 
-        $current_session_id = Session::get_session_id();
+        $current_session_id = self::__current_session($me);
 
         static::__assert_false(
             Session::terminate_session_for_user((int) $me->login_user_id, $current_session_id),
@@ -437,7 +444,12 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
         static::__assert_count(1, $captured, 'exactly one event per deactivated row');
         static::__assert_equals((int) $admin->login_user_id, $captured[0]['actor_login_user_id'], 'actor is the admin');
         static::__assert_equals((int) $target->login_user_id, $captured[0]['target_login_user_id'], 'target is the user');
-        static::__assert_equals($session_id, $captured[0]['session_id'], 'the deactivated row is named');
+        static::__assert_equals($session_id, $captured[0]['user_session_id'], 'the ended user session is named');
+        static::__assert_equals(
+            (int) DB::table('_user_sessions')->where('id', $session_id)->value('session_id'),
+            $captured[0]['session_id'],
+            'its browser is named'
+        );
         static::__assert_equals('admin', $captured[0]['scope'], 'a cross-user termination is scope admin');
     }
 
@@ -495,7 +507,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
         static::__assert_count(1, $captured, 'one event for the one row');
         static::__assert_equals('internal', $captured[0]['scope'], 'scope internal');
         static::__assert_null($captured[0]['actor_login_user_id'], 'no operator is named');
-        static::__assert_equals($session_id, $captured[0]['session_id'], 'the deactivated row is named');
+        static::__assert_equals($session_id, $captured[0]['user_session_id'], 'the ended user session is named');
     }
 
     // =====================================================================
@@ -555,7 +567,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
         static::__assert_count(1, $captured, 'one session.terminated for the one row');
         static::__assert_equals((int) $developer->login_user_id, $captured[0]['actor_login_user_id'], 'actor is the developer');
         static::__assert_equals((int) $stranger->id, $captured[0]['target_login_user_id'], 'target is the identity');
-        static::__assert_equals($ended, $captured[0]['session_id'], 'the deactivated row is named');
+        static::__assert_equals($ended, $captured[0]['user_session_id'], 'the ended user session is named');
         static::__assert_equals('admin', $captured[0]['scope'], 'another identity\'s session is scope admin');
     }
 
@@ -573,7 +585,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
         self::__act_as($developer);
 
-        $current_session_id = Session::get_session_id();
+        $current_session_id = self::__current_session($developer);
 
         static::__assert_equals(2, Session::developer_terminate_sessions((int) $target->login_user_id), 'both of the target\'s sessions');
         static::__assert_false(self::__is_active($target_rows[0]), 'first row deactivated');
@@ -613,7 +625,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
         self::__act_as($developer);
 
-        $current_session_id = Session::get_session_id();
+        $current_session_id = self::__current_session($developer);
 
         static::__assert_equals(0, Session::developer_terminate_sessions((int) $target->login_user_id, 999000111), 'an unknown id');
         static::__assert_equals(0, Session::developer_terminate_sessions((int) $target->login_user_id, $others_row), 'a session of a different identity');

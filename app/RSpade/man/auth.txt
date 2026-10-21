@@ -92,7 +92,9 @@ IDENTITY MODEL
         - One login_user has many users (Login_User_Model::users()).
         - Session identity is login_user_id (cross-site); the site-specific
           User_Model is resolved from (site_id, login_user_id).
-        - Session rows reference login_user_id, never users.id.
+        - A staff sign-in (a user session) records login_user_id and the
+          membership on its site; Session never stores a bare users.id as
+          the identity.
         - There is NO separate "invites" table - a pending users row is the
           invitation.
 

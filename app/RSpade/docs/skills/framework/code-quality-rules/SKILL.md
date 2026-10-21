@@ -1,6 +1,6 @@
 ---
 name: code-quality-rules
-description: "Writing and changing an RSpade code-quality rule against the driver contract - kind() per_file vs cross_file, depends_on() and fingerprint_extra(), the Manifest_Rule_Driver loop, Source_Cache (content/tokens/ast/class_node/declared_members - a rule never opens, parses or caches a file), the Validation_Ledger and its derived slots, where a build-time memo may live, @RULE-ID-EXCEPTION markers, and the tests/code_quality conventions. Use when adding a rule under CodeQuality/Rules/, making one manifest-time, diagnosing a rule that stopped firing or one that is slow on a cold build, or hitting Rule_Private_Cache_Test, Rule_Discovery_Depth_Test, or shouldnt_happen('Manifest::get_build_key() called before manifest was loaded')."
+description: "Writing and changing an RSpade code-quality rule against the driver contract - kind() per_file vs cross_file, depends_on() and fingerprint_extra(), the Manifest_Rule_Driver loop, Source_Cache (content/tokens/ast/class_node/declared_members - a rule never opens, parses or caches a file), the Validation_Ledger and its derived slots, where a build-time memo may live, @RULE-ID-EXCEPTION markers, and the tests/code_quality conventions. Use when adding a rule under CodeQuality/Rules/ or an application's own APP- rule, making one manifest-time, diagnosing a rule that stopped firing or one that is slow on a cold build, or hitting Rule_Private_Cache_Test, Rule_Discovery_Depth_Test, or shouldnt_happen('Manifest::get_build_key() called before manifest was loaded')."
 ---
 
 # Writing a code-quality rule
@@ -231,9 +231,11 @@ Three levels, and which one you get depends on who honors it:
 | line | the RULE itself, reading the marker on or above the line | one occurrence |
 
 The manifest-time driver does not apply `CodeQualityChecker`'s generic file-level handling, so a
-rule that needs its marker honored during a BUILD reads it itself. `SESSION-ID-01`
-(`SessionIdNullCheck_CodeQualityRule`) is the worked example, and reading it itself is exactly
-what gives it LINE granularity.
+rule that needs its marker honored during a BUILD reads it itself. `POLY-01`
+(`MorphStringPattern_CodeQualityRule`) is the worked example: it reads `@POLY-01-EXCEPTION` off
+the raw lines itself - the offending method's docblock, its declaration line or the line above
+(`method_has_exception()`) - and reading it itself is exactly what gives it a granularity finer
+than the file.
 
 **A bare marker with no rationale suppresses nothing**, and in several rules it is itself a
 violation. Test both.
@@ -283,6 +285,16 @@ Optional and `#[Replaceable]`: `kind()`, `depends_on()`, `fingerprint_extra()`,
 the field, why it is silent at runtime, and why it is fatal rather than advisory - that text is
 what a developer reads when the rule fires, and `rsx:check` prints the remediation as
 authoritative.
+
+**Application rules are the same contract from the other side.** Any concrete class extending
+`CodeQualityRule_Abstract` OUTSIDE `Rules/` - downstream, a class under `rsx/`, conventionally
+`rsx/lib/code_quality/` - is discovered by class through the manifest
+(`RuleDiscovery::app_rule_files()`) and runs exactly like a framework rule, manifest-time
+included if it opts in. Its id MUST start with `APP-` (refused with `YoureDoingItWrongException`
+otherwise, as is a second application rule on the same id), so **no framework rule may ever use
+`APP-`**. Downstream contract: `rsx:man coding_standards`, APPLICATION RULES; mechanics:
+`rsx:man code_quality`, APPLICATION RULES. A test needing a live application rule puts an inert
+fixture in the test tree, which is indexed under `rsx:test` (`App_Rule_Discovery_Test`).
 
 **Never name a constant after a PHP keyword.** `const NAMESPACE = ...` is legal PHP, but
 `self::NAMESPACE` LEXES as `T_NAMESPACE`, and `Php_Fixer` walks tokens to find where a file's

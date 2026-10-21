@@ -95,11 +95,14 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * challenge" - and the SSO path reads it unchanged: a Google sign-in by an identity holding a
  * passkey still faces the challenge, and may answer it with that passkey.
  *
- * SESSION VALUES SURVIVE A SIGN-OUT. Session::logout() and Portal_Session::logout() clear an
- * IDENTITY; neither deletes the _sessions row, and _session_values rows hang off that row by
- * FK. So a pending challenge written before the sign-out is still readable after it. That is
- * the mechanism the whole flow rests on, and it is why the pending value carries its own
- * expiry rather than relying on the session's.
+ * EVERY VALUE THIS CLASS PARKS LIVES IN THE REALM'S SESSION VALUES (SESSION_REALM): the
+ * pending challenge, the TOTP seed being enrolled, the WebAuthn ceremony challenges and the
+ * passkey enrollment marker. A realm's sign-out clears that realm's values, and a sign-in
+ * from signed-out does not, so begin_challenge() signs the realm out FIRST and parks the
+ * challenge after: it is then readable by the challenge screen and by verify_challenge(),
+ * and is gone with the next sign-out. A staff challenge is never cleared by a portal
+ * sign-out on the same browser, nor the reverse. The pending value carries its own expiry
+ * rather than relying on the realm's.
  *
  * THE CHALLENGE WINDOW IS A SECURITY WINDOW, NOT A TIMEOUT (see the timeout mandate). It
  * does not bound how long any operation may take and nothing fails when it expires - the
@@ -632,7 +635,7 @@ abstract class Rsx_Two_Factor_Abstract
         $secret = Totp::generate_secret();
         $uri = Totp::provisioning_uri($secret, (string) $identity->email, static::issuer());
 
-        Session::put_value(static::TOTP_PENDING_KEY, $secret, static::challenge_expires_at());
+        Session::put_value(static::TOTP_PENDING_KEY, $secret, static::challenge_expires_at(), static::SESSION_REALM);
 
         return [
             'secret' => $secret,
@@ -666,7 +669,7 @@ abstract class Rsx_Two_Factor_Abstract
     {
         $identity = static::__enrolling_identity();
 
-        $secret = Session::get_value(static::TOTP_PENDING_KEY);
+        $secret = Session::get_value(static::TOTP_PENDING_KEY, null, static::SESSION_REALM);
 
         if (!is_string($secret) || $secret === '') {
             throw new Two_Factor_Failed_Exception('That setup has expired. Please start again.');
@@ -693,7 +696,7 @@ abstract class Rsx_Two_Factor_Abstract
         $row->confirmed_at = Rsx_Time::now_iso();
         $row->save();
 
-        Session::forget_value(static::TOTP_PENDING_KEY);
+        Session::forget_value(static::TOTP_PENDING_KEY, static::SESSION_REALM);
 
         return static::__mint_recovery_codes((int) $identity->id);
     }
@@ -739,7 +742,8 @@ abstract class Rsx_Two_Factor_Abstract
                 'ip_address' => $client_context['ip_address'],
                 'user_agent' => $client_context['user_agent'],
             ],
-            Passkeys::challenge_expires_at()
+            Passkeys::challenge_expires_at(),
+            static::SESSION_REALM
         );
 
         static::__record_passkey_enrollment(
@@ -886,12 +890,15 @@ abstract class Rsx_Two_Factor_Abstract
      */
     protected static function __take_passkey_enrollment(): ?array
     {
-        if (!Session::has_session()) {
+        $session_id = Session::_current_browser_session_id();
+
+        if ($session_id === null) {
             return null;
         }
 
         $row = DB::table('_session_values')
-            ->where('session_id', Session::get_session_id())
+            ->where('session_id', $session_id)
+            ->where('realm_id', Session::_value_realm_id(static::SESSION_REALM))
             ->where('value_key', static::PASSKEY_ENROLLMENT_KEY)
             ->first();
 
@@ -1063,13 +1070,14 @@ abstract class Rsx_Two_Factor_Abstract
     // -------------------------------------------------------------------------
 
     /**
-     * Park an identity that has passed its password, and sign the realm out.
+     * Sign the realm out, and park an identity that has passed its password.
      *
-     * The order is deliberate: the pending value is WRITTEN FIRST and the sign-out follows.
-     * Session::put_value() is a writer, so it establishes the session row the value hangs
-     * off; signing out afterwards clears the row's identity but not the row, so the value
-     * survives. Doing it the other way round would park the value on a session the caller
-     * has already abandoned.
+     * The order is deliberate: the SIGN-OUT comes first and the pending value is written
+     * after it. The challenge lives in this realm's session values (SESSION_REALM), and a
+     * realm's sign-out clears that realm's values - so a challenge written first would be
+     * cleared by the sign-out it is followed by whenever somebody was still signed in. Both
+     * act on the same browser row (a sign-out rotates its tokens in place), and
+     * Session::put_value() establishes that row for a visitor who had none.
      *
      * The email is stored alongside the id because verify_challenge() has to record the
      * outcome against the address that was ATTEMPTED, which is a question about this attempt
@@ -1097,6 +1105,8 @@ abstract class Rsx_Two_Factor_Abstract
             $accepts = static::__validate_accepts($accepts, $identity_id);
         }
 
+        static::__sign_out();
+
         $expires_at = static::challenge_expires_at();
 
         Session::put_value(
@@ -1113,10 +1123,9 @@ abstract class Rsx_Two_Factor_Abstract
                 // Sends, not mints: a resend that re-sends the live code still counts.
                 'codes_issued' => 0,
             ],
-            $expires_at
+            $expires_at,
+            static::SESSION_REALM
         );
-
-        static::__sign_out();
     }
 
     /**
@@ -1159,10 +1168,10 @@ abstract class Rsx_Two_Factor_Abstract
 
         $code = static::__live_or_minted_code($pending['identity_id']);
 
-        $raw = Session::get_value(static::CHALLENGE_KEY);
+        $raw = Session::get_value(static::CHALLENGE_KEY, null, static::SESSION_REALM);
         $raw['codes_issued'] = $pending['codes_issued'] + 1;
 
-        Session::put_value(static::CHALLENGE_KEY, $raw, $pending['expires_at']);
+        Session::put_value(static::CHALLENGE_KEY, $raw, $pending['expires_at'], static::SESSION_REALM);
 
         return $code;
     }
@@ -1466,7 +1475,7 @@ abstract class Rsx_Two_Factor_Abstract
      */
     public static function abandon_challenge(): void
     {
-        Session::forget_value(static::CHALLENGE_KEY);
+        Session::forget_value(static::CHALLENGE_KEY, static::SESSION_REALM);
     }
 
     // -------------------------------------------------------------------------
@@ -1601,7 +1610,7 @@ abstract class Rsx_Two_Factor_Abstract
      * Refuses - throws - unless $identity passed a second factor in THIS request: trust is a
      * convenience on top of a verified sign-in, never a way to mint one. Throws too when the
      * realm's window is 0 (the configuration says this realm trusts no browser), and when
-     * this browser has no device record.
+     * this browser has no session row.
      *
      * @param Rsx_Model_Abstract $identity
      * @return void
@@ -1626,23 +1635,23 @@ abstract class Rsx_Two_Factor_Abstract
             );
         }
 
-        $device_id = Session::_current_device_id();
+        $session_id = Session::_current_browser_session_id();
 
-        if ($device_id === null) {
-            throw new \RuntimeException(static::class . '::trust_this_device(): this browser has no device record to trust.');
+        if ($session_id === null) {
+            throw new \RuntimeException(static::class . '::trust_this_device(): this browser has no session to trust.');
         }
 
         $now = now();
 
         DB::statement(
             'INSERT INTO _two_factor_trusted_devices
-                (identity_type, identity_id, device_id, earned_by, trusted_until, created_at, updated_at)
+                (identity_type, identity_id, session_id, earned_by, trusted_until, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE earned_by = VALUES(earned_by), trusted_until = VALUES(trusted_until), updated_at = VALUES(updated_at)',
             [
                 static::__identity_type_id(),
                 (int) $identity->id,
-                $device_id,
+                $session_id,
                 $verified[1],
                 $now->copy()->addDays($days)->format('Y-m-d H:i:s.v'),
                 $now->format('Y-m-d H:i:s.v'),
@@ -1667,16 +1676,16 @@ abstract class Rsx_Two_Factor_Abstract
             return false;
         }
 
-        $device_id = Session::_current_device_id();
+        $session_id = Session::_current_browser_session_id();
 
-        if ($device_id === null) {
+        if ($session_id === null) {
             return false;
         }
 
         $query = DB::table('_two_factor_trusted_devices')
             ->where('identity_type', static::__identity_type_id())
             ->where('identity_id', static::__resolve_id($identity))
-            ->where('device_id', $device_id)
+            ->where('session_id', $session_id)
             ->where('trusted_until', '>', now()->format('Y-m-d H:i:s.v'));
 
         if ($earned_by !== null) {
@@ -1708,10 +1717,10 @@ abstract class Rsx_Two_Factor_Abstract
             ->where('identity_type', static::__identity_type_id())
             ->where('identity_id', static::__resolve_id($identity));
 
-        $device_id = Session::_current_device_id();
+        $session_id = Session::_current_browser_session_id();
 
-        if ($except_this_device && $device_id !== null) {
-            $query->where('device_id', '<>', $device_id);
+        if ($except_this_device && $session_id !== null) {
+            $query->where('session_id', '<>', $session_id);
         }
 
         return $query->delete();
@@ -1868,7 +1877,7 @@ abstract class Rsx_Two_Factor_Abstract
      */
     protected static function __pending_challenge(): ?array
     {
-        $pending = Session::get_value(static::CHALLENGE_KEY);
+        $pending = Session::get_value(static::CHALLENGE_KEY, null, static::SESSION_REALM);
 
         if (!is_array($pending) || !isset($pending['identity_id'], $pending['email'], $pending['challenge_id'], $pending['expires_at'])) {
             return null;

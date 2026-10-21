@@ -122,7 +122,10 @@ abstract class Rsx_Model_Abstract extends Model
      * a history into noise, and a diff of "what the user changed" is the whole product.
      *
      * NOT a security control: a column excluded here is still stored in the record. To keep
-     * a value out of the database, do not put it there.
+     * a value out of the database, do not put it there. A SECRET column is not listed here
+     * at all - its $neverExport declaration already makes every revision record THAT it
+     * changed with the value replaced by Revision::REDACTED. A column named in both lists is
+     * not recorded at all: this list wins.
      *
      * @var array<int, string>
      */
@@ -586,6 +589,10 @@ abstract class Rsx_Model_Abstract extends Model
      * The effective list is the UNION of every declaration up the inheritance chain (see
      * never_exported_columns()), so a subclass - a class override of a core model included
      * - only ever ADDS columns and can never drop one its parent protects.
+     *
+     * The same list REDACTS the revision lane: on a model with $revisions, a change to a
+     * listed column is recorded with both sides replaced by Revision::REDACTED, so a history
+     * can say the column changed without the stored document ever holding its value.
      *
      * A secret-shaped column (password, token, secret) missing from the effective list is
      * flagged by the MODEL-NEVER-EXPORT-01 code-quality rule.
@@ -2364,6 +2371,10 @@ EXAMPLE;
      * wrote nothing and records nothing. A restore is an UPDATE whose deleted_at went back
      * to null, and is recorded as its own operation so a history can name it.
      *
+     * A never-exported column is recorded REDACTED - both sides Revision::REDACTED - decided
+     * before _revision_value() sees the value, so neither the old nor the new value of a
+     * secret ever reaches the document in any form.
+     *
      * @param array<string, mixed>|null $original The pre-write raw attributes, or null when
      *                                            recording was off before the write.
      */
@@ -2374,12 +2385,18 @@ EXAMPLE;
         }
 
         $excluded = $this->_revision_excluded_columns();
+        $redacted = array_fill_keys(static::never_exported_columns(), true);
 
         if (!$was_existing) {
             $diff = [];
 
             foreach ($this->getAttributes() as $column => $value) {
                 if ($value === null || isset($excluded[$column]) || $this->_is_system_column($column)) {
+                    continue;
+                }
+
+                if (isset($redacted[$column])) {
+                    $diff[$column] = [Revision::REDACTED, Revision::REDACTED];
                     continue;
                 }
 
@@ -2401,6 +2418,11 @@ EXAMPLE;
 
         foreach ($changes as $column => $value) {
             if (isset($excluded[$column]) || $this->_is_system_column($column)) {
+                continue;
+            }
+
+            if (isset($redacted[$column])) {
+                $diff[$column] = [Revision::REDACTED, Revision::REDACTED];
                 continue;
             }
 

@@ -8,8 +8,8 @@
 namespace App\RSpade\Tests\Time\Php;
 
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Ajax\Exceptions\AjaxAuthRequiredException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFormErrorException;
-use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
@@ -220,19 +220,23 @@ class Rsx_Timezone_Preference_Test extends Rsx_Test_Abstract
     // Rsx_Timezone_Controller
     // =========================================================================
 
+    /**
+     * Both endpoints are #[Auth('is_logged_in')]: a caller with nobody signed in is asked to
+     * sign in (auth_required), the gate-denial split rsx:man auth_gates documents.
+     */
     public static function test_endpoints_refuse_an_anonymous_caller()
     {
         static::__sign_out();
 
         static::__assert_throws(
-            AjaxUnauthorizedException::class,
+            AjaxAuthRequiredException::class,
             function () {
                 Ajax::internal('Rsx_Timezone_Controller', 'timezone_options');
             }
         );
 
         static::__assert_throws(
-            AjaxUnauthorizedException::class,
+            AjaxAuthRequiredException::class,
             function () {
                 Ajax::internal('Rsx_Timezone_Controller', 'set_timezone', ['timezone' => static::ZONE_A]);
             }

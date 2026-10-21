@@ -41,7 +41,7 @@ The component's own class name is always stamped on the root - which is what mak
 
 `content()` renders whatever the caller placed between the opening and closing tags - the default, unnamed slot. **A wrapper component that forgets `content()` silently discards its caller's content.**
 
-**`content()` returns an array, not text.** When the caller supplied content it returns the pair `[instructions, context]` - the caller's markup as compiled output instructions - and the template spreads that into its own output when you write `<%= content() %>` (the only sanctioned way to EMIT it). When the caller supplied nothing it returns `''`. So the value may be assigned to a `const`, emitted later, and tested for presence (`if (_footer_actions)`) to decide whether a wrapper should draw at all - `DataGrid_Abstract` does exactly that for its optional `footer_actions` slot. What it never is, is a string carrying content: `.trim()`, `=== ''` on the populated case, concatenation or your own escaping all operate on an array and throw at render. A component that needs a caller-supplied VALUE takes an argument (`$label`); caller MARKUP is `content()`.
+**`content()` returns a markup object, not text.** When the caller supplied content it returns a markup buffer - the caller's markup as compiled output instructions, rendered in the component that WROTE it - and the template splices that into its own output when you write `<%= content() %>` (the only sanctioned way to EMIT it). When the caller supplied nothing it returns `''`. So the value may be assigned to a `const`, emitted later, and tested for presence (`if (_footer_actions)`) to decide whether a wrapper should draw at all - `DataGrid_Abstract` does exactly that for its optional `footer_actions` slot. What it never is, is a string carrying content: `.trim()`, `=== ''` on the populated case, concatenation or your own escaping all operate on an object and throw or print garbage. A named slot's `content('name')` returns the same kind of object. A component that needs a caller-supplied VALUE takes an argument (`$label`); caller MARKUP is `content()`.
 
 Named slots are a separate channel for components with more than one content region:
 
@@ -84,7 +84,8 @@ Displayed content belongs in `content()`/slots, never in an attribute - see `ref
 - **Unquoted `$` expressions are synchronous.** The generated render function is not async - no `await`. Precompute in a `<% %>` block.
 - **An unquoted `$` expression ends at the first space unless it is bracketed.** Wrap anything containing spaces in parentheses, or precompute it.
 - **`class` and `style` MERGE; everything else overrides.** Define + invocation classes union (no dupes); `style` merges per CSS property with the invocation winning conflicts. Plain attributes and `$` args are replaced outright by the invocation.
-- **Void HTML elements auto-close** (`<input>`, `<img>`, `<br>`, `<hr>`); components never do - always `<Card />` or `<Card>...</Card>`.
+- **Void HTML elements auto-close** (`<input>`, `<img>`, `<br>`, `<hr>`); components never do - always `<Card />` or `<Card>...</Card>`. A closing tag on a void element (`<input ...></input>`, `</br>`) is a COMPILE ERROR: write `<input ...>` or `<input ... />` alone.
+- **A `<%= %>` / `<%!= %>` inside a quoted attribute value must be on ONE line.** One spanning lines is a compile error. A `$` arg takes JavaScript directly, so use the bracketed form, which may span lines - `$items=(JSON.stringify([...]))` - or a method the template calls (`$sections=this.nav_sections()`). `<%br= %>` is not allowed in an attribute value at all.
 
 ## Conditional attributes and the two corruption gotchas
 
@@ -133,6 +134,19 @@ nowhere for statements to write output, so build the value first and interpolate
 (Before 2.3.59 an expression in either position silently rendered the literal text
 `undefined`, and the workaround was to render them empty and populate from JS in
 `on_render()`. That workaround is no longer needed.)
+
+## Other compile errors
+
+The compiler refuses these outright, naming the line:
+
+- A stray or mismatched closing tag, or a stray `%>`.
+- A `<Define:>` nested inside another component definition.
+- The text `<script` or `</script` ANYWHERE - markup, a JS string in a `<% %>` block, an attribute value, an HTML comment. The compiled template may be inlined in a `<script>` block, where that text would end it; split a string that must contain it (`'<' + '/script>'`). `tag="script"` / `tag="style"` on a `<Define:>` or an invocation is refused too.
+- An attribute name containing a character HTML does not allow (a quote usually means a missing `=` or a stray quote earlier in the tag).
+- A slot name that is not a JavaScript identifier, and non-slot content in a `<Define:>` whose template uses slots.
+- An unterminated `<% %>` / `<%= %>`, reported at its OPENING tag. When a `//` comment inside template code hides a `%>`, the error says so - a `//` comment runs to the end of its line.
+
+Character references in a quoted attribute literal (`title="Tom &amp; Jerry"`) are decoded at compile time, as a browser would.
 
 ## Inline logic and handlers
 

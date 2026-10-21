@@ -11,7 +11,7 @@ no stdin. What is pinned is that a call with no terminal refuses rather than set
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | luc-01 | the new password verifies and the old one does not; --user by email | --user=<email> --password=new | hash checks new, not old | implemented |
-| luc-02 | every session of the identity ends, nobody else's | two own sessions + a bystander's | sessions_ended 2; bystander active | implemented |
+| luc-02 | every signed-in user session of the identity ends, nobody else's | two own sign-ins + a bystander's | sessions_ended 2; bystander still signed in | implemented |
 | luc-03 | --keep-sessions ends nothing | one session, --keep-sessions | sessions_ended 0; still active; password changed | implemented |
 | luc-04 | every refusal changes nothing | no source, two sources, empty, no --user, unknown user | each error code, exit 1; old password, session active | implemented |
 | luc-05 | the address moves with its memberships on every site, trashed included; a re-addressed membership is untouched | three memberships across three sites, one trashed, one re-addressed | identity + two memberships moved, third unchanged; no session ends; repeat is action none | implemented |

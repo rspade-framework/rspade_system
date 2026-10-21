@@ -8,7 +8,7 @@ SYNOPSIS
     Globals - no import, available in every bundle:
 
         if (empty(this.data.rows)) { ... }
-        this.$sid('note').html(nl2br(escape_html(record.notes)));
+        this.$sid('note').html(nl2brhtml(record.notes));
 
         await sleep(250);
 
@@ -42,7 +42,8 @@ DESCRIPTION
 
     PHP/JS parity list - same name, same semantics in both languages:
 
-        escape_html()  sanitize_rich_text_html()  nl2br()  bytes_to_human()
+        escape_html()  sanitize_rich_text_html()  nl2br()  nl2brhtml()
+        bytes_to_human()
         snake_to_camel()  camel_to_snake()  ucwords()  console_debug()
         shouldnt_happen()  urlencode()/urldecode()
         json_encode()/json_decode()  full_url_to_short_url()
@@ -100,7 +101,21 @@ API REFERENCE
                                      to the same allow-list as the PHP twin -
                                      rsx:man sanitize_rich_text_html.
     nl2br(str)                       newlines to <br>. Does NOT escape: plain
-                                     text is nl2br(escape_html(str)).
+                                     text is nl2brhtml(str).
+    nl2brhtml(str)                   plain text to HTML that shows it: escaped,
+                                     every line break a <br />. The safe way
+                                     to put multi-line text into markup.
+    html_to_text(html)               the text a browser would show for an HTML
+                                     string: tags dropped, entities decoded.
+                                     Parsed inertly (DOMParser), so nothing in
+                                     it loads or runs. JS only - the server
+                                     never needs it.
+    decode_html_entities(str)        entities decoded and nothing else: a
+                                     literal < stays a <, no tag is read.
+                                     For entity-encoded DATA (a JSON string
+                                     carried in a template attribute), where
+                                     html_to_text() would mangle a value
+                                     containing <.
     urlencode(str) / urldecode(str)
     json_encode(val) / json_decode(str)
     replace_all(string, search, replace)
@@ -255,7 +270,10 @@ EXAMPLES
     Escaping vs sanitizing:
 
         // The value is TEXT the user typed - escape it, keep the line breaks.
-        this.$sid('notes').html(nl2br(escape_html(record.notes)));
+        this.$sid('notes').html(nl2brhtml(record.notes));
+
+        // One line of text needs no markup at all.
+        this.$sid('title').text(record.name);
 
         // The value came from the WYSIWYG editor and is SUPPOSED to be markup.
         this.$sid('body').html(sanitize_rich_text_html(record.body_html));

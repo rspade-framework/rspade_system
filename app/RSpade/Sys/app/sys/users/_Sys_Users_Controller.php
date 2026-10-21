@@ -8,7 +8,6 @@
 namespace App\RSpade\Sys\App\Sys\Users;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
@@ -17,6 +16,7 @@ use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Sso\Rsx_Sso;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
+use App\RSpade\Sys\App\Sys\Users\_Sys_Audit_Sessions_DataGrid;
 use App\RSpade\Sys\App\Sys\Users\_Sys_User_Signins_DataGrid;
 use App\RSpade\Sys\App\Sys\Users\_Sys_Users_DataGrid;
 use App\RSpade\Sys\App\Sys\_Sys_Impersonation_Controller;
@@ -57,8 +57,8 @@ use App\RSpade\Sys\Lib\_Sys_Enum_Words;
  * records revisions). Ending sessions fires 'session.terminated' per row
  * (Session::developer_terminate_sessions()). Removing a factor and disconnecting a
  * provider record nothing: Rsx_Two_Factor and Rsx_Sso keep no audit trail of their own.
- * Signing in as an identity stamps the session row's impersonator_login_user_id and
- * impersonation_started_at (Session::begin_impersonation()).
+ * Signing in as an identity signs this browser in as it through a user session that records
+ * the impersonator and when the impersonation started (Session::begin_impersonation()).
  */
 #[Auth('is_sysadmin')]
 class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
@@ -134,17 +134,17 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
     }
 
     /**
-     * The identity's live sessions: Session::get_sessions_for_user() (active rows, most
-     * recently active first), each gaining the row's site, session type and impersonation
-     * columns. is_current marks the session the developer is reading this with - true only
-     * on their own identity.
+     * Where the identity is signed in: Session::get_sessions_for_user() with impersonations
+     * - its user sessions, one per browser x site (x impersonator), SIGNED IN and recently
+     * SIGNED OUT, most recently active first, and its API keys in use (is_api). The rsx:debug
+     * harness's browsers are never listed (the framework leaves them out). Each entry is
+     * __present_sessions()'s shape.
+     *
+     * Bounded by the identity's browsers, sites and keys - signed-out entries only within
+     * rsx.sessions.unused_session_days - and answered whole, as the listing answers it.
      *
      * @param array $params id (login_users.id)
-     * @return array {sessions: [{id, device_summary, user_agent, ip_address, location,
-     *                created_at, last_active, is_current, type_label, site_id, site_name,
-     *                impersonator_login_user_id, impersonator_email, impersonation_started_at,
- *                terminate_refusal}]}
- *                terminate_refusal is null, or the reason the session cannot be ended here.
+     * @return array {sessions: [__present_sessions() entries]}
      */
     #[Ajax_Endpoint]
     public static function sessions(Request $request, array $params = [])
@@ -155,49 +155,62 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
             return response_not_found('No login identity with that id.');
         }
 
-        // The operator's view: sessions on which somebody else is acting as this identity
-        // are included, and the Impersonation column names who.
-        $sessions = Session::get_sessions_for_user((int) $login_user->id, null, true);
-        $extra = $sessions === [] ? collect() : DB::table('_sessions')
-            ->whereIn('id', array_column($sessions, 'id'))
-            ->get(['id', 'site_id', 'type_id', 'impersonator_login_user_id', 'impersonation_started_at'])
-            ->keyBy('id');
+        return ['sessions' => static::__present_sessions(Session::get_sessions_for_user((int) $login_user->id, null, true))];
+    }
 
-        $site_names = _Sys_Enum_Words::site_names($extra->pluck('site_id')->filter(fn ($id) => $id !== null)->unique()->values()->all());
-        $impersonator_ids = $extra->pluck('impersonator_login_user_id')->filter()->unique()->values()->all();
-        // Bounded: the impersonators of this one identity's sessions, deleted ones included.
-        $impersonator_emails = $impersonator_ids === [] ? [] : Login_User_Model::withTrashed()
-            ->whereIn('id', $impersonator_ids)
-            ->pluck('email', 'id')
-            ->all();
+    /**
+     * One user session of the identity, for the session detail screen: the identity's id and
+     * email, and the entry exactly as sessions() lists it. not_found unless the id is one of
+     * sessions()' entries for THIS identity - the detail screen shows what the list shows.
+     *
+     * @param array $params id (login_users.id), user_session_id
+     * @return array {user: {id, email}, session: a __present_sessions() entry}
+     */
+    #[Ajax_Endpoint]
+    public static function session_detail(Request $request, array $params = [])
+    {
+        $login_user = static::__find_identity($params['id'] ?? null);
 
-        $out = [];
-
-        foreach ($sessions as $session) {
-            $row = $extra[$session['id']];
-            $site_id = $row->site_id === null ? null : (int) $row->site_id;
-            $impersonator_id = $row->impersonator_login_user_id === null ? null : (int) $row->impersonator_login_user_id;
-
-            $out[] = [
-                'id' => (int) $session['id'],
-                'device_summary' => $session['device_summary'],
-                'user_agent' => $session['user_agent'],
-                'ip_address' => $session['ip_address'],
-                'location' => $session['location'],
-                'created_at' => Rsx_Time::to_iso($session['created_at']),
-                'last_active' => Rsx_Time::to_iso($session['last_active']),
-                'is_current' => (bool) $session['is_current'],
-                'type_label' => Session::$enums['type_id'][(int) $row->type_id]['label'] ?? ('Type ' . $row->type_id),
-                'site_id' => $site_id,
-                'site_name' => $site_id === null ? null : ($site_names[$site_id] ?? null),
-                'impersonator_login_user_id' => $impersonator_id,
-                'impersonator_email' => $impersonator_id === null ? null : ($impersonator_emails[$impersonator_id] ?? null),
-                'impersonation_started_at' => Rsx_Time::to_iso($row->impersonation_started_at),
-                'terminate_refusal' => static::__session_refusal((int) $session['id']),
-            ];
+        if ($login_user === null) {
+            return response_not_found('No login identity with that id.');
         }
 
-        return ['sessions' => $out];
+        $session = static::__listed_session($login_user, $params['user_session_id'] ?? null);
+
+        if ($session === null) {
+            return response_not_found('No session of this identity with that id.');
+        }
+
+        return [
+            'user' => ['id' => (int) $login_user->id, 'email' => $login_user->email],
+            'session' => static::__present_sessions([$session])[0],
+        ];
+    }
+
+    /**
+     * Every address and browser one of the identity's user sessions acted from, a page at a
+     * time (_Sys_Audit_Sessions_DataGrid over Audit_Session::list_page_for_user_session()).
+     * not_found unless user_session_id is one of the identity's listed sessions.
+     *
+     * @param array $params login_user_id, user_session_id, plus the grid's page, per_page,
+     *                      sort, order, filter
+     */
+    #[Ajax_Endpoint]
+    public static function audit_sessions_fetch(Request $request, array $params = [])
+    {
+        $login_user = static::__find_identity($params['login_user_id'] ?? null);
+
+        if ($login_user === null) {
+            return response_not_found('No login identity with that id.');
+        }
+
+        $session = static::__listed_session($login_user, $params['user_session_id'] ?? null);
+
+        if ($session === null) {
+            return response_not_found('No session of this identity with that id.');
+        }
+
+        return _Sys_Audit_Sessions_DataGrid::fetch((int) $session['id'], $params);
     }
 
     /**
@@ -362,47 +375,50 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
     }
 
     /**
-     * End one of an identity's live sessions (Session::developer_terminate_sessions()).
-     * The browser holding it is pushed to reload signed out. Refused for the session the
-     * panel is being used from; not_found when the id is not a live session of this
-     * identity.
+     * End one of an identity's signed-in user sessions (Session::developer_terminate_sessions()).
+     * The browser holding it is pushed to reload signed out. Refused (__session_refusal())
+     * for an API key's entry and for a sign-in on the browser the panel is being used from;
+     * not_found when the id is not a signed-in user session of this identity.
      *
-     * @param array $params id (login_users.id), session_id (_sessions.id)
+     * @param array $params id (login_users.id), user_session_id (a sessions() entry's id)
      * @return array {count} - always 1
      */
     #[Ajax_Endpoint]
     public static function terminate_session(Request $request, array $params = [])
     {
         $login_user = static::__find_identity($params['id'] ?? null);
-        $session_id = static::__positive_int($params['session_id'] ?? null);
 
         if ($login_user === null) {
             return response_not_found('No login identity with that id.');
         }
 
-        if ($session_id === null) {
-            return response_not_found('No live session with that id.');
+        $user_session_id = static::__positive_int($params['user_session_id'] ?? null);
+
+        if ($user_session_id === null) {
+            return response_not_found('No signed-in session with that id.');
         }
 
-        $refusal = static::__session_refusal($session_id);
+        $listed = static::__listed_session($login_user, $user_session_id);
+        $refusal = $listed === null ? null : static::__session_refusal($listed);
 
         if ($refusal !== null) {
             return response_error(Ajax::ERROR_VALIDATION, $refusal);
         }
 
-        $count = Session::developer_terminate_sessions((int) $login_user->id, $session_id);
+        $count = Session::developer_terminate_sessions((int) $login_user->id, $user_session_id);
 
         if ($count === 0) {
-            return response_not_found("Session #{$session_id} is not a live session of this identity.");
+            return response_not_found("Session #{$user_session_id} is not a signed-in session of this identity.");
         }
 
         return ['count' => $count];
     }
 
     /**
-     * End every live session of an identity (Session::developer_terminate_sessions()),
-     * except the one the panel is being used from - so ending your own identity's sessions
-     * keeps this browser signed in. 0 when there was nothing to end.
+     * End every signed-in user session of an identity (Session::developer_terminate_sessions()),
+     * except any on the browser the panel is being used from - so ending your own identity's
+     * sessions keeps this browser signed in. An API key's use is not a sign-in this ends:
+     * revoking the key does. 0 when there was nothing to end.
      *
      * @param array $params id (login_users.id)
      * @return array {count}
@@ -554,7 +570,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
             ]);
         }
 
-        Session::put_value(_Sys_Impersonation_Controller::RETURN_SITE_KEY, Session::get_site_id());
+        Session::put_value(_Sys_Impersonation_Controller::RETURN_SITE_KEY, Session::get_site_id(), null, 'staff');
         Session::set_site_id($site_id);
         Session::begin_impersonation((int) $login_user->id);
 
@@ -633,15 +649,103 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
     }
 
     /**
-     * Why this session cannot be ended here, or null.
+     * Why this user session (a get_sessions_for_user() entry) cannot be ended here, or null:
+     * it is an API key's use (ended by revoking the key, never from a session list), or it
+     * is on the browser the panel is being used from. A signed-out entry offers no End at
+     * all; ending one answers not_found.
      */
-    private static function __session_refusal(int $session_id): ?string
+    private static function __session_refusal(array $session): ?string
     {
-        if (Session::has_session() && $session_id === Session::get_session_id()) {
+        if ($session['is_api']) {
+            return 'This is an API key\'s use. It ends when the key is revoked or expires.';
+        }
+
+        if ($session['session_id'] === Session::_current_browser_session_id()) {
             return 'This is the session you are using right now. Sign out instead.';
         }
 
         return null;
+    }
+
+    /**
+     * The get_sessions_for_user() entry (impersonations included) of this identity with this
+     * user session id, or null - the one ownership test behind session_detail(),
+     * audit_sessions_fetch() and terminate_session().
+     */
+    private static function __listed_session(Login_User_Model $login_user, $user_session_id): ?array
+    {
+        $user_session_id = static::__positive_int($user_session_id);
+
+        if ($user_session_id === null) {
+            return null;
+        }
+
+        foreach (Session::get_sessions_for_user((int) $login_user->id, null, true) as $session) {
+            if ($session['id'] === $user_session_id) {
+                return $session;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * get_sessions_for_user() entries as the Sessions tab and the session screen show them:
+     * each with its site's name, its browser's type label, the impersonator's email and the
+     * refusal its End button explains.
+     *
+     * @param array $sessions get_sessions_for_user() entries
+     * @return array [{id, device_summary, user_agent, ip_address, location, first_seen,
+     *               signed_in_at, last_active, is_signed_in, signed_out_at, sign_out_reason,
+     *               sign_in_count, is_current, is_api, type_label, site_id, site_name,
+     *               impersonator_login_user_id, impersonator_email, impersonation_started_at,
+     *               terminate_refusal}]
+     *               first_seen is the first sign-in of this account on this browser,
+     *               signed_in_at the current (or last) one; terminate_refusal is null when
+     *               End is offered and allowed.
+     */
+    private static function __present_sessions(array $sessions): array
+    {
+        $site_names = _Sys_Enum_Words::site_names(array_values(array_unique(array_filter(array_column($sessions, 'site_id'), fn ($id) => $id !== null))));
+        $impersonator_ids = array_values(array_unique(array_filter(array_column($sessions, 'impersonator_id'))));
+        // Bounded: the impersonators of this one identity's sessions, deleted ones included.
+        $impersonator_emails = $impersonator_ids === [] ? [] : Login_User_Model::withTrashed()
+            ->whereIn('id', $impersonator_ids)
+            ->pluck('email', 'id')
+            ->all();
+
+        $out = [];
+
+        foreach ($sessions as $session) {
+            $site_id = $session['site_id'];
+            $impersonator_id = $session['impersonator_id'];
+
+            $out[] = [
+                'id' => (int) $session['id'],
+                'device_summary' => $session['device_summary'],
+                'user_agent' => $session['user_agent'],
+                'ip_address' => $session['ip_address'],
+                'location' => $session['location'],
+                'first_seen' => $session['first_seen'],
+                'signed_in_at' => $session['signed_in_at'],
+                'last_active' => $session['last_active'],
+                'is_signed_in' => (bool) $session['is_signed_in'],
+                'signed_out_at' => $session['signed_out_at'],
+                'sign_out_reason' => $session['sign_out_reason'],
+                'sign_in_count' => (int) $session['sign_in_count'],
+                'is_current' => (bool) $session['is_current'],
+                'is_api' => (bool) $session['is_api'],
+                'type_label' => Session::$enums['type_id'][$session['type_id']]['label'] ?? ('Type ' . $session['type_id']),
+                'site_id' => $site_id,
+                'site_name' => $site_id === null ? null : ($site_names[$site_id] ?? null),
+                'impersonator_login_user_id' => $impersonator_id,
+                'impersonator_email' => $impersonator_id === null ? null : ($impersonator_emails[$impersonator_id] ?? null),
+                'impersonation_started_at' => $session['impersonation_started_at'],
+                'terminate_refusal' => static::__session_refusal($session),
+            ];
+        }
+
+        return $out;
     }
 
     /**

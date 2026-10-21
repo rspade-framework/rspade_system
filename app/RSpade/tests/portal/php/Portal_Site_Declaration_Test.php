@@ -194,10 +194,10 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A portal identity carries its tenant for life. The staff facade lets a tenant
-     * switch (Session::set_site_id updates site_id on the row); the portal
-     * deliberately does not, so a declaration cannot contradict the portal_site_id a
-     * live session already carries.
+     * A portal sign-in carries its tenant for life. The staff facade lets a tenant switch
+     * (Session::set_site_id moves the staff sign-in to another site's user session); the
+     * portal deliberately does not, so a declaration cannot contradict the portal_site_id a
+     * live portal sign-in already carries - the site is part of the user session's identity.
      */
     public static function test_a_live_session_site_wins_over_a_conflicting_declaration()
     {
@@ -209,33 +209,22 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
         $portal_user->status_id = Portal_User_Model::STATUS_ACTIVE;
         $portal_user->save();
 
-        $session = new Session();
-        $session->active = true;
-        $session->version = 1;
-        $session->site_id = 0;
-        $session->portal_site_id = self::SITE_ID;
-        $session->type_id = Session::TYPE_WEB;
-        $session->portal_user_id = $portal_user->id;
-        $session->session_token = bin2hex(random_bytes(32));
-        $session->csrf_token = bin2hex(random_bytes(32));
-        $session->user_agent = 'site-declaration-test';
-        $session->last_active = now();
-        $session->save();
+        $fixture = static::__insert_session_fixture([
+            'portal' => ['portal_user_id' => (int) $portal_user->id, 'portal_site_id' => self::SITE_ID],
+        ]);
 
-        // The web branch reads the browser's session row; CLI has none, so the
-        // conflict is asserted on the persisted row's own invariant: the portal tenant
-        // is stamped when the identity is established and no portal API rewrites it.
-        $reloaded = Session::_portal_query()->where('id', $session->id)->first();
-        static::__assert_not_null($reloaded, 'the row carries a portal identity');
+        // The web branch reads the browser's portal user session; CLI has none, so the
+        // conflict is asserted on the persisted invariant: the portal tenant is stamped when
+        // the sign-in is established and no portal API rewrites it.
+        static::__assert_not_null(Session::_portal_query()->where('id', $fixture['id'])->first(), 'the browser is signed into the portal');
         static::__assert_equals(
             self::SITE_ID,
-            (int) $reloaded->portal_site_id,
-            'a portal session never changes site - there is no API that writes it'
+            (int) \Illuminate\Support\Facades\DB::table('_user_sessions')->where('id', $fixture['portal_user_session_id'])->value('portal_site_id'),
+            'a portal sign-in never changes site - there is no API that writes it'
         );
-        static::__assert_equals(
-            0,
-            (int) $reloaded->site_id,
-            'and the STAFF tenant column is a different property entirely'
+        static::__assert_null(
+            \Illuminate\Support\Facades\DB::table('_sessions')->where('id', $fixture['id'])->value('staff_user_session_id'),
+            'and the staff realm is a different pointer entirely'
         );
     }
 }

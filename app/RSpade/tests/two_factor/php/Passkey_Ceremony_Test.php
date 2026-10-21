@@ -44,11 +44,14 @@ use App\RSpade\Tests\TwoFactor\Php\Webauthn_Authenticator_Fixture;
  *    finds it expired - exactly once each;
  *  - the portal realm writes the same outcomes as rows of its own history, _portal_login_history.
  *
- * SESSIONS IN CLI: as in Passkeys_Test, each test resets the process's CLI session so the
- * values Session::put_value() writes live inside the current transaction.
+ * SESSIONS: as in Passkeys_Test, each test acts as a browser ($acts_as_browser), so the
+ * values Session::put_value() writes live on a row inside the current transaction.
  */
 class Passkey_Ceremony_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     public static function teardown()
     {
         Login_Throttle::reset('CLI');

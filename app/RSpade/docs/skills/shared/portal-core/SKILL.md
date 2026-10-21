@@ -115,7 +115,7 @@ Rules: **request-scoped declaration only** - it creates nothing. Idempotent for 
 
 ## Part C - Portal_Session
 
-`Portal_Session` is a static **FACADE over the PORTAL PROPERTIES of the one session the browser has** - not a second session, not a model. There is no `Portal_Session::where()`, no instances, no portal session table.
+`Portal_Session` is a static **FACADE over the PORTAL SIGN-IN of the one session the browser has** - not a second session, not a model. A portal sign-in is a USER SESSION in the portal realm (browser x portal user x site x View-as-Client impersonator, reused when that user signs in there again); the browser's row points at the current one. There is no `Portal_Session::where()`, no instances, no portal session table.
 
 ```php
 Portal_Session::init(): void                  // load from cookie (no create)
@@ -127,25 +127,25 @@ Portal_Session::set_site_id(int): void        // declare (Part B)
 Portal_Session::get_site_id(): int            // THROWS when nothing declared one
 Portal_Session::set_portal_user_id(?int): void// log in / log out
 Portal_Session::logout(): void
-Portal_Session::get_session_id(): int         // the browser's session id (SHARED with Session)
+Portal_Session::get_session_id(): ?int        // the browser's session id (SHARED with Session); null in a command or task
 Portal_Session::get_csrf_token(): ?string     // the browser's ONE token (SHARED)
 Portal_Session::verify_csrf_token(string): bool
 Portal_Session::put_value($key, $value, ?$expires_at) / get_value($key, $default) / forget_value($key)
-                                              // the browser's session-value store (SHARED with
-                                              // Session - namespace portal keys 'portal_...');
-                                              // survives a portal logout
+                                              // the browser's session values in the PORTAL realm
+                                              // (Session::put_value(..., 'portal')); CLEARED by a
+                                              // portal sign-out; throw in a command, task or API call
 Portal_Session::_testing_reset(): void        // the RUNNER's per-test clean slate
 
-// device sessions ("your sessions" screen)
-Portal_Session::get_sessions_for_user(?int $id = null): array
-Portal_Session::terminate_session(int $id): bool      // OWN sessions only, fail-closed
-Portal_Session::terminate_all_other_sessions(): int
-Portal_Session::terminate_all_sessions_for_user(int $id, ?int $except = null): int
+// "where you're signed in" - user sessions (entry shape: rspade:session-auth)
+Portal_Session::get_sessions_for_user(?int $id = null, bool $include_impersonations = false): array
+Portal_Session::terminate_session(int $user_session_id): bool    // OWN, another browser, fail-closed
+Portal_Session::terminate_all_other_sessions(): int               // + forgets their 2FA trust
+Portal_Session::terminate_all_sessions_for_user(int $portal_user_id, ?int $except_user_session_id = null): int  // unguarded
 ```
 
-**A portal session ENDS by CLEARING the portal properties.** `logout()`, the terminate calls, the sign-in cap and `stop_impersonation()` all clear; **none of them deletes or deactivates the row**, because that row is the browser's session and may carry a staff login. `get_sessions_for_user()` excludes the "View as Client" handoff rows - single-use transport, not devices.
+**A portal sign-in ENDS by being signed out** - `logout()`, the lifetimes (`rsx.sessions.portal`: 7 days / 8 hours idle), the terminate calls, the sign-in cap, `stop_impersonation()` - which stamps the user session with a reason, clears the browser's portal pointer and its PORTAL session values, and rotates the tokens when it is this browser. **None of them deletes or deactivates the browser's row**, which may carry a staff sign-in. A second-factor login parks its own values AFTER `begin_challenge()` (which signs the portal out first). `get_sessions_for_user()` leaves a View as Client out unless `$include_impersonations`; the template lists the entries active within 3 months (`rsx/lib/sessions/session_listing.php`).
 
-**Never read or write the staff properties from portal code, and never the portal properties from main-app code.** That rule is for APPLICATION code: the framework surfaces serving both experiences resolve the experience themselves, so portal code writes them exactly like staff code -
+**Never read or write the staff sign-in from portal code, and never the portal sign-in from main-app code.** That rule is for APPLICATION code: the framework surfaces serving both experiences resolve the experience themselves, so portal code writes them exactly like staff code -
 
 ```php
 Flash_Alert::success('Welcome to the Client Portal!');   // this session; stamped as portal
@@ -253,7 +253,7 @@ Rsx_Portal.internal_url('/_ajax/Foo/bar');      // PHP twin: Rsx_Portal::interna
 
 Staff open the portal AS a contact to see exactly what that client sees, in a READ-ONLY session. (The staff-on-staff equivalent is a same-cookie in-place swap and is full read/write - see `rspade:session-auth`.)
 
-Tracked as PROPERTIES on the browser's session row, **never in the cookie**: `impersonator_user_id` (staff `User_Model` id; NULL = a normal portal login) and `impersonation_started_at`, beside `portal_user_id` / `portal_site_id` set to the target.
+A View as Client is a **PORTAL USER SESSION on the staff member's own browser** - the target portal user, its site, and `impersonator_user_id` (the staff `users.id`) - that the browser's portal pointer names while it lasts; the browser's own portal sign-in, if any, stays signed in behind it, and the staff sign-in is untouched. Nothing rotates, and nothing but the opaque token reaches the cookie.
 
 **Starting one** - a staff Ajax endpoint gated `#[Auth('can_impersonate')]`:
 
@@ -264,7 +264,7 @@ return ['url' => $url];   // the staff page opens it in a new tab
 
 It throws `AjaxUnauthorizedException` unless the staff-realm `can_impersonate` check passes, requires the impersonator id to be the caller's own staff user, and **never touches the contact's `last_login`**. `can_impersonate` is **framework-declared and DENIES by default** (`Permission_Abstract`, `#[Replaceable]`): an app offering View as Client redeclares it on its `Permission` class (`#[Auth_Check]`, its own rule, no `parent::` owed). Open the tab synchronously inside the click (`window.open('', '_blank')`) and point it at the URL when the call returns, or a popup blocker eats it - worked example: `system/app/RSpade/resource/reference_app/app/frontend/contacts/view/Contacts_View_Action.js`.
 
-- **Same host:** the impersonation is written straight onto the caller's own row (one cookie, one row); the URL is the portal's landing page.
+- **Same host:** the caller's own browser points its portal sign-in at the View as Client user session (one cookie, one row); the URL is the portal's landing page.
 - **Own host:** the browser has a different cookie there and neither host can set the other's. The URL is leg 1 of the **linked-session handshake** - three GET redirects:
   1. portal `<prefix>/_session_link/open` - burns code 1, sets an HttpOnly `rsx_link` nonce cookie, sends the browser to the staff host;
   2. staff `/_session_link/confirm` - burns code 2, REQUIRES the browser's own staff cookie to name the bound row and `can_impersonate` to still pass, applies the impersonation;
@@ -274,7 +274,7 @@ It throws `AjaxUnauthorizedException` unless the staff-realm `can_impersonate` c
 
 ```php
 Portal_Session::begin_impersonation_from_staff($portal_user_id, $impersonator_user_id, $portal_site_id): string
-Portal_Session::stop_impersonation(): void      // clears the portal properties; the staff login stays
+Portal_Session::stop_impersonation(): void      // signs the view out; the portal pointer falls back; staff untouched
 Portal_Session::is_impersonating(): bool
 Portal_Session::get_impersonator_user_id(): ?int
 ```
@@ -337,7 +337,7 @@ Portal_Notification_Model::mark_all_read($portal_user_id);
 
 ## Part I - Config and testing
 
-`config('rsx.portal.*')`: `url` (`PORTAL_URL`, Part A), `session_lifetime_days` (30), `invitation_expiry_days` (14), `password_min_length` (8), `password_reset_expiry_hours` (1). **There is NO framework key for the portal's site**, deliberately - a mono-site app keeps its own (the template's `rsx.portal.site_id`) and a multi-tenant app has none at all.
+`config('rsx.portal.*')`: `url` (`PORTAL_URL`, Part A), `invitation_expiry_days` (14), `password_min_length` (8), `password_reset_expiry_hours` (1). **There is NO framework key for the portal's site**, deliberately - a mono-site app keeps its own (the template's `rsx.portal.site_id`) and a multi-tenant app has none at all.
 
 ```bash
 php artisan rsx:debug /dashboard --portal --portal-user=1
@@ -364,7 +364,8 @@ Portal_Session::cli_set_portal_user_id($portal_user->id);   // 0 = signed out
 - **A portal Ajax call is denied, or resolves staff data.** The request went to the bare `/_ajax/...` path, or the controller resolved to the staff realm. Use the generated stubs / `Rsx_Portal.internal_url()`, and declare `#[Auth_Realm('portal')]` on any portal controller outside a portal root.
 - **An upload from a portal page 419s or hits the staff path.** It used `fetch('/_upload')`. Use `Ajax.upload(form_data)`.
 - **A model returns "not found" to portal JS.** Either it has no `portal_fetch()` (add `Portal_Authorizable` + `portal_can_read()`), or `portal_can_read()` returned false - which is what it should do, fail-closed, for a record outside the user's memberships.
-- **Staff logged out when a portal session ended (or vice versa).** Something deleted or deactivated the row instead of clearing the experience's properties. Use the facade; never write session rows by hand.
+- **Staff signed out when a portal sign-in ended (or vice versa).** Something deleted or deactivated the browser's row instead of signing out one realm's user session. Use the facade; never write session rows by hand.
+- **A value parked during a portal login is gone after the challenge.** It was written before `begin_challenge()`, whose sign-out cleared the portal realm. Write it after.
 - **A screen fails to load during "View as Client"** with "This is a read-only session; changes are disabled." - an endpoint it calls is a read that lacks `#[Portal_Impersonation_Readable]`.
 
 Details: `php artisan rsx:man portal`. Related: `rspade:auth-gates`, `rspade:session-auth`, `rspade:model-fetch`, and the app skill `portal-app` (the shipped screens, layouts, membership model and read-only enforcement).

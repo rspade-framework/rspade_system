@@ -56,7 +56,7 @@ THE CONTRACT
        sanitize_encoded(), the SANITIZER, applied to every value that did not
        come from the database. encode_plain_text(), the PLAIN-TEXT CONVERSION,
        applied to every bare string before the sanitizer sees it - for an HTML
-       type, '<p>' . nl2br(htmlspecialchars($plain)) . '</p>'. The framework will
+       type, '<p>' . nl2brhtml($plain) . '</p>'. The framework will
        not let a type omit either, even when one is a passthrough; a
        passthrough is written down with the reason it is safe. An optional
        SANITIZER ON THE CLIENT, sanitize_encoded() on the JS class, runs at the
@@ -213,7 +213,7 @@ TWO TYPES, WORKED
                              ticks as li[data-list="checked"|"unchecked"]
                              (rsx:man sanitize_rich_text_html, CHECKLISTS);
                              Rich_Text_Display draws them.
-        encode_plain_text()  '<p>' . nl2br(htmlspecialchars($plain)) . '</p>'.
+        encode_plain_text()  '<p>' . nl2brhtml($plain) . '</p>'.
                              A bare string keeps its angle brackets, ampersands
                              and line breaks as the text they were.
         is_empty()           OVERRIDDEN: trim(strip_tags(...)) === ''. An

@@ -11,7 +11,7 @@ Two complementary layers, at the dispatch seam, **POST only** (GET never mutates
 
 ## The token
 
-A 32-byte random token, minted with the session row and stored on `_sessions.csrf_token`. **It belongs to the row**: a site switch, a logout and an impersonation leave it alone, and a SIGN-IN changes it, because a sign-in moves the browser to a new row (`rsx:man session`, Sign-In Rotation). A sign-in made by an Ajax call is handed the new token in that call's envelope, so the page keeps working without a reload. It reaches JavaScript only as `window.rsxapp.csrf`, which is populated on page render **only when a session already exists** (an anonymous first-visit page has `null` - no session is created merely to emit a token). It never lives in a page-readable cookie.
+A 32-byte random token, minted with the session row and stored on `_sessions.csrf_token`. **It belongs to the browser's row and rotates with the session token**: every sign-in and sign-out replaces both in place (`rsx:man session`, TOKEN ROTATION); a site switch and an impersonation leave it alone. A sign-in made by an Ajax call is handed the new token in that call's envelope, so the page keeps working without a reload. It reaches JavaScript only as `window.rsxapp.csrf`, which is populated on page render **only when a session already exists** (an anonymous first-visit page has `null` - no session is created merely to emit a token). It never lives in a page-readable cookie.
 
 ## Transport (handled for you)
 
@@ -30,7 +30,7 @@ One POST-gated call (`App\RSpade\Core\Session\Rsx_Csrf::enforce($request)`) in t
 
 A failure returns a clean auth-style error with no stack trace - the Ajax error contract for `/_ajax` and `/_upload` (`unauthorized` "CSRF token mismatch"; a `/_ajax/_batch` gets it under EVERY `call_id` it named, so each call rejects with it), a **419** for native form POSTs. The rejection is an already-rendered response carried by an `HttpResponseException` honored **before** the handler chain, so no error handler can replace it with a 500. The check uses `has_session()` and never creates a session for a token-less anonymous caller.
 
-**Exempt**: the external API (`#[Api_Endpoint]`, `/api/vN/*`) - it authenticates with a Bearer token and a cookie-less headless session, so there is no ambient cookie to forge, and it branches off before this seam.
+**Exempt**: the external API (`#[Api_Endpoint]`, `/api/vN/*`) - it authenticates with a Bearer token on the key's own session, with no cookie, so there is no ambient cookie to forge, and it branches off before this seam.
 
 `Session::get_csrf_token()` / `Session::verify_csrf_token($token)` exist for the framework's own use and for an exotic transport you are building yourself; ordinary application code never calls them.
 

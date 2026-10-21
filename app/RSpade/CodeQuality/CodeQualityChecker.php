@@ -6,10 +6,12 @@ use App\RSpade\CodeQuality\CodeQuality_Violation;
 use App\RSpade\CodeQuality\Manifest_Rule_Driver;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\CodeQuality\Support\Js_CodeQuality_Rpc;
+use App\RSpade\CodeQuality\Support\RuleDiscovery;
 use App\RSpade\CodeQuality\Support\Validation_Ledger;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
 use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 class CodeQualityChecker
@@ -134,10 +136,12 @@ class CodeQualityChecker
             }
         }
 
-        // Skip CodeQuality infrastructure files, but allow checking Rules directory
-        // This enables meta rules to check other rules for code quality violations
-        if (str_contains($file_path, '/app/RSpade/CodeQuality/') &&
-            !str_contains($file_path, '/app/RSpade/CodeQuality/Rules/')) {
+        // Skip CodeQuality infrastructure files, but check the rules themselves (and the
+        // contract they extend), so meta rules can hold rules to their own conventions. The
+        // test is against the DISCOVERED rule set, not a directory: an application rule lives
+        // under rsx/, and a file under Rules/ is only a rule if discovery says it is one.
+        if (Rsx_Paths::under_framework(Rsx_Paths::relative($file_path), 'CodeQuality/')
+            && !RuleDiscovery::is_rule_source($file_path)) {
             return;
         }
 

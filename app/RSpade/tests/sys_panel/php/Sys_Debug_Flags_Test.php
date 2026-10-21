@@ -33,6 +33,9 @@ use App\RSpade\Sys\App\Sys\DebugFlags\_Sys_Debug_Flags_Controller;
  */
 class Sys_Debug_Flags_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     /** An override no configuration on any box plausibly matches. */
     private const OVERRIDE = [
         'enabled' => '1',
@@ -183,8 +186,10 @@ class Sys_Debug_Flags_Test extends Rsx_Test_Abstract
      */
     public static function test_anonymous_is_unaffected_and_creates_no_session()
     {
-        // The runner declares a boot tenant for every test; an anonymous request has none.
+        // The runner declares a boot tenant for every test, and this class acts as a browser;
+        // an anonymous request has neither.
         static::__reset_session();
+        Session::$_browser_session_id_for_tests = null;
 
         static::__assert_false(Session::has_session(), 'no session to begin with');
         $rows = DB::table('_sessions')->count();

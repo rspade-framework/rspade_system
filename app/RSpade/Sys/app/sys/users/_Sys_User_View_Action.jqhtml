@@ -1,6 +1,6 @@
 <%--
 _Sys_User_View_Action - one login identity (login_users.id): its facts and every site
-membership, its live sessions, its sign-in history and its second factors and
+membership, where it is signed in, its sign-in history and its second factors and
 connected sign-in providers, and the actions on them.
 
 Three states: loading, a load failure (_Sys_Not_Found for a missing or soft-deleted

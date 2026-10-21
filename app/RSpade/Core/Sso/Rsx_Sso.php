@@ -44,6 +44,9 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
  */
 class Rsx_Sso extends Rsx_Sso_Abstract
 {
+    /** The session-value realm the ceremony state and the pending identity live in. */
+    public const SESSION_REALM = 'staff';
+
     /** Session value holding the in-flight ceremony: {state, provider, intent, code_verifier}. */
     public const STATE_KEY = 'sso.state';
 

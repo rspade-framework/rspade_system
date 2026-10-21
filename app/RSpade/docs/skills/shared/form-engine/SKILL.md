@@ -255,8 +255,8 @@ of bug this contract exists to kill.
 **While loading, `submit()` refuses.** Blank is a value, so a submit racing the fetch
 would validly clear every field the data had not reached.
 
-The veil colour is the app's: core reads `--rsx-form-veil` and falls back to a light
-veil, so a dark theme that does not declare it flashes white.
+The veil colour is the app's: core declares `--rsx-form-veil` on `:root` as a light veil
+and reads it bare, so a dark theme that does not redeclare it flashes white.
 
 ```scss
 :root         { --rsx-form-veil: rgba(255, 255, 255, 0.65); }

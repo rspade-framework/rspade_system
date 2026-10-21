@@ -8,6 +8,7 @@ namespace App\RSpade\Tests\ClassOverride\Php;
 
 use Composer\Autoload\ClassLoader;
 use App\RSpade\Core\Autoloader;
+use App\RSpade\Core\Files\Markdown_Rendition;
 use App\RSpade\Core\Overrides\Class_Override_Loader;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -111,6 +112,17 @@ class Override_Loader_Test extends Rsx_Test_Abstract
         $first = spl_autoload_functions()[0] ?? null;
 
         static::__assert_equals([Class_Override_Loader::class, 'load'], $first, 'the override loader must be in front of every other autoloader');
+    }
+
+    /** The HTML sanitizers' first use (HTMLPurifier, loaded on demand) leaves the loader first. */
+    public static function test_the_html_sanitizers_leave_the_loader_first()
+    {
+        sanitize_rich_text_html('<p>text</p>');
+        Markdown_Rendition::render("# Heading\n\ntext");
+
+        $first = spl_autoload_functions()[0] ?? null;
+
+        static::__assert_equals([Class_Override_Loader::class, 'load'], $first, 'a library used on demand must not put an autoloader in front of the override loader');
     }
 
     /** A mapped framework name resolves to the override, and the shadowed framework file is never included. */

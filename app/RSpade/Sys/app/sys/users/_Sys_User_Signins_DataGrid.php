@@ -38,9 +38,11 @@ class _Sys_User_Signins_DataGrid extends _Sys_DataGrid_Abstract
     protected static ?string $default_sort = 'created_at';
 
     /**
-     * Badge tone per status. A status not listed here is drawn as a failure.
+     * Badge tone per status. A status not listed here is drawn as a failure. Public: the
+     * Portal Users screen's sign-in grid draws the same vocabulary
+     * (Login_History_Abstract's statuses) with the same tones.
      */
-    private const TONES = [
+    public const TONES = [
         Login_History::STATUS_SUCCESS => 'ok',
         Login_History::STATUS_PASSKEY_ENROLLED => 'ok',
         Login_History::STATUS_PASSKEY_ENROLL_BEGUN => 'info',

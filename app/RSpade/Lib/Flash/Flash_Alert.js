@@ -11,6 +11,9 @@
  *   Flash_Alert.info('FYI: New feature available')
  *   Flash_Alert.warning('Are you sure about that?')
  *
+ * A message is PLAIN TEXT. It is written into the alert with .text(), so markup in it
+ * (from JS or from a PHP Flash_Alert::*() call) is shown literally, never rendered.
+ *
  * Features:
  * - Queue system prevents alert spam (2.5s minimum between alerts)
  * - Auto-dismiss after timeout (success: 4s, others: 6s)
@@ -504,7 +507,8 @@ class Flash_Alert {
             $alert.append('<i class="bi bi-exclamation-triangle-fill me-2"></i>');
         }
 
-        $alert.append(message);
+        // A flash message is PLAIN TEXT: written with .text(), so markup in it shows literally.
+        $alert.append($('<span></span>').text(message));
 
         // Wrap in container for animation
         const $alert_container = $('<div class="alert-wrapper">').append($alert);

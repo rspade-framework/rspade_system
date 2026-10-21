@@ -101,13 +101,24 @@ RUNS
     five are terminal (is_terminal()). A terminal run never changes again, except that a
     rerun creates a NEW run.
 
-    Each row records dispatched_by (a type-ref pair: the User_Model, Portal_User_Model or
-    Login_User_Model signed in when the run was created, null for a schedule, a worker or
-    the CLI), site_id (the current site, 0 when there is none) and audit_session_id (the
-    acting context it was started from - Session::get_audit_session_id()). dispatched_by and
-    site_id are what an application's view gate keys on (GATES AND THE BROWSER API); the three
-    together are what a task declared #[Run_As_Dispatcher] runs as (RUNNING AS THE
-    DISPATCHER).
+    Each row records who started it and from where:
+
+        dispatched_by     a type-ref pair: the User_Model, Portal_User_Model or
+                          Login_User_Model signed in when the run was created; null for a
+                          schedule, a worker or the CLI
+        site_id           the current site, 0 when there is none
+        user_session_id   the sign-in it was started from (Session::get_user_session_id() -
+                          a browser's staff or portal sign-in, or an API key's); null where
+                          there is none (a command, a plain task, a schedule)
+        audit_session_id  the acting context (Session::get_audit_session_id()); null where
+                          there is none
+        priority          the claim tier, stamped at insert (THE WORKER POOLS):
+                          Task_Runner::PRIORITY_RUN_AS_DISPATCHER (0), PRIORITY_ON_DEMAND
+                          (1), PRIORITY_SCHEDULED (2)
+
+    dispatched_by and site_id are what an application's view gate keys on (GATES AND THE
+    BROWSER API); user_session_id is what a task declared #[Run_As_Dispatcher] runs bound to
+    (RUNNING AS THE DISPATCHER).
 
 REPORTING (Task_Instance)
 
@@ -658,52 +669,94 @@ LOCKS: PROTECTING CRITICAL SECTIONS
 
 RUNNING AS THE DISPATCHER
 
-    A dispatched task runs as NOBODY: no session identity, no site, no realm - correct for
-    system work (a render queued by an upload, a mail drain, a schedule). A task that is a
-    PERSON'S request moved off the request thread declares it runs as that person:
+    EVERY RUN A WORKER EXECUTES STARTS BLANK AND ENDS BLANK. A worker runs unrelated tasks
+    back to back in one process, so before each run (a worker, or rsx:task:process --once)
+    it starts a fresh virtual session and a fresh revision unit, and after it -
+    however it ended - Session::_end_virtual() blanks the identity, site, impersonation,
+    declared tenant, portal identity, declared audit session, request realm, timezone and
+    every memo keyed on them. A plain run therefore acts as NOBODY: no identity, no site, no
+    realm, get_session_id() and get_audit_session_id() null - correct for system work (a
+    render queued by an upload, a mail drain, a schedule). It may declare an identity
+    itself (Session::set_login_user_id(), set_site_id()), and the declaration ends with the
+    run. rsx:man session, VIRTUAL SESSIONS.
+
+    A task that is A PERSON'S REQUEST MOVED OFF THE REQUEST THREAD - the asynchronous
+    stand-in for a user's Ajax endpoint - declares that it runs as that person:
 
         #[Task('Set the status of the selected records')]
         #[Run_As_Dispatcher]
         public static function bulk_set_status(Task_Instance $task, array $params = [])
 
-    Opt-in, per task. While a worker (or rsx:task:process --once) executes such a run, for
-    pre_task() and the method, the context recorded at dispatch is put back:
+    ANY TASK THAT IS THE ASYNCHRONOUS STAND-IN FOR A USER'S AJAX ENDPOINT MUST CARRY IT.
+    Without it the run acts as nobody: its writes are attributed to nobody, its site scope
+    is empty, and it cannot tell whose request it is finishing. The test: the task is
+    dispatched from a request on a user's behalf, and its writes should be attributed to
+    that user, or it reads the user's identity or site.
 
-        - the identity and the site: Session::get_login_user_id(), get_user_id(), get_user(),
-          get_site_id() and the site scope answer as they did in the dispatching request; a
-          run dispatched by a portal user runs in the portal realm
+    1. DISPATCH. Task_Runner::insert_row() stamps the run with the requester's
+       user_session_id (Session::get_user_session_id()) and audit_session_id, and the
+       claim tier PRIORITY_RUN_AS_DISPATCHER. Where there is no sign-in - nobody signed
+       in, a command, a plain task - dispatching it THROWS ("... can only be started from a
+       signed-in request"). Dispatched from inside another #[Run_As_Dispatcher] run it is
+       bound to the same sign-in.
+
+    2. CLAIM. Workers claim dispatcher runs before any other pending run (THE WORKER
+       POOLS).
+
+    3. RUN. Task_Dispatcher_Context::begin() loads that user session and starts a FROZEN,
+       BOUND virtual session from it, for pre_task() and the method:
+
+        - the identity, the site, the realm: the user session's. Session::get_login_user_id(),
+          get_user_id(), get_user(), get_site_id() and the site scope answer as they did in
+          the dispatching request; a portal sign-in runs in the portal realm
           (Rsx_Portal::is_portal_request(), Portal_Session::get_portal_user_id(), its site);
-        - attribution: Rsx_Model_Abstract::_resolve_context_actor() names the dispatcher, so
-          revisions, the created_by/updated_by pairs and an application's own log do;
-        - the acting context: Session::get_audit_session_id() answers the dispatch's
-          audit_session_id - its address, user agent and device;
-        - impersonation, faithfully: the run acts as the EFFECTIVE identity, and the
-          impersonator the dispatching request carried is declared too
+          an API key's runs as the key's owner;
+        - THE BINDING HOLDS AFTER SIGN-OUT: the run acts as the user session as it was when
+          the task was dispatched, even if that browser has signed out since or signed into
+          another account - it is the dispatching request, finishing later;
+        - impersonation, faithfully: the impersonator the user session carried is declared
           (Session::get_impersonator_login_user_id(),
-          Portal_Session::get_impersonator_user_id()).
+          Portal_Session::get_impersonator_user_id());
+        - the browser: Session::get_session_id() answers the dispatching browser's row and
+          get_user_session_id() the user session;
+        - attribution: Rsx_Model_Abstract::_resolve_context_actor() names the dispatcher, and
+          Session::get_audit_session_id() answers the dispatch's audit session, so
+          revisions, the created_by/updated_by pairs and an application's own log record the
+          requester and the request's own address, user agent and browser;
+        - the timezone: Rsx_Time resolves from the dispatcher.
 
-    Afterwards the worker is back to acting as nobody, so its next run starts clean. No
-    _sessions row is created and no cookie exists: it is a declaration.
+       FROZEN: every identity, site, realm and impersonation setter of Session and
+       Portal_Session (set_login_user_id(), logout(), set_site_id(),
+       set_temporary_site_id(), impersonate(), begin/stop_impersonation(), reset(),
+       set_portal_user_id(), ...) THROWS, and so do Session::put_value(), get_value() and
+       forget_value() - the browser's values are the browser as it is NOW, which is not
+       the request the run stands for. Pass what the task needs in its params.
 
-    An INLINE run (Task::internal(), and a run queued while the task system is off and then
-    executed inline) executes in its caller's own context already; nothing is restored.
+    4. REFUSALS - never a fallback to running as nobody. When the run starts, the dispatcher
+       must still be allowed to act: the login identity exists and, on a site, its
+       membership is active (users.is_enabled and sites.is_enabled -
+       User_Model::is_active()); a portal user exists, may sign in
+       (Portal_User_Model::can_login()) and its site is active; the user session exists.
+       Otherwise the run FAILS with the reason as its error and nothing executes. Account
+       statuses an application defines are its own to check, in the task.
 
-    REFUSALS. Never a fallback to running as nobody:
+    5. RESET. Session::_end_virtual() after the run, as for every run.
 
-        - dispatched with nobody signed in - Task::dispatch() throws ("dispatched with nobody
-          signed in");
-        - the dispatcher may no longer act when the run starts - the membership or its site
-          was disabled or deleted (users.is_enabled, sites.is_enabled: User_Model::is_active()),
-          the login identity or the portal user was deleted, the portal site was disabled -
-          the run FAILS with the reason and nothing executes. Account statuses an application
-          defines are its own to check, in the task.
+    INLINE. Task::internal() runs the task in its CALLER's context - a #[Run_As_Dispatcher]
+    task called inline from a request runs as that request - and SAVES and RESTORES the
+    caller's whole context around the call (Session::_snapshot_context() /
+    _restore_context()), whatever the task declared meanwhile. Inline from a command or a
+    plain task, a #[Run_As_Dispatcher] task has no sign-in to run as and is refused.
 
-    A rerun ($run->rerun()) is a new dispatch, so it runs as whoever asked for the rerun.
-    Running as the dispatcher grants nothing about who may watch or stop the run: the view
-    and control gates are unchanged.
+    NOT BY HAND. rsx:task:run refuses a #[Run_As_Dispatcher] task, exit 1, with
+    "[ERROR] <Service>::<method> runs as the user who dispatched it and can only be started
+    from a request: dispatch it with Task::dispatch() from an Ajax endpoint". TASK-RUN-AS-01
+    (a manifest-build FATAL) refuses #[Run_As_Dispatcher] on a method that is not a #[Task],
+    and beside #[Schedule] or #[Command] - neither has a signed-in dispatcher.
 
-    TASK-RUN-AS-01 (a manifest-build FATAL) refuses #[Run_As_Dispatcher] on a method that is
-    not a #[Task], and beside #[Schedule] or #[Command] - neither has a signed-in dispatcher.
+    A rerun ($run->rerun()) is a new dispatch, so it runs bound to whoever asked for the
+    rerun (refused where nobody is signed in). Running as the dispatcher grants nothing
+    about who may watch or stop the run: the view and control gates are unchanged.
 
 THE WORKER POOLS
 
@@ -713,7 +766,7 @@ THE WORKER POOLS
         on_demand  runs dispatched work                       default 2
                                                               (RSX_TASK_MAX_WORKERS)
         scheduled  runs #[Schedule] work - and claims queued  default 1
-                   dispatched work FIRST
+                   on-demand work FIRST
         kill       the kill workers that carry out force      default 10
                    stops and kills (LIFECYCLE CONTROL)
 
@@ -734,13 +787,27 @@ THE WORKER POOLS
 
         1. Take the pool lock. If the cap's worth of OTHER workers are members, release it
            and exit 0. Otherwise join.
-        2. Still under the lock, claim the next run: the oldest due PENDING run (both
-           pools); in the scheduled pool only, when none is due, the earliest due schedule,
-           whose run row is created here (origin Scheduled) in the same transaction that
-           advances its next_run_at. Release the lock.
+        2. Still under the lock, claim the next run: a due PENDING run (both pools), in
+           CLAIM ORDER; in the scheduled pool only, when no on-demand run is due, the
+           earliest due schedule, whose run row is created here (origin Scheduled) in the
+           same transaction that advances its next_run_at. Release the lock.
         3. Run the task, holding no pool lock.
         4. Take the lock, settle the run, and claim again (back to 2). When nothing is
            claimable, or --max-time (300 s) has passed, leave the pool and exit.
+
+    CLAIM ORDER. By claim tier (_tasks.priority, stamped at insert), then OLDEST due first
+    within a tier (scheduled_for, then id):
+
+        0  #[Run_As_Dispatcher] runs - somebody's request, waiting
+        1  every other on-demand run (Task::dispatch(), a rerun)
+        2  scheduled-origin runs
+
+    No schedule is ticked while a due on-demand run (tier 0 or 1) is pending and claimable
+    this pass: on-demand work goes first. A run set aside this pass because its run lock is
+    held (#[Exclusive], #[Debounce], a group) does not count and is passed over whatever its
+    tier, so a blocked run never holds up the runs behind it. rsx:task:process --once runs
+    the run a worker would claim next. Read through idx_tasks_claim_priority (status_id,
+    priority, scheduled_for, id).
 
     Two pools claim the same pending rows and each holds only its own lock, so EVERY CLAIM
     IS A GUARDED WRITE (WHERE the row is still PENDING) that must affect exactly one row; a
@@ -1143,9 +1210,9 @@ GATES AND THE BROWSER API
     task that changed gets its grant re-checked, and a task users need not see gets none.
     The view gate and the view scope must express the same grant (one run vs a list).
 
-    Worked example: system/app/RSpade/resource/reference_app/handlers/Task_Gate_Handlers.php
-    - a USER_TASKS map of 'Service::method' => [actions], granted to staff users on the runs
-    they started; the scope narrows to the same owner AND the same listed tasks.
+    The shape in full is a USER_TASKS map of 'Service::method' => [actions], granted to
+    staff users on the runs they started; the scope narrows to the same owner AND the same
+    listed tasks.
 
     ENDPOINTS. Rsx_Task_Controller (#[Auth('public')], #[Auth_Realm('any')] - the gates
     decide): get, report, output, messages, find, page, stop, force_stop, force_kill, cancel,
@@ -1258,9 +1325,9 @@ WIDGETS
                                                 shows the output as of opening, and its
                                                 Refresh button reads what is new.
 
-    Size every widget with ordinary CSS on its host. Worked example:
-    system/app/RSpade/resource/reference_app/app/frontend/system/tasks/ (a user's own runs,
-    a run card with the badge, a progress bar, the report browser and the console).
+    Size every widget with ordinary CSS on its host. Worked example: the /_sys Tasks
+    screen, system/app/RSpade/Sys/app/sys/tasks/ (the badge, progress, the report browser
+    and the console on one run; rsx:man sys_panel).
 
 THE SAMPLE TASK
 
@@ -1551,7 +1618,8 @@ DATABASE SCHEMA
 
     _tasks (Task_Run_Model) - one row per run:
         class, method, params (JSON), params_hash, origin_id, schedule_id, pool_id,
-        site_id, dispatched_by_id + dispatched_by_type, audit_session_id,
+        site_id, dispatched_by_id + dispatched_by_type, user_session_id, audit_session_id,
+        priority,
         status_id, status_reason, error, return_code,
         scheduled_for, started_at, completed_at, stop_requested_at, abandon_count, timeout,
         status_text, progress_percent, progress_done, progress_total, eta_at,

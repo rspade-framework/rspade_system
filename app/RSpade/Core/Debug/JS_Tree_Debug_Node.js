@@ -104,7 +104,7 @@ class JS_Tree_Debug_Node extends Component {
         if (state === 'loading') {
             $children.html('<div class="js-tree-debug-leaf js-tree-debug-loading">Loading...</div>');
         } else if (state === 'error') {
-            $children.html('<div class="js-tree-debug-leaf js-tree-debug-error">"' + this._escape_html(error) + '"</div>');
+            $children.append($('<div class="js-tree-debug-leaf js-tree-debug-error"></div>').text('"' + error + '"'));
         } else if (state === 'loaded') {
             this._render_relationship_result($children, data, rel_name);
         }
@@ -137,8 +137,9 @@ class JS_Tree_Debug_Node extends Component {
 
         // Handle primitive values (shouldn't happen but be safe)
         if (type !== 'array' && type !== 'object') {
-            $container.html('<div class="js-tree-debug-leaf"><span class="js-tree-debug-value js-tree-debug-' + type + '">' +
-                this._escape_html(JS_Tree_Debug_Node.format_value(data, type)) + '</span></div>');
+            $container.empty().append(
+                $('<div class="js-tree-debug-leaf"></div>').append(JS_Tree_Debug_Node.__value_span(data, type))
+            );
             return;
         }
 
@@ -164,21 +165,23 @@ class JS_Tree_Debug_Node extends Component {
             } else {
                 // Render leaf value directly
                 $container.append(
-                    '<div class="js-tree-debug-leaf">' +
-                    '<span class="js-tree-debug-key">' + this._escape_html(String(key)) + '</span>' +
-                    '<span class="js-tree-debug-colon">: </span>' +
-                    '<span class="js-tree-debug-value js-tree-debug-' + val_type + '">' +
-                    this._escape_html(JS_Tree_Debug_Node.format_value(value, val_type)) +
-                    '</span></div>'
+                    $('<div class="js-tree-debug-leaf"></div>').append(
+                        $('<span class="js-tree-debug-key"></span>').text(String(key)),
+                        $('<span class="js-tree-debug-colon"></span>').text(': '),
+                        JS_Tree_Debug_Node.__value_span(value, val_type)
+                    )
                 );
             }
         }
     }
 
-    _escape_html(str) {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
+    /**
+     * One leaf value as a styled span, its text written with .text()
+     */
+    static __value_span(value, type) {
+        return $('<span class="js-tree-debug-value"></span>')
+            .addClass('js-tree-debug-' + type)
+            .text(JS_Tree_Debug_Node.format_value(value, type));
     }
 
     // Static helpers for template use

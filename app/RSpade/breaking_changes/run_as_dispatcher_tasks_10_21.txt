@@ -1,0 +1,140 @@
+IDENTIFY THE TASKS THAT MUST RUN AS THEIR DISPATCHER: #[Run_As_Dispatcher]
+Date: 2026-10-21
+
+IF YOU DO NOTHING: a task of yours that an Ajax endpoint dispatches on a user's behalf runs as nobody - its revisions and created_by/updated_by name nobody, its site-scoped queries see no site, and Session::get_session_id() / get_audit_session_id() answer null inside it.
+
+SUMMARY
+    Category 2. Every application must review its tasks once and mark the ones
+    that stand in for a user's request.
+
+    Every run a task worker executes now starts in a BLANK virtual session and
+    ends with the process blanked again: no identity, no site, no realm, no
+    audit session, Session::get_session_id() null, session values refused. That
+    is right for system work. A task that is the ASYNCHRONOUS STAND-IN FOR A
+    USER'S AJAX ENDPOINT - the endpoint answers "started" and the work finishes
+    in the background - must declare #[Run_As_Dispatcher], and then runs bound
+    to the sign-in that dispatched it.
+
+WHAT #[Run_As_Dispatcher] DOES
+        #[Task('Set the status of the selected records')]
+        #[Run_As_Dispatcher]
+        public static function bulk_set_status(Task_Instance $task, array $params = [])
+
+    - At dispatch, the run records the requester's user session (the sign-in -
+      staff, portal, or an API key's) and audit session, and is claimed by a
+      worker before every other pending run.
+    - When it runs, it acts as that sign-in, FROZEN: identity, site, realm,
+      impersonator, timezone and audit session are the requester's - even if
+      that browser has signed out since or signed into another account.
+      Session::get_session_id() answers the requester's browser and
+      get_user_session_id() the user session. Revisions, the
+      created_by/updated_by pairs and your own logs name the requester, from
+      the request's own address and browser.
+    - Frozen means every identity, site, realm and impersonation setter
+      (set_login_user_id(), logout(), set_site_id(), set_temporary_site_id(),
+      begin/stop_impersonation(), the portal setters) THROWS, and so do
+      Session::put_value(), get_value() and forget_value(). Pass what the task
+      needs in its $params.
+    - Refused, never run as nobody: dispatching it where there is no sign-in
+      (a guest, a command, a task without the attribute) throws; and when the
+      run starts, it FAILS with nothing executed if the login identity was
+      deleted, the membership or its site disabled or deleted, the portal user
+      disabled or its site off, or the user session gone. Account statuses
+      your application defines are still yours to check in the task.
+    - It cannot be started by hand - rsx:task:run refuses it ("can only be
+      started from a request") - and #[Schedule] or #[Command] beside it is a
+      build FATAL (TASK-RUN-AS-01). Task::internal() from a request runs it as
+      that request.
+
+THE TEST: DOES A TASK NEED IT?
+    Yes, when ALL of the first and ANY of the rest hold:
+
+        - it is dispatched from a request on a user's behalf (an Ajax endpoint,
+          an API endpoint, a page action) - not by a schedule, a command or
+          another system task;
+        - its writes should be attributed to that user (a revision-recorded
+          model, created_by/updated_by, an action log, a notification "X did
+          Y");
+        - it reads the user's identity or site (Session::get_user(),
+          get_site_id(), a site-scoped model query, Rsx_Time in the user's
+          timezone, a permission check).
+
+    No, for system work: a render or extraction queued by an upload, a mail or
+    webhook drain, a cleanup, an import started from a command, anything
+    #[Schedule]d. Those run as nobody, which is correct; one that must act as
+    somebody declares it itself with Session::set_login_user_id() /
+    set_site_id(), and the declaration ends with the run.
+
+WHAT CHANGES FOR A TASK WITHOUT IT
+    - Session::get_session_id() and get_audit_session_id() are null. A column
+      it writes either id into must be nullable (see
+      session_model_redesign_10_21.txt).
+    - Session::get_session() and put_value() throw.
+    - Nothing it declares (identity, site, impersonation, timezone) carries over
+      to the next run on the same worker, and nothing a previous run declared
+      is visible to it.
+    - Task::internal() called from your code runs the task in YOUR context and
+      gives it back unchanged afterwards.
+
+WHAT CHANGES FOR A TASK THAT ALREADY CARRIES IT
+    - It is bound to the requester's SIGN-IN, not only the account: a run
+      dispatched under an impersonation runs as the impersonated account with
+      the impersonator declared; a portal sign-in's run is a portal run.
+    - Any call in it that changes identity or site, or touches session values,
+      now throws. Move that input into $params.
+
+ACTION REQUIRED
+    1. List every task your application dispatches, and from where:
+
+           php artisan rsx:task:list
+
+           # files that dispatch a task:
+           grep -rln "Task::dispatch(\|Task::internal(" rsx/ --include=*.php
+
+           # of those, the ones that are request handlers:
+           grep -rln "Task::dispatch(\|Task::internal(" rsx/ --include=*.php \
+               | xargs grep -ln "#\[Ajax_Endpoint\|#\[Api_Endpoint\|#\[Route\|#\[Portal_Route"
+
+           # the Service::method pairs they dispatch:
+           grep -rhoE "Task::(dispatch|internal)\(\s*['\"][A-Za-z_]+['\"]\s*,\s*['\"][a-z_0-9]+['\"]" rsx/ \
+               | sort -u
+
+       Also check dispatches that build the service or method name in a
+       variable, and tasks dispatched from a helper class an endpoint calls.
+
+    2. For each task dispatched from a request handler, apply THE TEST above.
+       Where it passes, add #[Run_As_Dispatcher] beside its #[Task] (and remove
+       any #[Schedule] or #[Command] on it - a task that is a user's request
+       has no business on a timer or a command line; split the scheduled part
+       into a task of its own).
+
+    3. In every task you marked, remove calls that set identity or site
+       (Session::set_login_user_id(), set_site_id(), the portal setters) and
+       any Session::put_value() / get_value() / forget_value(); pass those
+       values in $params instead. A task that used to receive a user id or a
+       site id in $params only to declare it can drop the declaration - it
+       already runs as them.
+
+    4. In every task you did NOT mark, find uses of Session::get_session_id(),
+       get_session(), get_audit_session_id() and the session values: they are
+       null or throw now.
+
+VERIFICATION
+    - php artisan rsx:check (TASK-RUN-AS-01 is clean).
+    - For each marked task: trigger it from its screen while signed in, then
+      sign that browser out before the worker picks it up (or dispatch it and
+      read the run in /_sys/tasks). The run completes, and its revisions /
+      created_by / your action log name the user who clicked, on their site.
+    - php artisan rsx:task:run <Service> <method> on a marked task exits 1 with
+      "runs as the user who dispatched it and can only be started from a
+      request".
+    - Disable the user's membership, dispatch nothing new, and let a queued run
+      start: it FAILS with the reason and changes nothing.
+    - Unmarked tasks still run and write no NOT NULL failures for a
+      session_id / audit_session_id column.
+
+SEE ALSO
+    rsx:man tasks - RUNNING AS THE DISPATCHER, the claim order
+    rsx:man session - VIRTUAL SESSIONS, TASKS RUN AS THEIR DISPATCHER
+    skill rspade:background-tasks - writing the task
+    session_model_redesign_10_21.txt - null session ids in commands and tasks

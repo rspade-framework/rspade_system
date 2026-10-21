@@ -504,9 +504,6 @@ return [
         // Where the portal is served; blank = APP_URL + '/_portal'.
         'url' => env('PORTAL_URL', ''),
 
-        // Portal session lifetime, in days.
-        'session_lifetime_days' => 30,
-
         // NOTE: there is deliberately NO portal site key here. Which site a portal
         // request serves is an APPLICATION fact, declared at runtime with
         // Portal_Session::set_site_id() (see rsx:man portal). A mono-site app reads
@@ -1853,31 +1850,56 @@ return [
     |
     */
     'sessions' => [
-        // HOW LONG A SIGN-IN LASTS, per experience. Enforced when a request arrives
-        // (Session::enforce_timeouts() / Portal_Session::enforce_timeouts()), not by a
-        // sweeper, and measured on the session row.
+        // Every value in this block is a DEFAULT. An application changes any of them in
+        // rsx/resource/config/rsx.php under the same keys (the two files are deep-merged,
+        // so overriding one key leaves its siblings at these values).
         //
-        // max_length_minutes: from the SIGN-IN. The hard ceiling - a session is ended
+        // HOW LONG A SIGN-IN LASTS, per experience. Enforced when a request arrives
+        // (Session::enforce_timeouts() / Portal_Session::enforce_timeouts()), and measured
+        // on the USER SESSION - one account's sign-in on one browser - never on the browser
+        // row, which outlives every sign-in made on it. The hourly
+        // Session_Cleanup_Service::cleanup_sessions sweep signs out the sign-ins whose
+        // browser never comes back once they are past a limit plus ajax_grace_minutes, so
+        // a "where you're signed in" list stops showing them as signed in.
+        //
+        // max_length_minutes: from the SIGN-IN. The hard ceiling - a sign-in is ended
         //   this long after it began however active it is, and the person signs in again
         //   (facing their second factor again, if they have one). This is the limit that
-        //   bounds a session somebody else got hold of, because a thief is never idle.
+        //   bounds a sign-in somebody else got hold of, because a thief is never idle.
+        //   Default: 10080 (7 days).
         // max_idle_minutes: from the last PAGE VIEW - a rendered page or an SPA
         //   navigation. Ajax and API calls are not page views, so an open tab that polls
-        //   does not keep a session alive.
+        //   does not keep a sign-in alive. Default: 480 (8 hours - a working day away
+        //   from the screen signs the browser out).
         //
-        // Default: 30 days each. 0 means no limit. An application handling sensitive
-        // records sets both far lower (hours); see rsx:man session (SESSION LIFETIME).
+        // 0 means no limit. Both are SECURITY WINDOWS on a sign-in, not operation
+        // timeouts: nothing is waiting on them, and expiry ends in the sign-in screen
+        // with a message saying why. An application handling sensitive records sets both
+        // lower; see rsx:man session (HOW SESSIONS TIME OUT).
         'staff' => [
-            'max_length_minutes' => 43200,
-            'max_idle_minutes' => 43200,
+            'max_length_minutes' => 10080,
+            'max_idle_minutes' => 480,
         ],
 
-        // The same two limits for a client-portal sign-in. One browser session row can
-        // carry both identities; each is judged by its own limits on its own requests.
+        // The same two limits for a client-portal sign-in. One browser can carry a staff
+        // and a portal sign-in at once; each is judged by its own limits on its own
+        // requests.
         'portal' => [
-            'max_length_minutes' => 43200,
-            'max_idle_minutes' => 43200,
+            'max_length_minutes' => 10080,
+            'max_idle_minutes' => 480,
         ],
+
+        // Days a BROWSER session may go unused before it is retired. A session row is the
+        // browser (its cookie, its values, the sign-ins made on it); one whose cookie has
+        // not been presented for this long is made INACTIVE - by the daily maintenance task
+        // Session_Cleanup_Service::deactivate_unused_sessions, or the next time it is
+        // presented, whichever comes first - and never deleted, since its user sessions are
+        // the record of where an account signed in; the browser carries on as a stranger,
+        // and whoever was still signed in on it is signed out ("Browser unused"). Also how
+        // long a signed-out user session stays in Session::get_sessions_for_user(). A
+        // RETENTION WINDOW, not an operation timeout: nothing is waiting on it.
+        // 0 = never retired. Default: 30.
+        'unused_session_days' => 30,
 
         // How long past its limit a sign-in still answers NON-PAGE requests - Ajax
         // calls, thumbnails, downloads. A page (and an SPA navigation) is refused at the
@@ -1887,41 +1909,31 @@ return [
         // answers the session_expired envelope. Default: 2 hours.
         'ajax_grace_minutes' => 120,
 
-        // Minutes of inactivity before an API session expires. Default: 7 days.
-        'api_timeout_minutes' => 10080,
-
-        // Minutes of inactivity before a PLAYWRIGHT session expires. Default: 1 day.
-        // The rsx:debug harness deletes its own session as each request ends, so
-        // this window only mops up requests that died before their shutdown hook.
-        'playwright_timeout_minutes' => 1440,
-
-        // Minutes of inactivity before a CLI session expires. Default: 1 day.
-        // A CLI process deletes its own session row when it ends, so this window
-        // only mops up after a process that was killed before its shutdown hook ran.
-        'cli_timeout_minutes' => 1440,
-
-        // Minutes of inactivity before a WEB session that never carried ANY identity
-        // (neither login_user_id nor portal_user_id) expires. Default: 30 days.
-        // Anonymous rows are minted by any visitor a CSRF token is issued to,
-        // including crawlers, so they are swept sooner than a signed-in session.
-        'anonymous_timeout_minutes' => 43200,
+        // Minutes a GUEST browser session - one nobody has ever signed in on, in either
+        // experience (_sessions.first_signed_in_at is null) - may go unused before the
+        // hourly Session_Cleanup_Service::cleanup_sessions sweep DELETES it, with its
+        // session values. Guest rows are minted by any visitor something asks a session of,
+        // crawlers included. A browser that has ever had a sign-in is never deleted: it is
+        // made inactive after unused_session_days instead. A RETENTION WINDOW, not an
+        // operation timeout: nothing is waiting on it. Default: 30 days.
+        'guest_expiry_minutes' => 43200,
 
         // Days an IMPERSONATION may run before the daily
         // Session_Cleanup_Service::end_stale_impersonations task ends it. An
         // impersonation has no sign-in of its own to expire - it rides the
         // impersonator's browser session - so without this it lasts as long as that
-        // browser stays signed in. A staff impersonation's row is retired (the
-        // impersonator signs in again as themselves); a portal View as Client loses
-        // its portal identity and the staff session carries on. A SECURITY WINDOW on
-        // a borrowed identity, not an operation timeout. 0 = never ended for age.
+        // browser stays signed in. A staff impersonation is signed out together with the
+        // impersonator's own sign-in behind it (they sign in again as themselves); a
+        // portal View as Client is signed out alone and the staff sign-in carries on. A
+        // SECURITY WINDOW on a borrowed identity, not an operation timeout. 0 = never ended
+        // for age.
         'impersonation_max_days' => 7,
 
-        // How many concurrent WEB sessions one user may hold. On every sign-in the
-        // user's older web sessions beyond this count (by last_active) are signed
-        // out - the staff cap deactivates the row, the portal cap clears the portal
-        // properties off it (the row is that browser's session and may carry a staff
-        // login). Bounds the "one row per login forever" growth pattern at its source
-        // and limits how many places a stolen-then-abandoned session can persist.
+        // How many browsers one account may be signed in on at once, per realm. On every
+        // sign-in the account's older signed-in user sessions beyond this count (by last
+        // activity) are signed out - only that realm's sign-in on each evicted browser;
+        // the browser row and any other sign-in on it are untouched. Limits how many
+        // places a stolen-then-abandoned session can persist.
         //
         // Set to 0 or null to DISABLE the feature entirely (no session is ever
         // signed out on login). PLAYWRIGHT and API sessions are never counted or
@@ -2109,8 +2121,8 @@ return [
         // device_is_trusted($identity) before starting the next challenge. Nothing skips a
         // challenge on its own: the application decides who a trusted browser excuses. With
         // a realm at 0, trust_this_device() throws and device_is_trusted() is always false.
-        // A browser is its _session_devices row, kept across sign-ins and expiries and lost
-        // with its cookie. See rsx:man two_factor, TRUSTED BROWSERS.
+        // A browser is its _sessions row, kept across sign-ins and sign-outs (its tokens
+        // rotate in place) and lost with its cookie. See rsx:man two_factor, TRUSTED BROWSERS.
         'trusted_device_days' => [
             'staff' => 0,
             'portal' => 0,

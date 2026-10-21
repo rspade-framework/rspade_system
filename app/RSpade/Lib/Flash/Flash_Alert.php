@@ -206,12 +206,11 @@ class Flash_Alert
      */
     protected static function _create_message(string $message, int $type_id): void
     {
-        // Console context: print, never persist. This is DELIBERATE POLICY, not a
-        // limitation - a CLI process CAN mint a real _sessions row on demand
-        // (Session::__activate_cli) and flash still refuses to use one. A flash alert
-        // is a message for a browser that is about to render; a command has an operator
-        // reading its output right now, and that terminal is the honest delivery
-        // channel. Owner ruling 2026-08-09.
+        // Console context: print, never persist. A command runs a virtual session with no
+        // browser to queue against, and that is not the reason: a flash alert is a message
+        // for a browser that is about to render; a command has an operator reading its
+        // output right now, and that terminal is the honest delivery channel. Owner ruling
+        // 2026-08-09.
         if (app()->runningInConsole()) {
             static::_emit_cli($message, $type_id);
 
@@ -252,11 +251,14 @@ class Flash_Alert
      */
     protected static function _resolve_session_id(): int
     {
-        if (Rsx_Portal::is_portal_request()) {
-            return Portal_Session::get_session_id();
+        $session_id = Rsx_Portal::is_portal_request() ? Portal_Session::get_session_id() : Session::get_session_id();
+
+        // Only a process with no browser answers null, and console context never queues.
+        if ($session_id === null) {
+            shouldnt_happen('Flash_Alert: no session to queue against outside console context');
         }
 
-        return Session::get_session_id();
+        return $session_id;
     }
 
     /**

@@ -49,6 +49,9 @@ use App\RSpade\Tests\Sso\Php\Fake_Sso_Provider;
  */
 class Sso_Controller_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     /** Config keys these tests overwrite, restored in teardown. */
     private static array $config_backup = [];
 

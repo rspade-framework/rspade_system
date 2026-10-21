@@ -62,6 +62,9 @@ use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
  */
 class Rsx_Portal_Sso extends Rsx_Sso_Abstract
 {
+    /** The session-value realm the ceremony state and the pending identity live in. */
+    public const SESSION_REALM = 'portal';
+
     /** Session value holding the in-flight PORTAL ceremony. */
     public const STATE_KEY = 'portal_sso.state';
 

@@ -73,7 +73,7 @@ class Rich_Text extends Rsx_Text_Abstract
     // REQUIRED. A bare string is plain text: escape it, keep its line breaks.
     public static function encode_plain_text(string $plain): string
     {
-        return '<p>' . nl2br(htmlspecialchars($plain, ENT_QUOTES | ENT_HTML5)) . '</p>';
+        return '<p>' . nl2brhtml($plain) . '</p>';
     }
 
     // OVERRIDDEN: the encoding wraps content. <p><br></p> is empty.

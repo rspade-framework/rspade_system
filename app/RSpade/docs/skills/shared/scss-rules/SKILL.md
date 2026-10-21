@@ -1,6 +1,6 @@
 ---
 name: scss-rules
-description: "The SCSS rules RSpade enforces regardless of what an application's theme looks like - the single-class wrap (SCSS-SCOPE-01), BEM child classes prefixed with the exact PascalCase component name, no nested component selectors, no <style> tags and no hand-injected stylesheets, rsx/lib being non-visual, SCSS-SID-01 and SCSS-ANIM-01, and how SCSS reaches the browser through a module bundle's include order. Use when writing or moving an SCSS file, naming a BEM child class, splitting a stylesheet, wondering why a component renders unstyled or why editing a partial changed nothing, or responding to SCSS-SCOPE-01, SCSS-SID-01 or SCSS-ANIM-01."
+description: "The SCSS rules RSpade enforces regardless of what an application's theme looks like - the single-class wrap (SCSS-SCOPE-01), BEM child classes prefixed with the exact PascalCase component name, no nested component selectors, no <style> tags and no hand-injected stylesheets, rsx/lib being non-visual, SCSS-SID-01, SCSS-ANIM-01 and SCSS-PHANTOM-TOKEN-01 (no var(--token, #literal) default), and how SCSS reaches the browser through a module bundle's include order. Use when writing or moving an SCSS file, naming a BEM child class, splitting a stylesheet, wondering why a component renders unstyled or why editing a partial changed nothing, or responding to SCSS-SCOPE-01, SCSS-SID-01, SCSS-ANIM-01 or SCSS-PHANTOM-TOKEN-01."
 ---
 
 # SCSS rules the framework enforces
@@ -90,13 +90,18 @@ Child classes use the **exact PascalCase component name** as prefix:
 element simply renders unstyled with nothing to report it. This is the single most common
 cause of "my component has no styles".
 
-## Two more lint rules
+## Three more lint rules
 
 - **SCSS-SID-01** - never write a selector against `$sid` / `data-sid`. `$sid` is the
   component's own JS handle, not a styling hook; give the element a BEM class.
 - **SCSS-ANIM-01** - no animations, transforms or element movement. Serious business
   tools: hover effects only on interactive elements, and nothing moves. (`.min.css` /
   `.min.scss` are skipped.)
+- **SCSS-PHANTOM-TOKEN-01** - read a token bare, `var(--x)`, never `var(--x, #2563eb)`: the
+  literal default is painted whenever `--x` is undeclared, so a typo or a token that never
+  existed looks right in one theme and silently ignores every other theme and dark mode.
+  Any default that is not itself a `var()` read is reported; a chain `var(--x, var(--y))` is
+  fine. A missing token is declared in the theme, with its dark value. `vendor/` is skipped.
 
 **Granting an exception is `@<RULE-ID>-EXCEPTION` in a comment, and that spelling only** -
 e.g. `// @SCSS-ANIM-01-EXCEPTION the approve-flash is a colour-only pulse, no movement`.

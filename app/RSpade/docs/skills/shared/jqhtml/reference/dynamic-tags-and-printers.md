@@ -132,8 +132,10 @@ jqhtml.add_object_printer(function (value) {
   printer to return anything else handles the value and the rest are not called. That is
   what lets an application register beside the framework without either knowing about
   the other.
-- **Primitives never enter the chain**, and arrays keep their existing coercion. Ordinary
-  interpolation costs exactly what it always did.
+- **Primitives never enter the chain**, and neither do arrays: an array interpolated with
+  `<%= %>`, `<%!= %>` or `<%br= %>` prints the literal text `(Array)`, so join it
+  (`<%= tags.join(', ') %>`) or loop over it. A markup object (`content()`, a slot) is
+  spliced, never printed. Ordinary interpolation costs exactly what it always did.
 - **A returned string is treated as a string literal at that site**: escaped by `<%= %>`,
   raw under `<%!= %>`, escaped-with-breaks under `<%br= %>`. A printer cannot opt out of
   escaping — a type needing markup returns a descriptor and lets its component own that.

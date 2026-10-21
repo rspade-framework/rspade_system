@@ -52,6 +52,22 @@ use App\RSpade\Core\Session\Session;
 class Revision
 {
     /**
+     * The value recorded in place of a never-exported column's before AND after.
+     *
+     * A column in the model's never_exported_columns() is a secret, and a secret's history
+     * is THAT it changed, never what it was or became: the differ records such a change as
+     * `[REDACTED, REDACTED]`, so the stored document never holds the value, and diff()
+     * hands the marker back for a renderer to show as "changed". Both sides are the marker
+     * on a create and on a clear too: the pair states that the column changed, and neither
+     * side says anything about what it held.
+     *
+     * A plain string so it survives JSON and the codec untouched, spelled so it cannot be
+     * mistaken for data a user typed. Test for it with Revision_Model::is_redacted(), never
+     * by comparing against a copy of the literal.
+     */
+    public const REDACTED = '__RSX_REDACTED__';
+
+    /**
      * The `source` name each reset point declares, mapped to its stored enum value. A name
      * outside this map is a programming error and throws: the source is a fixed vocabulary,
      * not a free-form label, and a typo would silently create an unqueryable transaction.

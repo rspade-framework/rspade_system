@@ -265,9 +265,9 @@ HOW THE CHECKS RUN - THE SEAMS
         the model for that layer.
 
     #[Api_Endpoint]  (API dispatch)
-        After bearer-key identity establishes the headless session, before
-        the method. The same staff-realm checks apply (the bearer session IS
-        a staff identity); denial -> the API's standard 403 error shape.
+        After the bearer key's identity is installed (the key's own session),
+        before the method. The same staff-realm checks apply (the key's owner
+        IS a staff identity); denial -> the API's standard 403 error shape.
 
     @route actions  (Spa.dispatch - client)
         Before action instantiation: the target's checks are resolved against

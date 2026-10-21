@@ -14,7 +14,9 @@ use App\RSpade\Core\Manifest\Manifest;
  * toArray() is the one serializer behind fetch(), relationship and list payloads, the page's
  * user object and the external API. A column it does not strip travels to every browser that
  * reads the record. For a credential that is a security event with no error anywhere, and the
- * only defence is remembering to declare it - which this rule removes the need for.
+ * only defence is remembering to declare it - which this rule removes the need for. The one
+ * declaration also redacts the column's values from the revision lane (Revision::REDACTED), so
+ * the fix this rule asks for closes both doors.
  *
  * SECRET-SHAPED, deliberately narrow so that a finding is always worth reading:
  *
@@ -169,6 +171,9 @@ class ModelNeverExport_CodeQualityRule extends CodeQualityRule_Abstract
                 . "    public static \$neverExport = ['{$column}'];\n"
                 . "The effective list is the UNION of every \$neverExport up the inheritance chain, so an "
                 . "override lists only what it adds - it can no longer drop a column its base protects.\n"
+                . "The same declaration covers the revision lane: on a model with \$revisions, a change to a "
+                . "never-exported column is recorded with both values replaced by Revision::REDACTED, so the "
+                . "column needs no \$revision_exclude entry and the history still says it changed.\n"
                 . "If the column is exported ON PURPOSE, declare it in this file with the reason:\n"
                 . "    // @" . self::RULE_ID . "-EXCEPTION {$column} - <why a browser may hold it>\n"
                 . "See: php artisan rsx:man model, NEVER EXPORT FIELDS",

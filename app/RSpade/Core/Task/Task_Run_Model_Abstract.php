@@ -67,6 +67,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property array $params
  * @property string $params_hash
  * @property int $pool_id
+ * @property int $priority
  * @property int $progress_done
  * @property float $progress_percent
  * @property int $progress_total
@@ -83,6 +84,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
+ * @property int $user_session_id
  * @property int $worker_generation
  * @property string $worker_host
  * @property int $worker_id

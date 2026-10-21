@@ -79,10 +79,11 @@ use App\RSpade\Lib\Flash\Flash_Alert;
  * application. link_pending() is the redemption, and it is the application that decides it
  * may happen.
  *
- * SESSION VALUES SURVIVE LOGOUT - a realm's logout clears the session's IDENTITY and not
- * the row, and _session_values hangs off that row. That is what lets begin() park a state
- * for an anonymous visitor (put_value is a writer and mints the session), and what lets
- * _complete_login() hand a pending 2FA challenge across the same seam.
+ * THE CEREMONY STATE AND THE PENDING IDENTITY ARE THE REALM'S SESSION VALUES (SESSION_REALM).
+ * begin() parks the state for an anonymous visitor too (put_value is a writer and mints the
+ * browser's session), a sign-in from signed-out keeps them, and the realm's next sign-out -
+ * or another account signing in over it - clears them. The other realm's sign-ins never
+ * touch them. _complete_login() hands a pending 2FA challenge on through the same store.
  *
  * ACTIVITY IS CONFIGURED, NOT DERIVED. A provider is live because rsx.sso.providers.<key>.
  * enabled is true and for no other reason - mode, hostname and APP_URL have no bearing. A
@@ -357,7 +358,8 @@ abstract class Rsx_Sso_Abstract
                 'intent' => $intent === self::INTENT_LINK ? self::INTENT_LINK : self::INTENT_LOGIN,
                 'code_verifier' => $begun['code_verifier'],
             ],
-            static::pending_expires_at()
+            static::pending_expires_at(),
+            static::SESSION_REALM
         );
 
         return new RedirectResponse($begun['url']);
@@ -396,8 +398,8 @@ abstract class Rsx_Sso_Abstract
 
         $provider = self::provider($key);
 
-        $parked = Session::get_value(static::STATE_KEY);
-        Session::forget_value(static::STATE_KEY);
+        $parked = Session::get_value(static::STATE_KEY, null, static::SESSION_REALM);
+        Session::forget_value(static::STATE_KEY, static::SESSION_REALM);
 
         if (!static::__realm_enabled()) {
             return static::_fail(null, 'We could not complete that sign-in. Please try again.', 'realm disabled');
@@ -428,7 +430,7 @@ abstract class Rsx_Sso_Abstract
 
         // UNLINKED: the provider proved who owns the account, and nothing here knows who
         // that is. The identity is parked half-authenticated and the APPLICATION decides.
-        Session::put_value(static::PENDING_KEY, $identity, static::pending_expires_at());
+        Session::put_value(static::PENDING_KEY, $identity, static::pending_expires_at(), static::SESSION_REALM);
 
         $destination = Rsx::trigger_resolve(static::__hook('identity.unlinked'), $identity);
 
@@ -467,7 +469,7 @@ abstract class Rsx_Sso_Abstract
      */
     public static function pending(): ?array
     {
-        $pending = Session::get_value(static::PENDING_KEY);
+        $pending = Session::get_value(static::PENDING_KEY, null, static::SESSION_REALM);
 
         if (!is_array($pending) || !isset($pending['provider_key'], $pending['provider_user_key'])) {
             return null;
@@ -503,7 +505,7 @@ abstract class Rsx_Sso_Abstract
 
         $row = static::_link(static::_resolve_id($identity), $pending);
 
-        Session::forget_value(static::PENDING_KEY);
+        Session::forget_value(static::PENDING_KEY, static::SESSION_REALM);
 
         return $row;
     }
@@ -535,7 +537,7 @@ abstract class Rsx_Sso_Abstract
      */
     public static function abandon_pending(): void
     {
-        Session::forget_value(static::PENDING_KEY);
+        Session::forget_value(static::PENDING_KEY, static::SESSION_REALM);
     }
 
     // -------------------------------------------------------------------------

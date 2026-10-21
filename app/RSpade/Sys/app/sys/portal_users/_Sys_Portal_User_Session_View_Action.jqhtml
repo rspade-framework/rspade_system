@@ -1,0 +1,77 @@
+<%--
+_Sys_Portal_User_Session_View_Action - one user session of a portal user: one browser's
+sign-in to the client portal as it (or a staff member's View as Client of it), however
+many times it signed in there. Its facts, and every address and browser it acted from.
+READ-ONLY, like the rest of the Portal Users screen.
+
+Three states: loading, a load failure (_Sys_Not_Found when the portal user is missing or the
+id is not one of its listed sessions - the screen shows exactly what the Sessions tab lists;
+_Sys_Error for anything else), and the record - a header over the facts and
+_Sys_Audit_Sessions_DataGrid.
+--%>
+<Define:_Sys_Portal_User_Session_View_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+    <% if (this.data.loading) { %>
+        <Spinner class="_Sys_Portal_User_Session_View_Action__loading" />
+    <% } else if (this.data.load_error && this.data.load_error.code === Ajax.ERROR_NOT_FOUND) { %>
+        <_Sys_Not_Found $record_type="Session" $back_label="Back to the portal user" $back_url=(Rsx.Route('_Sys_Portal_User_View_Action', this.args.id, {tab: 'sessions'})) />
+    <% } else if (this.data.load_error) { %>
+        <_Sys_Error $error_data=this.data.load_error.message />
+    <% } else { %>
+        <%
+            const _u = this.data.user;
+            const _s = this.data.session;
+        %>
+        <_Sys_Page_Header $title=_s.device_summary $icon="bi-laptop" $subtitle=(_u.email + ' - portal session #' + _s.id)>
+            <Slot:meta>
+                <% if (_s.is_signed_in) { %>
+                    <_Sys_Status_Badge $status="ok" $label="Signed in" />
+                <% } else { %>
+                    <_Sys_Status_Badge $status="muted" $label="Signed out" />
+                <% } %>
+                <% if (_s.is_impersonation) { %>
+                    <_Sys_Status_Badge $status="info" $label="View as Client" />
+                <% } %>
+                <% if (_s.is_current) { %>
+                    <span class="_Sys_Portal_User_Session_View_Action__note">this browser</span>
+                <% } %>
+            </Slot:meta>
+            <Slot:actions>
+                <a class="btn btn-sm btn-secondary" href="<%= Rsx.Route('_Sys_Portal_User_View_Action', _u.id, {tab: 'sessions'}) %>">All sessions</a>
+            </Slot:actions>
+        </_Sys_Page_Header>
+
+        <_Sys_Section $title="Details" $icon="bi-info-circle">
+            <_Sys_Detail_List>
+                <_Sys_Detail_Item $label="Portal user">
+                    <a href="<%= Rsx.Route('_Sys_Portal_User_View_Action', _u.id) %>"><%= _u.email %></a>
+                </_Sys_Detail_Item>
+                <_Sys_Detail_Item $label="State" $value=(_s.is_signed_in ? 'Signed in' : (_s.sign_out_reason || 'Signed out') + ' - ' + Rsx_Time.format_datetime(_s.signed_out_at)) />
+                <_Sys_Detail_Item $label="Browser type" $value=_s.type_label />
+                <_Sys_Detail_Item $label="Last IP" $value=_s.ip_address $mono=true />
+                <_Sys_Detail_Item $label="User agent" $value=_s.user_agent />
+                <_Sys_Detail_Item $label="First signed in here" $value=(_s.first_seen ? Rsx_Time.format_datetime(_s.first_seen) : null) />
+                <_Sys_Detail_Item $label="This sign-in" $value=(_s.signed_in_at ? Rsx_Time.format_datetime(_s.signed_in_at) : null) />
+                <_Sys_Detail_Item $label="Last active" $value=(_s.last_active ? Rsx_Time.format_datetime(_s.last_active) + ' (' + Rsx_Time.relative(_s.last_active) + ')' : null) />
+                <_Sys_Detail_Item $label="Sign-ins" $value=_s.sign_in_count />
+                <% if (_s.is_impersonation) { %>
+                    <_Sys_Detail_Item $label="Viewed as client by">
+                        <% if (_s.impersonator_login_user_id) { %>
+                            <a href="<%= Rsx.Route('_Sys_User_View_Action', _s.impersonator_login_user_id) %>"><%= _s.impersonator_email || ('#' + _s.impersonator_login_user_id) %></a>
+                        <% } else { %>
+                            staff user #<%= _s.impersonator_user_id %>
+                        <% } %>
+                        <% if (_s.impersonation_started_at) { %>
+                            <span class="_Sys_Portal_User_Session_View_Action__dim">since <%= Rsx_Time.format_datetime(_s.impersonation_started_at) %></span>
+                        <% } %>
+                    </_Sys_Detail_Item>
+                <% } %>
+            </_Sys_Detail_List>
+        </_Sys_Section>
+
+        <_Sys_Audit_Sessions_DataGrid $data_source=_Sys_Portal_Users_Controller.audit_sessions_fetch $base_params=({portal_user_id: _u.id, user_session_id: _s.id}) />
+    <% } %>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Portal_User_Session_View_Action>

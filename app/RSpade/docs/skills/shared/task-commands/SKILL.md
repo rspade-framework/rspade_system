@@ -1,6 +1,6 @@
 ---
 name: task-commands
-description: "Giving a background task its own artisan command in RSpade by annotating it `#[Command('prefix:name', 'Description')]` beside its `#[Task]`, and the console contract every console run shares with `rsx:task:run`: the task's stdout is the command's stdout, its stderr (each status() change included) is the command's stderr, and the exit code is the task's return code. Use when asked to \"make an artisan command\", \"add a CLI command\", a cron entry or deploy step that runs app work, when piping a task's output into another program, when choosing between `$task->stdout()`, `$task->stderr()` and `$task->status()` for console output, when a command exits non-zero unexpectedly, or when a manifest build fails with \"#[Command] may only annotate a #[Task] method\", \"needs a 'prefix:name' segment\", \"The 'rsx:' prefix belongs to the framework\", \"already a framework command\", or \"the description and is required\"."
+description: "Giving a background task its own artisan command in RSpade by annotating it `#[Command('prefix:name', 'Description')]` beside its `#[Task]`, and the console contract every console run shares with `rsx:task:run`: the task's stdout is the command's stdout, its stderr (each status() change included) is the command's stderr, and the exit code is the task's return code. Use when asked to \"make an artisan command\", \"add a CLI command\", a cron entry or deploy step that runs app work, when piping a task's output into another program, when choosing between `$task->stdout()`, `$task->stderr()` and `$task->status()` for console output, when a command exits non-zero unexpectedly, or when a manifest build fails with \"#[Command] may only annotate a #[Task] method\", \"needs a 'prefix:name' segment\", \"The 'rsx:' prefix belongs to the framework\", \"already a framework command\", or \"the description and is required\", or when rsx:task:run refuses a task with \"runs as the user who dispatched it and can only be started from a request\" (#[Run_As_Dispatcher], TASK-RUN-AS-01)."
 ---
 
 # Task Commands
@@ -83,6 +83,8 @@ nobody's console, and a queued run writes its lines to the database only. Your t
 cannot tell which is happening, and must not try to - report with `$task->stdout()`,
 `stderr()` and `status()`, never `$this->line()`.
 
+**A console run acts as nobody** (a virtual session: `get_session_id()` and `get_audit_session_id()` null, session values throw) until the task declares an identity with `Session::set_login_user_id()` / `set_site_id()`. **A `#[Run_As_Dispatcher]` task cannot be run from a console** - it runs as the user whose request dispatched it, and a command line is nobody's request: `rsx:task:run` refuses it, exit 1 (`[ERROR] X::y runs as the user who dispatched it and can only be started from a request: dispatch it with Task::dispatch() from an Ajax endpoint`), and `#[Command]` beside it fails the build (`TASK-RUN-AS-01`).
+
 A console run is an inline run: `#[Exclusive]`/`#[Debounce]` hold (it waits for a running
 instance of its identity). Being inline, it is never killed for time - the silence limit
 (`rsx.tasks.silent_timeout`) applies only to runs a pool worker executes.
@@ -121,6 +123,7 @@ the build stays broken until the declaration is fixed.
 | `One command name names exactly one task` | Two `#[Command]`s with the same name | Rename one |
 | `That name is already a framework command` | Collides with a `$signature` under `app/RSpade/Commands` or `app/Console/Commands` | Rename yours; an alias never shadows one |
 | `The second argument is the description and is required` | Missing or blank | Write the line `php artisan list` prints |
+| `TASK-RUN-AS-01` | `#[Command]` beside `#[Run_As_Dispatcher]` | A task that runs as its dispatcher has no user on a command line - drop one of the two |
 
 Named arguments work: `#[Command(name: 'myapp:import', description: 'Import')]`.
 `#[Command]` is reflection-only - **never define a Command attribute class.**

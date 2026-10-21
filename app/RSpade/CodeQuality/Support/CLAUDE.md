@@ -72,20 +72,35 @@ routinely names files that vanished between the scan and the check), and so does
 syntax error - the lint stage is what reports syntax, and a rule must not turn an unparseable
 file into its own kind of failure.
 
-## RuleDiscovery - one discovery per process
+## RuleDiscovery - framework rules on disk, application rules by class
 
-`RuleDiscovery::rule_files()` returns `[fqcn => absolute path]` for every rule class, memoized
-for the process; `discover_rules()` instantiates them. The walk is a
+`RuleDiscovery::rule_files()` returns `[fqcn => absolute path]` for every rule class - the
+union of two sources - and `discover_rules()` instantiates them.
+
+**Framework rules** (`framework_rule_files()`) are walked on disk under
+`app/RSpade/CodeQuality/Rules/`, memoized for the process. The walk is a
 `RecursiveIteratorIterator`, and that matters: the predecessor was
 `glob('Rules/**' . '/*.php')`, **PHP's `glob()` has no `**`**, and the pattern matched exactly
 one directory level by accident. A rule filed two levels deep would have been silently never
 discovered and never run. `Rule_Discovery_Depth_Test` writes one and proves it is found.
 
-`file_for($fqcn)` is what the driver fingerprints a rule by.
+**Application rules** (`app_rule_files()`) are every other concrete class
+`Manifest::php_class_records_extending('CodeQualityRule_Abstract')` returns - in a real tree,
+classes under `rsx/` - memoized per saved index hash, so a rebuild in the same process is
+never answered from the old index. `select_app_rule_files()` is the pure selection over class
+records. `discover_rules()` refuses an application rule whose id lacks the `APP-` prefix
+(`app_rule_id_problem()` / `assert_app_rule_id()`) and two application rules sharing an id,
+with `YoureDoingItWrongException`.
 
-A rule file the application OVERRIDES (`Manifest::override_for()`) is never included: its class
-name is answered by the class override loader with the application's class, and `rule_files()`
-maps the FQCN to the override's file - so the override is the rule that runs.
+`files_for($fqcn)` is what the driver fingerprints a rule by: the rule's file plus every
+ancestor between it and `CodeQualityRule_Abstract` the index knows (an application's shared
+rule base). `is_rule_source()` / `is_app_rule_source()` answer "is this file a rule" for the
+checker's CodeQuality skip and for META-INHERIT-01.
+
+A rule file the application OVERRIDES (`Manifest::override_for()`) is never included as itself:
+its class name is answered by the class override loader with the application's class, and
+`framework_rule_files()` maps the FQCN to the override's file - so the override is the rule
+that runs, under the framework id, and `select_app_rule_files()` does not count it again.
 
 ## Validation_Ledger - the ONE store of "already passed"
 

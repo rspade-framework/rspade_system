@@ -282,13 +282,13 @@ SESSION & AUTH
     use App\RSpade\Core\Portal\Portal_Session;
 
     Portal_Session is the portal's Session. It is site-scoped and is a FACADE
-    over the PORTAL PROPERTIES of the one session the browser has - not a second
-    session. Never read or write the staff properties from portal code, and never
-    the portal properties from main-app code.
+    over the PORTAL SIGN-IN of the one session the browser has - not a second
+    session. Never read or write the staff sign-in from portal code, and never
+    the portal sign-in from main-app code.
 
     That rule is for APPLICATION code. The framework surfaces that serve BOTH
     experiences resolve the experience themselves from
-    Rsx_Portal::is_portal_request() and reach the right properties without being
+    Rsx_Portal::is_portal_request() and reach the right sign-in without being
     told - and @csrf and Flash_Alert simply use the browser's one session. So
     portal code writes them exactly like staff code:
 
@@ -298,16 +298,18 @@ SESSION & AUTH
     Do not hand-roll a portal variant of either: a portal-specific CSRF input or
     flash mechanism reintroduces the coupling these surfaces exist to hide.
 
-    Storage: the portal identity lives in portal-shaped COLUMNS on the browser's
-    _sessions row - portal_user_id, portal_site_id, impersonator_user_id,
-    impersonation_started_at (see rsx:man session). Portal_Session is a static FACADE over those
-    properties, not a model - there is no Portal_Session::where(), no instances,
-    and no portal table. The facade's public surface below is the whole API; use
-    it rather than querying sessions yourself. A portal session ENDS by CLEARING
-    the portal properties - logout(), terminate_session(), terminate_all_*(),
-    the sign-in cap and stop_impersonation() all clear; NONE of them deletes or
-    deactivates the row, because that row is the browser's session and may carry
-    a staff login.
+    Storage: a portal sign-in is a USER SESSION in the portal realm - one row
+    per browser x portal user x site x View-as-Client impersonator, reused when
+    that portal user signs in on that browser again - and the browser's row
+    points at the current one (portal_user_session_id). See rsx:man session, THE
+    THREE RECORDS. Portal_Session is a static FACADE, not a model - there is no
+    Portal_Session::where(), no instances, and no portal session table. The
+    facade's public surface below is the whole API; use it rather than querying
+    sessions yourself. A portal sign-in ENDS by being signed out: logout(),
+    terminate_session(), terminate_all_*(), the sign-in cap, the lifetimes and
+    stop_impersonation() stamp the user session with a reason and clear the
+    browser's portal pointer and its PORTAL session values; none of them
+    deletes or deactivates the browser's row, which may carry a staff sign-in.
 
       init(): void                       load session from cookie (no create)
       is_logged_in(): bool               authenticated portal user present
@@ -320,29 +322,42 @@ SESSION & AUTH
                                          nothing declared one
       set_portal_user_id(?int $id): void log in / log out (a login uses the
                                          declared site; no site argument exists)
-      logout(): void                     clear the identity on the session
-      get_session_id(): int              the browser's session id (SHARED with
-                                         Session; creates one if needed)
+      logout(): void                     sign the portal account out of this
+                                         browser (under a View as Client: end
+                                         the view)
+      get_session_id(): ?int             the browser's session id (SHARED with
+                                         Session; creates one if needed; null
+                                         in a command or a task)
       get_csrf_token(): ?string          the browser's ONE csrf token (SHARED)
       verify_csrf_token(string): bool    constant-time compare
       find_by_token(string): ?Session    resolves only rows that CARRY a portal
                                          identity
 
-    Device session management (for a "your sessions" screen):
+    "Where you're signed in" (for a "your sessions" screen):
       get_sessions_for_user(?int $id = null, bool $include_impersonations = false): array
-                                         ALL of this portal user's own live
-                                         sessions, most recent first. A staff
-                                         View as Client session is left out
-                                         unless asked for, and each entry
-                                         says is_impersonation. Capped per
-                                         user at sign-in by
-                                         rsx.sessions.max_web_sessions_per_user
-                                         (default 25); see rsx:man session
-      terminate_session(int $id): bool   OWN sessions only (fail-closed; false
-                                         otherwise). CLEARS the portal properties
-                                         on that row; the row survives
+                                         this portal user's USER SESSIONS -
+                                         signed in, or signed out within
+                                         rsx.sessions.unused_session_days -
+                                         most recent first; the entry shape is
+                                         Session's (rsx:man session, SESSION
+                                         MANAGEMENT). A staff View as Client is
+                                         left out unless asked for
+                                         (is_impersonation). The template lists
+                                         the entries active within 3 months
+      terminate_session(int $user_session_id): bool
+                                         one of the caller's OWN portal sign-ins
+                                         on another browser (fail-closed; false
+                                         otherwise); the other browser's staff
+                                         sign-in is untouched
       terminate_all_other_sessions(): int
-      terminate_all_sessions_for_user(int $id, ?int $except = null): int
+                                         every other browser; also forgets their
+                                         two-factor trust
+      terminate_all_sessions_for_user(int $portal_user_id,
+                                      ?int $except_user_session_id = null): int
+                                         unguarded: for an admin action or a
+                                         password change the caller authorized
+      Signed-in user sessions per portal user are capped at sign-in by
+      rsx.sessions.max_web_sessions_per_user (default 25).
 
     Auth pattern: DECLARATIVE. Every portal surface carries an #[Auth(...)] /
     @auth(...) gate naming portal-realm checks, and the Dispatcher evaluates
@@ -360,57 +375,55 @@ SESSION & AUTH
 PORTAL SESSIONS
     Cookie and storage
       There is ONE session per browser: one session cookie, one _sessions row, one
-      csrf_token, shared by the staff app and the portal. The portal identity is a
-      set of PROPERTIES on that row - portal_user_id, portal_site_id,
-      impersonator_user_id, impersonation_started_at - alongside the staff properties
-      (login_user_id, site_id, impersonator_login_user_id). A browser signed into
-      both carries both, on one row, and that is normal.
-
-      site_id is STAFF-only; the portal's tenant is portal_site_id, because one
-      browser can legitimately be on a different tenant in each experience.
+      csrf_token, shared by the staff app and the portal. The row points at the
+      browser's current staff sign-in and its current portal sign-in, each a user
+      session of its own (rsx:man session, THE THREE RECORDS). A browser signed
+      into both carries both, and that is normal; the portal's tenant is the
+      portal user session's site, because one browser can legitimately be on a
+      different tenant in each experience.
 
       A portal on its own host (PORTAL URL) is reached through a separate
       cookie jar, so the browser holds a session cookie per host, and ordinarily
-      each names its own row - the portal host's with the staff properties
-      null. The one place the two are joined is "View as Client": the
-      linked-session handshake points the portal host's cookie at the staff
-      browser's row (IMPERSONATION). There is no portal session table and no portal session model:
-      Portal_Session is a static facade over the portal properties. See rsx:man
-      session for the table itself.
+      each names its own row. The one place the two are joined is "View as
+      Client": the linked-session handshake points the portal host's cookie at
+      the staff browser's row (IMPERSONATION).
 
     Lifecycle
-      init()          reads the cookie and resumes the row; creates nothing. A
-                      portal sign-in moves the browser to a new row with a new
-                      token, carrying any staff login across (rsx:man session
-                      SECURITY, Sign-In Rotation), and lasts as long as
-                      rsx.sessions.portal allows (SESSION LIFETIME).
+      init()          reads the cookie and resumes the row; creates nothing.
       activation      THE ONE activation path. The first call that NEEDS a row
-                      (get_session_id(), get_session(), a login) mints the
-                      browser's session exactly as a staff page view would - same
-                      cookie, same token machinery, a type_id (TYPE_WEB, or
-                      TYPE_PLAYWRIGHT under the rsx:debug harness). No site is
-                      needed to CREATE a row; the declared site (below) is
-                      stamped onto portal_site_id when it is known.
-      logout()        CLEARS the portal properties. The row survives - it is the
-                      browser's session and may carry a staff login - and the
-                      cookie is untouched.
-      end             every portal "end" is a property clear: logout(), reset(),
-                      terminate_session(), terminate_all_*(), the sign-in cap,
-                      stop_impersonation(). None deletes or deactivates a row.
-      retention       idle rows are swept by the session cleanup: a row carrying
-                      ANY identity (portal_user_id counts) gets the 3-month web
-                      window, one carrying none gets the 30-day anonymous window.
-                      Each sign-in also clears the portal properties off the
-                      user's oldest sessions beyond
-                      rsx.sessions.max_web_sessions_per_user.
+                      (get_session_id(), get_session(), put_value(), a login)
+                      mints the browser's session exactly as a staff page view
+                      would - same cookie, same token machinery. No site is
+                      needed to CREATE a row.
+      sign-in         set_portal_user_id($id) finds or creates the portal user
+                      session for (this browser, the account, the declared
+                      site), points the browser at it, rotates the browser's
+                      tokens in place and applies the session cap; another
+                      portal account signed in on the browser before is signed
+                      out (SIGN_OUT_REPLACED). It lasts as long as
+                      rsx.sessions.portal allows (7 days from the sign-in, 8
+                      hours idle by default).
+      logout()        signs the portal user session out, rotates the tokens and
+                      clears the PORTAL session values. The row survives, with
+                      any staff sign-in on it. Under a View as Client, logout()
+                      ends the view instead.
+      end             every portal end is a sign-out of the user session, with a
+                      reason: logout(), the lifetimes, terminate_session(),
+                      terminate_all_*(), the cap, stop_impersonation(),
+                      reset(). None deletes or deactivates the browser's row.
+      retention       a browser unused for rsx.sessions.unused_session_days is
+                      made inactive (what was signed in on it is signed out); a
+                      browser nobody ever signed in on is deleted after
+                      rsx.sessions.guest_expiry_minutes. rsx:man session,
+                      LIFETIMES, CLEANUP AND DEACTIVATION.
       values          put_value($key, $value, $expires_at = null),
                       get_value($key, $default = null), forget_value($key) - the
-                      browser's session-value store, the SAME store
-                      Session::put_value() writes, so portal code never reaches
-                      for the staff facade. It belongs to the one row, not to an
-                      identity: namespace portal keys ('portal_...'). A value
-                      survives a portal logout, which is how a login flow parks
-                      something across a second-factor challenge.
+                      browser's session-value store in the PORTAL realm
+                      (Session::put_value(..., 'portal')). A portal sign-out
+                      clears them; staff and guest values are untouched. A
+                      second-factor login parks its own values AFTER
+                      begin_challenge(), which signs the portal out first. They
+                      throw in a command, a task and an API request.
 
     THE SITE CONTRACT
       A portal session is site-scoped: every row carries a site_id, and every
@@ -469,15 +482,15 @@ PORTAL SESSIONS
       Rsx_Portal::is_portal_request() is false in CLI, so nothing is ever in
       portal context there. The portal facade holds no CLI state of its own beyond
       the declaration and cli_set_portal_user_id(); get_session_id() delegates to
-      Session, which mints the process's own TYPE_CLI row on demand (rsx:man
-      session, CLI MODE). set_site_id() still works - it
+      Session, which answers null - a command runs a virtual session with no row
+      (rsx:man session, VIRTUAL SESSIONS). set_site_id() still works - it
       is the same declaration minus a request, and it is how tests and
       portal-aware commands seed a site (there is no cli_set_site_id()). Having no
       request boundary to protect, the CLI declaration may be re-declared. The
       runner clears it (plus cli_set_portal_user_id()) after every test method -
       Portal_Session::_testing_reset(), the runner's call, never a test's.
 
-EXPERIENCE FORKS (which properties answer)
+EXPERIENCE FORKS (which sign-in answers)
     Framework surfaces that serve BOTH experiences resolve the experience
     themselves - /_upload derives its site and its gate 'user' from it, and the
     realtime connection token picks its identity and site the same way. @csrf has
@@ -535,7 +548,7 @@ EXPERIENCE FORKS (which properties answer)
     A staff-OR-portal disjunction is a different thing and is fine where it is
     genuinely meant - "is anybody signed in" is a real question, and the template's
     file-upload gate handler asks exactly that. What is never acceptable is using
-    an identity test to decide WHICH PROPERTIES to read next.
+    an identity test to decide WHICH SIGN-IN to read next.
 
     Prefix mode masks these bugs from developers, because a developer's own browser
     is usually signed into the staff app on the same host - so a portal path that
@@ -575,12 +588,12 @@ PORTAL LOGIN FLOW
       Portal_Login_History                          the portal's sign-in history
                                                     (rows + failure counters)
       Portal_Session::set_portal_user_id($id)       THE login: activates the
-                                                    browser's session and stamps
-                                                    the portal identity + the
-                                                    declared tenant onto it
-      Portal_Session::logout()                      clears the portal properties
-                                                    (the row survives, along with
-                                                    any staff login on it)
+                                                    browser's session and signs
+                                                    the portal user in on it, on
+                                                    the declared tenant
+      Portal_Session::logout()                      signs the portal account out
+                                                    (the browser survives, along
+                                                    with any staff sign-in on it)
       Login_Redirect::capture/params/hidden_input/consume
                                                     intended-URL threading
                                                     (rsx:man login_redirect)
@@ -675,9 +688,10 @@ PORTAL LOGIN FLOW
                              PORTAL REALM)
 
     With a second factor the handler above becomes TWO-STAGE: after step 4,
-    when Rsx_Portal_Two_Factor::is_enabled($portal_user), park whatever the
-    destination needs with Portal_Session::put_value(), call
-    Rsx_Portal_Two_Factor::begin_challenge($portal_user) and redirect to a
+    when Rsx_Portal_Two_Factor::is_enabled($portal_user), call
+    Rsx_Portal_Two_Factor::begin_challenge($portal_user), park whatever the
+    destination needs with Portal_Session::put_value() AFTER it (the challenge
+    signs the portal out first, which clears portal values), and redirect to a
     verify page hosting <Two_Factor_Challenge> INSTEAD of step 5. Both
     facades admit only a portal user can_login() accepts, of the declared
     site, and both refuse enrollment and linking during "View as Client".
@@ -1014,17 +1028,16 @@ IMPERSONATION (VIEW AS CLIENT)
     its portal endpoints are reads.
 
     For the staff-side equivalent - a staff user impersonating another STAFF user
-    through the MAIN session - see rsx:man session (IMPERSONATION). That case is a
-    same-cookie in-place swap and is full read/write, not read-only.
+    - see rsx:man session (IMPERSONATION). That case is full read/write, not
+    read-only.
 
-    Session model. Impersonation is tracked as PROPERTIES on the browser's session
-    row, never in the cookie (the cookie still holds only the opaque token, so the
-    staff identity never reaches the client). Columns:
-      impersonator_user_id      staff User_Model id; NULL = a normal portal login.
-                                This both flags the session and records provenance.
-      impersonation_started_at  audit / optional auto-expiry.
-    portal_user_id and portal_site_id are set to the target, replacing any portal
-    identity already on the row; the staff properties are untouched.
+    Session model. A View as Client is a PORTAL USER SESSION on the staff
+    member's own browser: the target portal user, its site, and
+    impersonator_user_id = the staff users.id (which both flags it and records
+    provenance; its started_at is when the view began). The browser's portal
+    pointer names it while it lasts; the browser's own portal sign-in, if any,
+    stays signed in behind it; the staff sign-in is untouched. Nothing rotates
+    and nothing reaches the cookie but the opaque token.
 
     Starting one. A staff Ajax endpoint (gated #[Auth('can_impersonate')]) calls
 
@@ -1038,8 +1051,8 @@ IMPERSONATION (VIEW AS CLIENT)
     layout (PORTAL URL):
 
       Same host (the portal under a prefix on APP_URL's host): one cookie, one
-        row. The impersonation is written straight onto the caller's own row
-        and the portal's landing URL is returned.
+        row. The caller's own browser points its portal sign-in at the View as
+        Client user session and the portal's landing URL is returned.
       Separate host: the browser holds a different session cookie on the portal
         host, and no host can set a cookie for the other. The call starts the
         LINKED-SESSION HANDSHAKE below and returns the URL of its first leg.
@@ -1094,19 +1107,22 @@ IMPERSONATION (VIEW AS CLIENT)
 
       After the handshake ONE row serves both hosts through two cookies - the
       same shape as the same-host layout. Session::reset(), which deactivates
-      the row, ends the session on both hosts whichever host calls it; a portal logout or
-      stop_impersonation() clears only the portal properties, and the staff
-      login on the row is untouched.
+      the row, ends the session on both hosts whichever host calls it; a portal
+      logout or stop_impersonation() ends only the view, and the staff sign-in
+      on the row is untouched.
 
-    Ending one. Portal_Session::stop_impersonation() clears the portal
-    properties on the browser's row (the template's /impersonate/stop route
-    calls it). On a separate host the portal host keeps its cookie on the
-    shared row.
+    Ending one. Portal_Session::stop_impersonation() (and a portal logout()
+    during the view) signs the View as Client user session out
+    (SIGN_OUT_IMPERSONATION_ENDED) and the portal pointer falls back to the
+    browser's own portal sign-in, if it has one (the template's
+    /impersonate/stop route calls it). On a separate host the portal host keeps
+    its cookie on the shared row. rsx.sessions.impersonation_max_days ends a
+    view left open.
 
     Framework API (Portal_Session):
       begin_impersonation_from_staff($portal_user_id, $impersonator_user_id,
                                      $portal_site_id): string  // URL to open
-      stop_impersonation(): void                  // clear the portal properties
+      stop_impersonation(): void                  // sign the view out
       is_impersonating(): bool                    // current session is impersonated
       get_impersonator_user_id(): ?int            // the staff id (audit/UI)
       cli_set_impersonator_user_id(?int): void    // test seeding
@@ -1188,7 +1204,6 @@ CONFIGURATION
     rsx/resource/config/rsx.php. Keys under 'portal':
       url                          where the portal is served (PORTAL_URL;
                                    blank = APP_URL + /_portal) - see PORTAL URL
-      session_lifetime_days        portal session lifetime (default 30)
       invitation_expiry_days       invitation code validity (default 14)
       password_min_length          minimum portal password length (default 8)
       password_reset_expiry_hours  reset token validity (default 1)

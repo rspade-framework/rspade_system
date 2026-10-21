@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Meta;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\CodeQuality\Support\RuleDiscovery;
 
 /**
  * Rule: META-INHERIT-01
@@ -86,8 +87,9 @@ class Code_Quality_Meta_Inheritance_CodeQualityRule extends CodeQualityRule_Abst
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        // Only check code quality rule files
-        if (!str_contains($file_path, '/CodeQuality/Rules/')) {
+        // Only check code quality rule files: the framework's, and the application's own
+        // (found by class, wherever under rsx/ they are filed)
+        if (!str_contains($file_path, '/CodeQuality/Rules/') && !RuleDiscovery::is_app_rule_source($file_path)) {
             return;
         }
 

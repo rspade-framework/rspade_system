@@ -1,0 +1,52 @@
+<%--
+_Sys_Audit_Sessions_DataGrid - the addresses and browsers ONE user session acted from:
+its audit sessions (one per address x browser x site acted on), most recently seen first,
+a page at a time. Shown on the Users and the Portal Users session screens.
+
+$data_source - the screen controller's audit_sessions_fetch (required: the staff and the
+               portal screen each check the session belongs to their record first)
+$base_params - the record and the session the controller checks, sent with every request
+               (required): ({login_user_id, user_session_id}) or
+               ({portal_user_id, user_session_id})
+
+Server half: _Sys_Audit_Sessions_DataGrid.php, a page of
+Audit_Session::list_page_for_user_session() plus the site's name. Grid key "audit"; sort
+last seen, first seen or IP; search on IP or user agent. A row is recorded when the sign-in
+does something attributed to it (a revision-recorded change, a task it dispatches), and a
+new one whenever its address, its browser's user agent or the site it acts on changes - so
+a sign-in kept across networks shows every place it changed something from. Viewing pages
+records nothing.
+--%>
+<Define:_Sys_Audit_Sessions_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="audit"
+    $title="Activity"
+    $sort="last_seen_at"
+    $order="desc"
+    $per_page=25
+    $search="Search IP or browser...">
+    <Slot:header>
+        <tr>
+            <th data-sortby="last_seen_at">Last seen</th>
+            <th data-sortby="first_seen_at">First seen</th>
+            <th data-sortby="ip_address">IP</th>
+            <th>Device</th>
+            <th>Site</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr>
+            <td><%= row.last_seen_at ? Rsx_Time.format_datetime(row.last_seen_at) : '' %></td>
+            <td><%= row.first_seen_at ? Rsx_Time.format_datetime(row.first_seen_at) : '' %></td>
+            <td class="_Sys_Audit_Sessions_DataGrid__mono"><%= row.ip_address %></td>
+            <td><span title="<%= row.user_agent || '' %>"><%= row.device_summary %></span></td>
+            <td>
+                <% if (row.site_id !== null) { %>
+                    <span class="_Sys_Audit_Sessions_DataGrid__mono">#<%= row.site_id %></span> <%= row.site_name || '' %>
+                <% } %>
+            </td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-geo" $title="No activity recorded" $body="An address and browser are recorded the first time this sign-in does something attributed to it there - a recorded change, a task it starts. Viewing pages records nothing." />
+    </Slot:empty>
+</Define:_Sys_Audit_Sessions_DataGrid>

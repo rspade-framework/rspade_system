@@ -232,7 +232,8 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
      * Find an API key by its plaintext value
      *
      * Hashes the provided key and looks up by hash.
-     * Returns null if not found, revoked, or expired.
+     * Returns null if not found, revoked, or expired. An expired key's user session is signed
+     * out here (Session::SIGN_OUT_API_KEY_EXPIRED), so the refusal and the record agree.
      *
      * @param string $plaintext_key The API key from request
      * @return Api_Key_Model|null The key model if valid, null otherwise
@@ -249,8 +250,11 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
             return null;
         }
 
-        // Check expiration
+        // An expired key authenticates nothing, and whatever is still signed in through it is
+        // signed out now rather than at the next hourly sweep.
         if ($key->expires_at && $key->expires_at->isPast()) {
+            \App\RSpade\Core\Session\Session::_end_api_key_session((int) $key->id, \App\RSpade\Core\Session\Session::SIGN_OUT_API_KEY_EXPIRED);
+
             return null;
         }
 
@@ -276,12 +280,15 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
      * Revoke this API key
      *
      * Soft-disables the key. It remains in the database but can no longer
-     * be used for authentication.
+     * be used for authentication, and the user session its use was listed under is signed
+     * out.
      */
     public function revoke(): void
     {
         $this->is_revoked = true;
         $this->save();
+
+        \App\RSpade\Core\Session\Session::_end_api_key_session((int) $this->id, \App\RSpade\Core\Session\Session::SIGN_OUT_API_KEY_REVOKED);
     }
 
     /**

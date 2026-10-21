@@ -1,6 +1,6 @@
 ---
 name: revisions
-description: "Recording and reading per-model revision history in RSpade - opting a model in with $revisions and $revision_exclude, filing a child's writes under its parent with #[Revision_Parent], the one transaction per unit of work, reading it back with revisions() / revisions_including_children() / Revision_Model::diff(), storing Revision::transaction_id() on an application activity row, suppressing a backfill with Revision::without(), and declaring units of work in a script or long task with Revision::unit_of_work() / begin_unit_of_work(). Use when a screen must show what changed and who changed it, when adding $revisions to a model, when writing an import script or a task that saves many revisioned records, when one transaction holds a whole run's writes, when responding to a REVISION-01 manifest-build failure, when a bulk write records too many or no revisions, or when a read throws \"unknown codec byte\" or \"unknown dictionary id\"."
+description: "Recording and reading per-model revision history in RSpade - opting a model in with $revisions and $revision_exclude, filing a child's writes under its parent with #[Revision_Parent], the one transaction per unit of work, reading it back with revisions() / revisions_including_children() / Revision_Model::diff() and Revision_Model::is_redacted() for a $neverExport column's Revision::REDACTED marker, storing Revision::transaction_id() on an application activity row, suppressing a backfill with Revision::without(), and declaring units of work in a script or long task with Revision::unit_of_work() / begin_unit_of_work(). Use when a screen must show what changed and who changed it, when adding $revisions to a model, when writing an import script or a task that saves many revisioned records, when one transaction holds a whole run's writes, when responding to a REVISION-01 manifest-build failure, when a bulk write records too many or no revisions, or when a read throws \"unknown codec byte\" or \"unknown dictionary id\", or when a diff value reads \"__RSX_REDACTED__\"."
 ---
 
 # Revision history
@@ -33,6 +33,14 @@ create, where they are the record's provenance.
 
 **`$revision_exclude` is not a security control.** An excluded column is still stored in
 the record. To keep a value out of the database, do not put it there.
+
+**Secrets are redacted by `$neverExport`, not excluded.** A change to a column in the
+model's never-export list is recorded as `[Revision::REDACTED, Revision::REDACTED]`
+(`'__RSX_REDACTED__'`) - on a create, an update and a clear - so the history says the
+column changed and the stored document never holds the old or new value (a declared text
+type included: the marker replaces the value before anything encodes it). One declaration
+covers payloads and revisions; don't repeat a secret in `$revision_exclude` unless even
+"it changed" is noise, in which case that list wins and nothing is recorded.
 
 ## Filing a child under its parent
 
@@ -70,6 +78,7 @@ app is the worked example of a model that opts in and deliberately declares no p
 foreach ($client->revisions() as $revision) {              // this record only
     $revision->operation_id__label;                        // Created/Updated/Deleted/Restored
     $revision->diff();                                     // ['name' => ['Acme', 'Acme Ltd']]
+    Revision_Model::is_redacted($after);                   // a $neverExport column: show "changed", never the marker
     $revision->transaction->actor;                         // who
     $revision->transaction->source_id__label;              // Web/Ajax/API/Task/CLI/Test
     $revision->transaction->endpoint;                      // 'Clients_Controller::save'

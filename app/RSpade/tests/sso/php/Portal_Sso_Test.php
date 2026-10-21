@@ -49,6 +49,9 @@ use App\RSpade\Tests\Sso\Php\Fake_Sso_Provider;
  */
 class Portal_Sso_Test extends Rsx_Test_Abstract
 {
+    /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
+    protected static $acts_as_browser = true;
+
     private static int $_site_id = 0;
 
     private static int $_other_site_id = 0;

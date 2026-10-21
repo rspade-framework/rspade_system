@@ -1,0 +1,48 @@
+<%--
+_Sys_Portal_User_Signins_DataGrid - a portal user's Sign-ins tab: every
+_portal_login_history row it has, newest first, a page at a time.
+
+$base_params=({portal_user_id: <id>}) - the portal user (required); sent with every request
+
+Server half: _Sys_Portal_User_Signins_DataGrid.php, a page of
+Portal_Login_History::list_page() (each row through present_record(), plus the badge
+`tone`; search on the email given, IP or user agent). Grid key "signins". The table holds
+successful portal sign-ins, refusals after the password (a required password reset) and
+passkey enrollment outcomes for rsx.sessions.login_history_retention_days; sign-in
+failures are never rows. The portal table records no location.
+--%>
+<Define:_Sys_Portal_User_Signins_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="signins"
+    $data_source=_Sys_Portal_Users_Controller.signins_fetch
+    $title="Sign-ins"
+    $sort="created_at"
+    $order="desc"
+    $per_page=25
+    $search="Search email, IP or browser...">
+    <Slot:header>
+        <tr>
+            <th data-sortby="created_at">When</th>
+            <th data-sortby="status">Outcome</th>
+            <th data-sortby="ip_address">IP</th>
+            <th>Device</th>
+            <th data-sortby="email">Email given</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr>
+            <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+            <td>
+                <_Sys_Status_Badge $status=row.tone $label=row.status_label />
+                <% if (row.failure_reason) { %>
+                    <span class="_Sys_Portal_User_Signins_DataGrid__dim"><%= row.failure_reason %></span>
+                <% } %>
+            </td>
+            <td class="_Sys_Portal_User_Signins_DataGrid__mono"><%= row.ip_address %></td>
+            <td><span title="<%= row.user_agent || '' %>"><%= row.user_agent_parsed.summary %></span></td>
+            <td><%= row.email %></td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-box-arrow-in-right" $title="No sign-ins recorded" $body="Nothing in the retention window: this portal user has not signed in, or its history has been pruned." />
+    </Slot:empty>
+</Define:_Sys_Portal_User_Signins_DataGrid>

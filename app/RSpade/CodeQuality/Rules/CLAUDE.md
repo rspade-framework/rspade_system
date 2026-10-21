@@ -3,9 +3,15 @@
 Every concrete `rsx:check` rule, one class per rule, extending
 `CodeQualityRule_Abstract`. Grouped by the language or concern they inspect:
 `Blade/ Common/ Convention/ Database/ JavaScript/ Jqhtml/ Manifest/ Meta/
-Models/ PHP/ Scss/`. The subdirectory is organization only — rules are
-**discovered by the manifest**, so there is no registry file to edit and nothing
-to register when you add one.
+Models/ PHP/ Scss/`. The subdirectory is organization only — every class here
+that extends `CodeQualityRule_Abstract` is **discovered by a recursive walk of
+this directory** (`Support/RuleDiscovery.php`), at any depth, so there is no
+registry file to edit and nothing to register when you add one.
+
+**This directory holds FRAMEWORK rules only.** An application's own rules are
+classes outside it (under `rsx/`), found by class through the manifest, and must
+declare an `APP-` id — so no framework rule id may ever start with `APP-`. See
+the parent `CLAUDE.md`, "Application rules".
 
 Architecture (the runner, the collector, severities, the config surface) lives in
 the parent `CodeQuality/CLAUDE.md`. This file is about writing a rule.

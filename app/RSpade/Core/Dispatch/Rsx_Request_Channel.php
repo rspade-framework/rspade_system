@@ -155,6 +155,29 @@ class Rsx_Request_Channel
     }
 
     /**
+     * The stored classification as a value (null = none stored), for _restore().
+     * FRAMEWORK INTERNAL - Session::_snapshot_context().
+     *
+     * @return array|null
+     */
+    public static function _snapshot(): ?array
+    {
+        return static::$__state;
+    }
+
+    /**
+     * Put back a classification _snapshot() took. FRAMEWORK INTERNAL -
+     * Session::_restore_context().
+     *
+     * @param array|null $state
+     * @return void
+     */
+    public static function _restore(?array $state): void
+    {
+        static::$__state = $state;
+    }
+
+    /**
      * The path dispatch works with: the request path with a leading slash and no
      * trailing one. It is the spelling every dispatcher has always been handed.
      *

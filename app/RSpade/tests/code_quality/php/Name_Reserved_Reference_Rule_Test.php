@@ -307,11 +307,11 @@ class Name_Reserved_Reference_Rule_Test extends Rsx_Test_Abstract
     {
         $violations = self::__run(
             'rsx/lib/probe_js_internal.js',
-            "function probe()\n{\n    return Rsx._escape_html('x');\n}\n"
+            "function probe()\n{\n    return Rsx._describe_value('x');\n}\n"
         );
 
         static::__assert_count(1, $violations, 'expected exactly one violation');
-        static::__assert_contains('Rsx._escape_html', $violations[0]->message);
+        static::__assert_contains('Rsx._describe_value', $violations[0]->message);
     }
 
     /**

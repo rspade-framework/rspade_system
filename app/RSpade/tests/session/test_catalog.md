@@ -1,7 +1,7 @@
 # Test catalog: session
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues) | `planned`.
-Type: php / cli / asset / http / playwright. Last updated: 2026-09-26.
+Type: php / cli / asset / http / playwright. Last updated: 2026-10-21.
 
 ## Session_Cli_Test (php, default isolation) - CLI impersonation & resolvers
 
@@ -62,32 +62,39 @@ answers from the signed-in LOGIN identity - never a role, never a hostname.
 | sess-dev-06 | it is the LOGIN identity's flag | impersonate with an ordinary login id | is_developer() false | implemented |
 | sess-dev-07 | anonymous is never a developer | reset_impersonation() | is_developer() false | implemented |
 
-## Session_Cli_Row_Test (php, default isolation) - the CLI session ROW
+## Session_Virtual_Test (php, default isolation) - the VIRTUAL session (no browser, no row)
 
-get_session_id() yields a real session in every mode: a CLI process mints a TYPE_CLI
-_sessions row on first demand, holds it for the process, and deletes it at process
-end. Complements Session_Cli_Test, which covers the identity overrides that mint
-nothing.
+A process with no browser - a command, a task, this runner - runs a virtual session: no
+_sessions, _user_sessions or _audit_sessions row ever, get_session_id() null, identity in
+statics. Complements Session_Cli_Test, which covers the declared identity's getters.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| sess-clirow-01 | first get_session_id() mints a real row | fresh CLI | row exists, TYPE_CLI, no ip/ua, active, tokens minted | implemented |
-| sess-clirow-02 | the process holds ONE session | two calls | same id, one row | implemented |
-| sess-clirow-03 | get_session() returns that same row | mint then get_session() | ids match | implemented |
-| sess-clirow-04 | has_session() true once minted | mint | false before, true after | implemented |
-| sess-clirow-05 | csrf comes from the minted row | mint | get_csrf_token()/verify agree with the row | implemented |
-| sess-clirow-06 | the getters mint nothing | get_site_id/get_login_user_id/... | TYPE_CLI row count unchanged | implemented |
-| sess-clirow-07 | the identity setters mint nothing | set_site_id/set_login_user_id/impersonate | TYPE_CLI row count unchanged | implemented |
-| sess-clirow-08 | set_login_user_id lands on the row | mint then login | row.login_user_id set | implemented |
-| sess-clirow-09 | logout clears the login on the row | mint, login, logout | row.login_user_id null | implemented |
-| sess-clirow-10 | set_site_id lands on the row | mint then set_site_id | row.site_id set | implemented |
-| sess-clirow-11 | identity declared BEFORE the demand seeds the row | impersonate then mint | site + login on the new row | implemented |
-| sess-clirow-12 | end-of-process cleanup deletes the row | _cli_end_session() | row gone, handle forgotten | implemented |
-| sess-clirow-13 | cleanup is a no-op when nothing was minted | _cli_end_session() cold | row count unchanged | implemented |
-| sess-clirow-14 | a later demand mints a FRESH session | end then demand | different id, new row | implemented |
-| sess-clirow-15 | reset_impersonation drops the row | mint then reset_impersonation | row gone | implemented |
-| sess-clirow-16 | CLI reset deletes rather than deactivates | mint then reset() | row gone (not active=0) | implemented |
-| sess-clirow-17 | the shutdown hook actually fires at process exit | real process exit | row absent after exit | deferred (proven by live CLI run; a test cannot exit its own process) |
+| sess-virt-01 | get_session_id() is null and nothing is a session | fresh process | _is_virtual() true; null; has_session() false | implemented |
+| sess-virt-02 | get_session() throws | - | RuntimeException naming the virtual session | implemented |
+| sess-virt-03 | a declared identity is a session context with no row | impersonate() | has_session() true; get_session_id() null | implemented |
+| sess-virt-04 | a command that signs in and out, impersonates, switches site and records a unit of revision history writes no session row of any kind | impersonate/set_login_user_id/set_site_id/logout/get_audit_session_id + Revision::transaction_id() | audit id null; _transactions.audit_session_id null; the three table counts unchanged | implemented |
+| sess-virt-05 | a declared audit session is answered, and _end_virtual() ends it | Audit_Session::_declare() | the declared id; null after | implemented |
+| sess-virt-06 | _begin_virtual() declares the context given | site, identity, user, impersonator | each getter answers it | implemented |
+| sess-virt-07 | _end_virtual() blanks the process, declared tenant included | after begin + set_temporary_site_id | site 0, nobody, no tenant, no impersonation, no session | implemented |
+| sess-virt-08 | _begin_virtual() starts fresh | two begins | only the second context | implemented |
+| sess-virt-09 | put_value() refuses with no browser | declared identity | Rsx_Caller_Exception "belong to a browser" | implemented |
+| sess-virt-10 | the value readers answer absent and create nothing | get_value/forget_value | default; counts unchanged | implemented |
+| sess-virt-11 | a test acting as a browser has its row (__as_browser) | __as_browser(), values round trip | get_session_id/get_session the row; values stored on it | implemented |
+| sess-virt-12 | reset() is the hard exit and writes nothing | declared impersonation, reset() | not impersonating; counts unchanged | implemented |
+
+## Session_Values_Test (php, $acts_as_browser) - put_value / get_value / forget_value
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-val-01..03 | a read or forget with no session answers the default and creates no row | no browser | default; `_sessions` count unchanged | implemented |
+| sess-val-04..09 | round trip by type, upsert, unset default, forget, forgetting an absent key | put/get/forget | values as written; one row per key | implemented |
+| sess-val-10..13 | expiry: none and future readable; past reads as absent at once, row left for the pruner | expires_at past/future/null | as stated | implemented |
+| sess-val-14..15 | the FK cascade removes values with the row; one session cannot read another's | delete the row | 0 rows | implemented |
+| sess-val-16 | each realm is its own namespace: one key, three values, forgotten per realm | 'staff' / 'portal' / 'guest' | three rows by realm id; forgetting one leaves the others | implemented |
+| sess-val-17 | no realm = the request's experience | a staff request, then Rsx_Portal::set_portal_request(true) | staff realm, then portal realm | implemented |
+| sess-val-18 | Portal_Session's values are the portal realm | Portal_Session::put/get/forget | stored under realm 2; invisible to staff | implemented |
+| sess-val-19 | an unknown realm word throws | 'api', 'Staff', 'nobody' | Rsx_Caller_Exception | implemented |
 
 ## Session_Cache_Key_Test (php, no DB) - Rsx_Storage scope key recipe
 
@@ -146,36 +153,38 @@ and delete their keys in teardown.
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | sess-gc-01..03 | find_by_token: null for unknown, finds active, ignores inactive | committed sessions | correct row/null | implemented |
-| sess-gc-08 | cleanup_sessions applies the identity-aware windows (identified web at the idle limit, 90d here, vs identity-less 30d) | aged rows of each kind | each expires on its own window | implemented |
-| sess-gc-09 | cleanup_sessions expires TYPE_PLAYWRIGHT on its own window, leaving a same-age web row | 2-day-old harness + web rows | harness gone, web kept - proves the sweep reads type, not age | implemented |
-| sess-gc-09b | cleanup_sessions expires TYPE_CLI on its own window, leaving a same-age web row | 2-day-old CLI + web rows | CLI gone, web kept - the backstop for a killed process | implemented |
+| sess-gc-08 | cleanup_sessions deletes only GUEST browsers (no sign-in ever) past rsx.sessions.guest_expiry_minutes; a browser with a sign-in, current or ended, is never deleted | 40-day guest, 200-day signed-in and signed-out browsers, 2-day guest | only the old guest deleted (`guest_deleted`) | implemented |
+| sess-gc-08a | the guest predicate is `_sessions.first_signed_in_at`, not a look at user sessions; a guest's values go with it | a 40-day browser stamped first_signed_in_at with no user session; a 40-day guest with a guest value | stamped one kept; guest deleted with its value | implemented |
+| sess-gc-09 | cleanup_sessions leaves a harness row alone, however old: a machine row is never a guest | 400-day TYPE_PLAYWRIGHT row with no sign-in | kept | implemented |
 | sess-gc-10 | cleanup_sessions chunked delete clears a backlog | 12 rows, chunk_size 5 | all deleted across 3 statements | implemented |
+| sess-gc-12 | cleanup_sessions signs out sign-ins past a limit PLUS rsx.sessions.ajax_grace_minutes under the reason a request records (TIMED_OUT_LENGTH / _IDLE): pointer cleared, realm values gone, guest values and the remote token kept; one inside the grace or its limits stays | 8-day-old sign-in, 11h idle, 9h idle (in grace), fresh; 7d/8h/2h limits | first two signed out with their reasons; others signed in | implemented |
+| sess-gc-12a | a sign-in found past both clocks is recorded under the EARLIER expiry | signed in 7d3h ago, last page view 7d2h ago | SIGN_OUT_TIMED_OUT_IDLE | implemented |
+| sess-gc-12b | only the user session a browser POINTS AT is judged: an impersonator's own sign-in suspended behind a live impersonation stays; an idle impersonation takes it with it | two browsers with own sign-ins 2 days idle, one live and one 11h-idle impersonation | live pair signed in; idle pair both signed out | implemented |
+| sess-gc-12c | the portal realm is swept on its own limits, across batches | 7 portal sign-ins 12h idle, chunk_size 3 | all SIGN_OUT_TIMED_OUT_IDLE, no pointer left | implemented |
+| sess-gc-12d | limits of 0 read nothing | 60-day sign-in, 20 days idle, staff limits 0/0 | still signed in | implemented |
+| sess-gc-11 | deactivate_unused_sessions (daily maintenance) makes browsers unused past rsx.sessions.unused_session_days inactive, never deleted; a browser in use and an API key's row stay active | 40-day signed-in, 31-day guest, 2-day, 90-day TYPE_API rows | first two inactive and present; the others active | implemented |
+| sess-gc-11c | retiring an unused browser signs out what is signed in on it (SIGN_OUT_BROWSER_UNUSED, labelled "Browser unused for N days"): pointer cleared, realm values gone, no longer counted signed in; a browser in use keeps its sign-in | 40-day browser with a staff sign-in and a staff value; 2-day browser signed in | signed out with the reason; pointer null; values gone; inactive; fresh sign-in untouched | implemented |
+| sess-gc-11a | deactivate_unused_sessions clears a backlog across chunks | 12 45-day browsers, chunk_size 5 | none left active | implemented |
+| sess-gc-11b | unused_session_days 0 turns the retirement off | a 400-day browser, config 0 | deactivated 0, still active | implemented |
 | sess-gc-10a | cleanup_login_history prunes past the retention window | 400-day + 10-day rows | aged deleted, recent kept | implemented |
 | sess-gc-10b | cleanup_login_history is silent when nothing is aged | 3-day row | total_deleted 0, row kept | implemented |
 | sess-gc-10c | retention 0 disables the prune entirely | 400-day row, config 0 | total_deleted 0, row kept | implemented |
 | sess-gc-10d | cleanup_login_history clears a backlog across chunks | 12 aged rows, chunk_size 5 | all deleted | implemented |
-| sess-gc-11 | purge_playwright_sessions takes only this run's harness rows | harness + web in window, harness from a live concurrent run | own harness gone; web and concurrent run untouched | implemented |
-| sess-gc-12 | purge_playwright_sessions collects stale harness rows from earlier runs | 3h-idle harness row | deleted without waiting out the playwright window | implemented |
-| sess-gc-13 | a PORTAL identity is not read as anonymous | 40-day-idle rows with/without portal_user_id | portal-only kept, identity-less collected | implemented |
-| sess-gc-14 | a portal identity expires on the idle limit | 200-day vs 40-day portal rows, 90-day limits | stale gone, fresh kept | implemented |
-| sess-gc-20 | identified rows follow the longer idle limit plus the Ajax grace | 29-day and 31-day signed-in rows, 30-day limits | kept / collected | implemented |
-| sess-gc-21 | an unlimited idle window collects no identified row | portal idle limit 0, 900-day row | web count 0, row kept | implemented |
-| sess-gc-23 | cleanup_user_agents deletes a string nothing names and keeps one named by a session, a device, a login-history row or an audit session | five 10-day-old strings, four referenced | only the orphan deleted | implemented |
+| sess-gc-13 | a PORTAL sign-in is not read as a guest | 40-day-idle browsers with/without a portal user session | portal-only kept, guest collected | implemented |
+| sess-gc-23 | cleanup_user_agents deletes a string nothing names and keeps one named by a session, a login-history row or an audit session | four 10-day-old strings, three referenced | only the orphan deleted | implemented |
 | sess-gc-24 | a string resolved within the last day is left alone | an unreferenced string resolved now | kept | implemented |
 | sess-gc-25 | resolving a string again protects it from the sweep | a 10-day-old orphan, resolved again | kept | implemented |
-| sess-gc-22 | a device no session row names is collected | an orphan device, one in use | orphan gone, in-use kept | implemented |
-| sess-gc-15 | the playwright backstop ignores which identity a row carries | 2-day portal harness + portal web | harness gone, web kept | implemented |
-| sess-gc-17 | purge_playwright_sessions collects harness rows whatever they carry | staff + portal harness + portal web | both harness rows gone, web kept | implemented |
 
 ## Session_Cap_Test (php, $requires_db_reset + no-tx) - concurrent session cap
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| sess-cap-01 | the N most recent web sessions survive, older ones are signed out (STAFF cap deactivates the row; the portal cap clears properties - see PORTAL-PROP-11) | 5 web sessions, cap 3 | 3 newest active, 2 oldest deactivated | implemented |
-| sess-cap-02 | no-op under the limit | 2 sessions, cap 25 | both active | implemented |
-| sess-cap-03..04 | cap of 0 / null disables the feature | 5 sessions | all still active | implemented |
-| sess-cap-05 | another user's sessions are never in scope | cap 1, two users | only the acting user's older row signed out | implemented |
-| sess-cap-06 | PLAYWRIGHT + API sessions neither count toward nor are evicted by the cap | cap 2, 2 harness + 1 api + 2 web | all five active - machine rows never consumed a slot | implemented |
+| sess-cap-01 | the N most recent signed-in user sessions survive, older ones are signed out (SIGN_OUT_SESSION_CAP, pointer cleared, browser row kept) | 5 signed-in browsers, cap 3 | 3 newest signed in, 2 oldest signed out | implemented |
+| sess-cap-02 | no-op under the limit | 2 sessions, cap 25 | both signed in | implemented |
+| sess-cap-03..04 | cap of 0 / null disables the feature | 5 sessions | all still signed in | implemented |
+| sess-cap-05 | another user's sessions are never in scope | cap 1, two users | only the acting user's older sign-in ended | implemented |
+| sess-cap-06 | PLAYWRIGHT + API browsers neither count toward nor are evicted by the cap | cap 2, 2 harness + 1 api + 2 web | all five signed in - machine browsers never consumed a slot | implemented |
+| sess-cap-08 | an impersonation of the account is not counted or evicted | cap 1, an impersonation newer than the account's own sign-in | both signed in | implemented |
 | sess-cap-07 | the cap fires on a real web sign-in through set_login_user_id() | http | needs a live web request (setter is a CLI no-op) | deferred |
 
 ## http/session_cookie_behavior.sh (http - live server)
@@ -204,51 +213,82 @@ framework-development box: the `/ssr-test` probes are gated `is_framework_develo
 
 ## http/session_sign_in_rotation.sh (http - live server)
 
-Self-seeding (its own account, via tinker). Needs a framework-development box for the
-`/ssr-test` probe.
+Self-seeding (two accounts of its own, via tinker). Needs a framework-development box for the
+`/ssr-test` probe. One browser row throughout; tokens rotate in place.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| sess-rotate-01 | a sign-in moves the browser to a new token, in exactly one session cookie | anon session -> POST /login | token differs; one `Set-Cookie: rsx=` | implemented |
-| sess-rotate-02 | the new token authenticates; the token the browser arrived with does not, and is never re-cookied | GET /dashboard on each | 200 / 401 with no Set-Cookie | implemented |
-| sess-rotate-03 | the old row is retired - inactive, pointing at its successor; the new row carries the identity and its clocks | the two rows | as stated | implemented |
-| sess-rotate-06 | a request on a retired token is refused and sent no cookie | /dashboard, an Ajax call and /login on the copied cookie | 401, session_expired cause retired, 401; no Set-Cookie | implemented |
-| sess-rotate-07 | a retired row still records whose it was | a sign-in on an already signed-in browser | the replaced row: inactive, superseded_by_id set, login_user_id intact | implemented |
-| sess-rotate-04 | the rows share one device; a later sign-in on the browser lands on the same device | row state; sign out, sign in | same device_id, third token | implemented |
+| sess-rotate-01 | a sign-in keeps the browser's row and gives it a new token, in exactly one session cookie | guest row -> POST /login as A | same row id; token differs; one `Set-Cookie: rsx=` | implemented |
+| sess-rotate-02 | the row points at a signed-in user session for A, count 1 | row state | staff_user_session_id set; login_user_id A; sign_in_count 1 | implemented |
+| sess-rotate-03 | an Ajax call or a sub-resource on the token the sign-in just replaced (in flight during it) is REFUSED with no cookie and nothing minted, and the signed-in cookie keeps working | /dashboard with `Sec-Fetch-Dest: image` and an Ajax call on the copied cookie | 401 with no `Set-Cookie: rsx=`; `session_expired` cause `rotated`, no cookie; `_sessions` count unchanged; A's /dashboard still 200 | implemented |
+| sess-rotate-03a | a PAGE NAVIGATION on the just-replaced token is an ordinary guest, so a browser that missed the new cookie recovers | /dashboard with `Sec-Fetch-Dest: document` on the copied cookie | 302 to sign-in; any cookie names a row other than the browser's; A's /dashboard still 200 | implemented |
+| sess-rotate-04 | sign-out stamps the user session, clears the pointer and the browser's STAFF values (its guest value stays), rotates the token; the pre-sign-in token, two rotations old, is an ordinary stranger | a staff and a guest value; GET /logout, then /dashboard on the copied cookie | signed_out_at set, reason 1; pointer null; staff value gone, guest value kept; new token, same row; 302 to sign-in, never the browser's row | implemented |
+| sess-rotate-05 | another account on the same browser is a second user session on the same row | sign in as B | new user session; same row; new token | implemented |
+| sess-rotate-06 | the first account again REUSES its user session (A/B/A) and replaces B's | sign in as A without signing B out | pointer = A's user session, sign_in_count 2, signed in; B's reason 8 (replaced); two user sessions on the row | implemented |
+
+## http/harness_session_reuse.sh (http - live server)
+
+Self-seeding (an account of its own, via tinker); mints the signed dev-auth headers through
+Dev_Auth_Token::mint(), so it needs this box's development grant and a framework-development
+box for the `/ssr-test` probe.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-harness-01 | a dev-auth sign-in lands on a TYPE_PLAYWRIGHT row, and its traffic records no audit session | dev-auth GET of the audit probe, fresh jar | row type 2 signed in as the account; probe answers no id; no `_audit_sessions` row for the browser | implemented |
+| sess-harness-02 | a second run (fresh jar) is pointed at the same row, minting nothing | dev-auth GET, another fresh jar | same row id; `_sessions` count unchanged | implemented |
+| sess-harness-03 | a harness sign-in past max_length_minutes is not reused: signed out as timed out, and a new row minted | signed_in_at moved 400 days back, dev-auth GET | a different TYPE_PLAYWRIGHT row; the old user session reason 2 | implemented |
+| sess-harness-04 | the unsigned X-Playwright-Test marker alone makes an ordinary browser | GET with the header only | a TYPE_WEB row | implemented |
 
 ## http/session_lifetime.sh (http - live server)
 
-Self-seeding. Moves a real session's clocks back against the shipped defaults (30 days each,
-2 hours of grace).
+Self-seeding. Moves a real sign-in's clocks back (on its user session) against the shipped
+defaults (7 days from sign-in, 8 hours idle, 2 hours of grace). An ended sign-in = the user session stamped signed
+out with the reason, the pointer cleared, the browser row kept active.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| sess-life-01 | inside the grace window an Ajax call and a page sub-request still answer | login_at 30d+1h ago | `_success` true; 200 for `Sec-Fetch-Dest: image`; still signed in | implemented |
-| sess-life-02 | a page navigation past the limit signs out, redirects to sign-in and says why | same row, `Sec-Fetch-Dest: document` | 302 to /login; the row retired (inactive, identity intact) and its successor signed out; the message on the sign-in page | implemented |
-| sess-life-03 | past the grace an Ajax call signs out and answers session_expired | last_page_view_at 30d+3h ago | `error_code` session_expired, cause idle; the row retired and its successor signed out | implemented |
-| sess-life-04 | the page-view report gets no grace | login_at 30d+1h ago, POST page_view | session_expired; the row retired and its successor signed out | implemented |
-| sess-life-05 | the page-view report stamps the session and last_seen on the account | stamp 5 minutes old | stamp advanced; login_users.last_seen set | implemented |
+| sess-life-01 | inside the grace window an Ajax call and a page sub-request still answer | signed_in_at 30d+1h ago | `_success` true; 200 for `Sec-Fetch-Dest: image`; still signed in | implemented |
+| sess-life-02 | a page navigation past the limit signs out, redirects to sign-in and says why | same sign-in, `Sec-Fetch-Dest: document` | 302 to /login; user session signed out reason 2; the message on the sign-in page | implemented |
+| sess-life-03 | past the grace an Ajax call signs out and answers session_expired | last_page_view_at 30d+3h ago | `error_code` session_expired, cause idle; reason 3 | implemented |
+| sess-life-04 | the page-view report gets no grace | signed_in_at 30d+1h ago, POST page_view | session_expired; reason 2 | implemented |
+| sess-life-05 | the page-view report stamps the user session and last_seen on the account | stamp 5 minutes old | stamp advanced; login_users.last_seen set | implemented |
 | sess-life-06 | an Ajax call is not a page view | stamp 5 minutes old, any Ajax call | stamp unchanged | implemented |
 | sess-life-07 | rendering a page is a page view | GET /dashboard | stamp advanced | implemented |
+| sess-life-08 | last_active is written at most once a minute | last_active 20s ago, then 90s ago; an Ajax call each | unchanged / advanced | implemented |
+| sess-life-09 | a browser unused for rsx.sessions.unused_session_days is made inactive at lookup and is a stranger (its sign-ins are signed out through the same Session::_deactivate_browsers() sess-gc-11c covers) | last_active 31 days ago; GET /dashboard | 302 to sign-in; row inactive | implemented |
 
 ## Audit_Session_Test (php) - the acting context a logged act points at
 
+The key is user session (a guest: the browser) x site x address x user agent; the test
+process is virtual, so the keying is driven through Audit_Session::_id_for_context().
+
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| sess-audit-01 | one context is one row however often it is asked for | impersonate, ask twice | same id; site, identity, TYPE_CLI recorded | implemented |
-| sess-audit-02 | a process with no session is attributable, and asking mints no session | CLI identity | session_row_id, ip, user_agent_id null; has_session unchanged | implemented |
-| sess-audit-03 | a different identity or tenant is a different row; the first context is its first row again | three contexts, then the first | three ids; first id again | implemented |
-| sess-audit-04 | nobody signed in is still a context | no identity | a row with null identity and site | implemented |
-| sess-audit-05 | an impersonation is its own context | set the impersonator | new id carrying impersonator_login_user_id | implemented |
-| sess-audit-06 | a row minted in a rolled-back transaction is not answered again | begin, ask, roll back, ask | first row gone; a row exists for the second id | implemented |
+| sess-audit-02 | a process with no browser records no audit session, and asking mints none | declared CLI identity | null; count unchanged; no session | implemented |
+| sess-audit-02b | a declared audit session is answered | _declare(id) | get_audit_session_id() = id | implemented |
+| sess-audit-01 | one context is one row however often it is asked for | one context, twice | same id; site, identity, browser, user session, TYPE_WEB recorded | implemented |
+| sess-audit-03 | a different user session, address, user agent or site is a different row; the first context is its first row again | four variants, then the first | four distinct ids; the first again | implemented |
+| sess-audit-04 | a guest is keyed on its browser | no identity, two browsers | same browser same id; another browser another id; null identity and user session | implemented |
+| sess-audit-06 | a row minted in a rolled-back transaction is not answered again | begin, mint, roll back, mint | first row gone; a row exists for the second id | implemented |
 | sess-audit-07 | a user agent is stored once and in full | a 1000+ character string, twice; a variant | same id; different id; the whole string; one row | implemented |
 | sess-audit-08 | no user agent is null | null, '' | null id, null string | implemented |
-| sess-audit-10 | an audit session is read back through the framework, user agent as a string | get_audit_session($id); id 0 | the recorded context; null | implemented |
+| sess-audit-10 | an audit session is read back through the framework, address and user agent as strings | get_audit_session($id); id 0 | the recorded context; null | implemented |
 | sess-audit-11 | a session row answers its user agent as the string it was given | a 400+ character agent assigned to a row | the same string from a fresh read | implemented |
 | sess-audit-12 | join() adds every get_audit_session() field as audit_<name> to the caller's query, keeps its own columns, and lists a row with no audit session | a query-builder query over two rows, one attributed | 2 rows; fields set / null; the joined names equal get_audit_session()'s keys | implemented |
 | sess-audit-13 | column() names an audit field for where() and orderBy(); an unknown field or an unqualified column is refused | filter on ip_address, sort on first_seen_at; bad names | 1 match; InvalidArgumentException | implemented |
-| sess-audit-14 | join() on an Eloquent query still answers the caller's models | Transaction_Model query | a Transaction_Model with audit_login_user_id and its own description | implemented |
-| sess-audit-09 | a recorded unit of work carries the audit session | Revision::transaction_id() in a unit of work | _transactions.audit_session_id is the current id | implemented |
+| sess-audit-14 | join() on an Eloquent query still answers the caller's models | Transaction_Model query under a declared audit session | a Transaction_Model with audit_login_user_id and its own description | implemented |
+| sess-audit-09 | a recorded unit of work carries the audit session, and none where nobody with a browser acted | Revision::transaction_id() under a declared id, then with none | the declared id; null | implemented |
+
+## Audit_Session_List_Page_Test (php) - the audit sessions of one user session
+
+`Audit_Session::list_page_for_user_session()`, the display-page reader behind the session
+screens; rows minted through `_id_for_context()` with their clocks set by the test.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-auditpage-01 | one page plus the total of the user session's audit sessions only, most recently seen first, rows in describe()'s shape plus device_summary; offset walks on | three of the user session, one of another; limit 2, then offset 2 | total 3; two then one, in order; the shape | implemented |
+| sess-auditpage-02 | the published sorts, and a filter over the address and the user agent whose wildcards are literal | two rows; sort ip_address desc, first_seen_at asc; filters on an address, a user agent, '%' | the orders; one match each; 0 | implemented |
+| sess-auditpage-03 | the user session is required and the query is validated | none, zero, an unpublished sort, an unknown key, a limit over 200 | InvalidArgumentException each | implemented |
 
 ## Ip_Address_Test (php) - client addresses stored once in _ip_addresses
 
@@ -272,7 +312,7 @@ Self-seeding. Needs a framework-development box for the `/ssr-test` probe.
 | sess-audit-http-01 | a cookie-less caller gets an audit session - address and agent recorded, no session row - and no session cookie for asking | GET the probe | id; no `Set-Cookie: rsx=`; row as stated | implemented |
 | sess-audit-http-02 | the same context answers the same id | same request again | same id | implemented |
 | sess-audit-http-03 | a different user agent is a different context | another `User-Agent` | different id | implemented |
-| sess-audit-http-04 | a signed-in browser's audit session names its identity, session row and device | sign in, GET the probe | session_row_id, login_user_id, device_id match the session row | implemented |
+| sess-audit-http-04 | a signed-in browser's audit session names its identity, the browser and the user session | sign in, GET the probe | session_id, user_session_id, login_user_id match the browser row and its staff user session | implemented |
 
 ## playwright/session_expired.js (playwright)
 
@@ -324,16 +364,15 @@ application's can_impersonate denies its most privileged role). Self-seeding via
 | sess-http-04 | Session::reset() clears cookie in web mode | http | calls setcookie() | deferred |
 | sess-http-05 | multi-device: get_sessions_for_user / terminate_* / terminate_all_other | http | thin wrappers; need real session rows over HTTP | deferred |
 | sess-06 | get_current_session_info() | php/http | thin wrapper on already-tested parsing | deferred (low value) |
-| sess-08 | session type classification at creation (harness header -> TYPE_PLAYWRIGHT) | http | needs a live request carrying X-Playwright-Test; covered end-to-end by the rsx:debug purge behavior | deferred |
 
 ## Session_Terminate_Ownership_Test (php) - terminate_session() ownership predicate
 
 | ID | Purpose | Type | Input | Expected | Status |
 |----|---------|------|-------|----------|--------|
-| sess-term-01 | a user terminates their OWN session | php | active row with the caller's login_user_id | true, row deactivated | implemented |
-| sess-term-02 | another user's session id is fail-closed | php | active row owned by a different login_user_id | false, row still active | implemented |
-| sess-term-03 | an anonymous session row (no owner) is not terminable | php | active row with login_user_id NULL | false, row still active | implemented |
-| sess-term-04 | a caller with no login identity terminates nothing | php | logged out, any active row | false, row still active | implemented |
+| sess-term-01 | a user ends their OWN sign-in on another browser | php | a browser signed in as the caller | true; user session signed out (reason 4), pointer cleared, browser row kept | implemented |
+| sess-term-02 | another user's user session id is fail-closed | php | a browser signed in as another login | false, still signed in | implemented |
+| sess-term-03 | a signed-out user session is not terminable | php | the caller's user session already signed out | false | implemented |
+| sess-term-04 | a caller with no login identity terminates nothing | php | logged out, any signed-in user session | false, still signed in | implemented |
 
 ## Session_Terminate_For_User_Test (php) - the GUARDED cross-user primitives
 
@@ -349,7 +388,7 @@ MANAGER (peer), USER(600) under MANAGER.
 | sess-termfu-01 | an actor whose role may administer the target's terminates it | php | ROOT_ADMIN acting, MANAGER target's active row | true, row deactivated | implemented |
 | sess-termfu-02 | self-service works through the cross-user function | php | actor terminates own row | true, row deactivated | implemented |
 | sess-termfu-03 | ABSENCE is false, never a throw | php | valid authority, unknown session id | false | implemented |
-| sess-termfu-04 | the operator's own CURRENT session is refused with false | php | actor names its live CLI session id | false, row still active | implemented |
+| sess-termfu-04 | the operator's own CURRENT session is refused with false | php | actor names the user session on the browser it is using (Session::$_browser_session_id_for_tests) | false, still signed in | implemented |
 | sess-termfu-05 | a PEER follows the whitelist | php | a role acting on a second holder of the same role | permitted and the row deactivated when the role names itself in can_admin_roles (equal-or-lower administration); otherwise AjaxUnauthorizedException, row intact | implemented |
 | sess-termfu-06 | a subordinate reaching upward is refused | php | USER acting on MANAGER | AjaxUnauthorizedException, row intact | implemented |
 | sess-termfu-07 | no acting identity is refused | php | logged out, any target | AjaxUnauthorizedException ('logged-in actor'), row intact | implemented |
@@ -358,7 +397,7 @@ MANAGER (peer), USER(600) under MANAGER.
 | sess-termfu-10 | bulk termination by a peer follows the whitelist | php | a role acting on a second holder of the same role | 1 row ended when the role names itself in can_admin_roles; otherwise AjaxUnauthorizedException, no row touched | implemented |
 | sess-termfu-11 | bulk termination with no acting identity is refused | php | logged out | AjaxUnauthorizedException, row intact | implemented |
 | sess-termfu-12 | the unchecked internal path works with no session context | php | logged out, 2 rows | returns 2, both deactivated | implemented |
-| sess-termfu-13 | session.terminated payload for a cross-user termination | php | admin terminates target row | 1 event: actor/target/session_id, scope 'admin' | implemented |
+| sess-termfu-13 | session.terminated payload for a cross-user termination | php | admin ends the target's user session | 1 event: actor/target/user_session_id/session_id (the browser), scope 'admin' | implemented |
 | sess-termfu-14 | session.terminated scope is 'self' from terminate_session() | php | user terminates own row | 1 event, scope 'self', actor = user | implemented |
 | sess-termfu-15 | session.terminated scope is 'internal' with a null actor | php | unchecked helper | 1 event, scope 'internal', actor null | implemented |
 | sess-termfu-16 | each terminate path pushes a realtime session refresh | php/http | any deactivation | one push_session_refresh('staff', id) per row | deferred (no in-process assertion seam for the emissions outbox; verified live via the B3 harness, no-throw + queued) |
@@ -416,7 +455,7 @@ Session::set_temporary_site_id() - a DECLARED tenant that writes nothing, via
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | sess-tmpsite-01 | declaring a tenant creates NO _sessions row, however much is then asked of the session | php | set_temporary_site_id(4242), then has_session/get_site_id/is_logged_in/get_login_user_id/get_user_id | row count unchanged | implemented | 2026-08-24 |
-| sess-tmpsite-02 | an existing row is NOT rewritten, and is restored on clear | php | minted CLI row at site 9, then declare 4242 | row.site_id stays 9; get_site_id 4242; after clear, 9 | implemented | 2026-08-24 |
+| sess-tmpsite-02 | an existing row is NOT rewritten, and the process's own tenant returns on clear | php | a test browser row, process tenant 9, then declare 4242 | row unchanged, no user session; get_site_id 4242; after clear, 9 | implemented | 2026-10-21 |
 | sess-tmpsite-03 | get_site_id() returns the declared tenant | php | declare 7 | 0 before, 7 after | implemented | 2026-08-24 |
 | sess-tmpsite-04 | has_session() answers TRUE - site-scoped code guards on it before trusting get_site_id() | php | declare 7 | false before, true after | implemented | 2026-08-24 |
 | sess-tmpsite-05 | a tenant is not an identity - declaring one signs nobody in | php | declare 7 | is_logged_in false, get_login_user_id null, get_user_id null | implemented | 2026-08-24 |
@@ -504,13 +543,15 @@ refuses a cross-site save or delete.
 | pref-var-05 | never in the payload | `toArray()` on the writer and on fresh instances | no trace of the key or the value | implemented |
 | pref-var-06 | soft delete keeps, row removal cascades | soft delete, then delete the row | value still read; then zero rows | implemented |
 | pref-var-07 | an unsaved record is refused | `set_variable()` on a new model | a RuntimeException saying to save first | implemented |
-| SESSION-IMP-01 | the staff session listing leaves an impersonation of the user out by default | php | one own row and one row carrying the identity with an impersonator | only the own row; `is_impersonation` false | implemented | 2026-10-11 |
+| SESSION-IMP-01 | the staff session listing leaves an impersonation of the user out by default | php | the user's own user session and an impersonation user session of them | only the own one; `is_impersonation` false | implemented | 2026-10-21 |
 | SESSION-IMP-02 | asked for, the impersonation is answered and marked | php | the same rows, `$include_impersonations = true` | two entries; `is_impersonation` true on the impersonated one | implemented | 2026-10-11 |
 | SESSION-IMP-03 | the site filter and the impersonation filter apply together | php | an impersonation row, listed for its site | 0 by default, 1 on request | implemented | 2026-10-11 |
 | SESSION-IMP-04 | the portal listing leaves a View as Client session out by default and marks it on request | php | one own portal row and one staff row viewing as the portal user | only the own row; both on request, marked | implemented | 2026-10-11 |
-| SESSION-IMP-05 | the daily task retires a staff impersonation older than `rsx.sessions.impersonation_max_days`, keeping whose identity it carried and who acted as them | php | impersonations started 8 and 6 days ago and the user's own session, limit 7 | the 8-day row inactive with both identities kept; the others active | implemented | 2026-10-11 |
-| SESSION-IMP-06 | an old portal View as Client loses its portal properties only | php | a staff row viewing as a portal user for 9 days | row active, staff identity kept, portal properties and impersonation columns null | implemented | 2026-10-11 |
-| SESSION-IMP-07 | `0` switches the impersonation age limit off | php | a 400-day impersonation, limit 0 | still active | implemented | 2026-10-11 |
+| SESSION-IMP-05 | the daily task ends a staff impersonation older than `rsx.sessions.impersonation_max_days` together with the impersonator's sign-in behind it, each keeping its record | php | impersonations started 8 and 6 days ago and the user's own sign-in, limit 7 | the 8-day impersonation and its impersonator's sign-in signed out (reason 11), that browser's pointer null; the others signed in | implemented | 2026-10-21 |
+| SESSION-IMP-06 | an old portal View as Client is ended alone | php | a browser signed into staff, viewing as a portal user for 9 days | portal user session signed out (reason 11), portal pointer null, staff sign-in untouched | implemented | 2026-10-21 |
+| SESSION-IMP-07 | `0` switches the impersonation age limit off | php | a 400-day impersonation, limit 0 | still signed in | implemented | 2026-10-21 |
+| SESSION-LIST-01 | a signed-out user session is listed (marked, with its reason) within `rsx.sessions.unused_session_days`, an older one is not | php | sign-outs 2 and 60 days old | only the 2-day one; `is_signed_in` false, `sign_out_reason` 'Signed out' | implemented | 2026-10-21 |
+| SESSION-LIST-02 | a harness browser is never listed | php | a TYPE_PLAYWRIGHT browser and a web one, same account | only the web one | implemented | 2026-10-21 |
 
 ## Password_Reset_Required_Test (php, default isolation) - the staff refusal and the flag's lifecycle
 
@@ -549,3 +590,22 @@ test, built unsaved). User_Payload_Never_Export_Test covers the user invite colu
 | nexp-04 | makeVisible() cannot reveal a staff identity secret | makeVisible(['password','remember_token']) | neither key, no hash in the JSON | implemented |
 | nexp-05 | makeVisible() cannot reveal a portal password | makeVisible('password') | no password key | implemented |
 | nexp-06 | a portal user's metadata never serializes, server code still reads it | set_metadata() | no metadata key or value in toArray()/JSON; get_metadata() answers | implemented |
+
+## Session_User_Sessions_Test (php, default isolation) - the user session engine
+
+The browser-addressed primitives every web sign-in and sign-out is built from, driven against
+fixture browser rows (the web flow itself is http/session_sign_in_rotation.sh).
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-us-01 | the same account on the same browser and site reuses its user session (A/B/A) | activate A, B (A replaced), A again (B replaced) | A's id again, sign_in_count 2, signed in, pointed at; two user sessions on the browser | implemented |
+| sess-us-02 | a different site, impersonator or browser is a different user session | four tuples | four ids; the first tuple answers its own id again | implemented |
+| sess-us-03 | the tuple hash equals the migration's SQL | staff and portal tuples with nulls | PHP hash = SHA2(CONCAT_WS(...)) | implemented |
+| sess-us-04 | a realm's sign-out clears THAT realm's values; the other realm's and the guest values stay | staff + portal sign-ins, a value in each realm; sign each out | staff value gone after the staff sign-out, portal after the portal one, guest kept throughout; row survives | implemented |
+| sess-us-04a | another account signing in over a realm (SIGN_OUT_REPLACED) clears it; a site switch (pointer to the same person) keeps it | a staff value; SITE_SWITCHED then REPLACED | kept, then gone | implemented |
+| sess-us-09 | the browser's first sign-in in any realm stamps `_sessions.first_signed_in_at`, once | a guest fixture; two portal activations | null, then stamped; the second leaves it | implemented |
+| sess-us-05 | ending an impersonation returns the pointer to the suspended sign-in | impersonation + the impersonator's own | pointer = own, still signed in | implemented |
+| sess-us-06 | ending the impersonator's sign-in ends the impersonation riding it | the same, sign out the own | both signed out, pointer null | implemented |
+| sess-us-07 | signing out twice is a no-op; the first stamp and reason stand | sign out, then again with another reason | second call answers nothing | implemented |
+| sess-us-08 | a command has no user session | CLI identity | get_user_session_id() and get_current_session_info() null | implemented |
+

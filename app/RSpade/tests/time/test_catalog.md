@@ -37,7 +37,7 @@ Type: php. Last updated: 2026-09-01.
 | time-tz-05 | Portal request is refused (no personal zone there) | set_portal_request(true) | RuntimeException (shouldnt_happen) mentioning portal | implemented |
 | time-tz-06 | The setter invalidates the resolution cache | get, then set a new zone, then get | second get returns the new zone in-process | implemented |
 | time-tz-07 | timezone_options shape | none | 400+ entries, "America/Chicago (UTC-0[56]:00)", UTC+00:00, ksorted | implemented |
-| time-tz-08 | Endpoints refuse an anonymous caller | no session | AjaxUnauthorizedException on both endpoints | implemented |
+| time-tz-08 | Endpoints refuse an anonymous caller | no session | AjaxAuthRequiredException (auth_required) on both endpoints | implemented |
 | time-tz-09 | Endpoints serve a signed-in staff user | impersonated user | [{value,label}] options; set_timezone changed=true; get_settings reflects it | implemented |
 | time-tz-10 | set_timezone returns per-field validation errors | missing / unknown zone | AjaxFormErrorException carrying details['timezone'] | implemented |
 

@@ -22,6 +22,7 @@ SYNOPSIS
     foreach ($client->revisions() as $revision) {
         $revision->operation_id__label;   // Created / Updated / Deleted / Restored
         $revision->diff();                // ['name' => ['Acme', 'Acme Ltd'], ...]
+        Revision_Model::is_redacted($v);  // a $neverExport column: changed, value not recorded
         $revision->transaction->actor;    // who did it
     }
 
@@ -96,7 +97,9 @@ OPTING IN
 
     $revision_exclude is NOT a security control. An excluded column is still
     stored in the record. To keep a value out of the database, do not put it
-    there.
+    there. A SECRET does not belong in this list either: $neverExport already
+    redacts it (REDACTED COLUMNS). A column in both lists is not recorded at
+    all - this list wins.
 
     #[Revision_Parent]
 
@@ -141,9 +144,36 @@ AUTOMATIC EXCLUSIONS
     created_at and the created_by pair are NOT excluded. They appear exactly
     once, on the create, where they are the record's provenance.
 
+REDACTED COLUMNS
+
+    A column in the model's never-export list (Model::never_exported_columns(),
+    the union of $neverExport up the chain - rsx:man model, NEVER EXPORT
+    FIELDS) is a secret, and a secret's history is THAT it changed, never what
+    it held. Such a change is recorded with BOTH sides replaced by the marker:
+
+        'api_token' => [Revision::REDACTED, Revision::REDACTED]
+
+    on a create, an update and a clear alike, so the stored document never
+    holds the old value or the new one. The replacement happens before the
+    value is reduced for storage, so a never-exported column with a declared
+    text type is never encoded either. An update that leaves the column alone
+    does not mention it, and a delete's document is empty as always.
+
+    Revision::REDACTED is the string '__RSX_REDACTED__'. It survives JSON and
+    the codec unchanged, and diff() hands it back as-is. A history renderer
+    asks Revision_Model::is_redacted($value) per value and shows "changed" (or
+    its own wording) instead of the value - never the marker itself, and never
+    a comparison against a copy of the literal.
+
+    One declaration covers both lanes: a secret in $neverExport needs no
+    $revision_exclude entry. Name a column in $revision_exclude as well only
+    when even the fact that it changed is noise; then it is not recorded at
+    all.
+
 WHAT EACH OPERATION RECORDS
 
-    Created   Every non-null column as [null, value]. A created record's
+    Created   Every non-null column as [null, value] (a never-exported one as
+              [REDACTED, REDACTED]). A created record's
               history must be readable on its own, without inferring the
               starting state from the schema.
     Updated   Only the columns that actually changed. An update that changed
@@ -175,11 +205,15 @@ THE TABLES
         ip                  the caller's IP, null off a real request - read
                             as $transaction->ip; the row stores
                             ip_address_id (rsx:man ip_addresses)
-        audit_session_id    the acting context - identity, tenant,
-                            impersonators, address, session row, user agent -
-                            as a permanent _audit_sessions row (rsx:man
-                            session, AUDIT SESSIONS). Stamped by the framework
-                            on every unit of work, from any source.
+        audit_session_id    the acting context - a permanent _audit_sessions
+                            row keyed on user session x site x address x
+                            user agent, describing identity, tenant,
+                            impersonators and browser (rsx:man session,
+                            AUDIT SESSIONS). Stamped by the framework on
+                            every unit of work; NULL where nobody is acting
+                            (a command, a plain task, the rsx:debug
+                            harness). A #[Run_As_Dispatcher] task's units
+                            carry the dispatching request's.
         api_request_log_id  the _api_request_log row, when the source is api
         revision_count      how many revisions the action produced
         description         whatever Revision::describe() was given
@@ -415,8 +449,15 @@ API REFERENCE
     diff(): array
         The decoded document, ['field' => [before, after], ...]. The only
         reader of `changes`, which is $neverExport and never leaves the server
-        raw. Throws when the payload names a codec or dictionary this build
-        cannot honour.
+        raw. A never-exported column's pair is [REDACTED, REDACTED]. Throws
+        when the payload names a codec or dictionary this build cannot honour.
+
+    Revision_Model::is_redacted(mixed $value): bool
+        Whether one side of a diff() pair is Revision::REDACTED - the column
+        changed, and its value was never recorded. See REDACTED COLUMNS.
+
+    Revision::REDACTED
+        The marker itself, '__RSX_REDACTED__'.
 
     transaction, record, root
         Relations. $revision->transaction->actor is who did it;
@@ -570,6 +611,11 @@ EXAMPLES
             echo $revision->operation_id__label;
 
             foreach ($revision->diff() as $field => [$before, $after]) {
+                if (Revision_Model::is_redacted($after)) {
+                    echo "{$field}: changed";
+                    continue;
+                }
+
                 echo "{$field}: {$before} -> {$after}";
             }
         }
@@ -578,7 +624,7 @@ EXAMPLES
     component and its endpoint:
 
         system/app/RSpade/resource/reference_app/theme/components/view/revision_history/
-        system/app/RSpade/resource/reference_app/app/frontend/revisions/frontend_revisions_controller.php
+        system/app/RSpade/resource/reference_app/app/frontend/revisions/revisions_controller.php
 
 TROUBLESHOOTING
 
@@ -591,6 +637,11 @@ TROUBLESHOOTING
         It is in $revision_exclude, it is an automatic exclusion (updated_at,
         the updated_by pair, a `_`-prefixed column), or the write did not
         actually change it - an update records only what moved.
+
+    A field's values read "__RSX_REDACTED__"
+        Correct: the column is in the model's never-export list, so its change
+        is recorded and its value is not. Render it through
+        Revision_Model::is_redacted() (REDACTED COLUMNS).
 
     A child's writes do not show on the parent's history
         The child has no #[Revision_Parent], or the foreign key was null at

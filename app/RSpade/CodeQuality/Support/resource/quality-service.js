@@ -1,9 +1,10 @@
 /**
  * QUALITY subsystem of the node service (prefix `quality`).
  *
- * JavaScript linting (Babel parser) and this-usage analysis (Acorn) for rsx:check.
+ * JavaScript linting (Babel parser), this-usage analysis (Acorn) and raw-HTML-write
+ * detection (Babel parser) for rsx:check.
  *
- * Methods: quality.lint, quality.analyze_this
+ * Methods: quality.lint, quality.analyze_this, quality.analyze_raw_html
  *
  * @FILENAME-CONVENTION-EXCEPTION - node service module
  */
@@ -389,6 +390,174 @@ function analyzeThisUsage(content, filePath) {
 }
 
 // =============================================================================
+// RAW-HTML-WRITE ANALYSIS (Babel Parser) - JS-RAW-HTML-01
+// =============================================================================
+
+// Calls whose result is HTML-safe by construction: each turns plain text (or untrusted
+// rich text) into markup that is safe to insert.
+const SAFE_HTML_CALLS = new Set(['escape_html', 'sanitize_rich_text_html', 'nl2brhtml']);
+
+/**
+ * The name of a member expression's property, computed string keys included.
+ * @returns {string|null}
+ */
+function memberPropertyName(node) {
+    if (!node || (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression')) {
+        return null;
+    }
+    if (!node.computed && node.property.type === 'Identifier') {
+        return node.property.name;
+    }
+    if (node.computed && node.property.type === 'StringLiteral') {
+        return node.property.value;
+    }
+    return null;
+}
+
+/**
+ * Is this expression markup the author fully controls or produced by a safe call?
+ *
+ * Allowed: a string literal; a template literal whose every ${} part is itself allowed;
+ * escape_html(...), sanitize_rich_text_html(...), nl2brhtml(...), nl2br(escape_html(...));
+ * a + concatenation of allowed parts.
+ */
+function isSafeHtmlExpression(node) {
+    if (!node) {
+        return false;
+    }
+    switch (node.type) {
+        case 'StringLiteral':
+            return true;
+        case 'TemplateLiteral':
+            return node.expressions.every(isSafeHtmlExpression);
+        case 'BinaryExpression':
+            return node.operator === '+' && isSafeHtmlExpression(node.left) && isSafeHtmlExpression(node.right);
+        case 'CallExpression': {
+            if (node.callee.type !== 'Identifier') {
+                return false;
+            }
+            if (SAFE_HTML_CALLS.has(node.callee.name)) {
+                return true;
+            }
+            if (node.callee.name === 'nl2br' && node.arguments.length === 1) {
+                const inner = node.arguments[0];
+                return inner.type === 'CallExpression'
+                    && inner.callee.type === 'Identifier'
+                    && inner.callee.name === 'escape_html';
+            }
+            return false;
+        }
+        default:
+            return false;
+    }
+}
+
+/** An empty string written as a literal: '', "" or an empty template. */
+function isEmptyStringLiteral(node) {
+    if (node.type === 'StringLiteral') {
+        return node.value === '';
+    }
+    return node.type === 'TemplateLiteral'
+        && node.expressions.length === 0
+        && node.quasis.every((quasi) => quasi.value.cooked === '');
+}
+
+/**
+ * Find every write of a non-literal HTML string into the DOM.
+ *
+ * @param {string} content - File content
+ * @returns {object} {violations: [{line, kind}], error}
+ *   kind: 'html' (.html(x)), 'html_empty' (.html('')), 'inner_html', 'outer_html',
+ *         'insert_adjacent_html', 'document_write'
+ */
+function analyzeRawHtml(content) {
+    let ast;
+    try {
+        ast = babelParser.parse(content, {
+            sourceType: 'module',
+            errorRecovery: true,
+            plugins: [
+                'decorators-legacy',
+                'classProperties',
+                'classPrivateProperties',
+                'classPrivateMethods',
+                'optionalChaining',
+                'nullishCoalescingOperator',
+                'asyncGenerators',
+                'bigInt',
+                'dynamicImport',
+                'exportDefaultFrom',
+                'exportNamespaceFrom',
+                'objectRestSpread',
+                'topLevelAwait'
+            ]
+        });
+    } catch (e) {
+        // A file that does not parse is reported by quality.lint; nothing to analyze here.
+        return { violations: [], error: `Parse error: ${e.message}` };
+    }
+
+    const violations = [];
+
+    const report = (node, kind) => {
+        violations.push({ line: node.loc.start.line, kind });
+    };
+
+    const visit = (node) => {
+        if (!node || typeof node.type !== 'string') {
+            return;
+        }
+
+        if (node.type === 'CallExpression' || node.type === 'OptionalCallExpression') {
+            const callee = node.callee;
+            const name = memberPropertyName(callee);
+
+            if (name === 'html' && node.arguments.length === 1) {
+                const arg = node.arguments[0];
+                if (isEmptyStringLiteral(arg)) {
+                    report(callee.property, 'html_empty');
+                } else if (!isSafeHtmlExpression(arg)) {
+                    report(callee.property, 'html');
+                }
+            } else if (name === 'insertAdjacentHTML' && node.arguments.length >= 2) {
+                if (!isSafeHtmlExpression(node.arguments[1])) {
+                    report(callee.property, 'insert_adjacent_html');
+                }
+            } else if ((name === 'write' || name === 'writeln')
+                && callee.object.type === 'Identifier' && callee.object.name === 'document') {
+                if (!node.arguments.every(isSafeHtmlExpression)) {
+                    report(callee.property, 'document_write');
+                }
+            }
+        } else if (node.type === 'AssignmentExpression') {
+            const name = memberPropertyName(node.left);
+            if ((name === 'innerHTML' || name === 'outerHTML') && !isSafeHtmlExpression(node.right)) {
+                report(node.left.property, name === 'innerHTML' ? 'inner_html' : 'outer_html');
+            }
+        }
+
+        for (const key of Object.keys(node)) {
+            if (key === 'loc' || key === 'start' || key === 'end' || key === 'extra'
+                || key === 'leadingComments' || key === 'trailingComments' || key === 'innerComments') {
+                continue;
+            }
+            const child = node[key];
+            if (Array.isArray(child)) {
+                for (const item of child) {
+                    visit(item);
+                }
+            } else if (child && typeof child === 'object') {
+                visit(child);
+            }
+        }
+    };
+
+    visit(ast.program);
+
+    return { violations };
+}
+
+// =============================================================================
 // HANDLERS
 // =============================================================================
 
@@ -406,6 +575,35 @@ module.exports = {
                 results[file] = {
                     status: 'success',
                     error: error
+                };
+            } catch (error) {
+                results[file] = {
+                    status: 'error',
+                    error: {
+                        type: 'FileReadError',
+                        message: error.message
+                    }
+                };
+            }
+        }
+
+        return { results };
+    },
+
+    /**
+     * {files: [<absolute path>, ...]} -> {results: {<path>: {status, violations, error}}}
+     */
+    analyze_raw_html(request) {
+        const results = {};
+
+        for (const file of request.files) {
+            try {
+                const content = fs.readFileSync(file, 'utf8');
+                const result = analyzeRawHtml(content);
+                results[file] = {
+                    status: 'success',
+                    violations: result.violations,
+                    error: result.error || null
                 };
             } catch (error) {
                 results[file] = {

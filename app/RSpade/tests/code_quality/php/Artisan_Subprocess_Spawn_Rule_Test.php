@@ -23,8 +23,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * against locks its own parent holds - invisibly, since the parent's half of the cycle is
  * an OS waitpid rather than a lock wait.
  *
- * Fixtures are written to temp files and the rule is driven directly, the same way
- * Session_Id_Null_Check_Rule_Test drives SESSION-ID-01.
+ * Fixtures are written to temp files and the rule is driven directly.
  *
  * The LINE-NUMBER test is not incidental. The first implementation of this rule scanned
  * FileSanitizer::sanitize_php()['lines'], which is not index-aligned with the file (194

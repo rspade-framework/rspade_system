@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Revisions;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Revisions\Revision;
 use App\RSpade\Core\Revisions\Revision_Codec;
 use App\RSpade\Core\Revisions\Transaction_Model;
 
@@ -185,7 +186,8 @@ abstract class Revision_Model_Abstract extends Rsx_Model_Abstract
      *
      * Both values are the FULL stored value, never a delta - a revision says what the
      * field was and what it became, and answering "what changed" must not require
-     * replaying every earlier revision. A delete carries an empty document.
+     * replaying every earlier revision. A delete carries an empty document. A
+     * never-exported column carries Revision::REDACTED on both sides (is_redacted()).
      *
      * Throws (from Revision_Codec) when the stored payload names a codec or a dictionary
      * this build cannot honour: an unreadable revision is a fact about the data, and
@@ -200,5 +202,19 @@ abstract class Revision_Model_Abstract extends Rsx_Model_Abstract
         $decoded = json_decode($json, true);
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * Whether one value from a diff() pair is the redaction marker - the column is a
+     * never-exported secret, so the revision records that it changed and not its value.
+     *
+     * A history renderer asks this per value and paints "changed" (or its own wording)
+     * instead of the value; the marker itself is never something to show a reader.
+     *
+     * @param mixed $value One side of a diff() pair
+     */
+    public static function is_redacted($value): bool
+    {
+        return $value === Revision::REDACTED;
     }
 }

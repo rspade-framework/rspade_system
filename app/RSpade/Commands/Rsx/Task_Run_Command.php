@@ -9,6 +9,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Task\Task_Dispatcher_Context;
 use App\RSpade\Core\Task\Task_Run_Model;
 
 /**
@@ -25,6 +26,10 @@ use App\RSpade\Core\Task\Task_Run_Model;
  *          line of a run that fails. `-q` silences it; stdout is never silenced.
  *   EXIT CODE is the run's return code: 0 for success (the task returned null, true or 0),
  *          the code it returned for a failure (clamped to 1..255), 1 for false or a throw.
+ *
+ * A #[Run_As_Dispatcher] task is REFUSED here, with a message on STDERR and exit 1: it runs as
+ * the user whose request dispatched it, and a command line is nobody's request. (The build
+ * already refuses #[Command] on such a task - TASK-RUN-AS-01.)
  *
  * WHILE THE TASK SYSTEM IS OFF (php artisan rsx:tasks:disable) nothing runs: rsx:task:run and
  * every #[Command] alias queue their run, say once on STDERR that they are waiting for
@@ -102,11 +107,19 @@ class Task_Run_Command extends Command
         // Task::internal() called from application code prints to nobody's console.
         $streams = [STDOUT, $this->output->isQuiet() ? null : STDERR];
 
-
         try {
-            Task::resolve_task_class($service, $task);
+            $class = Task::resolve_task_class($service, $task);
         } catch (\Exception $e) {
             fwrite(STDERR, '[ERROR] ' . $e->getMessage() . "\n");
+
+            return 1;
+        }
+
+        // A #[Run_As_Dispatcher] task is a request's Ajax endpoint run later: it acts as the
+        // signed-in user who dispatched it, and a command line has nobody to bind it to.
+        if (Task_Dispatcher_Context::is_declared($class, $task)) {
+            fwrite(STDERR, '[ERROR] ' . class_basename($class) . "::{$task} runs as the user who dispatched it and can only be started from a request: "
+                . "dispatch it with Task::dispatch() from an Ajax endpoint\n");
 
             return 1;
         }

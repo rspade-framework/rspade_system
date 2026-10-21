@@ -353,11 +353,13 @@ HOW IT WORKS
 
     THE CHALLENGE STATE MACHINE
         begin_challenge($identity)
-            Writes {identity_id, email} to the realm's CHALLENGE_KEY session
-            value with an expiry, and then SIGNS THE REALM OUT. The order is load-bearing: put_value() is a writer,
-            so it establishes the session row the value hangs off; the logout
-            clears the row's IDENTITY but not the row, and _session_values
-            hang off it by FK, so the parked value survives.
+            SIGNS THE REALM OUT, and then writes {identity_id, email} to the
+            realm's CHALLENGE_KEY session value (in that realm) with an expiry.
+            The order is load-bearing: a realm's sign-out clears that realm's
+            session values, so a value written first would be cleared by the
+            sign-out whenever somebody was still signed in. Both act on the same
+            browser row (the sign-out rotates its tokens in place), and
+            put_value() establishes that row for a visitor who had none.
 
         WHY IT LOGS OUT. Between a correct password and a correct second
         factor the browser holds a HALF-authenticated state, and the only
@@ -563,7 +565,7 @@ THE FACADE
 
     THE CHALLENGE
         begin_challenge($identity, ?array $accepts = null): void
-            Parks the identity and SIGNS THE REALM OUT. $accepts names the
+            SIGNS THE REALM OUT, then parks the identity. $accepts names the
             kinds of answer THIS challenge takes - ANSWER_ISSUED_CODE,
             ANSWER_TOTP, ANSWER_PASSKEY, ANSWER_RECOVERY_CODE - and
             verify_challenge() refuses every other kind, a correct one
@@ -933,9 +935,10 @@ IMPLEMENTING 2FA IN AN APPLICATION
         ANYTHING THE CHALLENGE HAS TO CARRY ACROSS RIDES THE SESSION.
         <Two_Factor_Challenge> posts exactly {code} or {assertion}: there is
         no query string and no place to thread a form field. Park it with
-        Session::put_value(..., Rsx_Two_Factor::challenge_expires_at()) BEFORE
-        begin_challenge() (put_value() establishes the session row the value
-        and the pending identity both hang off) and consume it
+        Session::put_value(..., Rsx_Two_Factor::challenge_expires_at()) AFTER
+        begin_challenge() - the challenge signs the realm out first, and a
+        sign-out clears that realm's session values, so a value written
+        before it is gone whenever somebody was signed in - and consume it
         once in the verification endpoint. The template does this with the
         invite code the login form carried.
 
@@ -1175,9 +1178,11 @@ TRUSTED BROWSERS
 
     A staff realm left at 0 cannot be trusted by any application code.
 
-    A BROWSER is its device record (_session_devices): assigned at the
-    browser's first sign-in and kept across every later sign-in, expiry and
-    forced sign-out on it, lost with its cookie. So cleared cookies, a private
+    A BROWSER is its session row (_two_factor_trusted_devices.session_id): one
+    row per browser, kept across every sign-in, expiry and forced sign-out on
+    it, lost with its cookie - or when the browser goes unused for
+    rsx.sessions.unused_session_days and is made inactive (its next visit is a
+    new row). So cleared cookies, a private
     window or another browser always meet the challenge. Trust waives only the
     second step - the password is always checked - and is as strong as the
     session cookie it is recognised by. Rows past their window are removed by
@@ -1386,9 +1391,10 @@ NOTES AND GOTCHAS
     - Do not call Login_Throttle::record_failure() alongside a
       STATUS_FAILED_2FA record_failure(). One failure, one recorder.
 
-    - Park anything the challenge must carry BEFORE begin_challenge(), never
-      after: the logout clears the identity, and a value written afterwards
-      lands on a session the caller has already abandoned.
+    - Park anything the challenge must carry AFTER begin_challenge(), never
+      before: the challenge signs the realm out first, and a realm's sign-out
+      clears that realm's session values. (A 'guest' value survives either
+      way.)
 
     - A checkbox that is absent from a POST means OFF. An application policy
       flag written from a form uses the checkbox-absent-means-off idiom, or

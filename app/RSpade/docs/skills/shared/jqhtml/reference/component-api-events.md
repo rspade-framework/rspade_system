@@ -34,6 +34,7 @@ this.sid('child').on('event_name', (component, data) => { ... });       // liste
 ```
 
 - **`.on(event, cb)`** fires on every occurrence. **`.once(event, cb)`** fires once, then auto-removes. Both return `this` for chaining.
+- **The callback is called with `this` = the component that fired**, plus `(component, data)` as arguments - a `function` callback can use `this`; an arrow function keeps the `this` of where it was written (usually the listening component).
 - **Both fire immediately if the event already happened**, receiving the DATA stored from the most recent `trigger()` - not `undefined`.
 - **`this.invalidate('name')`** clears an event's already-occurred marker (registered handlers stay, they just wait for the next `trigger()`). `render()`/`reload()` do this to `ready` internally.
 
@@ -62,7 +63,7 @@ A subscription that means "the USER changed this" rides **`input`**, never **`va
 
 Custom component methods always get unique names. **Never shadow the `Jqhtml_Component` surface:**
 
-`reload` · `refresh` · `render` · `redraw` · `stop` · `ready` · `rendered` · `gate_load` · `is_attached` · `sid` · `$sid` · `closest` · `find` · `instantiator` · `on` · `once` · `trigger` · `invalidate` · plus every lifecycle hook (`on_create`, `on_render`, `on_load`, `on_loaded`, `on_ready`, `on_stop`, `on_attach`, `on_detach`). Also reserved, but RSpade's rather than jqhtml's: `subscribe`, patched onto `Component.prototype` at boot by `Rsx_Realtime` (its subscriptions are released through the component's `attach` / `detach` / `stop` events, never through `on_stop()`, so defining `on_stop()` is always safe).
+`reload` · `refresh` · `render` · `redraw` · `stop` · `ready` · `rendered` · `gate_load` · `is_attached` · `sid` · `$sid` · `closest` · `find` · `instantiator` · `on` · `once` · `trigger` · `invalidate` · plus every lifecycle hook (`on_create`, `on_render`, `on_load`, `on_load_error`, `on_loaded`, `on_ready`, `on_stop`, `on_attach`, `on_detach`). Also reserved, but RSpade's rather than jqhtml's: `subscribe`, patched onto `Component.prototype` at boot by `Rsx_Realtime` (its subscriptions are released through the component's `attach` / `detach` / `stop` events, never through `on_stop()`, so defining `on_stop()` is always safe).
 
 Overriding one of these is a deliberate OOP override for unusual edge cases only, never a naming convenience. **`render()` is the exception with no exceptions** - never override or shadow it, instance or static (`JQHTML-RENDER-01`/`JQHTML-IMPL-01` reject it). The full list is in `php artisan rsx:man jqhtml` (RESERVED NAMES).
 

@@ -106,7 +106,7 @@ from the control panel's Debug Flags screen (`/_sys/debug-flags`). The override 
 * the filter mode (all, whitelist, blacklist, specific) and its channel list
 * include_benchmark, include_location, include_backtrace
 
-It is stored against the browser's session (`Session::put_value('sys.console_debug')`,
+It is stored as a STAFF-realm session value on the browser (`Session::put_value('sys.console_debug', ..., null, 'staff')`,
 read through `Console_Debug_Override`) and applied to every page and Ajax request that
 browser makes - PHP output (`Debugger`) and `window.rsxapp.console_debug` alike. Other
 browsers, other developers and CLI processes never see it. It applies only:
@@ -117,7 +117,8 @@ browsers, other developers and CLI processes never see it. It applies only:
   production).
 
 It leaves `outputs.*` and `enable_get_trace` to the configuration, replaces
-CONSOLE_DEBUG_FILTER for that browser, and ends with the session (the screen's Reset
+CONSOLE_DEBUG_FILTER for that browser, and ends with the developer's staff sign-in on it -
+signing out, or a sign-in limit passing, clears it (the screen's Reset
 removes it sooner). Precedence, lowest to highest: config file, environment, the
 per-browser override, the rsx:debug harness headers. It takes effect when the request's
 dispatch begins, so output emitted earlier during framework boot follows the

@@ -85,6 +85,18 @@ abstract class Rsx_Test_Abstract
     protected static $explicit_group_only = false;
 
     /**
+     * When true, every test method in this class runs ACTING AS A BROWSER: a fresh browser
+     * row is inserted (inside the test's transaction) and the process acts as it, through
+     * __as_browser(). For a class whose subject belongs to a browser - session values, a
+     * second-factor challenge parked between two calls, View as Client - because the test
+     * process otherwise runs a virtual session, which has no browser and refuses
+     * Session::put_value().
+     *
+     * @var bool
+     */
+    protected static $acts_as_browser = false;
+
+    /**
      * The internal flag that marks a process as PART OF A TEST RUN: rsx:test declares it
      * on itself - in system/artisan, PRE-BOOT, because Manifest::init() runs during boot and
      * what it indexes depends on the answer - and Rsx_Artisan forwards it to every child it
@@ -351,6 +363,10 @@ abstract class Rsx_Test_Abstract
                 }
 
                 try {
+                    if (static::$acts_as_browser) {
+                        static::__as_browser();
+                    }
+
                     // Run the test
                     $method->invoke(null);
 
@@ -383,8 +399,8 @@ abstract class Rsx_Test_Abstract
                         DB::rollBack();
                     }
 
-                    // Return Session to virgin, pre-init state: the CLI session row and its
-                    // handle, the API identity tier, the loader flags and every resolved
+                    // Return Session to virgin, pre-init state: the browser the test acted
+                    // as, the API identity tier, the loader flags and every resolved
                     // cache. A test is one request; this is the request boundary a web server
                     // would have provided by ending the process. None of it is a DB row, so
                     // the rollback above cannot undo it. The CLI identity DECLARATION
@@ -681,14 +697,31 @@ abstract class Rsx_Test_Abstract
     // =========================================================================
     // SESSION / SITE / USER CONTEXT (headless impersonation)
     //
-    // A CLI run has no browser session, but site-scoped models read
-    // Session::get_site_id() / get_user() and audit code reads
-    // Session::get_user_id(). These helpers set the impersonated context as
-    // static overrides; they create no session row of their own (a test that
-    // wants one calls Session::get_session_id(), which mints a TYPE_CLI row for
-    // the process). __reset_session() clears the overrides AND drops any minted
-    // row. They are only effective in CLI/test context.
+    // A test process runs a VIRTUAL session: no browser, no session row, and
+    // Session::get_session_id() answers null. Site-scoped models read
+    // Session::get_site_id() / get_user() and audit code reads Session::get_user_id(),
+    // so these helpers declare the context as static overrides, writing nothing.
+    // __reset_session() clears them. A test whose subject belongs to a browser acts as
+    // one: __as_browser(), or $acts_as_browser for the whole class.
     // =========================================================================
+
+    /**
+     * Act as a BROWSER for the rest of this test: insert a browser row (no sign-in on it)
+     * and make Session::get_session_id(), has_session(), the session values and
+     * get_session() answer it. Identity is still the virtual session's - declare it with
+     * __acting_as_user() as usual. Call it again for a second, different browser.
+     *
+     * @param array $options __insert_session_fixture()'s options
+     * @return int The browser row's id
+     */
+    protected static function __as_browser(array $options = []): int
+    {
+        $session_id = static::__insert_session_fixture($options)['id'];
+
+        Session::$_browser_session_id_for_tests = $session_id;
+
+        return $session_id;
+    }
 
     /**
      * Impersonate a site for the current test. Session::get_site_id() (and the
@@ -728,6 +761,111 @@ abstract class Rsx_Test_Abstract
     protected static function __reset_session()
     {
         Session::reset_impersonation();
+    }
+
+    /**
+     * Insert a browser session row and the user sessions signed in on it, for a test of
+     * something that reads session rows (listings, terminations, lifetimes, cleanup). A CLI
+     * test cannot sign in through the web path, so the rows are written directly, in the
+     * shape the web path writes them.
+     *
+     * $options (all optional):
+     *   type_id, active, last_active, created_at (Rsx_Time-parseable), token - the row's
+     *                first_signed_in_at is its earliest user session's (null with none: a guest)
+     *   staff        [login_user_id, site_id, impersonator_login_user_id, signed_in_at,
+     *                 last_page_view_at, last_active_at, started_at, signed_out_at,
+     *                 sign_out_reason_id] - the user session the staff pointer names (unless
+     *                 signed_out_at is given, which leaves the pointer null)
+     *   staff_own    the same keys: a SIGNED-IN staff user session the pointer does not name -
+     *                the impersonator's own sign-in behind a staff impersonation
+     *   portal       [portal_user_id, portal_site_id, impersonator_user_id, ...timing] - the
+     *                portal pointer's user session
+     *
+     * @param array $options
+     * @return array{id: int, token: string, staff_user_session_id: ?int, staff_own_user_session_id: ?int, portal_user_session_id: ?int}
+     */
+    protected static function __insert_session_fixture(array $options = []): array
+    {
+        $as_db = fn ($value) => $value === null ? null : \App\RSpade\Core\Time\Rsx_Time::to_database($value);
+        $now = now()->format('Y-m-d H:i:s.v');
+        $token = $options['token'] ?? bin2hex(random_bytes(32));
+
+        $session_id = (int) DB::table('_sessions')->insertGetId([
+            'session_token' => $token,
+            'csrf_token' => bin2hex(random_bytes(32)),
+            'active' => (int) ($options['active'] ?? 1),
+            'type_id' => $options['type_id'] ?? Session::TYPE_WEB,
+            'version' => 1,
+            'ip_address_id' => \App\RSpade\Core\Session\Ip_Address::id('10.0.0.9'),
+            'user_agent_id' => \App\RSpade\Core\Session\Audit_Session::user_agent_id('test-browser'),
+            'last_active' => $as_db($options['last_active'] ?? null) ?? $now,
+            'created_at' => $as_db($options['created_at'] ?? null) ?? $now,
+            'updated_at' => $now,
+        ]);
+
+        $insert = function (int $realm_id, array $spec) use ($session_id, $as_db, $now): int {
+            $identity = $realm_id === Session::REALM_STAFF
+                ? [
+                    'login_user_id' => (int) $spec['login_user_id'],
+                    'site_id' => (int) ($spec['site_id'] ?? 0),
+                    'impersonator_login_user_id' => $spec['impersonator_login_user_id'] ?? null,
+                ]
+                : [
+                    'portal_user_id' => (int) $spec['portal_user_id'],
+                    'portal_site_id' => $spec['portal_site_id'] ?? null,
+                    'impersonator_user_id' => $spec['impersonator_user_id'] ?? null,
+                ];
+
+            $signed_in_at = $as_db($spec['signed_in_at'] ?? null) ?? $now;
+
+            return (int) DB::table('_user_sessions')->insertGetId(array_merge($identity, [
+                'session_id' => $session_id,
+                'realm_id' => $realm_id,
+                'tuple_hash' => Session::_user_session_tuple_hash($session_id, $realm_id, $identity),
+                'first_signed_in_at' => $signed_in_at,
+                'signed_in_at' => $signed_in_at,
+                'started_at' => $as_db($spec['started_at'] ?? null) ?? $signed_in_at,
+                'last_page_view_at' => $as_db($spec['last_page_view_at'] ?? null) ?? $now,
+                'last_active_at' => $as_db($spec['last_active_at'] ?? null) ?? $now,
+                'signed_out_at' => $as_db($spec['signed_out_at'] ?? null),
+                'sign_out_reason_id' => $spec['sign_out_reason_id'] ?? null,
+            ]));
+        };
+
+        $out = [
+            'id' => $session_id,
+            'token' => $token,
+            'staff_user_session_id' => null,
+            'staff_own_user_session_id' => null,
+            'portal_user_session_id' => null,
+        ];
+
+        if (isset($options['staff_own'])) {
+            $out['staff_own_user_session_id'] = $insert(Session::REALM_STAFF, $options['staff_own']);
+        }
+
+        foreach (['staff' => Session::REALM_STAFF, 'portal' => Session::REALM_PORTAL] as $key => $realm_id) {
+            if (!isset($options[$key])) {
+                continue;
+            }
+
+            $user_session_id = $insert($realm_id, $options[$key]);
+            $out[$key . '_user_session_id'] = $user_session_id;
+
+            if (!isset($options[$key]['signed_out_at'])) {
+                DB::table('_sessions')->where('id', $session_id)->update([$key . '_user_session_id' => $user_session_id]);
+            }
+        }
+
+        // The browser's first sign-in, as Session stamps it: a row with no user session is a
+        // guest (first_signed_in_at null).
+        $first_signed_in_at = DB::table('_user_sessions')->where('session_id', $session_id)->min('first_signed_in_at');
+
+        if ($first_signed_in_at !== null) {
+            DB::table('_sessions')->where('id', $session_id)->update(['first_signed_in_at' => $first_signed_in_at]);
+        }
+
+        return $out;
     }
 
     /**

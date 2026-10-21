@@ -4,7 +4,7 @@
 
 The external REST API subsystem (`/api/vN/...`): attribute-declared endpoints on a
 special controller type, framework-owned Bearer authentication that establishes a
-cookie-less headless `Session` identity, declarative parameter validation, a version
+cookie-less `Session` identity on the key's own session row, declarative parameter validation, a version
 display/resolution catalog, per-request logging with retention cleanup, and the
 app-facing response-helper family, the per-key scopes that narrow one credential
 below its holder's authority, and the per-key read-only flag that narrows one credential

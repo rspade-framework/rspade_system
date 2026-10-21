@@ -22,6 +22,7 @@
 function api_render_response_note($target, prefix, message, level) {
     const cls = prefix + '__response-note ' + prefix + '__response-note--' + (level || 'warn');
 
+    // @JS-RAW-HTML-01-EXCEPTION - the class is built from the caller's component name and a fixed level word, and the one free-text part is escape_html()'d
     $target.html('<div class="' + cls + '">' + escape_html(message) + '</div>');
 }
 
@@ -63,6 +64,7 @@ function api_render_response($target, prefix, status, status_text, ms, pretty) {
 
     parts.push('<pre class="' + prefix + '__response-pre"><code class="language-json"></code></pre>');
 
+    // @JS-RAW-HTML-01-EXCEPTION - every part above is a literal, a number, a BEM class from the caller's component name, or escape_html()'d text; the body itself goes in below through textContent
     $target.html(parts.join(''));
 
     // Addressed through the response block, not as "the first code element": the scope note

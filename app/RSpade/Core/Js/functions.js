@@ -373,6 +373,56 @@ function nl2br(str) {
 }
 
 /**
+ * Multi-line plain text in, HTML that shows it out: escapes it (escape_html()) and turns
+ * every line break into <br />, in one step. The safe way to show a user's multi-line text
+ * as markup - nl2br() alone does not escape. The twin of PHP nl2brhtml().
+ *
+ * @param {string} str - Plain text
+ * @returns {string} Escaped HTML with <br /> at each line break; '' for null/undefined
+ */
+function nl2brhtml(str) {
+    if (typeof str === undef || str === null) {
+        return '';
+    }
+    return escape_html(str + '').replace(/(\r\n|\n\r|\r|\n)/g, '<br />$1');
+}
+
+/**
+ * HTML in, the text a browser would show for it out: tags dropped, entities decoded.
+ *
+ * Parsed with DOMParser into a document that is never rendered, so nothing in the input
+ * runs or loads - an <img> is not fetched, an onerror never fires. Building a detached
+ * element with jQuery (`$('<div>').html(x).text()`) is NOT equivalent: that element
+ * belongs to the live document, and the browser fetches its images as it parses.
+ *
+ * @param {string} html - HTML (or entity-encoded text)
+ * @returns {string} The text content; '' for null/undefined
+ */
+function html_to_text(html) {
+    if (typeof html === undef || html === null) {
+        return '';
+    }
+    const doc = new DOMParser().parseFromString(html + '', 'text/html');
+    return doc.body.textContent;
+}
+
+/**
+ * Decode HTML entities and nothing else: `&amp;lt;` becomes `<`, while a literal `<` stays a
+ * literal `<` - no tag is ever interpreted. For entity-encoded DATA (a JSON string carried
+ * through a template attribute), where html_to_text() would read `a<b` as the start of a
+ * tag and mangle the value.
+ *
+ * @param {string} str - Entity-encoded text
+ * @returns {string} The decoded text; '' for null/undefined
+ */
+function decode_html_entities(str) {
+    if (typeof str === undef || str === null) {
+        return '';
+    }
+    return html_to_text((str + '').replace(/</g, '&lt;'));
+}
+
+/**
  * URL-encodes a string
  * @param {string} str - String to encode
  * @returns {string} URL-encoded string

@@ -1,8 +1,8 @@
 # app/RSpade/Sys - the framework's own application
 
 This tree is an RSpade APPLICATION that happens to ship inside the framework: the
-control panel served at `/_sys` (eight screens - dashboard, debug flags, tasks, task workers, email
-& SMS, logs, sites, users; `app/sys/CLAUDE.md` has the per-screen detail), plus the
+control panel served at `/_sys` (nine screens - dashboard, debug flags, tasks, task workers, email
+& SMS, logs, sites, users, portal users; `app/sys/CLAUDE.md` has the per-screen detail), plus the
 API console beside it. It is built exactly the way `rsx/` is built - a
 module with a bundle, a SPA bootstrap controller, JS actions, a theme directory of
 components - and it is scanned by the manifest like any other application tree
@@ -83,8 +83,8 @@ contract; this is the roster.
 | `_Sys_Not_Found` / `_Sys_Unauthorized` / `_Sys_Error` | the panel's error bodies - registered as its SPA error screens, and usable directly in a three-state page |
 | `_Sys_DataGrid_Abstract` (+ `_Sys_DataGrid_Body`, `_Sys_DataGrid_Filter`) | the paginated table; see "Panel grids" below |
 
-A page's top-bar buttons come from the action's `page_actions()` (see
-`app/sys/_Sys_Layout.js`).
+A page's top-bar buttons come from the action's `page_actions()`, which names a component
+for the bar - `{component, args}` or null (see `app/sys/_Sys_Layout.js`).
 
 ### Panel grids
 
@@ -123,6 +123,12 @@ A grid is three small files beside the screen that shows it: a PHP class, a
   $base_params=({site_id: _s.id}) />`) is a fixed scope sent with every request
   and never kept in the hash - a grid embedded in a record's screen. The
   `.jqhtml` docblock is the full contract.
+- **A system table with a published display-page reader** (`Reader::list_page()`,
+  `Rsx_Page_Query`) is paged by that reader, not by the base: the grid's PHP class is
+  then a plain adapter whose `fetch($params)` turns the grid request into the reader's
+  query and answers the same response shape (`_Sys_Portal_User_Signins_DataGrid` over
+  `Portal_Login_History::list_page()`, `_Sys_Audit_Sessions_DataGrid` over
+  `Audit_Session::list_page_for_user_session()`). The jqhtml half is unchanged.
 - **JS** is needed only for behaviour beyond that; the base owns all state.
 
 State lives in the URL hash under the declared, STABLE `$grid_key` - `<key>_page`,
