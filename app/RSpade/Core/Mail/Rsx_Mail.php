@@ -987,29 +987,33 @@ class Rsx_Mail
     // =========================================================================
 
     /**
-     * Does this install hand messages to a real transport? True in MODE_LIVE only: suppressed
-     * records without sending, aiosmtpd files the message on this box, and disabled freezes the
-     * queue - a message queued while disabled is sent only after the mode changes, so for
-     * "can a feature that depends on email work NOW" the answer is false.
+     * Is mail delivered on this install? True in MODE_LIVE (a real transport) and MODE_AIOSMTPD
+     * (the development catcher: an opted-in mode meaning "I have a catcher and I read it", so a
+     * feature that depends on a message works there). False in MODE_SUPPRESSED - the default,
+     * which records and sends nothing, so an install that never configured mail keeps every
+     * delivery-gated feature off - and in MODE_DISABLED, which freezes the queue.
      *
      * @return bool
      */
     public static function delivers(): bool
     {
-        return Rsx_Mail_Transport::delivery_mode() === Rsx_Mail_Transport::MODE_LIVE;
+        $mode = Rsx_Mail_Transport::delivery_mode();
+
+        return $mode === Rsx_Mail_Transport::MODE_LIVE || $mode === Rsx_Mail_Transport::MODE_AIOSMTPD;
     }
 
     /**
-     * Will a message of $category addressed to $email actually arrive AT $email?
+     * Can a feature that DEPENDS on a message of $category to $email rely on it here?
      *
-     * Every layer enqueue() applies, asked in advance and with the same exemptions:
-     *   - the delivery mode (delivers());
-     *   - the dev-site recipient gate, on a `.dev.` host in live mode: only a whitelisted
-     *     address arrives - a catchall redirect delivers to somebody ELSE, and no catchall
-     *     delivers nowhere, so neither reaches $email (the row of a redirected message still
-     *     ends Sent, which is why this cannot be read back afterwards);
+     * The layers enqueue() applies that make an address genuinely unreachable, asked in
+     * advance and with the same exemptions:
+     *   - the delivery mode (delivers(): live or the development catcher);
      *   - the site block list, which a SECURITY message escapes;
      *   - the recipient's opt-out for the category, which TRANSACTIONAL and SECURITY escape.
+     *
+     * The dev-site recipient gate is NOT consulted: on a `.dev.` host a message to an address
+     * outside the whitelist is redirected to the catchall or recorded in the queue, and the
+     * application behaves as though mail works while the operator reads it there.
      *
      * For an application deciding whether a feature that DEPENDS on the message is usable at
      * all - an emailed sign-in code, a verification link, an only recovery path - so it can
@@ -1023,10 +1027,6 @@ class Rsx_Mail
     public static function deliverable_to(string $email, int $category): bool
     {
         if (!static::delivers()) {
-            return false;
-        }
-
-        if (static::is_dev_mode() && !self::_dev_whitelisted($email)) {
             return false;
         }
 

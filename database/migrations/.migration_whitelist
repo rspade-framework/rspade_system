@@ -776,6 +776,11 @@
             "created_at": "2026-10-21T07:26:25+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe user_session_timeout_sweep_indexes"
+        },
+        "2026_10_21_202653_add_site_listing_index_to_file_attachments.php": {
+            "created_at": "2026-10-21T20:26:53+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_site_listing_index_to_file_attachments"
         }
     }
 }

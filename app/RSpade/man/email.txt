@@ -732,25 +732,28 @@ WILL IT ARRIVE? - delivers() AND deliverable_to()
 
     A feature that DEPENDS on an email arriving - an emailed sign-in code, a verification
     link, a password reset that is the only way back in - asks before it relies on it, so
-    it can degrade instead of locking somebody out when mail is suppressed, frozen or
-    stopped at 2am:
+    it can degrade instead of locking somebody out when mail is suppressed or frozen:
 
-        Rsx_Mail::delivers()                    is the delivery mode 'live'? (the
-                                                other three stop every message on
-                                                this box; a message queued while
-                                                'disabled' is sent only after the
-                                                mode changes, so "now" is false)
+        Rsx_Mail::delivers()                    is mail delivered here? True for
+                                                'live' and 'aiosmtpd' (the catcher
+                                                is opted into in order to read the
+                                                mail); false for 'suppressed', the
+                                                default, and 'disabled', which
+                                                freezes the queue
 
         Rsx_Mail::deliverable_to($email, $category)
-                                                will a message of this category,
-                                                sent to THIS address, arrive AT it?
+                                                can a feature that depends on a
+                                                message of this category, sent to
+                                                THIS address, rely on it?
 
-    deliverable_to() asks every layer enqueue() applies, with the same exemptions: the
-    mode; the dev-site gate (only a whitelisted address arrives - a catchall redirect
-    arrives somewhere else, and that row still ends Sent, which is why the answer cannot be
-    read back afterwards); the site block list, which SECURITY escapes; and the recipient's
-    opt-out, which TRANSACTIONAL and SECURITY escape. It reads the current site's lists, like
-    enqueue().
+    deliverable_to() asks the layers enqueue() applies that make an address genuinely
+    unreachable, with the same exemptions: the mode; the site block list, which SECURITY
+    escapes; and the recipient's opt-out, which TRANSACTIONAL and SECURITY escape. It reads
+    the current site's lists, like enqueue(). The dev-site gate is NOT one of them: on a
+    `.dev.` host a message outside the whitelist goes to the catchall or is recorded in the
+    queue, and the application behaves as though mail works while the operator reads it
+    there. So an emailed sign-in code is exercised on a development box running the
+    catcher.
 
         // the sign-in policy: a code nobody can receive is a locked account
         if (!Rsx_Mail::deliverable_to($user->email, Rsx_Mail::SECURITY)) {

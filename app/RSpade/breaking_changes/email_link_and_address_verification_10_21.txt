@@ -106,7 +106,7 @@ WHAT TO CHANGE
        signup_mode and verification_required keys are gone). On, a signup
        creates the identity (is_verified = 0), a new site and an owner
        membership, then begins an issued-code challenge so the signer verifies
-       by code or link; the page throws while mail delivery is not live; and a
+       by code or link; the page throws while mail is not delivered (live, or aiosmtpd on a development box); and a
        password sign-in by an unverified address owes the same verification.
        Reference: app/login/signup/signup_controller.php,
        emails/signup_verification_email.php, app/login/login_controller.php.

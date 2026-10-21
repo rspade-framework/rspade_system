@@ -335,8 +335,8 @@ DELIVERY MUST BE LIVE
             // another factor) rather than lock the account
         }
 
-    deliverable_to() answers for the delivery mode, the dev-site gate, the block list and
-    the opt-out together, with SECURITY's exemptions (rsx:man email, WILL IT ARRIVE?).
+    deliverable_to() answers for the delivery mode (live or the development catcher), the
+    block list and the opt-out together, with SECURITY's exemptions (rsx:man email, WILL IT ARRIVE?).
     Skipping the step or refusing the sign-in is the application's policy.
 
 PASSKEYS SKIP IT

@@ -332,7 +332,7 @@ The SITE's ruling that no email reaches an address, in every category; checked a
 | MAIL-313 | a Suppressed row keeps its tag | php | live mode, dev host, nowhere to send | Suppressed at enqueue, tag kept | implemented | 2026-10-15 |
 | MAIL-314 | 64 characters are stored | php | a 64-character tag | stored whole | implemented | 2026-10-15 |
 | MAIL-315 | longer than 64 throws naming the class and writes nothing | php | a 65-character tag | InvalidArgumentException naming `Mail_Preview_Fixture_Email::tag()`; no row | implemented | 2026-10-15 |
-| MAIL-320 | only live delivers | php | `delivers()` / `deliverable_to(SECURITY)` per mode | false in suppressed, aiosmtpd, disabled; true in live | implemented (`Mail_Deliverability_Test`) | 2026-10-19 |
-| MAIL-321 | the dev-site gate admits only a whitelisted address | php | `.dev.` host, live: no whitelist; a catchall; then the address whitelisted | false, false (a catchall is somebody else), true | implemented | 2026-10-19 |
+| MAIL-320 | live and the development catcher deliver; suppressed and disabled do not | php | `delivers()` / `deliverable_to(SECURITY)` per mode | false in suppressed, disabled; true in live, aiosmtpd | implemented (`Mail_Deliverability_Test`) | 2026-10-21 |
+| MAIL-321 | the dev-site gate never makes an address undeliverable | php | `.dev.` host, live and aiosmtpd: no whitelist and no catchall; then a catchall | true each time (redirected, or recorded and readable in the queue) | implemented (`Mail_Deliverability_Test`) | 2026-10-21 |
 | MAIL-322 | the site block list spares only SECURITY | php | a listed address, each category | SECURITY true, the rest false | implemented | 2026-10-19 |
 | MAIL-323 | the recipient opt-out spares TRANSACTIONAL and SECURITY | php | opt-outs per category | the opted-out category false, others true; TRANSACTIONAL and SECURITY true even when opted out | implemented | 2026-10-19 |

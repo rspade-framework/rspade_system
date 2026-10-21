@@ -56,36 +56,39 @@ class Mail_Deliverability_Test extends Rsx_Test_Abstract
         return $prefix . '_' . uniqid() . '@example.com';
     }
 
-    public static function test_only_live_delivers()
+    public static function test_live_and_the_catcher_deliver_suppressed_and_disabled_do_not()
     {
         static::__live_and_whitelisted();
         $email = static::__address('mode');
 
-        foreach (['suppressed', 'aiosmtpd', 'disabled'] as $mode) {
+        foreach (['suppressed', 'disabled'] as $mode) {
             config(['rsx.mail.delivery' => $mode]);
             static::__assert_false(Rsx_Mail::delivers(), "{$mode} does not deliver");
-            static::__assert_false(Rsx_Mail::deliverable_to($email, Rsx_Mail::SECURITY), "nothing arrives in {$mode}");
+            static::__assert_false(Rsx_Mail::deliverable_to($email, Rsx_Mail::SECURITY), "nothing can be relied on in {$mode}");
         }
 
-        config(['rsx.mail.delivery' => 'live']);
-        static::__assert_true(Rsx_Mail::delivers());
-        static::__assert_true(Rsx_Mail::deliverable_to($email, Rsx_Mail::SECURITY));
+        foreach (['live', 'aiosmtpd'] as $mode) {
+            config(['rsx.mail.delivery' => $mode]);
+            static::__assert_true(Rsx_Mail::delivers(), "{$mode} delivers");
+            static::__assert_true(Rsx_Mail::deliverable_to($email, Rsx_Mail::SECURITY), "a message can be relied on in {$mode}");
+        }
     }
 
-    public static function test_the_dev_site_gate_admits_only_a_whitelisted_address()
+    public static function test_the_dev_site_gate_never_makes_an_address_undeliverable()
     {
         static::__assert_true(Rsx_Mail::is_dev_mode(), 'the framework test host is a .dev. host');
         static::__live_and_whitelisted();
         config(['rsx.mail.dev_site.domain_whitelist' => '']);
 
         $email = static::__address('dev');
-        static::__assert_false(Rsx_Mail::deliverable_to($email, Rsx_Mail::SECURITY), 'no whitelist, no catchall: nowhere');
 
-        config(['rsx.mail.dev_site.catchall_address' => 'catchall@example.org']);
-        static::__assert_false(Rsx_Mail::deliverable_to($email, Rsx_Mail::SECURITY), 'a catchall delivers to somebody else');
+        foreach (['live', 'aiosmtpd'] as $mode) {
+            config(['rsx.mail.delivery' => $mode, 'rsx.mail.dev_site.catchall_address' => '']);
+            static::__assert_true(Rsx_Mail::deliverable_to($email, Rsx_Mail::SECURITY), "{$mode}, no whitelist, no catchall: recorded and readable in the queue");
 
-        config(['rsx.mail.dev_site.address_whitelist' => $email]);
-        static::__assert_true(Rsx_Mail::deliverable_to($email, Rsx_Mail::SECURITY), 'a whitelisted address arrives');
+            config(['rsx.mail.dev_site.catchall_address' => 'catchall@example.org']);
+            static::__assert_true(Rsx_Mail::deliverable_to($email, Rsx_Mail::SECURITY), "{$mode}, a catchall redirect");
+        }
     }
 
     public static function test_the_site_block_list_spares_only_security()
