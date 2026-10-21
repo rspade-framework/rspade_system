@@ -165,9 +165,9 @@ THE SEND ENDPOINT
     "HERE IS YOUR CODE AGAIN". issued_code_expires_at() is when the pending
     identity's live code stops working, or null when it has none. Asked
     before issue_code(), non-null means the send repeats the code the user
-    already holds; asked after, it is the expiry to print in the message,
-    which a resend does not move - so "expires in 15 minutes" is wrong on a
-    resend, and the minutes left are right.
+    already holds; asked after, it is the expiry to print in the message.
+    Every issue_code() restarts the code's clock (and the challenge's, and the
+    link's), so "expires in 15 minutes" is true of every copy.
 
     A user-safe rejection renders inline on the challenge screen.
 
@@ -389,10 +389,11 @@ TRUSTING THE BROWSER
 
 LIFETIME
     A code belongs to the IDENTITY, not to the challenge or the browser, and
-    lives rsx.two_factor.challenge_window_minutes (15) from the moment it was
-    MINTED - an absolute life:
+    lives rsx.two_factor.challenge_window_minutes (15) from its LAST issue:
 
-        a resend while it lives        the same digits; the expiry does not move
+        a resend while it lives        the same digits and the same link, with a
+                                       full window again (the pending challenge
+                                       too); the wrong-answer caps do not reset
         a new sign-in, another browser the same digits (a fresh session cannot
                                        mint a parallel code)
         after it expires               the next issue_code() mints a new one

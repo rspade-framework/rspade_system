@@ -590,7 +590,7 @@ THE FACADE
             it has none, for the APPLICATION to deliver. One code per
             identity: a resend, another browser or a fresh sign-in gets the
             same digits until the code expires (challenge_window_minutes from
-            mint; a resend extends nothing). Throws
+            the last issue; every issue restarts the clock). Throws
             Two_Factor_Failed_Exception when nothing is pending,
             RuntimeException when the challenge does not accept
             ANSWER_ISSUED_CODE. See ISSUED CODES.
@@ -1185,9 +1185,9 @@ ISSUED CODES
     identity may be answering it. issued_code_expires_at() lets the
     application word a resend ("here is your code again").
 
-    LIFETIME. rsx.two_factor.challenge_window_minutes (15) from MINT, an
-    absolute life a resend does not extend; the next issue after it mints
-    anew. codes_issued in challenge_pending() counts sends, so the
+    LIFETIME. rsx.two_factor.challenge_window_minutes (15) from the LAST
+    issue: a resend keeps the digits and restarts the clock; the next issue
+    after expiry mints anew. codes_issued in challenge_pending() counts sends, so the
     application can cap "Resend code". Storage, and what encryption trades
     against a keyed hash: rsx:man two_factor_codes, LIFETIME.
 

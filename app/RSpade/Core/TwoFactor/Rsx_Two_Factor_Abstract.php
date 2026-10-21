@@ -153,15 +153,15 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  *
  * AN ISSUED CODE BELONGS TO THE IDENTITY, NOT TO THE CHALLENGE. issue_code() keeps at most one
  * live code per identity per realm, in the transient-counter store beside the failure budget
- * that governs it, for rsx.two_factor.challenge_window_minutes from the moment it was MINTED -
- * an absolute life that no resend extends. Asking again while it lives returns the SAME
+ * that governs it, for rsx.two_factor.challenge_window_minutes from its LAST issue - every
+ * issue_code() restarts the clock without changing the digits. Asking again while it lives returns the SAME
  * digits, so a user holding three emails holds one code, not three where only the newest
  * works; and because the code is not keyed to the session, signing in again from a fresh
  * session (or another browser) reuses it rather than minting a parallel one. The session's
  * challenge keeps only the pointer it needs - which identity, and how many sends. Re-sending
  * the same digits means reading them back, so the code is stored ENCRYPTED with the
  * application key rather than hashed: a copy of the store alone does not reveal it, and
- * whatever it does reveal dies with the code's short absolute life. A correct answer consumes
+ * whatever it does reveal dies with the code's short life. A correct answer consumes
  * it; a spent challenge or a locked identity destroys it; abandoning one browser's challenge
  * leaves it, because another browser of the same identity may be answering it.
  *
@@ -1167,10 +1167,12 @@ abstract class Rsx_Two_Factor_Abstract
      * Six random digits, held against the IDENTITY (see the class docblock): while a code
      * lives, every call - a resend, a second browser, a fresh sign-in - returns the SAME
      * digits, so however many messages the user holds they all carry the one code that works.
-     * A code lives rsx.two_factor.challenge_window_minutes from the moment it was minted, and
-     * a resend extends nothing; once it has expired the next call mints a new one.
-     * issued_code_expires_at() tells the two apart before the call, for an application whose
-     * message says "here is your code again".
+     * A code lives rsx.two_factor.challenge_window_minutes, and EVERY call restarts that clock:
+     * a resend keeps the digits and gives them a full window again, as it does the pending
+     * challenge and the email link sent beside it, so every copy of the message can say
+     * "expires in N minutes" truthfully. The wrong-answer caps do not reset - a resend is a
+     * delivery, never more guesses - and how many resends one sign-in may send is the
+     * application's cap (codes_issued). Once a code has expired the next call mints a new one.
      *
      * Every call is counted as a SEND (challenge_pending()'s codes_issued), so the
      * application can cap resends however it likes; the attempt caps on WRONG answers are
@@ -1199,11 +1201,15 @@ abstract class Rsx_Two_Factor_Abstract
         }
 
         $code = static::__live_or_minted_code($pending['identity_id']);
+        $expires_at = static::__live_issued_code($pending['identity_id'])['expires_at'];
 
+        // The challenge lives as long as the code it was just sent: a window that closed
+        // before the code would make the message's "expires in" a lie.
         $raw = Session::get_value(static::CHALLENGE_KEY, null, static::SESSION_REALM);
         $raw['codes_issued'] = $pending['codes_issued'] + 1;
+        $raw['expires_at'] = $expires_at;
 
-        Session::put_value(static::CHALLENGE_KEY, $raw, $pending['expires_at'], static::SESSION_REALM);
+        Session::put_value(static::CHALLENGE_KEY, $raw, $expires_at, static::SESSION_REALM);
 
         return $code;
     }
@@ -1213,8 +1219,8 @@ abstract class Rsx_Two_Factor_Abstract
      *
      * For the application's own wording: asked BEFORE issue_code(), non-null means the call
      * will re-send the code the user already holds ("here is your code again"); asked after,
-     * it is the moment the delivered code stops working ("expires in 9 minutes"), which a
-     * resend does not move. Null too when nothing is pending or the challenge does not accept
+     * it is the moment the delivered code stops working, which every issue_code() call
+     * restarts. Null too when nothing is pending or the challenge does not accept
      * an issued code. Server-side; the digits themselves are never readable here.
      *
      * @return string|null ISO 8601 UTC
@@ -1244,11 +1250,11 @@ abstract class Rsx_Two_Factor_Abstract
      * nobody was sent would be a second, unannounced secret.
      *
      * ONE LINK PER CHALLENGE PER CODE. The token is derived (HMAC under a key derived from
-     * app.key) from this browser's challenge id and the live code's expiry, so a resend
-     * returns the SAME link, a fresh sign-in (a new challenge) gets a new one, and nothing
-     * secret is stored: what the store keeps, beside the code, is the token's SHA-256 bound
-     * to {challenge, this browser's session, the identity, the code's expiry, $return_url},
-     * expiring with the code. The first send's $return_url is the one kept.
+     * app.key) from this browser's challenge id and the moment the live code was minted, so
+     * a resend returns the SAME link, a fresh sign-in (a new challenge) or a re-minted code
+     * gets a new one, and nothing secret is stored: what the store keeps, beside the code, is
+     * the token's SHA-256 bound to {challenge, this browser's session, the identity, the
+     * code's mint, $return_url}, expiring with the code - a resend restarts both clocks.
      *
      * BOUND TO THIS BROWSER. Opened in the browser whose challenge it was minted for, the
      * route redirects to $return_url with the token in the URL FRAGMENT (never sent to a
@@ -1304,21 +1310,23 @@ abstract class Rsx_Two_Factor_Abstract
             shouldnt_happen(static::class . '::issued_link(): a challenge is pending on a browser with no session row');
         }
 
-        $token = static::__email_link_token($pending['challenge_id'], $live['expires_at']);
+        $token = static::__email_link_token($pending['challenge_id'], $live['minted_at']);
+        $binding = json_encode([
+            'challenge_id' => $pending['challenge_id'],
+            'session_id' => $session_id,
+            'identity_id' => $pending['identity_id'],
+            'code_minted_at' => $live['minted_at'],
+            'return_url' => $return_url,
+        ]);
 
-        // SET NX: false means an earlier send already bound this very token - the same link,
-        // which is what a resend is supposed to answer.
-        Rsx_Counter::add_value(
-            static::__email_link_key($token),
-            json_encode([
-                'challenge_id' => $pending['challenge_id'],
-                'session_id' => $session_id,
-                'identity_id' => $pending['identity_id'],
-                'code_expires_at' => $live['expires_at'],
-                'return_url' => $return_url,
-            ]),
-            Rsx_Time::to_ms($live['expires_at'])
-        );
+        // A resend binds the same token again: replace it with the code's restarted expiry,
+        // or store it on the first send.
+        $key = static::__email_link_key($token);
+        $expires_at_ms = Rsx_Time::to_ms($live['expires_at']);
+
+        if (!Rsx_Counter::replace_value($key, $binding, $expires_at_ms)) {
+            Rsx_Counter::add_value($key, $binding, $expires_at_ms);
+        }
 
         return static::__email_link_url($token);
     }
@@ -1354,7 +1362,7 @@ abstract class Rsx_Two_Factor_Abstract
 
         $binding = json_decode($stored, true);
 
-        if (!is_array($binding) || !isset($binding['challenge_id'], $binding['session_id'], $binding['identity_id'], $binding['code_expires_at'], $binding['return_url'])) {
+        if (!is_array($binding) || !isset($binding['challenge_id'], $binding['session_id'], $binding['identity_id'], $binding['code_minted_at'], $binding['return_url'])) {
             shouldnt_happen('An email link binding (' . static::class . ') is malformed: ' . $stored);
         }
 
@@ -1362,7 +1370,7 @@ abstract class Rsx_Two_Factor_Abstract
         // destroyed or replaced code takes its link with it.
         $live = static::__live_issued_code((int) $binding['identity_id']);
 
-        if ($live === null || $live['expires_at'] !== $binding['code_expires_at']) {
+        if ($live === null || $live['minted_at'] !== $binding['code_minted_at']) {
             return $expired;
         }
 
@@ -2174,16 +2182,29 @@ abstract class Rsx_Two_Factor_Abstract
         while (true) {
             $live = static::__live_issued_code($identity_id);
 
+            $expires_at = static::challenge_expires_at();
+
             if ($live !== null) {
-                return $live['code'];
+                // Same digits, same mint, a full window again. False only when the code
+                // expired between the read and this write - then go round and mint.
+                $restarted = Rsx_Counter::replace_value(
+                    static::__issued_code_key($identity_id),
+                    Crypt::encryptString(json_encode(['code' => $live['code'], 'minted_at' => $live['minted_at'], 'expires_at' => $expires_at])),
+                    Rsx_Time::to_ms($expires_at)
+                );
+
+                if ($restarted) {
+                    return $live['code'];
+                }
+
+                continue;
             }
 
             $code = str_pad((string) random_int(0, (10 ** self::ISSUED_CODE_DIGITS) - 1), self::ISSUED_CODE_DIGITS, '0', STR_PAD_LEFT);
-            $expires_at = static::challenge_expires_at();
 
             $stored = Rsx_Counter::add_value(
                 static::__issued_code_key($identity_id),
-                Crypt::encryptString(json_encode(['code' => $code, 'expires_at' => $expires_at])),
+                Crypt::encryptString(json_encode(['code' => $code, 'minted_at' => Rsx_Time::now_iso(), 'expires_at' => $expires_at])),
                 Rsx_Time::to_ms($expires_at)
             );
 
@@ -2201,7 +2222,7 @@ abstract class Rsx_Two_Factor_Abstract
      * or decode into the expected shape is corruption, and fails loud.
      *
      * @param int $identity_id
-     * @return array|null {code, expires_at}
+     * @return array|null {code, minted_at, expires_at}
      */
     protected static function __live_issued_code(int $identity_id): ?array
     {
@@ -2213,11 +2234,11 @@ abstract class Rsx_Two_Factor_Abstract
 
         $decoded = json_decode(Crypt::decryptString($stored), true);
 
-        if (!is_array($decoded) || !is_string($decoded['code'] ?? null) || !is_string($decoded['expires_at'] ?? null)) {
+        if (!is_array($decoded) || !is_string($decoded['code'] ?? null) || !is_string($decoded['minted_at'] ?? null) || !is_string($decoded['expires_at'] ?? null)) {
             shouldnt_happen('The issued sign-in code stored for identity ' . $identity_id . ' (' . static::class . ') is malformed');
         }
 
-        return ['code' => $decoded['code'], 'expires_at' => $decoded['expires_at']];
+        return ['code' => $decoded['code'], 'minted_at' => $decoded['minted_at'], 'expires_at' => $decoded['expires_at']];
     }
 
     /**
@@ -2260,7 +2281,7 @@ abstract class Rsx_Two_Factor_Abstract
             return null;
         }
 
-        $expected = static::__email_link_token($pending['challenge_id'], $live['expires_at']);
+        $expected = static::__email_link_token($pending['challenge_id'], $live['minted_at']);
 
         return hash_equals($expected, $token) ? self::ANSWER_ISSUED_CODE : null;
     }
@@ -2282,7 +2303,7 @@ abstract class Rsx_Two_Factor_Abstract
             return;
         }
 
-        Rsx_Counter::reset(static::__email_link_key(static::__email_link_token($pending['challenge_id'], $live['expires_at'])));
+        Rsx_Counter::reset(static::__email_link_key(static::__email_link_token($pending['challenge_id'], $live['minted_at'])));
     }
 
     /**
@@ -2356,10 +2377,10 @@ abstract class Rsx_Two_Factor_Abstract
      * no secret.
      *
      * @param string $challenge_id
-     * @param string $code_expires_at
+     * @param string $code_minted_at
      * @return string 64 lowercase hex characters
      */
-    protected static function __email_link_token(string $challenge_id, string $code_expires_at): string
+    protected static function __email_link_token(string $challenge_id, string $code_minted_at): string
     {
         $app_key = (string) config('app.key');
 
@@ -2369,7 +2390,7 @@ abstract class Rsx_Two_Factor_Abstract
 
         $key = hash_hmac('sha256', 'rsx-two-factor-email-link', $app_key, true);
 
-        return hash_hmac('sha256', static::class . "\n" . $challenge_id . "\n" . $code_expires_at, $key);
+        return hash_hmac('sha256', static::class . "\n" . $challenge_id . "\n" . $code_minted_at, $key);
     }
 
     /**

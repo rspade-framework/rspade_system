@@ -146,7 +146,7 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
     {
         $stored = Rsx_Counter::add_value(
             static::__engine(Rsx_Two_Factor::class, '__issued_code_key', (int) $login_user->id),
-            Crypt::encryptString(json_encode(['code' => $code, 'expires_at' => $expires_at])),
+            Crypt::encryptString(json_encode(['code' => $code, 'minted_at' => Rsx_Time::now_iso(), 'expires_at' => $expires_at])),
             Rsx_Time::to_ms($expires_at)
         );
 
@@ -289,16 +289,17 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
         static::__assert_equals($first, Rsx_Two_Factor::issue_code(), 'a resend re-sends the same digits');
         static::__assert_equals($first, Rsx_Two_Factor::issue_code());
         static::__assert_equals(3, Rsx_Two_Factor::challenge_pending()['codes_issued'], 'codes_issued counts sends, not mints');
-        static::__assert_equals($expires_at, Rsx_Two_Factor::issued_code_expires_at(), 'a resend moves no expiry');
+        static::__assert_true(Rsx_Time::is_future(Rsx_Two_Factor::issued_code_expires_at()), 'the resent code is live');
 
         Rsx_Two_Factor::verify_challenge(['code' => $first]);
         static::__assert_true(Session::is_logged_in(), 'the one code signs in');
     }
 
     /**
-     * A resend extends nothing: a code with a minute left still has that minute after it.
+     * A resend restarts the clock: a code with a minute left gets a full window again, with
+     * the same digits, and the pending challenge lives as long.
      */
-    public static function test_a_resend_does_not_extend_the_absolute_life()
+    public static function test_a_resend_restarts_the_code_s_clock()
     {
         $login_user = static::__make_login_user('absolute');
         $expires_at = Rsx_Time::add(Rsx_Time::now_iso(), 60);
@@ -309,7 +310,10 @@ class Two_Factor_Issued_Code_Test extends Rsx_Test_Abstract
 
         static::__assert_equals($expires_at, Rsx_Two_Factor::issued_code_expires_at(), 'a fresh challenge sees the live code');
         static::__assert_equals('246810', Rsx_Two_Factor::issue_code(), 'the live code is re-sent');
-        static::__assert_equals($expires_at, Rsx_Two_Factor::issued_code_expires_at(), 'its expiry is where it was');
+
+        $restarted = Rsx_Two_Factor::issued_code_expires_at();
+        static::__assert_true(Rsx_Time::diff_seconds(Rsx_Time::now_iso(), $restarted) > 60 * ((int) config('rsx.two_factor.challenge_window_minutes') - 1), 'a full window again');
+        static::__assert_equals('246810', Rsx_Two_Factor::issue_code(), 'still the same digits');
     }
 
     /**

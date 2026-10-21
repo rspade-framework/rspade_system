@@ -294,6 +294,37 @@ class Rsx_Counter
     }
 
     /**
+     * Overwrite a value add_value() stored, with a new absolute expiry - ONLY while it still
+     * exists (SET XX). False when it had expired or was removed, so a caller restarting a
+     * live value's clock never resurrects one that already ended. Throws like add_value() when
+     * the store is unavailable.
+     *
+     * @param string $key Value key
+     * @param string $value The caller's encoded value (stored as given)
+     * @param int $expires_at_ms Unix time in milliseconds the value expires at (must be future)
+     * @return bool True when the value existed and was replaced
+     */
+    public static function replace_value(string $key, string $value, int $expires_at_ms): bool
+    {
+        if ($expires_at_ms <= (int) (microtime(true) * 1000)) {
+            throw new InvalidArgumentException(
+                "Rsx_Counter::replace_value() requires a future expires_at_ms for key '{$key}', got {$expires_at_ms}"
+            );
+        }
+
+        $redis = self::_init();
+
+        if ($redis === null) {
+            throw new RuntimeException(
+                "Rsx_Counter::replace_value() cannot store key '{$key}': the counter store is unavailable"
+                . ' (maintenance mode has stopped redis)'
+            );
+        }
+
+        return $redis->set(self::_make_key($key), $value, ['xx', 'pxat' => $expires_at_ms]) === true;
+    }
+
+    /**
      * Read a value written by add_value(). Null when it is absent, expired, or the store is
      * unavailable.
      *
