@@ -12,14 +12,14 @@ with `--site` for an email, resolved by `Portal_User_Cli_Support`) and sets or c
 `password_reset_required`, writing nothing else.
 
 The properties pinned are the ones an operator cannot see until somebody tries to sign in:
-a password change replaces the hash and ends every session the identity held (unless
-`--keep-sessions`), and an email change moves the sign-in address together with every
+a password change replaces the hash and ends every session the identity held (the identity
+model's own consequence of a password change, `Session::_end_sessions_for_password_change()`), and an email change moves the sign-in address together with every
 membership (`users` row, any site, trashed included) that still showed the old address, while
 refusing an address any other identity holds - a soft-deleted one included, because the UNIQUE
 index on `login_users.email` does not know about soft deletes.
 
-Adjacent pieces this concern leans on but does not own: `Session::_deactivate_sessions_for_user()`
-(the unguarded termination primitive, tested in `session`), `Site_Scoped::without_site_scope()`,
+Adjacent pieces this concern leans on but does not own: `Session::_end_sessions_for_password_change()`
+(the password-change sign-out, tested in `session`), `Site_Scoped::without_site_scope()`,
 and the two-factor and SSO operator commands, which share the resolver and live in their own
 concerns.
 

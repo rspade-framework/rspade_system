@@ -194,7 +194,7 @@ All of these take USER SESSION ids and end only SIGNED-IN user sessions of the s
 // Anything on THIS browser is refused - that is logout()'s job.
 Session::terminate_session($user_session_id): bool
 
-// SELF, everything else - "sign out everywhere else" (what a password change wants).
+// SELF, everything else - "sign out everywhere else".
 // Also forgets every other browser's two-factor trust.
 Session::terminate_all_other_sessions(): int
 
@@ -214,6 +214,8 @@ Portal_Session::terminate_session($user_session_id): bool
 Portal_Session::terminate_all_other_sessions(): int
 Portal_Session::terminate_all_sessions_for_user($portal_user_id, $except_user_session_id = null): int
 ```
+
+**A password change needs NONE of these.** Saving a new password through `Login_User_Model` / `Portal_User_Model` ends every OTHER signed-in sign-in of that identity in its realm by itself (the models' `updated` hook; reason `SIGN_OUT_PASSWORD_CHANGED`, "Password changed"): the browser making the change is spared, a command/task/API call (no browser) ends every web sign-in, impersonations of the identity end with it, and an API key's session (`REALM_API`) is never touched. So a change-password endpoint just saves the hash - never call `terminate_all_other_sessions()` beside it. A raw-SQL password write skips this. `rsx:man session`, PASSWORD CHANGES.
 
 **What ending a sign-in does** (one path for every sign-out): the user session is stamped `signed_out_at` + a reason (`Session::SIGN_OUT_*`; `sign_out_reason_label()`), the browser's pointer is cleared, that REALM's session values are cleared, the impersonations riding a staff sign-in end with it, and the browser gets a realtime refresh push. **The other browser's token is NOT rotated** - its row now grants nothing a guest would not get, and its next sign-in rotates it. The browser row itself stays (a browser that has had a sign-in is never deleted).
 
@@ -371,7 +373,7 @@ Session::set_site_id((int) $params['site_id']);
 
 When nobody can sign in to fix an account through a screen, an operator sets the credentials from the command line. `--user` takes a `login_users.id` or the current email address, exactly as `rsx:users:2fa:*` and `rsx:users:sso:*` do.
 
-- `rsx:users:password:set --user=<id|email>` prompts twice with no echo; `--password-stdin` reads the first line of stdin for a script; `--password=` works but lands in shell history and the process list. It **ends every session of the identity** unless `--keep-sessions`, and enforces no policy beyond "not empty".
+- `rsx:users:password:set --user=<id|email>` prompts twice with no echo; `--password-stdin` reads the first line of stdin for a script; `--password=` works but lands in shell history and the process list. It **ends every web session of the identity** (the model's password-change consequence; an API key's session is left alone), and enforces no policy beyond "not empty".
 - `rsx:users:email:set --user=<id|email> --email=<new>` moves the sign-in address and every membership (`users` row, any site, trashed included) that showed the OLD address, refusing an address any other identity holds - a soft-deleted one included.
 
 Never write a one-off script or raw SQL for either: a hand-written `UPDATE login_users SET password` skips the session termination, and a hand-moved email leaves the memberships behind. Contract and error codes: `rsx:man auth` (OPERATOR COMMANDS).

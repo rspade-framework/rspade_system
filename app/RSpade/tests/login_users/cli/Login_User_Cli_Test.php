@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -21,7 +22,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * BOTH COMMANDS CHANGE HOW SOMEBODY SIGNS IN, and the operator has nothing to check the
  * result against until that person tries. So what is pinned is the claim each one makes:
  * the password command's new hash verifies and its old one does not, and every session the
- * identity held is gone unless --keep-sessions said otherwise; the email command moves the
+ * identity held is gone (signed out as SIGN_OUT_PASSWORD_CHANGED); the email command moves the
  * sign-in address, moves the memberships that showed the old address on EVERY site (trashed
  * ones too), leaves a membership an administrator had re-addressed alone, and refuses an
  * address another identity - a deleted one included - still holds.
@@ -167,23 +168,26 @@ class Login_User_Cli_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * luc-03: --keep-sessions changes the password and ends nothing.
+     * luc-03: the sessions end as the identity model's password-change consequence, recorded
+     * as SIGN_OUT_PASSWORD_CHANGED - the command no longer ends them itself, so there is no
+     * opting out.
      */
-    public static function test_password_set_keep_sessions_leaves_them_active()
+    public static function test_password_set_records_the_password_changed_reason()
     {
-        $login_user = static::__make_login_user('keep');
+        $login_user = static::__make_login_user('reason');
         $session = static::__insert_session((int) $login_user->id);
 
         [$code, $envelope] = static::__json_call('rsx:users:password:set', [
             '--user' => (string) $login_user->id,
-            '--password' => 'kept-sessions',
-            '--keep-sessions' => true,
+            '--password' => 'reason-recorded',
         ]);
 
         static::__assert_equals(0, $code);
-        static::__assert_equals(0, $envelope['data']['sessions_ended']);
-        static::__assert_true(static::__is_active($session));
-        static::__assert_true(Hash::check('kept-sessions', static::__row((int) $login_user->id)->password));
+        static::__assert_equals(1, $envelope['data']['sessions_ended']);
+        static::__assert_equals(
+            Session::SIGN_OUT_PASSWORD_CHANGED,
+            (int) DB::table('_user_sessions')->where('id', $session)->value('sign_out_reason_id')
+        );
     }
 
     /**

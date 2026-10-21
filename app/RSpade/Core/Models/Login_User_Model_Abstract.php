@@ -91,7 +91,7 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
 {
 
     /**
-     * Two consequences of a password change, both the framework's:
+     * Three consequences of a password change, all the framework's:
      *
      *   - password_reset_required is CLEARED in the same write (a `saving` hook, so it is one
      *     UPDATE and no second save re-enters these hooks). The flag asked for a new password and
@@ -100,9 +100,15 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
      *     writes both at once (rsx:man session, PASSWORD RESET REQUIRED).
      *   - every browser's two-factor trust for this identity ends: whoever knew the old password
      *     must verify again wherever they are (rsx:man two_factor, TRUSTED BROWSERS).
+     *   - every OTHER signed-in sign-in of this identity ends (SIGN_OUT_PASSWORD_CHANGED),
+     *     impersonations of it included: a session opened with the old password must not
+     *     outlive it. The browser making the change stays signed in; from a command, a task
+     *     or an API call (no browser) every web sign-in ends. An API key's session is never
+     *     touched - the key, not the password, is its credential
+     *     (Session::_end_sessions_for_password_change(), rsx:man session, PASSWORD CHANGES).
      *
-     * Both run on a model save only; a write that bypasses the model (raw SQL, ->raw_bulk())
-     * gets neither.
+     * All three run on a model save only; a write that bypasses the model (raw SQL, ->raw_bulk())
+     * gets none of them.
      */
     protected static function booted()
     {
@@ -117,6 +123,10 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
         static::updated(function ($model) {
             if ($model->wasChanged('password')) {
                 \App\RSpade\Core\TwoFactor\Rsx_Two_Factor::forget_trusted_devices((int) $model->id);
+                \App\RSpade\Core\Session\Session::_end_sessions_for_password_change(
+                    \App\RSpade\Core\Session\Session::REALM_STAFF,
+                    (int) $model->id
+                );
             }
         });
     }

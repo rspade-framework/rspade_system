@@ -438,7 +438,7 @@ for a definitional reason:
 
 Worked example:
     system/app/RSpade/resource/reference_app/app/frontend/settings/
-        group_management/edit_group/edit_group_modal_form.js
+        user_management/edit_user/edit_user_modal_form.js
 
 The settled flag is an INSTANCE property, deliberately not this.data: this.data
 is the maybe-cached result of on_load(), and a cached "already settled" would lie

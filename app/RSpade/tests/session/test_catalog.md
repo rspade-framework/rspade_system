@@ -609,3 +609,14 @@ fixture browser rows (the web flow itself is http/session_sign_in_rotation.sh).
 | sess-us-07 | signing out twice is a no-op; the first stamp and reason stand | sign out, then again with another reason | second call answers nothing | implemented |
 | sess-us-08 | a command has no user session | CLI identity | get_user_session_id() and get_current_session_info() null | implemented |
 
+## Session_Password_Change_Test (php, default isolation) - a password change signs the identity out everywhere else
+
+The consequence lives in the identity models' `updated` hook; the tests save a new password
+through the model and read the user sessions back.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| spc-01 | changed from a browser: the other web sign-in ends, this browser and the API key session stay | two web sign-ins + a REALM_API one; browser = the first | other signed out, reason SIGN_OUT_PASSWORD_CHANGED, pointer cleared; first and API signed in | implemented |
+| spc-02 | changed with no browser (command, task): every web sign-in ends | two web sign-ins + a REALM_API one; no browser | both signed out with the reason; API signed in | implemented |
+| spc-03 | impersonations of the identity end; another identity and a non-password save end nothing | own + impersonation-of + bystander's sign-in | non-password save ends nothing; then own + impersonation end, bystander stays | implemented |
+| spc-04 | the portal twin | two portal sign-ins (one browser also staff-signed-in) | other portal sign-in ends with the reason; changing browser and the staff sign-in stay | implemented |

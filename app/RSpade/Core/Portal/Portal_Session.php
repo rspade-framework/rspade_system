@@ -706,7 +706,8 @@ class Portal_Session
 
     /**
      * Sign a specific portal account out of every browser (optionally sparing one portal user
-     * session). For admin actions or a password change.
+     * session). For admin actions; a password change ends the other sign-ins by itself
+     * (Portal_User_Model_Abstract::booted()).
      *
      * @param int $portal_user_id
      * @param int|null $except_user_session_id A portal user session to spare

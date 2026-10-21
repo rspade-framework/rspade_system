@@ -31,12 +31,11 @@ use App\RSpade\Core\Session\Session;
  * is application vocabulary (the template's signup applies its own), and an operator setting
  * a password by hand is the one caller trusted to choose it.
  *
- * EVERY SIGNED-IN SESSION OF THE IDENTITY ENDS by default, because an operator changing a
- * password almost always means the old one is lost or compromised, and a session that
- * outlives the password it was opened with defeats the reset. Session::_deactivate_sessions_for_user()
- * is the primitive for a caller with no signed-in operator; each ended session gets the
- * realtime refresh push and a 'session.terminated' event with scope 'internal'.
- * --keep-sessions leaves them alone.
+ * EVERY SIGNED-IN WEB SESSION OF THE IDENTITY ENDS, because a session that outlives the
+ * password it was opened with defeats the reset. That is the identity model's own consequence
+ * of a password change (Login_User_Model_Abstract::booted(), SIGN_OUT_PASSWORD_CHANGED), not
+ * this command's: a command has no browser to spare, so every web sign-in ends, and an API
+ * key's session is left alone. The count reported is the sign-ins found before the save.
  */
 class Login_User_Password_Set_Command extends Command
 {
@@ -44,7 +43,6 @@ class Login_User_Password_Set_Command extends Command
                             {--user= : Login identity id or email address (required)}
                             {--password= : The new password (visible in shell history and the process list - prefer the prompt or --password-stdin)}
                             {--password-stdin : Read the new password from the first line of stdin}
-                            {--keep-sessions : Leave the identity\'s signed-in sessions active}
                             {--json : Output as JSON (requires --password or --password-stdin)}';
 
     protected $description = 'Set a login identity\'s password (prompts unless --password or --password-stdin is given)';
@@ -60,12 +58,10 @@ class Login_User_Password_Set_Command extends Command
             return Api_Key_Cli_Support::report_error($this, $e, $as_json);
         }
 
+        $sessions_ended = count(Session::_signed_in_user_session_ids(Session::REALM_STAFF, (int) $login_user->id, null, false));
+
         $login_user->password = Login_User_Model::hash_password($password);
         $login_user->save();
-
-        $sessions_ended = $this->option('keep-sessions')
-            ? 0
-            : Session::_deactivate_sessions_for_user((int) $login_user->id);
 
         if ($as_json) {
             return Api_Key_Cli_Support::json_ok($this, [
@@ -79,11 +75,7 @@ class Login_User_Password_Set_Command extends Command
         $this->info('[OK] Password set');
         Login_User_Cli_Support::print_identity($this, $login_user);
 
-        if ($this->option('keep-sessions')) {
-            $this->line('  Signed-in sessions were left active (--keep-sessions).');
-        } else {
-            $this->line('  Ended ' . $sessions_ended . ' signed-in session' . ($sessions_ended === 1 ? '' : 's') . '.');
-        }
+        $this->line('  Ended ' . $sessions_ended . ' signed-in session' . ($sessions_ended === 1 ? '' : 's') . '.');
 
         $this->newLine();
 

@@ -277,6 +277,12 @@ class Session extends Rsx_System_Model_Abstract
      */
     const SIGN_OUT_BROWSER_UNUSED = 15;
 
+    /**
+     * The account's password changed (_end_sessions_for_password_change(), from the identity
+     * model's own save): every other signed-in web sign-in of the identity ends.
+     */
+    const SIGN_OUT_PASSWORD_CHANGED = 16;
+
     /** Labels for the SIGN_OUT_* reasons, for screens that list user sessions. */
     const SIGN_OUT_REASON_LABELS = [
         self::SIGN_OUT_SIGNED_OUT => 'Signed out',
@@ -294,6 +300,7 @@ class Session extends Rsx_System_Model_Abstract
         self::SIGN_OUT_API_KEY_REVOKED => 'API key revoked',
         self::SIGN_OUT_API_KEY_EXPIRED => 'API key expired',
         self::SIGN_OUT_BROWSER_UNUSED => 'Browser unused',
+        self::SIGN_OUT_PASSWORD_CHANGED => 'Password changed',
     ];
 
     /**
@@ -3647,6 +3654,43 @@ class Session extends Rsx_System_Model_Abstract
 
         $ended = self::_sign_out_user_sessions($ids, self::__termination_reason($scope));
         self::__announce_sessions_terminated($actor_login_user_id, $ended, $scope);
+
+        return count($ended);
+    }
+
+    /**
+     * FRAMEWORK INTERNAL, NO AUTHORIZATION - the session consequence of a password change,
+     * called from the identity model's own `updated` hook (Login_User_Model_Abstract and
+     * Portal_User_Model_Abstract booted()), so every path that saves a new password through
+     * the model gets it: a change-password screen, a reset link, a command, an admin screen.
+     *
+     * Every signed-in user session of the identity in $realm_id ends with
+     * SIGN_OUT_PASSWORD_CHANGED - impersonations of it included, since they act as that
+     * identity - EXCEPT those on the browser making the request: the browser that changed the
+     * password stays signed in. A command, a task or an API call has no browser
+     * (_current_browser_session_id() is null), so there every web sign-in of the identity
+     * ends. An API key's own user session (REALM_API) is a different realm and is never
+     * touched: the key is its credential, not the password.
+     *
+     * Staff sign-ins fire 'session.terminated' with scope 'internal' and a null actor, like
+     * every framework-initiated termination; each browser gets the refresh push.
+     *
+     * @param int $realm_id REALM_STAFF (login_users.id) or REALM_PORTAL (portal_users.id)
+     * @param int $identity_id
+     * @return int Number of user sessions ended
+     */
+    public static function _end_sessions_for_password_change(int $realm_id, int $identity_id): int
+    {
+        if ($realm_id !== self::REALM_STAFF && $realm_id !== self::REALM_PORTAL) {
+            shouldnt_happen("_end_sessions_for_password_change(): realm {$realm_id} has no password");
+        }
+
+        $ended = self::_sign_out_user_sessions(
+            self::_signed_in_user_session_ids($realm_id, $identity_id, null, true),
+            self::SIGN_OUT_PASSWORD_CHANGED
+        );
+
+        self::__announce_sessions_terminated(null, $ended, 'internal');
 
         return count($ended);
     }

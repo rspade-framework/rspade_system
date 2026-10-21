@@ -505,9 +505,9 @@ THE MODAL PATTERN
     An EDIT modal's body IS the loader, and that needs three hooks:
 
         system/app/RSpade/resource/reference_app/app/frontend/settings/
-            group_management/edit_group/edit_group_modal_form.js
+            user_management/edit_user/edit_user_modal_form.js
 
-        on_create() { this._record = Controller.get_group_for_edit({...}); }
+        on_create() { this._record = Controller.get_user_for_edit({...}); }
         on_render() { if (!this._record_settled) this._get_form()?.set_loading(true); }
         on_ready()  { /* guarded once */ this._populate(); }
 

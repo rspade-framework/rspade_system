@@ -155,7 +155,6 @@ THE HANDLER RECIPE
         namespace Rsx\Handlers;
 
         use App\RSpade\Core\Models\User_Model;
-        use Rsx\Models\User_Group_Model;
 
         class Initial_User_Handlers
         {
@@ -164,24 +163,11 @@ THE HANDLER RECIPE
             {
                 /** @var User_Model $user */
                 $user = $data['user'];
-                $site_id = (int) $data['site_id'];
-                $connection_name = $user->getConnectionName();
 
                 if ($user->role_id === null) {
                     $user->role_id = User_Model::ROLE_ROOT_ADMIN;
                     $user->save();
                 }
-
-                $group = new User_Group_Model();
-                if ($connection_name !== null) {
-                    $group->setConnection($connection_name);
-                }
-                $group->site_id = $site_id;
-                $group->name = 'Administrators';
-                $group->deletion_protection = 1;
-                $group->save();
-
-                $group->members()->attach($user->id);
             }
         }
 
@@ -190,7 +176,7 @@ THE HANDLER RECIPE
       - THE CONNECTION. The test baseline seed writes on the 'test' connection while
         the default connection is still the developer database. A handler that
         creates related records must follow the connection of the model it was
-        handed: $user->getConnectionName().
+        handed: $record->setConnection($user->getConnectionName()) before save().
 
       - AN EXPLICIT ROLE BELONGS TO THE CALLER. The reference handler fills in a role
         only when the framework left it null, so the test baseline's deliberately

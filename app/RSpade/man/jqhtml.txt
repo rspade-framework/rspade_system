@@ -2882,6 +2882,18 @@ CONTENT AND SLOTS
         Works exactly like regular HTML - intuitive and simple.
         Perfect for: wrappers, containers, cards, modals.
 
+        content() and content('name') return '' when the caller supplied
+        nothing - the slot left out, or a body of only whitespace
+        (<Slot:note></Slot:note>). Anything else is content. Test it by
+        truthiness only - call it once, test, then emit - and never look
+        inside the returned value; its shape is internal:
+
+            <% const _note = content('note'); %>
+            <% if (_note) { %><div class="note"><%= _note %></div><% } %>
+
+        A caller cannot wrap a <Slot:> in <% if %>; to say "nothing
+        here" it writes the slot empty.
+
     2. Named Slots (Multiple Content Regions)
         Named slots are simply what a component with MORE THAN ONE
         content region needs - not an advanced, rare, or escape-hatch

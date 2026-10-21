@@ -41,7 +41,14 @@ The component's own class name is always stamped on the root - which is what mak
 
 `content()` renders whatever the caller placed between the opening and closing tags - the default, unnamed slot. **A wrapper component that forgets `content()` silently discards its caller's content.**
 
-**`content()` returns a markup object, not text.** When the caller supplied content it returns a markup buffer - the caller's markup as compiled output instructions, rendered in the component that WROTE it - and the template splices that into its own output when you write `<%= content() %>` (the only sanctioned way to EMIT it). When the caller supplied nothing it returns `''`. So the value may be assigned to a `const`, emitted later, and tested for presence (`if (_footer_actions)`) to decide whether a wrapper should draw at all - `DataGrid_Abstract` does exactly that for its optional `footer_actions` slot. What it never is, is a string carrying content: `.trim()`, `=== ''` on the populated case, concatenation or your own escaping all operate on an object and throw or print garbage. A named slot's `content('name')` returns the same kind of object. A component that needs a caller-supplied VALUE takes an argument (`$label`); caller MARKUP is `content()`.
+**`content()` returns a markup object, not text.** When the caller supplied content it returns a markup buffer - the caller's markup, rendered in the component that WROTE it - and the template splices that into its own output when you write `<%= content() %>` (the only sanctioned way to EMIT it). What it never is, is a string carrying content: `.trim()`, `=== ''` on the populated case, concatenation or your own escaping all operate on an object and throw or print garbage, and its shape is internal - never look inside it. A named slot's `content('name')` returns the same kind of object. A component that needs a caller-supplied VALUE takes an argument (`$label`); caller MARKUP is `content()`.
+
+**`content()` / `content('name')` is `''` when the caller supplied nothing** - the slot left out, or a body of only whitespace (`<Slot:note></Slot:note>`); anything else (text, an element, a component, `&nbsp;`, a printed `0`) is content. Truthiness is the only supported check, so call it once, test, then emit (`DataGrid_Abstract` does this for its optional slots). A caller cannot wrap a `<Slot:>` in `<% if %>`; to say "nothing here" it writes the slot empty.
+
+```jqhtml
+<% const _note = content('note'); %>
+<% if (_note) { %><div class="note"><%= _note %></div><% } %>
+```
 
 Named slots are a separate channel for components with more than one content region:
 

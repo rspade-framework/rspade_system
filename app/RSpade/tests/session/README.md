@@ -95,6 +95,11 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   and the `session.terminated` event fired once per deactivated row. The realtime
   refresh push each path emits has no in-process assertion seam and is verified live.
   (php)
+- The password-change sign-out (`Session::_end_sessions_for_password_change()`, called from
+  `Login_User_Model_Abstract` / `Portal_User_Model_Abstract` `booted()`): a saved new password
+  ends the identity's other web sign-ins with `SIGN_OUT_PASSWORD_CHANGED`, sparing the
+  changing browser (every one ends with no browser) and never touching an API key's
+  session; staff and portal. (php)
 - User-agent parsing: browser/OS/device detection, automation detection,
   summary formatting. (php - pure, no DB)
 - Session token lookup + expired-session cleanup. (php - commits, needs reset)

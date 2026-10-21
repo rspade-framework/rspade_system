@@ -354,8 +354,9 @@ SESSION & AUTH
                                          two-factor trust
       terminate_all_sessions_for_user(int $portal_user_id,
                                       ?int $except_user_session_id = null): int
-                                         unguarded: for an admin action or a
-                                         password change the caller authorized
+                                         unguarded: for an admin action the
+                                         caller authorized (a password change
+                                         ends the other sign-ins by itself)
       Signed-in user sessions per portal user are capped at sign-in by
       rsx.sessions.max_web_sessions_per_user (default 25).
 
@@ -661,7 +662,8 @@ PORTAL LOGIN FLOW
       cleared by Portal_User_Model when the password changes (the reset flow's
       set_password() + save()), and set by the application or by
       rsx:users:force_password_reset --portal-user=<id> (rsx:man session,
-      PASSWORD RESET REQUIRED).
+      PASSWORD RESET REQUIRED). The same save signs the portal user out of
+      every other browser (rsx:man session, PASSWORD CHANGES).
 
     PORTAL LOGIN HISTORY
       App\RSpade\Core\Session\Portal_Login_History records every portal

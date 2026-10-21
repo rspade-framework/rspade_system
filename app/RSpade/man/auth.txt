@@ -117,7 +117,7 @@ OPERATOR COMMANDS
 
     rsx:users:password:set --user=<id|email>
                            [--password=<value> | --password-stdin]
-                           [--keep-sessions] [--json]
+                           [--json]
         Sets the password. With neither source flag it prompts twice on the
         terminal with no echo; --password-stdin reads the first line of stdin
         (its line ending stripped, nothing else); --password puts the value on
@@ -125,9 +125,11 @@ OPERATOR COMMANDS
         it. Two sources at once is an error, and so is a call with no terminal
         and no source (--json included). The only rule applied to the value is
         that it is not empty - a password policy is application vocabulary.
-        Every active session of the identity ENDS (each gets the realtime
-        refresh push and a session.terminated event, scope 'internal');
-        --keep-sessions leaves them active.
+        Every signed-in web session of the identity ENDS - the identity
+        model's own consequence of a password change (rsx:man session,
+        PASSWORD CHANGES): reason SIGN_OUT_PASSWORD_CHANGED, the realtime
+        refresh push and a session.terminated event (scope 'internal') each.
+        An API key's session is left alone. Data: sessions_ended.
         Error codes: user_required, user_not_found, password_required,
         password_source_conflict, password_mismatch, password_empty.
 

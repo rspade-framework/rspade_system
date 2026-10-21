@@ -210,6 +210,11 @@ LISTING AND ENDING SESSIONS
     rsx/lib/sessions/session_listing.php). Portal_Session has the same family
     for portal accounts. SESSION MANAGEMENT in part two has the whole contract.
 
+    A PASSWORD CHANGE ends the account's other sign-ins by itself - nothing to
+    call. Saving a new password through the model (staff or portal) signs out
+    every other browser, keeping the one that made the change; PASSWORD
+    CHANGES in part two.
+
 CSRF
     Every internal transport (Ajax, uploads, @csrf forms) checks the CSRF token
     for you, portal included - rsx:man csrf. Session::get_csrf_token() and
@@ -409,7 +414,6 @@ SIGN-OUT REASONS
         SIGN_OUT_ENDED_BY_ADMIN        Ended by an            the admin and developer
                                        administrator          terminate functions
         SIGN_OUT_ENDED_BY_SYSTEM       Ended by the system    _deactivate_sessions_for_user()
-                                                              (rsx:users:password:set)
         SIGN_OUT_SESSION_CAP           Too many sessions      max_web_sessions_per_user
         SIGN_OUT_REPLACED              Another account        another account signed in
                                        signed in              on the browser
@@ -422,6 +426,8 @@ SIGN-OUT REASONS
         SIGN_OUT_API_KEY_EXPIRED       API key expired        the key passed expires_at
         SIGN_OUT_BROWSER_UNUSED        Browser unused for     unused_session_days
                                        N days
+        SIGN_OUT_PASSWORD_CHANGED      Password changed       a new password saved through
+                                                              the model (PASSWORD CHANGES)
 
     Every sign-out runs through one path (Session::_sign_out_user_sessions()),
     so the rules hold everywhere: a staff sign-in that ends takes the
@@ -810,6 +816,35 @@ REALTIME SESSION REFRESH AND THE SESSION HASH
     how a page notices a rotation that happened in another tab without
     realtime.
 
+PASSWORD CHANGES
+    A session opened with a password must not outlive it. Saving a new
+    password through the identity model - Login_User_Model (staff) or
+    Portal_User_Model (portal), whatever the caller: a change-password screen,
+    a reset link, rsx:users:password:set, an administrator's screen - ends
+    every OTHER signed-in sign-in of that identity in its realm, with reason
+    SIGN_OUT_PASSWORD_CHANGED. It is the models' own `updated` hook
+    (booted()), so there is nothing to call and no way to forget it:
+
+        $login_user->password = Login_User_Model::hash_password($new);
+        $login_user->save();     // every other browser is now signed out
+
+    - THE BROWSER THAT MADE THE CHANGE stays signed in: everything on the
+      browser making the request is spared.
+    - NO BROWSER (a command, a task, an API call): every web sign-in of the
+      identity ends.
+    - IMPERSONATIONS of the identity end with it - they act as that account.
+    - AN API KEY'S SESSION is never touched: it is a different realm, and the
+      key, not the password, is its credential. Revoke the key to end it.
+    - A staff change ends staff sign-ins on every site of the identity; a portal
+      change ends that portal user's portal sign-ins. The other realm's sign-in
+      on the same browser is untouched.
+
+    Each staff sign-in ended fires session.terminated (scope 'internal', null
+    actor) and every affected browser gets the realtime refresh push. The same
+    save forgets every browser's two-factor trust (TRUSTED BROWSERS) and clears
+    password_reset_required (PASSWORD RESET REQUIRED). A write that bypasses the
+    model (raw SQL, ->raw_bulk()) does none of this.
+
 TRUSTED BROWSERS (TWO-FACTOR)
     A browser that passed a second factor may be trusted for a window
     (rsx.two_factor.trusted_device_days) so the next sign-in on it is excused.
@@ -929,7 +964,10 @@ SESSION MANAGEMENT
         Portal twins: Portal_Session::terminate_session($user_session_id),
         terminate_all_other_sessions(), terminate_all_sessions_for_user(
         $portal_user_id, $except_user_session_id) - the last unguarded, for an
-        admin action or a password change the caller has authorized.
+        admin action the caller has authorized.
+
+    A password change needs none of these: the identity model ends the other
+    sign-ins itself (PASSWORD CHANGES).
 
     The authorization rule (the cross-user staff functions). Two ways to be
     authorized, and only two:
@@ -1206,8 +1244,8 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     The command is the operator's switch and its --clear the recovery for a
     wrongly flagged account. It sends no email, ends no session and changes no
     password - the reset workflow (a forgot-password link, a support call) is the
-    application's, and a session already open stays open (rsx:users:password:set
-    ends sessions when the password must go now).
+    application's, and a session already open stays open until the password
+    changes (PASSWORD CHANGES).
 
     THE REFUSAL. verify_credentials() asks the flag LAST - after the password
     matched and an active membership was found - and THROWS:
@@ -1256,7 +1294,8 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
         $login_user->save();
 
     Only a model save clears it; a write that bypasses the model (raw SQL,
-    ->raw_bulk()) does not.
+    ->raw_bulk()) does not. The same save signs the identity out of every other
+    browser (PASSWORD CHANGES).
 
     THE PORTAL. Portal_Auth::verify_credentials() (rsx:man portal, SIGNING IN)
     applies the same flag on portal_users, throws the same exception carrying the
