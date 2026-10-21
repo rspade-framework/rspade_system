@@ -7,9 +7,9 @@
 
 namespace App\RSpade\Core\Auth;
 
-use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Auth\Auth_Password_Reset_Required_Exception;
 use App\RSpade\Core\Auth\Login_Throttle;
+use App\RSpade\Core\Auth\Password_Verifier;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Login_History;
@@ -91,6 +91,11 @@ class RsxAuth
      * classified NOT_FOUND - the same answer a stranger's address gets, which is also the right
      * answer to give a stranger.
      *
+     * EQUAL TIME FOR AN UNKNOWN ADDRESS. A NOT_FOUND lookup still pays one password hash
+     * verification (Password_Verifier::verify_unknown(), against a dummy hash held to the current
+     * hashing config), so an unknown address is refused no faster than a wrong password and the
+     * clock cannot enumerate accounts. A soft-deleted identity takes that same path.
+     *
      * THROTTLED BEFORE ANYTHING ELSE. The first statement is
      * Login_Throttle::require_not_throttled(), which THROWS Auth_Throttled_Exception when the
      * client IP has spent its failure budget (rsx.sessions.login_throttle). It runs before the
@@ -132,6 +137,10 @@ class RsxAuth
         $login_user = Login_User_Model::where('email', $email)->first();
 
         if (!$login_user) {
+            // Pay the hash verification a known address pays, so the response time does not
+            // say which addresses hold accounts (Password_Verifier).
+            Password_Verifier::verify_unknown($password);
+
             if ($record) {
                 Login_History::record_failure($email, Login_History::STATUS_FAILED_NOT_FOUND);
             }
@@ -139,7 +148,7 @@ class RsxAuth
             return null;
         }
 
-        if (!Hash::check($password, $login_user->password)) {
+        if (!Password_Verifier::verify($password, $login_user->password)) {
             if ($record) {
                 Login_History::record_failure(
                     $email,

@@ -10,7 +10,6 @@ namespace App\RSpade\Tests\Tasks\Php;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\CodeQuality\Rules\PHP\TaskRunAsDispatcher_CodeQualityRule;
-use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -33,9 +32,14 @@ use App\RSpade\Tests\Tasks\Php\Task_Run_As_Fixture_Service;
  * after that browser signed out and another account signed in on it; changing identity or
  * reaching session values throws. A dispatcher who may no longer act (membership or site
  * disabled, login identity deleted, portal user disabled, the user session gone) fails the run
- * with nothing executed. Every worker run ends blank, Task::internal() keeps its caller's
- * context, rsx:task:run refuses such a task with a message, and the worker claims by tier then
- * age.
+ * with nothing executed. Every worker run ends blank, and the worker claims by tier then age.
+ *
+ * INLINE (Task::internal(), __run_task_method()) the run executes in its caller's context and
+ * keeps it: a sign-in, or an identity the caller declared on its virtual session (staff, or a
+ * portal user in the portal realm) - the run acts as it and dispatched_by names it. With
+ * nobody acting an inline run is refused, naming the command-line flags; a DISPATCHED run
+ * still needs a sign-in, a declared identity notwithstanding. rsx:task:run --user/--site is
+ * Task_Run_As_Dispatcher_Cli_Test.
  *
  * The test process runs a virtual session and cannot sign in through the web path, so a
  * "signed-in request" is a browser fixture with a user session on it
@@ -155,7 +159,11 @@ class Task_Run_As_Dispatcher_Test extends Rsx_Test_Abstract
         }, 'can only be started from a signed-in request');
     }
 
-    public static function test_a_declared_identity_without_a_sign_in_is_refused()
+    /**
+     * A DISPATCHED run needs a sign-in even when an identity is declared: a worker is another
+     * process and rebuilds the actor from the sign-in alone.
+     */
+    public static function test_a_dispatch_with_a_declared_identity_but_no_sign_in_is_refused()
     {
         static::__acting_as_user(self::USER_ID);
 
@@ -409,28 +417,106 @@ class Task_Run_As_Dispatcher_Test extends Rsx_Test_Abstract
         }
     }
 
-    public static function test_an_inline_dispatcher_run_with_no_sign_in_is_refused()
+    /**
+     * A declared identity with no sign-in: the inline run acts as it - identity, membership,
+     * site and attribution - with no browser, sign-in or audit session, and the row records
+     * the actor and no user session.
+     */
+    public static function test_an_inline_run_acts_as_the_declared_identity()
+    {
+        $user = static::__user();
+        static::__acting_as_user(self::USER_ID);
+
+        $run = Task::internal(self::SERVICE, 'as_dispatcher');
+
+        static::__assert_equals(Task_Run_Model::STATUS_COMPLETED, (int) $run->status_id, 'the run completed: ' . $run->error);
+        $who = $run->state();
+        static::__assert_equals((int) $user->login_user_id, (int) $who['login_user_id'], 'runs as the declared identity');
+        static::__assert_equals((int) $user->id, (int) $who['user_id'], 'its membership');
+        static::__assert_equals((int) $user->site_id, (int) $who['site_id'], 'on its site');
+        static::__assert_equals(['type' => 'User_Model', 'id' => (int) $user->id], $who['actor'], 'writes are attributed to it');
+        static::__assert_null($who['session_id'], 'no browser');
+        static::__assert_null($who['user_session_id'], 'no sign-in');
+        static::__assert_null($who['audit_session_id'], 'no audit session');
+
+        $row = static::__row((int) $run->id);
+        static::__assert_equals(Task_Run_Model::ORIGIN_INLINE, (int) $row->origin_id);
+        static::__assert_equals((int) $user->id, (int) $row->dispatched_by_id, 'dispatched_by names the declared identity');
+        static::__assert_equals(\App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry::class_to_id('User_Model'), (int) $row->dispatched_by_type);
+        static::__assert_null($row->user_session_id);
+        static::__assert_equals((int) $user->site_id, (int) $row->site_id);
+
+        static::__assert_equals((int) $user->login_user_id, (int) Session::get_login_user_id(), 'the caller keeps its identity');
+    }
+
+    /** The test seam: __run_task_method() after __acting_as_user() runs as that user. */
+    public static function test_the_test_harness_runs_it_as_the_acting_user()
     {
         static::__acting_as_user(self::USER_ID);
 
-        static::__assert_throws(\RuntimeException::class, function () {
-            Task::internal(self::SERVICE, 'as_dispatcher');
-        }, 'can only be started from a signed-in request');
+        $who = static::__run_task_method(Task_Run_As_Fixture_Service::class, 'as_dispatcher');
+
+        static::__assert_equals(self::USER_ID, (int) $who['user_id']);
+        static::__assert_equals(['type' => 'User_Model', 'id' => self::USER_ID], $who['actor']);
     }
 
-    public static function test_rsx_task_run_refuses_it_with_a_message()
+    /** A portal user declared in the portal realm is an actor too. */
+    public static function test_an_inline_run_acts_as_a_declared_portal_user()
     {
-        $output = [];
-        $exit = Rsx_Artisan::run('rsx:task:run', [self::SERVICE, 'as_dispatcher'], $output, [
-            'DB_DATABASE' => (string) config('database.connections.test.database'),
-        ]);
+        $portal_user = static::__portal_user();
 
-        static::__assert_equals(1, $exit);
-        static::__assert_contains(
-            'Task_Run_As_Fixture_Service::as_dispatcher runs as the user who dispatched it and can only be started from a request: '
-            . 'dispatch it with Task::dispatch() from an Ajax endpoint',
-            implode("\n", $output)
-        );
+        Rsx_Portal::set_portal_request(true);
+        \App\RSpade\Core\Portal\Portal_Session::set_site_id(1);
+        \App\RSpade\Core\Portal\Portal_Session::set_portal_user_id((int) $portal_user->id);
+
+        try {
+            $run = Task::internal(self::SERVICE, 'as_dispatcher');
+        } finally {
+            Session::_end_virtual();
+        }
+
+        static::__assert_equals(Task_Run_Model::STATUS_COMPLETED, (int) $run->status_id, 'the run completed: ' . $run->error);
+        $who = $run->state();
+        static::__assert_true($who['portal']);
+        static::__assert_equals((int) $portal_user->id, (int) $who['portal_user_id']);
+        static::__assert_equals(['type' => 'Portal_User_Model', 'id' => (int) $portal_user->id], $who['actor']);
+        static::__assert_equals((int) $portal_user->id, (int) static::__row((int) $run->id)->dispatched_by_id);
+    }
+
+    public static function test_an_inline_run_with_nobody_acting_is_refused_naming_the_flags()
+    {
+        static::__reset_session();
+        Task_Run_As_Fixture_Service::$run_order = [];
+        $before = (int) DB::table('_tasks')->max('id');
+
+        static::__assert_throws(\RuntimeException::class, function () {
+            Task::internal(self::SERVICE, 'as_dispatcher');
+        }, 'nobody is acting here');
+
+        static::__assert_throws(\RuntimeException::class, function () {
+            Task::internal(self::SERVICE, 'as_dispatcher');
+        }, 'rsx:task:run Task_Run_As_Fixture_Service as_dispatcher --user=<id|email> --site=<id>');
+
+        static::__assert_throws(\RuntimeException::class, function () {
+            static::__run_task_method(Task_Run_As_Fixture_Service::class, 'as_dispatcher');
+        }, 'nobody is acting here');
+
+        static::__assert_equals($before, (int) DB::table('_tasks')->max('id'), 'no row was written');
+        static::__assert_equals([], Task_Run_As_Fixture_Service::$run_order, 'nothing ran');
+    }
+
+    /**
+     * A site alone is not an actor: a declared tenant with nobody acting on it is still
+     * nobody.
+     */
+    public static function test_a_declared_site_alone_is_not_an_actor()
+    {
+        static::__reset_session();
+        static::__acting_as_site(1);
+
+        static::__assert_throws(\RuntimeException::class, function () {
+            Task::internal(self::SERVICE, 'as_dispatcher');
+        }, 'nobody is acting here');
     }
 
     // -------------------------------------------------------------------------

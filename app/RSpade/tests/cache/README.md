@@ -70,6 +70,7 @@ counter store's own copy of it.
 |------|------|---------|
 | Serialized round trip incl. boolean false and numeric strings | php | yes |
 | Corrupt payload fails loud | php | yes |
+| Plain data only: an object refused on write (all three writers) and a class-naming payload refused unread on read | php | yes |
 | Counter: creation window, no sliding, amount, bad window, read, reset | php | yes |
 | Counter: flag value + expiry; invisible to the cache; survives `clear()` | php | yes |
 | Counter degraded (maintenance) behavior | php | yes |

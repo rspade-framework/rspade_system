@@ -469,11 +469,12 @@ class Two_Factor_Controller_Test extends Rsx_Test_Abstract
         $state = Rsx_Two_Factor_Controller::challenge_state(static::__ajax_request());
 
         static::__assert_equals(
-            ['email', 'email_masked', 'accepts', 'has_totp', 'has_passkey', 'has_recovery_codes', 'has_issued_code', 'codes_issued'],
+            ['challenge_id', 'email', 'email_masked', 'accepts', 'has_totp', 'has_passkey', 'has_recovery_codes', 'has_issued_code', 'codes_issued'],
             array_keys($state),
             'only what the screen renders'
         );
 
+        static::__assert_true(is_string($state['challenge_id']) && $state['challenge_id'] !== '', 'the opaque challenge name the screen tells tabs apart by');
         static::__assert_equals(['totp', 'recovery_code'], $state['accepts'], 'what the identity holds');
         static::__assert_true($state['has_totp']);
         static::__assert_false($state['has_passkey']);

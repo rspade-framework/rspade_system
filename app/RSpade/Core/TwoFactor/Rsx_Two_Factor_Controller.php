@@ -241,17 +241,21 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
      * What the challenge screen needs to render itself, or null when nothing is pending.
      *
      * NULL PASSES THROUGH AS NULL and is not an error: "no challenge" is the answer a
-     * challenge screen gets when the window expired, when the user already signed in, or
-     * when they simply navigated here - and the screen's response to all three is the same,
-     * to send them back to the login page.
+     * challenge screen gets when the window expired or when they simply navigated here - and
+     * the screen's response to both is the same, to send them back to the login page.
      *
-     * @return array|null {email, email_masked, has_totp, has_passkey, has_recovery_codes}
+     * {completed: true, challenge_id, by_email_link} when nothing is pending because THIS browser completed
+     * its challenge within the challenge's window - the user signed in from the email link or
+     * another tab. A screen left open in this tab then says so instead of offering a dead
+     * challenge (<Two_Factor_Challenge> asks when its tab becomes visible again).
+     *
+     * @return array|null challenge_pending()'s shape, {completed, challenge_id, by_email_link}, or null
      */
     #[Ajax_Endpoint]
     #[Auth('public')]
     public static function challenge_state(Request $request, array $params = [])
     {
-        return Rsx_Two_Factor::challenge_pending();
+        return Rsx_Two_Factor::challenge_pending() ?? Rsx_Two_Factor::_challenge_completed_state();
     }
 
     /**

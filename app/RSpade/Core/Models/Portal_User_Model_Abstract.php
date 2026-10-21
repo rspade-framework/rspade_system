@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Models;
 
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Auth\Auth_Gates;
+use App\RSpade\Core\Auth\Password_Verifier;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Models\Has_Preference_Variables;
 use App\RSpade\Core\Portal\Portal_Authorizable;
@@ -214,14 +215,15 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     }
 
     /**
-     * Verify a plain-text password against the stored hash.
+     * Verify a plain-text password against the stored hash. A missing stored hash pays an
+     * equal-cost dummy verification and answers false (Password_Verifier::verify()).
      *
      * @param string $password
      * @return bool
      */
     public function check_password(string $password): bool
     {
-        return Hash::check($password, $this->password);
+        return Password_Verifier::verify($password, $this->password);
     }
 
     /**

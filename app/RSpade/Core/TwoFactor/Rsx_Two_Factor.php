@@ -10,6 +10,7 @@ namespace App\RSpade\Core\TwoFactor;
 use App\RSpade\Core\Auth\RsxAuth;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\TwoFactor\Passkeys;
@@ -145,6 +146,27 @@ class Rsx_Two_Factor extends Rsx_Two_Factor_Abstract
     protected static function __sign_out(): void
     {
         Session::logout();
+    }
+
+    /**
+     * login_users.is_verified - the identity's address, shared by every site it belongs to.
+     */
+    protected static function __mark_address_verified(Rsx_Model_Abstract $identity): void
+    {
+        if ((int) $identity->is_verified === 1) {
+            return;
+        }
+
+        $identity->is_verified = 1;
+        $identity->save();
+    }
+
+    /**
+     * /_email_link/:token on APP_URL's host.
+     */
+    protected static function __email_link_route(string $token): string
+    {
+        return rsx_absolute_url(Rsx::Route('Rsx_Email_Link_Controller::open', ['token' => $token]));
     }
 
     protected static function __event(string $name): string

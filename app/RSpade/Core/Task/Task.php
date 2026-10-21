@@ -45,8 +45,10 @@ class Task
      * run that calls another task - and after it the caller's whole acting context (identity,
      * site, realm, impersonation, declared audit session, timezone) is put back as it was
      * (Session::_snapshot_context()), whatever the task declared meanwhile. A
-     * #[Run_As_Dispatcher] task needs a sign-in to run as: inline from a command or a plain
-     * task, with no sign-in behind it, it is refused (Task_Runner::insert_row()).
+     * #[Run_As_Dispatcher] task needs somebody to run as: a sign-in, or an identity the
+     * caller declared on its virtual session (Session::impersonate(), rsx:task:run --user, a
+     * test's __acting_as_user()) - it then runs as that identity, attributed to it. With
+     * nobody acting it is refused (Task_Runner::insert_row()).
      *
      * The return value is the run's row, settled. A task that THROWS is settled FAILED and the
      * exception is rethrown to the caller; a task that returns a failure code is settled

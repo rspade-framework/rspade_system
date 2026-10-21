@@ -122,7 +122,7 @@ CONFIGURATION PHILOSOPHY
         convenience switches for rapid development. They let developers
         quickly test different behaviors without modifying code.
 
-        Example: signup_mode = 'invite_only' vs 'anonymous'
+        Example: rsx.auth.self_signup = false vs true
 
         However, the framework's philosophy is that developers should
         ultimately find the code controlling these features and customize
@@ -193,12 +193,10 @@ AUTHENTICATION SYSTEM
         - Email verified via invitation click
         - One login identity, multiple site memberships
 
-    Configuration Modes:
-        signup_mode = 'anonymous'    Anyone can create account
-        signup_mode = 'invite_only'  Only invited users can join
-        signup_mode = 'disabled'     No new accounts (closed system)
-
-        verification_required = 'email', 'sms', 'either', 'both'
+    Configuration Switches (template app, both off as shipped):
+        rsx.auth.self_signup         Anyone may create a new site, after
+                                     verifying their email address
+        rsx.auth.require_two_factor  Staff must enroll a second factor
 
     Flexible Architecture:
         - Works for single-site or multi-tenant

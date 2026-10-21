@@ -878,6 +878,10 @@ abstract class Rsx_Test_Abstract
      * by the method's return value, then the state object it reported with $task->state() is
      * returned (null when it reported none).
      *
+     * The method runs in the test's own context, like any inline run: a #[Run_As_Dispatcher]
+     * task runs as the identity the test declared with __acting_as_user() (and is refused
+     * when the test declared nobody).
+     *
      * @param string $class Fully-qualified service class
      * @param string $method The static #[Task] method
      * @param array $params The $params the method receives

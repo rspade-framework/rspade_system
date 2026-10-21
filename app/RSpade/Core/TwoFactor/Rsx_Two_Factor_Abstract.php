@@ -18,6 +18,7 @@ use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Qr\Rsx_Qr_Code;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Login_History;
+use App\RSpade\Core\Session\Rsx_Signed_Url;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Core\TwoFactor\Passkeys;
@@ -75,12 +76,28 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * identity holds (its confirmed factors and any unspent recovery code).
  *
  * AN ISSUED CODE is a one-time code the FRAMEWORK generates and the APPLICATION delivers:
- * issue_code() mints six random digits, keeps only a keyed hash of them in the pending
- * challenge (a later code replaces an earlier one) and returns the digits to the caller,
- * who sends them however the application chooses - an email of the SECURITY category, an
- * SMS, a phone call. Verification is the same verify_challenge(), under the same throttle,
- * the same two attempt caps and the same recording as a TOTP code. The code lives exactly
- * as long as its challenge.
+ * issue_code() returns the identity's live six digits (minting them when it has none - see
+ * AN ISSUED CODE BELONGS TO THE IDENTITY below) to the caller, who sends them however the
+ * application chooses - an email of the SECURITY category, an SMS, a phone call.
+ * Verification is the same verify_challenge(), under the same throttle, the same two attempt
+ * caps and the same recording as a TOTP code.
+ *
+ * AN EMAIL LINK travels in the same message as the code: issued_link($return_url), called
+ * after issue_code(), answers a signed URL to the framework's /_email_link/:token route, and
+ * opening it completes the step exactly as typing the code would - it is the same answer
+ * (ANSWER_ISSUED_CODE), consumes the same code, and dies with it. The link is BOUND TO THE
+ * BROWSER whose challenge it was minted for: opened anywhere else it says so and asks for the
+ * code instead, and that visit counts nothing. The GET route is read-only, so a mail scanner
+ * that prefetches the link consumes nothing; the browser that owns the challenge is sent back
+ * to $return_url with the token in the fragment, and <Two_Factor_Challenge> submits it to the
+ * application's own verification endpoint as {email_link: token}. See issued_link().
+ *
+ * A PASSED EMAILED ANSWER VERIFIES THE ADDRESS. When an issued code (typed, or its email link)
+ * answers a challenge, the identity's is_verified is set before the realm signs it in
+ * (__mark_address_verified()): the answer proved the person at the keyboard reads that
+ * mailbox, which is the whole of what is_verified records. This is what lets an emailed code
+ * double as signup verification, and lets a portal user whose address was never verified
+ * pass the portal's admission rule (can_login()) by answering one.
  *
  * THE PASSWORDLESS FLOW is begin_passkey_login() + verify_passkey_login(): a passkey as the
  * FIRST and only credential, with no password stage and nothing pending beforehand. The
@@ -187,6 +204,21 @@ abstract class Rsx_Two_Factor_Abstract
 
     /** Digits in an issued code. */
     private const ISSUED_CODE_DIGITS = 6;
+
+    /** _email_link_state(): the link was opened in the browser whose challenge it answers. */
+    public const EMAIL_LINK_SAME_BROWSER = 'same_browser';
+
+    /** _email_link_state(): the link is live, and this is not the browser it was minted for. */
+    public const EMAIL_LINK_OTHER_BROWSER = 'other_browser';
+
+    /** _email_link_state(): the link's code expired or was used, or the link is not one. */
+    public const EMAIL_LINK_EXPIRED_OR_USED = 'expired_or_used';
+
+    /** The Rsx_Signed_Url purpose an email link's URL is signed under. */
+    public const EMAIL_LINK_PURPOSE = 'email_link';
+
+    /** The URL-fragment key the landing route hands the token back to the challenge screen in. */
+    public const EMAIL_LINK_FRAGMENT_KEY = 'rsx_email_link';
 
     // -------------------------------------------------------------------------
     // Configuration
@@ -1201,6 +1233,153 @@ abstract class Rsx_Two_Factor_Abstract
     }
 
     /**
+     * The sign-in link that travels in the same message as the issued code: an absolute,
+     * signed URL to the framework route /_email_link/:token on this realm's host.
+     *
+     * THE CONTRACT: call it AFTER issue_code(), in the send that delivers that code, and put
+     * both in the one message. The link is the code's twin - it answers the challenge as
+     * ANSWER_ISSUED_CODE, a correct answer of either kind consumes both, and it stops working
+     * the moment the code does (its absolute expiry, a spent challenge, a locked identity).
+     * Called with no live code it THROWS rather than minting one, because a link whose code
+     * nobody was sent would be a second, unannounced secret.
+     *
+     * ONE LINK PER CHALLENGE PER CODE. The token is derived (HMAC under a key derived from
+     * app.key) from this browser's challenge id and the live code's expiry, so a resend
+     * returns the SAME link, a fresh sign-in (a new challenge) gets a new one, and nothing
+     * secret is stored: what the store keeps, beside the code, is the token's SHA-256 bound
+     * to {challenge, this browser's session, the identity, the code's expiry, $return_url},
+     * expiring with the code. The first send's $return_url is the one kept.
+     *
+     * BOUND TO THIS BROWSER. Opened in the browser whose challenge it was minted for, the
+     * route redirects to $return_url with the token in the URL FRAGMENT (never sent to a
+     * server, so never in a log), and <Two_Factor_Challenge> on that page submits it to the
+     * application's verification endpoint as {email_link: token} - verify_challenge() needs
+     * no other change. Opened in any other browser, the route renders a notice asking for the
+     * code in the browser that signed in; that visit is not an attempt and the code stays
+     * live. The route only READS, so a mail scanner prefetching the link consumes nothing and
+     * counts nothing.
+     *
+     * @param string $return_url The application's challenge page (normally its verify route,
+     *                           Rsx::Route() / Rsx_Portal::Route()), with no fragment.
+     * @return string The absolute signed URL.
+     * @throws Two_Factor_Failed_Exception When nothing is pending (the window has closed).
+     * @throws \RuntimeException When the pending challenge does not accept ANSWER_ISSUED_CODE,
+     *         or the identity holds no live code (issue_code() was not called first).
+     * @throws \InvalidArgumentException When $return_url is empty or carries a fragment.
+     */
+    public static function issued_link(string $return_url): string
+    {
+        $pending = static::__pending_challenge();
+
+        if ($pending === null) {
+            throw new Two_Factor_Failed_Exception('Your verification window has expired. Please sign in again.');
+        }
+
+        if (!in_array(self::ANSWER_ISSUED_CODE, $pending['accepts'] ?? [], true)) {
+            throw new RuntimeException(
+                static::class . '::issued_link() was called for a challenge that does not accept an issued code. '
+                . 'Pass ' . static::class . '::ANSWER_ISSUED_CODE in begin_challenge()\'s $accepts.'
+            );
+        }
+
+        if (trim($return_url) === '' || str_contains($return_url, '#')) {
+            throw new \InvalidArgumentException(
+                static::class . '::issued_link() needs the challenge page\'s URL with no fragment - the link hands '
+                . 'its token back in one. Got ' . var_export($return_url, true) . '.'
+            );
+        }
+
+        $live = static::__live_issued_code($pending['identity_id']);
+
+        if ($live === null) {
+            throw new RuntimeException(
+                static::class . '::issued_link() was called with no live issued code. Call issue_code() first and '
+                . 'send the code and the link in one message - the link is the code\'s twin and dies with it.'
+            );
+        }
+
+        $session_id = Session::_current_browser_session_id();
+
+        if ($session_id === null) {
+            shouldnt_happen(static::class . '::issued_link(): a challenge is pending on a browser with no session row');
+        }
+
+        $token = static::__email_link_token($pending['challenge_id'], $live['expires_at']);
+
+        // SET NX: false means an earlier send already bound this very token - the same link,
+        // which is what a resend is supposed to answer.
+        Rsx_Counter::add_value(
+            static::__email_link_key($token),
+            json_encode([
+                'challenge_id' => $pending['challenge_id'],
+                'session_id' => $session_id,
+                'identity_id' => $pending['identity_id'],
+                'code_expires_at' => $live['expires_at'],
+                'return_url' => $return_url,
+            ]),
+            Rsx_Time::to_ms($live['expires_at'])
+        );
+
+        return static::__email_link_url($token);
+    }
+
+    /**
+     * What opening an email link on THIS browser means - FRAMEWORK INTERNAL, for the landing
+     * route (Rsx_Email_Link_Controller). It READS ONLY: nothing is consumed, counted or
+     * recorded, whatever the answer, which is what makes a prefetching mail scanner harmless.
+     *
+     *   EMAIL_LINK_SAME_BROWSER     the challenge it was minted for is pending here, and its
+     *                               code is live: return_url is where to send the browser
+     *   EMAIL_LINK_OTHER_BROWSER    the link is live, but this is not the browser that signed
+     *                               in: the code from the same email still works there
+     *   EMAIL_LINK_EXPIRED_OR_USED  the code expired or was used, the challenge is gone, or the
+     *                               token is not a link at all
+     *
+     * @param string $token
+     * @return array{state: string, return_url: ?string}
+     */
+    public static function _email_link_state(string $token): array
+    {
+        $expired = ['state' => self::EMAIL_LINK_EXPIRED_OR_USED, 'return_url' => null];
+
+        if (!preg_match('/^[0-9a-f]{64}$/', $token)) {
+            return $expired;
+        }
+
+        $stored = Rsx_Counter::value(static::__email_link_key($token));
+
+        if ($stored === null) {
+            return $expired;
+        }
+
+        $binding = json_decode($stored, true);
+
+        if (!is_array($binding) || !isset($binding['challenge_id'], $binding['session_id'], $binding['identity_id'], $binding['code_expires_at'], $binding['return_url'])) {
+            shouldnt_happen('An email link binding (' . static::class . ') is malformed: ' . $stored);
+        }
+
+        // The code the link was sent with must still be the identity's live code: a used,
+        // destroyed or replaced code takes its link with it.
+        $live = static::__live_issued_code((int) $binding['identity_id']);
+
+        if ($live === null || $live['expires_at'] !== $binding['code_expires_at']) {
+            return $expired;
+        }
+
+        if (Session::_current_browser_session_id() !== (int) $binding['session_id']) {
+            return ['state' => self::EMAIL_LINK_OTHER_BROWSER, 'return_url' => null];
+        }
+
+        $pending = static::__pending_challenge();
+
+        if ($pending === null || $pending['challenge_id'] !== $binding['challenge_id']) {
+            return $expired;
+        }
+
+        return ['state' => self::EMAIL_LINK_SAME_BROWSER, 'return_url' => (string) $binding['return_url']];
+    }
+
+    /**
      * What the challenge screen needs to render itself, or null when there is nothing
      * pending.
      *
@@ -1216,9 +1395,10 @@ abstract class Rsx_Two_Factor_Abstract
      * accepts is the list of answer kinds this challenge takes AND this identity can give
      * (an issued code always can). has_totp, has_passkey and has_recovery_codes are the same
      * answer per kind - what the screen may ASK for. codes_issued counts issue_code() calls,
-     * for an application that caps resends.
+     * for an application that caps resends. challenge_id is an opaque name for this one
+     * challenge - the screen uses it to tell its own challenge from another tab's.
      *
-     * @return array|null {email, email_masked, accepts, has_totp, has_passkey,
+     * @return array|null {challenge_id, email, email_masked, accepts, has_totp, has_passkey,
      *                    has_recovery_codes, has_issued_code, codes_issued}
      */
     public static function challenge_pending(): ?array
@@ -1232,6 +1412,7 @@ abstract class Rsx_Two_Factor_Abstract
         $accepts = static::__answerable($pending);
 
         return [
+            'challenge_id' => $pending['challenge_id'],
             'email' => config('rsx.two_factor.challenge_shows_full_email') ? $pending['email'] : null,
             'email_masked' => static::__mask_email($pending['email']),
             'accepts' => $accepts,
@@ -1304,8 +1485,10 @@ abstract class Rsx_Two_Factor_Abstract
      *     one was offered; otherwise a typed code is tried against the identity's live
      *     issued code, then
      *     every confirmed TOTP credential, then the recovery codes. Recovery LAST, so a
-     *     string that is a live TOTP code never burns a recovery code. An answer of a kind
-     *     the challenge does not accept is a wrong answer.
+     *     string that is a live TOTP code never burns a recovery code. An email link token
+     *     ({email_link}) is an issued-code answer: it must be the link minted for THIS
+     *     browser's challenge and the identity's live code (issued_link()). An answer of a
+     *     kind the challenge does not accept is a wrong answer, and so is a wrong or dead link.
      *  4. A failure is recorded ONCE, through the realm (Login_History::record_failure()
      *     or Portal_Login_History::record_failure() with STATUS_FAILED_2FA, which already
      *     feeds Login_Throttle). Never twice: one
@@ -1315,16 +1498,19 @@ abstract class Rsx_Two_Factor_Abstract
      *     IP); the answer that spends the challenge's budget destroys the challenge, and
      *     that answer or the one that locks the identity destroys its live issued code.
      *  5. On success the pending value is forgotten FIRST, the identity's failure count is
-     *     cleared and its live issued code consumed (whichever kind of answer passed - the
-     *     sign-in it was sent for is over), then the realm signs the identity in, then the
-     *     success is recorded.
+     *     cleared and its live issued code consumed with its email link (whichever kind of
+     *     answer passed - the sign-in it was sent for is over); an issued-code answer marks the
+     *     address verified (__mark_address_verified()); then the realm signs the identity in,
+     *     the success is recorded, and a short-lived marker says this browser's challenge was
+     *     completed (_challenge_completed_state(), read by a challenge screen left open in
+     *     another tab).
      *  6. The sign-in REFUSES an identity the realm will not admit - a staff identity holding
      *     no active site membership (users.is_enabled + sites.is_enabled), a portal user the portal's account
      *     vocabulary rejects (Portal_User_Model::can_login(), or a user of another site). A
      *     correct code from such an identity is recorded STATUS_FAILED_DISABLED and then fails
      *     with the wrong-code message, so the two are indistinguishable from the outside.
      *
-     * @param array $input {assertion: array} or {code: string}.
+     * @param array $input {assertion: array}, {code: string} or {email_link: string}.
      * @return Rsx_Model_Abstract The identity now signed in (Login_User_Model for staff,
      *                            Portal_User_Model for the portal).
      * @throws \App\RSpade\Core\Auth\Auth_Throttled_Exception When the client IP is locked out.
@@ -1378,8 +1564,9 @@ abstract class Rsx_Two_Factor_Abstract
         // refused here, after every refusal that does not depend on the answer.
         $has_assertion = isset($input['assertion']) && is_array($input['assertion']);
         $has_code = isset($input['code']) && is_string($input['code']) && trim($input['code']) !== '';
+        $has_link = isset($input['email_link']) && is_string($input['email_link']) && $input['email_link'] !== '';
 
-        if (!$has_assertion && !$has_code) {
+        if (!$has_assertion && !$has_code && !$has_link) {
             throw new Two_Factor_Failed_Exception('Enter your verification code.');
         }
 
@@ -1387,11 +1574,13 @@ abstract class Rsx_Two_Factor_Abstract
 
         $accepts = static::__answerable($pending);
 
-        if (isset($input['assertion']) && is_array($input['assertion'])) {
+        if ($has_assertion) {
             $answer = in_array(self::ANSWER_PASSKEY, $accepts, true)
                 && static::__try_assertion($input['assertion'], $identity_id) ? self::ANSWER_PASSKEY : null;
-        } elseif (isset($input['code']) && is_string($input['code'])) {
+        } elseif ($has_code) {
             $answer = static::__try_code($input['code'], $pending, $accepts);
+        } else {
+            $answer = static::__try_email_link($input['email_link'], $pending, $accepts);
         }
 
         if ($answer === null) {
@@ -1444,7 +1633,14 @@ abstract class Rsx_Two_Factor_Abstract
 
         static::abandon_challenge();
         static::clear_failures($identity_id);
+        static::__forget_email_link($pending);
         static::__forget_issued_code($identity_id);
+
+        // An emailed answer proved the mailbox: the address is verified, whether or not the
+        // realm goes on to admit the identity (see the class docblock).
+        if ($answer === self::ANSWER_ISSUED_CODE) {
+            static::__mark_address_verified($identity);
+        }
 
         // The second factor was answered correctly, and the realm still will not admit the
         // identity - so the sign-in is refused with the same message a wrong code gets. The
@@ -1458,6 +1654,7 @@ abstract class Rsx_Two_Factor_Abstract
 
         static::__record_success($identity, $email);
         static::__remember_verified($identity_id, $answer);
+        static::__mark_challenge_completed($pending, $has_link);
 
         return $identity;
     }
@@ -2034,6 +2231,180 @@ abstract class Rsx_Two_Factor_Abstract
         Rsx_Counter::reset(static::__issued_code_key($identity_id));
     }
 
+    // -------------------------------------------------------------------------
+    // Email links and the completed marker
+    // -------------------------------------------------------------------------
+
+    /**
+     * Try an email link token: an issued-code answer when it is the link minted for THIS
+     * browser's pending challenge and the identity's live code.
+     *
+     * The comparison is against the token re-derived from what is pending here, so a link
+     * minted for another browser's challenge, for an earlier challenge, or for a code since
+     * replaced is simply a wrong answer - no lookup of the presented value is involved.
+     *
+     * @param string $token
+     * @param array $pending
+     * @param array $accepts
+     * @return string|null ANSWER_ISSUED_CODE, or null
+     */
+    protected static function __try_email_link(string $token, array $pending, array $accepts): ?string
+    {
+        if (!in_array(self::ANSWER_ISSUED_CODE, $accepts, true)) {
+            return null;
+        }
+
+        $live = static::__live_issued_code($pending['identity_id']);
+
+        if ($live === null) {
+            return null;
+        }
+
+        $expected = static::__email_link_token($pending['challenge_id'], $live['expires_at']);
+
+        return hash_equals($expected, $token) ? self::ANSWER_ISSUED_CODE : null;
+    }
+
+    /**
+     * Drop the binding of the email link minted for this challenge and the identity's live
+     * code, if one was minted. Called on success, before the code itself is consumed - the
+     * landing route would refuse the link afterwards anyway (its code is gone), but a binding
+     * with nothing left to answer is not kept.
+     *
+     * @param array $pending
+     * @return void
+     */
+    protected static function __forget_email_link(array $pending): void
+    {
+        $live = static::__live_issued_code($pending['identity_id']);
+
+        if ($live === null) {
+            return;
+        }
+
+        Rsx_Counter::reset(static::__email_link_key(static::__email_link_token($pending['challenge_id'], $live['expires_at'])));
+    }
+
+    /**
+     * Leave a marker saying this browser's challenge was completed, for a challenge screen
+     * still open in another tab (the user signed in from the email link, or in a second tab,
+     * and comes back to the first).
+     *
+     * ITS LIFE IS THE CHALLENGE'S OWN WINDOW, not a number of its own: it expires when the
+     * completed challenge would have. A tab answering after that would have found its
+     * challenge expired anyway and says "sign in again"; until then, the truthful answer is
+     * "you are signed in". It is a realm session value, so a later sign-out or a new
+     * challenge (begin_challenge() signs the realm out first) clears it.
+     *
+     * @param array $pending
+     * @param bool $by_email_link Whether the answer was the email link (the screen words it so)
+     * @return void
+     */
+    protected static function __mark_challenge_completed(array $pending, bool $by_email_link): void
+    {
+        if (Rsx_Time::is_past($pending['expires_at'])) {
+            return;
+        }
+
+        Session::put_value(
+            static::__completed_key(),
+            ['challenge_id' => $pending['challenge_id'], 'by_email_link' => $by_email_link],
+            $pending['expires_at'],
+            static::SESSION_REALM
+        );
+    }
+
+    /**
+     * {completed: true, challenge_id, by_email_link} when this browser completed a challenge of this realm
+     * within that challenge's window, else null - FRAMEWORK INTERNAL, for the challenge_state
+     * endpoints, which answer it when nothing is pending.
+     *
+     * @return array|null
+     */
+    public static function _challenge_completed_state(): ?array
+    {
+        if (Session::_current_browser_session_id() === null) {
+            return null;
+        }
+
+        $marker = Session::get_value(static::__completed_key(), null, static::SESSION_REALM);
+
+        if (!is_array($marker) || !is_string($marker['challenge_id'] ?? null)) {
+            return null;
+        }
+
+        return [
+            'completed' => true,
+            'challenge_id' => $marker['challenge_id'],
+            'by_email_link' => (bool) ($marker['by_email_link'] ?? false),
+        ];
+    }
+
+    /**
+     * The session value key of the completed marker, per realm.
+     */
+    protected static function __completed_key(): string
+    {
+        return static::CHALLENGE_KEY . '.completed';
+    }
+
+    /**
+     * The email link token for one challenge and one code: HMAC-SHA256 under a key derived
+     * from app.key, over the realm, the challenge id and the code's expiry. 256 bits nobody
+     * without the application key can produce, and the same value every time it is asked for
+     * the same challenge and code - which is what lets a resend repeat the link while storing
+     * no secret.
+     *
+     * @param string $challenge_id
+     * @param string $code_expires_at
+     * @return string 64 lowercase hex characters
+     */
+    protected static function __email_link_token(string $challenge_id, string $code_expires_at): string
+    {
+        $app_key = (string) config('app.key');
+
+        if ($app_key === '') {
+            shouldnt_happen('Email sign-in links need app.key (APP_KEY) to be set');
+        }
+
+        $key = hash_hmac('sha256', 'rsx-two-factor-email-link', $app_key, true);
+
+        return hash_hmac('sha256', static::class . "\n" . $challenge_id . "\n" . $code_expires_at, $key);
+    }
+
+    /**
+     * Where an email link's binding is kept, per realm, keyed by the token's SHA-256 - beside
+     * the identity's code, in the same store.
+     *
+     * @param string $token
+     * @return string
+     */
+    protected static function __email_link_key(string $token): string
+    {
+        return static::CHALLENGE_KEY . ':email_link:' . hash('sha256', $token);
+    }
+
+    /**
+     * The absolute URL of the landing route for a token, signed (Rsx_Signed_Url, purpose
+     * EMAIL_LINK_PURPOSE) over the token and the host the URL is addressed to - the realm's
+     * own host, so a staff link presented on the portal's host (or the reverse) is refused.
+     *
+     * @param string $token
+     * @return string
+     */
+    protected static function __email_link_url(string $token): string
+    {
+        $url = static::__email_link_route($token);
+        $host = parse_url($url, PHP_URL_HOST);
+
+        if (!is_string($host) || $host === '') {
+            shouldnt_happen(static::class . ': the email link route did not resolve to an absolute URL: ' . $url);
+        }
+
+        return $url . (str_contains($url, '?') ? '&' : '?')
+            . http_build_query(['s' => Rsx_Signed_Url::sign(self::EMAIL_LINK_PURPOSE, $token, $host)]);
+    }
+
     /**
      * Where one identity's live issued code is kept, per realm - beside its failure counter,
      * in the same store.
@@ -2273,6 +2644,26 @@ abstract class Rsx_Two_Factor_Abstract
      * @return bool False when the realm refuses the identity.
      */
     abstract protected static function __sign_in(Rsx_Model_Abstract $identity): bool;
+
+    /**
+     * Record that the identity's address is verified (is_verified), because an emailed answer
+     * - an issued code or its link - just proved the mailbox. Called by verify_challenge()
+     * before __sign_in(), so a realm whose admission rule requires a verified address (the
+     * portal's can_login()) admits the identity on the strength of this very answer.
+     *
+     * @param Rsx_Model_Abstract $identity
+     * @return void
+     */
+    abstract protected static function __mark_address_verified(Rsx_Model_Abstract $identity): void;
+
+    /**
+     * The absolute, UNSIGNED URL of the email link landing route (/_email_link/:token) on
+     * this realm's host. __email_link_url() signs it.
+     *
+     * @param string $token
+     * @return string
+     */
+    abstract protected static function __email_link_route(string $token): string;
 
     /**
      * Sign this realm out, leaving the session row (and its values) in place.

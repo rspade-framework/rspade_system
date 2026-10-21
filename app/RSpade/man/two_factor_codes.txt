@@ -1,8 +1,8 @@
 TWO_FACTOR_CODES(1)              RSpade Manual              TWO_FACTOR_CODES(1)
 
 NAME
-    two_factor_codes - emailed six-digit sign-in codes: the recipe, for staff
-    and the client portal
+    two_factor_codes - emailed six-digit sign-in codes and their sign-in
+    links: the recipe, for staff and the client portal
 
 SYNOPSIS
     # 1. The login function: the password passed, and this sign-in owes a code
@@ -14,12 +14,13 @@ SYNOPSIS
     ]);
     return redirect(Rsx::Route('Login_Controller::verify'));
 
-    # 2. The send endpoint - mint a code, deliver it
+    # 2. The send endpoint - mint a code and its link, deliver both in one email
     #[Ajax_Endpoint]
     public static function send_code(Request $request, array $params = [])
     {
         $code = Rsx_Two_Factor::issue_code();
-        (new Sign_In_Code_Email($code))->to(Rsx_Two_Factor::pending_identity()->email)->send();
+        $link = Rsx_Two_Factor::issued_link(Rsx::Route('Login_Controller::verify'));
+        (new Sign_In_Code_Email($code, $link))->to(Rsx_Two_Factor::pending_identity()->email)->send();
         return null;
     }
 
@@ -30,13 +31,15 @@ SYNOPSIS
     <Two_Factor_Challenge $controller="Login_Controller" $method="verify_2fa"
                           $send_controller="Login_Controller" $send_method="send_code" />
 
-    # 5. The verification endpoint - unchanged from any other challenge
+    # 5. The verification endpoint - unchanged from any other challenge; the
+    #    screen posts {code} or, from the link, {email_link}
     $login_user = Rsx_Two_Factor::verify_challenge($params);
 
 DESCRIPTION
     An emailed sign-in code is a second step that needs nothing enrolled:
-    the user typed their password, the site emails six digits to the
-    account's address, and typing them completes the sign-in. It is how a
+    the user typed their password, the site emails six digits - and a link
+    - to the account's address, and typing the digits or opening the link
+    in the same browser completes the sign-in. It is how a
     site requires a second step of EVERYBODY - every client on a portal, say
     - without asking each of them to install an authenticator app first.
 
@@ -46,10 +49,12 @@ DESCRIPTION
         THE FRAMEWORK (Rsx_Two_Factor / Rsx_Portal_Two_Factor)
             mints the code (random_int), keeps ONE live code per identity
             (encrypted, beside the identity's failure budget), re-sends those
-            same digits on a resend until the code expires, verifies it under
-            the login throttle and the two attempt caps, records the outcome,
-            and signs the identity in. It enforces which kinds of answer a
-            challenge accepts.
+            same digits on a resend until the code expires, mints the
+            browser-bound link that travels with them and serves the page it
+            opens, verifies either answer under the login throttle and the
+            two attempt caps, records the outcome, marks the address
+            verified, and signs the identity in. It enforces which kinds of
+            answer a challenge accepts.
 
         THE APPLICATION
             decides which sign-ins owe a code, which other answers it will
@@ -80,9 +85,11 @@ THE FLOW
     4. The component sees the challenge accepts an issued code and none has
        been issued, and calls the send endpoint itself. The endpoint calls
        issue_code() and emails the digits to pending_identity().
-    5. The user types the code. The component posts it to the verification
-       endpoint, which calls verify_challenge() - the same call as for a TOTP
-       code - and answers {redirect}.
+    5. The user types the code - or opens the link from the email in the
+       same browser, which lands back on this page and posts the link's
+       token for them (THE EMAIL LINK). The component posts the answer to
+       the verification endpoint, which calls verify_challenge() - the same
+       call as for a TOTP code - and answers {redirect}.
     6. "Resend code" calls the send endpoint again. While the code is live,
        issue_code() returns the SAME digits, so every message the user holds
        carries the one code that works; after it expires the next send mints
@@ -140,8 +147,9 @@ THE SEND ENDPOINT
             $again = Rsx_Portal_Two_Factor::issued_code_expires_at() !== null;
 
             $code = Rsx_Portal_Two_Factor::issue_code();
+            $link = Rsx_Portal_Two_Factor::issued_link(Rsx_Portal::Route('Portal_Login_Controller::verify'));
             $expires_at = Rsx_Portal_Two_Factor::issued_code_expires_at();
-            (new Portal_Sign_In_Code_Email($portal_user, $code, $expires_at, $again))
+            (new Portal_Sign_In_Code_Email($portal_user, $code, $link, $expires_at, $again))
                 ->to($portal_user->email)->send();
 
             return null;
@@ -174,6 +182,7 @@ THE EMAIL
             public function __construct(
                 public Portal_User_Model $portal_user,
                 public string $code,
+                public string $link,
                 public string $expires_at,
                 public bool $again = false
             ) {}
@@ -184,6 +193,7 @@ THE EMAIL
             {
                 return [
                     'code' => $this->code,
+                    'link' => $this->link,      // a button; say it works in this browser only
                     'again' => $this->again,
                     'expiry_minutes' => max(1, (int) ceil(Rsx_Time::seconds_until($this->expires_at) / 60)),
                 ];
@@ -201,7 +211,110 @@ THE EMAIL
 
     THE CODE IS IN THE QUEUE ROW. data() is frozen into _email_queue for as
     long as the row is retained. That is acceptable for a code that dies
-    within minutes; never put a long-lived secret in an email's data().
+    within minutes - and the link dies with it; never put a long-lived
+    secret in an email's data().
+
+THE EMAIL LINK
+    issued_link($return_url) answers the link that goes in the same message
+    as the code. The two are one answer delivered twice: the link answers
+    the challenge as ANSWER_ISSUED_CODE, a correct answer of either kind
+    consumes both, and the link stops working the moment the code does.
+
+    THE CONTRACT
+        call it after issue_code(), in the same send   with no live code it
+                                                       throws - a link nobody
+                                                       was sent a code with
+                                                       would be a second,
+                                                       unannounced secret
+        $return_url                                    the challenge page
+                                                       (Rsx::Route() /
+                                                       Rsx_Portal::Route()),
+                                                       no fragment
+        a resend                                       the same link (it is
+                                                       derived from the
+                                                       challenge and the code;
+                                                       the first $return_url
+                                                       is kept)
+        a fresh sign-in                                a new link for the new
+                                                       challenge
+
+    The URL is absolute, on the realm's own host (the portal's under its
+    prefix), and signed for that host (Rsx_Signed_Url), so a staff link is
+    refused on the portal's host and the reverse.
+
+    BOUND TO THE BROWSER THAT SIGNED IN. The link belongs to the challenge
+    parked on the browser that typed the password. The route /_email_link/
+    :token answers:
+
+        that browser           a redirect to $return_url with the token in
+                               the fragment (#rsx_email_link=...), where
+                               <Two_Factor_Challenge> posts it as
+                               {email_link} to the verification endpoint -
+                               no change to the endpoint, which hands
+                               $params to verify_challenge() as always
+        any other browser      a notice (409): "This sign-in was started in a
+                               different browser. Enter the 6-digit code from
+                               the email in the browser where you signed
+                               in." Not an attempt; the code stays live
+        expired, used, forged  a notice (410): "This link has expired or was
+                               already used. Sign in again."
+
+    Both notices are the error-page funnel (rsx:man error_pages), so an
+    application's /error/generic page dresses them; they carry
+    Referrer-Policy: no-referrer and Cache-Control: no-store.
+
+    WHY OTHER BROWSERS ARE REFUSED. A link that signed in whatever browser
+    opened it would sign in whoever reads the mailbox, from anywhere, with
+    no password - the password typed a moment ago would protect nothing.
+    Bound to the browser that proved the password, the link is exactly as
+    strong as the code: the password AND the mailbox. On a phone reading
+    the mail of a desktop sign-in, the code is the way through, and the
+    notice says so.
+
+    MAIL SCANNERS. Security gateways and link previewers fetch every URL in
+    a message before the recipient sees it. The route only READS: nothing
+    is consumed, counted or signed in by a GET. The answer is an ordinary
+    Ajax POST from the challenge page, under the CSRF check, the throttle
+    and the attempt caps - and the token reaches it in the fragment, which
+    a browser never sends to a server, so it appears in no access log after
+    the first request.
+
+    A WRONG OR DEAD LINK posted as {email_link} - one minted for another
+    challenge, or whose code was replaced - is a wrong answer, counted like
+    a wrong code.
+
+    OTHER TABS. The challenge screen left open where the password was typed
+    swaps itself for "You have signed in using the email link." and
+    Continue when the link completes the sign-in in another tab of the same
+    browser (rsx:man two_factor, <Two_Factor_Challenge>). Nothing to wire;
+    the host's challenge page need only send a signed-in visitor onward.
+
+    STORAGE. Nothing secret is stored. The token is an HMAC (under a key
+    derived from app.key) of the challenge and the code's expiry; the
+    store keeps its SHA-256 bound to {challenge, browser session, identity,
+    code expiry, return URL}, beside the code, expiring with the code.
+
+A PASSED EMAILED ANSWER VERIFIES THE ADDRESS
+    When an issued code - typed, or its link - answers a challenge,
+    verify_challenge() sets is_verified = 1 on the identity (login_users for
+    staff, portal_users for the portal) before the realm signs it in. The
+    answer proved the person at the keyboard reads that mailbox, which is
+    all is_verified records. Consequences:
+
+        an emailed code doubles as address verification, so a signup flow
+        can verify by challenge (begin_challenge($identity,
+        [ANSWER_ISSUED_CODE])) with nothing of its own - the reference
+        application's self-signup does exactly that, switched off as shipped
+        (system/app/RSpade/resource/reference_app/app/login/signup/)
+
+        a portal user with is_verified = 0 is admitted by can_login() on the
+        strength of the very answer that verified them - provided the
+        application's own login function let them reach the challenge
+
+        the address stays verified even when the realm then refuses the
+        sign-in (no enabled membership, an inactive account): the mailbox
+        was proved either way
+
 
 DELIVERY MUST BE LIVE
     rsx.mail.delivery defaults to 'suppressed': every message is rendered and
@@ -283,8 +396,10 @@ LIFETIME
         a new sign-in, another browser the same digits (a fresh session cannot
                                        mint a parallel code)
         after it expires               the next issue_code() mints a new one
-        a correct answer               consumes it (any accepted answer - the
-                                       sign-in it was sent for is over)
+        a correct answer               consumes it, and its link (any accepted
+                                       answer - the sign-in it was sent for
+                                       is over)
+        the link opened by a GET       nothing: the route only reads
         a spent challenge, or the      destroys it; the next sign-in mints new
         identity locked
         Cancel (abandon_challenge())   leaves it: another browser of the same
@@ -327,6 +442,16 @@ TROUBLESHOOTING
         rsx.mail.delivery is not 'live' (DELIVERY MUST BE LIVE), or the
         recipient is outside the .dev. whitelist on a development host. The
         queue row in /_sys says which.
+
+    The link says "This sign-in was started in a different browser."
+        It was opened somewhere other than the browser that typed the
+        password - a phone, another browser, a private window. Type the code
+        from the same email in the browser that signed in; the visit spent
+        nothing.
+
+    "...issued_link() was called with no live issued code"
+        The send endpoint asked for the link before issue_code(). Issue the
+        code first, then the link, and put both in one message.
 
     "That code is not valid." for a code just received
         The code expired (LIFETIME - fifteen minutes from the FIRST send, not

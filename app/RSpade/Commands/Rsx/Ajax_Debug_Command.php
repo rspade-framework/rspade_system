@@ -14,11 +14,9 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFormErrorException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxQuestionException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFatalErrorException;
-use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Console\Rsx_Cli_Actor;
+use App\RSpade\Core\Console\Rsx_Cli_Actor_Exception;
 use App\RSpade\Core\Debug\Debugger;
-use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Models\Site_Model;
 
 /**
  * RSX Ajax Command
@@ -106,47 +104,26 @@ class Ajax_Debug_Command extends Command
         $debug_mode = $this->option('debug');
         $show_context = $this->option('show-context');
 
-        // Validate and resolve user
-        $user_id = null;
-        if ($user_input !== null) {
-            $user_id = $this->resolve_user($user_input);
-            if ($user_id === null) {
-                return 1; // Error already displayed
-            }
-        }
-
-        // Validate site
-        $site_id = null;
-        if ($site_input !== null) {
-            $site_id = $this->resolve_site($site_input);
-            if ($site_id === null) {
-                return 1; // Error already displayed
-            }
+        // Resolve who the call acts as (Rsx_Cli_Actor - the one resolution rsx:task:run
+        // shares, so the two command-line entry points read --user / --site identically).
+        try {
+            $actor = Rsx_Cli_Actor::resolve($user_input, $site_input);
+        } catch (Rsx_Cli_Actor_Exception $e) {
+            $this->output_json_error($e->getMessage(), $e->error_type);
+            return 1;
         }
 
         // Rotate logs before test
         Debugger::logrotate();
 
-        // Establish the session context. An identity has three parts - the site, the LOGIN
-        // identity (login_users.id) and the SITE user (users.id) - and a user-scoped endpoint
-        // reads the third. Session::set_login_user_id() sets only the second: in CLI mode
-        // get_user_id() answers from a static that nothing derives, so a command that set the
-        // login identity alone ran every user-scoped endpoint as nobody, with a correct actor
-        // stamp and no warning (a downstream field report, 2026-09-04). Session::impersonate()
-        // sets all three, so it is the one call made when a login identity is given.
-        if ($user_id !== null) {
-            if ($site_id === null) {
-                $site_id = $this->resolve_site_for_login_user((int) $user_id);
-                if ($site_id === null) {
-                    return 1; // Error already displayed
-                }
-            }
+        Rsx_Cli_Actor::establish($actor);
 
-            $site_user = $this->resolve_site_user((int) $user_id, (int) $site_id);
+        if ($show_context) {
+            $user_id = $actor['login_user_id'];
+            $site_id = $actor['site_id'];
+            $site_user = $actor['user_id'];
 
-            Session::impersonate((int) $site_id, (int) $user_id, $site_user);
-
-            if ($show_context) {
+            if ($user_id !== null) {
                 $this->error("Set login_user_id to {$user_id}");
                 $this->error("Set site_id to {$site_id}");
                 if ($site_user !== null) {
@@ -156,10 +133,7 @@ class Ajax_Debug_Command extends Command
                     // real state. It is the state that used to be silent, so it is named.
                     $this->error("Set user_id to NULL: login user {$user_id} has no users row on site {$site_id}, so Session::get_user_id() answers null and a user-scoped endpoint sees no user");
                 }
-            }
-        } elseif ($site_id !== null) {
-            Session::set_site_id((int)$site_id);
-            if ($show_context) {
+            } elseif ($site_id !== null) {
                 $this->error("Set site_id to {$site_id}");
             }
         }
@@ -260,117 +234,5 @@ class Ajax_Debug_Command extends Command
         }
 
         $this->output_json($error);
-    }
-
-    /**
-     * Resolve user identifier to user ID
-     *
-     * Accepts either a numeric user ID or an email address.
-     * Validates that the user exists in the database.
-     *
-     * @param string $user_input User ID or email address
-     * @return int|null User ID or null if not found (error already displayed)
-     */
-    protected function resolve_user(string $user_input): ?int
-    {
-        // Check if input is an email address
-        if (str_contains($user_input, '@')) {
-            $login_user = Login_User_Model::find_by_email($user_input);
-            if (!$login_user) {
-                $this->output_json_error("User not found: {$user_input}", 'user_not_found');
-                return null;
-            }
-            return $login_user->id;
-        }
-
-        // Input is a user ID - validate it exists
-        if (!ctype_digit($user_input)) {
-            $this->output_json_error("Invalid user identifier: {$user_input} (must be numeric ID or email address)", 'invalid_user');
-            return null;
-        }
-
-        $user_id = (int) $user_input;
-        $login_user = Login_User_Model::find($user_id);
-        if (!$login_user) {
-            $this->output_json_error("User ID not found: {$user_id}", 'user_not_found');
-            return null;
-        }
-
-        return $user_id;
-    }
-
-    /**
-     * The users.id of a login identity on one site, or null when it has no row there.
-     *
-     * Read outside the site scope: the scope keys on Session::get_site_id(), which is
-     * what this lookup is about to establish.
-     */
-    protected function resolve_site_user(int $login_user_id, int $site_id): ?int
-    {
-        return User_Model::without_site_scope(function () use ($login_user_id, $site_id) {
-            $user = User_Model::where('login_user_id', $login_user_id)
-                ->where('site_id', $site_id)
-                ->first();
-
-            return $user ? (int) $user->id : null;
-        });
-    }
-
-    /**
-     * The site to run under when --site was not given: the one site the login identity
-     * has a users row on. A web request always runs under a site (it is resolved from
-     * the host), so an endpoint run under no site at all is not a state worth
-     * reproducing; when the answer is not unique the caller is told to choose.
-     *
-     * @return int|null Site id, or null if not resolvable (error already displayed)
-     */
-    protected function resolve_site_for_login_user(int $login_user_id): ?int
-    {
-        $site_ids = User_Model::without_site_scope(function () use ($login_user_id) {
-            return User_Model::where('login_user_id', $login_user_id)
-                ->orderBy('site_id')
-                ->get()
-                ->pluck('site_id')
-                ->unique()
-                ->values()
-                ->all();
-        });
-
-        if (count($site_ids) === 1) {
-            return (int) $site_ids[0];
-        }
-
-        if (count($site_ids) === 0) {
-            $this->output_json_error("Login user {$login_user_id} has no users row on any site; pass --site=<id> to choose the site to run under", 'site_required');
-            return null;
-        }
-
-        $this->output_json_error("Login user {$login_user_id} has users rows on sites " . implode(', ', $site_ids) . "; pass --site=<id> to choose one", 'site_required');
-        return null;
-    }
-
-    /**
-     * Resolve site identifier to site ID
-     *
-     * Validates that the site exists in the database.
-     *
-     * @param string $site_input Site ID
-     * @return int|null Site ID or null if not found (error already displayed)
-     */
-    protected function resolve_site(string $site_input): ?int
-    {
-        if (!ctype_digit($site_input)) {
-            $this->output_json_error("Invalid site identifier: {$site_input} (must be numeric ID)", 'invalid_site');
-            return null;
-        }
-
-        $site_id = (int) $site_input;
-        $site = Site_Model::find($site_id);
-        if (!$site) {
-            $this->output_json_error("Site ID not found: {$site_id}", 'site_not_found');
-            return null;
-        }
-
-        return $site_id;
     }
 }

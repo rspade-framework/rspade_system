@@ -115,6 +115,9 @@ class Rsx_Realtime {
     static _navigating_since = 0;
     static _refresh_listeners_installed = false;
 
+    // Claimants of the session-refresh reload (_claim_session_refresh). FRAMEWORK INTERNAL.
+    static _session_refresh_claims = new Set();
+
     // How long to wait, after the last watch stops, before actually closing the
     // socket (re-checked at fire time, so a new watch() in the meantime cancels it).
     //
@@ -438,6 +441,28 @@ class Rsx_Realtime {
 
         console_debug('Realtime', 'Refresh reload firing');
         Rsx_Realtime._do_reload();
+    }
+
+    /**
+     * Claim the session-refresh reload. FRAMEWORK INTERNAL - for a framework component whose
+     * page must not be reloaded out from under it when the browser's session changes, and
+     * which has something better to show (<Two_Factor_Challenge>: a sign-in completed in
+     * another tab of this browser is reported in place, with a Continue button).
+     *
+     * While at least one claim is held, a {type:'refresh'} frame calls each claimant with a
+     * `proceed` function INSTEAD of scheduling the reload; a claimant that decides the frame
+     * is not its business calls proceed(), which is the ordinary deduped, idle-gated reload
+     * (calling it more than once is harmless). The stale-reconnect reload is not claimable:
+     * it repairs dead code, which no component can answer for.
+     *
+     * @param {function(function): void} handler Receives proceed.
+     * @returns {function(): void} Release the claim (call it from the component's on_stop()).
+     */
+    static _claim_session_refresh(handler) {
+        Rsx_Realtime._session_refresh_claims.add(handler);
+        return () => {
+            Rsx_Realtime._session_refresh_claims.delete(handler);
+        };
     }
 
     /**
@@ -1148,7 +1173,15 @@ class Rsx_Realtime {
 
         if (msg.type === 'refresh') {
             // Targeted control frame (session/user refresh) — routed by connection stamps,
-            // not tied to any subscription.
+            // not tied to any subscription. A claimant (see _claim_session_refresh) decides
+            // first, and hands the frame back to the ordinary reload when it does not want it.
+            if (Rsx_Realtime._session_refresh_claims.size > 0) {
+                const proceed = () => Rsx_Realtime._handle_refresh();
+                for (const claim of Rsx_Realtime._session_refresh_claims) {
+                    claim(proceed);
+                }
+                return;
+            }
             Rsx_Realtime._handle_refresh();
             return;
         }

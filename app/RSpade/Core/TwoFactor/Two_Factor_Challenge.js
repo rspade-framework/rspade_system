@@ -21,8 +21,38 @@
  * ON SUCCESS THE PAGE NAVIGATES, and nothing is rendered afterwards: the user is signed in
  * and this screen is finished. window.location, not Spa.dispatch - the destination is a
  * fresh authenticated document, and the challenge page is not part of the SPA it leads into.
+ *
+ * THE EMAIL LINK. The framework's /_email_link/:token route sends the browser that owns the
+ * challenge back to this page with #rsx_email_link=<token>. The token is taken out of the
+ * URL at once (on_create) and submitted as {email_link} once the challenge has loaded, to the
+ * same endpoint a typed code goes to - so the application's verification endpoint needs no
+ * change to accept it.
+ *
+ * OTHER TABS OF THIS BROWSER. A sign-in that completes here is announced on the
+ * BroadcastChannel 'rsx_two_factor' ({type: 'signed_in', realm, challenge_id, redirect,
+ * by_email_link}); a screen for the same challenge open in another tab replaces its controls
+ * with "You have signed in using the email link." (or "... in another tab.") and a Continue
+ * button to that redirect. Two backstops for a tab that missed the message (a browser without
+ * BroadcastChannel, a tab that was asleep), both of which must work WITHOUT asking the server
+ * anything, because the sign-in rotated this browser's CSRF token and this page still holds
+ * the old one:
+ *   - while mounted the screen claims the realtime session-refresh reload
+ *     (Rsx_Realtime._claim_session_refresh) that every sign-in pushes to the browser's other
+ *     tabs, and shows "This sign-in continued in another tab." instead of being reloaded out
+ *     from under the user;
+ *   - when the tab becomes visible again it asks challenge_state(), and takes the CSRF
+ *     refusal that comes back as the same answer ({completed} is the answer only when nothing
+ *     rotated, which is a fresh page load).
+ * Those two swaps' Continue reloads the page - the host's challenge page sends a signed-in
+ * visitor on, and shows a new challenge if that is what moved. The host wires none of this.
  */
 class Two_Factor_Challenge extends Component {
+    /** The BroadcastChannel a completed sign-in is announced on, to this browser's other tabs. */
+    static CHANNEL = 'rsx_two_factor';
+
+    /** The URL-fragment key the email link hands its token back in (EMAIL_LINK_FRAGMENT_KEY). */
+    static EMAIL_LINK_KEY = 'rsx_email_link';
+
     on_create() {
         if (!this.args.controller || !this.args.method) {
             throw new Error('Two_Factor_Challenge requires $controller and $method');
@@ -30,6 +60,7 @@ class Two_Factor_Challenge extends Component {
 
         this.data.loaded = false;
         this.data.challenge = null;
+        this.data.completed = null;
 
         this.state = {
             // Taken once: whether this browser can run a passkey ceremony does not change
@@ -44,34 +75,103 @@ class Two_Factor_Challenge extends Component {
             // The user asked for the plain recovery-code box in place of the digit boxes.
             // Only meaningful when the challenge takes both kinds of answer.
             recovery_mode: false,
+
+            // The email link token this page was opened with, until it is submitted.
+            email_link: null,
+
+            // This browser's sign-in moved on elsewhere: {redirect (null = reload), how} - see
+            // _show_completed().
+            completed: null,
+
+            // This screen's own answer passed and the page is navigating away.
+            leaving: false,
+
+            // on_ready() has taken the first step (see on_ready).
+            first_step_taken: false,
         };
+
+        // Taken out of the address bar at once, so a reload, a bookmark or a copied URL never
+        // carries it; submitted in on_ready, once the challenge it answers has loaded.
+        const link = Rsx.url_hash_get(Two_Factor_Challenge.EMAIL_LINK_KEY);
+        if (link) {
+            this.state.email_link = String(link);
+            Rsx.url_hash_set({ [Two_Factor_Challenge.EMAIL_LINK_KEY]: null });
+        }
+
+        this._listen_for_other_tabs();
     }
 
     async on_load() {
-        this.data.challenge = await Rsx_Two_Factor.controller().challenge_state();
+        const state = await Rsx_Two_Factor.controller().challenge_state();
+
+        // {completed} is not a challenge: this browser already finished it (see challenge_state).
+        if (state !== null && state.completed) {
+            this.data.completed = { redirect: null, how: state.by_email_link ? 'email_link' : 'other_tab' };
+            this.data.challenge = null;
+        } else {
+            this.data.challenge = state;
+        }
+
         this.data.loaded = true;
     }
 
     on_loaded() {
         // Sticky events: a host that subscribes after this fires still hears it, so there is
         // no race between mounting the component and listening for the redirect it asks for.
-        if (this.data.challenge === null) {
+        if (this.data.challenge === null && !this.data.completed) {
             this.trigger('no_challenge');
+        }
+
+        if (this.data.completed) {
+            this.trigger('completed', { how: this.data.completed.how });
         }
     }
 
     async on_ready() {
-        // The first code is sent for the user when the host named a send endpoint and none
-        // has been issued yet. A host that issues the first code itself, server-side, before
-        // the page loads, never reaches this branch (codes_issued is already 1).
         // null is a state, not a missing value: nothing is pending (see on_loaded).
         const challenge = this.data.challenge;
         if (challenge === null) {
             return;
         }
 
+        // The first step - the link's answer, or the first code - is taken once per screen.
+        // on_ready() runs again after every render() and reload() (a refusal re-renders), and
+        // must not repeat it.
+        if (this.state.first_step_taken) {
+            return;
+        }
+        this.state.first_step_taken = true;
+
+        // Opened from the email link: that IS the answer, so no code is sent for it.
+        if (this.state.email_link) {
+            const token = this.state.email_link;
+            this.state.email_link = null;
+            await this._submit({ email_link: token });
+            return;
+        }
+
+        // The first code is sent for the user when the host named a send endpoint and none
+        // has been issued yet. A host that issues the first code itself, server-side, before
+        // the page loads, never reaches this branch (codes_issued is already 1).
         if (challenge.has_issued_code && challenge.codes_issued === 0 && this._can_send()) {
             await this._send_code(false);
+        }
+    }
+
+    on_stop() {
+        if (this._channel) {
+            this._channel.close();
+            this._channel = null;
+        }
+
+        if (this._on_visible) {
+            document.removeEventListener('visibilitychange', this._on_visible);
+            this._on_visible = null;
+        }
+
+        if (this._release_refresh) {
+            this._release_refresh();
+            this._release_refresh = null;
         }
     }
 
@@ -139,6 +239,153 @@ class Two_Factor_Challenge extends Component {
                 await that._send_code(true);
             });
         }
+
+        const $continue = this.$sid('continue');
+        if ($continue.exists()) {
+            $continue.off('click.tfa').on('click.tfa', function () {
+                that._continue();
+            });
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Other tabs of this browser
+    // -------------------------------------------------------------------------
+
+    /**
+     * This page's realm, as the BroadcastChannel message names it.
+     */
+    _realm() {
+        return Rsx_Portal.is_portal() ? 'portal' : 'staff';
+    }
+
+    /**
+     * Wire the three ways this screen learns its sign-in moved on elsewhere - see the class
+     * docblock. Undone in on_stop().
+     */
+    _listen_for_other_tabs() {
+        const that = this;
+
+        // Feature-detected like the passkey button: a browser without BroadcastChannel still
+        // has the two backstops below.
+        if (window.BroadcastChannel) {
+            this._channel = new BroadcastChannel(Two_Factor_Challenge.CHANNEL);
+            this._channel.onmessage = function (e) {
+                const message = e.data;
+                const challenge = that.data.challenge;
+
+                if (!message || message.type !== 'signed_in' || message.realm !== that._realm()) {
+                    return;
+                }
+
+                if (!challenge || challenge.challenge_id !== message.challenge_id) {
+                    return;
+                }
+
+                that._show_completed(message.redirect || null, message.by_email_link ? 'email_link' : 'other_tab');
+            };
+        }
+
+        this._on_visible = function () {
+            if (document.visibilityState === 'visible') {
+                that._check_on_return();
+            }
+        };
+        document.addEventListener('visibilitychange', this._on_visible);
+
+        // The sign-in's realtime frame. On a challenge page it can only mean this browser's
+        // session moved on - a sign-in in this realm, in another tab - and the page's tokens
+        // went with it (every sign-in rotates them), so nothing is asked of the server: the
+        // screen says so and offers Continue, which reloads. The BroadcastChannel message,
+        // when it arrives, replaces that with the exact wording and destination.
+        this._release_refresh = Rsx_Realtime._claim_session_refresh(function (proceed) {
+            // Our own answer passed: this page is already on its way out.
+            if (that.state.leaving) {
+                return;
+            }
+
+            // Nothing was waiting here: the frame is not this screen's to answer.
+            if (!that.data.loaded || that.data.challenge === null) {
+                proceed();
+                return;
+            }
+
+            that._show_completed(null, 'moved');
+        });
+    }
+
+    /**
+     * The tab became visible again: ask the server what became of this browser's challenge.
+     *
+     * Still pending - nothing to do. {completed} - the sign-in finished. A CSRF refusal
+     * (Rsx_Csrf answers ERROR_UNAUTHORIZED) is the other expected answer and the likelier one:
+     * a sign-in in another tab rotated this browser's tokens, so this page can no longer ask,
+     * and that alone says the sign-in moved on. Every other failure surfaces.
+     */
+    async _check_on_return() {
+        if (this.state.completed || this.state.leaving || !this.data.loaded || this.data.challenge === null) {
+            return;
+        }
+
+        let state;
+
+        try {
+            state = await Rsx_Two_Factor.controller().challenge_state();
+        } catch (e) {
+            if (e.code === Ajax.ERROR_UNAUTHORIZED) {
+                this._show_completed(null, 'moved');
+                return;
+            }
+            throw e;
+        }
+
+        if (state !== null && state.completed) {
+            this._show_completed(null, state.by_email_link ? 'email_link' : 'other_tab');
+        }
+    }
+
+    /**
+     * Replace the controls with the signed-in message and Continue.
+     *
+     * A screen already showing the vague 'moved' message takes the exact one when it
+     * arrives; anything else is shown once.
+     *
+     * @param {string|null} redirect Where Continue goes; null reloads the page.
+     * @param {string} how 'email_link' | 'other_tab' (this browser's sign-in completed, and
+     *                     how) | 'moved' (the session moved on under this page; the details
+     *                     are on the other side of a reload)
+     */
+    _show_completed(redirect, how) {
+        if (this.state.leaving) {
+            return;
+        }
+
+        if (this.state.completed && (this.state.completed.how !== 'moved' || how === 'moved')) {
+            return;
+        }
+
+        this.state.completed = { redirect: redirect, how: how };
+        this.state.error = null;
+        this.state.notice = null;
+        this.render();
+
+        // The host's own copy about answering the challenge ("lost your device?") is now
+        // beside a message saying the sign-in is done; this is its cue to change.
+        this.trigger('completed', { how: how });
+    }
+
+    /**
+     * Continue from the signed-in message.
+     */
+    _continue() {
+        const completed = this.state.completed;
+
+        if (completed.redirect) {
+            window.location = completed.redirect;
+            return;
+        }
+
+        window.location.reload();
     }
 
     /**
@@ -259,6 +506,19 @@ class Two_Factor_Challenge extends Component {
                 'The verification endpoint ' + this.args.controller + '::' + this.args.method +
                     ' returned no redirect.'
             );
+        }
+
+        this.state.leaving = true;
+
+        // Tell this browser's other tabs showing the same challenge (see the class docblock).
+        if (this._channel && this.data.challenge) {
+            this._channel.postMessage({
+                type: 'signed_in',
+                realm: this._realm(),
+                challenge_id: this.data.challenge.challenge_id,
+                redirect: result.redirect,
+                by_email_link: !!payload.email_link,
+            });
         }
 
         window.location = result.redirect;

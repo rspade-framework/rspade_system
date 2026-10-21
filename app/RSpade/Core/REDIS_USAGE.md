@@ -62,8 +62,10 @@ use App\RSpade\Core\Cache\RsxCache;
 ### Basic Usage
 
 ```php
-// Set a value (never expires)
-RsxCache::set('user:123', $user);
+// Set a value (never expires). PLAIN DATA ONLY - scalars, null, arrays; an object
+// anywhere inside the value throws on write, and a stored payload naming a class throws on
+// read (it is unserialized with allowed_classes => false). Cache ->toArray() / (array) $row.
+RsxCache::set('user:123', $user->toArray());
 
 // Set with expiration
 RsxCache::set('api:response', $data, RsxCache::HOUR);
@@ -87,7 +89,7 @@ if (RsxCache::exists('user:123')) {
 ```php
 // Remember pattern - cache or generate
 $users = RsxCache::remember('all_users', function() {
-    return User::all(); // Expensive operation
+    return User::all()->toArray(); // Expensive operation - cached as plain data
 }, RsxCache::HOUR);
 
 // Persistent namespace - NOT build-prefixed, so it survives a manifest rebuild
@@ -205,9 +207,9 @@ class Api_Controller
 
         return RsxCache::remember($cache_key, function() {
             // Expensive database query
-            return User::with(['posts', 'comments'])
-                ->where('active', true)
-                ->get();
+            return User::where('active', true)
+                ->get()
+                ->toArray();
         }, RsxCache::HOUR);
     }
 }

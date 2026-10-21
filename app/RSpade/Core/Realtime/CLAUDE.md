@@ -63,6 +63,14 @@ on. One browser has ONE session and can hold staff tabs and portal tabs on it at
 the realm stamp is what makes a portal-property change refresh the portal tabs and leave
 the staff tabs alone - it is not an id disambiguator.
 
+- **Claiming the reload** (FRAMEWORK INTERNAL, not public API): `Rsx_Realtime._claim_session_refresh(handler)`
+  returns a release function. While any claim is held, a `{type:'refresh'}` frame calls each
+  `handler(proceed)` INSTEAD of scheduling the reload; `proceed()` is the ordinary deduped,
+  idle-gated reload for a claimant that declines the frame. The stale-reconnect reload is
+  never claimable. Sole claimant: `<Two_Factor_Challenge>` while mounted - a sign-in completed
+  in another tab of the browser (the email link) would otherwise reload its page away, so it
+  shows "This sign-in continued in another tab." + Continue instead, WITHOUT an Ajax call (the
+  sign-in rotated the browser's CSRF token; this page still holds the old one).
 - **Session mutation** (confirmed-different gated): wired at `Session::set_login_user_id()`
   / `set_site_id()` / logout + `Portal_Session::set_portal_user_id()` / logout — a re-save of
   the same value is silent; staff impersonation begin/stop inherit it; portal "View as Client" (`Session::_apply_portal_impersonation()`) does NOT push.

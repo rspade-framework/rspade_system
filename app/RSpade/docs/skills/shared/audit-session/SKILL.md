@@ -15,7 +15,7 @@ A record of something somebody **did** - an activity log row, an export record, 
 | for | state that belongs to the browser and should die with it (a per-browser preference, a half-finished import) | the HISTORY of what somebody did |
 | lifetime | a guest's is deleted; one that has had a sign-in is kept but made inactive when unused | **never deleted** |
 | in a command / plain task | null | null - nobody is acting |
-| in a `#[Run_As_Dispatcher]` task | the dispatching browser | the dispatching request's audit session |
+| in a DISPATCHED `#[Run_As_Dispatcher]` run (a worker) | the dispatching browser | the dispatching request's audit session |
 | on an API call | the key's own session | yes - per caller address and agent |
 | a table of yours storing it | nullable, `FOREIGN KEY (session_id) REFERENCES _sessions (id) ON DELETE CASCADE` - the ONE reference an application makes to a system table | a plain nullable `BIGINT`; no foreign key |
 
@@ -32,7 +32,7 @@ $log->save();
 
 - Creates **no session**. Safe on any code path.
 - **The key**: the acting USER SESSION (the request realm's sign-in - staff, or portal on a portal request; on an API call the key owner's API user session) x the site acted on x the client address x the user agent. A guest's act is keyed on the browser row instead (or on nothing, for a visitor with no row). When any of them changes - a sign-in, a site switch, an impersonation, a new address - the next call answers a new audit session. The row also records the identity, both impersonators, the browser (`session_id`) and the session type.
-- **NULL where nobody is acting**: a command, a plain task and the `rsx:debug` harness record none. **A column storing it is nullable**, and a screen shows a null as "system" or blank. A `#[Run_As_Dispatcher]` task answers the audit session stamped at dispatch, so its writes count under the requester's own context (address, agent, browser).
+- **NULL where nobody is acting**: a command, a plain task and the `rsx:debug` harness record none. **A column storing it is nullable**, and a screen shows a null as "system" or blank. A dispatched `#[Run_As_Dispatcher]` run answers the audit session stamped at dispatch (run INLINE from a command or test it is the caller's: null), so its writes count under the requester's own context (address, agent, browser).
 - One process resolves a context once, however many rows it writes; `last_seen_at` advances at most once a minute.
 - The framework stamps it on every recorded unit of work itself (`_transactions.audit_session_id`, nullable - skill `rspade:revisions`).
 

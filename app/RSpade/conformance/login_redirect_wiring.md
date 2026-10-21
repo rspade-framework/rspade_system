@@ -20,7 +20,7 @@ The framework does the capture: when an `#[Auth]` gate refuses a signed-out page
 1. Every sign-in surface, staff and portal:
 
        ls rsx/app/login rsx/portal/auth
-       grep -rnE "RsxAuth::login\(|verify_challenge\(|verify_passkey_login\(|consume_pending_and_login\(|function post_login_destination|function post_auth_destination" rsx --include='*.php' | grep -v '^rsx/tests/'
+       grep -rnE "RsxAuth::login\(|verify_challenge\(|verify_passkey_login\(|consume_pending_and_login\(|set_portal_user_id\(|function complete_sign_in|function post_login_destination|function post_auth_destination" rsx --include='*.php' | grep -v '^rsx/tests/'
 
    Build the flow graph for each experience: login form -> (2FA challenge | passkey | SSO hook) -> (site selection | invite completion) -> terminal destination. Include every hop in an `sso.*` handler (`grep -rn "OnEvent('\(portal\.\)\?sso\." rsx/handlers`).
 

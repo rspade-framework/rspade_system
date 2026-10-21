@@ -196,11 +196,13 @@ class Error_Screens
      * @param Request $request The failed request
      * @param int $status The status to render
      * @param string $message The reason, when the raiser gave one
+     * @param string $title The page heading, when the raiser has a better one than the
+     *                      status's own (the framework's email sign-in link notices do)
      * @return Response A page carrying that status
      */
-    public static function http_status(Request $request, int $status, string $message = ''): Response
+    public static function http_status(Request $request, int $status, string $message = '', string $title = ''): Response
     {
-        return static::render($request, static::__context($status, $request, null, $message));
+        return static::render($request, static::__context($status, $request, null, $message, null, false, null, $title));
     }
 
     /**
@@ -297,6 +299,7 @@ class Error_Screens
      * @param array|null $detail Exception detail (500 only, non-production only)
      * @param bool $preview True for a development /error/<code> browse
      * @param string|null $error_id The log reference of a redacted exception
+     * @param string $title Overrides the status default heading when non-empty
      * @return Error_Context
      */
     protected static function __context(
@@ -306,15 +309,16 @@ class Error_Screens
         string $message = '',
         ?array $detail = null,
         bool $preview = false,
-        ?string $error_id = null
+        ?string $error_id = null,
+        string $title = ''
     ): Error_Context {
         $realm = $realm ?? (Rsx_Portal::is_portal_request() ? Auth_Gates::REALM_PORTAL : Auth_Gates::REALM_STAFF);
 
-        [$title, $default_message] = static::__defaults_for($status);
+        [$default_title, $default_message] = static::__defaults_for($status);
 
         return new Error_Context(
             $status,
-            $title,
+            $title !== '' ? $title : $default_title,
             $message !== '' ? $message : $default_message,
             $request->getPathInfo(),
             $request->getMethod(),

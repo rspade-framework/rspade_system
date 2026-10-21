@@ -60,4 +60,13 @@ class Task_Alias_Command extends Task_Run_Command
     {
         return $this->task_method;
     }
+
+    /**
+     * An alias's options are all the task's own: --user and --site are parameters here, never
+     * who the run acts as.
+     */
+    protected function takes_actor_flags(): bool
+    {
+        return false;
+    }
 }

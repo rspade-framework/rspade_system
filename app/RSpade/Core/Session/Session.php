@@ -1351,10 +1351,15 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
-     * Make this request's browser the rsx:debug harness's row for a staff account (on the
-     * request's site) - see __use_harness_session(). The dispatcher calls it for a request
-     * whose signed dev-auth headers verified, then signs the account in as usual (a
-     * re-statement, and so a no-op, when the row is already signed in as it).
+     * Make this request's browser the rsx:debug harness's row for a staff account - see
+     * __use_harness_session(). The dispatcher calls it for a request whose signed dev-auth
+     * headers verified, then signs the account in as usual (a re-statement, and so a no-op,
+     * when the row is already signed in as it).
+     *
+     * THE SITE is the request's declared one when the application declares a site per request
+     * (Main::init(), a request override); otherwise the account's first active membership,
+     * lowest site id first - the site a real sign-in of a single-site account binds, so a
+     * harness run renders what that account sees rather than a site-less session.
      *
      * FRAMEWORK INTERNAL - Dispatcher::__handle_dev_auth().
      *
@@ -1363,9 +1368,20 @@ class Session extends Rsx_System_Model_Abstract
      */
     public static function _use_harness_session(int $login_user_id): void
     {
+        $site_id = self::$_request_site_id_override;
+
+        if ($site_id === null) {
+            $site_id = (int) (User_Model::without_site_scope(
+                fn () => User_Model::where('login_user_id', $login_user_id)
+                    ->active()
+                    ->orderBy('site_id')
+                    ->value('site_id')
+            ) ?? 0);
+        }
+
         self::__use_harness_session(self::REALM_STAFF, [
             'login_user_id' => $login_user_id,
-            'site_id' => self::$_request_site_id_override ?? 0,
+            'site_id' => $site_id,
             'impersonator_login_user_id' => null,
         ]);
     }

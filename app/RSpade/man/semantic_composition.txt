@@ -315,7 +315,6 @@ THE FOUR LAYERS
         Empty region              Empty_State         icon + title + reason +
                                                       optional CTA
         Single empty cell         Empty_Value         the one muted em-dash
-        Placeholder/coming-soon   Placeholder_Card    dashed/muted variants
         Entity name anywhere      Entity_Link         fetched chip (type icon +
                                                       name); $no_link inside
                                                       clickable rows

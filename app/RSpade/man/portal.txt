@@ -701,6 +701,13 @@ PORTAL LOGIN FLOW
     <Totp_Enrollment>, <Two_Factor_Challenge>, <Sso_Buttons>) pick the portal
     realm on a portal page by themselves.
 
+    EMAILED SIGN-IN CODES work here exactly as for staff (rsx:man
+    two_factor_codes): issue_code() and issued_link() on Rsx_Portal_Two_Factor,
+    the link pointing at <prefix>/_email_link/:token on the portal's own host
+    and bound to the browser that typed the password. A passed emailed answer
+    sets portal_users.is_verified before the sign-in, so can_login() admits
+    a portal user whose address it just verified.
+
     WHERE THE SITE DECLARATION GOES - three patterns:
       Mono-site            Portal_Main::init() reads the app's own config key.
                            The login flow never thinks about the site.
@@ -1253,8 +1260,10 @@ ONBOARDING (SIGNUP MODEL)
     invitation signup satisfies.
 
     An application that chooses to add a non-invite (open) signup path takes on
-    responsibility for verifying the email address itself before setting
-    is_verified - the framework does not ship an open-signup verification flow.
+    responsibility for verifying the email address before admitting the account.
+    The framework's emailed code is the tool for it: a challenge accepting
+    ANSWER_ISSUED_CODE, answered by the code or its link, sets is_verified
+    (rsx:man two_factor_codes, A PASSED EMAILED ANSWER VERIFIES THE ADDRESS).
 
     Self-service access lookup (Portal_Request_Access_Controller, /request-access,
     public): the login page links here ("Create one now"). It does NOT create an

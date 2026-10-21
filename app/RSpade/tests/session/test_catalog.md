@@ -425,6 +425,23 @@ test, per-IP counter read as a delta ('CLI'), keys deleted in teardown.
 | sess-auth-07 | malformed input is not an attempt | php | {}, email only, password only, empty password | null x4, no row, no email counter, no IP counter | implemented |
 | sess-auth-08 | $touch_last_login: a real login stamps last_login and a dev-auth harness login does not | http | POST /login vs rsx:debug --user=N | last_login bumped / unchanged | deferred (no CLI observability: Session::set_login_user_id() returns from its CLI branch before the stamp; verified live during B2) |
 
+## Password_Verifier_Test (php, default isolation) - equal-time refusal of an unknown address
+
+An unknown address must cost what a known one costs, or the clock enumerates accounts. The
+mechanism is pinned deterministically through the dummy-verification counter
+(`Password_Verifier::$_dummy_verifications`), never by wall-clock timing. Every call passes
+record: false, so nothing outside the per-test transaction is written.
+
+| ID | Purpose | Type | Input | Expected | Status |
+|----|---------|------|-------|----------|--------|
+| sess-pwv-01 | the dummy hash is held to the current hashing config | php | `Password_Verifier::_dummy_hash()` | `Hash::needsRehash()` false; same algorithm as `Hash::make()` | implemented |
+| sess-pwv-02 | the dummy's own plaintext never authenticates an unknown address | php | fresh email + the dummy plaintext | null | implemented |
+| sess-pwv-03 | staff: an unknown address pays exactly one dummy verification | php | fresh email | null; counter +1 | implemented |
+| sess-pwv-04 | staff: a soft-deleted identity takes the same path | php | trashed identity, correct password | null; counter +1 | implemented |
+| sess-pwv-05 | staff: a known address pays its own hash, not the dummy | php | real identity, wrong password | null; counter +0 | implemented |
+| sess-pwv-06 | portal: an unknown address pays exactly one dummy verification | php | portal request, fresh email | null; counter +1 | implemented |
+| sess-pwv-07 | portal: a known address pays its own hash, not the dummy | php | real portal user, wrong password | null; counter +0 | implemented |
+
 ## Login_Throttle_Test (php, default isolation) - brute-force throttle
 
 The framework's own rate limit on the authentication surface: FAILURES counted per client

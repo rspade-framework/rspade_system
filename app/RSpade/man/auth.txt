@@ -413,40 +413,54 @@ INVITATION WORKFLOW
           sets site context).
         - Logged in, email mismatch -> blocked; log out and retry.
 
-    On successful account creation the login_users row is created with
-    is_verified = 0 (UNVERIFIED). Following an invite link proves the recipient
-    received the mail, but the current template does NOT auto-verify the email;
-    a verification step is not yet wired (see SIGNUP MODES). The membership is
-    activated (invite_accepted_at = now, login_user_id linked) and the session
-    is established with Session::set_login_user_id() + Session::set_site_id().
+    On successful account creation the login_users row is created with the
+    INVITED address and is_verified = 1: following the invite link proves the
+    recipient reads that mailbox, so no separate verification step follows (a
+    different address is refused). The one-click accept of a signed-in user
+    marks that identity verified the same way. The membership is activated
+    (invite_accepted_at = now, login_user_id linked) and the account signs in
+    through the template's single completion function,
+    Login_Controller::complete_sign_in(), which binds the invited site.
 
     NOTE: The staff invitation flow above is distinct from the CLIENT PORTAL's
     own invite/onboarding system (separate models and sessions). See
     rsx:man portal.
 
-SIGNUP MODES
-    Controlled by config('rsx.auth.signup_mode') in rsx/resource/config/rsx.php
-    (env override RSX_SIGNUP_MODE). Read by the template signup/accept-invite
-    controllers - these are convenience switches for development, not framework
-    guarantees.
+SELF-SIGNUP
+    Template-app policy, not a framework guarantee: two hardcoded booleans in
+    rsx/resource/config/rsx.php, both OFF as shipped, honoured by the
+    template's own controllers (rsx/app/login/), which carry the whole
+    feature.
 
-        invite_only  (default) - /signup requires a valid invite code;
-                     bare /signup redirects to login. Accounts come only
-                     through the invitation workflow.
-        anonymous    - open /signup; anyone may create an account.
-        disabled     - no new signups; /signup is refused.
+        rsx.auth.self_signup         false - accounts come only from an
+                                     administrator's invitation; /signup and
+                                     its submit endpoint answer 404 and the
+                                     login page offers no Sign up link.
+                                     true - /signup creates a NEW SITE with the
+                                     signer as its owner (the initial user's
+                                     role), then verifies the address.
+        rsx.auth.require_two_factor  false - a second factor is the user's
+                                     choice. true - a staff member signing in
+                                     with no factor is held on Password &
+                                     Security until they enroll one (rsx:man
+                                     two_factor, REQUIRING A SECOND FACTOR).
 
-    The template applies the mode to BOTH the /signup page and its submit
-    endpoint, so a POST never succeeds where the page would refuse, and an
-    address that already has an account gets the same answer as a new one
-    (nothing is written, nothing is revealed). Federated sign-in never
-    creates an account in any mode (rsx:man sso, THE FOUR POLICY MODES).
+    SELF-SIGNUP ALWAYS VERIFIES THE ADDRESS. The submission creates the
+    identity (is_verified = 0), the site and the owner membership in one
+    transaction, signs nobody in, and begins the framework's emailed
+    challenge (begin_challenge($identity, [ANSWER_ISSUED_CODE])). The verify
+    screen emails a six-digit code and a sign-in link together; either one
+    completes it, and the framework marks the address verified (rsx:man
+    two_factor_codes). So mail must leave: with rsx.mail.delivery anything but
+    'live' the signup page and endpoint THROW naming the mode. A password
+    sign-in of an identity whose address was never verified owes the same
+    emailed verification whenever mail can reach that address
+    (Rsx_Mail::deliverable_to()), so the password is no way around it.
 
-    Verification (config('rsx.auth.verification_required'), env
-    RSX_VERIFICATION_REQUIRED) defaults to 'none' - the PIN/email/SMS
-    verification flow is configured but NOT yet implemented in the template.
-    New accounts are created with is_verified = 0 regardless of path; do not
-    assume a verified email until an app wires verification.
+    The submit endpoint answers an address that already has an account
+    exactly like a new one and writes nothing. Federated sign-in never creates
+    an account (rsx:man sso, THE FOUR POLICY MODES); the client portal has no
+    self-signup - portal accounts come from invitations only.
 
     Invitation expiry: config('rsx.auth.invite_expiration_days') (default 7,
     env RSX_INVITE_EXPIRATION_DAYS).
@@ -562,7 +576,7 @@ PITFALLS
       assign an explicit User_Model::ROLE_* constant when creating one, never a
       bare integer.
 
-    - Config keys are under rsx.auth.* (signup_mode, verification_required,
+    - Config keys are under rsx.auth.* (self_signup, require_two_factor,
       invite_expiration_days) - not top-level rsx.*.
 
     - The session cookie is named "__Host-rsx" (plain "rsx" only on a

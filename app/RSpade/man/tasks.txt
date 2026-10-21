@@ -448,10 +448,13 @@ STARTING A RUN
        system is off the run is queued and the call waits (TURNING THE TASK SYSTEM OFF AND
        ON).
 
-    3. Console: php artisan rsx:task:run <Service> <method> [--key=value ...]
+    3. Console: php artisan rsx:task:run <Service> <method> [--user=<id|email> --site=<id>]
+                [--key=value ...]
        Task::internal() with the command's own stdout and stderr attached: the task's
        stdout is the command's stdout, its stderr (every status() change and the failure
        line included) is the command's stderr, and the exit code is the run's return code.
+       --user / --site say who the run acts as, with rsx:ajax's meaning (rsx:man
+       task_commands, ACTING AS A USER); every other option is a task parameter.
        A task worth invoking by hand gets its own artisan command by adding
        #[Command('myapp:name', 'Description')] beside its #[Task] - that alias IS this
        line under a friendlier name. Full treatment: rsx:man task_commands.
@@ -696,9 +699,11 @@ RUNNING AS THE DISPATCHER
     1. DISPATCH. Task_Runner::insert_row() stamps the run with the requester's
        user_session_id (Session::get_user_session_id()) and audit_session_id, and the
        claim tier PRIORITY_RUN_AS_DISPATCHER. Where there is no sign-in - nobody signed
-       in, a command, a plain task - dispatching it THROWS ("... can only be started from a
-       signed-in request"). Dispatched from inside another #[Run_As_Dispatcher] run it is
-       bound to the same sign-in.
+       in, a command, a plain task - dispatching it THROWS ("... a dispatched run can only
+       be started from a signed-in request"), even when the caller has declared an
+       identity (Session::impersonate(), rsx:task:run --user): a worker is another process
+       and rebuilds the person from the sign-in alone. Dispatched from inside another
+       #[Run_As_Dispatcher] run it is bound to the same sign-in.
 
     2. CLAIM. Workers claim dispatcher runs before any other pending run (THE WORKER
        POOLS).
@@ -742,17 +747,42 @@ RUNNING AS THE DISPATCHER
 
     5. RESET. Session::_end_virtual() after the run, as for every run.
 
-    INLINE. Task::internal() runs the task in its CALLER's context - a #[Run_As_Dispatcher]
-    task called inline from a request runs as that request - and SAVES and RESTORES the
-    caller's whole context around the call (Session::_snapshot_context() /
-    _restore_context()), whatever the task declared meanwhile. Inline from a command or a
-    plain task, a #[Run_As_Dispatcher] task has no sign-in to run as and is refused.
+    INLINE. Task::internal() runs the task in its CALLER's context and SAVES and RESTORES
+    the caller's whole context around the call (Session::_snapshot_context() /
+    _restore_context()), whatever the task declared meanwhile. An inline run executes in
+    the caller's own process, so it needs no sign-in to rebuild the person from - it needs
+    somebody ACTING, and runs as them:
 
-    NOT BY HAND. rsx:task:run refuses a #[Run_As_Dispatcher] task, exit 1, with
-    "[ERROR] <Service>::<method> runs as the user who dispatched it and can only be started
-    from a request: dispatch it with Task::dispatch() from an Ajax endpoint". TASK-RUN-AS-01
-    (a manifest-build FATAL) refuses #[Run_As_Dispatcher] on a method that is not a #[Task],
-    and beside #[Schedule] or #[Command] - neither has a signed-in dispatcher.
+        a signed-in request          runs as that request (browser, sign-in, audit session)
+        a declared identity          runs as it: Session::impersonate() in a command or
+                                     task, rsx:task:run --user/--site, a test's
+                                     __acting_as_user(); a portal user declared through
+                                     Portal_Session in the portal realm
+        nobody (a site alone counts  REFUSED, nothing recorded: "... nobody is acting here.
+        as nobody)                   ... rsx:task:run <Service> <method> --user=<id|email>
+                                     --site=<id> ..."
+
+    With a declared identity the run's dispatched_by and site_id name it and its writes,
+    revisions and created_by/updated_by pairs are attributed to it; user_session_id,
+    audit_session_id, Session::get_session_id() and get_user_session_id() are null - there
+    is no browser, sign-in or request behind a command or a test. The run is NOT frozen:
+    it is the caller's context, which the caller may change. Should such a row ever reach
+    a worker (an inline caller that died while the task system was off), the worker
+    refuses it for want of a sign-in (REFUSALS above).
+
+    BY HAND. rsx:task:run runs a #[Run_As_Dispatcher] task as the person --user names - the
+    shape of an operational re-run (a mass edit that failed half way, a repair attributed
+    to a real person):
+
+        php artisan rsx:task:run Records_Service bulk_set_status --user=ann@example.com --site=1 --status=2
+
+    Without --user it refuses, exit 1, nothing recorded: "[ERROR] <Service>::<method> runs
+    as the user who dispatched it (#[Run_As_Dispatcher]). From the command line, say who it
+    acts as: --user=<id|email> --site=<id>". TASK-RUN-AS-01 (a manifest-build FATAL)
+    refuses #[Run_As_Dispatcher] on a method that is not a #[Task], and beside #[Schedule]
+    or #[Command] - a tick has no dispatcher, and a #[Command] alias takes no --user.
+    Queueing such a run for a WORKER as a named user is not supported: a dispatched run
+    needs a sign-in (1. DISPATCH).
 
     A rerun ($run->rerun()) is a new dispatch, so it runs bound to whoever asked for the
     rerun (refused where nobody is signed in). Running as the dispatcher grants nothing
@@ -1553,7 +1583,8 @@ TURNING THE TASK SYSTEM OFF AND ON
 
 COMMANDS
 
-    php artisan rsx:task:run Service method [--key=value]    Run inline (rsx:man task_commands)
+    php artisan rsx:task:run Service method [--key=value]    Run inline (rsx:man task_commands);
+                                                             --user/--site act as a user
     php artisan rsx:task:list                                Discovered tasks, with the
                                                              #[Command] each is reachable
                                                              as (or '-')
@@ -1650,7 +1681,12 @@ TESTING
     at every class boundary and waits there for every detached process the class started
     (rsx:man testing). Rsx_Test_Abstract::__run_task_method($class, $method, $params) calls
     a task method directly as a real inline run (no pre_task(), no run lock, no capture),
-    settles it, and returns what it reported with state().
+    settles it, and returns what it reported with state(). Both run in the test's own
+    context, so a #[Run_As_Dispatcher] task runs as the user the test declared with
+    __acting_as_user() (RUNNING AS THE DISPATCHER, INLINE):
+
+        static::__acting_as_user($user_id);
+        $state = static::__run_task_method(Records_Service::class, 'bulk_set_status', $params);
 
     An in-process worker is a real pool member: it needs rsx-lockd, joins under the pool
     lock and leaves before Artisan::call() returns. Pools are named by the connection

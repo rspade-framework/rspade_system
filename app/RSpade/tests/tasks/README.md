@@ -32,7 +32,8 @@ framework.
 - `Task_Notify.php` + the three topics (`Task_Changed_Topic`, `Task_Output_Topic`,
   `Task_List_Changed_Topic`); `Task_Gates.php` (deny-by-default view/control gates)
 - `Task_Retention_Service.php`, `Task_Health_Checks.php`
-- Commands: `rsx:task:worker`, `rsx:task:process`, `rsx:task:run`, `rsx:task:killer`,
+- Commands: `rsx:task:worker`, `rsx:task:process`, `rsx:task:run` (its `--user`/`--site`
+  resolved by `Core/Console/Rsx_Cli_Actor.php`, shared with rsx:ajax), `rsx:task:killer`,
   `rsx:task:list`, `rsx:tasks:list`, `rsx:tasks:stop`, `rsx:tasks:cancel`,
   `rsx:tasks:disable`, `rsx:tasks:enable` (the task system's switch: `Task::is_enabled()`,
   `disabled_state()`, `disable()`, `enable()`, the `_task_system_off` row)
@@ -75,8 +76,13 @@ They exist only while the suite runs (the test trees enter the manifest only the
 - `#[Run_As_Dispatcher]`: the user session, audit session and claim tier stamped at dispatch,
   the frozen virtual session a worker runs it in (bound to the dispatching sign-in, setters
   and session values refused), the refusals, every worker run ending blank, `Task::internal()`
-  keeping its caller's context, the rsx:task:run refusal and the claim order (tier, then
-  oldest). (php; `Task_Run_As_Dispatcher_Test`)
+  keeping its caller's context, an inline run acting as a declared identity (staff, portal,
+  `__run_task_method()` after `__acting_as_user()`) and refused with nobody acting, a dispatch
+  refused without a sign-in even with a declared identity, and the claim order (tier, then
+  oldest). (php; `Task_Run_As_Dispatcher_Test`) `rsx:task:run --user/--site` driven for real:
+  the refusal naming the flags, the run as the named user, rsx:ajax's resolution (unknown
+  user/site, `--site` required across several sites), the flags on an ordinary task and never
+  as parameters, an alias passing them through. (cli; `Task_Run_As_Dispatcher_Cli_Test`)
 - The return contract and the console exit code. (php; `Task_Return_Contract_Test`)
 - Single-instance identities: coalescing primitives, dispatch coalescing, the run lock held by
   another process for an inline run and a worker claim. (php; `Task_Concurrency_Test`,

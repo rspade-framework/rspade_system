@@ -617,6 +617,17 @@ CLASS BOUNDARIES AND DETACHED PROCESSES
     spawn opts in with Task::spawn_workers(true), and the runner calls
     Task::spawn_workers(false) at every class boundary.
 
+    A TASK DECLARED #[Run_As_Dispatcher] IS TESTED AS THE USER IT ACTS FOR. An
+    inline run - Task::internal() or __run_task_method() - executes in the
+    test's own context, so it runs as the identity the test declared:
+
+        static::__acting_as_user($user_id);
+        $state = static::__run_task_method(Records_Service::class, 'bulk_set_status', $params);
+
+    With nobody declared it is refused ("nobody is acting here"). Dispatching it
+    still needs a sign-in, which a test does not have (rsx:man tasks, RUNNING AS
+    THE DISPATCHER).
+
     A process a test starts DETACHED - a task worker spawned by an opted-in
     Task::spawn_worker(), or any Rsx_Artisan::dispatch_detached() call - belongs
     to the test class that started it and ends at that class's boundary, never

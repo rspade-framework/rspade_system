@@ -1,7 +1,7 @@
 # Test catalog: two_factor
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues) | `planned`.
-Type: php / cli / asset / http / playwright. Last updated: 2026-10-07.
+Type: php / cli / asset / http / playwright. Last updated: 2026-10-21.
 
 ## Totp_Test (php, no transactions - pure logic) - RFC 6238 correctness and the rules verify() adds
 
@@ -143,6 +143,24 @@ it created.
 | TFA-ISS-06 | wrong issued codes spend the challenge's attempt cap | challenge_max_failures wrong codes | "not valid" until the last, then "sign in again", the challenge and its code are gone, the next challenge starts with no code | implemented |
 | TFA-ISS-07 | the portal facade issues and verifies on its own realm | portal user, `[ISSUED_CODE]` | the staff realm sees no challenge; a resend re-sends the same digits; the code signs the portal user in | implemented |
 
+## Two_Factor_Email_Link_Test (php, default isolation) - the email link, its landing route, and the verification effect
+
+`issued_link($return_url)` answers the browser-bound link that goes in the same email as the issued code; the
+landing route `/_email_link/:token` (`Rsx_Email_Link_Controller`) only reads; `{email_link}` answers the
+challenge as `ANSWER_ISSUED_CODE`; a passed emailed answer sets `is_verified` (`rsx:man two_factor_codes`).
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| TFA-LINK-01 | the link needs its code | nothing pending; a default challenge; an issued-code challenge with no code; a fragment / empty return URL | "expired"; "does not accept an issued code"; "Call issue_code() first"; InvalidArgumentException | implemented |
+| TFA-LINK-02 | a resend answers the same link and nothing secret is stored | issue_code() + issued_link() twice; then a fresh challenge | an absolute signed URL, identical on resend; the store holds a binding (return URL, challenge id) without the token; a new challenge gets a new link for the same code | implemented |
+| TFA-LINK-03 | the link is bound to its browser | state in the minting browser, then in another | SAME_BROWSER with the return URL; OTHER_BROWSER; there, {email_link} is a wrong answer and the code signs in | implemented |
+| TFA-LINK-04 | the link signs in, consumes code and link, verifies the address, leaves the completed marker | an identity with is_verified 0 answering {email_link} | signed in, is_verified 1, no live code, no binding, state EXPIRED_OR_USED, `_challenge_completed_state()` and the challenge_state endpoint answer {completed, challenge_id, by_email_link: true} | implemented |
+| TFA-LINK-05 | a typed code consumes the link and verifies the address too | {code} | is_verified 1, the link EXPIRED_OR_USED, by_email_link false | implemented |
+| TFA-LINK-06 | a wrong or dead link is a counted wrong answer | 64 zeros; then the real token after the code was replaced | "not valid" twice, the identity's failure count +1 each, the challenge survives the first, nobody signed in | implemented |
+| TFA-LINK-07 | the route redirects the owning browser and spends nothing | the signed URL opened twice | 302 to the return URL + #rsx_email_link=<token>, no-referrer; challenge pending, code live, nobody signed in, nothing counted | implemented |
+| TFA-LINK-08 | the route shows another browser a notice and spends nothing | the URL from a second browser; a forged signature; the token in the portal realm | 409 with the different-browser text, nothing counted, code live; 410; EXPIRED_OR_USED | implemented |
+| TFA-LINK-09 | the portal facade: a portal-host link that admits an unverified portal user | portal user with is_verified false, [ISSUED_CODE] | link under the portal prefix; SAME_BROWSER there, EXPIRED_OR_USED in the staff realm; {email_link} signs in, is_verified true, completed state | implemented |
+
 ## Passkeys_Test (php, default isolation) - WebAuthn against a simulated authenticator
 
 `php/Webauthn_Authenticator_Fixture.php` is a software FIDO2 authenticator: a real P-256 keypair, a
@@ -197,7 +215,7 @@ Enforcement itself is the http row below; the two halves are untestable together
 | tfa-ctl-11 | a malformed attestation is refused before any crypto runs | absent, null, a string | ERROR_VALIDATION x3 | implemented |
 | tfa-ctl-12 | the creation args reach the browser in navigator.credentials.create() shape | passkey_register_begin | publicKey with a challenge, a user handle and pubKeyCredParams | implemented |
 | tfa-ctl-13 | nothing pending reads as NULL, not an error | anonymous session | null | implemented |
-| tfa-ctl-14 | a pending challenge answers exactly what the screen renders, address MASKED | begin_challenge then challenge_state | exactly {email, email_masked, has_totp, has_passkey, has_recovery_codes}; has_totp + has_recovery_codes true; email null; not the raw address | implemented |
+| tfa-ctl-14 | a pending challenge answers exactly what the screen renders, address MASKED | begin_challenge then challenge_state | exactly {challenge_id, email, email_masked, accepts, has_totp, has_passkey, has_recovery_codes, has_issued_code, codes_issued}, challenge_id a non-empty string; has_totp + has_recovery_codes true; email null; not the raw address | implemented |
 | tfa-ctl-15 | passkey options with nothing pending is a user-safe refusal, not an exception | anonymous session | Error_Response, ERROR_VALIDATION, non-empty reason | implemented |
 | tfa-ctl-16 | with a challenge pending the options endpoint answers a ceremony shape | begin_challenge then challenge_passkey_options | publicKey with a non-empty challenge | implemented |
 | tfa-ctl-17 | challenge_shows_full_email puts the full address in the challenge state | config true; begin_challenge then challenge_state | email = the address; email_masked still masked | implemented |
@@ -399,3 +417,16 @@ challenge still pending, the identity not locked).
 | 2FA-CONTROLS-01 | a control carries its own class beside the theme's | `Totp_Enrollment` mounted on `/_sys` | Confirm has `btn btn-primary` and `Totp_Enrollment__confirm` | implemented |
 | 2FA-CONTROLS-02 | `$unstyled_controls` drops the theme classes | the same with `$unstyled_controls` | Confirm has only `Totp_Enrollment__confirm` | implemented |
 | 2FA-CONTROLS-03 | the digit boxes are `Code_Input`'s either way | both mounts | six `Code_Input__box` | implemented |
+
+## email_link.js (playwright, the /_sys panel) - `<Two_Factor_Challenge>` and the email link
+
+Driven against a scripted controller; the engine and the route's answers are `Two_Factor_Email_Link_Test`.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| TFA-LINK-B-01 | the fragment is taken and posted once, with no code sent | a page at #rsx_email_link=<token>, codes_issued 0, an endpoint that refuses | the hash no longer carries the token; one post of exactly {email_link}; no send; the code boxes with the server's message | implemented |
+| TFA-LINK-B-02 | two tabs, one browser: the other tab swaps | the link tab's answer passes | the link tab follows the redirect; the code tab shows "You have signed in using the email link." + Continue and no boxes; Continue goes to that redirect | implemented |
+| TFA-LINK-B-03 | a tab showing a different challenge ignores the announcement | another challenge_id | unchanged | implemented |
+| TFA-LINK-B-04 | the visibility backstop | challenge_state answers {completed}; then a CSRF (unauthorized) refusal | "You have signed in using the email link."; "This sign-in continued in another tab." | implemented |
+| TFA-LINK-B-05 | the realtime session-refresh claim | a frame while waiting; a broadcast after it; stop; a frame on a screen with nothing pending | one claim held; swap to "continued in another tab" with no reload; upgraded to the exact message; claim released; the idle screen hands the frame back (proceed) | implemented |
+| TFA-LINK-B-06 | the landing route's notice page on both hosts, from another browser context | a bad signature at /_email_link/ and /_portal/_email_link/ | 410 with "This link has expired or was already used. Sign in again." | implemented |

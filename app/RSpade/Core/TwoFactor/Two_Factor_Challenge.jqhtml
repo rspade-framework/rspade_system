@@ -14,7 +14,8 @@ to a control that is not a form over model fields.
 
 THE VERIFICATION ENDPOINT'S CONTRACT, both directions:
   it receives  {code: '123456'}  from the typed answer, or
-               {assertion: {id, clientDataJSON, authenticatorData, signature}} from a passkey
+               {assertion: {id, clientDataJSON, authenticatorData, signature}} from a passkey, or
+               {email_link: '<token>'} when the page was opened from an emailed sign-in link
   it calls     Rsx_Two_Factor::verify_challenge($params)
   it returns   {redirect: '/somewhere'} - followed with window.location
   it rejects   with a user-safe message, rendered inline here
@@ -45,6 +46,24 @@ A resend delivers the identity's LIVE code - the same digits as before, until th
 - so every message the user holds carries the one code that works.
 Without a send endpoint the host issues and delivers the code itself, before the page loads.
 
+THE EMAIL LINK. issued_link() puts a link beside the code in the same email. The framework
+route it points at sends the browser that owns the challenge back to this page with
+#rsx_email_link=<token>; the screen removes it from the address bar and submits
+  {email_link: '<64 hex>'}
+to the same verification endpoint - which passes $params to verify_challenge() as for a code,
+so it needs no change. A link opened in another browser never reaches this page (the route
+shows a notice there).
+
+ANOTHER TAB OF THIS BROWSER. When the challenge is answered in another tab - the email link,
+or a code typed there - this screen replaces its controls with "You have signed in using the
+email link." (or "... in another tab.") and Continue, to the redirect the other tab was given,
+when it hears it over BroadcastChannel('rsx_two_factor'). A tab that missed that message
+learns it from the realtime sign-in frame (which it claims while mounted, so the page is not
+reloaded out from under it) or when it becomes visible again, and then says "This sign-in
+continued in another tab." with Continue reloading the page - the sign-in rotated the
+browser's tokens, so the details are on the other side of a reload. The host's challenge page
+must therefore send a signed-in visitor onward. The host wires nothing.
+
 THE THROTTLE MESSAGE MUST SURVIVE. Auth_Throttled_Exception surfaces as an ordinary Ajax
 rejection, so it lands in the same inline error as a wrong code. That is deliberate: "you are
 doing that too fast" is the most important thing this screen ever says, and a component that
@@ -52,6 +71,8 @@ only rendered messages it recognised would swallow it.
 
 STATES, in the order the template tests them:
   data.challenge === null pending   the first load has not answered -> a loading notice
+  completed                         this browser completed the challenge elsewhere -> the
+                                    signed-in message and Continue
   data.challenge === null           nothing is pending              -> a notice; 'no_challenge' fires
   otherwise                         the masked address and the answer controls
 
@@ -77,9 +98,15 @@ Args:
 Events:
   no_challenge - nothing is pending: an expired window, or a direct visit. The host page
                  sends the visitor back to the login screen.
+  completed    - {how} - the screen swapped its controls for the signed-in message (this
+                 browser's sign-in completed in another tab or by the email link; how is
+                 'email_link', 'other_tab' or 'moved'). The host hides its own copy about
+                 answering the challenge - a recovery-code hint, a "check your email" note.
+                 May fire again when a vague 'moved' sharpens into the exact wording. Not
+                 fired for this screen's own successful answer: that one navigates away.
 
 CONTROLS. Every control carries its own class - Two_Factor_Challenge__verify,
-Two_Factor_Challenge__cancel, Two_Factor_Challenge__send-button,
+Two_Factor_Challenge__cancel, Two_Factor_Challenge__continue, Two_Factor_Challenge__send-button,
 Two_Factor_Challenge__switch-button, Two_Factor_Challenge__passkey,
 Two_Factor_Challenge__recovery-input - so a host restyles it by name, never by a theme class
 or its position.
@@ -97,6 +124,15 @@ See: php artisan rsx:man two_factor
 
     <% if (!this.data.loaded) { %>
         <div class="Two_Factor_Challenge__notice">Checking your sign-in...</div>
+    <% } else if (this.state.completed || this.data.completed) { %>
+        <% const _done = this.state.completed || this.data.completed; %>
+        <div class="Two_Factor_Challenge__completed">
+            <div class="Two_Factor_Challenge__completed-message">
+                <%= _done.how === 'email_link' ? 'You have signed in using the email link.'
+                    : (_done.how === 'other_tab' ? 'You have signed in in another tab.' : 'This sign-in continued in another tab.') %>
+            </div>
+            <button type="button" class="<%= _btn('primary') %>Two_Factor_Challenge__continue" $sid="continue">Continue</button>
+        </div>
     <% } else if (!this.data.challenge) { %>
         <div class="Two_Factor_Challenge__notice">This sign-in is no longer waiting for a second step.</div>
     <% } else { %>

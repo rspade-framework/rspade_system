@@ -37,7 +37,11 @@ says what is in this DIRECTORY and what must stay true when editing it.
   from `Rsx_Model_Abstract::_resolve_context_actor()`, the current `site_id`,
   `Session::get_user_session_id()`, `audit_session_id` and the claim tier `priority` -
   `PRIORITY_RUN_AS_DISPATCHER` 0, `PRIORITY_ON_DEMAND` 1, `PRIORITY_SCHEDULED` 2 for a
-  scheduled-origin run; refuses a `#[Run_As_Dispatcher]` task with no user session behind it),
+  scheduled-origin run; a `#[Run_As_Dispatcher]` task with no user session behind it is
+  refused unless the run is INLINE and somebody is acting - a declared identity, staff or
+  portal (`_resolve_context_actor()` non-null) - in which case it runs in the caller's
+  unfrozen context with `user_session_id`/`audit_session_id` null; a dispatched run always
+  needs the user session, because `Task_Dispatcher_Context::begin()` rebuilds from it alone),
   `execute()` (`pre_task()`, the method, echo captured line by line as stdout, a throw is an
   outcome, a worker's leaked locks released and named; with `$own_context` - worker and
   `--once` - a fresh revision unit and virtual session before, `Session::_end_virtual()`

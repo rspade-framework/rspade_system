@@ -120,6 +120,14 @@ RUN apt-get update && apt-get install -y \
 #            It is the CLI tier, REQUIRED_CLI_EXTENSIONS, enforced only under PHP_SAPI
 #            'cli'.
 # `rsx:man health` -> PHP EXTENSION CONTRACT.
+#
+# SECURITY FLOOR. PHP is unpinned within ${PHP_VERSION}, so a fresh install takes the
+# newest patch - but Docker reuses the cached install layer until a line above it
+# changes. When a PHP security release must reach every image, change the cachebreak
+# line (forcing a fresh install) AND raise PHP_MIN_PATCHED (the build then refuses a
+# mirror that has not published the release yet, rather than shipping the old patch).
+ARG PHP_MIN_PATCHED=8.5.12
+RUN echo "cachebreak: force PHP upgrade to 8.5.12 or newer (2026-10-21 security release, CVE-2026-109618 / CVE-2026-109619)"
 COPY php/ondrej-php.sources /etc/apt/sources.list.d/ondrej-php.sources
 RUN apt-get update && apt-get install -y \
         php${PHP_VERSION} \
@@ -143,6 +151,9 @@ RUN apt-get update && apt-get install -y \
         php${PHP_VERSION}-zstd \
     && update-alternatives --set php /usr/bin/php${PHP_VERSION} \
     && rm -rf /var/lib/apt/lists/*
+
+RUN php -r 'exit(version_compare(PHP_VERSION, getenv("PHP_MIN_PATCHED"), ">=") ? 0 : 1);' \
+    || { echo "PHP $(php -r 'echo PHP_VERSION;') is below the security floor ${PHP_MIN_PATCHED}: the PHP package mirror has not published the release yet - rebuild once it has." >&2; exit 1; }
 
 # Composer. Verified against the installer's published signature - an unverified
 # curl-to-php of a build tool is how a supply chain gets compromised.

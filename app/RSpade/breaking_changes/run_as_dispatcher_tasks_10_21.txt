@@ -41,10 +41,12 @@ WHAT #[Run_As_Dispatcher] DOES
       deleted, the membership or its site disabled or deleted, the portal user
       disabled or its site off, or the user session gone. Account statuses
       your application defines are still yours to check in the task.
-    - It cannot be started by hand - rsx:task:run refuses it ("can only be
-      started from a request") - and #[Schedule] or #[Command] beside it is a
-      build FATAL (TASK-RUN-AS-01). Task::internal() from a request runs it as
-      that request.
+    - By hand it runs only as a named person: rsx:task:run <Service> <method>
+      --user=<id|email> --site=<id> (without --user it is refused, naming the
+      flags). #[Schedule] or #[Command] beside it is a build FATAL
+      (TASK-RUN-AS-01). Task::internal() runs it as whoever is acting - a
+      request, or the identity a command or test declared (__acting_as_user());
+      with nobody acting it is refused.
 
 THE TEST: DOES A TASK NEED IT?
     Yes, when ALL of the first and ANY of the rest hold:
@@ -126,8 +128,8 @@ VERIFICATION
       read the run in /_sys/tasks). The run completes, and its revisions /
       created_by / your action log name the user who clicked, on their site.
     - php artisan rsx:task:run <Service> <method> on a marked task exits 1 with
-      "runs as the user who dispatched it and can only be started from a
-      request".
+      "From the command line, say who it acts as: --user=<id|email>
+      --site=<id>"; with those flags it runs as that user.
     - Disable the user's membership, dispatch nothing new, and let a queued run
       start: it FAILS with the reason and changes nothing.
     - Unmarked tasks still run and write no NOT NULL failures for a

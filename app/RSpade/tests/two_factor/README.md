@@ -46,6 +46,8 @@ own history row).
 - `app/RSpade/Core/TwoFactor/Two_Factor_Failed_Exception.php` - the user-safe failure
 - `app/RSpade/Core/TwoFactor/Rsx_Two_Factor_Controller.php` - the Ajax surface: enrollment,
   the settings list, and the two public challenge endpoints
+- `app/RSpade/Core/TwoFactor/Rsx_Email_Link_Controller.php` - `/_email_link/:token`, the read-only
+  landing route of the link an emailed code travels with (`issued_link()`), on both hosts
 - `app/RSpade/Core/TwoFactor/Rsx_Two_Factor.js` - the browser half of the passkey ceremonies
   (base64url <-> ArrayBuffer, `navigator.credentials.create/get`)
 - `app/RSpade/Core/TwoFactor/Totp_Enrollment.*` / `Passkey_Register.*` /
@@ -75,7 +77,11 @@ The APPLICATION half of the flow, which the framework deliberately does not own:
 
 - `man/two_factor.txt`
 - `man/two_factor_codes.txt` - the emailed-code recipe; `Two_Factor_Issued_Code_Test` pins the
-  engine half (`$accepts`, `issue_code()` and its identity-scoped storage, `issued_code_expires_at()`, `pending_identity()`)
+  engine half (`$accepts`, `issue_code()` and its identity-scoped storage, `issued_code_expires_at()`, `pending_identity()`),
+  `Two_Factor_Email_Link_Test` the email link (`issued_link()`, its browser binding, the read-only
+  landing route, `{email_link}` as an answer, and the `is_verified` a passed emailed answer sets), and
+  `playwright/email_link.js` the challenge screen's half (the fragment, the cross-tab swap, the
+  realtime claim)
 
 ## Testable surface
 
@@ -131,6 +137,12 @@ The APPLICATION half of the flow, which the framework deliberately does not own:
   the stamp), exactly ONE success row is written for the two steps, and the ambient
   `Login_Throttle` call inside `verify_challenge()` refuses a locked-out client with a
   message that reaches the screen as itself. (http)
+- The EMAIL LINK: minted once per challenge and code, bound to the browser that typed the
+  password, read-only on GET (a mail scanner spends nothing), an answer equal to the code
+  that consumes both, and the address verification a passed emailed answer performs. (php)
+  On the screen: the fragment taken and posted, another tab of the same browser swapping to
+  the signed-in message, the visibility and realtime backstops, and the notice pages from
+  another browser. (playwright)
 - The OPERATOR path (`rsx:users:2fa:setup|dump|remove`), which bypasses the session-bound
   enrollment ceremony entirely: the seed `setup` prints answers a real login challenge for
   that identity, a second seed is refused rather than stacked, `dump` reads the seed back

@@ -578,7 +578,9 @@ TESTING
     until --site chooses. A login identity with no users row on the chosen site
     is a real state and runs with Session::get_user_id() null; --show-context
     prints all three parts, that null included, so a user-scoped endpoint that
-    answers "nothing" is never a silent surprise.
+    answers "nothing" is never a silent surprise. A disabled membership or site
+    (User_Model::is_active()) is refused - error_type membership_disabled or
+    site_disabled - as a sign-in and a #[Run_As_Dispatcher] worker refuse it.
 
     Test Validation Error
     ---------------------

@@ -7,9 +7,9 @@
 
 namespace App\RSpade\Core\Auth;
 
-use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Auth\Auth_Password_Reset_Required_Exception;
 use App\RSpade\Core\Auth\Login_Throttle;
+use App\RSpade\Core\Auth\Password_Verifier;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Session\Portal_Login_History;
 
@@ -45,6 +45,8 @@ class Portal_Auth
      *      caller - recorded as Portal_Login_History::record_failure() with
      *      STATUS_FAILED_NOT_FOUND / STATUS_FAILED_PASSWORD (counters, the throttle, one log
      *      line; no row). A soft-deleted portal user is NOT_FOUND through the model's own scope.
+     *      Indistinguishable by the clock too: an unknown address still pays one password hash
+     *      verification (Password_Verifier::verify_unknown()).
      *   4. A portal user flagged password_reset_required THROWS
      *      Auth_Password_Reset_Required_Exception, carrying the portal user - only now, once the
      *      password matched, so it discloses nothing to a guesser. Recorded as a
@@ -92,6 +94,10 @@ class Portal_Auth
         );
 
         if (!$portal_user) {
+            // Pay the hash verification a known address pays, so the response time does not
+            // say which addresses hold portal accounts (Password_Verifier).
+            Password_Verifier::verify_unknown($password);
+
             if ($record) {
                 Portal_Login_History::record_failure($email, Portal_Login_History::STATUS_FAILED_NOT_FOUND);
             }
@@ -99,7 +105,7 @@ class Portal_Auth
             return null;
         }
 
-        if (!Hash::check($password, $portal_user->password)) {
+        if (!Password_Verifier::verify($password, $portal_user->password)) {
             if ($record) {
                 Portal_Login_History::record_failure(
                     $email,

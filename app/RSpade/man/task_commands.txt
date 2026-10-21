@@ -69,7 +69,8 @@ WHAT IS REGISTERED
        One Task_Alias_Command per declaration - Task_Run_Command with the service and the
        method already decided. Its signature is the bare name, plus the same free-form
        --key=value argv parsing rsx:task:run has, so every option an invocation passes
-       arrives in the task's $params. Laravel's own built-ins (--help, --quiet, --verbose,
+       arrives in the task's $params (--user and --site too: only rsx:task:run reads those
+       as who the run acts as - ACTING AS A USER). Laravel's own built-ins (--help, --quiet, --verbose,
        --version, --ansi, --no-ansi, --no-interaction, --env) and the maintenance gate's
        --force never do. A JSON value is decoded: --data='{"a":1}' arrives as an array. A
        bare --flag arrives as boolean true.
@@ -126,23 +127,56 @@ OUTPUT CONTRACT
        difference and must not try to.
 
        A console run executes in the command's VIRTUAL session (rsx:man session): it acts
-       as nobody until the task declares an identity (Session::set_login_user_id(),
-       set_site_id()), get_session_id() and get_audit_session_id() answer null, and
-       session values throw. A task's writes therefore record no audit session.
-
-       A #[Run_As_Dispatcher] task CANNOT run from the command line - a command line is
-       nobody's request. rsx:task:run refuses it before anything runs, exit 1:
-
-           [ERROR] Bulk_Service::set_status runs as the user who dispatched it and can
-           only be started from a request: dispatch it with Task::dispatch() from an Ajax
-           endpoint
-
-       and #[Command] beside #[Run_As_Dispatcher] is a build FATAL (TASK-RUN-AS-01).
+       as nobody until somebody is declared - rsx:task:run's --user (ACTING AS A USER), or
+       the task itself (Session::set_login_user_id(), set_site_id()) - get_session_id() and
+       get_audit_session_id() answer null, and session values throw. A task's writes
+       therefore record no audit session.
 
        A #[Command] run is an inline run, so #[Exclusive]/#[Debounce] hold: a
        single-instance task waits for a running instance of its identity to finish before
        it starts. Being inline, it is never killed for time: the silence limit applies
        only to runs a pool worker executes (rsx:man tasks THE SILENCE LIMIT).
+
+ACTING AS A USER
+       php artisan rsx:task:run <Service> <method> --user=<id|email> [--site=<id>] [...]
+
+       rsx:task:run (never an alias) takes the two flags rsx:ajax takes, with the same
+       meaning - one resolution serves both (Rsx_Cli_Actor), so they cannot drift:
+
+       --user  a login identity: its login_users id, or its email address. Must exist.
+       --site  a site id. Must exist. With --user, REQUIRED when the identity has users
+               rows on several sites (or on none); with exactly one, that site is used.
+
+       A disabled membership or site (User_Model::is_active()) is refused before anything
+       runs, exit 1, as a sign-in and a #[Run_As_Dispatcher] worker refuse it.
+
+       Before the task runs, Session::impersonate() declares the site, the login identity
+       and its users row on that site (null when it has none there). No sign-in is
+       created: get_session_id(), get_user_session_id() and get_audit_session_id() stay
+       null. The run's dispatched_by names the user, and its writes, revisions and
+       created_by/updated_by pairs are attributed to them. --site alone declares a site
+       and nobody acting on it. Neither flag ever reaches the task's $params.
+
+       The flags work for ANY task. A #[Run_As_Dispatcher] task (rsx:man tasks, RUNNING AS
+       THE DISPATCHER) NEEDS them - it runs as a person - and without --user it is refused
+       before anything runs or is recorded, exit 1:
+
+           [ERROR] Bulk_Service::set_status runs as the user who dispatched it
+           (#[Run_As_Dispatcher]). From the command line, say who it acts as:
+           --user=<id|email> --site=<id>
+
+       With them it runs inline as that person - an operator's re-run of a person's
+       request, attributed to them:
+
+           php artisan rsx:task:run Bulk_Service set_status --user=ann@example.com --site=1
+
+       A flag that names nothing exits 1 with rsx:ajax's message on stderr ("[ERROR] User
+       not found: ...", "[ERROR] Site ID not found: ...", "[ERROR] Login user 7 has users
+       rows on sites 1, 4; pass --site=<id> to choose one").
+
+       A #[Command] alias does NOT take the pair: every option an alias is given is the
+       task's own parameter, --user and --site included. #[Command] beside
+       #[Run_As_Dispatcher] is a build FATAL (TASK-RUN-AS-01).
 
 BUILD-TIME RULES
        Every rule is enforced by Task_Command_ManifestSupport during the manifest build and
@@ -165,8 +199,9 @@ BUILD-TIME RULES
 
        #[Command] beside #[Run_As_Dispatcher]
              TASK-RUN-AS-01, reported by the code-quality rule at manifest build. A task
-             that runs as the user who dispatched it has no user on a command line.
-             Remove the #[Command], or the #[Run_As_Dispatcher].
+             that runs as the user who dispatched it has no user on an alias's command
+             line (an alias takes no --user). Remove the #[Command], or the
+             #[Run_As_Dispatcher]; rsx:task:run --user runs such a task by hand.
 
        A name already taken
              "One command name names exactly one task" (another #[Command]), or

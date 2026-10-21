@@ -40,7 +40,6 @@ EXAMPLES:
             // This expensive query only runs once per request
             return User_Model::find($user_id)
                 ->permissions()
-                ->with('roles')
                 ->get();
         });
     }
@@ -85,6 +84,7 @@ CHARACTERISTICS:
 - Automatic double-check after lock acquisition
 - Optional expiration time
 - Serialization/deserialization automatic
+- PLAIN DATA ONLY - scalars, null and arrays (see PLAIN DATA ONLY below)
 
 SYNTAX:
     // Never expires (default)
@@ -131,7 +131,8 @@ EXAMPLES:
             return Product_Model::where('views', '>', 1000)
                 ->orderBy('views', 'desc')
                 ->limit(10)
-                ->get();
+                ->get()
+                ->toArray();  // plain data - an Eloquent collection would throw
         }, RsxCache::HOUR);
     }
 
@@ -140,7 +141,7 @@ EXAMPLES:
         return RsxCache::remember("dashboard_data:{$user_id}", function() use ($user_id) {
             return [
                 'stats' => User_Stats::calculate($user_id),
-                'recent_activity' => Activity::for_user($user_id)->limit(20)->get(),
+                'recent_activity' => Activity::for_user($user_id)->limit(20)->get()->toArray(),
                 'recommendations' => Recommendation_Engine::generate($user_id),
             ];
         }, RsxCache::DAY);
@@ -150,15 +151,48 @@ EXAMPLES:
     function get_all_users_with_permissions() {
         return RsxCache::remember('users_with_permissions', function() {
             // This might take 500ms, but only runs once per deployment
-            return DB::select("
+            // DB::select() answers stdClass rows - cast each to an array
+            return array_map(fn ($row) => (array) $row, DB::select("
                 SELECT u.*, GROUP_CONCAT(p.name) as permissions
                 FROM users u
                 LEFT JOIN _user_permissions up ON u.id = up.user_id
                 LEFT JOIN permissions p ON up.permission_id = p.id
                 GROUP BY u.id
-            ");
+            "));
         });
     }
+
+
+PLAIN DATA ONLY
+===============
+
+Everything RsxCache stores in redis (set, set_persistent, remember) is a
+scalar, null, or an array of those - never an object: no Eloquent model or
+collection, no stdClass row from DB::select(), no enum, no value object.
+
+- ON WRITE: set(), set_persistent() and remember() THROW a RuntimeException
+  ("RsxCache stores plain data only") when the value carries an object
+  anywhere inside it. Nothing is stored.
+- ON READ: every payload is unserialized with allowed_classes => false, so a
+  stored payload can never instantiate a class. A payload that names one -
+  which RsxCache itself can no longer write, so it came from somewhere else -
+  THROWS a RuntimeException naming the key and the class. It is never
+  returned as false or as a half-built object.
+
+The read side is the security boundary: whoever can write to redis must not
+be able to make this process build an object of their choosing (PHP object
+injection). The write side keeps the rule honest - an object would otherwise
+be written fine and fail only on the way back out.
+
+THE REMEDY is to cache the data, not the object:
+
+    Model / collection      ->toArray()
+    Query builder rows      ->get()->toArray(), or ->pluck('col')->all()
+    DB::select() rows       array_map(fn ($row) => (array) $row, DB::select(...))
+    Enum                    ->value (and Enum::from() after the read)
+
+RsxCache::once() is untouched by this rule: it keeps the value in process
+memory, never serializes it, and may hold anything.
 
 
 EXPIRATION CONSTANTS
@@ -430,7 +464,7 @@ Combine once() and remember() for two-level caching:
             // Build-scoped cache (fast)
             return RsxCache::remember("user_permissions:{$user_id}", function() use ($user_id) {
                 // Database query (slow)
-                return User_Model::find($user_id)->permissions()->get();
+                return User_Model::find($user_id)->permissions()->get()->toArray();
             }, RsxCache::HOUR);
         });
     }
@@ -455,7 +489,7 @@ CACHE WARMING:
 
     // In deployment script or scheduled job
     function warm_critical_caches() {
-        RsxCache::remember('product_catalog', fn() => Product::all());
+        RsxCache::remember('product_catalog', fn() => Product::all()->toArray());
         RsxCache::remember('site_config', fn() => Config::load_all());
         RsxCache::remember('menu_structure', fn() => Menu::build_tree());
     }
@@ -494,7 +528,7 @@ RsxCache::once():
 
 RsxCache::remember():
 - Speed: 1-2ms (Redis, Unix socket)
-- Overhead: Serialization + lock acquisition on miss
+- Overhead: Serialization (plain data only) + lock acquisition on miss
 - Scalability: Shared across all processes
 
 Cache build with lock:

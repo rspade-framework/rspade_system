@@ -38,6 +38,8 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   `verify_credentials()` throws for a flagged identity (`password_reset_required`, cleared by
   `Login_User_Model_Abstract` / `Portal_User_Model_Abstract` booted() on a password change)
 - `app/RSpade/Core/Auth/RsxAuth.php` - verify_credentials() / login() / logout() / has_enabled_membership()
+- `app/RSpade/Core/Auth/Password_Verifier.php` - the password comparison both front doors make, with an
+  equal-cost dummy verification for an unknown address (`Password_Verifier_Test`)
 - `app/RSpade/Core/Auth/Login_Throttle.php`, `Auth_Throttled_Exception.php` - the
   per-IP brute-force throttle (config `rsx.sessions.login_throttle`)
 - `app/RSpade/Core/Models/Login_User_Model.php`, `User_Model.php`, `Site_Model.php`

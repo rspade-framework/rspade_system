@@ -10,6 +10,7 @@ namespace App\RSpade\Core\TwoFactor;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\TwoFactor\Passkeys;
@@ -34,7 +35,10 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Abstract;
  *   AND they belong to the site the application declared for this request
  *   (Portal_Session::set_site_id). A credential row names a portal user by id, and ids are
  *   global, so the site check is what keeps a passkey minted on one tenant's portal from
- *   signing its owner in to another's. A refusal answers exactly like a wrong answer.
+ *   signing its owner in to another's. A refusal answers exactly like a wrong answer. An
+ *   emailed answer (an issued code, or its link) sets is_verified BEFORE that question is
+ *   asked (__mark_address_verified()), so the answer that proves the mailbox is also the one
+ *   that satisfies the portal's "verified" rule.
  *
  *   RECORDING. Into the portal's own login history, Portal_Login_History
  *   (_portal_login_history), under the same statuses staff write to theirs: a success and a
@@ -188,6 +192,28 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
     protected static function __sign_out(): void
     {
         Portal_Session::logout();
+    }
+
+    /**
+     * portal_users.is_verified - which can_login() requires, so a portal user whose address
+     * was never verified is admitted by the very emailed answer that verifies it.
+     */
+    protected static function __mark_address_verified(Rsx_Model_Abstract $identity): void
+    {
+        if ($identity->is_verified) {
+            return;
+        }
+
+        $identity->is_verified = true;
+        $identity->save();
+    }
+
+    /**
+     * <portal prefix>/_email_link/:token on the portal's own host.
+     */
+    protected static function __email_link_route(string $token): string
+    {
+        return rsx_absolute_url(Rsx_Portal::Route('Rsx_Email_Link_Controller::open', ['token' => $token]));
     }
 
     protected static function __event(string $name): string

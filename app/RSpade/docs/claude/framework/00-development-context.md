@@ -10,6 +10,10 @@ Working with **Brian**, creator and sole maintainer of RSpade. This is **framewo
 - **Framework** (`/system/app/RSpade/`): core systems, manifest, bundles, auth, developer tooling.
 - **Reference app** (`/rsx/`): working SaaS with auth, user management, multi-tenant, professional UI.
 
+### Template app sign-in posture (owner ruling, 2026-10-21)
+
+**As shipped, the template DISALLOWS self-signup and REQUIRES NO second factor, yet every feature is coded in and switched off by a hardcoded boolean in `rsx/resource/config/rsx.php`**: `rsx.auth.self_signup` (staff only; portal accounts come from invitations), `rsx.auth.require_two_factor` (staff TOTP, forced enrollment) and `rsx.portal.emailed_sign_in_codes` (portal 2FA by email). Self-signup always verifies the address by emailed code OR link, and its pages THROW when mail delivery is not live; accepting an invite marks the address verified. **The template's staff and portal controllers are the only web path to sign-in or signup** - every staff entrance finishes in `Login_Controller::complete_sign_in()`, every portal one in `Portal_Login_Controller::complete_sign_in()`. The other callers that sign anybody in are the framework acting for those controllers (the 2FA engine for their verify endpoints, the SSO ceremony under their `sso.*` hooks), `rsx:debug` dev-auth (development tooling) and impersonation / View as Client (not a sign-in); verified 2026-10-21 by grepping every `RsxAuth::login(`, `set_login_user_id(` and `set_portal_user_id(` caller. Keep it that way.
+
 ### CRITICAL DIRECTIVE: NO BACKWARDS COMPATIBILITY
 
 Zero external users. No releases. We control 100% of the codebase. Breaking changes are required for progress.

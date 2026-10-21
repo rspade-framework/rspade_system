@@ -23,7 +23,7 @@ SYNOPSIS
     Login_History::record_success((int) $login_user->id, $email);
 
     # The application's verification endpoint - the framework does not own it
-    $login_user = Rsx_Two_Factor::verify_challenge($params);   // {code} or {assertion}
+    $login_user = Rsx_Two_Factor::verify_challenge($params);   // {code}, {assertion} or {email_link}
     return ['redirect' => $destination];
 
     <%-- The challenge screen, pointed at that endpoint --%>
@@ -32,6 +32,7 @@ SYNOPSIS
     # An emailed code: the challenge accepts one, the application delivers it
     Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
     $code = Rsx_Two_Factor::issue_code();      // six digits - send them yourself
+    $link = Rsx_Two_Factor::issued_link(Rsx::Route('Login_Controller::verify'));  // in the same email
 
     <%-- Enrollment, anywhere a signed-in user can reach --%>
     <Totp_Enrollment />
@@ -577,11 +578,13 @@ THE FACADE
             the application's policy; the list is how that policy reaches the
             one place it is enforced (ISSUED CODES).
         challenge_pending(): ?array
-            {email, email_masked, accepts, has_totp, has_passkey,
+            {challenge_id, email, email_masked, accepts, has_totp, has_passkey,
             has_recovery_codes, has_issued_code, codes_issued}, or null. accepts
             is what the challenge takes AND the identity can give; the has_*
             flags are the same answer per kind - what the screen may ask for.
             codes_issued counts issue_code() calls (sends, not mints).
+            challenge_id is an opaque name for this one challenge (the screen
+            tells its own challenge from another tab's by it).
         issue_code(): string
             The pending identity's LIVE code, minting six random digits when
             it has none, for the APPLICATION to deliver. One code per
@@ -591,6 +594,15 @@ THE FACADE
             Two_Factor_Failed_Exception when nothing is pending,
             RuntimeException when the challenge does not accept
             ANSWER_ISSUED_CODE. See ISSUED CODES.
+        issued_link(string $return_url): string
+            The sign-in LINK that goes in the same message as the code: an
+            absolute URL to the framework route /_email_link/:token on the
+            realm's host, signed for that host. Call it AFTER issue_code() -
+            with no live code it throws RuntimeException (as it does when the
+            challenge does not accept ANSWER_ISSUED_CODE); $return_url is the
+            challenge page, with no fragment (InvalidArgumentException).
+            Opening it answers the challenge exactly as the code does, in the
+            browser that signed in only. See ISSUED CODES, THE EMAIL LINK.
         issued_code_expires_at(): ?string
             When the pending identity's live code expires (ISO), or null when
             it has none, nothing is pending, or the challenge does not accept
@@ -604,9 +616,13 @@ THE FACADE
             Refused (Two_Factor_Failed_Exception) when the login function's
             explicit $accepts leaves passkeys out.
         verify_challenge(array $input): identity
-            $input is {code: '123456'} or {assertion: {...}}. On success the
-            caller is SIGNED IN, last_login is stamped and the success is
-            recorded; the method returns the identity. Order:
+            $input is {code: '123456'}, {assertion: {...}} or
+            {email_link: '<token>'} (the email link, posted by
+            <Two_Factor_Challenge>). On success the caller is SIGNED IN,
+            last_login is stamped and the success is recorded; the method
+            returns the identity. An issued-code answer - the typed code or
+            its link - first sets the identity's is_verified (ISSUED CODES,
+            A PASSED EMAILED ANSWER VERIFIES THE ADDRESS). Order:
 
                 1. require_not_throttled()   - throws Auth_Throttled_Exception
                 2. the pending identity, or the window has closed
@@ -619,7 +635,10 @@ THE FACADE
                    credential,
                    and THEN the recovery codes - recovery LAST, so a string
                    that is a live TOTP code never burns a recovery code. An
-                   answer of a kind not accepted is a wrong answer
+                   email link answers as ANSWER_ISSUED_CODE when it is the one
+                   minted for THIS browser's challenge and the live code. An
+                   answer of a kind not accepted is a wrong answer, and so is
+                   a wrong or dead link
                 4. on failure: record the failure ONCE through the realm
                    (staff: Login_History STATUS_FAILED_2FA; portal: the
                    throttle directly), count it once against the challenge
@@ -730,10 +749,14 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
                                         when issues_recovery_codes is true
 
         #[Auth('public')]           - the half-authenticated population
-            challenge_state         -> challenge_pending(): {email,
-                                        email_masked, accepts, has_*,
-                                        codes_issued} or NULL, which is not
-                                        an error
+            challenge_state         -> challenge_pending(): {challenge_id,
+                                        email, email_masked, accepts, has_*,
+                                        codes_issued}; with nothing pending
+                                        {completed: true, challenge_id,
+                                        by_email_link} when THIS browser
+                                        completed its challenge within the
+                                        challenge's window; else NULL, which
+                                        is not an error
             challenge_abandon       -> null; forgets this session's pending
                                         challenge (Cancel)
             challenge_passkey_options
@@ -766,7 +789,7 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
     of its own, so a host styles it by name - never by a theme class or by its
     position:
 
-        Two_Factor_Challenge    __verify  __cancel  __send-button
+        Two_Factor_Challenge    __verify  __cancel  __continue  __send-button
                                 __switch-button  __passkey  __recovery-input
         Totp_Enrollment         __confirm  __acknowledge  __copy
         Passkey_Register        __register  __acknowledge  __copy  __label-input
@@ -812,13 +835,44 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
                 code" and sends the FIRST code itself when none has been
                 issued. Absent: no send link; the host issues the code.
                 $unstyled_controls (above).
-        Posts:  {code: '...'} from the typed answer, or {assertion: {...}}
-                from a passkey. To the send endpoint: {}.
+        Posts:  {code: '...'} from the typed answer, {assertion: {...}}
+                from a passkey, or {email_link: '<token>'} when the page was
+                opened from the email link. To the send endpoint: {}.
         Expects: {redirect: '/somewhere'}, followed with window.location.
                  A response with no redirect throws. The send endpoint may
                  answer anything, or reject with a user-safe message.
         Events: no_challenge - nothing is pending (expired window, direct
                 visit). The host page sends the visitor back to /login.
+                completed {how} - the screen swapped its controls for the
+                signed-in message (ANOTHER TAB OF THIS BROWSER, below; how is
+                'email_link', 'other_tab' or 'moved'). The host hides its own
+                copy about answering - a recovery-code hint beside the
+                widget. May fire again when 'moved' sharpens into the exact
+                wording; never fired for this screen's own passed answer,
+                which navigates away.
+
+        THE EMAIL LINK. The /_email_link/:token route sends the browser that
+        owns the challenge back to the challenge page with
+        #rsx_email_link=<token>. The screen takes the token out of the
+        address bar at once and, once the challenge has loaded, posts it as
+        {email_link} to the same endpoint - and sends no code for it. A
+        refused link leaves the ordinary code entry with the server's
+        message.
+
+        ANOTHER TAB OF THIS BROWSER. Every passed answer is announced on
+        BroadcastChannel('rsx_two_factor') {type: 'signed_in', realm,
+        challenge_id, redirect, by_email_link}; a screen for the same
+        challenge in another tab replaces its controls with "You have signed
+        in using the email link." (or "... in another tab.") and Continue,
+        which goes to that redirect. A tab that missed the message learns
+        it from the realtime sign-in frame - the screen claims the
+        session-refresh reload while mounted, so it is not reloaded out from
+        under the user - or from challenge_state() when it becomes visible
+        again (a CSRF refusal there means the same: the sign-in rotated the
+        browser's tokens). It then says "This sign-in continued in another
+        tab." and Continue reloads the page. So THE HOST'S CHALLENGE PAGE
+        MUST SEND A SIGNED-IN VISITOR ONWARD rather than to the login form.
+        The host wires none of this.
 
         THE TYPED ANSWER. A six-digit code - issued by the application or
         read off an authenticator; the server tries each accepted kind - is
@@ -933,7 +987,8 @@ IMPLEMENTING 2FA IN AN APPLICATION
         throttle.
 
         ANYTHING THE CHALLENGE HAS TO CARRY ACROSS RIDES THE SESSION.
-        <Two_Factor_Challenge> posts exactly {code} or {assertion}: there is
+        <Two_Factor_Challenge> posts exactly {code}, {assertion} or
+        {email_link}: there is
         no query string and no place to thread a form field. Park it with
         Session::put_value(..., Rsx_Two_Factor::challenge_expires_at()) AFTER
         begin_challenge() - the challenge signs the realm out first, and a
@@ -977,7 +1032,8 @@ IMPLEMENTING 2FA IN AN APPLICATION
                 return ['redirect' => static::__post_login_destination(...)];
             }
 
-        Hand $params straight through - it is already {code} or {assertion}.
+        Hand $params straight through - it is already {code}, {assertion} or
+        {email_link}.
         Both catches carry a user-safe message; nothing else is caught.
 
         NEVER SHOW HOW MANY ATTEMPTS REMAIN. "That code is not valid" and the
@@ -1056,7 +1112,13 @@ IMPLEMENTING 2FA IN AN APPLICATION
         The framework decides only whether an identity HAS a factor. It
         does not decide who must have one, it reads no "required" setting,
         and it ships no screen that holds a signed-in user until they
-        enroll. The reference application requires nobody to enroll.
+        enroll. The reference application ships the rule written out and
+        switched OFF (rsx.auth.require_two_factor in its own config):
+        Login_Controller::complete_sign_in() parks the step,
+        Login_Controller::outstanding_enrollment_redirect() is what its
+        Main::pre_dispatch() asks, and the step is forgotten on the next
+        page request once Rsx_Two_Factor::is_enabled() answers true
+        (system/app/RSpade/resource/reference_app/app/login/login_controller.php).
 
         An application that wants the rule writes it as its own sign-in
         step. A user who is past the password is signed in, and what they
@@ -1128,6 +1190,21 @@ ISSUED CODES
     anew. codes_issued in challenge_pending() counts sends, so the
     application can cap "Resend code". Storage, and what encryption trades
     against a keyed hash: rsx:man two_factor_codes, LIFETIME.
+
+    THE EMAIL LINK. issued_link($return_url), called after issue_code() in
+    the same send, answers a signed URL to /_email_link/:token, and the
+    email carries both. Opening it in the browser that signed in completes
+    the step; anywhere else it shows a notice asking for the code there, and
+    that visit counts nothing. The route only READS, so a mail scanner that
+    prefetches the link consumes nothing. The full contract: rsx:man
+    two_factor_codes, THE EMAIL LINK.
+
+    A PASSED EMAILED ANSWER VERIFIES THE ADDRESS. When an issued code or
+    its link answers a challenge, verify_challenge() sets is_verified on
+    the identity (login_users / portal_users) before the realm signs it in:
+    the answer proved the mailbox. So an emailed code doubles as address
+    verification, and a portal user with is_verified = 0 is admitted by
+    can_login() on the strength of the very answer that verified them.
 
 TRUSTED BROWSERS
     A browser on which an identity passed a second factor may be TRUSTED for a

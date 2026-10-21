@@ -1,0 +1,128 @@
+EMAILED CODES CARRY A SIGN-IN LINK; AN EMAILED ANSWER AND AN ACCEPTED INVITE VERIFY THE ADDRESS
+Date: 2026-10-21
+
+IF YOU DO NOTHING: your emailed sign-in-code emails keep working with the code alone and carry no link; an invite your application accepts still stores is_verified = 0 even though the invitation email proved the address; a user with is_verified = 0 who passes an emailed code is now marked verified by the framework, so an application that used is_verified = 0 as a hold state admits that user after the code; an object stored through RsxCache now throws; and a Main::init() that declares one site for every web request still pins every staff request to that site.
+
+SUMMARY
+    Category 3, with two Category 2 items. The framework's emailed six-digit
+    code gained a twin: a sign-in LINK, bound to the browser that started the
+    sign-in, sent in the same email. Either answer completes the step. The
+    reference application now uses it for portal sign-in codes and for the new
+    staff self-signup verification, marks an accepted invitation's address
+    verified, and finishes every sign-in through one function per realm. Port
+    what applies to your application; the framework half needs nothing from you.
+
+THE CHANGE - FRAMEWORK
+    - Rsx_Two_Factor::issued_link($return_url) / Rsx_Portal_Two_Factor::
+      issued_link($return_url) return an absolute, signed URL to the framework
+      route /_email_link/<token>. Call it AFTER issue_code(), in the same send
+      (it throws when no code is live). A resend returns the same link; a new
+      code gets a new one. $return_url is your verify page - the page that
+      renders <Two_Factor_Challenge>.
+    - Opening the link changes nothing (mail scanners prefetch links). In the
+      browser that started the sign-in it returns to your verify page, where
+      <Two_Factor_Challenge> submits the link to YOUR verify endpoint exactly as
+      it submits a typed code - verify_challenge() accepts it as an issued-code
+      answer, so the endpoint and its $accepts list need no change. In another
+      browser it shows a notice to use the 6-digit code instead, and the code
+      stays live.
+    - A code screen left open in another tab of the same browser replaces
+      itself with "You have signed in using the email link." and a Continue
+      button. The widget does this itself; it now also fires a 'completed'
+      event {how} a host may use to hide its own copy about answering.
+    - A correct emailed answer (typed code or link) sets is_verified = 1 on the
+      login identity or portal user before signing in - the email proves the
+      address.
+    - RsxCache stores plain data only (scalars, null, arrays). set(),
+      set_persistent() and remember() throw on an object anywhere in the value,
+      and a read that would materialise an object throws. Cache ->toArray(),
+      (array) $row, or an enum's ->value instead.
+
+WHAT TO CHANGE
+    1. EVERY EMAIL THAT SENDS A CODE FROM issue_code() (staff or portal).
+       In the send endpoint, mint the link after the code and hand it to the
+       email:
+
+           // before
+           $code = Rsx_Portal_Two_Factor::issue_code();
+           (new Portal_Sign_In_Code_Email($portal_user, $code,
+               Rsx_Portal_Two_Factor::issued_code_expires_at(), $again))
+               ->to($portal_user->email)->send();
+
+           // after
+           $code = Rsx_Portal_Two_Factor::issue_code();
+           $link = Rsx_Portal_Two_Factor::issued_link(
+               Rsx_Portal::Route('Portal_Login_Controller::verify'));
+           (new Portal_Sign_In_Code_Email($portal_user, $code, $link,
+               Rsx_Portal_Two_Factor::issued_code_expires_at(), $again))
+               ->to($portal_user->email)->send();
+
+       Staff: Rsx_Two_Factor and Rsx::Route('<your login controller>::verify').
+       In the email class add a string $link constructor argument (after
+       $code) and 'link' => $this->link in data(); in its blade put a button
+       to {{ $link }} above the code, and keep the code - it is how a reader on
+       another device signs in. The link is absolute and signed already; never
+       rebuild it. Reference:
+           system/app/RSpade/resource/reference_app/emails/portal_sign_in_code_email.php
+           system/app/RSpade/resource/reference_app/emails/portal_sign_in_code_email.blade.php
+           system/app/RSpade/resource/reference_app/portal/auth/Portal_Login_Controller.php (send_code)
+
+    2. INVITE ACCEPTANCE (staff and portal) stores is_verified = 1 on the
+       identity it creates, or on the existing identity that accepts. The
+       invitation email proved the address, so no verification step follows.
+       The invitee cannot change the address: the field is read-only and the
+       server refuses any other value. Reference:
+           system/app/RSpade/resource/reference_app/app/login/accept_invite/accept_invite_controller.php
+           system/app/RSpade/resource/reference_app/portal/auth/Portal_Register_Controller.php
+       Existing accounts created by an older acceptance hold is_verified = 0;
+       mark them verified in a migration of your own if your application reads
+       the column.
+
+    3. IF YOUR APPLICATION READS is_verified = 0 AS A HOLD STATE (an account
+       an operator must approve, say), that state is no longer safe on
+       is_verified: an emailed code lifts it. Move the hold to a column of your
+       own (a status_id) and enforce it in your login function.
+
+    4. ONE COMPLETION FUNCTION PER REALM. The reference application finishes
+       every sign-in - password, second factor, passkey, SSO destination hook,
+       accept-invite, signup verification - in Login_Controller::
+       complete_sign_in() (portal: Portal_Login_Controller::complete_sign_in()),
+       which also parks any step the user still owes and picks the destination.
+       If your accept-invite or SSO handler signs in on its own, route it
+       through yours, so a policy added at sign-in reaches every door.
+
+    5. A SITE DECLARED IN Main::init() FOR EVERY WEB REQUEST outranks the site
+       a sign-in bound, so a member of any other site reads the declared one.
+       The reference application now declares site 1 only for console
+       processes (app()->runningInConsole()) and lets a web request serve the
+       site its sign-in carries. Keep your declaration if your application is
+       truly single-site; otherwise apply the same condition, or resolve the
+       site from the request host. Invitation lookups made for a visitor who
+       has not signed in then run outside the site scope
+       (reference: app/login/invite_helper.php).
+
+    6. SELF-SIGNUP (only if you enable it). The reference application ships it
+       off, behind the hardcoded boolean rsx.auth.self_signup (the old
+       signup_mode and verification_required keys are gone). On, a signup
+       creates the identity (is_verified = 0), a new site and an owner
+       membership, then begins an issued-code challenge so the signer verifies
+       by code or link; the page throws while mail delivery is not live; and a
+       password sign-in by an unverified address owes the same verification.
+       Reference: app/login/signup/signup_controller.php,
+       emails/signup_verification_email.php, app/login/login_controller.php.
+
+    7. RsxCache: find every set(), set_persistent() and remember() whose value
+       is an object, a collection or a DB row:
+           grep -rnE "RsxCache::(set|set_persistent|remember)\(" rsx/
+       and cache its array form.
+
+VERIFICATION
+    - Turn on your emailed codes, sign in, and open the email: it shows the
+      button and the code. Click the button in the same browser: you are signed
+      in, and a code screen left open in another tab shows the signed-in
+      message. Open the same kind of email's link in a different browser: it
+      says to use the code, and the code still works.
+    - Accept a fresh invitation: the new account's is_verified is 1.
+    - A member of a site other than the one Main::init() names signs in and
+      sees their own site's data.
+    - php artisan rsx:test passes, and no page logs a RsxCache object refusal.

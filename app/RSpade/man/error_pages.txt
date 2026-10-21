@@ -154,8 +154,12 @@ WHICH FAILURES RENDER A PAGE
     400     response_form_error() returned from a web GET route, or a thrown
             AjaxFormErrorException on a GET, carrying the reason as the message
     500     any uncaught exception reaching the top of a full-page request
+    409/410 an emailed sign-in link opened in another browser / expired or
+            used (/_email_link/:token, rsx:man two_factor_codes) - notices,
+            through Error_Screens::http_status() with a title of their own
     other   any other abort() status on a browsed request (405, 429, 503 ...),
             through Error_Screens::http_status(), carrying the raiser's message
+            (and, optionally, a heading in place of the status's own)
 
     A POST is not on this table for 400 and 404: a POST is a form submission, and
     the user is standing in front of the form that failed, so the reason is

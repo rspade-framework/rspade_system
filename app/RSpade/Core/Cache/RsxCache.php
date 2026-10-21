@@ -82,6 +82,15 @@ require_once __DIR__ . '/../../helpers.php';
  *   produced is simply never read again and is LRU-evicted. So a persistent key MUST carry
  *   its inputs: a fixed key with changing inputs is a stale answer until the next clear().
  *
+ * PLAIN DATA ONLY. A cached value is a scalar, null, or an array of those - never an object
+ * (an Eloquent model or collection, a stdClass row, an enum). set() / set_persistent() /
+ * remember() THROW for a value carrying an object anywhere inside it, and every read
+ * unserializes with allowed_classes => false and THROWS when the payload names a class. The
+ * read side is the security boundary: anyone who can write to redis must never be able to
+ * make this process instantiate a class of their choosing (a PHP object-injection gadget
+ * chain). The write side keeps the rule honest - an object would otherwise be written fine
+ * and fail only on the way back out. Cache ->toArray() / (array) $row instead.
+ *
  * THE _RVC_ KEY CONVENTION is INTERNAL ONLY - it is a cache-key convention, not a second API.
  * A key beginning with _RVC_ is stored in database 2 under the ordinary state-key and
  * database-scope prefix, so a code update or a migration still misses it cleanly and it is
@@ -368,7 +377,81 @@ class RsxCache
             );
         }
 
-        return unserialize($value);
+        // allowed_classes => false: an object token in the payload becomes an inert
+        // __PHP_Incomplete_Class instead of instantiating anything (no __wakeup, no
+        // __destruct, no gadget chain). Nothing this class writes contains one (see the
+        // header, PLAIN DATA ONLY), so finding one is refused rather than handed back.
+        $decoded = unserialize($value, ['allowed_classes' => false]);
+
+        // Fast path: every object token starts with O:, C: or E:, so a payload carrying none of
+        // them cannot hold an object and needs no walk.
+        if (strpos($value, 'O:') !== false || strpos($value, 'C:') !== false || strpos($value, 'E:') !== false) {
+            $class = self::_first_object_class($decoded);
+
+            if ($class !== null) {
+                throw new RuntimeException(
+                    "RsxCache: the cache payload for key '{$key}' contains an object of class "
+                    . "'{$class}'. RsxCache stores plain data only (scalars, null, arrays), so this "
+                    . 'value was not written by RsxCache::set() and is refused unread.'
+                );
+            }
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * Serialize a value for storage, refusing anything that is not plain data.
+     *
+     * @param string $key The caller's key, for the error message only
+     * @param mixed $value
+     * @return string
+     */
+    private static function _encode(string $key, $value): string
+    {
+        $class = self::_first_object_class($value);
+
+        if ($class !== null) {
+            throw new RuntimeException(
+                "RsxCache: refusing to cache key '{$key}' - the value contains an object of class "
+                . "'{$class}'. RsxCache stores plain data only (scalars, null, arrays): cache "
+                . '->toArray() of a model or collection, (array) of a query row, ->value of an enum.'
+            );
+        }
+
+        return serialize($value);
+    }
+
+    /**
+     * The class name of the first object found anywhere in a value, or null for plain data.
+     *
+     * An __PHP_Incomplete_Class (what allowed_classes => false makes of an object token)
+     * answers the class name the payload claimed.
+     *
+     * @param mixed $value
+     * @return string|null
+     */
+    private static function _first_object_class($value): ?string
+    {
+        if (is_object($value)) {
+            if ($value instanceof \__PHP_Incomplete_Class) {
+                return (string) (((array) $value)['__PHP_Incomplete_Class_Name'] ?? '__PHP_Incomplete_Class');
+            }
+
+            return get_class($value);
+        }
+
+        if (is_array($value)) {
+            foreach ($value as $item) {
+                $class = self::_first_object_class($item);
+
+                if ($class !== null) {
+                    return $class;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -391,12 +474,15 @@ class RsxCache
      * Set a value in cache
      *
      * @param string $key Cache key
-     * @param mixed $value Value to cache
+     * @param mixed $value Plain data only - scalars, null, arrays; an object anywhere inside throws
      * @param int $expiration Expiration time in seconds (0 = never expire)
      * @return bool Success
      */
     public static function set(string $key, $value, int $expiration = self::NO_EXPIRATION): bool
     {
+        // Refused before anything else, so an object is as loud in maintenance mode as out of it.
+        $payload = self::_encode($key, $value);
+
         $redis = self::_connection_for($key);
 
         if (self::_redis_bypass()) {
@@ -410,7 +496,6 @@ class RsxCache
         }
 
         $full_key = self::_make_key_persistent(self::_transform_key_build($key));
-        $payload = serialize($value);
 
         if ($expiration > 0) {
             return $redis->setex($full_key, $expiration, $payload);
@@ -426,12 +511,14 @@ class RsxCache
      * DATABASE 0 ONLY - the persistent namespace is not _RVC_-routed.
      *
      * @param string $key Cache key
-     * @param mixed $value Value to cache
+     * @param mixed $value Plain data only - scalars, null, arrays; an object anywhere inside throws
      * @param int $expiration Expiration time in seconds (0 = never expire)
      * @return bool Success
      */
     public static function set_persistent(string $key, $value, int $expiration = self::NO_EXPIRATION): bool
     {
+        $payload = self::_encode($key, $value);
+
         self::_init();
 
         if (self::_redis_bypass()) {
@@ -446,13 +533,11 @@ class RsxCache
 
         $full_key = self::_make_key_persistent($key);
 
-        $value = serialize($value);
-
         if ($expiration > 0) {
-            return self::$_redis->setex($full_key, $expiration, $value);
+            return self::$_redis->setex($full_key, $expiration, $payload);
         }
 
-        return self::$_redis->set($full_key, $value);
+        return self::$_redis->set($full_key, $payload);
     }
 
     /**

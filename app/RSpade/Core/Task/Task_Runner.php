@@ -49,9 +49,23 @@ class Task_Runner
      * the current site, the sign-in it came from (Session::get_user_session_id() - a browser's
      * staff or portal sign-in, or an API key's) and Session::get_audit_session_id() - so an
      * application's view gate can show users the runs they started, and a task declared
-     * #[Run_As_Dispatcher] runs bound to that sign-in (Task_Dispatcher_Context). Such a task
-     * started where there is no sign-in (nobody signed in, a command, a plain task) is refused
-     * here: it would otherwise run as nobody.
+     * #[Run_As_Dispatcher] runs bound to that sign-in (Task_Dispatcher_Context).
+     *
+     * Such a task is refused here unless somebody is acting - it would otherwise run as
+     * nobody - and what counts depends on WHERE it will execute:
+     *
+     *   - DISPATCHED (or scheduled): a worker is another process and rebuilds the actor from
+     *     the row's user session alone, so it needs a sign-in (a signed-in request, an API
+     *     key, or a run already bound to one). An identity merely declared on a virtual
+     *     session is not enough: it cannot cross into the worker.
+     *   - INLINE (ORIGIN_INLINE - Task::internal(), rsx:task:run, the test harness): the run
+     *     executes in its caller's own context, so the caller's actor is the one it runs as -
+     *     a sign-in, OR an identity declared on the virtual session (Session::impersonate(),
+     *     rsx:task:run --user/--site, a test's __acting_as_user(), a portal user declared
+     *     through Portal_Session in the portal realm). dispatched_by records that actor;
+     *     user_session_id and audit_session_id are the caller's, null in a command or test.
+     *     Should such a row ever reach a worker (an inline caller that died while the task
+     *     system was off), Task_Dispatcher_Context::begin() refuses it for want of a sign-in.
      *
      * The run's claim tier is stamped too (priority): a scheduled-origin run is
      * PRIORITY_SCHEDULED, a #[Run_As_Dispatcher] run - somebody's request, waiting -
@@ -70,10 +84,7 @@ class Task_Runner
         $as_dispatcher = Task_Dispatcher_Context::is_declared($class, $method);
 
         if ($as_dispatcher && $user_session_id === null) {
-            throw new \RuntimeException(
-                class_basename($class) . "::{$method} runs as the user who dispatched it (#[Run_As_Dispatcher]) and can only be "
-                . 'started from a signed-in request: dispatch it with Task::dispatch() from an Ajax endpoint. There is no sign-in here.'
-            );
+            static::__refuse_unbound_dispatcher_run($class, $method, $origin_id === Task_Run_Model::ORIGIN_INLINE, $actor !== null);
         }
 
         $priority = match (true) {
@@ -101,6 +112,37 @@ class Task_Runner
         ];
 
         return (int) DB::table('_tasks')->insertGetId(array_merge($row, $fields));
+    }
+
+    /**
+     * A #[Run_As_Dispatcher] run with no sign-in behind it: allowed only INLINE with an actor
+     * (see insert_row()); refused otherwise, naming the way in.
+     *
+     * @throws \RuntimeException
+     */
+    private static function __refuse_unbound_dispatcher_run(string $class, string $method, bool $inline, bool $has_actor): void
+    {
+        if ($inline && $has_actor) {
+            return;
+        }
+
+        $task = class_basename($class) . "::{$method}";
+
+        if ($inline) {
+            throw new \RuntimeException(
+                "{$task} runs as the user who dispatched it (#[Run_As_Dispatcher]), and nobody is acting here. "
+                . 'Run it from a signed-in request, or say who it acts as: from the command line, '
+                . 'rsx:task:run ' . class_basename($class) . " {$method} --user=<id|email> --site=<id>; "
+                . 'in code or a test, declare the identity first (Session::impersonate(), __acting_as_user()).'
+            );
+        }
+
+        throw new \RuntimeException(
+            "{$task} runs as the user who dispatched it (#[Run_As_Dispatcher]), and a dispatched run can only be started "
+            . 'from a signed-in request: a worker rebuilds the user from the sign-in, and there is no sign-in here. '
+            . 'Dispatch it with Task::dispatch() from an Ajax endpoint, or run it inline as a stated user '
+            . '(Task::internal() after declaring the identity; from the command line, rsx:task:run --user=<id|email> --site=<id>).'
+        );
     }
 
     /**

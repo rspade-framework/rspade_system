@@ -60,9 +60,9 @@ get_session_id() AND has_session()
         The id of this browser's session, CREATING it if the browser has none
         yet. Call it only when you want a session to exist - for a guest it
         mints a row and sets a cookie. It answers NULL where there is no
-        browser: in a command, in a task, and in a test. In a task declared
-        #[Run_As_Dispatcher] it answers the id of the browser whose request
-        dispatched the task. On an external API request it answers the API
+        browser: in a command, in a task, and in a test. In a dispatched run of
+        a task declared #[Run_As_Dispatcher] it answers the id of the browser
+        whose request dispatched the task. On an external API request it answers the API
         key's own session.
 
     Session::has_session(): bool
@@ -677,9 +677,10 @@ AUDIT SESSIONS
         (session_id), the user session and the session type.
 
         NULL in a command, a task and the rsx:debug harness - a context with no
-        person in it has nothing to attribute - EXCEPT a #[Run_As_Dispatcher]
-        task, whose runner declares the dispatching request's audit session, so
-        the run's writes count under the requester's own context.
+        person in it has nothing to attribute - EXCEPT a dispatched
+        #[Run_As_Dispatcher] run, whose runner declares the dispatching
+        request's audit session, so the run's writes count under the
+        requester's own context.
 
         One resolution per context per process; last_seen_at advances at most
         once a minute. A failure to record is loud. Two requests minting the
@@ -751,7 +752,9 @@ TASKS RUN AS THEIR DISPATCHER
        session (_tasks.user_session_id = get_user_session_id() - a staff or
        portal sign-in, or an API key's) and audit session, and the claim tier
        PRIORITY_RUN_AS_DISPATCHER. Dispatched where there is no sign-in - a
-       guest, a command, a plain task - it is refused with an exception.
+       guest, a command, a plain task - it is refused with an exception, even
+       when an identity is declared: the worker rebuilds the person from the
+       sign-in alone.
 
     2. CLAIM. Workers claim dispatcher runs first, then other on-demand runs,
        then scheduled ones, oldest first within a tier, and tick no schedule
@@ -791,11 +794,14 @@ TASKS RUN AS THEIR DISPATCHER
     5. RESET. However the run ended, Session::_end_virtual() blanks the process
        (VIRTUAL SESSIONS).
 
-    A #[Run_As_Dispatcher] task cannot be started by hand: rsx:task:run (and a
-    #[Command] alias, which the build already refuses - TASK-RUN-AS-01) exits 1
-    with a message saying it must be dispatched from a request; #[Schedule] on
-    it is a build FATAL too. Inline in a request, Task::internal() runs it in
-    the request's own context. ANY TASK THAT IS THE ASYNCHRONOUS STAND-IN FOR A
+    INLINE (Task::internal(), rsx:task:run, a test) it runs in the CALLER's
+    context and needs somebody acting there, not a sign-in: a request runs it
+    as the request; a command or test runs it as the identity it declared
+    (rsx:task:run --user=<id|email> --site=<id>, Session::impersonate(),
+    __acting_as_user()) - not frozen, with no browser, sign-in or audit
+    session; with nobody acting it is refused. A #[Command] alias takes no
+    --user, so #[Command] beside it is a build FATAL (TASK-RUN-AS-01), and so
+    is #[Schedule]. ANY TASK THAT IS THE ASYNCHRONOUS STAND-IN FOR A
     USER'S AJAX ENDPOINT MUST CARRY IT: without it the run acts as nobody, its
     writes are attributed to nobody and its site scope is empty. rsx:man tasks,
     RUNNING AS THE DISPATCHER.
@@ -1219,8 +1225,9 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     The external API tier is enforced separately and earlier - Rsx_Api_Bearer
     refuses a key whose membership is not active (User_Model::is_active(), so a
     disabled site's keys stop working too) before it installs an identity - and a
-    command or a task has no browser to enforce against (a #[Run_As_Dispatcher]
-    task is refused at run time instead - TASKS RUN AS THEIR DISPATCHER).
+    command or a task has no browser to enforce against (a dispatched
+    #[Run_As_Dispatcher] run is refused at run time instead - TASKS RUN AS
+    THEIR DISPATCHER).
 
     STAFF ONLY. The portal realm does not read either switch: a portal's site is
     the application's own declaration (Portal_Session::set_site_id(), rsx:man

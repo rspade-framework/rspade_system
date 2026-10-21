@@ -9,13 +9,14 @@ use App\RSpade\Core\Manifest\Manifest;
  * TASK-RUN-AS-01 - #[Run_As_Dispatcher] sits only where a signed-in person starts the run.
  *
  * A task declared #[Run_As_Dispatcher] runs as the person who dispatched it, so a run with
- * nobody behind it is refused at dispatch (Task_Runner::insert_row()). Three declarations can
+ * nobody behind it is refused when it is started (Task_Runner::insert_row()). Three declarations can
  * only ever produce such a run, and this rule names them before they reach a scheduler tick
  * or a terminal:
  *
  *   - #[Run_As_Dispatcher] on a method that is not a #[Task] - the attribute does nothing;
  *   - beside #[Schedule] - a scheduler tick has no dispatcher, so every tick is refused;
- *   - beside #[Command] - a command runs from a terminal, with nobody signed in.
+ *   - beside #[Command] - a command runs from a terminal, with nobody signed in (an alias takes
+ *     no --user; rsx:task:run --user is the way to run such a task by hand).
  *
  * A manifest-build FATAL (maintainer-approved): each of the three is unambiguously broken.
  * Cross-file: runs once per pass over the whole manifest.

@@ -133,7 +133,7 @@ class Schema_Contract
                 'columns' => [
                     'id' => ['where' => 'Session, RsxAuth, Rsx_Two_Factor, Rsx_Sso; FK target of _sso_identities and _two_factor_credentials'],
                     'email' => ['where' => 'Login_User_Model::find_by_email(), RsxAuth::verify_credentials() - sign-in resolves on it'],
-                    'password' => ['where' => 'RsxAuth::verify_credentials() Hash::check'],
+                    'password' => ['where' => 'RsxAuth::verify_credentials() Password_Verifier::verify()'],
                     'is_activated' => ['where' => 'Login_User_Model::is_active()'],
                     'is_verified' => ['where' => 'Login_User_Model::is_active()'],
                     'status_id' => ['where' => 'Login_User_Model::is_active(), Rsx_Initial_User::create()'],
@@ -206,7 +206,7 @@ class Schema_Contract
                     'id' => ['where' => 'Portal_Session; FK target of _user_sessions.portal_user_id'],
                     'site_id' => ['where' => 'Portal_Session::get_site_id() scoping'],
                     'email' => ['where' => 'Portal_User_Model::find_by_email() - stored lower-cased and trimmed'],
-                    'password' => ['where' => 'Portal_Auth::verify_credentials() Hash::check'],
+                    'password' => ['where' => 'Portal_Auth::verify_credentials() Password_Verifier::verify()'],
                     'password_reset_required' => [
                         'where' => 'Portal_Auth::verify_credentials() refusal, Portal_User_Model booted() clears it on a password change',
                         'migration' => '2026_10_20_141047_add_password_reset_required_to_identities',
