@@ -549,7 +549,9 @@ return [
     | values: changing one there means php artisan rsx:build --force.
     |
     | 'custom_domains' (PORTAL_CUSTOM_DOMAINS) - whether sites.portal_domain is
-    | honoured. Valid values: off, override, only. Anything else throws at boot.
+    | honoured. MULTI TENANCY ONLY: in single tenancy the portal's domain is
+    | PORTAL_URL, and override / only fail the manifest build. Valid values:
+    | off, override, only. Anything else throws at boot.
     |
     |   off       sites.portal_domain is ignored
     |   override  a site with a portal_domain is served there; its template

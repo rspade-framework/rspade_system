@@ -438,13 +438,39 @@ class Rsx_Portal_Url
      */
     public static function check_configured(): ?string
     {
-        return static::check(
-            (string) config('rsx.portal.url'),
-            (string) config('app.url'),
-            Rsx_App_Url::http_allowed(),
-            Rsx_Tenancy::mode(),
-            static::is_enabled()
-        );
+        return static::check_custom_domains(static::custom_domains(), Rsx_Tenancy::mode(), static::is_enabled())
+            ?? static::check(
+                (string) config('rsx.portal.url'),
+                (string) config('app.url'),
+                Rsx_App_Url::http_allowed(),
+                Rsx_Tenancy::mode(),
+                static::is_enabled()
+            );
+    }
+
+    /**
+     * PORTAL_CUSTOM_DOMAINS against the tenancy, as a refusal message or null. Pure.
+     *
+     * Per-site portal domains (sites.portal_domain) exist for MULTI tenancy only. A
+     * single-tenant install has one portal, and its address is PORTAL_URL - a configured
+     * value - so 'override' and 'only' are refused there rather than quietly giving the one
+     * portal a second place its address could be set.
+     *
+     * @param string $custom_domains off | override | only
+     * @param string $tenancy Rsx_Tenancy::SINGLE or ::MULTI
+     * @param bool $enabled PORTAL_ENABLED
+     * @return string|null
+     */
+    public static function check_custom_domains(string $custom_domains, string $tenancy, bool $enabled = true): ?string
+    {
+        if (!$enabled || $tenancy === Rsx_Tenancy::MULTI || $custom_domains === self::CUSTOM_DOMAINS_OFF) {
+            return null;
+        }
+
+        return 'PORTAL_CUSTOM_DOMAINS is "' . $custom_domains . '", but rsx.tenancy is single. In single'
+            . ' tenancy the portal\'s address - its domain included - is the configured PORTAL_URL value'
+            . ' (.env), and the portal_domain on a site record is ignored. Set PORTAL_CUSTOM_DOMAINS=off'
+            . ' and put the portal\'s domain in PORTAL_URL (https://portal.example.com). See rsx:man portal.';
     }
 
     /**

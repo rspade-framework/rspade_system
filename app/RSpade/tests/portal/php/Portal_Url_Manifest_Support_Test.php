@@ -153,6 +153,29 @@ class Portal_Url_Manifest_Support_Test extends Rsx_Test_Abstract
         static::__assert_contains('rsx.tenancy is single', (string) static::__rebuild_problem([]));
     }
 
+    /** Per-site portal domains are multi-tenant only: override and only are fatal in single tenancy. */
+    public static function test_custom_domains_are_fatal_in_single_tenancy()
+    {
+        try {
+            foreach (['override', 'only'] as $mode) {
+                config(['rsx.tenancy' => 'single', 'rsx.portal.enabled' => true, 'rsx.portal.url' => '', 'rsx.portal.custom_domains' => $mode]);
+
+                $problem = (string) static::__rebuild_problem([]);
+                static::__assert_contains('Invalid client portal address', $problem, $mode);
+                static::__assert_contains('PORTAL_CUSTOM_DOMAINS is "' . $mode . '", but rsx.tenancy is single', $problem, $mode);
+                static::__assert_contains('portal_domain on a site record is ignored', $problem, $mode);
+            }
+
+            config(['rsx.portal.custom_domains' => 'off']);
+            static::__assert_null(static::__rebuild_problem([]), 'off is fine in single tenancy');
+
+            config(['rsx.tenancy' => 'multi', 'rsx.portal.custom_domains' => 'override']);
+            static::__assert_null(static::__rebuild_problem([]), 'override is fine in multi tenancy');
+        } finally {
+            config(['rsx.portal.custom_domains' => 'off']);
+        }
+    }
+
     public static function test_a_disabled_portal_is_not_judged()
     {
         config(['rsx.tenancy' => 'multi', 'rsx.portal.enabled' => false, 'rsx.portal.url' => '/dashboard']);

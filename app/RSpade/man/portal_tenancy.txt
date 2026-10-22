@@ -84,7 +84,9 @@ THE SETTINGS
         (/_portal/:slug), or a host template (https://:slug.myapp.com).
         :slug is sites.slug, :site_id is sites.id.
 
-    PORTAL_CUSTOM_DOMAINS (.env, default off)
+    PORTAL_CUSTOM_DOMAINS (.env, default off; multi tenancy only - in single
+    tenancy the portal's domain is PORTAL_URL, sites.portal_domain is ignored,
+    and override or only fails the manifest build)
         off       sites.portal_domain is ignored.
         override  a site with a portal_domain is served there and only there;
                   its template address answers a 301 to the same path on the

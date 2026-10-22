@@ -93,7 +93,10 @@ PORTAL URL
       PORTAL_ENABLED         the feature, install-wide (default true)
       PORTAL_URL             where the portal lives - a TEMPLATE (below)
       PORTAL_CUSTOM_DOMAINS  off | override | only - whether a site's own
-                             portal domain (sites.portal_domain) is honoured
+                             portal domain (sites.portal_domain) is honoured.
+                             Multi tenancy only: in single tenancy the portal's
+                             domain is PORTAL_URL, sites.portal_domain is
+                             ignored, and override / only fail the build
 
     PORTAL_URL is written like APP_URL - a scheme, a host, an optional port, an
     optional path, the $HOSTNAME token (resolved by the same boot seam; skill
