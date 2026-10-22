@@ -1,0 +1,55 @@
+<%--
+_Sys_Site_Portal_Users_DataGrid - one site's client-portal users on its detail screen.
+
+$base_params=({site: <id>}) - the site (required); sent with every request
+
+Server half: the Portal Users screen's own source (_Sys_Portal_Users_Controller.datagrid_fetch,
+_Sys_Portal_Users_DataGrid.php), whose 'site' filter the base params pin to this site - so the
+Site column and the site filter are dropped here. Grid key "site_portal_users". Every row links
+to the portal user's detail screen (_Sys_Portal_User_View_Action).
+--%>
+<Define:_Sys_Site_Portal_Users_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="site_portal_users"
+    $data_source=_Sys_Portal_Users_Controller.datagrid_fetch
+    $title="Portal Users"
+    $sort="id"
+    $order="desc"
+    $per_page=25
+    $search="Search email..."
+    $filters=([
+        {key: 'status', label: 'All statuses', options: _Sys_Portal_Users_Controller.status_options},
+    ])>
+    <Slot:header>
+        <tr>
+            <th data-sortby="id">ID</th>
+            <th data-sortby="email">Email</th>
+            <th data-sortby="status_id">Status</th>
+            <th>Verified</th>
+            <th data-sortby="last_login">Last sign-in</th>
+            <th data-sortby="created_at">Created</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr data-href="<%= Rsx.Route('_Sys_Portal_User_View_Action', row.id) %>">
+            <td class="_Sys_Site_Portal_Users_DataGrid__mono"><%= row.id %></td>
+            <td>
+                <%= row.email %>
+                <% if (row.printed_name && row.printed_name !== row.email) { %>
+                    <span class="_Sys_Site_Portal_Users_DataGrid__dim"><%= row.printed_name %></span>
+                <% } %>
+            </td>
+            <td>
+                <_Sys_Status_Badge $status=row.status $label=row.status_label />
+                <% if (row.password_reset_required) { %>
+                    <_Sys_Status_Badge $status="warn" $label="Reset required" />
+                <% } %>
+            </td>
+            <td><%= row.is_verified ? 'Yes' : 'No' %></td>
+            <td><%= row.last_login ? Rsx_Time.format_datetime(row.last_login) : 'Never' %></td>
+            <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-person-vcard" $title="No portal users" $body="Nobody can sign in to the client portal on this site." />
+    </Slot:empty>
+</Define:_Sys_Site_Portal_Users_DataGrid>

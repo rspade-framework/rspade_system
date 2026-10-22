@@ -625,10 +625,11 @@ How site_id is Determined:
     - All queries for site models filtered by this site_id
     - Changing session site_id changes which data is accessible
 
-    PORTAL request - the site the application DECLARED for the portal
-    (Portal_Session::set_site_id, normally in Portal_Main::init). It is a different
-    site from the staff one - the portal sign-in's, on the same one browser - and an
-    undeclared portal site THROWS rather than scoping to 0. See: rsx:man portal.
+    PORTAL request - the site the request's URL serves, which the framework
+    declares before any application code (Portal_Session::get_site_id()). It is a
+    different site from the staff one - the portal sign-in's, on the same one
+    browser - and a portal request with no site THROWS rather than scoping to 0.
+    See: rsx:man portal.
 
 See: php artisan rsx:man auth (for complete authentication/site selection flow)
 

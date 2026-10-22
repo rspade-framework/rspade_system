@@ -48,8 +48,9 @@ DESCRIPTION
     administrators do with tenants, billing or customers. Those are application
     concepts and they stay in the application.
 
-    It has nine screens, in sidebar order: Dashboard, Debug Flags, Tasks,
-    Task Workers, Email & SMS, Logs, Sites, Users and Portal Users, each
+    It has ten screens, in sidebar order: Dashboard, System Info, Debug
+    Flags, Tasks, Task Workers, Email & SMS, Logs, Sites, Users and Portal
+    Users, each
     described below. A screen over
     site-scoped data reads EVERY site, never the developer's own tenant. What
     an application has to coexist with is the panel's SHAPE - the tree, the
@@ -69,6 +70,30 @@ DESCRIPTION
     the one row that cannot be observed from there - the CLI extension tier -
     reads INFO and points at `php artisan rsx:health`. The two halves load
     independently, so the active probes never hold up the tiles.
+
+    System Info (`/_sys/system-info`) describes the box as the PHP process
+    serving the request sees it - the web tier, so its PHP version,
+    extensions and OPcache are php-fpm's, not the CLI's. Read-only, in
+    cards: Server (operating system name, hostname, kernel, uptime, load
+    average, install path), CPU & Memory (cores, processor, total, used,
+    buffers/cache, free and available memory, swap used and free, from
+    /proc/meminfo - the host's figures inside a container), Disk (free and
+    used space on the project root, and on `/` and the storage root only
+    when either is on a different device from the project root, each with
+    its device; then the space the file attachment blob store holds - the
+    sum of every blob's recorded size from the database, not a measurement
+    of the disk), PHP (version, SAPI, php.ini, the common limits), OPcache
+    (enabled, hit rate, memory, cached scripts, validate_timestamps and
+    revalidate_freq, JIT; statistics only when the cache runs in that
+    process and opcache.restrict_api allows them) and Extensions. Inside an
+    RSpade container (/.rspade_container) it adds one card per php-fpm pool
+    (www and ajax: pm, max_children, start/min/max spare servers,
+    max_requests, idle timeout, user, listen, read from the pool files of
+    the running PHP version) and a table of the services supervisor runs
+    with their state. A value that cannot be read on this box is shown as a
+    dash rather than failing the screen. "View full phpinfo" opens PHP's own
+    phpinfo() page (`/_sys/system-info/phpinfo`, gated like the panel) in a
+    new tab.
 
     Debug Flags (`/_sys/debug-flags`) sets console_debug for THIS BROWSER.
     The override - enabled, the filter (all, whitelist, blacklist or specific)
@@ -258,12 +283,18 @@ DESCRIPTION
     timezone, member count (live memberships, enabled or not) and created
     date, filtered by enabled or disabled, searched by name or slug. A row
     opens the site (`/_sys/sites/<id>`; the Default site, a deleted site and
-    a missing id are not found): its facts, who created and last updated it,
+    a missing id are not found): its facts - its client portal among them:
+    whether the site's portal is switched on (sites.is_portal_enabled), the
+    address it is served on now (Rsx_Portal_Url::for_site(), "No client
+    portal" when the site has none) and its custom portal domain
+    (sites.portal_domain), all read-only - who created and last updated it,
     and its members - email (linking to the member's identity on the Users
     screen), name, role, whether the membership is enabled, whether it is
     ACTIVE (User_Model::is_active(): the membership enabled and the site
     enabled), last sign-in - searchable and filtered by the membership's own
-    switch. Rename edits the name and the slug; both are
+    switch; then its client-portal users - id, email, status, verified, last
+    sign-in, created, each opening that portal user - searchable by email and
+    filtered by status. Rename edits the name and the slug; both are
     required and capped at their column's length, and the slug must be
     unused by any other site, deleted ones included. Changing a slug moves
     whatever application code looks the site up by it

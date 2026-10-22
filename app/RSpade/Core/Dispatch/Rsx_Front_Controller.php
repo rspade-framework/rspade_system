@@ -12,6 +12,7 @@ use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -41,14 +42,17 @@ use App\RSpade\Core\Revisions\Revision;
  *      the first is in flight is shouldnt_happen(). Nothing calls a dispatcher from inside
  *      another, so this is unreachable by construction and exists to make any future
  *      violation loud.
- *   2. Rsx_Request_Channel::classify() - ASSET, API, AJAX or PAGE, plus the realm. Decided
+ *   2. Rsx_Request_Channel::classify() - ASSET, API, AJAX or PAGE, plus the realm and, for
+ *      a portal request, the site its URL resolves to (Portal_Site_Resolver). Decided
  *      once, read by everything after it.
  *   3. The fixed preamble: the revision unit of work, Manifest::init(), the development
  *      hostname tripwire, and (AJAX and PAGE only) the first-run setup screen and a
  *      developer's per-browser console_debug override (Debugger::apply_session_override()).
- *   4. The channel's pipeline: AssetHandler (ASSET), Api_Dispatcher (API), Dispatcher
+ *   4. A portal address with no servable portal: the 301 to a site's custom domain
+ *      (PORTAL_CUSTOM_DOMAINS=override), or the portal's 404 (plain text for an Ajax call).
+ *   5. The channel's pipeline: AssetHandler (ASSET), Api_Dispatcher (API), Dispatcher
  *      (AJAX and PAGE, in the realm the request was classified in).
- *   5. Any Throwable becomes a response through the channel's error policy, inside the
+ *   6. Any Throwable becomes a response through the channel's error policy, inside the
  *      same try - never by dispatching again. HttpResponseException carries its response
  *      verbatim; ASSET answers plain text; every other channel is rendered by the
  *      exception handler chain (config('rsx.exception_handlers')), whose handlers choose
@@ -143,6 +147,31 @@ class Rsx_Front_Controller
 
         if ($channel === Rsx_Request_Channel::API) {
             return Api_Dispatcher::dispatch($url, $method, [], $request);
+        }
+
+        // A portal address the resolver settled without serving it: a template address of a
+        // site that lives at its custom domain moves there for good, and an address that
+        // names no servable portal is the portal's 404 page - both before any application
+        // code. An Ajax call to either (a page left open across the change; an XHR cannot
+        // follow a cross-origin redirect) is a plain-text 404: there is no site to build an
+        // envelope's side channels for, and the client rejects every call in it.
+        if (Rsx_Request_Channel::is_portal()) {
+            $redirect_to = Rsx_Request_Channel::portal_redirect_to();
+
+            if ($redirect_to !== null || Rsx_Request_Channel::portal_not_served()) {
+                if ($channel === Rsx_Request_Channel::AJAX) {
+                    return new Response("Not Found\n", 404, [
+                        'Content-Type' => 'text/plain; charset=UTF-8',
+                        'X-Content-Type-Options' => 'nosniff',
+                    ]);
+                }
+
+                if ($redirect_to !== null) {
+                    return new RedirectResponse($redirect_to, 301);
+                }
+
+                throw new NotFoundHttpException();
+            }
         }
 
         // First-run setup: with no credential records at all, a page or Ajax request is

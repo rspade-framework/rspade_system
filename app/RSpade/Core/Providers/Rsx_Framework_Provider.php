@@ -241,10 +241,11 @@ class Rsx_Framework_Provider extends ServiceProvider
         // runs after HandleExceptions has bootstrapped. See Rsx_App_Url.
         \App\RSpade\Core\Env\Rsx_App_Url::enforce_scheme_from_env();
 
-        // Fail loud on a PORTAL_URL the portal cannot be served at: equal to APP_URL, a
-        // scheme APP_URL's rule refuses, malformed, or a prefix claiming a framework path.
-        // Same phase and same reason as the APP_URL check above. See Rsx_Portal_Url.
-        \App\RSpade\Core\Portal\Rsx_Portal_Url::validate();
+        // Fail loud on a tenancy or portal switch outside its allowed set (rsx.tenancy,
+        // PORTAL_ENABLED, PORTAL_CUSTOM_DOMAINS): a few comparisons, same
+        // phase and same reason as the APP_URL check above. PORTAL_URL itself is judged at
+        // manifest build (Portal_Url_ManifestSupport), where the route table is known.
+        \App\RSpade\Core\Env\Rsx_Tenancy::enforce_settings();
 
         if (getcwd() != base_path()) {
             chdir(base_path());

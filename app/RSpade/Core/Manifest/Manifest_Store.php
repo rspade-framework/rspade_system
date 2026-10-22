@@ -356,7 +356,14 @@ class Manifest_Store
         // development boot that loads an index recorded under another mode rebuilds it
         // (index_mode_stale_reason()), so a key always describes the mode serving it.
         Manifest::$data['mode'] = Rsx::get_mode();
-        Manifest::$data['hash'] = self::_compute_hash(Manifest::$data['data'], Manifest::$data['mode']);
+
+        // Likewise the client portal settings (rsx.tenancy, PORTAL_ENABLED, PORTAL_URL,
+        // PORTAL_CUSTOM_DOMAINS). Three are .env, not source, yet the build judges them
+        // (Portal_Url_ManifestSupport) - so a development boot whose settings differ from the
+        // stamp rebuilds (index_portal_env_stale_reason()), and a sealed one refuses to boot
+        // (Manifest::init()).
+        Manifest::$data['portal_env'] = \App\RSpade\Core\Portal\Rsx_Portal_Url::fingerprint();
+        Manifest::$data['hash'] = self::_compute_hash(Manifest::$data['data'], Manifest::$data['mode'], Manifest::$data['portal_env']);
 
         // The hot payload: every derived section, the file index, and the hot files only.
         $hot = Manifest::$data;
@@ -582,6 +589,20 @@ class Manifest_Store
             return false;
         }
 
+        // The same holds for an index built under other client portal settings: the build is
+        // where they are judged, so a change re-runs the judgement - and keys the new build.
+        $portal_env_reason = self::index_portal_env_stale_reason(
+            Manifest::$data['portal_env'] ?? null,
+            \App\RSpade\Core\Portal\Rsx_Portal_Url::fingerprint()
+        );
+
+        if ($portal_env_reason !== null) {
+            console_debug('MANIFEST', '* ' . $portal_env_reason . ' *');
+            Manifest::$data = static::_empty_data();
+
+            return false;
+        }
+
         $stale_reason = self::stale_reason(
             Manifest::$data['data']['file_index'] ?? [],
             Manifest::$data['data']['files'] ?? [],
@@ -647,6 +668,26 @@ class Manifest_Store
 
         return 'Manifest index was built in ' . ($index_mode ?? 'an unrecorded') . ' mode and RSX_MODE is '
             . $current_mode . ', triggering a full manifest rebuild';
+    }
+
+    /**
+     * Was a loaded index built under the client portal settings now configured?
+     *
+     * Returns null when it was, or a one-line reason when the settings differ (or the index
+     * records none). Pure over its arguments, like index_mode_stale_reason().
+     *
+     * @param string|null $index_stamp   Manifest::$data['portal_env'] as loaded, null when absent
+     * @param string      $current_stamp Rsx_Portal_Url::fingerprint()
+     * @return string|null Null when the index was built under these settings, else why not
+     */
+    public static function index_portal_env_stale_reason(?string $index_stamp, string $current_stamp): ?string
+    {
+        if ($index_stamp === $current_stamp) {
+            return null;
+        }
+
+        return 'Manifest index was built under other client portal settings (rsx.tenancy, PORTAL_ENABLED,'
+            . ' PORTAL_URL, PORTAL_CUSTOM_DOMAINS), triggering a full manifest rebuild';
     }
 
     /**
@@ -1040,15 +1081,21 @@ class Manifest_Store
      * seal's key, so two different builds shared every one of those namespaces. Two checkouts
      * built in the SAME mode still produce the same key, which is the cluster contract.
      *
+     * THE PORTAL SETTINGS ARE PART OF IT TOO (Rsx_Portal_Url::fingerprint()): the build is
+     * what judged them, so a build under other settings is another build. The fingerprint
+     * reads PORTAL_URL with its $HOSTNAME token unresolved, so boxes sharing one .env keep
+     * sharing one key.
+     *
      * NO DEEP COPY. The predecessor rebuilt the entire manifest body node by node -
      * ksorting every associative node and running a path rewrite over every string - and
      * measured 29 ms plus a second copy of the index in memory, on every save.
      *
      * @param array $manifest_body The value of Manifest::$data['data']
      * @param string $mode The RSX mode the build is produced in (Rsx::MODE_*)
+     * @param string $portal_env The client portal settings fingerprint (Rsx_Portal_Url::fingerprint())
      * @return string 32-char truncated SHA-256
      */
-    public static function _compute_hash(array $manifest_body, string $mode): string
+    public static function _compute_hash(array $manifest_body, string $mode, string $portal_env): string
     {
         $file_lines = [];
 
@@ -1075,7 +1122,7 @@ class Manifest_Store
         self::_emit_hash_material($manifest_body, $derived);
 
         return substr(
-            hash('sha256', $mode . "\n" . hash('sha256', implode("\n", $file_lines)) . "\n" . hash('sha256', $derived)),
+            hash('sha256', $mode . "\n" . $portal_env . "\n" . hash('sha256', implode("\n", $file_lines)) . "\n" . hash('sha256', $derived)),
             0,
             32
         );

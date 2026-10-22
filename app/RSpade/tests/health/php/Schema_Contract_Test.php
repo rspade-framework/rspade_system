@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Health\Php;
 
 use App\RSpade\Core\Database\Schema_Contract;
 use App\RSpade\Core\Database\Schema_Contract_Health_Checks;
+use App\RSpade\Core\Env\Rsx_Tenancy;
 use App\RSpade\Core\Health\Health_Check_Runner;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -245,7 +246,7 @@ class Schema_Contract_Test extends Rsx_Test_Abstract
 
         $found = [
             'sites id 0' => true,
-            'sites id ' . (int) config('multi-tenant.default_site_id', 1) . ' (multi-tenant.default_site_id)' => true,
+            'sites id ' . Rsx_Tenancy::SINGLE_TENANT_SITE_ID => true,
         ];
 
         $result = Schema_Contract_Health_Checks::_rows_row($contract, $found);

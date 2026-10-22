@@ -260,8 +260,14 @@ class Spa {
         const parsed = Spa.parse_url(url);
         let path = parsed.path;
 
-        // Strip the portal prefix if in portal context
+        // On a portal page the SPA routes live under this page's portal base: a path outside
+        // it (a staff page on the same host, another tenant's portal) is no route of this
+        // SPA, however its remainder reads - the browser navigates to it.
         if (Rsx_Portal.is_portal()) {
+            if (!Rsx_Portal.is_under_prefix(path)) {
+                return null;
+            }
+
             path = Rsx_Portal.strip_prefix(path);
         }
 

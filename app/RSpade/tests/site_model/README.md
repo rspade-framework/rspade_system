@@ -22,10 +22,16 @@ now caught fatally at manifest build by the default parent-call chaining rule,
 manifest-time error until the call is added. (The rule's own detection tests live
 in the `code_quality` concern; this concern tests the runtime isolation behavior.)
 
+The concern also covers the `sites` table's own per-site client portal columns:
+`portal_domain` (a bare lowercase hostname or NULL, unique, normalised on every save by
+`Site_Model_Abstract::normalize_portal_domain()`) and `is_portal_enabled` (default on).
+
 ## Source under test
 
 - `app/RSpade/Core/Database/Models/Rsx_Site_Model_Abstract.php` - `booted()`
   installs the site protections and is the chain-mandatory extension point.
+- `app/RSpade/Core/Models/Site_Model_Abstract.php` - `normalize_portal_domain()`, the
+  `saving` normalisation, the `is_portal_enabled` cast.
 
 ## Man page
 
@@ -37,3 +43,4 @@ in the `code_quality` concern; this concern tests the runtime isolation behavior
 |----------|------|--------|
 | A subclass overriding `booted()` + chaining `parent::booted()` gets the `site` scope, and its own body still runs | php | implemented |
 | Cross-tenant `find()` of a foreign-site row returns null (visible unscoped) | php | implemented |
+| `sites.portal_domain` normalisation, refusal and uniqueness; `is_portal_enabled` default and cast | php | implemented |

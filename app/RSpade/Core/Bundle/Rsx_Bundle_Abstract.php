@@ -484,14 +484,11 @@ abstract class Rsx_Bundle_Abstract
             $rsxapp_data['impersonation'] = static::impersonation_payload();
         }
 
-        // How the portal is addressed (Rsx_Portal_Url), in EVERY bundle: Rsx_Portal.js
-        // builds portal route URLs and internal-endpoint URLs from it on a portal page,
-        // and a staff page needs it to link into the portal on another host.
-        $rsxapp_data['portal'] = array_merge([
-            'origin' => Rsx_Portal_Url::origin(),
-            'prefix' => Rsx_Portal_Url::prefix(),
-            'separate_host' => Rsx_Portal_Url::is_separate_host(),
-        ], $portal_permission_block);
+        // How the current site's portal is addressed (Rsx_Portal_Url::client_payload()), in
+        // EVERY bundle: Rsx_Portal.js builds portal route URLs and internal-endpoint URLs
+        // from it on a portal page, and a staff page needs it to link into its site's portal
+        // (base is null when that site has none, and Rsx_Portal.Route() answers false).
+        $rsxapp_data['portal'] = array_merge(Rsx_Portal_Url::client_payload(), $portal_permission_block);
 
         // Declarative auth gates for the ACTIVE realm (the same portal/staff split
         // the identity fork above made - active_realm() reads the same predicate).

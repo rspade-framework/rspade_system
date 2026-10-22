@@ -28,6 +28,7 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
      */
     private const SCREENS = [
         '/_sys'             => '_Sys_Dashboard_Action',
+        '/_sys/system-info' => '_Sys_System_Info_Action',
         '/_sys/debug-flags' => '_Sys_Debug_Flags_Action',
         '/_sys/tasks'       => '_Sys_Tasks_Action',
         '/_sys/tasks/:id'   => '_Sys_Task_View_Action',
@@ -145,7 +146,7 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * RP-ROUTE-01 - The panel's one server-rendered route: logout, gated on is_sysadmin.
+     * RP-ROUTE-01 - The panel's server-rendered sign-out route, gated on is_sysadmin.
      */
     public static function test_logout_route_is_indexed_and_gated()
     {
@@ -158,6 +159,25 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
         static::__assert_equals('standard', $row['type']);
         static::__assert_equals('App\\RSpade\\Sys\\App\\Sys\\_Sys_Controller', $row['class']);
         static::__assert_equals('logout', $row['method']);
+        static::__assert_equals(['GET'], $row['methods']);
+        static::__assert_true(in_array('is_sysadmin', Auth_Gates::surface_gates($row['surface']), true));
+    }
+
+    /**
+     * RP-ROUTE-02 - The System Info screen's full phpinfo() page: a plain GET route on
+     * the screen's controller, gated on is_sysadmin.
+     */
+    public static function test_phpinfo_route_is_indexed_and_gated()
+    {
+        $routes = static::__routes();
+
+        static::__assert_array_has_key('/_sys/system-info/phpinfo', $routes);
+
+        $row = $routes['/_sys/system-info/phpinfo'];
+
+        static::__assert_equals('standard', $row['type']);
+        static::__assert_equals('App\\RSpade\\Sys\\App\\Sys\\SystemInfo\\_Sys_System_Info_Controller', $row['class']);
+        static::__assert_equals('phpinfo', $row['method']);
         static::__assert_equals(['GET'], $row['methods']);
         static::__assert_true(in_array('is_sysadmin', Auth_Gates::surface_gates($row['surface']), true));
     }

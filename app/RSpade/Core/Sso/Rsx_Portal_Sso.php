@@ -9,6 +9,8 @@ namespace App\RSpade\Core\Sso;
 
 use RuntimeException;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
+use App\RSpade\Core\Env\Rsx_Tenancy;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -39,8 +41,8 @@ use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
  *            to register in each provider's console; callback_url() prints it.
  *   STORAGE  _portal_sso_identities, unique per (site_id, provider_key, provider_user_key):
  *            portal users are site-scoped, so one Google account may be a portal user of two
- *            sites. Every lookup is scoped to the site the application DECLARED for the
- *            request (Portal_Session::set_site_id), which is why the ceremony runs entirely
+ *            sites. Every lookup is scoped to the site the request's portal URL resolved
+ *            to (Portal_Session::get_site_id()), which is why the ceremony runs entirely
  *            inside portal dispatch.
  *   HOOKS    portal.sso.identity.unlinked, portal.sso.login.authorize,
  *            portal.sso.two_factor.verify_url, portal.sso.two_factor.accepts,
@@ -84,16 +86,25 @@ class Rsx_Portal_Sso extends Rsx_Sso_Abstract
     }
 
     /**
-     * The portal's SSO ceremony path ON THE PORTAL HOST: the portal prefix + /_sso.
+     * The portal's SSO ceremony path ON THE PORTAL HOST: the request's portal base + /_sso
+     * (Rsx_Request_Channel::portal_base() - per site in multi tenancy; the ceremony runs
+     * inside portal dispatch).
+     *
+     * ONE HOST PER CEREMONY: a ceremony finishes on the host whose cookie jar started it, so
+     * every portal host is a redirect URI of its own in each provider console. In multi
+     * tenancy with a host template or custom domains that is one URI per tenant host - the
+     * ceremony on the application host handing its result to the tenant's portal is not
+     * built yet, and rsx:health warns while rsx.sso.portal_enabled is on there
+     * (health_row()).
      */
     public static function base_path(): string
     {
-        return Rsx_Portal_Url::prefix() . Rsx_Sso::BASE_PATH;
+        return Rsx_Request_Channel::portal_base() . Rsx_Sso::BASE_PATH;
     }
 
     /**
-     * A portal-host path made absolute: on the portal's own origin when it has its own
-     * host, else on the application's (rsx_absolute_url()).
+     * A portal-host path made absolute: on the current site's portal origin when it has its
+     * own host, else on the application's (rsx_absolute_url()).
      */
     public static function absolute_url(string $path): string
     {
@@ -102,6 +113,43 @@ class Rsx_Portal_Sso extends Rsx_Sso_Abstract
         }
 
         return Rsx_Portal_Url::origin() . $path;
+    }
+
+    /**
+     * Portal SSO on a multi-tenant install whose portals live on hosts of their own.
+     *
+     * WARN while rsx.sso.portal_enabled is on with rsx.tenancy = multi and either a host
+     * template (https://:slug.myapp.com) or custom portal domains
+     * (PORTAL_CUSTOM_DOMAINS override or only): each tenant host would need its own redirect
+     * URI in every provider console, and the cross-host ceremony that would spare it is not
+     * built yet. OK otherwise.
+     *
+     * @return array{status: string, detail: string, remediation: ?string}
+     */
+    #[Health_Check('Portal SSO')]
+    public static function health_row(): array
+    {
+        if (!static::__realm_enabled()) {
+            return ['status' => 'OK', 'detail' => 'portal federated sign-in is off (rsx.sso.portal_enabled)', 'remediation' => null];
+        }
+
+        $multi_host = Rsx_Tenancy::is_multi() && Rsx_Portal_Url::is_enabled()
+            && (Rsx_Portal_Url::template()['mode'] === Rsx_Portal_Url::MODE_HOST
+                || Rsx_Portal_Url::custom_domains() !== Rsx_Portal_Url::CUSTOM_DOMAINS_OFF);
+
+        if ($multi_host) {
+            return [
+                'status' => 'WARN',
+                'detail' => 'portal federated sign-in is on, and this multi-tenant install serves portals on hosts of'
+                    . ' their own (a host template or custom portal domains): a sign-in ceremony finishes only on the'
+                    . ' host that started it, so every tenant host needs its own redirect URI in each provider console.'
+                    . ' The ceremony on the application host that hands the result to the tenant\'s portal is not built yet.',
+                'remediation' => 'turn rsx.sso.portal_enabled off, or register each tenant portal host\'s callback'
+                    . ' (<portal>/_sso/<provider>/callback) with every provider (rsx:man sso)',
+            ];
+        }
+
+        return ['status' => 'OK', 'detail' => 'portal federated sign-in is on', 'remediation' => null];
     }
 
     public static function _link_model(): string
@@ -141,12 +189,27 @@ class Rsx_Portal_Sso extends Rsx_Sso_Abstract
 
     protected static function __login_path(): string
     {
-        return Rsx_Portal::portal_path('/login');
+        return static::__own_portal_path('/login');
     }
 
     protected static function __home_path(): string
     {
-        return Rsx_Portal::portal_path('/');
+        return static::__own_portal_path('/');
+    }
+
+    /**
+     * A path of the portal this ceremony runs in. The ceremony runs inside portal dispatch,
+     * for a served site, whose portal always has an address.
+     */
+    private static function __own_portal_path(string $path): string
+    {
+        $url = Rsx_Portal::portal_path($path);
+
+        if ($url === false) {
+            shouldnt_happen('Rsx_Portal_Sso: the portal ceremony ran for a site with no client portal');
+        }
+
+        return $url;
     }
 
     protected static function __signed_in_identity(): ?Rsx_Model_Abstract

@@ -264,25 +264,59 @@ HTTP
     framework's own URL builder (rsx_absolute_url()), which composes from the
     request only for a served host (rsx:man helpers).
 
+TENANCY
+    'tenancy' => 'single',                 # 'single' | 'multi'
+
+    Whether the install serves one organisation or many. APPLICATION
+    configuration with no .env key: an application is single- or multi-tenant
+    by design, so a multi-tenant one sets 'tenancy' => 'multi' in
+    rsx/resource/config/rsx.php. Any other value throws at boot; blank is
+    single. A single-tenant install's tenant is always site 1
+    (Rsx_Tenancy::SINGLE_TENANT_SITE_ID - fixed, not a setting), which is also
+    the site the initial user belongs to in either tenancy.
+
+    Its effect is the client portal's: single serves one portal at PORTAL_URL
+    as written, multi requires the tenant placeholder in PORTAL_URL that
+    addresses a portal per site. See rsx:man portal_tenancy.
+
 CLIENT PORTAL
     'portal' => [
-        'url' => env('PORTAL_URL', ''),    # where the portal is served
+        'enabled' => env('PORTAL_ENABLED', true),           # the feature, install-wide
+        'url' => env('PORTAL_URL', ''),                     # where it is served (a template)
+        'custom_domains' => env('PORTAL_CUSTOM_DOMAINS', 'off'),  # off | override | only
         'invitation_expiry_days' => 14,
         'password_min_length' => 8,
         'password_reset_expiry_hours' => 1,
     ]
 
-    Framework defaults for the parallel portal experience. 'url' is PORTAL_URL,
-    written exactly like APP_URL ($HOSTNAME included); blank serves the portal at
-    APP_URL's origin + /_portal, and the portal's host and prefix are derived
-    from it (Rsx_Portal_Url). A value equal to APP_URL, http outside
-    development, or a prefix claiming a framework path refuses to boot.
+    Framework defaults for the parallel portal experience.
 
-    There is deliberately no portal site key: which site a portal request
-    serves is declared at runtime with Portal_Session::set_site_id(). The
-    template app keeps its own 'portal.site_id' (plus
-    shared_link_default_expiry_days) in rsx/resource/config/rsx.php for that.
-    See: php artisan rsx:man portal (PORTAL URL, CONFIGURATION)
+    'url' is PORTAL_URL, a TEMPLATE written like APP_URL ($HOSTNAME included)
+    or as a bare path on APP_URL's host. Blank serves the portal at APP_URL's
+    origin + /_portal in single tenancy and + /_portal/:site_id in multi. In
+    multi tenancy it carries exactly one tenant placeholder, :slug or :site_id,
+    as the last path segment after a fixed one (/_portal/:slug) or as the
+    host's first label (https://:slug.myapp.com); single tenancy refuses one.
+    The template is judged at MANIFEST BUILD in every mode - a value equal to
+    APP_URL, http outside development, a prefix claiming a framework path or
+    colliding with a staff route, a misplaced or missing placeholder all fail
+    the build.
+
+    'custom_domains' is PORTAL_CUSTOM_DOMAINS: off ignores sites.portal_domain;
+    override serves a site with one there (its template address answers a 301
+    to it); only serves every site at its domain and nowhere else. 'enabled'
+    and 'custom_domains' outside their values throw at boot.
+
+    rsx.tenancy and these three values are part of the build fingerprint:
+    changing one rebuilds a development box, and a sealed box refuses to serve
+    until php artisan rsx:build --force.
+
+    There is no key for the portal's site: the framework reads it from each
+    request's URL (site 1 in single tenancy). Per-site switches live on the
+    sites table (portal_domain, is_portal_enabled). The template app keeps its
+    own 'portal.shared_link_default_expiry_days' (and its sign-in switches) in
+    rsx/resource/config/rsx.php.
+    See rsx:man portal (PORTAL URL, CONFIGURATION) and rsx:man portal_tenancy.
 
 PUBLIC DIRECTORY SECURITY
     'public' => [
@@ -1087,6 +1121,7 @@ SEE ALSO
     rsx:man external_api
     rsx:man login_redirect
     rsx:man portal
+    rsx:man portal_tenancy
     rsx:man document_search
     rsx:man tasks
     rsx:man realtime

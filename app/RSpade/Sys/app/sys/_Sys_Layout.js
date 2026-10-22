@@ -33,6 +33,12 @@ class _Sys_Layout extends Spa_Layout {
                             href: Rsx.Route('_Sys_Dashboard_Action'),
                         },
                         {
+                            label: 'System Info',
+                            icon: 'bi-hdd-rack',
+                            route: '_Sys_System_Info_Action',
+                            href: Rsx.Route('_Sys_System_Info_Action'),
+                        },
+                        {
                             label: 'Debug Flags',
                             icon: 'bi-toggles',
                             route: '_Sys_Debug_Flags_Action',

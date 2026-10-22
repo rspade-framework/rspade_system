@@ -28,7 +28,7 @@ Notes:
 | PORTAL-TERM-02 | another portal user's user session id is fail-closed | php | a browser signed in as a different portal user | false, still signed in | implemented | 2026-10-21 |
 | PORTAL-TERM-03 | a caller with no portal identity terminates nothing | php | logged out, any portal user session | false, still signed in | implemented | 2026-10-21 |
 
-## Portal_Site_Declaration_Test (php) - the portal site contract (set_site_id)
+## Portal_Site_Declaration_Test (php) - the portal site contract (set_site_id / _declare_resolved_site)
 
 | ID | Purpose | Type | Input | Expected | Status | Last updated |
 |----|---------|------|-------|----------|--------|--------------|
@@ -42,13 +42,42 @@ Notes:
 | PORTAL-SITE-08 | CLI may re-scope to another site (no request boundary) | php | set_site_id(1) then (77) | 77 | implemented | 2026-08-09 |
 | PORTAL-SITE-09 | declaring creates no session row | php | set_site_id + get_site_id | _sessions count unchanged | implemented | 2026-08-09 |
 | PORTAL-SITE-10 | a portal session's site is stamped at creation and never rewritten | php | persisted portal row | site_id stable | implemented | 2026-08-09 |
-| PORTAL-SITE-11 | a web request with NO declaration 500s with the guidance message | http | remove the template declaration, GET /_portal/login | 500 naming set_site_id + rsx:man portal | verified manually 2026-08-09 (needs a broken template to run) | 2026-08-09 |
+| PORTAL-SITE-11 | (retired: a web portal request's site is resolved from its URL; the application declares nothing) | - | - | - | retired | 2026-10-22 |
+| PORTAL-SITE-12 | the resolved site is what get_site_id() returns | php | _declare_resolved_site(77) | 77 | implemented | 2026-10-22 |
+| PORTAL-SITE-13 | a resolved site of another tenant ends the portal identity declared before it; the same site keeps it | php | set_site_id(1) + CLI portal user, then _declare_resolved_site(1) / (77) | user kept / null; site 77 | implemented | 2026-10-22 |
+| PORTAL-SITE-14 | a non-positive resolved site is impossible | php | _declare_resolved_site(0) | RuntimeException | implemented | 2026-10-22 |
+| PORTAL-SITE-15 | a live portal sign-in of another site is signed out (SIGN_OUT_SITE_SWITCHED) and the request continues signed out | http | harness sign-in moved to site 0, GET /_portal/ | control 200; then 302 to /_portal/login, reason 9, pointer cleared | implemented (`http/portal_site_mismatch_sign_out.sh`) | 2026-10-22 |
+| PORTAL-SITE-16 | set_site_id() throws in a web request (the URL is the authority) | http | a web call to set_site_id() | RuntimeException naming rsx:man portal | deferred (no web caller remains to drive it; CLI cannot reach the web branch) | 2026-10-22 |
 
 Notes:
 - All `php` rows live in `php/Portal_Site_Declaration_Test.php`.
 - CLI cannot exercise `__activate()` (no portal session row is minted in CLI by
   design), so row-creation-uses-the-declared-site is covered by the live portal
   login round-trip, not by a php test.
+
+## Portal_Site_Resolver_Test (php) - which site a portal request serves, read from its URL
+
+Every layout through config overrides (tenancy, PORTAL_URL, PORTAL_CUSTOM_DOMAINS,
+PORTAL_ENABLED, APP_URL), synthetic hosts and paths, fixture sites saved through the model
+inside the test's transaction.
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| PSR-01 | single tenancy serves site 1 under the prefix on any host; a staff path and a segment look-alike are not the portal | php | blank PORTAL_URL | site 1, base /_portal / null | implemented | 2026-10-22 |
+| PSR-02 | a single-tenant portal on its own host claims the whole host (outside the prefix too) | php | https://portal.../x | site 1, base /x, under_base false outside; null on the APP host | implemented | 2026-10-22 |
+| PSR-03 | multi path by slug: per-site base, slug compared lowercased, unknown slug / bare fixed prefix not served | php | /_portal/:slug | per row | implemented | 2026-10-22 |
+| PSR-04 | multi path by id is the blank default; only the canonical id spelling, site 0 and unknown ids not served | php | blank PORTAL_URL, multi | per row | implemented | 2026-10-22 |
+| PSR-05 | site 0 is never served by its slug either | php | site 0's slug | not_served | implemented | 2026-10-22 |
+| PSR-06 | multi subdomain by slug: one label only, not the bare suffix, the APP host wins | php | https://:slug.portals... | per row | implemented | 2026-10-22 |
+| PSR-07 | override: a template address 301s to https://<domain> + realm path + query; the domain serves at its root; a site without a domain keeps its address | php | override | redirect_to / served | implemented | 2026-10-22 |
+| PSR-08 | only: the domain serves; the template address is not served | php | only | per row | implemented | 2026-10-22 |
+| PSR-09 | off: portal_domain is ignored | php | off | null; is_portal_domain false | implemented | 2026-10-22 |
+| PSR-10 | single tenancy serves only site 1 at a custom domain | php | another site's domain | not_served | implemented | 2026-10-22 |
+| PSR-11 | a disabled, portal-off or deleted site is not served | php | three fixture sites | not_served | implemented | 2026-10-22 |
+| PSR-12 | a change to the site reaches the cached lookups (portal off, slug rename, delete, restore) | php | saves through the model | each answer follows | implemented | 2026-10-22 |
+| PSR-13 | PORTAL_ENABLED=false makes nothing a portal request | php | enabled false | null; needs_host false | implemented | 2026-10-22 |
+| PSR-14 | host_patterns() names every host the template adds; host_matches() is exact or one label | php | per template | per row | implemented | 2026-10-22 |
+| PSR-15 | a custom domain is a served host while custom domains are on, a disabled site's included | php | only | is_portal_domain / served_by_portal true | implemented | 2026-10-22 |
 
 ## Portal_Session_Realm_Test (php) - PROPERTY isolation on the one session row
 
@@ -119,11 +148,23 @@ on a staff one (rsx:man anchors).
 | PORTAL-ROUTE-04 | the JS twin: same parity, #at= not ?at=, non-string action refused, a portal SPA action resolved by name | playwright | probe routes written into `Rsx._routes` / `Rsx_Portal._routes` on `/_sys`, a probe portal SPA class | identical URLs; refusal names "must be a string" | implemented (`playwright/portal_route_parity.js`) | 2026-09-25 |
 | PORTAL-ROUTE-05 | the hash argument: the portal URL carries the hash state before the anchor, identical to the staff URL with the portal base (the JS twin is DISP-53 d) | php | `['tab' => 'a b', 'gone' => null]` with the PORTAL-ROUTE-01 params | `portal_path('/test-route-parity/5/7?x=1#tab=a%20b&at=a%20b')` | implemented (`Portal_Route_Parity_Test`) | 2026-09-25 |
 
+## playwright/portal_spa_prefix.js - the portal SPA router stays inside its base
+
+The portal context is simulated on `/_sys` (`Rsx_Portal._is_portal`, `window.rsxapp.portal`, a
+probe route in `Spa.routes`) and restored.
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| PORTAL-SPA-01 | on a portal page a path under the page's base matches with the base removed (a query string too) | playwright | base `/_portal/acme`, probe `/spa-prefix-probe` | the probe action | implemented (`playwright/portal_spa_prefix.js`) | 2026-10-22 |
+| PORTAL-SPA-02 | a path outside the base is no route of this SPA: a same-host staff path, another tenant's portal, a segment look-alike | playwright | `/spa-prefix-probe`, `/_portal/other/...`, `/_portal/acmex/...` | null | implemented | 2026-10-22 |
+| PORTAL-SPA-03 | a portal at the root of its own host claims every path | playwright | prefix '' | the probe action | implemented | 2026-10-22 |
+| PORTAL-SPA-04 | a staff page whose site has no portal: Rsx_Portal.Route() false, is_on_portal_host() false, is_under_prefix() false | playwright | `rsxapp.portal.base` null | false x3 | implemented | 2026-10-22 |
+
 ## Portal_Url_Test (php) - PORTAL_URL: derivation, refusals, classification, URL generation
 
 | ID | Purpose | Type | Input | Expected | Status | Last updated |
 |----|---------|------|-------|----------|--------|--------------|
-| PORTAL-URL-01 | a blank PORTAL_URL derives APP_URL's origin + /_portal; default port dropped, non-default kept | php | `parse('', APP_URL)` | origin/host/prefix/separate | implemented | 2026-10-01 |
+| PORTAL-URL-01 | a blank PORTAL_URL derives APP_URL's origin + /_portal; default port dropped, non-default kept | php | `parse('', APP_URL)` | the whole parse() shape (mode path, no placeholder, fixed_prefix /_portal) | implemented | 2026-10-22 |
 | PORTAL-URL-02 | blank PORTAL_URL with an empty APP_URL derives only the prefix | php | `parse('', '')` | origin '', prefix /_portal | implemented | 2026-10-01 |
 | PORTAL-URL-03 | a path on the application host is a same-host prefix (case, trailing slash normalised) | php | `https://APP.../clients/` | prefix /clients, not separate | implemented | 2026-10-01 |
 | PORTAL-URL-04 | a host of its own, no prefix | php | `https://Portal...:443/` | prefix '', separate | implemented | 2026-10-01 |
@@ -133,13 +174,13 @@ on a staff one (rsx:man anchors).
 | PORTAL-URL-08 | nothing is checked while APP_URL is empty | php | garbage PORTAL_URL, empty APP_URL | null | implemented | 2026-10-01 |
 | PORTAL-URL-09 | equal to APP_URL is refused after normalisation (slash, port, case, scheme) | php | five spellings | "must not equal APP_URL" | implemented | 2026-10-01 |
 | PORTAL-URL-10 | the APP_URL scheme rule applies (https outside development, http/https only) | php | http without allowance, ftp | APP_URL's messages naming PORTAL_URL | implemented | 2026-10-01 |
-| PORTAL-URL-11 | a non-absolute value is refused | php | bare host, bare path | "must be an absolute" | implemented | 2026-10-01 |
+| PORTAL-URL-11 | a value that is neither an absolute URL nor a '/' path is refused | php | bare host, relative path | "must be an absolute" | implemented | 2026-10-22 |
 | PORTAL-URL-12 | credentials, query and fragment are refused | php | three values | "may carry only" | implemented | 2026-10-01 |
 | PORTAL-URL-13 | malformed path segments are refused | php | `.`, empty segment, `%`, space | "path segments" | implemented | 2026-10-01 |
 | PORTAL-URL-14 | a framework-owned first segment is refused; /_portal allowed; deeper segments free | php | api, error, ws, `_` names | "belongs to the framework" | implemented | 2026-10-01 |
 | PORTAL-URL-15 | the rsx:health "Portal URL" row reports the derivation and FAILs a refusal | php | three configs | OK / OK / FAIL | implemented | 2026-10-01 |
 | PORTAL-URL-16 | default layout: prefix decides on any host (loopback included); artifacts realm-agnostic | php | synthetic requests | channel/realm/portal_host/realm_path | implemented | 2026-10-01 |
-| PORTAL-URL-17 | a same-host prefix wins over staff routes beneath it | php | `rsx.portal.url` = APP_URL + /clients | /clients/view/5 portal | implemented | 2026-10-01 |
+| PORTAL-URL-17 | a same-host prefix wins over staff routes beneath it at classification (such a PORTAL_URL is a manifest-build FATAL - PORTAL-UMS-06; this pins the runtime precedence) | php | `rsx.portal.url` = APP_URL + /clients | /clients/view/5 portal | implemented | 2026-10-22 |
 | PORTAL-URL-18 | a separate host without a prefix is the portal throughout; API refused there; app host staff | php | own host, no prefix | per row | implemented | 2026-10-01 |
 | PORTAL-URL-19 | a separate host with a prefix: outside-prefix paths stay portal realm, /api outside is the refused API, the prefix means nothing on the app host | php | own host + /x | per row | implemented | 2026-10-01 |
 | PORTAL-URL-20 | outside the prefix on the portal host is the portal 404 | php | front controller, portal fixture route in and out of /x | 200 / 404 | implemented | 2026-10-01 |
@@ -147,7 +188,52 @@ on a staff one (rsx:man anchors).
 | PORTAL-URL-22 | a separate-host portal generates absolute URLs off its host and paths on it | php | ambient request on app host vs portal host | absolute / relative | implemented | 2026-10-01 |
 | PORTAL-URL-23 | `rsx_absolute_url()` passes an absolute URL through; the emailed-link spelling is right from staff | php | absolute input; `rsx_absolute_url(Route())` | unchanged / portal origin | implemented | 2026-10-01 |
 | PORTAL-URL-24 | `is_under_prefix()` / `strip_prefix()` respect segment boundaries and query strings | php | `/_portalx`, `/_portal?tab=1` | per row | implemented | 2026-10-01 |
-| PORTAL-URL-25 | the boot guard throws the first refusal on a live boot | cli | a refused PORTAL_URL in .env, any artisan command | RuntimeException naming PORTAL_URL | deferred (needs .env edited; `validate()` is `check()` + throw, covered by 07-14) | 2026-10-01 |
+| PORTAL-URL-25 | RETIRED (2026-10-22): PORTAL_URL is no longer judged at boot; the build judge is PORTAL-UMS-* | cli | - | - | retired | 2026-10-22 |
+| PORTAL-URL-26 | a bare '/' path names at least one segment; the path rules apply to it | php | `/`, `/c`, `/clients`, `/api`, `/a.b` | refusal / null | implemented | 2026-10-22 |
+| PORTAL-URL-27 | a bare path is a prefix on the application host | php | `parse('/clients/')` | APP origin, prefix /clients, path mode | implemented | 2026-10-22 |
+| PORTAL-URL-28 | blank in multi tenancy is the /_portal/:site_id template | php | `parse('', APP, multi)` | whole shape, fixed_prefix /_portal | implemented | 2026-10-22 |
+| PORTAL-URL-29 | a path template carries its placeholder and fixed prefix (bare and absolute) | php | `/clients/area/:slug`, APP + `/_portal/:site_id/` | placeholder, fixed_prefix | implemented | 2026-10-22 |
+| PORTAL-URL-30 | a host template carries its suffix; a non-first-label placeholder has none | php | `https://:slug.Example.test:8443/` | host mode, host_suffix .example.test | implemented | 2026-10-22 |
+| PORTAL-URL-31 | usable multi-tenant templates pass | php | blank, path and host templates | null | implemented | 2026-10-22 |
+| PORTAL-URL-32 | single tenancy refuses a placeholder | php | three templates | "rsx.tenancy is single" | implemented | 2026-10-22 |
+| PORTAL-URL-33 | multi tenancy requires a placeholder | php | four plain values | "rsx.tenancy = multi requires" | implemented | 2026-10-22 |
+| PORTAL-URL-34 | exactly one placeholder | php | two placeholders | "exactly one" | implemented | 2026-10-22 |
+| PORTAL-URL-35 | a path placeholder ends the path after a fixed segment | php | `/:slug`, `/_portal/:slug/area`, own host `/:slug` | "must END" | implemented | 2026-10-22 |
+| PORTAL-URL-36 | a host placeholder is the whole first label | php | mid-host, partial label, no suffix | "whole first label" | implemented | 2026-10-22 |
+| PORTAL-URL-37 | an unknown placeholder is refused, either tenancy | php | `:tenant`, `:slugs` | "placeholders are :slug and :site_id" | implemented | 2026-10-22 |
+| PORTAL-URL-38 | the existing rules apply to a template (reserved segment, charset, scheme quoting the template, query) | php | templates | per row | implemented | 2026-10-22 |
+| PORTAL-URL-39 | nothing is checked while the portal is disabled | php | `enabled=false` | null | implemented | 2026-10-22 |
+| PORTAL-URL-40 | single tenancy accessors answer a bare-path layout | php | `/clients` | origin/prefix/url | implemented | 2026-10-22 |
+| PORTAL-URL-41 | the accessors answer for the CURRENT site (a portal request's declared site, slug lowercased) and throw when it has no portal, where for_site() answers false | php | multi `/_portal/:slug`, portal seam + set_site_id | origin/prefix/url per site; throws "has none" | implemented | 2026-10-22 |
+| PORTAL-URL-42 | rsx.tenancy takes single/multi, blank = single, anything else throws | php | config values | per row | implemented | 2026-10-22 |
+| PORTAL-URL-43 | (retired: the single-tenant site is the constant Rsx_Tenancy::SINGLE_TENANT_SITE_ID, not a setting) | - | - | - | retired | 2026-10-22 |
+| PORTAL-URL-44 | PORTAL_ENABLED is a boolean, blank = true | php | bools, strings, garbage | per row | implemented | 2026-10-22 |
+| PORTAL-URL-45 | PORTAL_CUSTOM_DOMAINS takes off/override/only, blank = off | php | config values | per row | implemented | 2026-10-22 |
+| PORTAL-URL-46 | the boot check (Rsx_Tenancy::enforce_settings) refuses each bad switch | php | one bad value at a time | RuntimeException | implemented | 2026-10-22 |
+| PORTAL-URL-47 | for_site() in single tenancy is the template, for site 1 only | php | blank and own-host PORTAL_URL; another site | template values / false | implemented | 2026-10-22 |
+| PORTAL-URL-48 | for_site() fills a path template with the slug (lowercased) or the id; a slug that cannot be a path segment names no address | php | `/_portal/:slug`, blank multi, a slug with a space | `/_portal/<slug>`, `/_portal/<id>`, false | implemented | 2026-10-22 |
+| PORTAL-URL-49 | for_site() fills a host template; a slug that cannot be a DNS label names no address | php | `https://:slug.portals.example.test/x` | origin/host per tenant, prefix /x; false for `under_score` | implemented | 2026-10-22 |
+| PORTAL-URL-50 | for_site() and a custom domain: off ignores it, override and only answer https://<domain> with no prefix, only without one is false | php | a site with and without portal_domain | per mode | implemented | 2026-10-22 |
+| PORTAL-URL-51 | for_site() is false with no portal: site 0, no such site, disabled, portal off, deleted, PORTAL_ENABLED=false, no current site; the staff side's current site is the session's | php | fixture sites, `__acting_as_site()` | false / the session site's address | implemented | 2026-10-22 |
+| PORTAL-URL-52 | Route()/portal_path()/is_on_portal_host() take a named site_id and answer false without a portal; a host template is absolute from staff; inside a portal request its own portal is the request's base | php | two tenants and a portal-off site, path and host templates, a classified tenant request | per row | implemented | 2026-10-22 |
+| PORTAL-URL-53 | client_payload() (window.rsxapp.portal) carries the current site's base, null base and prefix for a site with no portal, app_host_prefix only for a same-host path template | php | staff side, path and host templates | per row | implemented | 2026-10-22 |
+
+## Portal_Url_Manifest_Support_Test (php) - PORTAL_URL judged at manifest build
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| PORTAL-UMS-01 | a route at or under the fixed prefix collides (case-insensitive, segment boundaries) | php | `find_route_conflicts('/clients', ...)` | /clients, /clients/view/:id, /Clients/add | implemented | 2026-10-22 |
+| PORTAL-UMS-02 | a route whose parameters reach the prefix collides | php | `/clients/:id` vs `/clients/portal` | collides | implemented | 2026-10-22 |
+| PORTAL-UMS-03 | a shorter static route does not collide | php | `/clients` vs `/clients/portal` | none | implemented | 2026-10-22 |
+| PORTAL-UMS-04 | a route beginning with a parameter, and '/', collide with nothing | php | `/:slug`, `/` | none | implemented | 2026-10-22 |
+| PORTAL-UMS-05 | an empty prefix collides with nothing | php | '' | none | implemented | 2026-10-22 |
+| PORTAL-UMS-06 | a colliding prefix is FATAL and names each colliding route | php | PORTAL_URL=/dashboard, synthetic routes | RuntimeException listing /dashboard routes only | implemented | 2026-10-22 |
+| PORTAL-UMS-07 | a template collides through its fixed prefix | php | /clients/:slug | FATAL naming /clients/view/:id | implemented | 2026-10-22 |
+| PORTAL-UMS-08 | a portal on its own host collides with nothing | php | own host + /dashboard, host template | null | implemented | 2026-10-22 |
+| PORTAL-UMS-09 | a refused setting is FATAL | php | multi without placeholder; single with one | FATAL with check()'s message | implemented | 2026-10-22 |
+| PORTAL-UMS-10 | a disabled portal is not judged | php | enabled=false | null | implemented | 2026-10-22 |
+| PORTAL-UMS-11 | the shipped default passes against the live route table, single and multi | php | blank PORTAL_URL | no throw | implemented | 2026-10-22 |
+| PORTAL-UMS-12 | a live build FATALs on a refused .env value, in development and on a production rsx:build | cli | PORTAL_URL edited in .env | manifest build RuntimeException | deferred (needs .env edited; rebuild() is driven directly by 06-10) | 2026-10-22 |
 
 ## Portal_Host_Reach_Test (php) - the framework file and report endpoints answer in the portal realm
 
@@ -212,6 +298,9 @@ is proved by `session/http/session_link_handshake.sh` (sess-http-07).
 | PORTAL-LINK-19 | leg 3 refuses a tampered signature | php | bad `s` | 400 | implemented | 2026-10-01 |
 | PORTAL-LINK-20 | Session_Cleanup_Service::cleanup_session_links removes expired links only | php | one live, one expired | expired gone, live kept | implemented | 2026-10-01 |
 | PORTAL-LINK-21 | Session::_clone_session_to_this_host() refuses in CLI | php | call in CLI | RuntimeException (no browser) | implemented | 2026-10-01 |
+| PORTAL-LINK-23 | a tenant subdomain handshake runs on that tenant's host: leg 1 there (refused on another tenant's host - the signature binds the host), nonce cookie at /_session_link (the tenant serves at its root), leg 2 returns to the tenant host, the impersonation names the tenant | php | multi, `https://:slug.portals.example.test` | per row | implemented | 2026-10-22 |
+| PORTAL-LINK-24 | View as Client decides per site: a tenant under a prefix on the application host gets its landing path and no handshake; a tenant on its custom domain (override) gets the handshake there | php | multi `/_portal/:slug`, override, a portal_domain | `/_portal/<slug>/`, no link rows / leg 1 on https://<domain> | implemented | 2026-10-22 |
+| PORTAL-LINK-25 | View as Client answers false for a site with no portal, applies nothing and mints nothing | php | a portal-off tenant | false; no portal sign-in; no link rows | implemented | 2026-10-22 |
 | PORTAL-LINK-22 | a live separate-host round trip on the dev box (two real hosts) | http | needs PORTAL_URL on another host in the box's .env | - | deferred (the suite never edits a box's .env, and a docker worker's .env is the dev box's defaults; the host binding is PORTAL-LINK-07/11 in-process and the cookie is sess-http-07 over HTTP in the same-host layout) | 2026-10-01 |
 
 ## Portal_Auth_Test (php, default isolation) - Portal_Auth::verify_credentials(), the portal password door

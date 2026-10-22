@@ -417,7 +417,9 @@ SIGN-OUT REASONS
         SIGN_OUT_SESSION_CAP           Too many sessions      max_web_sessions_per_user
         SIGN_OUT_REPLACED              Another account        another account signed in
                                        signed in              on the browser
-        SIGN_OUT_SITE_SWITCHED         Switched site          set_site_id()
+        SIGN_OUT_SITE_SWITCHED         Switched site          set_site_id(); a portal
+                                                              URL serving another site
+                                                              (rsx:man portal)
         SIGN_OUT_MEMBERSHIP_DISABLED   Membership disabled    enforce_enabled_membership()
         SIGN_OUT_IMPERSONATION_ENDED   Impersonation ended    stop_impersonation(), the
                                                               impersonation age limit
@@ -1229,9 +1231,10 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     #[Run_As_Dispatcher] run is refused at run time instead - TASKS RUN AS
     THEIR DISPATCHER).
 
-    STAFF ONLY. The portal realm does not read either switch: a portal's site is
-    the application's own declaration (Portal_Session::set_site_id(), rsx:man
-    portal), and its sign-in and per-request rules are the application's.
+    STAFF ONLY. The portal realm does not read users.is_enabled, and reads
+    sites.is_enabled only to serve its portal: a portal's site is the one its URL
+    names, and a disabled site's portal answers 404 (rsx:man portal, PORTAL
+    URL). A portal sign-in's own account rules are the application's.
 
     PASSWORD RESET REQUIRED (login_users.password_reset_required) - SET BY YOU,
     ENFORCED AND CLEARED BY THE FRAMEWORK

@@ -7,6 +7,9 @@
 namespace App\RSpade\Core\Env;
 
 use RuntimeException;
+use App\RSpade\Core\Env\Rsx_Tenancy;
+use App\RSpade\Core\Portal\Portal_Site_Resolver;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -19,8 +22,12 @@ use App\RSpade\Core\Rsx;
  * at the wrong box. This guard fails loud on that mismatch during development.
  *
  * THE DECLARED HOSTS are the APP_URL host and, when PORTAL_URL names a host of its
- * own, the portal's host (Rsx_Portal_Url). A request passes when its host equals ANY
- * declared host. Hosts are compared without ports, exactly as cookies are scoped.
+ * own, the portal's host - for a tenant-subdomain template ('https://:slug.myapp.com') the
+ * pattern '*.myapp.com', one label then the suffix (Portal_Site_Resolver::host_patterns()).
+ * A request passes when its host matches ANY declared host, or - while
+ * PORTAL_CUSTOM_DOMAINS is not off - is some site's sites.portal_domain (a cached lookup,
+ * made only for a host nothing else accepts). Hosts are compared without ports, exactly as
+ * cookies are scoped.
  *
  * check() runs once per web request (immediately before route dispatch). It is a
  * DEVELOPMENT-mode tripwire only - debug and production validate the request host in
@@ -92,6 +99,10 @@ class Rsx_Env_Hostname_Guard
         $declared = self::__collect_declared_hosts();
         $mismatch = self::find_mismatch($request_host, $declared);
 
+        if ($mismatch !== null && Portal_Site_Resolver::is_portal_domain($request_host)) {
+            $mismatch = null;
+        }
+
         if ($mismatch !== null) {
             // NOTE: do NOT memoize on a mismatch - keep failing loud until fixed.
             throw new RuntimeException(self::mismatch_message($mismatch));
@@ -106,7 +117,8 @@ class Rsx_Env_Hostname_Guard
      * declared host, else the mismatch (every declared entry and the request host).
      * No declared entry (APP_URL not configured yet) is never a mismatch.
      *
-     * The match is EXACT - a sub-host of a declared host does NOT satisfy it. Each
+     * The match is EXACT - a sub-host of a declared host does NOT satisfy it - except for
+     * a '*.<suffix>' entry, which one label in front of the suffix satisfies. Each
      * declared entry is {var, host}.
      *
      * @param array<int,array{var:string,host:string}> $declared
@@ -119,7 +131,7 @@ class Rsx_Env_Hostname_Guard
         }
 
         foreach ($declared as $entry) {
-            if ($request_host === $entry['host']) {
+            if (Portal_Site_Resolver::host_matches($request_host, $entry['host'])) {
                 return null;
             }
         }
@@ -151,18 +163,22 @@ class Rsx_Env_Hostname_Guard
             . '" ' . $matches . '.'
             . ' The .env of this instance declares a different hostname than the one it is'
             . ' being browsed on - fix APP_URL (or PORTAL_URL, for the client portal\'s own host)'
-            . ' in .env to match. [rsx:man realtime]';
+            . ' in .env to match' . (Rsx_Portal_Url::is_enabled() && Rsx_Portal_Url::custom_domains() !== Rsx_Portal_Url::CUSTOM_DOMAINS_OFF
+                ? ', or set the host as a site\'s portal_domain' : '')
+            . '. [rsx:man realtime]';
     }
 
     /**
      * Pure declared-host builder: given the relevant raw .env values, produce the
-     * normalized comparison entries - the APP_URL host, then the PORTAL_URL host when
-     * it names a host other than APP_URL's (a same-host portal, or a blank PORTAL_URL,
-     * adds nothing). An empty APP_URL yields no entry at all; a non-empty but
-     * unparseable APP_URL or PORTAL_URL is a fatal misconfiguration (fail loud). A
-     * loopback-VALUED APP_URL is NOT skipped.
+     * normalized comparison entries - the APP_URL host, then each host the PORTAL_URL
+     * template adds (Portal_Site_Resolver::host_patterns(): a host other than APP_URL's,
+     * or '*.<suffix>' for a tenant-subdomain template; a blank or bare-path PORTAL_URL, a
+     * same-host portal and a disabled portal add nothing). An empty APP_URL yields no
+     * entry at all; a non-empty APP_URL, or an absolute PORTAL_URL, with no parseable
+     * host is a fatal misconfiguration (fail loud). A loopback-VALUED APP_URL is NOT
+     * skipped. 'tenancy' (rsx.tenancy) defaults to single and PORTAL_ENABLED to true.
      *
-     * @param array{APP_URL?: ?string, PORTAL_URL?: ?string} $env
+     * @param array{APP_URL?: ?string, PORTAL_URL?: ?string, tenancy?: ?string, PORTAL_ENABLED?: ?bool} $env
      * @return array<int,array{var:string,host:string}>
      */
     public static function build_declared(array $env): array
@@ -178,12 +194,23 @@ class Rsx_Env_Hostname_Guard
         $declared[] = ['var' => 'APP_URL', 'host' => $app_host];
 
         $portal_url = trim((string) ($env['PORTAL_URL'] ?? ''));
-        if ($portal_url !== '') {
-            $portal_host = self::__host_of('PORTAL_URL', $portal_url);
+        $enabled = $env['PORTAL_ENABLED'] ?? true;
 
-            if ($portal_host !== $app_host) {
-                $declared[] = ['var' => 'PORTAL_URL', 'host' => $portal_host];
-            }
+        // An absolute template must name a host; the placeholder label is masked so that
+        // ':slug.myapp.com' parses.
+        if ($enabled && $portal_url !== '' && !str_starts_with($portal_url, '/')) {
+            self::__host_of('PORTAL_URL', preg_replace('/:(slug|site_id)(?![A-Za-z0-9_])/', 'tenant', $portal_url));
+        }
+
+        $patterns = Portal_Site_Resolver::host_patterns(
+            $portal_url,
+            $app_url,
+            (string) ($env['tenancy'] ?? '') === Rsx_Tenancy::MULTI ? Rsx_Tenancy::MULTI : Rsx_Tenancy::SINGLE,
+            (bool) $enabled
+        );
+
+        foreach ($patterns as $pattern) {
+            $declared[] = ['var' => 'PORTAL_URL', 'host' => $pattern];
         }
 
         return $declared;
@@ -234,6 +261,8 @@ class Rsx_Env_Hostname_Guard
         self::$_declared_cache = self::build_declared([
             'APP_URL' => env('APP_URL'),
             'PORTAL_URL' => config('rsx.portal.url'),
+            'tenancy' => Rsx_Tenancy::mode(),
+            'PORTAL_ENABLED' => Rsx_Portal_Url::is_enabled(),
         ]);
 
         return self::$_declared_cache;

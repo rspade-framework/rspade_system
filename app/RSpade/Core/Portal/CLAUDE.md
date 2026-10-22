@@ -14,6 +14,22 @@ the application half lives in `rsx/portal/` (which has its own CLAUDE.md).
 - `Portal_Route_ManifestSupport.php` / `Portal_Spa_ManifestSupport.php` —
   `#[Portal_Route]` and `@portal_spa` indexing. Portal routes live in a
   **separate manifest table** from staff `#[Route]`s.
+- `Rsx_Portal_Url.php` — the portal's address: `PORTAL_URL` parsed as a TEMPLATE
+  (`:slug` / `:site_id` placeholder in multi tenancy), `check()`, the `PORTAL_ENABLED` /
+  `PORTAL_CUSTOM_DOMAINS` switches and the settings `fingerprint()` the manifest stamps.
+  `for_site(?int)` is ONE site's address (custom domain, else the filled template) or
+  FALSE when it has no portal; null = the current site (a portal request's resolved site,
+  else `Session::get_site_id()`; single tenancy site 1). `origin()`/`prefix()`/`host()`/
+  `is_separate_host()` answer for the current site and throw without one;
+  `client_payload()` is `window.rsxapp.portal`. `Rsx_Portal::Route()`/`portal_path()` take
+  `site_id:` and answer false; inside a portal request they use the request's base.
+- `Portal_Site_Resolver.php` — which site a portal request serves, read from its host and
+  path (custom domain, then the template); the verdict (served / 301 / not served); cached
+  site lookups forgotten by `Site_Model`'s hooks; the host patterns both hostname guards
+  accept.
+- `Portal_Url_ManifestSupport.php` — judges the address at MANIFEST BUILD (every mode):
+  `check()` plus the fixed prefix's collision with staff routes (`find_route_conflicts()`).
+  Nothing about `PORTAL_URL` is validated per request.
 - `Portal_Main_Abstract.php` — base for the app's `rsx/portal_main.php`.
 - `Portal_Permission_Abstract.php` — marker base for the app's
   `Portal_Permission` facade.
@@ -30,19 +46,25 @@ the application half lives in `rsx/portal/` (which has its own CLAUDE.md).
   clears the portal pointer and the portal realm's session values.
 - **Identity is not experience.** App code that must fork forks on
   `Rsx_Portal::is_portal_request()`, never on `is_logged_in()`.
-- **RSpade never resolves the portal's site.** The application declares it with
-  `Portal_Session::set_site_id(int)`. `get_site_id()` throws when nothing has.
-  Do not add detection, a default, or a hook here.
+- **The URL is the authority for the portal's site.** `Portal_Site_Resolver` reads it
+  from the request (site 1 in single tenancy; the `:slug` / `:site_id` / custom domain in
+  multi), `Rsx_Request_Channel` classifies with it, the front controller answers the 301 /
+  404 verdicts, and `Dispatcher` declares the site per request
+  (`Portal_Session::_declare_resolved_site()`) before `Portal_Main::init()` - signing out a
+  portal sign-in of another site. The site is never stored. `set_site_id()` is CLI-only
+  (commands, tasks, tests) and throws in a web request. `get_site_id()` throws when nothing
+  declared one.
 - **Realms are separate namespaces.** `is_logged_in` exists in both and means
   different things; a cross-realm check name is a build error. At the shared
   transports (Ajax, ORM, upload) a realm mismatch DENIES before any check name
   resolves.
 - Framework surfaces serving both experiences (flash alerts, CSRF, ORM fetch)
   resolve the experience themselves. **Never hand-roll a portal variant** of one.
-- Read-only impersonation is the APP's job; core exposes only
-  `is_impersonating()`.
+- View as Client is READ-ONLY, enforced by the framework deny-by-default: a portal Ajax
+  endpoint runs during it only when marked `#[Portal_Impersonation_Readable]`. The app's
+  job is marking its reads and showing a read-only experience.
 
 ## Pointers
 
-`rsx:man portal` · `rsx:man auth_gates` · `rsx:man session` ·
+`rsx:man portal` · `rsx:man portal_tenancy` · `rsx:man auth_gates` · `rsx:man session` ·
 skill `rspade:portal-core` · app side: app skill `portal-app`, `rsx/portal/CLAUDE.md`

@@ -27,14 +27,19 @@ CORE OPTIONS
     development environments.
 
 --portal
-    Enable portal mode for testing client portal routes. The URL is the path
-    INSIDE the portal (a URL already carrying the portal's prefix has it
-    stripped), and it is browsed at the portal's own address: the origin and
-    prefix derived from PORTAL_URL (rsx:man portal, PORTAL URL) -
-    /_portal/... on the APP_URL host by default, or a portal host of its own.
-    Both the APP_URL host and the portal host are mapped to loopback, so a
-    separate portal host needs no DNS. Use with --portal-user to
-    authenticate as a portal user.
+    Enable portal mode for testing client portal routes. A run browses ONE
+    site's portal, at that portal's own address (rsx:man portal, PORTAL URL) -
+    /_portal/... on the APP_URL host by default, a tenant's base or host in
+    multi tenancy, or a portal host of its own. The site is the one a URL
+    under a tenant's base on the application host names (/_portal/acme/...
+    for PORTAL_URL=/_portal/:slug; the base is removed), else the
+    --portal-user's site, else the current site (site 1 in single tenancy);
+    otherwise the URL is the path INSIDE the portal, a URL still carrying the
+    portal's prefix having it stripped. A URL naming no served portal, or a
+    site with none, is refused. Both the APP_URL host and the portal host
+    are mapped to loopback, so a separate portal host needs no DNS. Use with
+    --portal-user to authenticate as a portal user; one belonging to another
+    site than the browsed portal serves is refused.
 
 --portal-user=<id|email>
     Test as a specific portal user, bypassing portal authentication.

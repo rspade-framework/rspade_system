@@ -71,7 +71,10 @@ class Turnstile_Input extends Component {
         // jqhtml events are sticky: registering after an error already fired replays it, which
         // resets a freshly-minted widget once. Harmless (the widget just re-solves).
         if (!this._form_bound) {
-            const form = this.closest('.Rsx_Form');
+            // Inside its Rsx_Form, or outside it and naming it with $form.
+            const form = this.args.form
+                ? ($('#' + this.args.form).exists() ? $('#' + this.args.form).component() : null)
+                : this.closest('.Rsx_Form');
             if (form) {
                 this._form_bound = true;
                 form.on('submit_error', function () {

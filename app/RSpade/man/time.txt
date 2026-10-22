@@ -286,7 +286,8 @@ TIMEZONE INITIALIZATION
 
        On a PORTAL request tier 1 does not exist: portal_users has no timezone
        column, so resolution starts at the SITE - and the site is the PORTAL's
-       (Portal_Session::set_site_id), never the staff session's. Which site a
+       (the one its URL serves, Portal_Session::get_site_id()), never the staff
+       session's. Which site a
        request lives under is answered by its EXPERIENCE throughout the framework;
        see rsx:man portal (EXPERIENCE FORKS).
 

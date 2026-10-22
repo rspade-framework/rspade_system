@@ -1,0 +1,209 @@
+<%--
+_Sys_System_Info_Action - the machine, PHP and the RSpade container, as the web tier
+serving this request sees them (_Sys_System_Info_Controller.report).
+
+Cards, four across on a large screen, two on a medium one, one on a phone: Server,
+CPU & Memory, Disk (the project root, then the filesystem root and the storage root
+when either is on another device, then the blob store's size from the database), PHP,
+OPcache, Extensions, and - inside an RSpade container - one card per php-fpm pool.
+Beneath them, inside an RSpade container, the services supervisor runs.
+
+A value the server could not read arrives null and draws the detail list's dash.
+The header links the full phpinfo() page (_Sys_System_Info_Controller::phpinfo) in a
+new tab.
+--%>
+<Define:_Sys_System_Info_Action>
+<%
+    const _A = _Sys_System_Info_Action;
+    const _phpinfo_url = Rsx.Route('_Sys_System_Info_Controller::phpinfo');
+%>
+<_Sys_Page_Scaffold class="_Sys_Page_Scaffold--wide">
+    <Slot:main>
+        <_Sys_Page_Header $title="System Info" $icon="bi-hdd-rack" $subtitle="The machine, PHP and the services behind this site, as the web tier sees them">
+            <Slot:actions>
+                <a class="btn btn-sm btn-secondary" href="<%= _phpinfo_url %>" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> View full phpinfo</a>
+                <button type="button" class="btn btn-sm btn-secondary" data-action="refresh"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+            </Slot:actions>
+        </_Sys_Page_Header>
+
+        <% if (this.data.error_data) { %>
+            <_Sys_Error $error_data=this.data.error_data />
+        <% } else if (!this.data.report) { %>
+            <Spinner class="_Sys_System_Info_Action__loading" />
+        <% } else { %>
+            <%
+                const _r = this.data.report;
+                const _s = _r.server;
+                const _m = _r.cpu_memory;
+                const _p = _r.php;
+                const _o = _r.opcache;
+                const _c = _r.container;
+                const _load = _s.load_average ? _s.load_average.join(' / ') : null;
+            %>
+            <div class="row g-3">
+                <div class="col-xl-3 col-md-6">
+                    <_Sys_Section class="h-100" $title="Server" $icon="bi-hdd-rack">
+                        <_Sys_Detail_List>
+                            <_Sys_Detail_Item $label="Operating system" $value=_s.os_name />
+                            <_Sys_Detail_Item $label="Hostname" $value=_s.hostname $mono=true />
+                            <_Sys_Detail_Item $label="Kernel" $value=_s.kernel />
+                            <_Sys_Detail_Item $label="Uptime" $value=_s.uptime_human />
+                            <_Sys_Detail_Item $label="Load (1 / 5 / 15 min)" $value=_load />
+                            <_Sys_Detail_Item $label="Install path" $value=_s.install_path $mono=true />
+                        </_Sys_Detail_List>
+                    </_Sys_Section>
+                </div>
+
+                <div class="col-xl-3 col-md-6">
+                    <_Sys_Section class="h-100" $title=('CPU & Memory') $icon="bi-memory">
+                        <_Sys_Detail_List>
+                            <_Sys_Detail_Item $label="Processor cores" $value=_m.cores />
+                            <_Sys_Detail_Item $label="Processor" $value=_m.cpu_model />
+                            <_Sys_Detail_Item $label="Total memory" $value=_A.bytes(_m.mem_total) />
+                            <_Sys_Detail_Item $label="Used" $value=_A.bytes(_m.mem_used) />
+                            <_Sys_Detail_Item $label="Buffers / cache" $value=_A.bytes(_m.mem_cached) />
+                            <_Sys_Detail_Item $label="Free" $value=_A.bytes(_m.mem_free) />
+                            <_Sys_Detail_Item $label="Available" $value=_A.bytes(_m.mem_available) />
+                            <_Sys_Detail_Item $label="Swap used" $value=(_A.bytes_of(_m.swap_used, _m.swap_total)) />
+                            <_Sys_Detail_Item $label="Swap free" $value=_A.bytes(_m.swap_free) />
+                        </_Sys_Detail_List>
+                    </_Sys_Section>
+                </div>
+
+                <div class="col-xl-3 col-md-6">
+                    <_Sys_Section class="h-100" $title="Disk" $icon="bi-device-hdd">
+                        <% for (const _d of _r.disks) { %>
+                            <div class="_Sys_System_Info_Action__group"><%= _d.label %></div>
+                            <_Sys_Detail_List>
+                                <_Sys_Detail_Item $label="Path" $value=_d.path $mono=true />
+                                <_Sys_Detail_Item $label="Device" $value=(_d.device ? _d.device + (_d.fs_type ? ' (' + _d.fs_type + ')' : '') : null) $mono=true />
+                                <_Sys_Detail_Item $label="Free" $value=(_A.bytes_of(_d.free, _d.total)) />
+                                <_Sys_Detail_Item $label="Used" $value=_A.bytes(_d.used) />
+                            </_Sys_Detail_List>
+                        <% } %>
+                        <div class="_Sys_System_Info_Action__group">File attachments</div>
+                        <_Sys_Detail_List>
+                            <_Sys_Detail_Item $label="Stored" $value=_A.bytes(_r.file_storage.bytes) />
+                            <_Sys_Detail_Item $label="Blobs" $value=_A.count(_r.file_storage.blobs) />
+                        </_Sys_Detail_List>
+                        <div class="_Sys_System_Info_Action__help">From the database: the sum of every stored blob's recorded size (_file_storage), each identical file counted once. Not a measurement of the disk.</div>
+                    </_Sys_Section>
+                </div>
+
+                <div class="col-xl-3 col-md-6">
+                    <_Sys_Section class="h-100" $title="PHP" $icon="bi-filetype-php">
+                        <_Sys_Detail_List>
+                            <_Sys_Detail_Item $label="Version" $value=_p.version />
+                            <_Sys_Detail_Item $label="SAPI" $value=_p.sapi />
+                            <_Sys_Detail_Item $label="Zend Engine" $value=_p.zend_version />
+                            <_Sys_Detail_Item $label="php.ini" $value=_p.ini_file $mono=true />
+                            <_Sys_Detail_Item $label="memory_limit" $value=_p.memory_limit $mono=true />
+                            <_Sys_Detail_Item $label="max_execution_time" $value=_p.max_execution_time $mono=true />
+                            <_Sys_Detail_Item $label="upload_max_filesize" $value=_p.upload_max_filesize $mono=true />
+                            <_Sys_Detail_Item $label="post_max_size" $value=_p.post_max_size $mono=true />
+                            <_Sys_Detail_Item $label="display_errors" $value=_p.display_errors $mono=true />
+                            <_Sys_Detail_Item $label="Timezone" $value=_p.date_timezone />
+                        </_Sys_Detail_List>
+                    </_Sys_Section>
+                </div>
+
+                <div class="col-xl-3 col-md-6">
+                    <_Sys_Section class="h-100" $title="OPcache" $icon="bi-lightning-charge">
+                        <% if (!_o) { %>
+                            <_Sys_Empty_State $icon="bi-slash-circle" $title="Not loaded" $body="The OPcache extension is not loaded in this PHP process." />
+                        <% } else { %>
+                            <% const _os = _o.status; const _oc = _o.config; %>
+                            <_Sys_Detail_List>
+                                <_Sys_Detail_Item $label="Enabled">
+                                    <_Sys_Status_Badge $status=(_o.enabled ? 'ok' : 'muted') $label=(_o.enabled ? 'Enabled' : 'Disabled') />
+                                </_Sys_Detail_Item>
+                                <_Sys_Detail_Item $label="Hit rate" $value=(_os && _os.hit_rate !== null ? _os.hit_rate + '%' : null) />
+                                <_Sys_Detail_Item $label="Hits / misses" $value=(_os && _os.hits !== null ? _A.count(_os.hits) + ' / ' + _A.count(_os.misses) : null) />
+                                <_Sys_Detail_Item $label="Memory used" $value=(_os ? _A.bytes_of(_os.used_memory, _oc.memory_consumption) : null) />
+                                <_Sys_Detail_Item $label="Memory free" $value=(_os ? _A.bytes(_os.free_memory) : null) />
+                                <_Sys_Detail_Item $label="Memory wasted" $value=(_os ? _A.bytes(_os.wasted_memory) : null) />
+                                <_Sys_Detail_Item $label="Cached scripts" $value=(_os && _os.cached_scripts !== null ? _A.count(_os.cached_scripts) + ' of ' + _A.count(_oc.max_accelerated_files) : null) />
+                                <_Sys_Detail_Item $label="Cache size" $value=_A.bytes(_oc.memory_consumption) />
+                                <_Sys_Detail_Item $label="Interned strings" $value=(_os ? _A.bytes_of(_os.interned_used, _oc.interned_strings_buffer) : _A.bytes(_oc.interned_strings_buffer)) />
+                                <_Sys_Detail_Item $label="Validate timestamps" $value=_A.yes_no(_oc.validate_timestamps) />
+                                <_Sys_Detail_Item $label="Revalidate every" $value=(_oc.revalidate_freq === null ? null : _oc.revalidate_freq + ' s') />
+                                <_Sys_Detail_Item $label="JIT" $value=_oc.jit $mono=true />
+                                <_Sys_Detail_Item $label="Restarts" $value=(_os ? _os.restarts : null) />
+                                <_Sys_Detail_Item $label="Cache full" $value=(_os ? _A.yes_no(_os.cache_full) : null) />
+                            </_Sys_Detail_List>
+                            <% if (!_os) { %>
+                                <div class="_Sys_System_Info_Action__help"><%= _o.restricted ? 'Statistics unavailable: opcache.restrict_api withholds them from this script.' : 'Statistics unavailable: the cache is not running in this process.' %></div>
+                            <% } %>
+                        <% } %>
+                    </_Sys_Section>
+                </div>
+
+                <div class="col-xl-3 col-md-6">
+                    <_Sys_Section class="h-100" $title="Extensions" $icon="bi-puzzle" $count=_r.extensions.extensions.length>
+                        <div class="_Sys_System_Info_Action__chips">
+                            <% for (const _e of _r.extensions.extensions) { %>
+                                <span class="_Sys_System_Info_Action__chip"><%= _e %></span>
+                            <% } %>
+                        </div>
+                        <% if (_r.extensions.zend_extensions.length) { %>
+                            <div class="_Sys_System_Info_Action__group">Zend extensions</div>
+                            <div class="_Sys_System_Info_Action__chips">
+                                <% for (const _e of _r.extensions.zend_extensions) { %>
+                                    <span class="_Sys_System_Info_Action__chip"><%= _e %></span>
+                                <% } %>
+                            </div>
+                        <% } %>
+                    </_Sys_Section>
+                </div>
+
+                <% if (_c.is_rspade_container) { %>
+                    <% for (const _pool of _c.fpm_pools) { %>
+                        <div class="col-xl-3 col-md-6">
+                            <_Sys_Section class="h-100" $title=('PHP-FPM ' + _pool.label.toLowerCase() + ' (' + _pool.pool + ')') $icon="bi-diagram-2">
+                                <% const _ps = _pool.settings || {}; %>
+                                <_Sys_Detail_List>
+                                    <_Sys_Detail_Item $label="Process manager" $value=(_ps['pm']) $mono=true />
+                                    <_Sys_Detail_Item $label="Max children" $value=(_ps['pm.max_children']) $mono=true />
+                                    <_Sys_Detail_Item $label="Start servers" $value=(_ps['pm.start_servers']) $mono=true />
+                                    <_Sys_Detail_Item $label="Min spare servers" $value=(_ps['pm.min_spare_servers']) $mono=true />
+                                    <_Sys_Detail_Item $label="Max spare servers" $value=(_ps['pm.max_spare_servers']) $mono=true />
+                                    <_Sys_Detail_Item $label="Max requests" $value=(_ps['pm.max_requests']) $mono=true />
+                                    <_Sys_Detail_Item $label="Idle timeout" $value=(_ps['pm.process_idle_timeout']) $mono=true />
+                                    <_Sys_Detail_Item $label="User" $value=(_ps['user']) $mono=true />
+                                    <_Sys_Detail_Item $label="Listen" $value=(_ps['listen']) $mono=true />
+                                </_Sys_Detail_List>
+                                <div class="_Sys_System_Info_Action__help"><%= _pool.settings ? 'From ' + _pool.path : 'Not readable at ' + _pool.path %></div>
+                            </_Sys_Section>
+                        </div>
+                    <% } %>
+                <% } %>
+            </div>
+
+            <% if (_c.is_rspade_container) { %>
+                <_Sys_Section $title="Services" $icon="bi-gear-wide-connected" $count=(_c.services ? _c.services.length : null) $flush=true>
+                    <Slot:body>
+                        <% if (!_c.services) { %>
+                            <_Sys_Empty_State $icon="bi-question-circle" $title="Supervisor did not answer" $body="supervisorctl status gave this process nothing to read - supervisor may not be running, or its control socket may not be readable by the web server's user." />
+                        <% } else { %>
+                            <div class="table-responsive">
+                                <table class="table mb-0">
+                                    <thead><tr><th>Service</th><th>State</th><th>Detail</th></tr></thead>
+                                    <tbody>
+                                        <% for (const _svc of _c.services) { %>
+                                            <tr>
+                                                <td class="_Sys_System_Info_Action__mono"><%= _svc.name %></td>
+                                                <td><_Sys_Status_Badge $status=(_A.SERVICE_TONES[_svc.state] || 'muted') $label=_svc.state /></td>
+                                                <td class="_Sys_System_Info_Action__dim"><%= _svc.description %></td>
+                                            </tr>
+                                        <% } %>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <% } %>
+                    </Slot:body>
+                </_Sys_Section>
+            <% } %>
+        <% } %>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_System_Info_Action>

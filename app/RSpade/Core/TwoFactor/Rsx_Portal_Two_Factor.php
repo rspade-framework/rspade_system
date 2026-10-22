@@ -32,8 +32,8 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Abstract;
  *
  *   ADMISSION. A portal user is signed in only when Portal_User_Model::can_login() admits
  *   them (active and verified - the portal's account vocabulary, which the framework owns)
- *   AND they belong to the site the application declared for this request
- *   (Portal_Session::set_site_id). A credential row names a portal user by id, and ids are
+ *   AND they belong to the site this request's portal URL resolved to
+ *   (Portal_Session::get_site_id()). A credential row names a portal user by id, and ids are
  *   global, so the site check is what keeps a passkey minted on one tenant's portal from
  *   signing its owner in to another's. A refusal answers exactly like a wrong answer. An
  *   emailed answer (an issued code, or its link) sets is_verified BEFORE that question is
@@ -50,10 +50,14 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Abstract;
  *   enrollment and removal refuses under it: a staff member viewing a client's portal must
  *   never be able to enroll a passkey onto that client's account.
  *
- *   THE RELYING PARTY is the portal's own host. When PORTAL_URL names a host of its own
- *   that is that host (Rsx_Portal_Url::host()); under a prefix on the application host
- *   the portal shares that host, and so shares its rpId with staff - which is safe because the two
- *   realms' credentials live in different tables (see Passkeys). The USER HANDLE is
+ *   THE RELYING PARTY is the host the portal request is served on: the current site's
+ *   portal host when it has one of its own (a PORTAL_URL host, a tenant subdomain, a custom
+ *   domain - Rsx_Portal_Url::host(), which in a portal request answers for the site its URL
+ *   resolved to); under a prefix on the application host the portal shares that host, and
+ *   so shares its rpId with staff - which is safe because the two realms' credentials live
+ *   in different tables (see Passkeys). A passkey therefore belongs to the host it was
+ *   enrolled on: one enrolled on a tenant subdomain does not sign in on the custom domain
+ *   the site later moves to. The USER HANDLE is
  *   'portal-<id>', never the bare id, so a portal passkey and a staff passkey on one
  *   authenticator can never overwrite each other.
  *
@@ -123,8 +127,8 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
     }
 
     /**
-     * The portal's own host when it has one (Rsx_Portal_Url), else the application's
-     * hostname.
+     * The current site's portal host when it has one of its own (Rsx_Portal_Url - the
+     * request's portal host in a portal request), else the application's hostname.
      *
      * @return string
      */
@@ -213,7 +217,14 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
      */
     protected static function __email_link_route(string $token): string
     {
-        return rsx_absolute_url(Rsx_Portal::Route('Rsx_Email_Link_Controller::open', ['token' => $token]));
+        $url = Rsx_Portal::Route('Rsx_Email_Link_Controller::open', ['token' => $token]);
+
+        if ($url === false) {
+            // A challenge is begun in a portal request, for the site its URL resolved to.
+            shouldnt_happen('Rsx_Portal_Two_Factor: the current site has no client portal to link an emailed code to');
+        }
+
+        return rsx_absolute_url($url);
     }
 
     protected static function __event(string $name): string

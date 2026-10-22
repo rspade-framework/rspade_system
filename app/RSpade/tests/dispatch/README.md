@@ -17,7 +17,9 @@ ROUTE-VERB-01 build rule, and the dev-auth credential.
   to the exception handler chain exactly once).
 - `app/RSpade/Core/Dispatch/Rsx_Request_Channel.php` - `classify()`: ASSET / API / AJAX /
   PAGE plus the staff/portal realm, decided once; `Rsx_Portal::is_portal_request()` reads
-  it.
+  it. For a portal request it also carries the site the URL resolved to
+  (`Portal_Site_Resolver`): `portal_site_id()`, `portal_base()`, `portal_redirect_to()`,
+  `portal_not_served()` - the last two answered by the front controller before dispatch.
 - `app/Http/Kernel.php` - `dispatchToRouter()`: Laravel's router is never consulted.
 - `app/RSpade/Core/Dispatch/Route_ManifestSupport.php` - ROUTE-VERB-01: a `#[Route]` /
   `#[Portal_Route]` may declare GET and/or POST only.

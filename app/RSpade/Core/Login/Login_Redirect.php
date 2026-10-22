@@ -5,8 +5,8 @@ namespace App\RSpade\Core\Login;
 use Illuminate\Http\Request;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Dispatch\Dispatcher;
+use App\RSpade\Core\Portal\Portal_Site_Resolver;
 use App\RSpade\Core\Portal\Rsx_Portal;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
 
 /**
  * Login_Redirect - intended-URL ("return to the page I was trying to visit")
@@ -40,8 +40,8 @@ use App\RSpade\Core\Portal\Rsx_Portal_Url;
  * The same four calls serve the staff app and the client portal unchanged. The
  * class reads Rsx_Portal::is_portal_request() and adapts its page-path and
  * loop-prevention rules to the active context. In portal context a return target
- * must live under the portal's prefix (Rsx_Portal_Url::prefix(); an empty prefix -
- * the portal at the root of its own host - contains every path), and the prefix is
+ * must live under the request's portal prefix (Rsx_Portal::is_under_prefix(); an empty
+ * prefix - the portal at the root of its own host - contains every path), and the prefix is
  * stripped before the base non-page and exclusion rules apply. Staff and portal
  * targets are isolated in both directions: a staff redirect can never point under
  * a same-host portal prefix (whatever its spelling - the '/_' rule alone would not
@@ -172,9 +172,10 @@ class Login_Redirect
      * Context-aware page-path predicate. Wraps the base rules with the portal
      * namespace rule:
      *
-     *   - staff context: a path under the portal's prefix on the application host
-     *     (a same-host portal) is the portal's, never a staff target; otherwise the
-     *     base rules apply to $path directly.
+         *   - staff context: a path the portal claims on the application host (a
+     *     same-host portal's prefix - every tenant's in multi tenancy;
+     *     Portal_Site_Resolver::claims_application_path()) is the portal's, never a
+     *     staff target; otherwise the base rules apply to $path directly.
      *   - portal context: $path MUST be under the portal prefix (an empty prefix
      *     contains every path). The prefix is stripped and the base rules apply to
      *     the remainder, so <prefix>/_... and <prefix>/api/... reject while
@@ -183,7 +184,7 @@ class Login_Redirect
     private static function _is_non_page_path_in_context(string $path): bool
     {
         if (!Rsx_Portal::is_portal_request()) {
-            if (!Rsx_Portal_Url::is_separate_host() && Rsx_Portal::is_under_prefix($path)) {
+            if (Portal_Site_Resolver::claims_application_path($path)) {
                 return true;
             }
 

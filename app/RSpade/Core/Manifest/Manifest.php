@@ -288,6 +288,10 @@ class Manifest
     public const UNSEALED_BUILD_MESSAGE = 'This production build is unsealed. '
         . 'Run: php artisan rsx:build --force. See rsx:man prod.';
 
+    public const PORTAL_ENV_CHANGED_MESSAGE = 'The client portal settings (rsx.tenancy, and PORTAL_ENABLED, '
+        . 'PORTAL_URL, PORTAL_CUSTOM_DOMAINS in .env) differ from the ones this production build was made with. '
+        . 'Run: php artisan rsx:build --force. See rsx:man prod.';
+
     // True when this process's init() actually (re)scanned/rebuilt the manifest
     // (incremental update WITH changes, or a no-cache full build). Stays false on a
     // warm boot that loaded a valid cache. Drives the rsx.rebuilt* lifecycle events
@@ -1408,6 +1412,13 @@ class Manifest
         if (Rsx::is_production() && !\App\RSpade\Core\Prod\Rsx_Build_Context::is_active()) {
             if (!$loaded_cache || !\App\RSpade\Core\Prod\Rsx_Prod_Seal::exists()) {
                 throw new \RuntimeException(self::UNSEALED_BUILD_MESSAGE);
+            }
+
+            // The build judged the client portal settings (Portal_Url_ManifestSupport) and
+            // stamped them; a sealed box never rebuilds, so settings changed since are
+            // refused here rather than served unjudged. One string comparison.
+            if ((self::$data['portal_env'] ?? null) !== \App\RSpade\Core\Portal\Rsx_Portal_Url::fingerprint()) {
+                throw new \RuntimeException(self::PORTAL_ENV_CHANGED_MESSAGE);
             }
 
             console_debug('MANIFEST', 'Manifest cache loaded (production mode)');

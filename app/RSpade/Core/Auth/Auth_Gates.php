@@ -501,7 +501,10 @@ class Auth_Gates
         }
 
         if ($realm === self::REALM_PORTAL) {
-            return Rsx_Portal::Route($target, $params);
+            // A site without a portal has no link to give.
+            $url = Rsx_Portal::Route($target, $params);
+
+            return $url === false ? null : $url;
         }
 
         return \App\RSpade\Core\Rsx::Route($target, $params);

@@ -12,9 +12,12 @@
  * - Portal-specific context detection
  * - Simpler (no event system, fewer utilities)
  *
- * The portal's address is the server's derivation of PORTAL_URL (PHP Rsx_Portal_Url),
- * shipped in every bundle as window.rsxapp.portal {origin, prefix, separate_host} and read
- * through origin() / host() / prefix() / is_separate_host().
+ * The portal's address is the server's answer for the CURRENT site (PHP
+ * Rsx_Portal_Url::client_payload()), shipped in every bundle as window.rsxapp.portal
+ * {origin, prefix, separate_host, base, app_host_prefix} and read through origin() /
+ * host() / prefix() / is_separate_host() / base(). On a portal page it is the site the
+ * page's URL resolved to; on a staff page the signed-in site's portal. base is null when
+ * that site has no portal, and Route() then answers false.
  *
  * Usage Examples:
  * ```javascript
@@ -51,32 +54,60 @@ class Rsx_Portal {
     // =========================================================================
 
     /**
-     * scheme://host[:port] the portal is served on ('' before APP_URL is configured).
+     * The current site's portal address, origin + prefix, or null when it has no portal.
      *
-     * @returns {string}
+     * @returns {string|null}
+     */
+    static base() {
+        return window.rsxapp.portal.base;
+    }
+
+    /**
+     * scheme://host[:port] the current site's portal is served on ('' before APP_URL is
+     * configured; null when the site has no portal).
+     *
+     * @returns {string|null}
      */
     static origin() {
         return window.rsxapp.portal.origin;
     }
 
     /**
-     * The portal's host, lowercased, without a port ('' before APP_URL is configured).
+     * The portal's host, lowercased, without a port ('' before APP_URL is configured; null
+     * when the site has no portal).
      *
-     * @returns {string}
+     * @returns {string|null}
      */
     static host() {
         const origin = Rsx_Portal.origin();
+
+        if (origin === null) {
+            return null;
+        }
 
         return origin === '' ? '' : new URL(origin).hostname.toLowerCase();
     }
 
     /**
      * The path the portal lives under on its host: '' or '/seg[/seg]', no trailing slash.
+     * On a portal page, the base this page's URL resolved to (per site in multi tenancy).
+     * Null on a staff page whose site has no portal.
      *
-     * @returns {string}
+     * @returns {string|null}
      */
     static prefix() {
         return window.rsxapp.portal.prefix;
+    }
+
+    /**
+     * The fixed path the portal claims on the application host, whatever the site
+     * ('/_portal' for both '/_portal' and '/_portal/:slug'), or null when the portal is
+     * disabled or lives on hosts of its own.
+     *
+     * @returns {string|null}
+     */
+    static app_host_prefix() {
+        return window.rsxapp.portal.app_host_prefix;
     }
 
     /**
@@ -90,7 +121,8 @@ class Rsx_Portal {
 
     /**
      * Whether a path (a query string or fragment may follow) is under the portal's prefix.
-     * An empty prefix contains every path. Mirror of PHP Rsx_Portal::is_under_prefix().
+     * An empty prefix contains every path; no prefix (a staff page whose site has no
+     * portal) contains none. Mirror of PHP Rsx_Portal::is_under_prefix().
      *
      * @param {string} path
      * @returns {boolean}
@@ -98,15 +130,27 @@ class Rsx_Portal {
     static is_under_prefix(path) {
         const prefix = Rsx_Portal.prefix();
 
-        if (prefix === '' || path === prefix) {
+        return prefix !== null && Rsx_Portal.is_under_base(path, prefix);
+    }
+
+    /**
+     * is_under_prefix() against a given base ('' or '/seg[/seg]'). Mirror of PHP
+     * Rsx_Portal::is_under_base().
+     *
+     * @param {string} path
+     * @param {string} base
+     * @returns {boolean}
+     */
+    static is_under_base(path, base) {
+        if (base === '' || path === base) {
             return true;
         }
 
-        if (!path.startsWith(prefix)) {
+        if (!path.startsWith(base)) {
             return false;
         }
 
-        return ['/', '?', '#'].includes(path.charAt(prefix.length));
+        return ['/', '?', '#'].includes(path.charAt(base.length));
     }
 
     /**
@@ -120,7 +164,7 @@ class Rsx_Portal {
     static strip_prefix(path) {
         const prefix = Rsx_Portal.prefix();
 
-        if (prefix === '' || !Rsx_Portal.is_under_prefix(path)) {
+        if (prefix === null || prefix === '' || !Rsx_Portal.is_under_prefix(path)) {
             return path;
         }
 
@@ -130,13 +174,19 @@ class Rsx_Portal {
     }
 
     /**
-     * Whether a portal URL built here can be a host-relative path: always when the portal
-     * shares the application's host, otherwise only on a page served from the portal's
-     * host. Mirror of PHP Rsx_Portal::is_on_portal_host().
+     * Whether a portal URL built here can be a host-relative path: when the portal shares
+     * the application's host, or when this page is served from the portal's host. False when the current site has no portal.
+     * Mirror of PHP Rsx_Portal::is_on_portal_host().
      *
      * @returns {boolean}
      */
     static is_on_portal_host() {
+        if (Rsx_Portal.base() === null) {
+            return false;
+        }
+
+        // A staff page is on the application host, and a portal page's address is its own
+        // site's: separate_host says which host each is on.
         if (!Rsx_Portal.is_separate_host()) {
             return true;
         }
@@ -270,9 +320,16 @@ class Rsx_Portal {
      * ```
      *
      * @param {string} action Controller class, SPA action, or "Class::method"
+     * The URL is for the CURRENT site's portal (window.rsxapp.portal): on a portal page the
+     * page's own, on a staff page the signed-in site's. FALSE when that site has no portal
+     * (base null) - a staff page that links into the portal handles it. There is no site_id
+     * argument here: another site's portal URL is built on the server
+     * (PHP Rsx_Portal::Route(..., site_id:)).
+     *
      * @param {number|Object} [params=null] Route parameters
      * @param {Object} [hash=null] Fragment state, as Rsx.Route() takes it
-     * @returns {string} A path, or an absolute URL when this page is not on the portal host
+     * @returns {string|false} A path, or an absolute URL when this page is not on the portal
+     *                         host; false when the current site has no portal
      */
     static Route(action, params = null, hash = null) {
         if (typeof action !== 'string') {
@@ -341,13 +398,18 @@ class Rsx_Portal {
 
     /**
      * Place a portal-namespace path at the portal's address: prefix + path, on the portal's
-     * origin unless is_on_portal_host(). Mirror of PHP Rsx_Portal::_apply_portal_base().
+     * origin unless is_on_portal_host(). False when the current site has no portal. Mirror
+     * of PHP Rsx_Portal::_apply_portal_base().
      *
      * @param {string} path The path inside the portal (e.g., '/dashboard')
-     * @returns {string}
+     * @returns {string|false}
      * @private
      */
     static _apply_portal_base(path) {
+        if (Rsx_Portal.base() === null) {
+            return false;
+        }
+
         const prefixed = Rsx_Portal.prefix() + path;
 
         if (Rsx_Portal.is_on_portal_host()) {

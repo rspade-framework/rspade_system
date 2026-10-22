@@ -11,7 +11,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Cookie;
 use App\RSpade\Core\Auth\Auth_Gates;
-use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
+use App\RSpade\Core\Portal\Portal_Site_Resolver;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Session\Rsx_Session_Cookie;
 use App\RSpade\Core\Session\Rsx_Signed_Url;
@@ -19,8 +20,12 @@ use App\RSpade\Core\Session\Session;
 
 /**
  * Session_Link - the linked-session handshake: three one-time GET legs that make a portal
- * served from its OWN host (PORTAL_URL) use the SAME _sessions row as the staff browser
- * that started "View as Client".
+ * served from its OWN host (a PORTAL_URL host, a tenant subdomain, a custom portal domain)
+ * use the SAME _sessions row as the staff browser that started "View as Client".
+ *
+ * The portal legs are addressed to the portal of the impersonated portal user's SITE
+ * (Rsx_Portal_Url::for_site()): in multi tenancy each site has its own host, and the site
+ * travels on the link row, never in a URL.
  *
  * Why it is needed: on a separate host the browser holds a separate `rsx` cookie, and a
  * cookie for one host cannot be set from the other. Cross-host POST is refused (Rsx_Csrf's
@@ -92,9 +97,10 @@ class Session_Link
 
     /**
      * Mint leg 1 of a "View as Client" handshake for a staff browser's session row and
-     * return its URL (absolute, on the portal's origin).
+     * return its URL (absolute, on the origin of $portal_site_id's portal).
      *
-     * FRAMEWORK INTERNAL - for Portal_Session::begin_impersonation_from_staff().
+     * FRAMEWORK INTERNAL - for Portal_Session::begin_impersonation_from_staff(), which has
+     * already established that the site has a portal on a host of its own.
      *
      * @param int $session_id The staff browser's _sessions row
      * @param int $portal_user_id
@@ -104,13 +110,19 @@ class Session_Link
      */
     public static function begin_impersonation(int $session_id, int $portal_user_id, int $portal_site_id, int $impersonator_user_id): string
     {
+        $address = Rsx_Portal_Url::for_site($portal_site_id);
+
+        if ($address === false) {
+            shouldnt_happen("Session_Link::begin_impersonation(): site {$portal_site_id} has no client portal");
+        }
+
         $code = static::__mint(self::LEG_OPEN, $session_id, null, [
             'portal_user_id' => $portal_user_id,
             'portal_site_id' => $portal_site_id,
             'impersonator_user_id' => $impersonator_user_id,
         ]);
 
-        return static::__leg_url(self::LEG_OPEN, $code);
+        return static::__portal_leg_url(self::LEG_OPEN, $code, $address);
     }
 
     // =========================================================================
@@ -135,7 +147,7 @@ class Session_Link
         $code = static::__mint(self::LEG_CONFIRM, $link['session_id'], hash('sha256', $nonce), $link['payload']);
 
         return [
-            'redirect' => static::__leg_url(self::LEG_CONFIRM, $code),
+            'redirect' => static::__staff_leg_url($code),
             'nonce' => $nonce,
         ];
     }
@@ -186,9 +198,18 @@ class Session_Link
             return null;
         }
 
+        // Back to the portal of the impersonated user's site - refused when it has lost its
+        // portal since leg 1 (the impersonation just applied is then harmless: the portal it
+        // belongs to does not answer).
+        $address = Rsx_Portal_Url::for_site($portal_site_id);
+
+        if ($address === false) {
+            return null;
+        }
+
         $code = static::__mint(self::LEG_COMPLETE, $link['session_id'], $link['nonce_hash'], []);
 
-        return static::__leg_url(self::LEG_COMPLETE, $code);
+        return static::__portal_leg_url(self::LEG_COMPLETE, $code, $address);
     }
 
     /**
@@ -219,18 +240,20 @@ class Session_Link
     // =========================================================================
 
     /**
-     * The nonce cookie leg 1 sets, scoped to the handshake's portal paths.
+     * The nonce cookie leg 1 sets, scoped to the handshake's portal paths under the base the
+     * leg was served at.
      *
+     * @param Request $request The leg's request
      * @param string $nonce
      * @return Cookie
      */
-    public static function nonce_cookie(string $nonce): Cookie
+    public static function nonce_cookie(Request $request, string $nonce): Cookie
     {
         return Cookie::create(
             self::NONCE_COOKIE,
             $nonce,
             time() + self::EXPIRY_SECONDS,
-            static::__nonce_cookie_path(),
+            static::__nonce_cookie_path($request),
             null,
             Rsx_Session_Cookie::is_secure(),
             true,
@@ -242,15 +265,16 @@ class Session_Link
     /**
      * The expired twin of nonce_cookie(), which removes it.
      *
+     * @param Request $request The leg's request
      * @return Cookie
      */
-    public static function forget_nonce_cookie(): Cookie
+    public static function forget_nonce_cookie(Request $request): Cookie
     {
         return Cookie::create(
             self::NONCE_COOKIE,
             '',
             1,
-            static::__nonce_cookie_path(),
+            static::__nonce_cookie_path($request),
             null,
             Rsx_Session_Cookie::is_secure(),
             true,
@@ -260,11 +284,16 @@ class Session_Link
     }
 
     /**
-     * Legs 1 and 3 are both under <prefix>/_session_link on the portal host.
+     * Legs 1 and 3 are both under <base>/_session_link on the portal host, where <base> is
+     * the portal base the request's address resolves to (per site in multi tenancy) - read
+     * from the request itself, the same reading Rsx_Request_Channel classifies with. A leg
+     * on the staff host (a refused leg 2) has no base.
      */
-    private static function __nonce_cookie_path(): string
+    private static function __nonce_cookie_path(Request $request): string
     {
-        return Rsx_Portal_Url::prefix() . '/_session_link';
+        $match = Portal_Site_Resolver::match(strtolower($request->getHost()), Rsx_Request_Channel::dispatch_path($request));
+
+        return ($match['base_path'] ?? '') . '/_session_link';
     }
 
     // =========================================================================
@@ -380,22 +409,29 @@ class Session_Link
     // =========================================================================
 
     /**
-     * The signed URL of a leg, on the host that serves it: legs 1 and 3 on the portal
-     * (Rsx_Portal::portal_path(), prefix-aware and absolute off the portal host), leg 2 on
-     * APP_URL's origin.
+     * The signed URL of leg 1 or 3, absolute on the site's portal origin and under its
+     * prefix, signed for its host.
+     *
+     * @param array $address Rsx_Portal_Url::for_site() of the impersonated user's site
      */
-    private static function __leg_url(int $leg, string $code): string
+    private static function __portal_leg_url(int $leg, string $code, array $address): string
     {
-        if ($leg === self::LEG_CONFIRM) {
-            $app = static::__app_address();
-            $base = $app['origin'] . self::PATHS[$leg];
-            $host = $app['host'];
-        } else {
-            $base = Rsx_Portal::portal_path(self::PATHS[$leg]);
-            $host = Rsx_Portal_Url::host();
-        }
+        return static::__signed($leg, $code, $address['origin'] . $address['prefix'] . self::PATHS[$leg], $address['host']);
+    }
 
-        return $base . '?' . http_build_query([
+    /**
+     * The signed URL of leg 2, on APP_URL's origin.
+     */
+    private static function __staff_leg_url(string $code): string
+    {
+        $app = static::__app_address();
+
+        return static::__signed(self::LEG_CONFIRM, $code, $app['origin'] . self::PATHS[self::LEG_CONFIRM], $app['host']);
+    }
+
+    private static function __signed(int $leg, string $code, string $url, string $host): string
+    {
+        return $url . '?' . http_build_query([
             'c' => $code,
             's' => Rsx_Signed_Url::sign(static::__purpose($leg), $code, $host),
         ]);

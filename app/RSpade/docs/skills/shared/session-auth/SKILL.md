@@ -148,7 +148,7 @@ Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (10), `window
 
 ### Declaring a site without a session
 
-`Session::set_temporary_site_id($site_id)` declares the tenant for the rest of the script and **writes nothing**: no `_sessions` row, no cookie, no change to an existing row - a browser mid-session has its own tenant back after `clear_temporary_site_id()`. `get_site_id()` answers the declared value and `has_session()` answers true meanwhile; it outranks the stored session and is refused inside an external API request. Use it where code must run in a site's context and no session should come into being (a first-run request, a webhook that names its tenant); `set_site_id()` is the call that changes a signed-in user's tenant. Staff realm and site only - the portal declares its site with `Portal_Session::set_site_id()`.
+`Session::set_temporary_site_id($site_id)` declares the tenant for the rest of the script and **writes nothing**: no `_sessions` row, no cookie, no change to an existing row - a browser mid-session has its own tenant back after `clear_temporary_site_id()`. `get_site_id()` answers the declared value and `has_session()` answers true meanwhile; it outranks the stored session and is refused inside an external API request. Use it where code must run in a site's context and no session should come into being (a first-run request, a webhook that names its tenant); `set_site_id()` is the call that changes a signed-in user's tenant. Staff realm and site only - a portal request's site is read from its URL by the framework (`Portal_Session::set_site_id()` is for commands, tasks and tests).
 
 ### Account state is APPLICATION vocabulary; site membership is the FRAMEWORK's
 

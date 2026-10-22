@@ -53,7 +53,7 @@ class Rsx_Portal
      *
      * The answer is the request's REALM as Rsx_Request_Channel classified it, once, before
      * anything was dispatched: on the portal's own host every request, on the application
-     * host a request under the portal's prefix (Rsx_Portal_Url). Outside a request (CLI, tests) it is false unless set_portal_request()
+     * host a request under the portal's prefix (Portal_Site_Resolver). Outside a request (CLI, tests) it is false unless set_portal_request()
      * declared otherwise.
      *
      * @return bool True if this is a portal request
@@ -80,63 +80,90 @@ class Rsx_Portal
      * the prefix itself, or the prefix followed by '/', '?' or '#'. An empty prefix (the
      * portal at the root of its own host) contains every path.
      *
+     * The prefix is this portal request's base (Rsx_Request_Channel::portal_base() - per
+     * site in multi tenancy); outside a classified portal request, the current site's
+     * (Rsx_Portal_Url::prefix(), which throws when that site has no portal).
+     *
      * @param string $path
      * @return bool
      */
     public static function is_under_prefix(string $path): bool
     {
-        $prefix = Rsx_Portal_Url::prefix();
-
-        if ($prefix === '' || $path === $prefix) {
-            return true;
-        }
-
-        if (!str_starts_with($path, $prefix)) {
-            return false;
-        }
-
-        return in_array($path[strlen($prefix)], ['/', '?', '#'], true);
+        return static::is_under_base($path, Rsx_Request_Channel::portal_base());
     }
 
     /**
      * A URL with the portal's path prefix removed - the path INSIDE the portal ('/_portal'
      * -> '/', '/_portal/x?y' -> '/x?y'). Unchanged when the portal has no prefix or the URL
-     * is not under it.
+     * is not under it. The prefix is is_under_prefix()'s.
      *
      * @param string $url
      * @return string
      */
     public static function strip_prefix(string $url): string
     {
-        $prefix = Rsx_Portal_Url::prefix();
+        return static::strip_base($url, Rsx_Request_Channel::portal_base());
+    }
 
-        if ($prefix === '' || !static::is_under_prefix($url)) {
+    /**
+     * is_under_prefix() against a given base ('' or '/seg[/seg]') - one tenant's concrete
+     * prefix ('/_portal/acme') rather than the configured one.
+     *
+     * @param string $path
+     * @param string $base
+     * @return bool
+     */
+    public static function is_under_base(string $path, string $base): bool
+    {
+        if ($base === '' || $path === $base) {
+            return true;
+        }
+
+        if (!str_starts_with($path, $base)) {
+            return false;
+        }
+
+        return in_array($path[strlen($base)], ['/', '?', '#'], true);
+    }
+
+    /**
+     * strip_prefix() against a given base: '/' for the base itself, the remainder beneath
+     * it, the URL unchanged when the base is empty or the URL is not under it.
+     *
+     * @param string $url
+     * @param string $base
+     * @return string
+     */
+    public static function strip_base(string $url, string $base): string
+    {
+        if ($base === '' || !static::is_under_base($url, $base)) {
             return $url;
         }
 
-        $remainder = substr($url, strlen($prefix));
+        $remainder = substr($url, strlen($base));
 
         return ($remainder === '' || $remainder[0] !== '/') ? '/' . $remainder : $remainder;
     }
 
     /**
-     * Whether a URL the portal generates can be a host-relative path for the caller.
+     * Whether a URL a site's portal generates can be a host-relative path for the caller.
      *
-     * In a same-host layout (the portal under a prefix on APP_URL's host) always: the
-     * portal lives on whatever host the caller is on, and an absolute form, when one is
+     * In a same-host layout (the portal under a prefix on APP_URL's host) yes, unless the
+     * caller is itself on a portal host of its own (a custom domain): the portal lives on
+     * whatever application host the caller is on, and an absolute form, when one is
      * needed, is rsx_absolute_url()'s job. With the portal on its own host, only when the
-     * current request's host IS the portal host; a staff page, CLI and a task (whose
-     * request carries APP_URL's host) need the absolute URL.
+     * current request's host IS that portal's host; a staff page, CLI and a task (whose
+     * request carries APP_URL's host) need the absolute URL. False when the site has no
+     * portal.
      *
+     * @param int|null $site_id The site (Rsx_Portal_Url::for_site()); null = the current site
      * @return bool
      */
-    public static function is_on_portal_host(): bool
+    public static function is_on_portal_host(?int $site_id = null): bool
     {
-        if (!Rsx_Portal_Url::is_separate_host()) {
-            return true;
-        }
+        $address = Rsx_Portal_Url::for_site($site_id);
 
-        return strtolower(request()->getHost()) === Rsx_Portal_Url::host();
+        return $address !== false && static::__is_on_host_of($address);
     }
 
     /**
@@ -145,7 +172,8 @@ class Rsx_Portal
      * onto the realm of the CURRENT request - the PHP twin of Rsx_Portal.internal_url().
      *
      *   staff request (and CLI, tasks, the external API)  -> unchanged
-     *   portal request                                    -> under the portal's prefix
+     *   portal request                                    -> under the request's portal base
+     *                                                        (per site in multi tenancy)
      *
      * A portal request is always on the portal's host, so the result is a path. Without
      * this a portal page would request the bare path, which on the application host is a
@@ -161,7 +189,7 @@ class Rsx_Portal
             return $path;
         }
 
-        return Rsx_Portal_Url::prefix() . $path;
+        return Rsx_Request_Channel::portal_base() . $path;
     }
 
     // =========================================================================
@@ -200,12 +228,28 @@ class Rsx_Portal
      * // Returns: #
      * ```
      *
+     * THE SITE. Every site has its own portal address in multi tenancy, so the URL is for
+     * one site: the named site_id, or the current one (Rsx_Portal_Url::for_site()) - in a
+     * portal request the site its URL resolved to, on a staff page the signed-in site.
+     * FALSE when that site has no portal (the feature off, the site unserved or switched
+     * off, under 'only' no custom domain): a staff screen that links into the portal
+     * handles it rather than send a broken link. A portal request's own site always has
+     * one.
+     *
+     * ```php
+     * // Every site's invitation link from a batch task:
+     * $url = Rsx_Portal::Route('Portal_Login_Controller', site_id: $site->id);
+     * if ($url === false) { ... this site has no client portal ... }
+     * ```
+     *
      * @param string $action Controller class, SPA action, or "Class::method"
      * @param int|array|\stdClass|null $params Route parameters
      * @param array|null $hash Fragment state, as Rsx::Route() takes it
-     * @return string A path, or an absolute URL when the caller is not on the portal host
+     * @param int|null $site_id The site whose portal; null = the current site
+     * @return string|false A path, or an absolute URL when the caller is not on that portal's
+     *                      host; false when the site has no portal
      */
-    public static function Route($action, $params = null, ?array $hash = null): string
+    public static function Route($action, $params = null, ?array $hash = null, ?int $site_id = null): string|false
     {
         // Parse action into class_name and action_name
         if (str_contains($action, '::')) {
@@ -267,7 +311,7 @@ class Rsx_Portal
 
         $path = Rsx::_generate_url_from_pattern($selected_route['pattern'], $params_array, $class_name, $action_name, $hash);
 
-        return self::_apply_portal_base($path);
+        return self::_apply_portal_base($path, $site_id);
     }
 
     /**
@@ -276,32 +320,64 @@ class Rsx_Portal
      * the caller is not on the portal's host - exactly as Route() builds a route's URL.
      *
      * For a framework path that is not a route target - a ceremony URL, a redirect after a
-     * failure. Anything that IS a route target is Route().
+     * failure. Anything that IS a route target is Route(). The site, and false, are Route()'s.
      *
      * @param string $path A path in the portal's own namespace, starting with '/'.
-     * @return string
+     * @param int|null $site_id The site whose portal; null = the current site
+     * @return string|false
      */
-    public static function portal_path(string $path): string
+    public static function portal_path(string $path, ?int $site_id = null): string|false
     {
-        return self::_apply_portal_base($path);
+        return self::_apply_portal_base($path, $site_id);
     }
 
     /**
-     * Place a portal-namespace path at the portal's address: prefix + path, on the portal's
-     * origin unless is_on_portal_host().
+     * Place a portal-namespace path at a site's portal address: prefix + path, on that
+     * portal's origin unless the caller is on its host. A portal request generating a path
+     * of its OWN portal (no site named) uses the base its URL resolved to
+     * (Rsx_Request_Channel::resolved_portal_base()), on the host it arrived on - which also
+     * answers on an address that serves no site (the portal's 404 page links home).
      *
      * @param string $path The path inside the portal (e.g., '/dashboard')
-     * @return string
+     * @param int|null $site_id The site whose portal; null = the current site
+     * @return string|false False when the site has no portal
      */
-    protected static function _apply_portal_base(string $path): string
+    protected static function _apply_portal_base(string $path, ?int $site_id = null): string|false
     {
-        $path = Rsx_Portal_Url::prefix() . $path;
+        $resolved_base = ($site_id === null && static::is_portal_request()) ? Rsx_Request_Channel::resolved_portal_base() : null;
 
-        if (static::is_on_portal_host()) {
+        if ($resolved_base !== null) {
+            return $resolved_base . $path;
+        }
+
+        $address = Rsx_Portal_Url::for_site($site_id);
+
+        if ($address === false) {
+            return false;
+        }
+
+        $path = $address['prefix'] . $path;
+
+        if (static::__is_on_host_of($address)) {
             return $path;
         }
 
-        return Rsx_Portal_Url::origin() . $path;
+        return $address['origin'] . $path;
+    }
+
+    /**
+     * is_on_portal_host() for an address for_site() answered.
+     *
+     * @param array $address
+     * @return bool
+     */
+    private static function __is_on_host_of(array $address): bool
+    {
+        if (!$address['separate_host'] && !Rsx_Request_Channel::is_portal_host()) {
+            return true;
+        }
+
+        return strtolower(request()->getHost()) === $address['host'];
     }
 
     // =========================================================================

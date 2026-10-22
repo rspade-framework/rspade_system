@@ -111,8 +111,8 @@ class Rsx_File_Upload
 
         // site_id is derived ENTIRELY server-side - client input is never consulted. Trusting a
         // posted site_id was a cross-tenant write primitive (a logged-in caller could stamp an
-        // attachment into another tenant). Portal REQUEST -> Portal_Session's site (declared by
-        // the app in Portal_Main::init(), and it throws rather than guess), otherwise the staff
+        // attachment into another tenant). Portal REQUEST -> Portal_Session's site (the one its
+        // URL serves, and it throws rather than guess), otherwise the staff
         // Session's site - the same realm fork as the gate payload above, and for the same reason.
         $site_id = $is_portal
             ? Portal_Session::get_site_id()

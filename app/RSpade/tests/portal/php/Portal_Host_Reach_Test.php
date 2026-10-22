@@ -214,12 +214,21 @@ class Portal_Host_Reach_Test extends Rsx_Test_Abstract
         config(['rsx.portal.url' => '']);
         $foreign = ['HTTP_ORIGIN' => 'https://elsewhere.example'];
 
-        // A browser's report carries whatever Origin it carries, and no token.
-        Rsx_Csrf::enforce(Request::create(static::__app_origin() . '/_portal/_csp-report', 'POST', [], [], [], $foreign));
-        Rsx_Csrf::enforce(Request::create(static::__app_origin() . '/_csp-report', 'POST', [], [], [], $foreign));
+        // Each request is classified first, as the front controller does: CSRF reads the
+        // request's realm to know which collector path is the portal's.
+        $classified = function (string $path) use ($foreign) {
+            $request = Request::create(static::__app_origin() . $path, 'POST', [], [], [], $foreign);
+            Rsx_Request_Channel::classify($request);
 
-        static::__assert_throws(HttpResponseException::class, function () use ($foreign) {
-            Rsx_Csrf::enforce(Request::create(static::__app_origin() . '/_portal/_upload', 'POST', [], [], [], $foreign));
+            return $request;
+        };
+
+        // A browser's report carries whatever Origin it carries, and no token.
+        Rsx_Csrf::enforce($classified('/_portal/_csp-report'));
+        Rsx_Csrf::enforce($classified('/_csp-report'));
+
+        static::__assert_throws(HttpResponseException::class, function () use ($classified) {
+            Rsx_Csrf::enforce($classified('/_portal/_upload'));
         });
     }
 

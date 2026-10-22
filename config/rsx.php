@@ -99,6 +99,34 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Tenancy
+    |--------------------------------------------------------------------------
+    |
+    | 'tenancy' says whether this install serves one organisation or many.
+    | Valid values: single, multi. Anything else throws at boot.
+    |
+    | It is APPLICATION configuration, not a deployment setting: there is no
+    | .env key for it. The framework default is single; a multi-tenant
+    | application sets 'tenancy' => 'multi' in its rsx/resource/config/rsx.php.
+    |
+    | - single: one tenant, always site 1. The client portal is served at
+    |   PORTAL_URL exactly as written, which carries no tenant placeholder.
+    | - multi: many tenants. PORTAL_URL must carry the tenant placeholder
+    |   (:slug or :site_id) that addresses a portal per site.
+    |
+    | Its effect today is the client portal's tenancy. See rsx:man portal.
+    |
+    | Site 1 is the tenant a single-tenant install serves, the site the initial
+    | user belongs to, and the site a sign-in with no other membership lands on
+    | (Rsx_Tenancy::SINGLE_TENANT_SITE_ID - fixed, not configurable). Site 0 is
+    | the sessionless infrastructure site and is never a tenant.
+    |
+    */
+
+    'tenancy' => 'single',
+
+    /*
+    |--------------------------------------------------------------------------
     | Theme (dark mode)
     |--------------------------------------------------------------------------
     |
@@ -228,6 +256,9 @@ return [
         \App\RSpade\Integrations\Jqhtml\Jqhtml_ManifestSupport::class,
         \App\RSpade\Core\SPA\Spa_ManifestSupport::class,
         \App\RSpade\Core\Api\Api_Endpoint_ManifestSupport::class,
+        // After the last producers of `routes` (staff, SPA, API): judges PORTAL_URL and
+        // its path-prefix collision with those routes.
+        \App\RSpade\Core\Portal\Portal_Url_ManifestSupport::class,
         \App\RSpade\Core\Externals\Externals_ManifestSupport::class,
         \App\RSpade\Core\Task\Task_Command_ManifestSupport::class,
         \App\RSpade\Core\Mail\Email_ManifestSupport::class,
@@ -482,33 +513,68 @@ return [
     | rsx/resource/config/rsx.php) to add app-specific knobs. These defaults
     | let the portal subsystem run sanely on their own.
     |
-    | 'url' (PORTAL_URL) is WHERE the portal is served, written exactly like
-    | APP_URL - scheme, host, optional port, optional path, the $HOSTNAME
-    | token. The portal's host and path prefix are derived from it
-    | (Rsx_Portal_Url):
+    | 'enabled' (PORTAL_ENABLED, default true) switches the portal on or off for
+    | the whole install. Off, nothing is served as the portal and PORTAL_URL is
+    | not validated.
+    |
+    | 'url' (PORTAL_URL) is WHERE the portal is served: a TEMPLATE, written like
+    | APP_URL - scheme, host, optional port, optional path, the $HOSTNAME token -
+    | or as a bare path on APP_URL's host ('/clients'). The portal's host and
+    | path prefix are derived from it (Rsx_Portal_Url).
+    |
+    | Single tenancy (rsx.tenancy = single) - no placeholder:
     |
     |   (blank)                      APP_URL's origin + /_portal
-    |   https://portal.myapp.com/    its own host, no prefix
+    |   /clients                     the application host, under /clients
     |   https://myapp.com/clients    the application host, under /clients
-    |                                (on that host the portal wins over any
-    |                                staff route under the same path)
+    |   https://portal.myapp.com/    its own host, no prefix
     |   https://portal.myapp.com/x   its own host, under /x
     |
-    | Refused at boot: a value equal to APP_URL, http outside development, a
-    | query/fragment/credentials, a path segment outside [A-Za-z0-9_-], and a
-    | first segment the framework owns (api, error, ws, any /_ name other than
-    | /_portal). See rsx:man portal.
+    | Multi tenancy (rsx.tenancy = multi) - exactly one tenant placeholder, :slug
+    | (sites.slug) or :site_id (sites.id):
+    |
+    |   (blank)                      APP_URL's origin + /_portal/:site_id
+    |   /_portal/:slug               the application host, one path per site
+    |   https://:slug.myapp.com      a subdomain per site (the placeholder is
+    |                                the host's first label)
+    |
+    | A path template ends in the placeholder after at least one fixed segment.
+    |
+    | Refused at MANIFEST BUILD, every mode: a value equal to APP_URL, http
+    | outside development, a query/fragment/credentials, a path segment outside
+    | [A-Za-z0-9_-], a first segment the framework owns (api, error, ws, any /_
+    | name other than /_portal), a placeholder in single tenancy or a missing
+    | one in multi, and a path prefix on the application host that collides
+    | with a staff #[Route], SPA @route or API route. A sealed build pins these
+    | values: changing one there means php artisan rsx:build --force.
+    |
+    | 'custom_domains' (PORTAL_CUSTOM_DOMAINS) - whether sites.portal_domain is
+    | honoured. Valid values: off, override, only. Anything else throws at boot.
+    |
+    |   off       sites.portal_domain is ignored
+    |   override  a site with a portal_domain is served there; its template
+    |             address redirects to it
+    |   only      a site is served at its portal_domain and nowhere else
+    |
+    | Each site also carries sites.is_portal_enabled (default on): a site with
+    | it off has no portal. See rsx:man portal.
     |
     */
     'portal' => [
-        // Where the portal is served; blank = APP_URL + '/_portal'.
+        // The client portal, on or off for the whole install.
+        'enabled' => env('PORTAL_ENABLED', true),
+
+        // Where the portal is served (a template - see above); blank = APP_URL +
+        // '/_portal' (single) or APP_URL + '/_portal/:site_id' (multi).
         'url' => env('PORTAL_URL', ''),
 
-        // NOTE: there is deliberately NO portal site key here. Which site a portal
-        // request serves is an APPLICATION fact, declared at runtime with
-        // Portal_Session::set_site_id() (see rsx:man portal). A mono-site app reads
-        // its own config key for it; a multi-tenant app looks it up from the host.
-        // The framework does not guess, and does not ship a default that would.
+        // off | override | only - whether sites.portal_domain is honoured.
+        'custom_domains' => env('PORTAL_CUSTOM_DOMAINS', 'off'),
+
+        // NOTE: there is deliberately NO portal site key here. The site a portal
+        // request serves is resolved from its URL (Portal_Site_Resolver): site 1
+        // in single tenancy, the :slug / :site_id / sites.portal_domain the
+        // address names in multi tenancy. See rsx:man portal.
 
         // How long a portal invitation code stays valid, in days.
         'invitation_expiry_days' => 14,

@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Debug;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 use App\RSpade\Core\Debug\Dev_Auth_Token;
+use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
@@ -115,7 +116,11 @@ class Rsx_Diagnostics
 
         $portal_user_id = $request->header('X-Dev-Auth-Portal-User-Id');
         if ($portal_user_id && ctype_digit((string) $portal_user_id)) {
-            $portal_uri = Rsx_Portal::strip_prefix($uri);
+            // The token signs the path inside the portal: this request's portal base removed
+            // (per site in multi tenancy). Outside the portal realm it cannot verify.
+            $portal_uri = Rsx_Request_Channel::is_portal()
+                ? Rsx_Portal::strip_base($uri, Rsx_Request_Channel::portal_base())
+                : $uri;
 
             return Dev_Auth_Token::verify($portal_uri, (int) $portal_user_id, true, $exp, $token) === null;
         }

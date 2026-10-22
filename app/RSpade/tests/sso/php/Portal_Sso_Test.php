@@ -220,6 +220,39 @@ class Portal_Sso_Test extends Rsx_Test_Abstract
      * The portal ceremony has its own URLs, and the provider is told to come back to the
      * portal's callback - on the portal's host and path, never the staff one.
      */
+    public static function test_the_health_row_warns_when_tenant_portals_live_on_hosts_of_their_own()
+    {
+        foreach (['rsx.tenancy', 'rsx.portal.url', 'rsx.portal.custom_domains', 'rsx.portal.enabled'] as $key) {
+            self::__override($key, config($key));
+        }
+
+        // Single tenancy, a portal on its own host: one host, one redirect URI.
+        config()->set('rsx.tenancy', 'single');
+        config()->set('rsx.portal.url', 'https://portal.example.test');
+        static::__assert_equals('OK', Rsx_Portal_Sso::health_row()['status']);
+
+        // Multi tenancy by path: every tenant is on the application host.
+        config()->set('rsx.tenancy', 'multi');
+        config()->set('rsx.portal.url', '/_portal/:slug');
+        config()->set('rsx.portal.custom_domains', 'off');
+        static::__assert_equals('OK', Rsx_Portal_Sso::health_row()['status']);
+
+        // Custom domains, or a host template: a host per tenant.
+        config()->set('rsx.portal.custom_domains', 'override');
+        $row = Rsx_Portal_Sso::health_row();
+        static::__assert_equals('WARN', $row['status']);
+        static::__assert_contains('not built yet', $row['detail']);
+
+        config()->set('rsx.portal.custom_domains', 'off');
+        config()->set('rsx.portal.url', 'https://:slug.portals.example.test');
+        static::__assert_equals('WARN', Rsx_Portal_Sso::health_row()['status']);
+
+        // The realm off: nothing to warn about.
+        config()->set('rsx.sso.portal_enabled', false);
+        static::__assert_equals('OK', Rsx_Portal_Sso::health_row()['status']);
+        config()->set('rsx.sso.portal_enabled', true);
+    }
+
     public static function test_the_portal_ceremony_uses_the_portal_urls_and_state()
     {
         static::__as_portal(static::$_site_id);

@@ -4,7 +4,6 @@ namespace App\RSpade\Core\Csp;
 
 use RuntimeException;
 use App\RSpade\Core\Externals\Rsx_Externals;
-use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Rsx;
 
@@ -160,9 +159,10 @@ class Rsx_Csp
 
     /**
      * The collector's path as a page of this realm posts to it: REPORT_PATH for staff, and
-     * the same path under the portal's prefix for the portal (Rsx_Portal_Url), so a portal
-     * page's reports are portal requests on the portal's own host or prefix. A path, never an
-     * absolute URL - a page reports to the host it was served from.
+     * the same path under this request's portal base for the portal (the prefix its URL
+     * resolved to - per site in multi tenancy; Rsx_Request_Channel::portal_base()), so a
+     * portal page's reports are portal requests on the portal's own host or prefix. A path,
+     * never an absolute URL - a page reports to the host it was served from.
      *
      * @param string $realm 'staff' or 'portal'
      * @return string
@@ -170,7 +170,7 @@ class Rsx_Csp
     public static function report_path(string $realm): string
     {
         return $realm === 'portal'
-            ? Rsx_Portal_Url::prefix() . self::REPORT_PATH
+            ? \App\RSpade\Core\Dispatch\Rsx_Request_Channel::portal_base() . self::REPORT_PATH
             : self::REPORT_PATH;
     }
 

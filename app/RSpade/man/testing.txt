@@ -594,8 +594,9 @@ PER-TEST STATE RESET
     cli_set_user_id() - SURVIVES between test methods, because setup() runs once
     per CLASS and is where a suite declares who it acts as; clearing it would
     land every fixture written after the first test method on site_id 0. The
-    PORTAL declaration does NOT survive: a portal site is declared per REQUEST by
-    the application, so each test declares its own.
+    PORTAL declaration does NOT survive: a portal site is declared per REQUEST
+    (from its URL), so each test declares the site its request would have
+    resolved.
 
     The consequence for portal tests: a Portal_Session::set_site_id() call in
     setup() does NOT survive, because setup() runs once per CLASS and this reset

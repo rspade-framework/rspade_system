@@ -14,8 +14,10 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * Unit coverage for Rsx_Env_Hostname_Guard (the dev-mode .env hostname tripwire).
  *
  * The guard declares the APP_URL host and, when PORTAL_URL names a host of its own,
- * the portal's host; a request passes when it matches ANY of them, EXACTLY (no
- * sub-host suffix rule, no port). The guard's per-request check() bails immediately under CLI -
+ * the portal's host (or, for a tenant-subdomain template, '*.<suffix>': one label in front
+ * of the suffix); a request passes when it matches ANY of them, EXACTLY otherwise (no
+ * sub-host suffix rule, no port). Custom portal domains (sites.portal_domain) are a lookup
+ * made outside the pure core - Portal_Site_Resolver_Test covers it. The guard's per-request check() bails immediately under CLI -
  * and the PHP test runner IS CLI - so the web path can never be exercised here.
  * Instead the guard is deliberately factored into a pure core (build_declared +
  * find_mismatch + is_loopback_host + normalize_request_host) that takes plain
@@ -248,10 +250,54 @@ class Env_Hostname_Guard_Test extends Rsx_Test_Abstract
         static::__assert_throws(
             \RuntimeException::class,
             function () {
-                Rsx_Env_Hostname_Guard::build_declared(['APP_URL' => 'https://app.dev.hanson.xyz', 'PORTAL_URL' => '/clients']);
+                Rsx_Env_Hostname_Guard::build_declared(['APP_URL' => 'https://app.dev.hanson.xyz', 'PORTAL_URL' => 'https:///clients']);
             },
             'PORTAL_URL'
         );
+    }
+
+    /**
+     * A bare path is the portal under that prefix on APP_URL's host: no host of its own.
+     */
+    public static function test_a_bare_path_portal_url_declares_nothing_more()
+    {
+        static::__assert_count(1, Rsx_Env_Hostname_Guard::build_declared([
+            'APP_URL' => 'https://app.dev.hanson.xyz',
+            'PORTAL_URL' => '/clients',
+        ]));
+        static::__assert_count(1, Rsx_Env_Hostname_Guard::build_declared([
+            'APP_URL' => 'https://app.dev.hanson.xyz',
+            'PORTAL_URL' => '/_portal/:slug',
+            'tenancy' => 'multi',
+        ]));
+    }
+
+    /**
+     * A tenant-subdomain template declares one label in front of its suffix - every tenant
+     * host, never a deeper sub-host or the bare suffix.
+     */
+    public static function test_a_tenant_subdomain_template_declares_one_label_hosts()
+    {
+        $declared = Rsx_Env_Hostname_Guard::build_declared([
+            'APP_URL' => 'https://app.dev.hanson.xyz',
+            'PORTAL_URL' => 'https://:slug.portals.dev.hanson.xyz',
+            'tenancy' => 'multi',
+        ]);
+
+        static::__assert_equals('*.portals.dev.hanson.xyz', $declared[1]['host']);
+        static::__assert_null(Rsx_Env_Hostname_Guard::find_mismatch('acme.portals.dev.hanson.xyz', $declared));
+        static::__assert_null(Rsx_Env_Hostname_Guard::find_mismatch('app.dev.hanson.xyz', $declared));
+        static::__assert_not_null(Rsx_Env_Hostname_Guard::find_mismatch('a.b.portals.dev.hanson.xyz', $declared), 'one label only');
+        static::__assert_not_null(Rsx_Env_Hostname_Guard::find_mismatch('portals.dev.hanson.xyz', $declared), 'not the bare suffix');
+    }
+
+    public static function test_a_disabled_portal_declares_nothing_more()
+    {
+        static::__assert_count(1, Rsx_Env_Hostname_Guard::build_declared([
+            'APP_URL' => 'https://app.dev.hanson.xyz',
+            'PORTAL_URL' => 'https://portal.dev.hanson.xyz',
+            'PORTAL_ENABLED' => false,
+        ]));
     }
 
     public static function test_the_portal_host_is_compared_without_its_port()
@@ -279,13 +325,20 @@ class Env_Hostname_Guard_Test extends Rsx_Test_Abstract
 
     public static function test_production_serves_the_app_host_its_sub_hosts_and_the_portal_host()
     {
-        static::__assert_true(Rsx::host_is_served('myapp.com', 'myapp.com', 'myapp.com'));
-        static::__assert_true(Rsx::host_is_served('tenant.myapp.com', 'myapp.com', 'myapp.com'));
-        static::__assert_true(Rsx::host_is_served('clients-of-myapp.com', 'myapp.com', 'clients-of-myapp.com'), 'a portal host that is not a sub-host');
+        static::__assert_true(Rsx::host_is_served('myapp.com', 'myapp.com', []));
+        static::__assert_true(Rsx::host_is_served('tenant.myapp.com', 'myapp.com', []));
+        static::__assert_true(Rsx::host_is_served('clients-of-myapp.com', 'myapp.com', ['clients-of-myapp.com']), 'a portal host that is not a sub-host');
 
-        static::__assert_false(Rsx::host_is_served('other.com', 'myapp.com', 'clients-of-myapp.com'));
-        static::__assert_false(Rsx::host_is_served('xmyapp.com', 'myapp.com', 'myapp.com'), 'a suffix that is not a label boundary');
-        static::__assert_false(Rsx::host_is_served('sub.clients-of-myapp.com', 'myapp.com', 'clients-of-myapp.com'), 'the portal host is exact');
-        static::__assert_false(Rsx::host_is_served('other.com', 'myapp.com', ''), 'an empty portal host matches nothing');
+        static::__assert_false(Rsx::host_is_served('other.com', 'myapp.com', ['clients-of-myapp.com']));
+        static::__assert_false(Rsx::host_is_served('xmyapp.com', 'myapp.com', []), 'a suffix that is not a label boundary');
+        static::__assert_false(Rsx::host_is_served('sub.clients-of-myapp.com', 'myapp.com', ['clients-of-myapp.com']), 'the portal host is exact');
+        static::__assert_false(Rsx::host_is_served('other.com', 'myapp.com', []), 'no portal host matches nothing');
+    }
+
+    public static function test_production_serves_every_tenant_subdomain_of_a_host_template()
+    {
+        static::__assert_true(Rsx::host_is_served('acme.portals.com', 'myapp.com', ['*.portals.com']));
+        static::__assert_false(Rsx::host_is_served('a.b.portals.com', 'myapp.com', ['*.portals.com']), 'one label only');
+        static::__assert_false(Rsx::host_is_served('portals.com', 'myapp.com', ['*.portals.com']), 'not the bare suffix');
     }
 }

@@ -8,6 +8,7 @@ namespace App\RSpade\Tests\Manifest\Php;
 
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\Manifest_Store;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -21,6 +22,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * seal's key: the key was a hash of the source tree only, the tree had not changed, so the
  * development build recomputed exactly the production value.
  *
+ * The client portal settings are .env rather than source, yet the build judges them
+ * (Portal_Url_ManifestSupport), so they are stamped and keyed the same way as the mode.
+ *
  * Asserted at the decision level - Manifest_Store::_compute_hash() and
  * Manifest_Store::index_mode_stale_reason() over synthetic input - plus the validation seam
  * driven against the live index with its mode stamp swapped in memory. Nothing here switches
@@ -29,6 +33,11 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 class Manifest_Build_Key_Mode_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
+
+    /**
+     * A client portal settings stamp for the synthetic bodies.
+     */
+    private const PORTAL_ENV = 'portal-env-a';
 
     /**
      * A small manifest body: two file records and one derived section.
@@ -52,9 +61,9 @@ class Manifest_Build_Key_Mode_Test extends Rsx_Test_Abstract
     {
         $body = self::__body();
 
-        $development = Manifest_Store::_compute_hash($body, Rsx::MODE_DEVELOPMENT);
-        $debug = Manifest_Store::_compute_hash($body, Rsx::MODE_DEBUG);
-        $production = Manifest_Store::_compute_hash($body, Rsx::MODE_PRODUCTION);
+        $development = Manifest_Store::_compute_hash($body, Rsx::MODE_DEVELOPMENT, self::PORTAL_ENV);
+        $debug = Manifest_Store::_compute_hash($body, Rsx::MODE_DEBUG, self::PORTAL_ENV);
+        $production = Manifest_Store::_compute_hash($body, Rsx::MODE_PRODUCTION, self::PORTAL_ENV);
 
         static::__assert_not_equals($production, $development, 'a development build of the production tree reuses the production key');
         static::__assert_not_equals($production, $debug, 'a debug build shares the strict production key');
@@ -73,8 +82,8 @@ class Manifest_Build_Key_Mode_Test extends Rsx_Test_Abstract
 
         foreach ([Rsx::MODE_DEVELOPMENT, Rsx::MODE_DEBUG, Rsx::MODE_PRODUCTION] as $mode) {
             static::__assert_equals(
-                Manifest_Store::_compute_hash($a, $mode),
-                Manifest_Store::_compute_hash($b, $mode),
+                Manifest_Store::_compute_hash($a, $mode, self::PORTAL_ENV),
+                Manifest_Store::_compute_hash($b, $mode, self::PORTAL_ENV),
                 "two builds of one tree disagree in {$mode} mode"
             );
         }
@@ -82,8 +91,8 @@ class Manifest_Build_Key_Mode_Test extends Rsx_Test_Abstract
         $c = self::__body();
         $c['files']['rsx/app/fixture/fixture.js']['hash'] = 'cccc3333';
         static::__assert_not_equals(
-            Manifest_Store::_compute_hash($a, Rsx::MODE_DEVELOPMENT),
-            Manifest_Store::_compute_hash($c, Rsx::MODE_DEVELOPMENT),
+            Manifest_Store::_compute_hash($a, Rsx::MODE_DEVELOPMENT, self::PORTAL_ENV),
+            Manifest_Store::_compute_hash($c, Rsx::MODE_DEVELOPMENT, self::PORTAL_ENV),
             'a content change did not move the development key'
         );
     }
@@ -120,10 +129,12 @@ class Manifest_Build_Key_Mode_Test extends Rsx_Test_Abstract
         Manifest_Store::_load_cold_files();
 
         static::__assert_equals(
-            Manifest_Store::_compute_hash(Manifest::$data['data'], Manifest::$data['mode']),
+            Manifest_Store::_compute_hash(Manifest::$data['data'], Manifest::$data['mode'], Manifest::$data['portal_env']),
             Manifest::get_build_key(),
             'the build key is not the hash of the loaded index in its recorded mode'
         );
+
+        static::__assert_equals(Rsx_Portal_Url::fingerprint(), Manifest::$data['portal_env'] ?? null, 'the loaded index does not carry the live portal settings stamp');
     }
 
     /**
@@ -146,6 +157,87 @@ class Manifest_Build_Key_Mode_Test extends Rsx_Test_Abstract
             static::__assert_false(Manifest_Store::_validate_cached_data(), 'a production index was accepted by a development boot');
             static::__assert_equals('', Manifest::$data['hash'] ?? null, 'the refused index was not discarded');
             static::__assert_equals([], Manifest::$data['data']['files'] ?? null, 'the refused index kept its files - the rebuild would be incremental and find nothing to do');
+        } finally {
+            Manifest::$data = $live;
+        }
+    }
+
+    /**
+     * The client portal settings move the key: a build under other settings is another build.
+     */
+    public static function test_the_portal_settings_stamp_moves_the_key()
+    {
+        $body = self::__body();
+
+        static::__assert_not_equals(
+            Manifest_Store::_compute_hash($body, Rsx::MODE_DEVELOPMENT, self::PORTAL_ENV),
+            Manifest_Store::_compute_hash($body, Rsx::MODE_DEVELOPMENT, 'portal-env-b'),
+            'two portal settings stamps produced one key'
+        );
+    }
+
+    /**
+     * The decision, pure: an index belongs to the portal settings that built it.
+     */
+    public static function test_an_index_from_other_portal_settings_is_stale()
+    {
+        static::__assert_null(Manifest_Store::index_portal_env_stale_reason('a', 'a'));
+
+        $reason = Manifest_Store::index_portal_env_stale_reason('a', 'b');
+        static::__assert_not_null($reason, 'an index built under other portal settings was accepted');
+        static::__assert_contains('PORTAL_URL', $reason);
+
+        static::__assert_not_null(Manifest_Store::index_portal_env_stale_reason(null, 'b'), 'an index with no portal stamp was accepted');
+    }
+
+    /**
+     * The fingerprint follows each of the four settings.
+     */
+    public static function test_the_fingerprint_follows_each_portal_setting()
+    {
+        $saved = [
+            'rsx.tenancy' => config('rsx.tenancy'),
+            'rsx.portal.enabled' => config('rsx.portal.enabled'),
+            'rsx.portal.url' => config('rsx.portal.url'),
+            'rsx.portal.custom_domains' => config('rsx.portal.custom_domains'),
+        ];
+
+        try {
+            $base = Rsx_Portal_Url::fingerprint();
+
+            foreach ([
+                'rsx.tenancy' => 'multi',
+                'rsx.portal.enabled' => false,
+                'rsx.portal.url' => '/clients-fingerprint',
+                'rsx.portal.custom_domains' => 'only',
+            ] as $key => $value) {
+                config([$key => $value]);
+                static::__assert_not_equals($base, Rsx_Portal_Url::fingerprint(), "{$key} did not move the fingerprint");
+                config([$key => $saved[$key]]);
+            }
+
+            static::__assert_equals($base, Rsx_Portal_Url::fingerprint(), 'the fingerprint is not a function of the settings');
+        } finally {
+            config($saved);
+        }
+    }
+
+    /**
+     * A development boot refuses an index built under other portal settings, whole.
+     */
+    public static function test_a_development_boot_refuses_an_index_from_other_portal_settings()
+    {
+        if (!Rsx::is_development()) {
+            static::__skip('the validation path under test is the development one');
+        }
+
+        $live = Manifest::$data;
+
+        try {
+            Manifest::$data['portal_env'] = 'stamp-of-other-settings';
+
+            static::__assert_false(Manifest_Store::_validate_cached_data(), 'an index built under other portal settings was accepted');
+            static::__assert_equals([], Manifest::$data['data']['files'] ?? null, 'the refused index kept its files');
         } finally {
             Manifest::$data = $live;
         }

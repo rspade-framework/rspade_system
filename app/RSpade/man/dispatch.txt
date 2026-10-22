@@ -87,14 +87,20 @@ THE FRONT CONTROLLER
                  previews, routes, SPA bootstraps, the file routes.
 
        The realm (staff or portal) is where PORTAL_URL places the portal: on
-       the application host a path under the portal prefix; on a portal host
-       of its own every request there, a path outside the prefix being the
-       portal's 404 (rsx:man portal, PORTAL URL). Rsx_Portal::
-       is_portal_request() reads it.
+       the application host a path under the portal's base; on a portal host
+       of its own (a PORTAL_URL host, a tenant subdomain, a custom portal
+       domain) every request there, a path outside the base being the
+       portal's 404. A portal request also resolves the SITE its address
+       serves (Portal_Site_Resolver); an address serving no site answers the
+       portal's 404, and a template address of a site moved to its custom
+       domain a 301, both after the preamble (step 3) and before the
+       channel's pipeline (step 4) (rsx:man portal, PORTAL URL). Rsx_Portal::is_portal_request() reads
+       the realm.
 
     3. The preamble: the request's revision unit of work, Manifest::init(), the
        development hostname tripwire (Rsx_Env_Hostname_Guard: a browsed host
-       that matches neither APP_URL's nor PORTAL_URL's host fatals; loopback
+       that matches neither APP_URL's host nor a host the portal answers on
+       fatals; loopback
        is exempt; debug and production validate the host in Rsx::get_hostname()
        instead), and - AJAX and
        PAGE only - the development first-run setup screen (offered to, and
@@ -147,13 +153,15 @@ THE DISPATCH PIPELINE
         dev-auth header     X-Dev-Auth-User-Id     X-Dev-Auth-Portal-User-Id
         CSP realm           staff                  portal
 
-    A portal path under the portal's prefix is matched with the prefix
-    removed (Rsx_Portal::strip_prefix()).
+    A portal path under the portal's base is matched with the base removed
+    (Rsx_Portal::strip_prefix()) - per site in multi tenancy (/_portal/acme).
 
-    1. Portal realm only: the application's Portal_Main::init(), once per
-       process - the FIRST application code in a portal request and the place
-       the portal declares its site (Portal_Session::set_site_id()), which
-       everything after it may ask for. (Staff Main::init() runs at boot.)
+    1. Portal realm only: the site the request's URL resolved to is declared
+       for the request (Portal_Session::_declare_resolved_site(), which signs
+       out a portal sign-in of another site), then the application's
+       Portal_Main::init(), once per process - the FIRST application code in a
+       portal request. Everything after may ask for the site (rsx:man portal,
+       THE SITE CONTRACT). (Staff Main::init() runs at boot.)
 
     2. CSRF. For POST only (the verb on the wire), Rsx_Csrf::enforce() runs.
        One session per browser, one token: this seam covers Ajax, batches,

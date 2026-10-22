@@ -111,6 +111,7 @@ and the portal's admission rule.
 | sso-portal-06 | links are site-scoped | one subject linked on two sites | two rows; a ceremony on site A signs in site A's portal user | implemented |
 | sso-portal-07 | a suspended portal user is refused | linked, then suspended | redirect to the portal login, not signed in | implemented |
 | sso-portal-08 | a portal sign-in records into the portal history | a linked sign-in, then the same subject suspended | one SUCCESS row with the site; the refusal is no row and one portal failure count; no staff row | implemented |
+| sso-portal-09 | the rsx:health "Portal SSO" row WARNs while portal SSO is on in multi tenancy with tenant portals on hosts of their own (custom domains, a host template) - the cross-host ceremony is not built | single own host, multi path, multi override, multi host template, realm off | OK, OK, WARN, WARN, OK | implemented |
 
 ## sso_http_surface.sh (http) - what only the dispatcher and the CSRF seam decide
 

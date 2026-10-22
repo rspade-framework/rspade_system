@@ -185,7 +185,8 @@ class Login_Redirect {
      * Context-aware page-path predicate. Wraps the base rules with the portal
      * namespace rule (mirror of the PHP _is_non_page_path_in_context()):
      *
-     *   - staff page: a path under the portal's prefix on this same host is the
+     *   - staff page: a path the portal claims on the application host (under
+     *     Rsx_Portal.app_host_prefix() - every tenant's, in multi tenancy) is the
      *     portal's, never a staff target; otherwise the base rules.
      *   - portal page: the path MUST be under the portal's prefix (an empty prefix
      *     contains every path); the prefix is stripped and the base rules apply to
@@ -196,7 +197,9 @@ class Login_Redirect {
      */
     static #is_non_page_path_in_context(path) {
         if (!Rsx_Portal.is_portal()) {
-            if (!Rsx_Portal.is_separate_host() && Rsx_Portal.is_under_prefix(path)) {
+            const claimed = Rsx_Portal.app_host_prefix();
+
+            if (claimed !== null && Rsx_Portal.is_under_base(path, claimed)) {
                 return true;
             }
 

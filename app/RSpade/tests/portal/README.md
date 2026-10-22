@@ -25,9 +25,24 @@ Framework core:
   `Core/Throttle/Rsx_Throttle.php` - the other site seams, same fork
 - `Core/Portal/Portal_Session.php` (`begin_impersonation_from_staff()`), `Core/Session/Session_Link.php`,
   `Core/Session/Session_Link_Controller.php`, `Core/Session/Rsx_Signed_Url.php` - staff "View as
-  Client" and the linked-session handshake that joins a portal on its own host to the staff row
+  Client" and the linked-session handshake that joins a portal on its own host to the staff row,
+  addressed per site (a tenant subdomain, a custom domain)
+- `Core/Portal/Rsx_Portal_Url.php` - PORTAL_URL parsed as a template, `check()` per tenancy,
+  the PORTAL_ENABLED / PORTAL_CUSTOM_DOMAINS switches, the settings fingerprint, and
+  `for_site()` - one site's portal address or false - with the current-site accessors and
+  `client_payload()` (`window.rsxapp.portal`) built on it (`Portal_Url_Test`); `Core/Env/Rsx_Tenancy.php` - rsx.tenancy and the single-tenant site constant
+- `Core/Portal/Portal_Site_Resolver.php` - which site a portal request serves, read from its
+  host and path (custom domain, template, single-tenant site 1), the 301 / not-served
+  verdicts, the cached site lookups and the host patterns the hostname guards accept
+  (`Portal_Site_Resolver_Test`); its declaration per request and the mismatch sign-out are
+  `Portal_Session::_declare_resolved_site()` (`Portal_Site_Declaration_Test`,
+  `http/portal_site_mismatch_sign_out.sh` - live server, development mode)
+- `Core/Portal/Portal_Url_ManifestSupport.php` - the build-time FATALs: settings refusals and
+  the prefix's collision with staff routes (`Portal_Url_Manifest_Support_Test`)
 - `Core/Portal/Rsx_Portal.php`, `Core/Js/Rsx_Portal.js` - portal URL generation, which
-  selects and generates with `Rsx`'s own routines and adds only the portal base
+  selects and generates with `Rsx`'s own routines and adds only the portal base - per site
+  (`site_id:`), false when the site has no portal; `Core/SPA/Spa.js` matches portal SPA routes
+  only under the page's base (`playwright/portal_spa_prefix.js`)
 - `Lib/Flash/Flash_Alert.php` - flash alerts are EXPERIENCE-scoped (`_flash_alerts.is_portal`);
   the tests live in the `flash` concern
 - `Core/Auth/Portal_Auth.php` - `verify_credentials()`, the portal password door (`Portal_Auth_Test`;

@@ -127,8 +127,8 @@ THE SUBMISSION PIPELINE
         3.  Clear rendered errors (inline marks, messages, alert, tab badges).
         4.  Client _validate() pass - the architectural exception only, see
             VALIDATION.
-        5.  Serialize - vals() collects EVERY descendant input plus native
-            hidden inputs.
+        5.  Serialize - vals() collects EVERY descendant input plus the native
+            hidden inputs the form owns (see HIDDEN FIELDS OUTSIDE THE FORM).
         6.  before_submit hook, when the host installed one.
         7.  Submit affordance - Button_Utils animates the submit buttons and
             makes them inert.
@@ -424,11 +424,36 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
         system/app/RSpade/resource/reference_app/app/frontend/contacts/contacts_controller.php
             save(): validate, ask about the duplicate email, then write.
 
+HIDDEN FIELDS OUTSIDE THE FORM
+
+    <Rsx_Form> renders a real <form> element, so the browser's own form
+    association applies: give the form an id, and a native hidden input
+    anywhere in the document carrying form="<that id>" belongs to it.
+    vals() reads form.elements, which is exactly that set - the form's
+    descendants plus the inputs associated by id, minus a descendant that
+    names another form.
+
+    The intended use is the human-verification widget, Turnstile_Input,
+    placed outside the form - below a sign-in card, say - and still posting
+    with it (rsx:man turnstile, OUTSIDE ITS FORM):
+
+        <Rsx_Form id="signup-form" $controller="Signup_Controller" $method="submit">
+            ...
+        </Rsx_Form>
+
+        <Turnstile_Input $form="signup-form" />
+
+    Only a native hidden input is reached this way. An input COMPONENT
+    (anything extending Form_Input_Abstract) belongs to the form it renders
+    inside, always.
+
 VALUES AND INPUT ACCESS
 
     form.vals()             serialize - {name: value} for every descendant input
                             (shallow: inputs inside a composite input belong to
-                            that composite) plus native hidden inputs
+                            that composite) plus the native hidden inputs the
+                            form owns - its descendants, and any hidden input
+                            elsewhere whose HTML form attribute names its id
     form.vals(object)       apply - sets each named input present in the object,
                             SKIPPING touched names (see KEYSTROKES WIN); never
                             makes the form dirty

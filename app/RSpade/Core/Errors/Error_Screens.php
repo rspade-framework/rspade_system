@@ -126,6 +126,12 @@ class Error_Screens
                 ? Rsx_Portal::Route('Portal_Login_Controller', $capture)
                 : Rsx::Route('Login_Controller', $capture);
 
+            if ($login_url === false) {
+                // A gate denied a portal surface, so the request was dispatched for a served
+                // site - whose portal has an address.
+                shouldnt_happen('Error_Screens::unauthorized(): the portal login route has no address for this request');
+            }
+
             return redirect($login_url);
         }
 
@@ -360,8 +366,12 @@ class Error_Screens
         }
 
         // The portal's own root (its prefix, on its host): the staff root is somebody
-        // else's application.
-        return rsx_absolute_url(Rsx_Portal::portal_path('/'));
+        // else's application. A portal request always has its own base, a 404 for an
+        // address that serves no site included; a portal-realm page rendered for a staff
+        // request whose site has no portal links to the staff root instead.
+        $home = Rsx_Portal::portal_path('/');
+
+        return $home === false ? url('/') : rsx_absolute_url($home);
     }
 
     /**

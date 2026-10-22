@@ -242,8 +242,8 @@ class Flash_Alert
      * because the portal facade is where the portal's own site contract lives.
      *
      * The portal facade needs a site to create a session with, and refuses to invent
-     * one: it uses the site the APPLICATION declared (Portal_Session::set_site_id,
-     * normally in Portal_Main::init), and throws when the application declared none.
+     * one: it uses the site the request's portal URL resolved to (Portal_Session::
+     * get_site_id()), and throws when there is none.
      * That throw is the portal's contract and belongs to the portal - silently
      * dropping the alert here would hide a misconfigured portal instead.
      *

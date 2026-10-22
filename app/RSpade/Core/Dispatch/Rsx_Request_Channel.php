@@ -10,7 +10,7 @@ namespace App\RSpade\Core\Dispatch;
 use Illuminate\Http\Request;
 use App\RSpade\Core\Api\Api_Dispatcher;
 use App\RSpade\Core\Dispatch\AssetHandler;
-use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Portal_Site_Resolver;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
 
 /**
@@ -36,19 +36,24 @@ use App\RSpade\Core\Portal\Rsx_Portal_Url;
  *   PAGE   everything else, in its realm: public files, /error/* previews, routes, SPA
  *          bootstraps and the framework file routes.
  *
- * THE REALM (staff | portal) is an attribute of AJAX and PAGE, not a channel. Where the
- * portal lives is Rsx_Portal_Url's derivation of PORTAL_URL:
+ * THE REALM (staff | portal) is an attribute of AJAX and PAGE, not a channel. Which
+ * requests are the portal's, and which site each serves, is Portal_Site_Resolver's reading
+ * of the URL against PORTAL_URL (a template), PORTAL_CUSTOM_DOMAINS and sites.portal_domain:
  *
- *   portal on the application host (under a prefix): a path under the prefix is the
- *     portal, any other path is staff - on every host the application answers on.
- *   portal on its own host: EVERY request on that host is the portal realm. A path
- *     outside the prefix there is a portal path no route matches (Dispatcher answers the
- *     portal's 404), never a staff page. On any other host the request is staff, the
- *     prefix included.
+ *   portal on the application host (under a prefix, per site in multi tenancy): a path
+ *     under the prefix is the portal, any other path is staff - on every host the
+ *     application answers on.
+ *   portal on a host of its own (a separate PORTAL_URL host, a tenant subdomain, a custom
+ *     domain): EVERY request on that host is the portal realm. A path outside the prefix
+ *     there is a portal path no route matches (Dispatcher answers the portal's 404), never
+ *     a staff page. On any other host the request is staff, the prefix included.
  *
  * Build artifacts (/_compiled, /_vendor) are realm-agnostic on every host. realm_path is
- * the path with the prefix removed when the request is under it. Rsx_Portal::
- * is_portal_request() is exactly "realm() === REALM_PORTAL".
+ * the path with the request's portal base removed when the request is under it. For AJAX
+ * and PAGE the resolver also SETTLES the site the address names - portal_site_id(),
+ * portal_redirect_to() (a template address of a site served at its custom domain) or
+ * portal_not_served() (no servable portal there) - which the front controller answers
+ * before dispatch. Rsx_Portal::is_portal_request() is exactly "realm() === REALM_PORTAL".
  *
  * OUTSIDE A REQUEST (CLI, a test that never classified one) the answer is a staff PAGE,
  * which is what the portal predicate has always answered in CLI. A web process that asks
@@ -67,8 +72,9 @@ class Rsx_Request_Channel
     public const REALM_PORTAL = 'portal';
 
     /**
-     * The stored classification: ['channel', 'realm', 'portal_host', 'realm_path'], or
-     * null when this process has classified nothing yet.
+     * The stored classification: ['channel', 'realm', 'portal_host', 'realm_path',
+     * 'portal_base', 'portal_site_id', 'portal_redirect_to', 'portal_not_served'], or null
+     * when this process has classified nothing yet.
      */
     private static ?array $__state = null;
 
@@ -111,9 +117,10 @@ class Rsx_Request_Channel
     }
 
     /**
-     * True when the current request arrived on the portal's OWN host (PORTAL_URL names a
-     * host other than APP_URL's). Never true when the portal is under a prefix on the
-     * application host. The API reads this to refuse its whole namespace there.
+     * True when the current request arrived on a host that belongs to the portal - a
+     * PORTAL_URL host other than APP_URL's, a tenant subdomain, a custom portal domain.
+     * Never true when the portal is under a prefix on the application host. The API reads
+     * this to refuse its whole namespace there.
      */
     public static function is_portal_host(): bool
     {
@@ -127,6 +134,54 @@ class Rsx_Request_Channel
     public static function realm_path(): string
     {
         return static::__state()['realm_path'];
+    }
+
+    /**
+     * The concrete path prefix of this request's portal ('/_portal', '/_portal/acme', ''
+     * on a portal host's root). Outside a classified portal request - the CLI/test seam
+     * set_realm() - the current site's prefix (Rsx_Portal_Url::prefix(), which throws when
+     * that site has no portal).
+     */
+    public static function portal_base(): string
+    {
+        return static::resolved_portal_base() ?? Rsx_Portal_Url::prefix();
+    }
+
+    /**
+     * The concrete path prefix the classifier resolved for this portal request, or null when
+     * none was resolved (not a portal request, or the CLI/test seam set_realm()).
+     */
+    public static function resolved_portal_base(): ?string
+    {
+        return static::__state()['portal_base'];
+    }
+
+    /**
+     * The site this portal request's URL resolved to, or null (not a portal request, a
+     * build artifact, an address no servable portal answers, or the CLI/test seam).
+     */
+    public static function portal_site_id(): ?int
+    {
+        return static::__state()['portal_site_id'];
+    }
+
+    /**
+     * Where a template address of a site served at its custom domain is permanently
+     * redirected (PORTAL_CUSTOM_DOMAINS=override), or null.
+     */
+    public static function portal_redirect_to(): ?string
+    {
+        return static::__state()['portal_redirect_to'];
+    }
+
+    /**
+     * True when this portal request's address names no servable portal - an unknown slug
+     * or id, a disabled or deleted site, a site whose portal is switched off, site 0. The
+     * front controller answers the portal's 404 before dispatch.
+     */
+    public static function portal_not_served(): bool
+    {
+        return static::__state()['portal_not_served'];
     }
 
     /**
@@ -212,50 +267,68 @@ class Rsx_Request_Channel
      */
     private static function __outside_request_state(): array
     {
-        return ['channel' => self::PAGE, 'realm' => self::REALM_STAFF, 'portal_host' => false, 'realm_path' => '/'];
+        return static::__state_of(self::PAGE, self::REALM_STAFF, false, '/');
     }
 
     /**
-     * The classification itself. One input: the request's path and host.
+     * One stored classification.
+     *
+     * @param string $channel
+     * @param string $realm
+     * @param bool $portal_host
+     * @param string $realm_path
+     * @param array|null $portal The resolver's answer (match() or settle()) for a portal request
+     * @return array
+     */
+    private static function __state_of(string $channel, string $realm, bool $portal_host, string $realm_path, ?array $portal = null): array
+    {
+        return [
+            'channel' => $channel,
+            'realm' => $realm,
+            'portal_host' => $portal_host,
+            'realm_path' => $realm_path,
+            'portal_base' => $portal['base_path'] ?? null,
+            'portal_site_id' => $portal['site_id'] ?? null,
+            'portal_redirect_to' => $portal['redirect_to'] ?? null,
+            'portal_not_served' => $portal['not_served'] ?? false,
+        ];
+    }
+
+    /**
+     * The classification itself. One input: the request's host, path and query string.
      *
      * @param Request $request
-     * @return array ['channel', 'realm', 'portal_host', 'realm_path']
+     * @return array See $__state
      */
     private static function __compute(Request $request): array
     {
         $path = static::dispatch_path($request);
 
-        $portal_host = Rsx_Portal_Url::is_separate_host()
-            && strtolower($request->getHost()) === Rsx_Portal_Url::host();
+        // The Host header is read (and validated) only where the answer can depend on it.
+        $host = Portal_Site_Resolver::needs_host() ? strtolower($request->getHost()) : '';
+        $match = Portal_Site_Resolver::match($host, $path);
 
-        $in_portal_prefix = Rsx_Portal::is_under_prefix($path);
+        $realm = $match === null ? self::REALM_STAFF : self::REALM_PORTAL;
+        $portal_host = $match !== null && $match['portal_host'];
+        $realm_path = $match === null ? $path : $match['realm_path'];
 
-        // The portal's own host is the portal realm throughout; on the application host the
-        // prefix decides. A separate-host portal's prefix means nothing on the staff host.
-        $is_portal = Rsx_Portal_Url::is_separate_host() ? $portal_host : $in_portal_prefix;
-        $realm = $is_portal ? self::REALM_PORTAL : self::REALM_STAFF;
-
-        // The path inside the realm: the portal prefix is not part of any portal path.
-        $under_prefix = $is_portal && $in_portal_prefix;
-        $realm_path = $under_prefix ? Rsx_Portal::strip_prefix($path) : $path;
-
+        // A build artifact never asks which site: no lookup, no verdict.
         if (AssetHandler::is_build_artifact_request($realm_path)) {
-            return ['channel' => self::ASSET, 'realm' => $realm, 'portal_host' => $portal_host, 'realm_path' => $realm_path];
+            return static::__state_of(self::ASSET, $realm, $portal_host, $realm_path, $match);
         }
 
         // The API is a staff identity wherever it answers, so its realm is staff even on
-        // the portal host - where the API pipeline refuses it (is_portal_host()). /api/
+        // a portal host - where the API pipeline refuses it (is_portal_host()). /api/
         // under a non-empty portal prefix is a portal path, not the API.
-        $prefixed_portal_path = $under_prefix && Rsx_Portal_Url::prefix() !== '';
+        $prefixed_portal_path = $match !== null && $match['under_base'] && $match['base_path'] !== '';
 
         if (!$prefixed_portal_path && Api_Dispatcher::is_api_request($path)) {
-            return ['channel' => self::API, 'realm' => self::REALM_STAFF, 'portal_host' => $portal_host, 'realm_path' => $path];
+            return static::__state_of(self::API, self::REALM_STAFF, $portal_host, $path);
         }
 
-        if (str_starts_with($realm_path, '/_ajax/') && $request->getRealMethod() === 'POST') {
-            return ['channel' => self::AJAX, 'realm' => $realm, 'portal_host' => $portal_host, 'realm_path' => $realm_path];
-        }
+        $portal = $match === null ? null : Portal_Site_Resolver::settle($match, (string) $request->server->get('QUERY_STRING', ''));
+        $channel = str_starts_with($realm_path, '/_ajax/') && $request->getRealMethod() === 'POST' ? self::AJAX : self::PAGE;
 
-        return ['channel' => self::PAGE, 'realm' => $realm, 'portal_host' => $portal_host, 'realm_path' => $realm_path];
+        return static::__state_of($channel, $realm, $portal_host, $realm_path, $portal);
     }
 }

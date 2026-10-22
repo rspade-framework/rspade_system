@@ -133,12 +133,32 @@ CHECKS
       or deleted site refuses its users exactly like a wrong password.
           php artisan db:query "SELECT id, name, is_enabled, deleted_at FROM sites WHERE id <> 0 AND (is_enabled = 0 OR deleted_at IS NOT NULL)"
 
-    - PORTAL_URL is final. Changing it later breaks portal SSO (each enabled
+    - The portal layout is final. PORTAL_URL (and, in multi tenancy, its
+      template's domain and every site's slug or id inside it) is the address
+      of every portal; changing it later breaks portal SSO (each enabled
       provider console registers the old callback URI), portal passkeys on a
       host change (bound to the old host; users enrol again) and stored
-      portal URLs (notification payloads, sent email). Treat a change as a
-      migration.
+      portal URLs (notification payloads, sent email). The same holds for a
+      site's portal_domain under PORTAL_CUSTOM_DOMAINS=only. The one move the
+      framework bridges is a site gaining a portal_domain under override (its
+      template address answers a 301). Production runs the layout it launched
+      with; a development box may differ (paths there, hosts in production),
+      and only .env changes between them. Treat a change as a migration.
           php artisan rsx:health                     # "Portal URL" row
+          grep '^PORTAL_' .env
+
+    - Portal hosts have TLS. Every host a portal answers on - PORTAL_URL's
+      host, every tenant subdomain of a host template (a wildcard certificate),
+      every sites.portal_domain (issued on demand by the TLS terminator in
+      front of the application) - serves a valid certificate before it is
+      linked to. RSpade issues none.
+          php artisan db:query "SELECT id, slug, portal_domain FROM sites WHERE portal_domain IS NOT NULL"
+
+    - Portal SSO with per-site hosts. With rsx.sso.portal_enabled on, a host
+      template or custom portal domains, every tenant host needs its own
+      redirect URI in each provider console; the cross-host ceremony is not
+      yet built. Resolve the WARN or turn portal SSO off.
+          php artisan rsx:health                     # "Portal SSO" row
 
     - Keep-forever file retention. At rsx.files.deleted_retention_days = 0
       no blob is ever removed, force_destroy() included: unreferenced bytes
@@ -167,6 +187,7 @@ SEE ALSO
     email - delivery modes, the dev-site layer, transports
     session - the login throttle and the client address
     portal - PORTAL_URL
+    portal_tenancy - per-site portal hosts, custom domains and TLS
     sso - provider redirect URIs
     two_factor - passkey relying-party id
     file_disposal - keep-forever retention

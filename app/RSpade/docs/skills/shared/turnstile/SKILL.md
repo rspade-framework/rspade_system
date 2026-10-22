@@ -41,7 +41,9 @@ TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA     # server-only, neve
 </Rsx_Form>
 ```
 
-Framework-core, globally available - nothing to import. Args: `$theme` (auto|light|dark), `$size` (normal|flexible|compact), `$appearance` (always|execute|interaction-only).
+Framework-core, globally available - nothing to import. Args: `$theme` (auto|light|dark), `$size` (normal|flexible|compact), `$appearance` (always|execute|interaction-only), `$form`.
+
+**Outside its form.** `$form="<form id>"` puts the HTML `form` attribute on the hidden field, so the widget can sit anywhere in the page - below the sign-in card is the reference app's placement (each auth layout's `below_card` section) - and still post with that form. A native `<form>` submits it; an `<Rsx_Form id="...">` collects it in `vals()` (form.elements) and the widget resets after that form's failed submit. `rsx:man turnstile`, OUTSIDE ITS FORM.
 
 **Two states, chosen from whether the server exported a site key.** *Active*: Cloudflare's widget renders into the component's container and the hidden field receives the token when the challenge resolves. *Inactive*: the hidden field carries `'inactive'`, and **in development** an inert, obviously-static placeholder shows where the widget will sit - on a fresh install every wired form shows it, which is how you see at a glance that the form IS wired and the feature is merely off. **In a sealed build (debug or production) an inactive component shows nothing and takes no room**; the field is still submitted and validated.
 

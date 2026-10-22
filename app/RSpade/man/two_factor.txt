@@ -1335,8 +1335,8 @@ THE CLIENT PORTAL REALM
                     a staff login on the same session is untouched.
         admission   a portal user is signed in only when
                     Portal_User_Model::can_login() accepts them (active and
-                    verified) AND they belong to the site the application
-                    declared (Portal_Session::set_site_id). A credential row
+                    verified) AND they belong to the site the request's URL
+                    serves (Portal_Session::get_site_id()). A credential row
                     names its owner by a global id, so the site check is what
                     keeps one tenant's passkey from signing in on another's
                     portal. A refusal answers like a wrong answer.
@@ -1345,13 +1345,18 @@ THE CLIENT PORTAL REALM
                     success and a passkey enrollment outcome are rows, a
                     failure is Portal_Login_History::record_failure(), which
                     feeds Login_Throttle exactly once.
-        rpId        the portal's HOST (Rsx_Portal_Url::host()) when PORTAL_URL
-                    gives the portal a host of its own, otherwise the
-                    application's hostname (shared with staff - safe, see
-                    PASSKEYS above). A prefix never enters it. A passkey is
-                    bound to its rpId, so moving the portal to another host
-                    strands the passkeys enrolled under the old one (rsx:man
-                    launch_checklist, PORTAL_URL is final).
+        rpId        the current site's portal HOST (Rsx_Portal_Url::host() - on a
+                    portal request the host it arrived on) when that portal
+                    has a host of its own - a PORTAL_URL host, a tenant
+                    subdomain of a host template, a custom portal domain -
+                    otherwise the application's hostname (shared with staff -
+                    safe, see PASSKEYS above). A prefix never enters it. A
+                    passkey is bound to its rpId, so moving a portal to
+                    another host strands the passkeys enrolled under the old
+                    one: a tenant that moves from its subdomain to a custom
+                    domain (PORTAL_CUSTOM_DOMAINS=override) has its portal
+                    users enrol again there (rsx:man portal_tenancy; rsx:man
+                    launch_checklist, the portal layout is final).
         user handle 'portal-<id>'.
         endpoints   Rsx_Portal_Two_Factor_Controller.
         impersonation

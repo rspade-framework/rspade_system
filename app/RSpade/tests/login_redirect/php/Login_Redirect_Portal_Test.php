@@ -261,6 +261,46 @@ class Login_Redirect_Portal_Test extends Rsx_Test_Abstract
         static::__assert_equals(['redirect' => '/test-login-redirect/page'], Login_Redirect::params());
     }
 
+    public static function test_params_staff_rejects_every_tenants_prefix_in_multi_tenancy()
+    {
+        // A multi-tenant path template claims its whole fixed prefix on the application
+        // host - every tenant's base under it - so a staff target there is the portal's.
+        $saved = config('rsx.tenancy');
+
+        try {
+            config(['rsx.tenancy' => 'multi', 'rsx.portal.url' => '/test-login-redirect/:slug']);
+            Rsx_Portal::set_portal_request(false);
+
+            static::__bind_redirect('/test-login-redirect/page');
+            static::__assert_empty(Login_Redirect::params(), 'under the fixed prefix, whichever tenant it names');
+
+            config(['rsx.portal.url' => 'https://:slug.portals.example.com']);
+            static::__assert_equals(['redirect' => '/test-login-redirect/page'], Login_Redirect::params(), 'a host template claims nothing on the staff host');
+        } finally {
+            config(['rsx.tenancy' => $saved]);
+        }
+    }
+
+    public static function test_params_portal_rejects_another_tenants_base()
+    {
+        // On a tenant's portal page a target must live under THAT tenant's base.
+        $saved = config('rsx.tenancy');
+
+        try {
+            config(['rsx.tenancy' => 'multi', 'rsx.portal.url' => '/_portal/:slug']);
+            \App\RSpade\Core\Dispatch\Rsx_Request_Channel::classify(Request::create('/_portal/acme/dashboard', 'GET'));
+
+            static::__assert_true(Rsx_Portal::is_under_prefix('/_portal/acme/test-login-redirect/item/5'));
+            static::__assert_false(Rsx_Portal::is_under_prefix('/_portal/other/test-login-redirect/item/5'));
+
+            app()->instance('request', Request::create('/_portal/acme/login?redirect=' . rawurlencode('/_portal/other/test-login-redirect/item/5'), 'GET'));
+            static::__assert_empty(Login_Redirect::params(), 'another tenant\'s portal');
+        } finally {
+            \App\RSpade\Core\Dispatch\Rsx_Request_Channel::reset();
+            config(['rsx.tenancy' => $saved]);
+        }
+    }
+
     public static function test_params_staff_rejects_non_page_path()
     {
         // The validator (not just capture()) now rejects /_... paths.

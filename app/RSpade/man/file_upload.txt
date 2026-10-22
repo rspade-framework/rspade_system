@@ -893,8 +893,8 @@ UPLOAD ENDPOINT
         filename_override  (optional) Override the stored filename
 
     site_id is derived ENTIRELY server-side, from the REALM OF THE REQUEST: a
-    portal request uses the portal session's site (declared by the app in
-    Portal_Main::init(); it throws rather than guess), any other request uses the
+    portal request uses the site its URL serves (Portal_Session::get_site_id();
+    it throws rather than guess), any other request uses the
     staff session's site. The gate payload's 'user' key forks the same way. Note
     it is the REALM, not who is signed in - an anonymous portal upload is still a
     portal upload, and a staff upload from a browser that also holds a portal

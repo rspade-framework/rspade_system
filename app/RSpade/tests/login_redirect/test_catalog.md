@@ -85,6 +85,8 @@ while the suite runs.
 | LR-68 | A prefixed portal host requires its prefix | php | `rsx.portal.url` = own host + `/x`, portal ctx | `/x/<page>` kept; the unprefixed page and `/x/login` `[]` | implemented | 2026-10-01 |
 | LR-69 | Staff ctx rejects a target under a same-host prefix that does not start with `_` | php | `rsx.portal.url` = APP_URL + `/test-login-redirect`, staff ctx, the staff fixture page | kept under the default URL, `[]` under that prefix | implemented | 2026-10-01 |
 | LR-70 | A separate-host portal's prefix names nothing on the staff host | php | `rsx.portal.url` = own host + `/test-login-redirect`, staff ctx, the staff fixture page | value | implemented | 2026-10-01 |
+| LR-71 | Multi tenancy: a staff target under a path template's fixed prefix is the portal's, whichever tenant it names; a host template claims nothing on the staff host | php | `rsx.tenancy` multi, `/test-login-redirect/:slug` then `https://:slug.portals.example.com`, staff ctx, the staff fixture page | `[]` / value | implemented | 2026-10-22 |
+| LR-72 | Multi tenancy: on a tenant's portal page the namespace is THAT tenant's base - another tenant's portal path is refused | php | multi `/_portal/:slug`, request classified as `/_portal/acme/...`, target `/_portal/other/...` | `is_under_prefix` true/false; `[]` | implemented | 2026-10-22 |
 
 ## Notes
 

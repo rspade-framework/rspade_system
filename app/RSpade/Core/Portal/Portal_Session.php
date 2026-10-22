@@ -40,13 +40,15 @@ use App\RSpade\Core\Session\Session_Link;
  * - The session id, the session token and the CSRF token are SHARED with the staff
  *   facade. get_session_id() / get_csrf_token() here are the same values Session
  *   reports; they are kept as facade methods so portal code never has to know that.
- * - Site-scoped, with no multi-site switching. The APPLICATION declares the portal's
- *   tenant with set_site_id(); the framework never guesses one. get_site_id() throws
- *   when nothing has declared it - see set_site_id() and rsx:man portal.
+ * - Site-scoped, with no multi-site switching. THE URL IS THE AUTHORITY: the framework
+ *   resolves each portal request's site from its address (Portal_Site_Resolver) and
+ *   declares it for that request (_declare_resolved_site()) before Portal_Main::init();
+ *   it is never stored. A portal sign-in on this browser for a different site is ended
+ *   at that moment (SIGN_OUT_SITE_SWITCHED). get_site_id() throws when nothing has
+ *   declared a site - see rsx:man portal.
  * - CLI mints nothing of its own: Rsx_Portal::is_portal_request() is false in CLI, so
- *   nothing can be in portal context. set_site_id() still works there (it is the same
- *   declaration, minus a request), which is how tests and portal-aware commands seed
- *   a site.
+ *   nothing can be in portal context. set_site_id() is the declaration there (a command,
+ *   a task, a test), and only there: a web request's site is its URL's.
  */
 class Portal_Session
 {
@@ -55,7 +57,8 @@ class Portal_Session
     private static $_portal_user = null;
 
     /**
-     * The site the APPLICATION declared for this request via set_site_id().
+     * The site declared for this request: in web mode the one its URL resolved to
+     * (_declare_resolved_site()), in CLI the one set_site_id() declared.
      *
      * Request-scoped in web mode (the declaration belongs to the request, not to
      * the session row); process-scoped in CLI, where it is also the whole CLI site
@@ -134,37 +137,19 @@ class Portal_Session
     }
 
     /**
-     * Declare which site this portal request belongs to.
+     * Declare which site the portal serves, in a process that has no request: a command,
+     * a task, a test.
      *
-     * THE FRAMEWORK NEVER RESOLVES THE PORTAL'S SITE. There is no detection, no
-     * config default, and no hook: which tenant a portal request serves is an
-     * application fact (one site, a host lookup, an invite link, a subdomain
-     * table), and every scheme the framework could guess would be wrong for some
-     * app. So the application declares it, and does so EARLY - before anything
-     * asks. The natural place is Portal_Main::init() (called once per portal
-     * request, before dev-auth, CSRF, the #[Auth] gates and every controller); a
-     * login flow that resolves the site itself may declare it there instead.
-     *
-     *   // mono-site app, in Portal_Main::init()
-     *   Portal_Session::set_site_id((int) config('rsx.portal.site_id'));
-     *
-     * Semantics:
-     * - Request-scoped. It creates no session; the tenant is recorded on the portal user
-     *   session when somebody signs in.
-     * - Idempotent for the same id; a DIFFERENT id throws. A portal never offers a
-     *   site switcher, so two answers in one request means two subsystems disagree
-     *   about the tenant - a bug, not a switch. (This is the deliberate difference
-     *   from Session::set_site_id(), where staff tenant switching is a feature.)
-     * - A session that already carries a portal tenant WINS and cannot be
-     *   contradicted: declaring a different one throws.
-     * - CLI: the same declaration without a request. It is the whole CLI site
-     *   contract (test seeding, portal-aware commands) and, having no request
-     *   boundary to protect, may be re-declared; reset() clears it.
+     * A WEB request never calls this: the framework resolves the site from the portal URL
+     * (Portal_Site_Resolver) and declares it itself before Portal_Main::init(), so a call
+     * in any web request THROWS - remove it (rsx:man portal). In CLI it is the whole site
+     * contract: request-free, it creates no session, may be re-declared (that is how a test
+     * moves between tenants), and _testing_reset() clears it.
      *
      * @param int $site_id A real site id (positive)
      * @return void
      * @throws Rsx_Caller_Exception on a non-positive id
-     * @throws \RuntimeException on a conflicting declaration
+     * @throws \RuntimeException in a web request
      */
     public static function set_site_id(int $site_id): void
     {
@@ -176,48 +161,84 @@ class Portal_Session
             );
         }
 
-        // CLI: no request, no session, no cookie - just the declaration.
-        if (self::__is_cli()) {
-            Session::_refuse_if_frozen('Portal_Session::set_site_id()');
-
-            self::$_declared_site_id = $site_id;
-            self::$_site = null;
-
-            return;
-        }
-
-        $row_site_id = Session::_get_portal_site_id();
-
-        // A session that already carries a portal tenant answers the question, and the
-        // portal has no site switcher: contradicting it is a bug in the caller.
-        if ($row_site_id !== null && $row_site_id !== $site_id) {
+        if (!self::__is_cli()) {
             throw new \RuntimeException(
-                'Portal_Session::set_site_id(' . $site_id . ') conflicts with the live portal session, which '
-                . 'belongs to site ' . $row_site_id . '. A portal session never changes site; '
-                . 'end it (logout) before serving a different tenant. See: php artisan rsx:man portal'
+                'Portal_Session::set_site_id(' . $site_id . ') is for commands, tasks and tests only. In a web request '
+                . 'the portal\'s site is resolved from its URL (PORTAL_URL, sites.portal_domain) and declared by the '
+                . 'framework before Portal_Main::init() - remove the call (an application no longer declares its '
+                . 'portal site). See: php artisan rsx:man portal'
             );
         }
 
-        if (self::$_declared_site_id !== null && self::$_declared_site_id !== $site_id) {
-            throw new \RuntimeException(
-                'Portal site already declared as ' . self::$_declared_site_id . ' for this request; '
-                . 'set_site_id(' . $site_id . ') contradicts it. Declare the portal site exactly once per '
-                . 'request (Portal_Main::init() is the usual place). See: php artisan rsx:man portal'
-            );
-        }
+        Session::_refuse_if_frozen('Portal_Session::set_site_id()');
 
         self::$_declared_site_id = $site_id;
         self::$_site = null;
     }
 
     /**
+     * Declare the site this portal request's URL resolved to. Every portal request, before
+     * Portal_Main::init() and anything else that may ask for the site.
+     *
+     * A portal sign-in on this browser that belongs to a different site is signed out
+     * (Session::SIGN_OUT_SITE_SWITCHED) and the request continues signed out: a portal user
+     * belongs to exactly one site, so the URL and the sign-in can only disagree in path mode
+     * (one cookie for every tenant on the host), and the URL wins. In CLI (an in-process
+     * dispatch) the virtual portal identity of another site is cleared the same way.
+     *
+     * FRAMEWORK INTERNAL - Dispatcher, from Rsx_Request_Channel::portal_site_id().
+     *
+     * @param int $site_id The resolved site (positive)
+     * @return void
+     */
+    public static function _declare_resolved_site(int $site_id): void
+    {
+        if ($site_id <= 0) {
+            shouldnt_happen('Portal_Session::_declare_resolved_site() requires a real site id; got ' . $site_id);
+        }
+
+        if (self::__is_cli()) {
+            if (self::$_declared_site_id !== $site_id) {
+                Session::_refuse_if_frozen('Portal_Session::_declare_resolved_site()');
+
+                if (self::$_declared_site_id !== null && self::$_cli_portal_user_id !== null) {
+                    self::$_cli_portal_user_id = null;
+                    self::$_cli_impersonator_user_id = null;
+                }
+            }
+        } else {
+            $row_site_id = Session::_get_portal_site_id();
+
+            if ($row_site_id !== null && $row_site_id !== $site_id) {
+                Session::_sign_out_current('portal', Session::SIGN_OUT_SITE_SWITCHED);
+            }
+        }
+
+        self::$_declared_site_id = $site_id;
+        self::$_site = null;
+        self::$_portal_user = null;
+    }
+
+    /**
+     * The site declared for this process - resolved from a web portal request's URL, or
+     * set by a command or test - or null when none was. Never throws, never reads the
+     * session row. FRAMEWORK INTERNAL - Rsx_Portal_Url::current_site_id().
+     *
+     * @return int|null
+     */
+    public static function _declared_site_id(): ?int
+    {
+        return self::$_declared_site_id;
+    }
+
+    /**
      * Get site ID for the current portal request.
      *
-     * Resolution order: the portal sign-in's own tenant (its user session's site), then
-     * the application's set_site_id() declaration.
-     * Nothing else - there is no detection and no default. When neither exists this
-     * THROWS, which is the contract: a portal that does not know its tenant must not
-     * quietly pick one.
+     * Resolution order: the site declared for this request (its URL's, or in CLI
+     * set_site_id()'s), then the portal sign-in's own tenant (its user session's site) for a
+     * request that declared none. They never disagree: declaring a different site ends that
+     * sign-in. When neither exists this THROWS, which is the contract: a portal that does
+     * not know its tenant must not quietly pick one.
      *
      * @return int
      * @throws \RuntimeException when no site has been declared
@@ -233,14 +254,14 @@ class Portal_Session
             return self::$_declared_site_id;
         }
 
+        if (self::$_declared_site_id !== null) {
+            return self::$_declared_site_id;
+        }
+
         $row_site_id = Session::_get_portal_site_id();
 
         if ($row_site_id !== null) {
             return $row_site_id;
-        }
-
-        if (self::$_declared_site_id !== null) {
-            return self::$_declared_site_id;
         }
 
         self::__throw_site_unresolved();
@@ -254,12 +275,18 @@ class Portal_Session
      */
     private static function __throw_site_unresolved(): never
     {
+        if (self::__is_cli()) {
+            throw new \RuntimeException(
+                'The portal site has not been declared. A command, task or test declares it with '
+                . 'Portal_Session::set_site_id(<site id>) before any portal session work. '
+                . 'See: php artisan rsx:man portal'
+            );
+        }
+
         throw new \RuntimeException(
-            'The portal site has not been declared. RSpade does not resolve it for you: the application must '
-            . 'call Portal_Session::set_site_id(<site id>) before any portal session work - normally in '
-            . 'Portal_Main::init() (mono-site: read your own config key; multi-tenant: look the site up from '
-            . 'the request host), or in a login flow that resolves the site itself. '
-            . 'See: php artisan rsx:man portal (PORTAL SESSIONS)'
+            'The portal site is not known in this request: it is not a portal request whose URL resolved a site '
+            . '(the framework declares it from PORTAL_URL / sites.portal_domain before Portal_Main::init()). '
+            . 'See: php artisan rsx:man portal'
         );
     }
 
@@ -494,10 +521,10 @@ class Portal_Session
      *
      * SIGN-IN: activates the browser's session (minting the row through THE activation path
      * if this is a fresh browser) and finds or creates the portal user session for (this
-     * browser, the account, the tenant the application declared with set_site_id()); the
+     * browser, the account, the request's declared site); the
      * browser points at it, its clocks start, the tokens rotate and the account's session
-     * cap is applied. Declare the site before calling this (Portal_Main::init or the login
-     * flow itself); an undeclared site throws. Re-stating the account the browser is already
+     * cap is applied. The site is the one this request's URL resolved to; a request with
+     * none throws. Re-stating the account the browser is already
      * signed in as is not a sign-in and changes nothing.
      *
      * SIGN-OUT: the portal user session is signed out (SIGN_OUT_SIGNED_OUT), the browser's
@@ -546,7 +573,7 @@ class Portal_Session
             return;
         }
 
-        // Throws when the application never declared a site (see set_site_id). Read
+        // Throws when the request has no declared site (see get_site_id). Read
         // BEFORE activation so a misconfigured portal fails before it mints anything.
         $site_id = self::get_site_id();
 
@@ -612,9 +639,8 @@ class Portal_Session
     // CLI MODE SETTERS
     // =========================================================================
 
-    // NOTE: there is no cli_set_site_id(). Declaring the portal's site is the same
-    // act in every mode, so it has ONE spelling: set_site_id(), whose CLI branch is
-    // this section's site setter. reset() clears it.
+    // NOTE: there is no cli_set_site_id(). set_site_id() is the CLI site setter (a web
+    // request's site is its URL's). _testing_reset() clears it.
 
     /**
      * Set portal user ID in CLI mode
@@ -752,11 +778,19 @@ class Portal_Session
      * Start viewing the portal as a portal user, from a staff request, and return the
      * URL the staff page opens (normally in a new tab).
      *
+     * The portal is the one of $portal_site_id (Rsx_Portal_Url::for_site()), and whether it
+     * shares the caller's host is decided for that site:
+     *
      * Same host (the portal under a prefix on APP_URL's host): the impersonation becomes
      * the caller's own browser's portal sign-in, and the portal's landing URL is returned.
-     * Separate host: a linked-session handshake is started for the caller's row and its
-     * first leg's URL is returned (absolute, on the portal's origin); the impersonation is
-     * applied on the handshake's staff leg, after the browser has proved itself.
+     * Separate host (a PORTAL_URL host, a tenant subdomain, a custom domain): a
+     * linked-session handshake is started for the caller's row and its first leg's URL is
+     * returned (absolute, on that portal's origin); the impersonation is applied on the
+     * handshake's staff leg, after the browser has proved itself.
+     *
+     * FALSE when the site has no portal (the feature off, the site unserved or its portal
+     * switched off, under 'only' no custom domain) - nothing is applied, and the staff
+     * screen tells its user there is no portal to view.
      *
      * Refuses (AjaxUnauthorizedException) unless the staff realm's `can_impersonate`
      * check passes for the caller, and requires $impersonator_user_id to be the caller's
@@ -766,10 +800,10 @@ class Portal_Session
      * @param int $portal_user_id       Target portal user to view as
      * @param int $impersonator_user_id Staff users.id of the caller
      * @param int $portal_site_id       Tenant of the target portal user
-     * @return string URL to open
+     * @return string|false URL to open, or false when the site has no portal
      * @throws AjaxUnauthorizedException When can_impersonate denies the caller
      */
-    public static function begin_impersonation_from_staff(int $portal_user_id, int $impersonator_user_id, int $portal_site_id): string
+    public static function begin_impersonation_from_staff(int $portal_user_id, int $impersonator_user_id, int $portal_site_id): string|false
     {
         Session::_refuse_if_frozen('Portal_Session::begin_impersonation_from_staff()');
 
@@ -793,7 +827,13 @@ class Portal_Session
             shouldnt_happen('begin_impersonation_from_staff(): View as Client moves a browser\'s portal sign-in, and this process has no browser session');
         }
 
-        if (Rsx_Portal_Url::is_separate_host()) {
+        $address = Rsx_Portal_Url::for_site($portal_site_id);
+
+        if ($address === false) {
+            return false;
+        }
+
+        if ($address['separate_host']) {
             return Session_Link::begin_impersonation($session_id, $portal_user_id, $portal_site_id, $impersonator_user_id);
         }
 
@@ -810,7 +850,7 @@ class Portal_Session
         self::$_portal_user = null;
         self::$_site = null;
 
-        return Rsx_Portal::portal_path('/');
+        return Rsx_Portal::portal_path('/', $portal_site_id);
     }
 
     /**

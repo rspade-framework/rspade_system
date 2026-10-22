@@ -447,8 +447,11 @@ class Rsx_Form extends Component {
      * Serialize (no argument) or apply (object argument) form values.
      *
      * Serializing collects every descendant input's val() - shallow, so inputs inside
-     * a composite input (a Repeater) belong to that composite - plus native hidden
-     * inputs. Applying sets each named input present in the object, SKIPPING touched
+     * a composite input (a Repeater) belong to that composite - plus the native hidden
+     * inputs the form OWNS: its descendants, and any input elsewhere in the document whose
+     * HTML form attribute names this form's id (the browser's own form association, read
+     * through form.elements). That is what lets <Turnstile_Input $form="<id>" /> sit outside
+     * the form - below a sign-in card - and still post with it. Applying sets each named input present in the object, SKIPPING touched
      * names: data never clobbers the user (see class docblock). An applied value is a
      * programmatic write, so it never makes the form dirty.
      *
@@ -471,7 +474,9 @@ class Rsx_Form extends Component {
             }
         });
 
-        this.$.find('input[type="hidden"][name]').each(function () {
+        // form.elements: descendants plus inputs associated by form="<this form's id>",
+        // minus descendants that name another form.
+        $(this.$[0].elements).filter('input[type="hidden"][name]').each(function () {
             const $native = $(this);
             const name = $native.attr('name');
             if (name) {

@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Core\Database;
 
+use App\RSpade\Core\Env\Rsx_Tenancy;
+
 /**
  * Schema_Contract - what the FRAMEWORK assumes about application-owned tables.
  *
@@ -189,6 +191,14 @@ class Schema_Contract
                         'migration' => '2026_01_12_073624 (sites.timezone)',
                     ],
                     'is_enabled' => ['where' => 'Site_Model::is_active(), User_Model::is_active() / scopeActive(), RsxAuth::has_enabled_membership(), Session::enforce_enabled_membership()'],
+                    'portal_domain' => [
+                        'where' => 'Site_Model_Abstract::normalize_portal_domain() - the host a site\'s client portal is served at under PORTAL_CUSTOM_DOMAINS',
+                        'migration' => '2026_10_22_083110_add_portal_columns_to_sites',
+                    ],
+                    'is_portal_enabled' => [
+                        'where' => 'whether a site has a client portal at all',
+                        'migration' => '2026_10_22_083110_add_portal_columns_to_sites',
+                    ],
                     'deleted_at' => ['where' => 'SoftDeletes - every query the model issues'],
                 ],
                 'unique' => [
@@ -196,6 +206,11 @@ class Schema_Contract
                         'columns' => ['slug'],
                         'name' => 'uk_sites_slug',
                         'why' => 'a slug must address one tenant and no other',
+                    ],
+                    [
+                        'columns' => ['portal_domain'],
+                        'name' => 'uk_sites_portal_domain',
+                        'why' => 'a portal domain must address one tenant and no other',
                     ],
                 ],
             ],
@@ -389,7 +404,7 @@ class Schema_Contract
      *
      * Two of them, and both are structural rather than data: site 0 is the SESSIONLESS
      * site (Site_Scoped::get_current_site_id() returns 0 with no session, and
-     * Site_Model::booted() refuses to delete it), and the configured default site is
+     * Site_Model::booted() refuses to delete it), and site 1 (Rsx_Tenancy::SINGLE_TENANT_SITE_ID) is
      * the tenant a first sign-in lands on. The initial user pair is checked only when
      * login_users has any row at all - a database that has never been seeded is a
      * fresh install, not a broken one.
@@ -398,7 +413,7 @@ class Schema_Contract
      */
     public static function rows(): array
     {
-        $default_site_id = (int) config('multi-tenant.default_site_id', 1);
+        $default_site_id = Rsx_Tenancy::SINGLE_TENANT_SITE_ID;
 
         $rows = [
             [
@@ -412,13 +427,13 @@ class Schema_Contract
                     . ' 2026_07_30_121017_seed_default_site, INSERT INTO sites (id, slug, name) VALUES (0, ...))',
             ],
             [
-                'label' => 'sites id ' . $default_site_id . ' (multi-tenant.default_site_id)',
+                'label' => 'sites id ' . $default_site_id,
                 'table' => 'sites',
                 'where' => ['id' => $default_site_id],
                 'only_if_any' => null,
                 'why' => 'the default tenant a sign-in with no other membership lands on; with it absent'
                     . ' the framework falls back to MIN(id) > 0 and throws when there is none',
-                'remediation' => 'create the tenant, or point DEFAULT_SITE_ID at the tenant this install uses',
+                'remediation' => 'create site ' . $default_site_id . ' - the tenant of a single-tenant install and the site the initial user belongs to',
             ],
             [
                 'label' => 'initial user login_users 1',

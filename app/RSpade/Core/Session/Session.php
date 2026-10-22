@@ -1384,6 +1384,14 @@ class Session extends Rsx_System_Model_Abstract
             'site_id' => $site_id,
             'impersonator_login_user_id' => null,
         ]);
+
+        // The dispatcher signs the account in next (RsxAuth::login()), and a sign-in takes its
+        // site from the request's declaration, else the session's - which a freshly minted
+        // harness browser does not have. Declare the site worked out above for this request,
+        // so a new harness row is signed in on it (and is found again by the next run).
+        if (self::$_request_site_id_override === null && $site_id > 0) {
+            self::$_request_site_id_override = $site_id;
+        }
     }
 
     /**

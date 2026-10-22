@@ -70,7 +70,7 @@ form.on('submitted', (form, result) => grid.reload());
 ```
 
 Reaching one input: `form.input('due_date').on('val', cb)` - never a raw selector.
-`form.vals()` serializes, `form.vals(object)` applies (skipping touched names, never making the form dirty).
+`form.vals()` serializes, `form.vals(object)` applies (skipping touched names, never making the form dirty). Serializing includes the native hidden inputs the form OWNS - its descendants and, because `<Rsx_Form>` is a real `<form>`, any hidden input elsewhere whose HTML `form` attribute names its id (`form.elements`). The intended use is `<Turnstile_Input $form="signup-form" />` placed below the sign-in card, outside `<Rsx_Form id="signup-form">` (`rsx:man form_conventions`, HIDDEN FIELDS OUTSIDE THE FORM). An input component always belongs to the form it renders inside.
 
 ## Validation lives on the server, once
 

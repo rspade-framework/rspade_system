@@ -16,6 +16,7 @@ use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Portal_User_Model;
+use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Rsx_Signed_Url;
@@ -44,7 +45,9 @@ use App\RSpade\Tests\Portal\Php\Portal_Impersonation_Grant_Fixture;
  * session/http/session_link_handshake.sh. Leg 3's REFUSALS run through the controller.
  *
  * The layout is a portal on its own host with a prefix (https://portal.example.test/x), so
- * every URL is also checked for the prefix. The staff browser's row is this process's CLI
+ * every URL is also checked for the prefix. The per-site tests run multi tenancy: a tenant
+ * subdomain (the legs on THAT tenant's host, refused on another's), a tenant under a prefix
+ * on the application host (no handshake), a custom domain, and a site with no portal. The staff browser's row is this process's CLI
  * session row; the staff user is real, and its can_impersonate answer is set by
  * Portal_Impersonation_Grant_Fixture (the check is the application's rule).
  *
@@ -65,11 +68,17 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
 
     private static $saved_portal_url;
 
+    private static $saved_settings;
+
     private static $saved_request;
 
     public static function setup(): void
     {
         self::$saved_portal_url = config('rsx.portal.url');
+        self::$saved_settings = [
+            'rsx.tenancy' => config('rsx.tenancy'),
+            'rsx.portal.custom_domains' => config('rsx.portal.custom_domains'),
+        ];
         self::$saved_request = app('request');
         static::__acting_as_site(self::SITE_ID);
     }
@@ -77,6 +86,7 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
     public static function teardown(): void
     {
         config(['rsx.portal.url' => self::$saved_portal_url]);
+        config(self::$saved_settings);
         app()->instance('request', self::$saved_request);
         Rsx_Request_Channel::reset();
         Portal_Impersonation_Grant_Fixture::uninstall();
@@ -106,12 +116,20 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
     /**
      * A staff user signed in on the staff host, a portal user to view as, and leg 1's URL.
      *
-     * @return array{staff: User_Model, target: Portal_User_Model, row_id: int, token: string, leg1: string}
+     * @param int|null $portal_site_id The portal user's site; null = SITE_ID on the default
+     *                                 layout (a portal on its own host, under PREFIX). A named
+     *                                 site keeps the portal settings the caller configured.
+     * @return array{staff: User_Model, target: Portal_User_Model, row_id: int, token: string, leg1: string|false}
      */
-    private static function __begin(): array
+    private static function __begin(?int $portal_site_id = null): array
     {
         Portal_Impersonation_Grant_Fixture::install(true);
-        config(['rsx.portal.url' => self::PORTAL_ORIGIN . self::PREFIX]);
+
+        if ($portal_site_id === null) {
+            config(['rsx.portal.url' => self::PORTAL_ORIGIN . self::PREFIX]);
+            $portal_site_id = self::SITE_ID;
+        }
+
         static::__on(static::__app_origin() . '/contacts');
         static::__acting_as_site(self::SITE_ID);
 
@@ -137,14 +155,14 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
         static::__acting_as_user($staff->id);
 
         $target = new Portal_User_Model();
-        $target->site_id = self::SITE_ID;
+        $target->site_id = $portal_site_id;
         $target->email = 'link_target_' . uniqid() . '@example.com';
         $target->set_password('secret-password');
         $target->is_verified = true;
         $target->status_id = Portal_User_Model::STATUS_ACTIVE;
         $target->save();
 
-        $leg1 = Portal_Session::begin_impersonation_from_staff($target->id, $staff->id, self::SITE_ID);
+        $leg1 = Portal_Session::begin_impersonation_from_staff($target->id, $staff->id, $portal_site_id);
         $row_id = Session::get_session_id();
 
         return [
@@ -521,6 +539,117 @@ class Portal_Session_Link_Test extends Rsx_Test_Abstract
             Session_Link_Controller::complete(static::__on(static::__tampered($run['leg3']), [Session_Link::NONCE_COOKIE => $run['nonce']])),
             'tampered'
         );
+    }
+
+    // =====================================================================
+    // Per-site portals (multi tenancy)
+    // =====================================================================
+
+    /**
+     * A fixture tenant, saved through the model so the resolver's cached lookups follow it.
+     */
+    private static function __tenant(array $fields = []): Site_Model
+    {
+        $site = new Site_Model();
+        $site->slug = 'link-' . strtolower(substr(uniqid(), -8));
+        $site->name = 'Session Link Tenant';
+
+        foreach ($fields as $field => $value) {
+            $site->$field = $value;
+        }
+
+        $site->save();
+
+        return $site;
+    }
+
+    private static function __restore_portal_settings(): void
+    {
+        config(['rsx.portal.url' => self::$saved_portal_url]);
+        config(self::$saved_settings);
+    }
+
+    public static function test_a_tenant_subdomain_handshake_runs_on_that_tenants_host()
+    {
+        try {
+            config(['rsx.tenancy' => 'multi', 'rsx.portal.url' => 'https://:slug.portals.example.test']);
+            $tenant = static::__tenant();
+            $other = static::__tenant();
+            $origin = 'https://' . $tenant->slug . '.portals.example.test';
+
+            $begin = static::__begin($tenant->id);
+            static::__assert_true(
+                str_starts_with((string) $begin['leg1'], $origin . '/_session_link/open?'),
+                'leg 1 is on the impersonated user\'s tenant host; got ' . $begin['leg1']
+            );
+
+            // The code is signed for that host: another tenant's host refuses it.
+            $elsewhere = 'https://' . $other->slug . '.portals.example.test/_session_link/open?' . parse_url((string) $begin['leg1'], PHP_URL_QUERY);
+            static::__assert_refused(static::__leg1($elsewhere)['response'], 'another tenant\'s host');
+
+            $begin = static::__begin($tenant->id);
+            $leg1 = static::__leg1($begin['leg1']);
+            static::__assert_equals(302, $leg1['response']->getStatusCode(), 'leg 1 redirects');
+
+            $nonce_cookie = null;
+            foreach ($leg1['response']->headers->getCookies() as $cookie) {
+                if ($cookie->getName() === Session_Link::NONCE_COOKIE) {
+                    $nonce_cookie = $cookie;
+                }
+            }
+            static::__assert_equals('/_session_link', $nonce_cookie->getPath(), 'the tenant host serves its portal at the root');
+
+            $leg2 = static::__leg2($leg1['location'], $begin['token']);
+            static::__assert_equals(302, $leg2->getStatusCode(), 'leg 2 redirects');
+            static::__assert_true(
+                str_starts_with((string) $leg2->headers->get('Location'), $origin . '/_session_link/complete?'),
+                'leg 2 returns to the tenant host; got ' . $leg2->headers->get('Location')
+            );
+            static::__assert_equals($tenant->id, (int) static::__portal_user_session($begin['row_id'])->portal_site_id, 'the impersonation names the tenant');
+        } finally {
+            static::__restore_portal_settings();
+        }
+    }
+
+    public static function test_view_as_client_shares_the_host_or_hands_off_per_site()
+    {
+        try {
+            config(['rsx.tenancy' => 'multi', 'rsx.portal.url' => '/_portal/:slug', 'rsx.portal.custom_domains' => 'override']);
+            $path_tenant = static::__tenant();
+            $domain = 'portal-' . strtolower(substr(uniqid(), -8)) . '.customer.test';
+            $domain_tenant = static::__tenant(['portal_domain' => $domain]);
+
+            // A tenant under a prefix on the application host: no handshake, the caller's own row.
+            $begin = static::__begin($path_tenant->id);
+            static::__assert_equals('/_portal/' . $path_tenant->slug . '/', $begin['leg1'], 'the tenant\'s landing path');
+            static::__assert_equals(0, DB::table('_session_links')->where('session_id', $begin['row_id'])->count(), 'no handshake');
+            static::__assert_equals($path_tenant->id, (int) static::__portal_user_session($begin['row_id'])->portal_site_id, 'applied to the caller\'s row');
+
+            // A tenant on its custom domain: the handshake, on that domain.
+            $begin = static::__begin($domain_tenant->id);
+            static::__assert_true(
+                str_starts_with((string) $begin['leg1'], 'https://' . $domain . '/_session_link/open?'),
+                'leg 1 on the custom domain; got ' . $begin['leg1']
+            );
+        } finally {
+            static::__restore_portal_settings();
+        }
+    }
+
+    public static function test_view_as_client_answers_false_for_a_site_without_a_portal()
+    {
+        try {
+            config(['rsx.tenancy' => 'multi', 'rsx.portal.url' => '/_portal/:slug']);
+            $tenant = static::__tenant(['is_portal_enabled' => 0]);
+
+            $begin = static::__begin($tenant->id);
+
+            static::__assert_false($begin['leg1'], 'no portal, no URL');
+            static::__assert_not_linked($begin['row_id'], 'nothing applied');
+            static::__assert_equals(0, DB::table('_session_links')->where('session_id', $begin['row_id'])->count(), 'no handshake minted');
+        } finally {
+            static::__restore_portal_settings();
+        }
     }
 
     // =====================================================================

@@ -1,6 +1,7 @@
 <%--
 _Sys_Site_View_Action - one tenant site: its facts, Rename, Enable/Disable, and its
-members (_Sys_Site_Members_DataGrid).
+members (_Sys_Site_Members_DataGrid) and its client-portal users
+(_Sys_Site_Portal_Users_DataGrid).
 
 Three states: loading, a load failure (_Sys_Not_Found for site 0, a soft-deleted or
 a missing id; _Sys_Error for anything else), and the record.
@@ -48,6 +49,17 @@ a missing id; _Sys_Error for anything else), and the record.
                     <% } %>
                 </_Sys_Detail_Item>
                 <_Sys_Detail_Item $label="Timezone" $value=_s.timezone />
+                <_Sys_Detail_Item $label="Client portal">
+                    <_Sys_Status_Badge $status=(_s.is_portal_enabled ? 'ok' : 'muted') $label=(_s.is_portal_enabled ? 'Switched on' : 'Switched off') />
+                </_Sys_Detail_Item>
+                <_Sys_Detail_Item $label="Portal address">
+                    <% if (_s.portal_url) { %>
+                        <a href="<%= _s.portal_url %>" target="_blank" rel="noopener"><%= _s.portal_url %></a>
+                    <% } else { %>
+                        <span class="_Sys_Site_View_Action__hint">No client portal</span>
+                    <% } %>
+                </_Sys_Detail_Item>
+                <_Sys_Detail_Item $label="Portal domain" $value=_s.portal_domain $mono=true />
                 <_Sys_Detail_Item $label="Members" $value=(_s.member_count + ' (' + _s.enabled_member_count + ' with the membership enabled)') />
                 <_Sys_Detail_Item $label="Created">
                     <%= _s.created_at ? Rsx_Time.format_datetime(_s.created_at) : '' %>
@@ -65,6 +77,8 @@ a missing id; _Sys_Error for anything else), and the record.
         </_Sys_Section>
 
         <_Sys_Site_Members_DataGrid $base_params=({site_id: _s.id}) />
+
+        <_Sys_Site_Portal_Users_DataGrid $base_params=({site: _s.id}) />
     <% } %>
     </Slot:main>
 </_Sys_Page_Scaffold>

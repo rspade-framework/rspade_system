@@ -64,11 +64,13 @@ class Rsx_Csrf
         // with no page, no form and no token to attach - so a token check could only ever
         // reject it. It is exempt because there is nothing to forge: it reads nothing and
         // writes nothing but its own diagnostic log. See Csp_Report_Controller. One path per
-        // realm: the portal's collector lives under the portal prefix (Rsx_Csp::report_path()).
+        // realm: the portal's collector lives under the request's portal base
+        // (Rsx_Csp::report_path()), asked only of a portal request.
         $path = '/' . ltrim($request->getPathInfo(), '/');
 
         if ($path === \App\RSpade\Core\Csp\Rsx_Csp::report_path('staff')
-            || $path === \App\RSpade\Core\Csp\Rsx_Csp::report_path('portal')) {
+            || (\App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
+                && $path === \App\RSpade\Core\Csp\Rsx_Csp::report_path('portal'))) {
             return;
         }
 
@@ -103,9 +105,10 @@ class Rsx_Csrf
         // that top-level GET navigation, which does carry the Lax cookie. Path-exact, one
         // provider, one path PER REALM: the client portal runs its own ceremony and its own
         // callback (Rsx_Portal_Sso), whose Apple leg is the same do-nothing 303 - computed
-        // only because the portal prefix is configuration.
+        // from the request's portal base, and asked only of a portal request.
         if ($path === \App\RSpade\Core\Sso\Rsx_Sso::APPLE_CALLBACK_PATH
-            || $path === \App\RSpade\Core\Sso\Rsx_Portal_Sso::apple_callback_path()) {
+            || (\App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
+                && $path === \App\RSpade\Core\Sso\Rsx_Portal_Sso::apple_callback_path())) {
             return;
         }
 

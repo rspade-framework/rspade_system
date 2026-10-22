@@ -147,12 +147,16 @@ THE WIDGET
     OUTSIDE ITS FORM. $form="login-form" puts the HTML form attribute on the
     hidden field, so the component may be rendered anywhere in the document -
     below the card a page's form sits in, for instance - and the field still
-    posts with that form. It serves a native <form> only: Rsx_Form.vals()
-    reads its own subtree and the auto-reset below finds its Rsx_Form by
-    ancestry, so a component serving an Rsx_Form stays inside it.
+    posts with that form. Both kinds of form are served: a native <form>
+    POST includes the associated field, and an <Rsx_Form> given the same id
+    collects it in vals() (rsx:man form_conventions, HIDDEN FIELDS OUTSIDE
+    THE FORM); the auto-reset below finds that Rsx_Form by its id.
 
         <form id="login-form" method="POST"> ... </form>
         <Turnstile_Input $form="login-form" />
+
+        <Rsx_Form id="signup-form" $controller="Signup_Controller" $method="submit"> ... </Rsx_Form>
+        <Turnstile_Input $form="signup-form" />
 
     TWO STATES. The component decides which to show from whether the server
     exported a site key:

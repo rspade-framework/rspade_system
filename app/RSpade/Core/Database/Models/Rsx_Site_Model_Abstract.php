@@ -34,8 +34,8 @@ use App\RSpade\Core\Database\Models\Site_Scoped;
  *
  * WHICH SITE (see Site_Scoped::get_current_site_id):
  * - Staff request / CLI: the staff session's site_id
- * - Portal request: the site the app declared via Portal_Session::set_site_id
- *   (throws if it declared none - a portal request has no site to guess at)
+ * - Portal request: the site the portal URL resolved to (Portal_Session::get_site_id;
+ *   throws when there is none - a portal request has no site to guess at)
  *
  * CONCURRENCY CONTROL:
  * Site locks key on that same resolved site, so a portal request locks the portal's

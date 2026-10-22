@@ -21,7 +21,6 @@ The Config directory contains Laravel configuration files that define how the ap
 | logging.php | 3,749 bytes | Application logging setup with stack, single file, daily, Slack, and other channels. Configures how and where application logs are stored. |
 | mail.php | 4,249 bytes | Laravel's mail configuration in Laravel's own shape and `MAIL_*` keys: the mailer the queue sends through in `live` mode (`MAIL_MAILER`, default smtp to 127.0.0.1:1025) and the global From. Whether mail is sent at all is `rsx.mail`. Apps extend it in `rsx/resource/config/mail.php`. |
 | models.php | 480 bytes | Custom registry of application models used for dynamic model loading and auto-discovery. |
-| multi-tenant.php | 2,631 bytes | Custom multi-tenant system configuration with single-user tenant mode option, 48-hour invitation expiry, session key for current site ID ('current_site_id'), and site creation permissions. |
 | queue.php | 2,906 bytes | Queue system configuration with sync, database, Redis, SQS, and other queue drivers for asynchronous task processing. |
 | rspade.php | 1,223 bytes | RSpade application-specific settings including app name, description, 10 items per page default, todo list limits, and feature toggles for public profiles, sharing, and markdown support. |
 | services.php | 2,668 bytes | Third-party service credentials for Mailgun, Postmark, AWS, and Twilio. |
@@ -32,7 +31,6 @@ The Config directory contains Laravel configuration files that define how the ap
 
 1. **Custom Configuration Files**:
    - **models.php**: Application-specific model registry
-   - **multi-tenant.php**: Multi-tenant functionality configuration
    - **rspade.php**: Application-specific settings for the RSpade platform
 
 2. **Configuration Loading**:

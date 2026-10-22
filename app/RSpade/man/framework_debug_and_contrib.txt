@@ -621,8 +621,8 @@ SUBSYSTEM PRIMERS
     realm descriptor: route table, Main hooks, site membership, FPC,
     default route, dev-auth header, CSP realm)
             Manifest::init() (idempotent)
-            portal realm: Portal_Main::init(), once per process - the
-              documented place to declare the portal's site
+            portal realm: the URL's site declared, then
+              Portal_Main::init(), once per process
             CSRF enforcement, POST only
             development signed-identity header for the realm (after CSRF,
               before gates, so a harness identity is visible to #[Auth])

@@ -1,0 +1,363 @@
+PORTAL_TENANCY(3)            RSX Framework Manual            PORTAL_TENANCY(3)
+
+NAME
+    portal_tenancy - serving the client portal for one organisation or many:
+    rsx.tenancy, PORTAL_URL templates, per-site portal domains and switches
+
+SYNOPSIS
+    // rsx/resource/config/rsx.php - the application says what it is
+    'tenancy' => 'multi',                  // 'single' is the framework default
+
+    # .env - each box says where its portals are served
+    PORTAL_ENABLED=true                     # the feature, install-wide (default true)
+    PORTAL_URL=https://:slug.myapp.com      # a template; blank = /_portal[/:site_id]
+    PORTAL_CUSTOM_DOMAINS=override          # off | override | only (default off)
+
+    -- per site (sites table)
+    sites.portal_domain       a custom portal host (unique, stored normalised)
+    sites.is_portal_enabled   this site has a portal at all (default on)
+
+    // staff code building a link into one site's portal
+    $url = Rsx_Portal::Route('Portal_Login_Controller', site_id: $client->site_id);
+    if ($url === false) {
+        return response_error(Ajax::ERROR_VALIDATION, 'This site has no client portal.');
+    }
+
+DESCRIPTION
+    The client portal (rsx:man portal) is served per SITE. A single-tenant
+    install - one organisation, the usual internal business application - has
+    one portal at one address. A multi-tenant SaaS has a portal per customer,
+    and where each one lives changes with the product: a path per tenant on a
+    development box, a subdomain per tenant in production, a domain the
+    application provisions for each tenant, or a custom domain a tenant buys as
+    an upgrade. This page walks each of those products through its settings
+    and through what the application code around it looks like.
+
+    Three facts decide everything:
+
+      rsx.tenancy            'single' or 'multi'. APPLICATION configuration,
+                             set in rsx/resource/config/rsx.php - an
+                             application is single- or multi-tenant by design,
+                             not by deployment, so there is no .env key. A value
+                             outside the pair throws at boot. Blank = single.
+      PORTAL_URL             WHERE a portal is served, as a template - a
+                             deployment fact, so it is .env (rsx:man portal,
+                             PORTAL URL, has the full grammar).
+      PORTAL_CUSTOM_DOMAINS  whether sites.portal_domain is honoured.
+
+    THE URL IS THE AUTHORITY. Every portal request names its tenant in its own
+    address, and the framework reads it there on every request: a custom domain
+    when one matches, else the :slug or :site_id the template places in the
+    host or the path, else - in single tenancy - site 1. Nothing about the site
+    is stored, configured or declared by the application: Portal_Main::init()
+    runs with the site already known, every site-scoped model, mail, setting
+    and time zone seam reads it, and Portal_Session::get_site_id() answers it.
+
+    SINGLE TENANCY IS SITE 1, ALWAYS (Rsx_Tenancy::SINGLE_TENANT_SITE_ID). It is
+    a fixed fact, not a setting: site 1 is also the site the initial user
+    belongs to in either tenancy. Site 0 is the infrastructure site and is
+    never a tenant.
+
+    Key differences from Laravel:
+    - Laravel: tenancy is a package choice (a tenant resolver middleware, a
+      tenant model, a per-tenant route group), wired by hand.
+    - RSX: the portal's tenant is read from the URL by the framework before any
+      application code runs, the address of every tenant's portal is derived
+      from one template, and the template is validated at build time.
+
+THE SETTINGS
+    rsx.tenancy (rsx/resource/config/rsx.php)
+        'single' (default) - one portal, served at PORTAL_URL as written; a
+        tenant placeholder in PORTAL_URL is refused.
+        'multi' - PORTAL_URL must carry exactly one tenant placeholder.
+
+    PORTAL_ENABLED (.env, default true)
+        Off, nothing is served as the portal: no address is classified portal,
+        PORTAL_URL is not validated, and every portal URL generator answers
+        false.
+
+    PORTAL_URL (.env, default blank)
+        Single tenancy: blank (APP_URL + /_portal), a path on the application
+        host (/clients), or a host of its own (https://portal.acme.com,
+        optionally with a path).
+        Multi tenancy: blank (APP_URL + /_portal/:site_id), a path template
+        (/_portal/:slug), or a host template (https://:slug.myapp.com).
+        :slug is sites.slug, :site_id is sites.id.
+
+    PORTAL_CUSTOM_DOMAINS (.env, default off)
+        off       sites.portal_domain is ignored.
+        override  a site with a portal_domain is served there and only there;
+                  its template address answers a 301 to the same path on the
+                  domain. A site without one is served at its template address.
+        only      a site is served at its portal_domain and nowhere else; a site
+                  without one has no portal, and every template address is the
+                  portal's 404.
+
+    sites.portal_domain
+        A bare lowercase hostname, unique across sites, or null. Saved through
+        the model, whatever was typed is normalised - a scheme, port, path and
+        trailing dot removed, the host lowercased - and a value that is not a
+        DNS name of at least two labels throws InvalidArgumentException.
+        Site_Model::normalize_portal_domain($value) is the same rule, public, so
+        a settings endpoint validates with it and renders the message as the
+        field error. Always served over https.
+
+    sites.is_portal_enabled
+        Default on. Off, the site has no portal: its addresses answer 404 and
+        its URL generators answer false.
+
+    The four .env-and-config values are judged at MANIFEST BUILD in every mode
+    and are part of the build fingerprint: changing one rebuilds a development
+    box, and a sealed box refuses to serve until php artisan rsx:build --force.
+    The grammar and every refusal: rsx:man portal, PORTAL URL.
+
+SCENARIO: AN INTERNAL SINGLE-TENANT APPLICATION
+    One organisation, its own staff, its own clients.
+
+        rsx.tenancy            single (the default; nothing to set)
+        PORTAL_URL             development box: blank   -> https://dev.acme.com/_portal
+                               production box:  https://portal.acme.com
+        PORTAL_CUSTOM_DOMAINS  off
+
+    That is the whole job. The portal serves site 1; Portal_Main::init() needs
+    no site code; Rsx_Portal::Route() needs no site argument. Production may
+    equally keep the portal under /_portal (or any free path) on the
+    application host - a path portal is a supported production layout, not a
+    development convenience.
+
+    A portal on its own host is a second DNS name (and certificate) for the
+    same deployment; the hostname guards accept it with no further setting.
+
+SCENARIO: A MULTI-TENANT SAAS - DEVELOPMENT ON PATHS
+    Nobody configures a virtual host per tenant on a development box, so the
+    portals are paths on the application host:
+
+        rsx.tenancy            multi
+        PORTAL_URL             blank            -> /_portal/7/login
+                          or   /_portal/:slug   -> /_portal/acme/login
+
+    The template's fixed segment (/_portal) is what keeps the portal from
+    claiming every path on the host; a path template must END in the
+    placeholder after at least one fixed segment. Portal routes are written
+    once - #[Portal_Route('/login')], @route('/settings') - and the dispatcher
+    and the SPA router strip each tenant's base before matching.
+
+    Every tenant shares the application host's one session cookie. A browser
+    signed into acme's portal that opens /_portal/globex/... is signed out of
+    acme's portal (SIGN_OUT_SITE_SWITCHED) and continues signed out: a portal
+    user belongs to exactly one site, and the URL wins.
+
+    The same application then runs on host templates in production - only
+    .env changes between the boxes.
+
+SCENARIO: PRODUCTION ON SLUG SUBDOMAINS
+        rsx.tenancy            multi
+        PORTAL_URL             https://:slug.myapp.com
+        PORTAL_CUSTOM_DOMAINS  off
+
+    acme's portal is https://acme.myapp.com/, globex's https://globex.myapp.com/.
+    The placeholder is the host's whole first label; the rest is the domain
+    every tenant is a subdomain of. A path may follow (https://:slug.myapp.com/
+    portal), and a host template may name :site_id instead.
+
+    The deployment provides:
+      - wildcard DNS (*.myapp.com) pointing at the servers;
+      - a wildcard TLS certificate for *.myapp.com;
+      - a web server that routes every such host to the application.
+    The framework's hostname guards accept any one-label subdomain of the
+    template's domain by themselves.
+
+    Each subdomain is its own cookie jar, so a sign-in on one tenant's portal
+    never reaches another's. APP_URL's own host is never a tenant, even when it
+    fits the pattern (APP_URL=https://app.myapp.com and a site whose slug is
+    "app"): such a site has no portal address in this layout - for_site() and
+    Rsx_Portal::Route() answer false for it - so give no site a slug that names
+    the application's own host. A site whose slug is not a valid DNS label has
+    no portal in this layout either.
+
+    A site's slug IS its portal address here (and in a /_portal/:slug path
+    template): changing a slug moves the portal, and links sent under the old
+    one answer 404.
+
+SCENARIO: THE APPLICATION PROVISIONS EVERY TENANT'S DOMAIN
+    A product where each customer's portal lives on a domain the application
+    sets up itself (portal.customer.com, provisioned at onboarding):
+
+        rsx.tenancy            multi
+        PORTAL_URL             blank (still validated; every template address
+                               answers 404 under 'only')
+        PORTAL_CUSTOM_DOMAINS  only
+
+    The application writes sites.portal_domain when it provisions the domain:
+
+        $site->portal_domain = 'portal.customer.com';
+        $site->save();          // normalised; a non-hostname throws
+
+    A site with no portal_domain has no portal yet: Rsx_Portal_Url::for_site()
+    and Rsx_Portal::Route(..., site_id:) answer false for it, and the staff
+    screens that would send a portal link refuse (NO PORTAL, below). DNS and
+    TLS for each domain are the deployment's (CUSTOM DOMAINS AND TLS).
+
+SCENARIO: THE CUSTOM-DOMAIN UPSELL
+    Every tenant starts on a subdomain; a tenant who pays for it moves to its
+    own domain (jobs.myagency.com):
+
+        rsx.tenancy            multi
+        PORTAL_URL             https://:slug.myapp.com
+        PORTAL_CUSTOM_DOMAINS  override
+
+    Setting sites.portal_domain moves that site's portal at once: every link
+    the framework generates for it uses the domain, and a request to its old
+    template address (acme.myapp.com/login?x=1) answers a 301 to the same path
+    and query string on https://<domain>, so a bookmark, a sent email or a
+    printed link keeps working. Only a page request is redirected; an Ajax call
+    to the old address (a page left open across the change - an XHR cannot
+    follow a cross-origin redirect) answers a plain-text 404. Clearing the
+    domain serves the template address again.
+
+    Tell the customer, as part of the upgrade:
+      - SIGN-INS DO NOT CROSS HOSTS. A browser signed in at acme.myapp.com is
+        signed out at jobs.myagency.com - each host has its own cookie jar.
+      - PASSKEYS BELONG TO THE HOST THEY WERE ENROLLED ON. A passkey's relying
+        party is the portal's host, so one enrolled at acme.myapp.com does not
+        work at jobs.myagency.com: portal users enrol again on the new domain
+        (rsx:man two_factor, THE CLIENT PORTAL REALM). Passwords, TOTP and
+        recovery codes are unaffected.
+      - TLS for the new domain must be in place before the domain is saved, or
+        the 301 lands on a certificate error.
+
+SCENARIO: PER-CUSTOMER OPT-IN PORTALS
+    sites.is_portal_enabled is ON by default, so a fresh site has a portal with
+    no friction. A product that sells the portal as a feature provisions it
+    off and switches it on per customer:
+
+        $site->is_portal_enabled = false;     // at site creation
+        $site->save();
+
+    Off, the site's portal addresses answer 404, its URL generators answer
+    false, and the staff screens hide or refuse their portal actions. A
+    disabled site (sites.is_enabled) has no portal either. PORTAL_ENABLED=false
+    turns the feature off for every site at once.
+
+WHICH SETTINGS FOR WHICH PRODUCT
+    Product                            tenancy  PORTAL_URL               CUSTOM_DOMAINS
+    internal app, portal on a path     single   (blank) or /clients      off
+    internal app, portal host          single   https://portal.acme.com  off
+    SaaS, development box              multi    (blank) or /_portal/:slug off
+    SaaS, tenant subdomains            multi    https://:slug.myapp.com  off
+    SaaS, app-provisioned domains      multi    (blank)                  only
+    SaaS, subdomains + domain upsell   multi    https://:slug.myapp.com  override
+    no portal at all                   any      PORTAL_ENABLED=false
+
+    Opt-in portals are sites.is_portal_enabled, orthogonal to every row.
+
+A SITE WITH NO PORTAL (STAFF CODE)
+    In multi tenancy "this site has no client portal" is an ordinary answer -
+    the feature off, the site disabled or opted out, under 'only' no domain -
+    so the generators answer FALSE rather than throw:
+
+        Rsx_Portal_Url::for_site($site_id)       {origin, prefix, host,
+                                                 separate_host} or false
+        Rsx_Portal::Route($target, ..., site_id: $site_id)
+        Rsx_Portal::portal_path($path, site_id: $site_id)
+        Rsx_Portal.Route(...)  (JS)              false while
+                                                 window.rsxapp.portal.base is null
+
+    Without site_id the current site is meant: on a portal page the site its
+    URL resolved to, on a staff page the signed-in site, in single tenancy site
+    1. window.rsxapp.portal.base carries the current site's portal base on
+    staff pages too, so staff JavaScript can hide a portal action when it is
+    null.
+
+    A staff endpoint that emails, shares or opens a portal link checks FIRST
+    and refuses with nothing written or sent:
+
+        if (Rsx_Portal_Url::for_site($client->site_id) === false) {
+            return response_error(Ajax::ERROR_VALIDATION, 'This site has no client portal.');
+        }
+
+    Portal_Session::begin_impersonation_from_staff() answers false the same way
+    and applies nothing. Build every link for the RECORD's site (site_id:),
+    never the caller's, and never send a link built from false. The template
+    app's worked example is the clients feature
+    (system/app/RSpade/resource/reference_app/app/frontend/clients/
+    clients_controller.php) and the View as Client endpoint
+    (.../app/frontend/contacts/contacts_controller.php).
+
+    The single-valued accessors - Rsx_Portal_Url::origin(), prefix(), host(),
+    url(), is_separate_host() - answer for the current site and THROW when it
+    has no portal; code that can meet a site without one asks for_site().
+
+CUSTOM DOMAINS AND TLS
+    Serving a custom domain is the framework's: the request host is matched
+    against sites.portal_domain (exactly, lowercased), and the hostname guards
+    accept every such host. Certificates are the DEPLOYMENT's: an on-demand TLS
+    terminator (Caddy's on_demand_tls, a SaaS edge, a load balancer that issues
+    per host) in front of the application, asked to issue only for hosts the
+    application recognises. RSpade issues no certificate and runs no ACME
+    client. The customer points the domain's DNS (a CNAME) at the deployment
+    before the domain is saved.
+
+PORTAL SSO ACROSS TENANT HOSTS (NOT YET DEVELOPED)
+    Portal federated sign-in (Rsx_Portal_Sso, rsx:man sso) finishes on the host
+    that started it, so with portals on hosts of their own - a host template or
+    custom domains - every tenant host would need its own redirect URI in every
+    provider console. The intended design, not yet built: the provider ceremony
+    runs on the application's primary host (one redirect URI per provider,
+    however many tenants exist), and its result is handed to the tenant's
+    portal host through the same linked-session handshake View as Client uses.
+    Until it exists, php artisan rsx:health warns ("Portal SSO") while
+    rsx.sso.portal_enabled is on in multi tenancy with a host template or
+    PORTAL_CUSTOM_DOMAINS override or only. A path template (/_portal/:slug)
+    shares the application host, but its callback carries the tenant's base
+    (/_portal/acme/_sso/<provider>/callback), so each tenant is still a
+    redirect URI of its own there too, and the health row does not warn for it.
+
+CHANGING THE LAYOUT LATER
+    A portal's address is a promise. Moving from paths to subdomains, renaming
+    the template's domain or changing a slug breaks links already sent, strands
+    passkeys enrolled on the old host and invalidates SSO redirect URIs
+    registered for it. Decide the production layout before launch
+    (rsx:man launch_checklist); the custom-domain 301 is the one move the
+    framework bridges.
+
+TROUBLESHOOTING
+    The build fails "Invalid client portal address."
+        The template or the prefix is refused; the message names the rule.
+        rsx:man portal, PORTAL URL lists them.
+
+    "rsx.tenancy = multi requires PORTAL_URL to carry a tenant placeholder"
+        Leave PORTAL_URL blank (/_portal/:site_id), or write /_portal/:slug or
+        https://:slug.myapp.com.
+
+    "PORTAL_URL carries a tenant placeholder ... but rsx.tenancy is single"
+        Either the application is multi-tenant and says so in
+        rsx/resource/config/rsx.php, or the placeholder goes.
+
+    A tenant's portal answers 404
+        No site has that slug or id; the site is disabled, deleted or has
+        is_portal_enabled off; under 'only', the address is a template address;
+        or the slug is not writable into the template (not a DNS label in a
+        host template).
+
+    The old address redirects (301)
+        PORTAL_CUSTOM_DOMAINS=override and the site has a portal_domain - by
+        design. Clear the domain to serve the template address again.
+
+    A portal user is signed out when switching tenants on a dev box
+        Path templates share one cookie; a sign-in for another site is ended
+        (SIGN_OUT_SITE_SWITCHED). Use a second browser profile per tenant.
+
+    A staff endpoint answers "This site has no client portal."
+        Rsx_Portal_Url::for_site() answered false for the record's site.
+
+SEE ALSO
+    portal - the portal itself: PORTAL URL grammar, URL generation, sessions
+    config_rsx - rsx.tenancy and the portal keys
+    launch_checklist - PORTAL_URL finality
+    two_factor - the passkey relying party of a portal host
+    sso - Rsx_Portal_Sso and its redirect URIs
+    skill rspade:portal-core - recipes and troubleshooting
+    skill rspade:environment-config - .env, APP_URL and the hostname guards
+
+RSX Framework            Last updated 2026-10-22            PORTAL_TENANCY(3)

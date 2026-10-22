@@ -66,8 +66,8 @@ SCOPING
 
     For a site-scoped setting, get()/set() default the site to the CURRENT
     EXPERIENCE's site - the staff session site on a staff request or in CLI, and the
-    site the app declared for the portal (Portal_Session::set_site_id) on a portal
-    request, which throws if none was declared. Pass an explicit $site_id to target
+    site the portal request's URL serves (Portal_Session::get_site_id()) on a portal
+    request, which throws if there is none. Pass an explicit $site_id to target
     another. A site with no stored value resolves to the definition default. Global
     settings ignore the site entirely.
 

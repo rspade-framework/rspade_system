@@ -8,6 +8,8 @@ namespace App\RSpade\Tests\Dispatch\Php;
 
 use Illuminate\Http\Request;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
+use App\RSpade\Core\Env\Rsx_Tenancy;
+use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -15,14 +17,16 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * Rsx_Request_Channel::classify() - the one decision about what kind of request this is.
  *
- * Pure: a synthetic request in, a channel and a realm out. The portal's address is driven
- * through config('rsx.portal.url'): the default prefix on the application host, and a
- * host of its own. The full layout matrix (a separate host WITH a prefix included) is
- * Portal_Url_Test's. No DB.
+ * A synthetic request in, a channel and a realm out - plus, for a portal request, the
+ * site its URL resolved to (Portal_Site_Resolver). The portal's address is driven through
+ * config overrides: the default prefix on the application host, a host of its own, and the
+ * multi-tenant templates (per-site path, tenant subdomain, a custom domain's 301). The full
+ * resolution matrix is Portal_Site_Resolver_Test's, the PORTAL_URL layout matrix
+ * Portal_Url_Test's. Fixture sites live inside the test's transaction.
  */
 class Request_Channel_Test extends Rsx_Test_Abstract
 {
-    protected static $use_database_transactions = false;
+    protected static $use_database_transactions = true;
 
     private const PORTAL_HOST = 'portal.request-channel-test.invalid';
 
@@ -54,6 +58,43 @@ class Request_Channel_Test extends Rsx_Test_Abstract
         } finally {
             config(['rsx.portal.url' => $original]);
         }
+    }
+
+    /**
+     * Run $fn with the given config values, restoring every one afterwards.
+     */
+    private static function __with_settings(array $settings, callable $fn): void
+    {
+        $saved = [];
+        foreach (array_keys($settings) as $key) {
+            $saved[$key] = config($key);
+        }
+
+        config($settings);
+
+        try {
+            $fn();
+        } finally {
+            config($saved);
+        }
+    }
+
+    /**
+     * A fixture site, saved through the model (the resolver's cache hooks run).
+     */
+    private static function __fixture_site(array $fields = []): Site_Model
+    {
+        $site = new Site_Model();
+        $site->slug = 'channel-' . strtolower(substr(uniqid(), -8));
+        $site->name = 'Request Channel Test';
+
+        foreach ($fields as $field => $value) {
+            $site->$field = $value;
+        }
+
+        $site->save();
+
+        return $site;
     }
 
     public static function test_the_staff_host_channels()
@@ -123,6 +164,94 @@ class Request_Channel_Test extends Rsx_Test_Abstract
             // once the portal has a host of its own.
             static::__assert_equals(['page', 'staff', false], static::__classify('http://localhost/dashboard'));
             static::__assert_equals(['page', 'staff', false], static::__classify('http://localhost' . Rsx_Portal_Url::DEFAULT_PREFIX . '/dashboard'));
+        });
+    }
+
+    public static function test_a_single_tenant_portal_request_serves_site_one()
+    {
+        static::__classify(Rsx_Portal_Url::prefix() . '/login');
+
+        static::__assert_equals(Rsx_Tenancy::SINGLE_TENANT_SITE_ID, Rsx_Request_Channel::portal_site_id());
+        static::__assert_equals(Rsx_Portal_Url::prefix(), Rsx_Request_Channel::portal_base());
+        static::__assert_false(Rsx_Request_Channel::portal_not_served());
+        static::__assert_null(Rsx_Request_Channel::portal_redirect_to());
+
+        static::__classify('/dashboard');
+        static::__assert_null(Rsx_Request_Channel::portal_site_id(), 'a staff request names no portal site');
+    }
+
+    /**
+     * Multi tenancy: the base is per site, and classification never asks the single-valued
+     * accessors (which throw there).
+     */
+    public static function test_a_multi_tenant_path_template_classifies_per_site()
+    {
+        $site = static::__fixture_site();
+
+        static::__with_settings(['rsx.tenancy' => 'multi', 'rsx.portal.url' => '/_portal/:slug'], function () use ($site) {
+            $base = '/_portal/' . $site->slug;
+
+            static::__assert_equals(['page', 'portal', false], static::__classify($base . '/login'));
+            static::__assert_equals('/login', Rsx_Request_Channel::realm_path());
+            static::__assert_equals($base, Rsx_Request_Channel::portal_base());
+            static::__assert_equals((int) $site->id, Rsx_Request_Channel::portal_site_id());
+
+            static::__assert_equals(['ajax', 'portal', false], static::__classify($base . '/_ajax/Some_Controller/action', 'POST'));
+            static::__assert_equals('/_ajax/Some_Controller/action', Rsx_Request_Channel::realm_path());
+
+            static::__assert_equals(['page', 'portal', false], static::__classify('/_portal/no-such-tenant/login'));
+            static::__assert_true(Rsx_Request_Channel::portal_not_served(), 'an unknown slug is the portal\'s 404');
+            static::__assert_null(Rsx_Request_Channel::portal_site_id());
+
+            static::__assert_equals(['page', 'staff', false], static::__classify('/dashboard'));
+            static::__assert_equals(['api', 'staff', false], static::__classify('/api/v1/me'));
+        });
+    }
+
+    public static function test_a_tenant_subdomain_is_a_portal_host()
+    {
+        $site = static::__fixture_site();
+
+        static::__with_settings([
+            'app.url' => 'https://app.request-channel-test.invalid',
+            'rsx.tenancy' => 'multi',
+            'rsx.portal.url' => 'https://:slug.request-channel-test.invalid',
+        ], function () use ($site) {
+            $origin = 'https://' . $site->slug . '.request-channel-test.invalid';
+
+            static::__assert_equals(['page', 'portal', true], static::__classify($origin . '/login'));
+            static::__assert_equals('', Rsx_Request_Channel::portal_base());
+            static::__assert_equals((int) $site->id, Rsx_Request_Channel::portal_site_id());
+
+            static::__assert_equals(['api', 'staff', true], static::__classify($origin . '/api/v1/me'), 'the API refuses on a portal host');
+            static::__assert_equals(['page', 'staff', false], static::__classify('https://app.request-channel-test.invalid/login'), 'the APP host wins');
+        });
+    }
+
+    public static function test_an_override_custom_domain_redirects_the_template_address()
+    {
+        $domain = 'cd-' . strtolower(substr(uniqid(), -8)) . '.request-channel-test.invalid';
+        $site = static::__fixture_site(['portal_domain' => $domain]);
+
+        static::__with_settings([
+            'rsx.tenancy' => 'multi',
+            'rsx.portal.url' => '/_portal/:slug',
+            'rsx.portal.custom_domains' => 'override',
+        ], function () use ($site, $domain) {
+            static::__classify('/_portal/' . $site->slug . '/projects?tab=files');
+            static::__assert_equals('https://' . $domain . '/projects?tab=files', Rsx_Request_Channel::portal_redirect_to());
+            static::__assert_null(Rsx_Request_Channel::portal_site_id());
+
+            static::__assert_equals(['page', 'portal', true], static::__classify('https://' . $domain . '/projects'));
+            static::__assert_equals((int) $site->id, Rsx_Request_Channel::portal_site_id());
+            static::__assert_null(Rsx_Request_Channel::portal_redirect_to());
+        });
+    }
+
+    public static function test_a_disabled_portal_classifies_nothing_as_the_portal()
+    {
+        static::__with_settings(['rsx.portal.enabled' => false], function () {
+            static::__assert_equals(['page', 'staff', false], static::__classify(Rsx_Portal_Url::DEFAULT_PREFIX . '/login'));
         });
     }
 

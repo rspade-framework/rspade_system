@@ -121,18 +121,18 @@ trait Site_Scoped
      *
      * It forks on the EXPERIENCE OF THE REQUEST (Rsx_Portal::is_portal_request()), never on
      * who is signed in: a browser has ONE session carrying BOTH identities, so an identity
-     * test gets it wrong in both directions. A portal request is scoped by the site the
-     * application DECLARED for the portal (Portal_Session::set_site_id, normally in
-     * Portal_Main::init) - which lives in its own column, portal_site_id, and has nothing to
-     * do with the staff session's site_id.
+     * test gets it wrong in both directions. A portal request is scoped by the site its URL
+     * resolved to (Portal_Site_Resolver, declared by the framework before Portal_Main::init;
+     * Portal_Session::get_site_id()) - which lives in its own column, portal_site_id, and has
+     * nothing to do with the staff session's site_id.
      *
      * A portal request with no declared site THROWS (Portal_Session::get_site_id's contract,
      * ruling 12). It is deliberate and it is the whole point: the alternative - quietly
      * scoping to site 0, or to whatever tenant a co-resident staff cookie happens to be on -
-     * is a cross-tenant read/write primitive that reports success. The window before
-     * Portal_Main::init() runs is not a real one for site-scoped models: the page dispatcher
-     * calls it as the FIRST application code in a portal request, before dev auth, CSRF, the
-     * #[Auth] gates and every controller.
+     * is a cross-tenant read/write primitive that reports success. There is no window before
+     * the site is known: the page dispatcher declares it before Portal_Main::init(), the
+     * FIRST application code in a portal request, ahead of dev auth, CSRF, the #[Auth] gates
+     * and every controller.
      *
      * @return int
      */

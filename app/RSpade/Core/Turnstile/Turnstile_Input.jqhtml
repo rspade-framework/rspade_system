@@ -22,11 +22,11 @@ Args:
   $theme       auto | light | dark                        (default auto)
   $size        normal | flexible | compact                (default normal)
   $appearance  always | execute | interaction-only        (default always)
-  $form        the id of a NATIVE <form> the field belongs to (optional). Rendered as the
-               hidden input's HTML form attribute, so the component may sit anywhere in the
-               document - below a sign-in card, say - and still post with that form. Native
-               forms only: an Rsx_Form gathers its values from its own subtree, so a component
-               serving one stays inside it.
+  $form        the id of the form the field belongs to (optional). Rendered as the hidden
+               input's HTML form attribute, so the component may sit anywhere in the document -
+               below a sign-in card, say - and still post with that form: a native <form>
+               submits it, and an <Rsx_Form id="..."> collects it in vals() and resets the
+               widget after a failed submit.
 
 See: php artisan rsx:man turnstile
 --%>

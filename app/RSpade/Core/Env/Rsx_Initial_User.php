@@ -8,6 +8,7 @@ namespace App\RSpade\Core\Env;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use App\RSpade\Core\Env\Rsx_Tenancy;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Rsx;
@@ -289,7 +290,7 @@ class Rsx_Initial_User
     }
 
     /**
-     * The site the initial profile belongs to: the configured default when it
+     * The site the initial profile belongs to: site 1 (Rsx_Tenancy::SINGLE_TENANT_SITE_ID) when it
      * exists, otherwise the lowest-numbered real site there is.
      *
      * A profile row must belong to a site - sign-in looks up the enabled User_Model
@@ -305,7 +306,7 @@ class Rsx_Initial_User
      */
     public static function resolve_site_id(?string $connection_name = null): int
     {
-        $site_id = (int) config('multi-tenant.default_site_id', 1);
+        $site_id = Rsx_Tenancy::SINGLE_TENANT_SITE_ID;
 
         if (self::__select($connection_name, 'SELECT id FROM sites WHERE id = ?', [$site_id]) !== []) {
             return $site_id;

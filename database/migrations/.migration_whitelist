@@ -781,6 +781,11 @@
             "created_at": "2026-10-21T20:26:53+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_site_listing_index_to_file_attachments"
+        },
+        "2026_10_22_083110_add_portal_columns_to_sites.php": {
+            "created_at": "2026-10-22T08:31:10+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_portal_columns_to_sites"
         }
     }
 }

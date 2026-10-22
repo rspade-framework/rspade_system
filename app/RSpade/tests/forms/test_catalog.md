@@ -133,3 +133,9 @@ Real keyboard input on a runtime-mounted widget on `/_sys`.
 |----|---------|-------|----------|--------|
 | forms-pt-01 | a field error, an unmatched field error and a general error each render their message as text | messages carrying `<b>` and `<img onerror>` | element text = the message verbatim; no `b`/`img` inside | implemented |
 | forms-pt-02 | `Rsx.render_error()` renders the fatal box's file, line and message as text | a fatal error with markup in `file` and `error` | text shows them literally; no element from them | implemented |
+
+## Hidden inputs associated by id (`playwright/form_hidden_outside.js`)
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-ho-01 | `vals()` collects the native hidden inputs the form OWNS through `form.elements` - the shape `<Turnstile_Input $form>` renders outside its form | an Rsx_Form with an id; hidden inputs inside it, outside it naming its id, outside naming nothing, and inside naming another form | the first two collected, the last two not | implemented |

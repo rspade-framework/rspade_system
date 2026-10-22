@@ -17,6 +17,7 @@ use App\RSpade\Core\Ide\Ide_Bridge_Token;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Portal\Portal_User_Model;
+use App\RSpade\Core\Portal\Portal_Site_Resolver;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
@@ -287,13 +288,6 @@ class Route_Debug_Command extends Command
             return 1;
         }
 
-        // Normalize URL for portal mode: the path INSIDE the portal. A URL already carrying
-        // the portal's prefix ('/_portal/dashboard' by default) has it stripped; the browser
-        // script puts the prefix back on the portal's own address.
-        if ($portal_mode) {
-            $url = Rsx_Portal::strip_prefix($url);
-        }
-
         // Get user ID from options (accepts ID or email)
         $user_id = $this->option('user');
         if ($user_id !== null) {
@@ -314,6 +308,17 @@ class Route_Debug_Command extends Command
             if ($portal_user_id === null) {
                 return 1; // Error already displayed
             }
+        }
+
+        // Portal mode browses ONE site's portal: the path INSIDE it is what is signed and
+        // browsed, and the browser script puts that portal's prefix back on its own address.
+        $portal_address = null;
+        if ($portal_mode) {
+            $resolved = $this->__resolve_portal($url, $portal_user_id);
+            if ($resolved === null) {
+                return 1; // Error already displayed
+            }
+            [$url, $portal_address] = $resolved;
         }
 
         // Get log flag
@@ -460,12 +465,12 @@ class Route_Debug_Command extends Command
         if ($portal_mode) {
             $command_args[] = '--portal';
 
-            $portal_authority = static::__authority(Rsx_Portal_Url::origin());
+            $portal_authority = static::__authority($portal_address['origin']);
             if ($portal_authority !== '') {
                 $command_args[] = "--portal-host={$portal_authority}";
             }
 
-            $command_args[] = '--portal-prefix=' . Rsx_Portal_Url::prefix();
+            $command_args[] = '--portal-prefix=' . $portal_address['prefix'];
         }
 
         if ($user_id) {
@@ -835,6 +840,59 @@ class Route_Debug_Command extends Command
         }
 
         return $minted;
+    }
+
+    /**
+     * The portal a --portal run browses, and the path inside it.
+     *
+     *   1. A URL under a tenant's portal base on the application host ('/_portal/acme/x' for
+     *      PORTAL_URL=/_portal/:slug, '/_portal/x' for the single-tenant default) names its
+     *      site, read by the same resolver that classifies requests; the base is removed.
+     *   2. Otherwise the --portal-user's site, else the current site (single tenancy: its one
+     *      tenant). A URL still carrying that portal's prefix has it removed.
+     *
+     * @param string $url The URL as given, fragment removed
+     * @param int|null $portal_user_id
+     * @return array{0: string, 1: array}|null [path inside the portal, Rsx_Portal_Url::for_site()],
+     *                                         or null after printing why there is none
+     */
+    private function __resolve_portal(string $url, ?int $portal_user_id): ?array
+    {
+        $query_at = strpos($url, '?');
+        $path = $query_at === false ? $url : substr($url, 0, $query_at);
+        $query = $query_at === false ? '' : substr($url, $query_at);
+
+        $app_host = strtolower((string) parse_url((string) config('app.url'), PHP_URL_HOST));
+        $match = Portal_Site_Resolver::match($app_host, $path);
+        $site_id = null;
+
+        if ($match !== null && $match['under_base']) {
+            $site_id = Portal_Site_Resolver::settle($match)['site_id'];
+
+            if ($site_id === null) {
+                $this->error("{$path} names no served client portal (an unknown tenant, a disabled site, or a site whose portal is off).");
+                return null;
+            }
+
+            $path = $match['realm_path'];
+        } elseif ($portal_user_id !== null) {
+            $site_id = (int) Portal_User_Model::find($portal_user_id)->site_id;
+        }
+
+        $address = Rsx_Portal_Url::for_site($site_id);
+
+        if ($address === false) {
+            $this->error($site_id === null
+                ? 'No site is current, so there is no portal to browse: give a URL under a tenant\'s portal address (e.g. /_portal/<slug>/...) or --portal-user.'
+                : "Site {$site_id} has no client portal (the portal is disabled, the site is not served, or its portal is switched off).");
+            return null;
+        }
+
+        if ($match === null || !$match['under_base']) {
+            $path = Rsx_Portal::strip_base($path, $address['prefix']);
+        }
+
+        return [$path . $query, $address];
     }
 
     /**

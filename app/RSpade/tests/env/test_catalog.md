@@ -8,8 +8,10 @@ One row per test worth having (implemented AND not). Status is one of
 Covers Rsx_Env_Hostname_Guard's pure core. The PHP runner is CLI, where check()
 bails, so the request wrapper's end-to-end behavior is proven by E2E curl in the
 ticket verification (see EHG-E2E below), not a persistent test. The guard declares
-the APP_URL host plus, when PORTAL_URL names a host of its own, the portal host; a
-request passes when it matches ANY declared host exactly, without its port.
+the APP_URL host plus, when PORTAL_URL names a host of its own, the portal host (for a
+tenant-subdomain template, '*.<suffix>': one label in front of the suffix); a request
+passes when it matches ANY declared host, without its port. A custom portal domain is a
+lookup outside the pure core (Portal_Site_Resolver_Test, PSR-15).
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
@@ -24,16 +26,21 @@ request passes when it matches ANY declared host exactly, without its port.
 | EHG-09 | comparison is case-insensitive | php | mixed-case request + APP_URL | no mismatch | implemented | 2026-07-22 |
 | EHG-10 | a separate PORTAL_URL host is a second declared host: either host passes, a third is refused, the message names both | php | APP_URL + PORTAL_URL on another host | 2 entries; app/portal pass; third mismatch | implemented | 2026-10-01 |
 | EHG-11 | a same-host or blank PORTAL_URL declares nothing more; nothing is declared before APP_URL | php | prefix on the app host, blank, empty APP_URL | 1 / 1 / 0 entries | implemented | 2026-10-01 |
-| EHG-12 | a hostless PORTAL_URL fails loud | php | PORTAL_URL='/clients' | RuntimeException naming PORTAL_URL | implemented | 2026-10-01 |
+| EHG-12 | an absolute PORTAL_URL with no host fails loud | php | PORTAL_URL='https:///clients' | RuntimeException naming PORTAL_URL | implemented | 2026-10-22 |
+| EHG-17 | a bare-path PORTAL_URL (single or multi) declares nothing more | php | '/clients', '/_portal/:slug' | 1 entry | implemented | 2026-10-22 |
+| EHG-18 | a tenant-subdomain template declares '*.<suffix>': one label passes, deeper sub-hosts and the bare suffix do not | php | 'https://:slug.portals...' | per row | implemented | 2026-10-22 |
+| EHG-19 | a disabled portal declares nothing more | php | PORTAL_ENABLED=false | 1 entry | implemented | 2026-10-22 |
 | EHG-13 | the portal host is compared without its port | php | declared :8080, request :9000 | no mismatch | implemented | 2026-10-01 |
 | EHG-14 | no declared host is never a mismatch | php | [] | null | implemented | 2026-10-01 |
-| EHG-15 | production `Rsx::get_hostname()` serves the APP_URL host, its sub-hosts and the portal host (exact), nothing else | php | `Rsx::host_is_served()` | per row | implemented | 2026-10-01 |
+| EHG-15 | production `Rsx::get_hostname()` serves the APP_URL host, its sub-hosts and the portal host (exact), nothing else | php | `Rsx::host_is_served()` | per row | implemented | 2026-10-22 |
+| EHG-20 | production serves every one-label tenant host of a host template, nothing deeper | php | `Rsx::host_is_served()` with `*.portals.com` | per row | implemented | 2026-10-22 |
 | EHG-16 | the loopback test is a parsed 127.0.0.0/8 dotted quad, never a prefix | php | `127.attacker.example`, `127.0.0.256`, `127.1`, `[::1]`, `127.255.255.255` | names and malformed addresses false; real loopback true | implemented | 2026-10-05 |
 
 ## Absolute_Url_Request_Test (php, no transactions)
 
 Covers `rsx_absolute_url()` / `Rsx::absolute_url_origin()`: the request authority is used
-only when the request host is SERVED (APP_URL host, a sub-host, the PORTAL_URL host);
+only when the request host is SERVED (APP_URL host, a sub-host, a host the PORTAL_URL template
+names, a custom portal domain);
 anything else - a loopback host APP_URL does not name, an arbitrary Host header - gets
 APP_URL's configured origin. Driven by rebinding `app('request')` to synthetic requests.
 The no-request (CLI / task) answer is the mail concern's `Absolute_Url_Test`.

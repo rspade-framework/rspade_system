@@ -1,6 +1,6 @@
 ---
 name: portal-core
-description: "The framework's client-portal machinery - [Portal_Route] and @portal_spa routing, the portal password check (Portal_Auth::verify_credentials()) and sign-in history (Portal_Login_History), the portal's own second factors / passkeys (Rsx_Portal_Two_Factor) and federated sign-in (Rsx_Portal_Sso, rsx.sso.portal_enabled), Portal_Session::put_value(), Portal_Main_Abstract::init() and the mandatory Portal_Session::set_site_id() declaration, the Portal_Session facade over the shared session row, the portal auth realm, Portal_Permission_Abstract, portal_fetch()/portal_can_read() and PORTAL-MODEL-FETCH-01, the internal-endpoint channel and Ajax.upload(), PORTAL_URL and the portal's address (Rsx_Portal_Url), View as Client (Portal_Session::begin_impersonation_from_staff() and the linked-session handshake), and Portal_Notification_Model. Use when adding a portal page or endpoint, when moving the portal to its own host or prefix, when a View as Client link answers \"This link has expired or was already used.\", when Portal_Session::get_site_id() throws, when a portal Ajax call resolves in the staff realm, when exposing a model to portal JavaScript, or when marking a read endpoint #[Portal_Impersonation_Readable] for read-only impersonation, or hitting \"This is a read-only session; changes are disabled.\""
+description: "The framework's client-portal machinery - [Portal_Route] and @portal_spa routing, portal tenancy (rsx.tenancy single|multi, the PORTAL_URL template with its :slug / :site_id placeholder, PORTAL_ENABLED, PORTAL_CUSTOM_DOMAINS off|override|only, sites.portal_domain, sites.is_portal_enabled, Portal_Site_Resolver reading the site from the URL), per-site URLs (Rsx_Portal_Url::for_site(), Rsx_Portal::Route(..., site_id:) answering false, window.rsxapp.portal.base), the portal password check (Portal_Auth::verify_credentials()) and sign-in history (Portal_Login_History), the portal's own second factors / passkeys (Rsx_Portal_Two_Factor) and federated sign-in (Rsx_Portal_Sso, rsx.sso.portal_enabled), Portal_Session::put_value(), Portal_Main_Abstract::init(), the Portal_Session facade over the shared session row, the portal auth realm, Portal_Permission_Abstract, portal_fetch()/portal_can_read() and PORTAL-MODEL-FETCH-01, the internal-endpoint channel and Ajax.upload(), View as Client (Portal_Session::begin_impersonation_from_staff() and the linked-session handshake), and Portal_Notification_Model. Use when adding a portal page or endpoint, making the portal multi-tenant or moving it to its own host, prefix, tenant subdomains or custom domains, building a staff link into a site's portal, when the build fails \"Invalid client portal address.\" (\"rsx.tenancy = multi requires PORTAL_URL to carry a tenant placeholder\", \"but rsx.tenancy is single\", \"must END in /:slug or /:site_id\", \"collides with these staff routes\"), when a tenant's portal answers 404 or an old portal address 301s, when an endpoint answers \"This site has no client portal.\", when Portal_Session::set_site_id() throws \"is for commands, tasks and tests only\" or Portal_Session::get_site_id() throws, when a View as Client link answers \"This link has expired or was already used.\", when a portal Ajax call resolves in the staff realm, when exposing a model to portal JavaScript, or when marking a read endpoint #[Portal_Impersonation_Readable] for read-only impersonation, or hitting \"This is a read-only session; changes are disabled.\""
 ---
 
 # The portal framework
@@ -14,21 +14,28 @@ A second authenticated experience for external users (clients, vendors), running
 
 ---
 
-## Part A - Routing
+## Part A - Routing and the portal's address
 
-**Where the portal lives is `PORTAL_URL`** (`config('rsx.portal.url')`), written exactly like `APP_URL`. Blank = `APP_URL` + `/_portal`. `Rsx_Portal_Url` derives `origin()`, `host()`, `prefix()` and `is_separate_host()`:
+**Where the portal lives is `PORTAL_URL`** (`config('rsx.portal.url')`), a TEMPLATE written like `APP_URL` (or a bare path on `APP_URL`'s host). Beside it: `rsx.tenancy` (`single` | `multi`, APPLICATION config in `rsx/resource/config/rsx.php`, no `.env` key), `PORTAL_ENABLED` (default true) and `PORTAL_CUSTOM_DOMAINS` (`off` | `override` | `only`). Per site: `sites.portal_domain` (unique, normalised on save, throws for a non-hostname - `Site_Model::normalize_portal_domain()` is the same rule for a form) and `sites.is_portal_enabled` (default on).
 
 ```
 PORTAL_URL                          served at
+-- single tenancy (site 1, always; a placeholder is refused)
 (blank)                             APP_URL's host, under /_portal
-https://myapp.com/client-portal     the application host, under /client-portal
+/clients                            APP_URL's host, under /clients
 https://portal.myapp.com/           its own host, no prefix
 https://portal.myapp.com/clients    its own host, under /clients
+-- multi tenancy (exactly one :slug or :site_id)
+(blank)                             APP_URL's host, under /_portal/:site_id
+/_portal/:slug                      APP_URL's host, one path per site
+https://:slug.myapp.com             a subdomain per site
 ```
 
-- **Same host:** a path under the prefix is the portal; everything else is staff. A prefix that matches staff routes WINS - those staff URLs become unreachable - so pick one the staff app does not use.
-- **Own host:** every request on that host is the portal; a path outside the prefix is the portal's 404. The external API does not exist there.
-- **Refused at boot:** equal to `APP_URL` (same host + path after normalising), https rule as `APP_URL`, query/fragment/credentials, a segment outside `[A-Za-z0-9_-]`, a first segment `api` / `error` / `ws` / any `_` name but `_portal`. The `rsx:health` "Portal URL" row reports the derivation.
+- **A path placeholder ENDS the path after at least one fixed segment** (`/_portal/:slug`, never `/:slug`) and lives on the APPLICATION's host only - a path placeholder on a portal host of its own (`https://portal.myapp.com/x/:slug`) is refused, since a tenant's portal is its own subdomain or domain; **a host placeholder is the whole first label** (`https://:slug.myapp.com`).
+- **Judged at MANIFEST BUILD, every mode**, each failure FATAL as "Invalid client portal address." plus the rule: equal to `APP_URL`, https rule as `APP_URL`, query/fragment/credentials, a segment outside `[A-Za-z0-9_-]`, a first segment `api` / `error` / `ws` / any `_` name but `_portal`, a placeholder in single / none in multi, and a same-host FIXED prefix that **collides with a staff `#[Route]`, `@route` or API route** (listed in the error). The four values are in the build fingerprint: a dev box rebuilds on a change, a sealed box refuses until `rsx:build --force`. The `rsx:health` "Portal URL" row reports the derivation.
+- **Same host:** a path under the portal's base is the portal; everything else is staff. **Own host** (a portal host, a tenant subdomain, a custom domain): every request there is the portal; a path outside the base is the portal's 404; the external API does not exist there.
+
+**The site is read from the URL, every request** (`Portal_Site_Resolver`): a custom domain (override|only), else the template's slug or id, else - single tenancy - site 1. An address serving no site (unknown slug/id, site deleted/disabled/`is_portal_enabled` off, under `only` any template address) is the portal's **404**; under `override` a template address of a site with a `portal_domain` is a **301** to the same path on `https://<domain>`. Both happen before any application code (an Ajax call gets a plain-text 404). Product layouts, DNS/TLS, the upsell: `rsx:man portal_tenancy`.
 
 `Rsx_Portal::is_portal_request()` / `Rsx_Portal.is_portal()` report context (decided once, before dispatch); `Rsx_Portal::strip_prefix($url)` gives the path inside the portal. Full rules: `rsx:man portal` (PORTAL URL).
 
@@ -40,7 +47,7 @@ https://portal.myapp.com/clients    its own host, under /clients
 public static function index(Request $request, array $params = []) { }
 ```
 
-Public static methods only; the pattern may contain `:params`; `methods` defaults to `['GET']`. These land in the manifest's **portal route table, entirely separate from the main `#[Route]` table**. Use them for login, register, password reset, logout. As with main routes, `$params` carries the GET query string AND the URL params (URL params win on a clash) - read query values from `$params`, never `$request->query()`. POST data is not in `$params`; use `$request`.
+Public static methods only; the pattern may contain `:params`; `methods` defaults to `['GET']`. These land in the manifest's **portal route table, entirely separate from the main `#[Route]` table**. Use them for login, register, password reset, logout. As with main routes, `$params` carries the GET query string AND the URL params (URL params win on a clash) - read query values from `$params`, never `$request->query()`. POST data is not in `$params`; use `$request`. **A route is written once for every tenant** - the dispatcher and the SPA router strip each tenant's base (`/_portal/acme`) before matching.
 
 ### Authenticated SPA screens
 
@@ -61,55 +68,61 @@ The portal counterpart of `@spa`: GET routes served through the single `Portal_S
 Rsx_Portal::Route('Portal_Login_Controller')            // /_portal/login
 Rsx_Portal::Route('Portal_Project_View_Action', 123)    // integer -> 'id'
 Rsx_Portal::Route('...Action', ['id' => 1, 'tab' => 'x'])
-Rsx_Portal::portal_path('/login')                       // a non-route portal path
+Rsx_Portal::Route('Portal_Login_Controller', site_id: $client->site_id)  // ONE site's portal
+Rsx_Portal::portal_path('/login')                       // a non-route portal path (site_id: too)
 rsx_absolute_url(Rsx_Portal::Route(...))                // absolute, from any context
 ```
 
-**`Route()` / `portal_path()` answer a path on the portal's host and an ABSOLUTE URL off it** (a staff page, CLI, a task - when the portal has its own host). `rsx_absolute_url()` passes an absolute URL through, so an emailed link is always `rsx_absolute_url(Rsx_Portal::Route(...))` and is right in every layout. Never `Rsx::Route()` for a portal page and never hand-join the prefix.
+**`Route()` / `portal_path()` answer a path on the portal's host and an ABSOLUTE URL off it** (a staff page, CLI, a task - when the portal has its own host). `rsx_absolute_url()` passes an absolute URL through, so an emailed link is always `rsx_absolute_url(Rsx_Portal::Route(...))`. Never `Rsx::Route()` for a portal page and never hand-join the prefix.
 
-JS: `Rsx_Portal.Route(...)`, `Rsx_Portal.is_portal()`, `Rsx_Portal.user()`, `Rsx_Portal.is_impersonating()`, and the address `Rsx_Portal.origin()` / `prefix()` / `is_separate_host()` - read from `window.rsxapp.portal`, which is in EVERY bundle, staff included.
+**A URL is for ONE site** - `site_id:`, or the current one (a portal page's resolved site; a staff page's signed-in site; site 1 in single tenancy) - and **answers `false` when that site has no portal** (feature off, site disabled or opted out, under `only` no domain). `Rsx_Portal_Url::for_site(?int)` answers the address (`{origin, prefix, host, separate_host}`) or false. Staff code builds a link for the RECORD's site and refuses first, writing and sending nothing:
+
+```php
+if (Rsx_Portal_Url::for_site($client->site_id) === false) {
+    return response_error(Ajax::ERROR_VALIDATION, 'This site has no client portal.');
+}
+```
+
+Worked example: `system/app/RSpade/resource/reference_app/app/frontend/clients/clients_controller.php`. `Rsx_Portal_Url::origin()` / `prefix()` / `host()` / `url()` / `is_separate_host()` answer for the current site and THROW without a portal.
+
+JS: `Rsx_Portal.Route(...)` (current site only, no `site_id`; false while `window.rsxapp.portal.base` is null - hide the portal action then), `Rsx_Portal.is_portal()`, `Rsx_Portal.user()`, `Rsx_Portal.is_impersonating()`, and the address `Rsx_Portal.origin()` / `prefix()` / `base()` / `is_separate_host()` - read from `window.rsxapp.portal` (`{origin, prefix, separate_host, base, app_host_prefix}`), which is in EVERY bundle, staff included.
 
 ---
 
-## Part B - Portal_Main and the site declaration
+## Part B - Portal_Main and the site
 
 One `rsx/portal_main.php` extending `Portal_Main_Abstract`:
 
 | hook | when |
 |---|---|
-| `init()` | once per process, at the top of the first portal request - **the FIRST application code in the portal stack** |
+| `init()` | once per process, at the top of the first portal request - **the FIRST application code in the portal stack**; the site is already declared |
 | `pre_dispatch($req, $params)` | before every matched route, **AFTER the `#[Auth]` gates have already run**, and for an unmatched URL; return null to continue, a Response to halt. Also once per Ajax CALL (before its endpoint and gates; `$params['controller']`/`['action']`): non-null refuses that call only - a coded result keeps its code and reason, anything else is `unauthorized` |
 | `unhandled_route($req, $params)` | no portal route matched (after `pre_dispatch`); return null for the 404 page |
 
-Order: `Portal_Main::init` -> CSRF -> dev auth -> route match -> **`#[Auth]` gates** -> `Portal_Main::pre_dispatch` -> controller `pre_dispatch` -> handler.
+Order: the URL's site declared (framework) -> `Portal_Main::init` -> CSRF -> dev auth -> route match -> **`#[Auth]` gates** -> `Portal_Main::pre_dispatch` -> controller `pre_dispatch` -> handler.
 
 The portal is the one `Dispatcher` in the PORTAL realm (`rsx:man dispatch`, THE REALM DESCRIPTOR), so everything else is the staff behaviour: `$params` carries `_method` / `_route` / `_handler` for a matched route and the query string for an unmatched one; a returned string is an HTML body; `response_unauthorized()` and friends get the full-page split; and an `abort()` or a thrown coded exception (`AjaxUnauthorizedException` from `require_permission()`, `AjaxNotFoundException`, ...) is answered with the portal's own login redirect / 403 / 404 / 400 page (`rsx:man dispatch`, CODED FAILURES).
 
 **`pre_dispatch` performs NO authorization.** It is for tenant setup, redirects, and the login-redirect capture.
 
-### Declaring the site
+### The site - THE URL IS THE AUTHORITY
 
-**RSpade never resolves which site a portal request serves - no detection, no default, no hook.** `init()` runs before everything that might ask, which is why the declaration lives there:
+**The framework reads the portal's site from the request's URL and declares it for the request before `Portal_Main::init()`.** The application declares nothing; `init()` just inits the session:
 
 ```php
-// rsx/portal_main.php - the mono-site recipe
+// rsx/portal_main.php
 public static function init(): void
 {
-    Portal_Session::set_site_id((int) config('rsx.portal.site_id'));  // an APP config key
-    Portal_Session::init();
+    Portal_Session::init();   // Portal_Session::get_site_id() already answers
 }
 ```
 
-A flow that only learns the site later (an invite code, a workspace selection) declares it at that point instead:
+- **Never stored** - no session column, no cookie, no config key. A portal user belongs to one site, so the sign-in already implies it.
+- **The URL wins over a sign-in**: a live portal sign-in for another site is signed out (`SIGN_OUT_SITE_SWITCHED`) and the request continues signed out - only in a path layout, where every tenant shares one cookie.
+- `get_site_id()` answers the request's site, else the portal sign-in's own; with neither it **throws** - **a portal that does not know its tenant must not pick one.** Login carries no site argument (`set_portal_user_id(?int)` uses the request's site). A login, register or reset handler reads `get_site_id()` and checks every credential, invite code and token against it - never adopts the site of the row it found.
+- **`Portal_Session::set_site_id()` is for commands, tasks and tests ONLY** and throws in a web request. In CLI it may be re-declared (moving a test between tenants); the runner clears it after every test method (`Portal_Session::_testing_reset()` - the runner's call, never a test's).
 
-```php
-$invitation = Portal_Invitation_Model::find_by_code($params['code']);
-Portal_Session::set_site_id((int) $invitation->site_id);   // before any site-scoped query
-```
-
-Rules: **request-scoped declaration only** - it creates nothing. Idempotent for the same id; **throws** on a different id or against a live session's site; a non-positive id throws. `get_site_id()` returns the session's site, else the declaration, else **throws** - **a portal that does not know its tenant must not pick one.** Login carries no site argument (`set_portal_user_id(?int)` uses the declared site). CLI/tests use the same call; the test runner clears it after every test method (`Portal_Session::_testing_reset()` - the runner's call, never a test's).
-
-**Every framework site seam reads that declaration on a portal request** - `Rsx_Site_Model_Abstract::get_current_site_id()` (global scope, forced `site_id` on create, cross-site fatals, site write lock), plus `Rsx_Mail`, `Rsx_Sms`, `Rsx_Time` (the site-timezone tier; portal accounts have no personal zone), `Rsx_Settings`, `Rsx_Throttle`. **So portal code never hand-scopes a query** with `where('site_id', ...)`, and a staff `Session::set_site_id()` is the STAFF app's tenancy only.
+**Every framework site seam reads that site on a portal request** - `Rsx_Site_Model_Abstract::get_current_site_id()` (global scope, forced `site_id` on create, cross-site fatals, site write lock), plus `Rsx_Mail`, `Rsx_Sms`, `Rsx_Time` (the site-timezone tier; portal accounts have no personal zone), `Rsx_Settings`, `Rsx_Throttle`. **So portal code never hand-scopes a query** with `where('site_id', ...)`, and a staff `Session::set_site_id()` is the STAFF app's tenancy only.
 
 ---
 
@@ -123,8 +136,8 @@ Portal_Session::is_logged_in(): bool
 Portal_Session::has_session(): bool           // creates nothing
 Portal_Session::get_user() / get_portal_user()      // ?Portal_User_Model
 Portal_Session::get_portal_user_id(): ?int
-Portal_Session::set_site_id(int): void        // declare (Part B)
-Portal_Session::get_site_id(): int            // THROWS when nothing declared one
+Portal_Session::get_site_id(): int            // the URL's site (Part B); THROWS without one
+Portal_Session::set_site_id(int): void        // CLI/tests only; THROWS in a web request
 Portal_Session::set_portal_user_id(?int): void// log in / log out
 Portal_Session::logout(): void
 Portal_Session::get_session_id(): ?int        // the browser's session id (SHARED with Session); null in a command or task
@@ -259,13 +272,18 @@ A View as Client is a **PORTAL USER SESSION on the staff member's own browser** 
 
 ```php
 $url = Portal_Session::begin_impersonation_from_staff($portal_user_id, Session::get_user()->id, $site_id);
+if ($url === false) {     // that site has no portal - nothing was applied
+    return response_error(Ajax::ERROR_VALIDATION, 'This site has no client portal.');
+}
 return ['url' => $url];   // the staff page opens it in a new tab
 ```
 
 It throws `AjaxUnauthorizedException` unless the staff-realm `can_impersonate` check passes, requires the impersonator id to be the caller's own staff user, and **never touches the contact's `last_login`**. `can_impersonate` is **framework-declared and DENIES by default** (`Permission_Abstract`, `#[Replaceable]`): an app offering View as Client redeclares it on its `Permission` class (`#[Auth_Check]`, its own rule, no `parent::` owed). Open the tab synchronously inside the click (`window.open('', '_blank')`) and point it at the URL when the call returns, or a popup blocker eats it - worked example: `system/app/RSpade/resource/reference_app/app/frontend/contacts/view/Contacts_View_Action.js`.
 
+Whether it crosses hosts is decided by THAT site's portal address (`Rsx_Portal_Url::for_site($site_id)`).
+
 - **Same host:** the caller's own browser points its portal sign-in at the View as Client user session (one cookie, one row); the URL is the portal's landing page.
-- **Own host:** the browser has a different cookie there and neither host can set the other's. The URL is leg 1 of the **linked-session handshake** - three GET redirects:
+- **Own host** (a portal host, a tenant subdomain, a custom domain): the browser has a different cookie there and neither host can set the other's. The URL is leg 1 of the **linked-session handshake** - three GET redirects:
   1. portal `<prefix>/_session_link/open` - burns code 1, sets an HttpOnly `rsx_link` nonce cookie, sends the browser to the staff host;
   2. staff `/_session_link/confirm` - burns code 2, REQUIRES the browser's own staff cookie to name the bound row and `can_impersonate` to still pass, applies the impersonation;
   3. portal `<prefix>/_session_link/complete` - burns code 3, REQUIRES the nonce cookie, points the portal host's session cookie at the SAME row.
@@ -273,7 +291,7 @@ It throws `AjaxUnauthorizedException` unless the staff-realm `can_impersonate` c
   Codes are 256-bit, stored hashed in `_session_links`, single-use, HMAC-signed per leg and host (`Rsx_Signed_Url`), valid **120 seconds - a security window, not a timeout**. The session token never appears in a URL. **Any failure answers one 400, "This link has expired or was already used.", and links nothing** - click View as Client again. Afterwards one row serves both hosts: `Session::reset()` on either ends both.
 
 ```php
-Portal_Session::begin_impersonation_from_staff($portal_user_id, $impersonator_user_id, $portal_site_id): string
+Portal_Session::begin_impersonation_from_staff($portal_user_id, $impersonator_user_id, $portal_site_id): string|false
 Portal_Session::stop_impersonation(): void      // signs the view out; the portal pointer falls back; staff untouched
 Portal_Session::is_impersonating(): bool
 Portal_Session::get_impersonator_user_id(): ?int
@@ -312,7 +330,7 @@ Who may impersonate is the app's call.
 
 **Onboarding is invite-only by default** - no open self-registration. Staff invite a contact, a single-use expiring code is emailed, the recipient sets a password. **The invitation proves email ownership, so accounts are created already verified** (`is_verified = true`) with no separate verification step. **An app adding open signup must verify the email itself.**
 
-**Second factors, passkeys and federated sign-in are framework-owned in this realm too** - `Rsx_Portal_Two_Factor` (TOTP, passkeys, recovery codes, the challenge, passwordless sign-in; skill `rspade:two-factor`) and `Rsx_Portal_Sso` (off until `rsx.sso.portal_enabled`; skill `rspade:sso`). Each keeps its own table, so a staff credential or a staff Google link never signs anybody in here; both admit only a portal user `can_login()` accepts on the declared site, and both refuse enrollment and linking during "View as Client". A portal login with a factor becomes two-stage: park the destination with `Portal_Session::put_value()`, `Rsx_Portal_Two_Factor::begin_challenge()`, redirect to a page hosting `<Two_Factor_Challenge>` - never `set_portal_user_id()` first.
+**Second factors, passkeys and federated sign-in are framework-owned in this realm too** - `Rsx_Portal_Two_Factor` (TOTP, passkeys, recovery codes, the challenge, passwordless sign-in; skill `rspade:two-factor`) and `Rsx_Portal_Sso` (off until `rsx.sso.portal_enabled`; skill `rspade:sso`). Each keeps its own table, so a staff credential or a staff Google link never signs anybody in here; both admit only a portal user `can_login()` accepts on the request's site, and both refuse enrollment and linking during "View as Client". A portal login with a factor becomes two-stage: park the destination with `Portal_Session::put_value()`, `Rsx_Portal_Two_Factor::begin_challenge()`, redirect to a page hosting `<Two_Factor_Challenge>` - never `set_portal_user_id()` first.
 
 **Everything past the account model is the application's** - memberships, the client concept, what an invite grants, which screens exist. The shipped model is described by the app skill `portal-app`.
 
@@ -337,16 +355,16 @@ Portal_Notification_Model::mark_all_read($portal_user_id);
 
 ## Part I - Config and testing
 
-`config('rsx.portal.*')`: `url` (`PORTAL_URL`, Part A), `invitation_expiry_days` (14), `password_min_length` (8), `password_reset_expiry_hours` (1). **There is NO framework key for the portal's site**, deliberately - a mono-site app keeps its own (the template's `rsx.portal.site_id`) and a multi-tenant app has none at all.
+`config('rsx.tenancy')`: `single` | `multi` (app config, no `.env` key). `config('rsx.portal.*')`: `enabled` (`PORTAL_ENABLED`), `url` (`PORTAL_URL`), `custom_domains` (`PORTAL_CUSTOM_DOMAINS`) - Part A - plus `invitation_expiry_days` (14), `password_min_length` (8), `password_reset_expiry_hours` (1). **There is no key for the portal's site**: it is read from the URL.
 
 ```bash
 php artisan rsx:debug /dashboard --portal --portal-user=1
-php artisan rsx:debug /_portal/mail --portal --portal-user=client@x.com
+php artisan rsx:debug /_portal/acme/dashboard --portal --portal-user=client@x.com
 ```
 
-`--portal` selects the portal stack and browses the portal's own address (`PORTAL_URL`'s host and prefix, both hosts mapped to loopback); `--portal-user` takes an id or email; the path works with or without the prefix; disabled in production. **The harness declares no site of its own** - it browses the portal the application serves, so the site is whatever `Portal_Main::init()` declared, and a `--portal-user` belonging to a DIFFERENT site is refused loudly rather than signed in against the served tenant.
+`--portal` browses ONE site's portal at its own address (both hosts mapped to loopback): the site a path under a tenant's base names (`/_portal/acme/...`, base removed), else the `--portal-user`'s site, else the current one (site 1 in single tenancy); a path naming no served portal is refused. `--portal-user` takes an id or email; disabled in production. **The harness declares no site of its own** - the dispatcher reads it from the browsed URL, and a `--portal-user` belonging to a DIFFERENT site is refused loudly rather than signed in against that tenant.
 
-In PHP tests (CLI), declare the site exactly as the app does:
+In PHP tests (CLI), declare the site the request would have resolved:
 
 ```php
 Portal_Session::set_site_id(self::SITE_ID);
@@ -359,8 +377,14 @@ Portal_Session::cli_set_portal_user_id($portal_user->id);   // 0 = signed out
 
 ## Troubleshooting
 
-- **`Portal_Session::get_site_id()` throws.** Nothing declared the site for this request. Add the `set_site_id()` call to `Portal_Main::init()`, or to the flow that learns the site (invite, workspace). The throw is deliberate - the framework will not guess a tenant.
-- **`set_site_id()` throws on a value you thought was fine.** It is idempotent only for the SAME id; a different id, or any id against a live session's site, throws. Declare once, early.
+- **The build fails "Invalid client portal address."** The message names the rule. "rsx.tenancy = multi requires PORTAL_URL to carry a tenant placeholder" - leave `PORTAL_URL` blank (`/_portal/:site_id`) or write `/_portal/:slug` / `https://:slug.myapp.com`. "carries a tenant placeholder ... but rsx.tenancy is single" - set `'tenancy' => 'multi'` in `rsx/resource/config/rsx.php` or drop the placeholder. "must END in /:slug or /:site_id, after at least one fixed segment" - `/:slug` and `https://portal.x.com/:slug` both lack the fixed segment. "whole first label" - `https://portal-:slug.x.com` is not a label. "collides with these staff routes" - pick a prefix no staff route uses, or move the routes.
+- **A sealed box refuses to serve after a portal setting changed.** `rsx.tenancy`, `PORTAL_ENABLED`, `PORTAL_URL`, `PORTAL_CUSTOM_DOMAINS` are in the build fingerprint: `php artisan rsx:build --force`.
+- **A tenant's portal answers 404.** No site has that slug/id; the site is deleted, disabled or `is_portal_enabled` off; under `only` the address is a template address; or the slug is not a DNS label (host template). With `PORTAL_ENABLED=false` nothing is a portal.
+- **An old portal address answers 301.** `PORTAL_CUSTOM_DOMAINS=override` and the site has a `portal_domain` - by design; sign-ins do not carry across hosts, and passkeys must be enrolled again on the new host.
+- **"Portal_Session::set_site_id(...) is for commands, tasks and tests only."** A web request called it - remove the call; the framework declares the URL's site.
+- **`Portal_Session::get_site_id()` throws.** In a web request: the code ran outside a resolved portal request. In CLI: the test or command declared no site - `Portal_Session::set_site_id()` first.
+- **A staff endpoint answers "This site has no client portal."** `Rsx_Portal_Url::for_site()` / `Rsx_Portal::Route(..., site_id:)` answered false for the record's site - the feature, the site or its portal switch is off, or under `only` it has no domain.
+- **A portal user is signed out when switching tenants in development.** Path templates share one cookie; a sign-in for another site ends (`SIGN_OUT_SITE_SWITCHED`).
 - **A portal Ajax call is denied, or resolves staff data.** The request went to the bare `/_ajax/...` path, or the controller resolved to the staff realm. Use the generated stubs / `Rsx_Portal.internal_url()`, and declare `#[Auth_Realm('portal')]` on any portal controller outside a portal root.
 - **An upload from a portal page 419s or hits the staff path.** It used `fetch('/_upload')`. Use `Ajax.upload(form_data)`.
 - **A model returns "not found" to portal JS.** Either it has no `portal_fetch()` (add `Portal_Authorizable` + `portal_can_read()`), or `portal_can_read()` returned false - which is what it should do, fail-closed, for a record outside the user's memberships.
@@ -368,4 +392,4 @@ Portal_Session::cli_set_portal_user_id($portal_user->id);   // 0 = signed out
 - **A value parked during a portal login is gone after the challenge.** It was written before `begin_challenge()`, whose sign-out cleared the portal realm. Write it after.
 - **A screen fails to load during "View as Client"** with "This is a read-only session; changes are disabled." - an endpoint it calls is a read that lacks `#[Portal_Impersonation_Readable]`.
 
-Details: `php artisan rsx:man portal`. Related: `rspade:auth-gates`, `rspade:session-auth`, `rspade:model-fetch`, and the app skill `portal-app` (the shipped screens, layouts, membership model and read-only enforcement).
+Details: `rsx:man portal`, `rsx:man portal_tenancy`. Related: `rspade:auth-gates`, `rspade:session-auth`, `rspade:model-fetch`, and the app skill `portal-app` (the shipped screens, layouts, membership model and read-only enforcement).

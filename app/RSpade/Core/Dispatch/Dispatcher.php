@@ -53,8 +53,9 @@ use App\RSpade\Lib\Flash\Flash_Alert;
  * apply. Nothing else in this class asks which realm it is in.
  *
  * WHAT IT DOES, IN ORDER:
- * 1. The realm preamble: the portal's Portal_Main::init() (once per process - it declares
- *    the portal's site, which everything after it may ask for), CSRF on a POST, and the
+ * 1. The realm preamble: the portal's site, resolved from the URL (Rsx_Request_Channel)
+ *    and declared for the request (Portal_Session::_declare_resolved_site()), then the
+ *    application's Portal_Main::init() (once per process), CSRF on a POST, and the
  *    rsx:debug dev-auth identity.
  * 2. AJAX channel: /_ajax/_batch and /_ajax/<Controller>/<action>, to the Ajax core.
  * 3. PAGE channel: a public file when one exists at the path; the /error/* preview
@@ -141,18 +142,30 @@ class Dispatcher
         $request = $request ?? request();
         $realm = static::__realm(Rsx_Request_Channel::realm());
 
-        // The path inside the realm: a portal path under the portal's prefix is matched
-        // without it. A request on the portal's own host OUTSIDE its prefix is classified
-        // portal (Rsx_Request_Channel) and is a portal path no route matches.
+        // The path inside the realm: a portal path under this request's portal base (the
+        // prefix, per site in multi tenancy) is matched without it. A request on a portal
+        // host OUTSIDE its base is classified portal (Rsx_Request_Channel) and is a portal
+        // path no route matches.
         $is_portal = $realm['realm'] === Auth_Gates::REALM_PORTAL;
-        $path = $is_portal ? Rsx_Portal::strip_prefix($url) : $url;
-        $outside_prefix = $is_portal && Rsx_Request_Channel::is_portal_host() && !Rsx_Portal::is_under_prefix($url);
+        $base = $is_portal ? Rsx_Request_Channel::portal_base() : '';
+        $path = $is_portal ? Rsx_Portal::strip_base($url, $base) : $url;
+        $outside_prefix = $is_portal && Rsx_Request_Channel::is_portal_host() && !Rsx_Portal::is_under_base($url, $base);
 
-        // Portal_Main::init() - the FIRST application code to run in a portal request, and
-        // the documented place to declare the portal's site (Portal_Session::set_site_id).
-        // Everything after it may ask for a site: CSRF, dev auth, the gates, Flash_Alert,
-        // the rsxapp payload. Staff Main::init() runs at boot, in the framework provider.
-        if ($realm['realm'] === Auth_Gates::REALM_PORTAL) {
+        if ($is_portal) {
+            // The site the URL resolved to (Portal_Site_Resolver), declared for THIS request
+            // before any application code runs - a portal sign-in for another site on this
+            // browser is ended here. Every request, unlike init() below. Null only through
+            // the CLI/test realm seam, where the caller declares its own site.
+            $site_id = Rsx_Request_Channel::portal_site_id();
+
+            if ($site_id !== null) {
+                Portal_Session::_declare_resolved_site($site_id);
+            }
+
+            // Portal_Main::init() - the FIRST application code to run in a portal request.
+            // Everything after it may ask for the site: CSRF, dev auth, the gates,
+            // Flash_Alert, the rsxapp payload. Staff Main::init() runs at boot, in the
+            // framework provider.
             static::__call_portal_init();
         }
 
@@ -829,8 +842,8 @@ class Dispatcher
      * X-Dev-Auth-Token; the token signs the path INSIDE the portal (the prefix removed),
      * which is the URL the minting side signed. Same verifier, same development-only rule.
      *
-     * The harness does not declare a site of its own: it browses the portal the application
-     * serves, so a portal user of another tenant is refused loudly.
+     * The harness does not declare a site of its own: it browses the portal the URL
+     * resolved, so a portal user of another tenant is refused loudly.
      *
      * @param Request $request
      * @param string $path The path inside the portal
@@ -877,8 +890,8 @@ class Dispatcher
         if ((int) $portal_user->site_id !== $declared_site_id) {
             throw new RuntimeException(
                 "Dev auth: portal user {$portal_user_id} belongs to site {$portal_user->site_id}, but this portal "
-                . "request serves site {$declared_site_id}. Pick a portal user on the served site, or point the "
-                . 'application\'s Portal_Session::set_site_id() declaration at the other tenant.'
+                . "URL serves site {$declared_site_id}. Pick a portal user on the served site, or browse that "
+                . "user's own site's portal address (rsx:man portal)."
             );
         }
 
@@ -892,7 +905,8 @@ class Dispatcher
 
     /**
      * Resolve a URL to its route in one realm's route table - what a request for it would
-     * match. A portal URL may carry the portal's prefix.
+     * match. A portal URL may carry the portal's prefix: the current request's portal base
+     * (per site in multi tenancy; Rsx_Portal::strip_prefix()).
      *
      * Used by Login_Redirect's routability gate and the code quality rules.
      *

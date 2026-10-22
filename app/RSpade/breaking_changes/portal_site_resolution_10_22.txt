@@ -1,0 +1,79 @@
+THE FRAMEWORK RESOLVES THE CLIENT PORTAL'S SITE FROM THE URL; PORTAL LINKS ARE BUILT PER SITE
+Date: 2026-10-22
+
+IF YOU DO NOTHING: a Portal_Main::init() that calls Portal_Session::set_site_id() throws on every portal page and Ajax call; and staff code that builds a portal link with Rsx_Portal::Route() and passes the result on as a string fails with a TypeError, or puts the word "false" in an email, for a site that has no client portal.
+
+SUMMARY
+    Category 2. The client portal now serves one portal per site. Which site a
+    portal request serves is resolved by the framework from the request's URL -
+    its host or its path - every request, so the application no longer declares
+    it. PORTAL_URL becomes a template (`:site_id` / `:slug` in a multi-tenant
+    app), and portal URL generation answers FALSE for a site that has no portal.
+    A single-tenant application keeps its PORTAL_URL and its behaviour: its
+    portal is site 1, as before.
+
+THE CHANGE
+    - rsx.tenancy ('single' | 'multi', default 'single') is application config,
+      set in rsx/resource/config/rsx.php. Single tenancy is always site 1.
+    - .env: PORTAL_ENABLED (default true), PORTAL_URL (now a template; blank is
+      /_portal, or /_portal/:site_id in a multi-tenant app) and
+      PORTAL_CUSTOM_DOMAINS (off | override | only). An invalid PORTAL_URL, or a
+      path prefix that collides with a staff route, fails the manifest build.
+    - sites gains portal_domain (unique) and is_portal_enabled (default on).
+      An unserved site, or a portal switched off, answers 404.
+    - Portal_Session::set_site_id() is for commands and tests only; in a web
+      request it throws. A portal sign-in that belongs to another site than the
+      URL resolves is signed out.
+    - Rsx_Portal::Route() and Rsx_Portal::portal_path() answer string|false and
+      take a named site_id; Rsx_Portal_Url::for_site() is the primitive.
+      window.rsxapp.portal.base is the current site's portal base, or null.
+    - system/config/multi-tenant.php and its MULTI_TENANT_ENABLED,
+      DEFAULT_SITE_ID and related keys are gone (only default_site_id was ever
+      read; single tenancy is site 1).
+
+ACTION REQUIRED
+    1. In rsx/portal_main.php, DELETE the Portal_Session::set_site_id(...) call
+       from init(), and delete the app config key it read (the template app's
+       was rsx.portal.site_id in rsx/resource/config/rsx.php). Nothing replaces
+       it. A multi-tenant host lookup of your own in init() is also deleted:
+       set rsx.tenancy => 'multi' and PORTAL_URL instead
+       (php artisan rsx:man portal_tenancy).
+
+    2. Find every portal link built OUTSIDE a portal request:
+           grep -rnE "Rsx_Portal::(Route|portal_path)\(" rsx/
+       For each one in staff code, a task or a command:
+       - pass the record's site: Rsx_Portal::Route($target, $params,
+         site_id: $client->site_id), so the link names that site's portal;
+       - handle false - the site has no portal. The template refuses the action
+         with nothing written or sent:
+               $url = Rsx_Portal::Route('Portal_Register_Controller', ['code' => $code], site_id: $client->site_id);
+               if ($url === false) {
+                   return response_error(Ajax::ERROR_VALIDATION, 'This site has no client portal.');
+               }
+       A function of yours declared ': string' that returns such a link becomes
+       ': string|false' (the template's Portal_Invitation_Model::get_invitation_url()).
+       Reference: system/app/RSpade/resource/reference_app/app/frontend/clients/clients_controller.php,
+       system/app/RSpade/resource/reference_app/models/portal_invitation_model.php.
+
+    3. In JavaScript, Rsx_Portal.Route() answers false when the current site has
+       no portal; hide a portal button with
+       `if (!window.rsxapp.portal.base)` (the reference app's View as Client
+       button: system/app/RSpade/resource/reference_app/app/frontend/contacts/).
+
+    4. View as Client: Portal_Session::begin_impersonation_from_staff() answers
+       false for a site with no portal - refuse with a message, as
+       system/app/RSpade/resource/reference_app/app/frontend/contacts/contacts_controller.php does.
+
+    5. An email class's sample() that called Rsx_Portal::Route() now reads the
+       sites table: give it a fixed illustrative URL instead (sample() must not
+       touch the database).
+
+    6. If your .env carried MULTI_TENANT_ENABLED, DEFAULT_SITE_ID or the other
+       multi-tenant.php keys, delete them - nothing reads them.
+
+VERIFICATION
+    - php artisan rsx:debug /_portal/login (your portal path) renders, and a
+      portal sign-in reaches the dashboard.
+    - An invitation sent from a staff screen carries a working portal link.
+    - php artisan rsx:health shows the "Portal URL" row OK.
+    - grep -rn "set_site_id" rsx/ finds no call outside tests and commands.

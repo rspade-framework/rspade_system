@@ -158,11 +158,29 @@ class Rsx_App_Url
     }
 
     /**
+     * The values patch_environment() read, before substitution, keyed by .env key.
+     */
+    private static array $_raw_values = [];
+
+    /**
+     * A key's value as .env wrote it - the $HOSTNAME token unresolved - or null when
+     * patch_environment() has not read it in this process.
+     *
+     * For a fingerprint of the CONFIGURATION rather than of this box: two boxes sharing one
+     * .env line (PORTAL_URL=https://portal.$HOSTNAME) resolve it to different hosts but were
+     * configured identically.
+     */
+    public static function raw_value(string $key): ?string
+    {
+        return self::$_raw_values[$key] ?? null;
+    }
+
+    /**
      * Boot seam (substitution only): read the raw APP_URL and PORTAL_URL, resolve the
      * $HOSTNAME token in each, and write the resolved values back into $_ENV / $_SERVER /
      * putenv so env() and every config file that reads env('APP_URL') or
      * env('PORTAL_URL') see the resolved hostname. Scheme enforcement is NOT done here -
-     * see enforce_scheme_from_env() and Rsx_Portal_Url::validate().
+     * see enforce_scheme_from_env() and Portal_Url_ManifestSupport.
      *
      * Registered from bootstrap/app.php via afterLoadingEnvironment(), which runs
      * after phpdotenv has loaded .env and before LoadConfiguration reads it.
@@ -182,6 +200,7 @@ class Rsx_App_Url
 
             $resolved = self::resolve($raw, $os_hostname);
 
+            self::$_raw_values[$key] = $raw;
             $_ENV[$key] = $resolved;
             $_SERVER[$key] = $resolved;
             putenv($key . '=' . $resolved);

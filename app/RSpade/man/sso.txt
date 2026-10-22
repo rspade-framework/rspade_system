@@ -856,20 +856,38 @@ THE CLIENT PORTAL REALM
     also offered on the portal.
 
     ITS OWN CEREMONY URLS, AND A SECOND REDIRECT URI. A portal ceremony runs
-    entirely inside PORTAL dispatch - that is where the application declares
-    the portal's site, and every lookup, link and sign-in is scoped to it -
+    entirely inside PORTAL dispatch - where the portal's site is the one the
+    request's URL serves, and every lookup, link and sign-in is scoped to it -
     and must finish on the host whose cookie jar started it. So the portal
     callback is its own URL, and it must be registered in each provider's
     console BESIDE the staff one: Rsx_Portal_Sso::callback_url('google')
-    prints it: the portal's ORIGIN + PREFIX + /_sso/<key>/callback, both
+    prints it: the portal's ORIGIN + BASE + /_sso/<key>/callback, both
     derived from PORTAL_URL (rsx:man portal, PORTAL URL):
 
         PORTAL_URL (blank)                  https://<APP_URL host>/_portal/_sso/google/callback
         https://portal.myapp.com/           https://portal.myapp.com/_sso/google/callback
         https://myapp.com/clients           https://myapp.com/clients/_sso/google/callback
+        /_portal/:slug (multi tenancy)      https://<APP_URL host>/_portal/<slug>/_sso/google/callback
 
     Changing PORTAL_URL changes this URI, so every provider console needs the
-    new one (rsx:man launch_checklist, PORTAL_URL is final).
+    new one (rsx:man launch_checklist, the portal layout is final).
+
+    PER-SITE PORTAL HOSTS ARE NOT YET SUPPORTED. In multi tenancy with a host
+    template (https://:slug.myapp.com) or custom portal domains
+    (PORTAL_CUSTOM_DOMAINS override or only), each tenant's portal is a host
+    of its own, and since a ceremony finishes on the host that started it,
+    every tenant host would need its own redirect URI in every provider
+    console. The intended design, not yet developed: the provider ceremony
+    runs on the application's primary host - one redirect URI per provider,
+    however many tenants exist - and its result is handed to the tenant's
+    portal host through the linked-session handshake View as Client uses
+    (rsx:man portal, IMPERSONATION). Until then the rsx:health "Portal SSO"
+    row WARNs while rsx.sso.portal_enabled is on with such a layout; turn
+    portal SSO off there, or register each tenant host's callback by hand.
+    A path template (/_portal/:slug) keeps every tenant on the application
+    host, but the callback carries the tenant's base (above), so each tenant
+    is still a redirect URI of its own; the health row does not warn for it.
+    rsx:man portal_tenancy.
 
     ITS OWN HOOKS, NEVER THE STAFF ONES. The portal fires DISTINCT hook names,
     each payload carrying 'portal_user' where the staff one carries
@@ -895,10 +913,10 @@ THE CLIENT PORTAL REALM
                     site_id stored and UNIQUE (site_id, provider_key,
                     provider_user_key) - portal users are site-scoped, so one
                     Google account may be a portal user of two sites. Every
-                    lookup is scoped to the declared site.
+                    lookup is scoped to the request's site.
         admission   a portal user is signed in only when
                     Portal_User_Model::can_login() accepts them and they
-                    belong to the declared site; a refusal is answered like a
+                    belong to the request's site; a refusal is answered like a
                     denied gate.
         recording   the portal's own login history, Portal_Login_History
                     (_portal_login_history): a SUCCESS row per sign-in;

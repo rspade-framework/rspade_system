@@ -47,7 +47,7 @@ class Session_Link_Controller extends Rsx_Controller_Abstract
             return static::__refused($request);
         }
 
-        return redirect($result['redirect'])->withCookie(Session_Link::nonce_cookie($result['nonce']));
+        return redirect($result['redirect'])->withCookie(Session_Link::nonce_cookie($request, $result['nonce']));
     }
 
     /**
@@ -79,7 +79,14 @@ class Session_Link_Controller extends Rsx_Controller_Abstract
             return static::__refused($request);
         }
 
-        return redirect(Rsx_Portal::portal_path('/'))->withCookie(Session_Link::forget_nonce_cookie());
+        // Leg 3 is a portal request of a served site: its own portal always has an address.
+        $home = Rsx_Portal::portal_path('/');
+
+        if ($home === false) {
+            shouldnt_happen('Session_Link_Controller::complete(): the portal leg has no portal address');
+        }
+
+        return redirect($home)->withCookie(Session_Link::forget_nonce_cookie($request));
     }
 
     /**
@@ -88,7 +95,7 @@ class Session_Link_Controller extends Rsx_Controller_Abstract
     private static function __refused(Request $request)
     {
         $response = Error_Screens::bad_request($request, Session_Link::FAILURE_MESSAGE);
-        $response->headers->setCookie(Session_Link::forget_nonce_cookie());
+        $response->headers->setCookie(Session_Link::forget_nonce_cookie($request));
 
         return $response;
     }

@@ -31,8 +31,7 @@ class Portal_Auth
      * user, or null - and signs nobody in.
      *
      * A portal account is a (site, email) pair, so the site is an argument: normally
-     * Portal_Session::get_site_id(), the site the application declared for this portal
-     * request. The lookup reads exactly that site, whatever tenant the process is scoped to.
+     * Portal_Session::get_site_id(), the site this portal request's URL serves. The lookup reads exactly that site, whatever tenant the process is scoped to.
      *
      * THE ORDER, and why it is the same as staff:
      *

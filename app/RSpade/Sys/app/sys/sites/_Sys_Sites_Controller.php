@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Sys\App\Sys\Sites\_Sys_Site_Members_DataGrid;
@@ -66,7 +67,11 @@ class _Sys_Sites_Controller extends _Sys_Endpoint_Controller_Abstract
      * is on - the members a Disable signs out and an Enable lets back in.
      *
      * @param array $params id
-     * @return array {site: {id, name, slug, is_enabled, timezone, created_at, updated_at,
+     * portal_url is the site's client-portal address as it is served now
+     * (Rsx_Portal_Url::for_site()), null when the site has none.
+     *
+     * @return array {site: {id, name, slug, is_enabled, timezone, portal_url, portal_domain,
+     *                is_portal_enabled, created_at, updated_at,
      *                created_by_author, updated_by_author, member_count, enabled_member_count,
      *                is_current_site, can_disable, field_lengths: {name, slug}}}
      */
@@ -195,6 +200,7 @@ class _Sys_Sites_Controller extends _Sys_Endpoint_Controller_Abstract
             fn () => User_Model::query()->where('site_id', $site->id)->where('is_enabled', true)->count()
         );
         $is_current_site = (int) $site->id === (int) Session::get_site_id();
+        $portal_address = Rsx_Portal_Url::for_site((int) $site->id);
 
         return [
             'id' => (int) $site->id,
@@ -202,6 +208,9 @@ class _Sys_Sites_Controller extends _Sys_Endpoint_Controller_Abstract
             'slug' => $site->slug,
             'is_enabled' => (bool) $site->is_enabled,
             'timezone' => $site->timezone,
+            'portal_url' => $portal_address === false ? null : $portal_address['origin'] . $portal_address['prefix'],
+            'portal_domain' => $site->portal_domain,
+            'is_portal_enabled' => (bool) $site->is_portal_enabled,
             'created_at' => Rsx_Time::to_iso($site->created_at),
             'updated_at' => Rsx_Time::to_iso($site->updated_at),
             'created_by_author' => $site->get_created_by_author(),

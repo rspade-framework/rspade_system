@@ -139,10 +139,11 @@ The same seam is the **test seam**: register a fake provider under `rsx.sso.cust
 `Rsx_Portal_Sso` - same API, its own realm:
 
 - **Off until you switch it on**: `'sso' => ['portal_enabled' => true]` in `rsx/resource/config/rsx.php` (config, not `.env`). Off, the portal roster is empty and `begin()` throws, so a provider switched on for staff never quietly appears on the portal.
-- **Its own ceremony URLs** (`#[Portal_Route]`, `Rsx_Portal_Sso_Controller`) - the ceremony runs inside portal dispatch, where the app declares the portal's site, and finishes on the host that started it. **Register the portal callback as a SECOND redirect URI** in each console: `Rsx_Portal_Sso::callback_url('google')`.
+- **Its own ceremony URLs** (`#[Portal_Route]`, `Rsx_Portal_Sso_Controller`) - the ceremony runs inside portal dispatch, scoped to the site the request's URL serves, and finishes on the host that started it. **Register the portal callback as a SECOND redirect URI** in each console: `Rsx_Portal_Sso::callback_url('google')`.
+- **Per-site portal addresses are NOT YET SUPPORTED.** In multi tenancy (`rsx.tenancy = multi`) each tenant's portal has its own callback - its own host under a host template (`https://:slug.myapp.com`) or custom portal domains, its own base under a path template (`/_portal/acme/_sso/google/callback`) - so every tenant would be a redirect URI of its own in every console. The intended design, not yet developed: the ceremony on the application's primary host, its result handed to the tenant's portal through the linked-session handshake. `rsx:health` "Portal SSO" WARNs while `rsx.sso.portal_enabled` is on with a host template or custom domains. `rsx:man portal_tenancy`.
 - **Its own hooks, never the staff ones**: `portal.sso.identity.unlinked`, `portal.sso.login.authorize`, `portal.sso.two_factor.verify_url`, `portal.sso.two_factor.accepts`, `portal.sso.login.destination`, `portal.sso.link.destination`, each payload carrying `portal_user`. Separate names so a staff policy (matching addresses against `login_users`) can never govern a client.
-- **Links are site-scoped**: `_portal_sso_identities`, unique per `(site_id, provider_key, provider_user_key)` - one Google account may be a portal user of two sites. Lookups see only the declared site's.
-- **Admission** is `Portal_User_Model::can_login()` plus the declared site; outcomes go to `Portal_Login_History` (a success row; a failure through `record_failure()`, which feeds `Login_Throttle` once); 2FA is `Rsx_Portal_Two_Factor`; "View as Client" refuses linking.
+- **Links are site-scoped**: `_portal_sso_identities`, unique per `(site_id, provider_key, provider_user_key)` - one Google account may be a portal user of two sites. Lookups see only the request's site.
+- **Admission** is `Portal_User_Model::can_login()` plus the request's site; outcomes go to `Portal_Login_History` (a success row; a failure through `record_failure()`, which feeds `Login_Throttle` once); 2FA is `Rsx_Portal_Two_Factor`; "View as Client" refuses linking.
 - `<Sso_Buttons />` on a portal page reads the PORTAL roster by itself (`window.rsxapp.sso` is the page realm's), so the buttons start the portal ceremony with no argument. Gate the divider on `Rsx_Portal_Sso::is_enabled()`.
 
 A policy for an invite-only portal (the reference app's `reference_app/handlers/Portal_Sso_Handlers.php`):
@@ -169,12 +170,12 @@ Microsoft asserts no `email_verified`, so on such a portal Microsoft connects th
 
 ```
 https://<APP_URL host>/_sso/<provider key>/callback               staff
-<portal origin><portal prefix>/_sso/<provider key>/callback       portal
+<portal origin><portal base>/_sso/<provider key>/callback         portal
   https://<APP_URL host>/_portal/_sso/google/callback               PORTAL_URL blank (default)
   https://portal.myapp.com/_sso/google/callback                     PORTAL_URL=https://portal.myapp.com/
 ```
 
-`Rsx_Sso::callback_url($key)` / `Rsx_Portal_Sso::callback_url($key)` print the exact string. The portal URI derives from `PORTAL_URL` (`rsx:man portal`), so **changing `PORTAL_URL` means re-registering the portal URI in every provider console** (`rsx:man launch_checklist`, PORTAL_URL is final).
+`Rsx_Sso::callback_url($key)` / `Rsx_Portal_Sso::callback_url($key)` print the exact string. The portal URI derives from `PORTAL_URL` (`rsx:man portal`), so **changing `PORTAL_URL` means re-registering the portal URI in every provider console** (`rsx:man launch_checklist`, the portal layout is final).
 
 Matched exactly by providers. Apple's `client_id` is the **Services ID** (`com.example.web`), never a bundle id, and takes three more credentials because its client secret is an ES256 JWT minted offline per exchange.
 
