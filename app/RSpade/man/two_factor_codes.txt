@@ -143,13 +143,9 @@ THE SEND ENDPOINT
                 return response_error(Ajax::ERROR_VALIDATION, 'Too many codes have been sent. Please sign in again.');
             }
 
-            // Asked BEFORE issuing: a live code means this send repeats it.
-            $again = Rsx_Portal_Two_Factor::issued_code_expires_at() !== null;
-
             $code = Rsx_Portal_Two_Factor::issue_code();
             $link = Rsx_Portal_Two_Factor::issued_link(Rsx_Portal::Route('Portal_Login_Controller::verify'));
-            $expires_at = Rsx_Portal_Two_Factor::issued_code_expires_at();
-            (new Portal_Sign_In_Code_Email($portal_user, $code, $link, $expires_at, $again))
+            (new Portal_Sign_In_Code_Email($portal_user, $code, $link))
                 ->to($portal_user->email)->send();
 
             return null;
@@ -162,12 +158,13 @@ THE SEND ENDPOINT
     without limit. challenge_pending()['codes_issued'] is the count, and it
     counts SENDS: a resend that re-sends the live code still counts.
 
-    "HERE IS YOUR CODE AGAIN". issued_code_expires_at() is when the pending
-    identity's live code stops working, or null when it has none. Asked
-    before issue_code(), non-null means the send repeats the code the user
-    already holds; asked after, it is the expiry to print in the message.
-    Every issue_code() restarts the code's clock (and the challenge's, and the
-    link's), so "expires in 15 minutes" is true of every copy.
+    ONE MESSAGE FOR EVERY SEND. A resend carries the same code and the same
+    link, and every issue_code() restarts their clock (and the challenge's),
+    so the email needs no "here it is again" variant: it is word for word the
+    original and states the configured window,
+    rsx.two_factor.challenge_window_minutes, true of every copy.
+    issued_code_expires_at() still answers when the live code stops working,
+    or null when it has none.
 
     A user-safe rejection renders inline on the challenge screen.
 
@@ -182,9 +179,7 @@ THE EMAIL
             public function __construct(
                 public Portal_User_Model $portal_user,
                 public string $code,
-                public string $link,
-                public string $expires_at,
-                public bool $again = false
+                public string $link
             ) {}
 
             public function subject(): string { return 'Your sign-in code: ' . $this->code; }
@@ -193,9 +188,8 @@ THE EMAIL
             {
                 return [
                     'code' => $this->code,
-                    'link' => $this->link,      // a button; say it works in this browser only
-                    'again' => $this->again,
-                    'expiry_minutes' => max(1, (int) ceil(Rsx_Time::seconds_until($this->expires_at) / 60)),
+                    'link' => $this->link,      // after the code; it works in this browser only
+                    'expiry_minutes' => max(1, (int) config('rsx.two_factor.challenge_window_minutes')),
                 ];
             }
 

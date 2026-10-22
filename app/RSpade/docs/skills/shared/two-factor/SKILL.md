@@ -199,13 +199,12 @@ Rsx_Two_Factor::begin_challenge($login_user, [
 ]);
 
 // The send endpoint (#[Auth('public')] - the session is signed out)
-$again = Rsx_Two_Factor::issued_code_expires_at() !== null;   // a live code: this send repeats it
 $code = Rsx_Two_Factor::issue_code();     // the identity's live code, minted when it has none
 $link = Rsx_Two_Factor::issued_link(Rsx::Route('Login_Controller::verify'));   // AFTER issue_code(); same email
 (new Sign_In_Code_Email($code, $link))->to(Rsx_Two_Factor::pending_identity()->email)->send();
 ```
 
-- **The link is the code's twin, bound to the browser that typed the password.** Call `issued_link($challenge_page_url)` after `issue_code()` (with no live code it throws) and put both in one email. Opened in that browser, `/_email_link/:token` redirects back to the challenge page with `#rsx_email_link=<token>` and `<Two_Factor_Challenge>` posts `{email_link}` to your SAME verify endpoint (no change - hand `$params` to `verify_challenge()`). Anywhere else it shows "This sign-in was started in a different browser..." and spends nothing; the code still works where the password was typed. The GET only reads, so mail scanners are harmless. A resend returns the same link; either answer consumes both.
+- **The link is the code's twin, bound to the browser that typed the password.** Call `issued_link($challenge_page_url)` after `issue_code()` (with no live code it throws) and put both in one email. Opened in that browser, `/_email_link/:token` redirects back to the challenge page with `#rsx_email_link=<token>` and `<Two_Factor_Challenge>` posts `{email_link}` to your SAME verify endpoint (no change - hand `$params` to `verify_challenge()`). Anywhere else it shows "This sign-in was started in a different browser..." and spends nothing; the code still works where the password was typed. The GET only reads, so mail scanners are harmless. A resend returns the same code and link and restarts their clock, so the email is one message for every send (code first, then the link) stating the configured window; either answer consumes both.
 - **A passed emailed answer sets `is_verified`** on the identity (login_users / portal_users) before the sign-in - so an emailed code is also address verification, and a portal user with `is_verified = 0` passes `can_login()` by answering one.
 - **Another tab of the same browser** still showing the code screen swaps itself for "You have signed in using the email link." + Continue (BroadcastChannel, plus a realtime/visibility backstop). Nothing to wire - but your challenge page must send a SIGNED-IN visitor onward (Continue may reload it), not to the login form.
 

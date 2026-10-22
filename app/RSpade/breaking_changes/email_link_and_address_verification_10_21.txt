@@ -53,15 +53,18 @@ WHAT TO CHANGE
            $code = Rsx_Portal_Two_Factor::issue_code();
            $link = Rsx_Portal_Two_Factor::issued_link(
                Rsx_Portal::Route('Portal_Login_Controller::verify'));
-           (new Portal_Sign_In_Code_Email($portal_user, $code, $link,
-               Rsx_Portal_Two_Factor::issued_code_expires_at(), $again))
+           (new Portal_Sign_In_Code_Email($portal_user, $code, $link))
                ->to($portal_user->email)->send();
 
        Staff: Rsx_Two_Factor and Rsx::Route('<your login controller>::verify').
        In the email class add a string $link constructor argument (after
-       $code) and 'link' => $this->link in data(); in its blade put a button
-       to {{ $link }} above the code, and keep the code - it is how a reader on
-       another device signs in. The link is absolute and signed already; never
+       $code) and 'link' => $this->link in data(); in its blade put the link
+       {{ $link }} as bold text BELOW the code - the code works on any device,
+       the link only in the browser that started the sign-in. Every send now
+       restarts the code's clock, so a resend can be word for word the original:
+       drop any "here it is again" variant ($again) and state the configured
+       window, max(1, (int) config('rsx.two_factor.challenge_window_minutes')),
+       rather than the minutes left. The link is absolute and signed already; never
        rebuild it. Reference:
            system/app/RSpade/resource/reference_app/emails/portal_sign_in_code_email.php
            system/app/RSpade/resource/reference_app/emails/portal_sign_in_code_email.blade.php

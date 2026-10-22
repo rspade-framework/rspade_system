@@ -142,6 +142,17 @@ THE WIDGET
         $theme       auto | light | dark                   (default auto)
         $size        normal | flexible | compact           (default normal)
         $appearance  always | execute | interaction-only   (default always)
+        $form        the id of a NATIVE <form> (optional)
+
+    OUTSIDE ITS FORM. $form="login-form" puts the HTML form attribute on the
+    hidden field, so the component may be rendered anywhere in the document -
+    below the card a page's form sits in, for instance - and the field still
+    posts with that form. It serves a native <form> only: Rsx_Form.vals()
+    reads its own subtree and the auto-reset below finds its Rsx_Form by
+    ancestry, so a component serving an Rsx_Form stays inside it.
+
+        <form id="login-form" method="POST"> ... </form>
+        <Turnstile_Input $form="login-form" />
 
     TWO STATES. The component decides which to show from whether the server
     exported a site key:
