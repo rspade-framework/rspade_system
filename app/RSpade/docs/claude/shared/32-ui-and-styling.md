@@ -13,6 +13,9 @@ its spinner once via `Rsx.set_default_spinner('Name')` from a `static on_app_mod
 - the first boot phase: the first SPA page draws its spinners before `app_ready`, so a later
 registration silently misses it. The framework ships `Rsx_Default_Spinner` (a small
 fixed-size circle, centered) so a fresh app has one before it has designed one.
+**A page or dialog hidden until it is ready is never hand-rolled either**: an action declares
+`@spinner_until_ready('uncached'|'always')` (or calls its own `show_spinner()`/`hide_spinner()`),
+a form dialog passes `spinner_until_ready` to `Modal.form()` - `rsx:man spa`, SPINNER UNTIL READY.
 
 
 **Asset split**: jqhtml = markup | JS files = logic, lifecycle, state | SCSS = component styles, auto-bundled. **No `<style>` or `<script>` tags**, no inline event handlers. **An external script/stylesheet is never hand-injected either** (no appended `<script src=cdn>`, no vendor copy-paste snippet) — declare it in a `*.externals.php` file beside the feature and `await Rsx.load_external('id')`; the CSP whitelist derives from that declaration, so an ad-hoc external is a blocked external. Skill `rspade:external-resources`; `rsx:man external_resources`, `rsx:man csp`.

@@ -94,6 +94,20 @@ Find every uncached component on a page: `php artisan rsx:debug /path --user=1 -
 \$('[data-nocache]').map((i, e) => e.className.split(' ')[0] + ' ' + e.getAttribute('data-nocache')).get()"`.
 A component with no `on_load()` is never cached and never needs to be.
 
+**`this.was_ready_before()`** answers whether this component, with these args (or this
+`cache_id()`), reached ready before in this cache scope - with or without `on_load()`. Ready is
+bottom-up, so true means the whole subtree booted once and will very probably paint from cache
+at once: the cue to show a spinner on a COLD visit only. Callable from `on_create()`, frozen at
+the first ask (this instance reaching ready never flips its own answer), opt-in (only a
+component that asks records a marker), false for unkeyable args. For an SPA action use the
+`@spinner_until_ready('uncached')` decorator (skill `rspade:spa`) instead of calling it by hand.
+
+**`$skip_cache_read=true`** (reserved; not in the key, never in `this.args`) boots a component as on
+a cache miss - no hydration, no cached HTML paint - while cache WRITES continue; everything created
+inside it inherits it. jqhtml applies the same skip itself to a component created inside
+`display: none` (visibility: hidden still reads). `@spinner_until_ready('always')` and
+`Modal.form({spinner_until_ready: 'always'})` pass it for you.
+
 ## Complexity tiers
 
 Pick the lowest tier that does the job. Reaching for a higher tier than the component needs is the most common source of unnecessary jqhtml code.
@@ -213,3 +227,4 @@ Remedies included - most of these are silent, not thrown.
 25. **`attach` is not `ready`, and `on_attach()` can run many times.** `attach` means in the document AND ready - first after `on_ready()`, then on every return to the document. One-time setup stays in `on_create()` / `on_ready()`; wait for a component with `ready()`. `is_attached()` is the live answer and is correct in `on_create()` too.
 26. **The lifecycle lock: a `render()`/`reload()`/`refresh()`/`load()` called from `on_ready()` runs AFTER `on_ready()` returns** (unless awaited, which runs it at once), and `ready` fires only once every queued call has run. So an `on_ready()` that unconditionally re-renders its own component loops forever and never reaches `ready` - nor does any parent waiting on it: show loaded values from the template, never by re-rendering from `on_ready()`. Never AWAIT one inside `on_loaded()` (a permanent hang), and never call one from `on_create()`/`on_render()` (it warns and runs later). Calls are not debounced: each runs, in call order, and only an identical call still waiting merges. Full rules: `reference/lifecycle-and-state.md`, "The lifecycle lock".
 27. **An ARRAY prints as the literal text `(Array)`** under `<%= %>`, `<%!= %>` and `<%br= %>` - join it (`<%= tags.join(', ') %>`) or loop. `content()` and a slot return a markup object, which interpolation splices; a slot the caller left out or wrote empty returns `''`, so test it by truthiness only (`reference/template-syntax.md`).
+28. **Every wait outside `on_load()` goes through `this.alive()`** - `const res = await this.alive(Controller.method(...))` in a helper started from `on_ready()` or a handler, a handler's own awaits, a timer, `await this.alive(child.ready())`. If the component stops while it waits, `alive()` never settles and nothing after it runs; unguarded, acting on a stopped component throws (a `null` child handle), rejects (`reload()`), or lands a navigation, modal or flash on the page the user has moved to - and the unhandled exception switches the SPA to full page loads. **The alternative is `is_stopped()`**, for code that must keep going after a stop (a download the user asked for, a value a caller awaits, a cleanup): await the plain promise, then `if (this.is_stopped()) return;` where the component-specific part begins. **Neither in `on_load()`, where both THROW**: a deduplicated `on_load()` runs once for several identical components, so `this` there is not one component (and jqhtml already drops a stopped component's load). `reference/lifecycle-and-state.md`, "Code that resumes after an await"; conformance `async_continuations_check_stopped`.

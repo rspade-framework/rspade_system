@@ -19,7 +19,7 @@ class _Sys_Debug_Flags_Form extends Component {
         });
 
         this.$.off('click._sys_debug_flags').on('click._sys_debug_flags', '[data-action="reset"]', async function () {
-            await _Sys_Debug_Flags_Controller.reset();
+            await that.alive(_Sys_Debug_Flags_Controller.reset());
             Flash_Alert.success('Override removed; this browser follows the configuration again.');
             that.trigger('changed');
         });

@@ -582,6 +582,61 @@ your component, never the component the markup is rendered inside. Write `this.m
 - **`render()` / `redraw()`** - re-execute the template -> wait for children -> `on_ready()`. Does NOT re-run `on_load()`. UI-only updates.
 - **`render('sid')`** - re-render ONLY the element carrying that `$sid`, which must be marked `$redrawable` in the template. Child DOM elsewhere is untouched - use for counters, badges and live fragments instead of a full `render()`.
 - **`stop()`** - destroy the component and all children: fires `detach` (and `on_detach()`) first when attached, then `on_stop()`, then `stop`. You rarely call it - **every jQuery removal stops the components it removes** (`.remove()`, `.empty()`, `.html(x)`, `.text(x)`, `.replaceWith()`, `.replaceAll()`), as does a parent's re-render. NATIVE DOM removal (`element.remove()`, `innerHTML = ''`) and jQuery `.detach()` do NOT stop anything; a natively removed component still fires `detach`.
+- **`alive(promise)`** - a promise that settles like the wrapped one while the component lives and NEVER settles once it has stopped. The standard way to wait outside `on_load()`; see "Code that resumes after an await".
+- **`is_stopped()`** - true from the moment the component (or an ancestor) began stopping, and never false again. The explicit alternative to `alive()`.
+
+### Code that resumes after an await
+
+Code that continues after an `await` - or in a `.then()` callback, a timer, a `debounce()`d
+function - runs outside every lifecycle hook, and the component may have been STOPPED while it
+waited: the user navigated away, a parent re-rendered, the dialog closed. jqhtml cannot cancel
+the suspended function, but it can decline to resume it - so every wait outside `on_load()`
+goes through `this.alive()`:
+
+```javascript
+async _refresh_project(parent) {
+    const res = await this.alive(Tasks_Controller.resolve_parent_project({taskable_type: parent.type, taskable_id: parent.id}));
+    this.sid('project_select').val(res.project_id);   // only ever runs on a live component
+}
+```
+
+If the component stops before the wrapped promise settles, `alive()` never settles and the rest of
+the function never runs. While it lives, `alive()` settles exactly like the wrapped promise, so
+try/catch works as usual; a rejection after the stop is swallowed. Wrap EVERY wait in a sequence.
+
+Unguarded, a child handle on a stopped component is `null` (`this.sid()`,
+`this.$sid('x').component()`) and the call throws; `reload()` / `refresh()` / `load()` reject;
+a `Spa.dispatch()`, modal or flash lands on whatever page the user is now on; and an unhandled
+exception switches the SPA to full page loads for the rest of the visit.
+
+**The alternative: `is_stopped()`, when the code must keep going after a stop.** A `finally` after
+an `alive()` wait does not run when the component stopped - by design, since what it restores
+belongs to the component that is gone. Work that must complete anyway awaits the PLAIN promise and
+tests `is_stopped()` where the component-specific part begins:
+
+```javascript
+const result = await Clients_Controller.export_csv(params);
+trigger_file_download(result);                 // the user asked for this file
+if (this.is_stopped()) return;                 // the flash belongs to the page
+Flash_Alert.success('Exported');
+```
+
+The cases: a download or other work the user asked for, a value a caller is awaiting (a framework
+method that resolves with the server's result even when its form is gone), a cleanup that must run.
+
+- **NEVER in `on_load()` - `alive()` and `is_stopped()` both THROW there.** `on_load()` may be
+  DEDUPLICATED: identical components loading at the same moment share ONE run of it, so inside
+  `on_load()` `this` is not any one component and "stopped" has no answer. No guard is needed
+  either: jqhtml abandons the result of a load whose component stopped.
+- **`await this.alive(child.ready())`** - `ready()` and `rendered()` also resolve when the
+  component stops; through `alive()`, a stop of THIS component never resumes.
+- **Reading only** (`this.data`, `this.args` - the `page_title()` override that awaits
+  `await_loaded()` and returns a string) and plain jQuery reads/writes on `this.$` /
+  `this.$sid(...)` are harmless on a stopped component.
+- **`is_attached()` is a different question**: a component can be detached and alive, or stopped
+  with its element still in the DOM.
+
+Audited by conformance `async_continuations_check_stopped`.
 
 ### The lifecycle lock
 

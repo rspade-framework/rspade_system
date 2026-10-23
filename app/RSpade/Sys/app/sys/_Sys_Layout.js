@@ -163,7 +163,8 @@ class _Sys_Layout extends Spa_Layout {
         const spec = await action.page_actions();
 
         // A slower page_actions() from an earlier navigation must not paint over the
-        // current action's bar.
+        // current action's bar. The layout persists across navigation, so this
+        // action-identity test is the guard.
         if (this.action !== action || !spec) {
             return;
         }

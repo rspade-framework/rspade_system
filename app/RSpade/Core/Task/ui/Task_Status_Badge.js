@@ -10,7 +10,10 @@ class Task_Status_Badge extends Component {
 
         if (!this.args.task && this.args.task_id) {
             // Every frame refetches through one debounced refresh (Rsx_Task.LIVE_UPDATE_DELAY).
-            const refresh_soon = debounce(() => this.refresh(), Rsx_Task.LIVE_UPDATE_DELAY);
+            const refresh_soon = debounce(() => {
+                if (this.is_stopped()) return;
+                return this.refresh();
+            }, Rsx_Task.LIVE_UPDATE_DELAY);
             this.subscribe('Task_Changed_Topic', { id: int(this.args.task_id) }, () => refresh_soon());
         }
     }

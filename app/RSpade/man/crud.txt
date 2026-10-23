@@ -339,6 +339,7 @@ VIEW PAGE (DETAIL)
             @spa('Frontend_Spa_Controller::index')
             @auth('is_logged_in')
             @title('Client Details')
+            @spinner_until_ready('uncached')     // first visit: revealed whole
             class Clients_View_Action extends Spa_Action {
                 on_create() {
                     this.data.client = { name: '', tags: [] };  // Stub
@@ -352,25 +353,6 @@ VIEW PAGE (DETAIL)
                     } catch (e) {
                         this.data.error_data = e;
                     }
-                }
-
-                // An edit FORM does not use the three-state pattern. The real
-                // form renders unconditionally and wears the form's own loading
-                // overlay; renders rebuild the DOM, so it is re-armed here.
-                on_render() {
-                    this._set_form_loading(this.data.is_edit && !this._record_settled);
-                }
-
-                on_ready() {
-                    if (!this.data.is_edit || this.data.error_data) return;
-                    this._record_settled = true;
-                    this.$.find('.Rsx_Form').first().component().vals(this.data.form_data);
-                    this._set_form_loading(false);
-                }
-
-                _set_form_loading(loading) {
-                    const $form = this.$.find('.Rsx_Form').first();
-                    if ($form.exists()) $form.component().set_loading(loading);
                 }
             }
 
@@ -437,6 +419,7 @@ EDIT PAGE (ADD/EDIT COMBINED)
             @spa('Frontend_Spa_Controller::index')
             @auth('can_manage_clients')
             @title('Client')
+            @spinner_until_ready('always')       // never shown before the record is in
             class Clients_Edit_Action extends Spa_Action {
                 on_create() {
                     this.data.is_edit = !!this.args.id;
@@ -456,11 +439,6 @@ EDIT PAGE (ADD/EDIT COMBINED)
                     };
 
                     this.data.error_data = null;
-
-                    // INSTANCE property, never this.data: this.data is the
-                    // maybe-cached result of on_load(), and a cached "already
-                    // settled" lies on a revisit while the fetch is in flight.
-                    this._record_settled = false;
                 }
 
                 async on_load() {
@@ -483,33 +461,15 @@ EDIT PAGE (ADD/EDIT COMBINED)
                         this.data.error_data = e;
                     }
                 }
-
-                // An edit FORM does not use the three-state pattern. The real
-                // form renders unconditionally and wears the form's own loading
-                // overlay; renders rebuild the DOM, so it is re-armed here.
-                on_render() {
-                    this._set_form_loading(this.data.is_edit && !this._record_settled);
-                }
-
-                on_ready() {
-                    if (!this.data.is_edit || this.data.error_data) return;
-                    this._record_settled = true;
-                    this.$.find('.Rsx_Form').first().component().vals(this.data.form_data);
-                    this._set_form_loading(false);
-                }
-
-                _set_form_loading(loading) {
-                    const $form = this.$.find('.Rsx_Form').first();
-                    if ($form.exists()) $form.component().set_loading(loading);
-                }
             }
 
     Template (edit/{Feature}_Edit_Action.jqhtml)
             <Define:Clients_Edit_Action>
                 <Page>
                     <%-- A LOAD FAILURE is a page, not a placeholder: there is no
-                         form to wait for. There is no loading branch - the form
-                         renders and the overlay covers it. --%>
+                         form to wait for. There is no loading branch - the action
+                         is hidden behind the spinner until it is ready
+                         (@spinner_until_ready('always')). --%>
                     <% if (this.data.error_data) { %>
                         <Universal_Error_Page_Component ... />
                     <% } else { %>

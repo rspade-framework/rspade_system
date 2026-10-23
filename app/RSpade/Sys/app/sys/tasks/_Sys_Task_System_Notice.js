@@ -8,7 +8,10 @@ class _Sys_Task_System_Notice extends Component {
     on_create() {
         this.data.state = null;
 
-        const refresh_soon = debounce(() => this.refresh(), Rsx_Task.LIVE_UPDATE_DELAY);
+        const refresh_soon = debounce(() => {
+            if (this.is_stopped()) return;
+            return this.refresh();
+        }, Rsx_Task.LIVE_UPDATE_DELAY);
         this.subscribe('Task_List_Changed_Topic', {}, () => refresh_soon());
     }
 

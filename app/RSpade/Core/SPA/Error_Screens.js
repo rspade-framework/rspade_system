@@ -173,6 +173,10 @@ class Error_Screens {
             );
         }
 
+        if (Spa._action) {
+            Spa._action.hide_spinner();
+        }
+
         const current_action = Spa.action();
         if (current_action) {
             current_action.stop();

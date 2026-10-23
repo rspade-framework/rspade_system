@@ -23,7 +23,10 @@ class _Sys_Task_Workers_Action extends Spa_Action {
         this.data.error_data = null;
 
         const that = this;
-        const refresh_soon = debounce(() => that.refresh(), Rsx_Task.LIVE_UPDATE_DELAY);
+        const refresh_soon = debounce(() => {
+            if (that.is_stopped()) return;
+            return that.refresh();
+        }, Rsx_Task.LIVE_UPDATE_DELAY);
         this.subscribe('Task_List_Changed_Topic', {}, () => refresh_soon());
     }
 

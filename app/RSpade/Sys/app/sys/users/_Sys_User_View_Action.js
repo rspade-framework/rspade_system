@@ -109,7 +109,7 @@ class _Sys_User_View_Action extends Spa_Action {
             return;
         }
 
-        const result = await _Sys_User_Actions.call(() => _Sys_Users_Controller.set_status({ id: user.id, status: status }));
+        const result = await this.alive(_Sys_User_Actions.call(() => _Sys_Users_Controller.set_status({ id: user.id, status: status })));
         if (result === null) {
             return;
         }
@@ -129,7 +129,7 @@ class _Sys_User_View_Action extends Spa_Action {
             return;
         }
 
-        const result = await _Sys_User_Actions.call(() => _Sys_Users_Controller.terminate_all_sessions({ id: user.id }));
+        const result = await this.alive(_Sys_User_Actions.call(() => _Sys_Users_Controller.terminate_all_sessions({ id: user.id })));
         if (result === null) {
             return;
         }
@@ -171,7 +171,7 @@ class _Sys_User_View_Action extends Spa_Action {
             return;
         }
 
-        const result = await _Sys_User_Actions.call(() => _Sys_Users_Controller.set_membership_enabled({ id: membership.id, enabled: enable }));
+        const result = await this.alive(_Sys_User_Actions.call(() => _Sys_Users_Controller.set_membership_enabled({ id: membership.id, enabled: enable })));
         if (result === null) {
             return;
         }

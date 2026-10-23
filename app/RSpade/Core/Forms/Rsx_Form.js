@@ -543,6 +543,7 @@ class Rsx_Form extends Component {
         const client_errors = this._run_client_validation();
         if (client_errors) {
             await this.render_error({ code: Ajax.ERROR_VALIDATION, metadata: client_errors });
+            if (this.is_stopped()) return false;
             this.trigger('submit_error', client_errors);
             return false;
         }
@@ -567,7 +568,9 @@ class Rsx_Form extends Component {
                 const metadata = (typeof hook_error === 'object' && hook_error !== null && !(hook_error instanceof Error))
                     ? hook_error
                     : { _message: String(hook_error instanceof Error ? hook_error.message : hook_error) };
+                if (this.is_stopped()) return false;
                 await this.render_error({ code: Ajax.ERROR_VALIDATION, metadata });
+                if (this.is_stopped()) return false;
                 this.trigger('submit_error', metadata);
                 return false;
             }
@@ -615,7 +618,9 @@ class Rsx_Form extends Component {
                     runaway.code = Ajax.ERROR_GENERIC;
 
                     this._set_submitting($submit_btns, false);
+                    if (this.is_stopped()) return false;
                     await this.render_error(runaway);
+                    if (this.is_stopped()) return false;
                     this.trigger('submit_error', runaway);
                     return false;
                 }
@@ -623,6 +628,10 @@ class Rsx_Form extends Component {
                 // The spinner comes off while the user reads the question; _submitting
                 // stays true for the whole loop, so re-entrancy remains blocked.
                 this._set_submitting($submit_btns, false);
+
+                // A form stopped during the round trip has nobody left to ask: the
+                // submission ends unanswered, exactly as a cancelled question does.
+                if (this.is_stopped()) return false;
 
                 const answer = await this._ask_question(question.question || {}, question.key, asked, answers);
 
@@ -640,6 +649,12 @@ class Rsx_Form extends Component {
             // what the inputs hold is the new unchanged state.
             this._touched = {};
             this._clear_parking();
+
+            // A form stopped during the round trip (its dialog closed, the page left) still
+            // resolves with the server's result for its caller; only the steps that act on
+            // the form and its inputs, and the redirect, are skipped.
+            if (this.is_stopped()) return result;
+
             this.__each_input((component) => component._rebaseline());
             this.__announce_dirty();
 
@@ -662,7 +677,9 @@ class Rsx_Form extends Component {
                 throw error;
             }
 
+            if (this.is_stopped()) return false;
             await this.render_error(error);
+            if (this.is_stopped()) return false;
             this.trigger('submit_error', error);
             return false;
         } finally {
@@ -769,6 +786,7 @@ class Rsx_Form extends Component {
 
         try {
             const values = await data;
+            if (this.is_stopped()) return values;
             this.state.values = values && typeof values === 'object' ? values : {};
             this.vals(this.state.values);
             this.__announce_dirty();
@@ -846,6 +864,7 @@ class Rsx_Form extends Component {
             const message = (metadata && typeof metadata === 'object' && metadata._message) || null;
 
             await Form_Utils.apply_form_errors(this.$, metadata, { message });
+            if (this.is_stopped()) return;
 
             if (this.state.tabs) {
                 this.state.tabs.handle_validation_errors(metadata);

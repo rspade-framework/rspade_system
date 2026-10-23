@@ -58,6 +58,17 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-SESSION-01 | The page's session hash names the session the request ENDED with: a sign-in during the request (dev-auth) still publishes a hash | playwright | `playwright/session_hash_after_sign_in.js` on `/_sys` | `rsxapp.session_hash` non-null | implemented (pre-fix: null - computed from the incoming cookie) | 2026-10-19 |
 | SPA-SESSION-02 | The page hash and `get_state()` agree | playwright | same | equal | implemented | 2026-10-19 |
 | SPA-SESSION-03 | An SPA navigation after that sign-in stays in the document, with `validate_session` NOT stubbed | playwright | `Spa.dispatch('/_sys/tasks')` | document mark survives, no `session_changed` | implemented (pre-fix: reloaded) | 2026-10-19 |
+| SPA-SPINNER-01 | `'uncached'`: a cold visit inserts ONE spinner beside the action and hides it (visibility) | playwright | `playwright/spinner_until_ready.js`, the static set at run time on `/_sys/system-info` | one spinner observed, its sibling `visibility: hidden` | implemented | 2026-10-23 |
+| SPA-SPINNER-02 | The decorator's spinner is removed when the action is ready | playwright | same visit, after `ready()` | no spinner, action visible | implemented | 2026-10-23 |
+| SPA-SPINNER-03 | An action without the decorator is never held | playwright | `/_sys` | no spinner observed | implemented | 2026-10-23 |
+| SPA-SPINNER-04 | `'uncached'`: a warm revisit (same action, same args, `was_ready_before()` true) is not held | playwright | the same route again | no spinner observed | implemented | 2026-10-23 |
+| SPA-SPINNER-05 | `'always'`: held on the first visit AND the revisit, and revealed at ready | playwright | `/_sys/tasks` twice | one spinner each visit, none after ready | implemented | 2026-10-23 |
+| SPA-SPINNER-11 | `'always'` boots the action with jqhtml's `skip_cache_read`, inherited by the components inside it and never left in `this.args`; `'uncached'` reads the cache | playwright | the `/_sys/tasks` revisit and the `/_sys/system-info` warm revisit | `_skip_cache_read` true on the action and a child, absent from args; false for 'uncached' | implemented | 2026-10-23 |
+| SPA-SPINNER-06 | `show_spinner()` hides the action behind one spinner; a second call adds none | playwright | the mounted action | one spinner, action hidden | implemented | 2026-10-23 |
+| SPA-SPINNER-07 | The spinner survives the action re-rendering, and `hide_spinner()` reveals it (a second hide is a no-op) | playwright | `show_spinner()`, `render()`, `hide_spinner()` x2 | spinner still there after render; gone after hide | implemented | 2026-10-23 |
+| SPA-SPINNER-08 | Placement: the stage spans the action from its top edge to the lower of its bottom edge and the window's | playwright | `show_spinner()` on the mounted action | stage top/bottom equal the expected edges | implemented | 2026-10-23 |
+| SPA-SPINNER-09 | A dispatch made during a hold removes the old spinner, which sits outside the emptied content area | playwright | `show_spinner()`, then `Spa.dispatch()` | spinner gone on the new page | implemented | 2026-10-23 |
+| SPA-SPINNER-10 | An unhandled exception during a hold reveals the page (`Spinner_Overlay.hide_all()`) | playwright | `/_sys/workers` held, `Exception_Handler.display_unhandled_exception()` | spinner gone, action visible | implemented | 2026-10-23 |
 
 ## Notes
 

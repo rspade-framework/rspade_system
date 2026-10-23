@@ -65,7 +65,7 @@ class JS_Tree_Debug_Node extends Component {
         this._update_relationship_ui(rel_name);
 
         try {
-            const result = await obj[rel_name]();
+            const result = await this.alive(obj[rel_name]());
             this.state.rel_states[rel_name] = 'loaded';
             this.state.rel_data[rel_name] = result;
             this._update_relationship_ui(rel_name);

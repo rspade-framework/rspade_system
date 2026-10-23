@@ -39,11 +39,19 @@ bundle)**
 - `Spa_Layout.js` - the persistent wrapper. `$content()` (i.e. `$sid('content')`),
   `resolve_page_title(paint, placeholder)` - the ONE way a layout obtains a title - the
   `on_action(url, action_name, args)` hook, and `show_debug_exception()`.
-- `Spa_Decorators.js` - six `/** @decorator */` functions, each storing one static on the class:
+- `Spa_Decorators.js` - seven `/** @decorator */` functions, each storing one static on the class:
   `route` -> `_spa_routes[]`, `layout` -> `_spa_layouts[]` (unshift, because decorators run
   bottom-up and the array is outermost-first), `spa` -> `_spa_controller_method`, `title` ->
   `_spa_title`, `auth` -> `_auth_checks[]`, `portal_spa` -> `_spa_controller_method` +
-  `_is_portal_spa`.
+  `_is_portal_spa`, `spinner_until_ready(mode)` -> `_spa_spinner_until_ready` ('uncached' |
+  'always', anything else throws at class definition).
+- The spinner itself is `Core/Ui/Spinner_Overlay.js` (+ `spinner_overlay.scss`), which
+  `Spa_Action.show_spinner()` / `hide_spinner()` wrap. `_resolve_layout_chain()` decides the
+  decorator's hold (`_spinner_until_ready_applies()`, calling `was_ready_before()` only for
+  'uncached') and hides it at the action's `ready()`; the previous action's spinner is hidden
+  before the content area is emptied (it sits OUTSIDE it, as a sibling of the action element),
+  `Error_Screens._render()` hides the action's, and `Exception_Handler` calls
+  `Spinner_Overlay.hide_all()`.
 - `Error_Screens.js` - the JS twin of `Core/Errors/Error_Screens.php`. Same three outcomes rendered
   INTO the live layout instead of as a new page. The bodies are whatever the running bundle
   registered through `Error_Screens.set_components({unauthorized, not_found, fatal})` from a static

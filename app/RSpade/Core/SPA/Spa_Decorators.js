@@ -89,6 +89,36 @@ function title(page_title) {
 
 /**
  * @decorator
+ * Hide this action behind the application's spinner until its whole component tree is
+ * ready, then reveal it whole
+ *
+ * The mode is required:
+ *   'uncached' - only when jqhtml has no record of this action, with these args, reaching
+ *                ready (was_ready_before()). A revisit paints from the component cache at
+ *                once, which a spinner would only hide. For a page that SHOWS data (a CRUD
+ *                view page).
+ *   'always'   - on every visit. For a page that must not be seen before its data is
+ *                final (a CRUD edit page: a form shown early can be typed into).
+ *
+ * The spinner is the one registered with Rsx.set_default_spinner(), shown through
+ * Spa_Action.show_spinner() / hide_spinner(). See rsx:man spa.
+ *
+ * Usage:
+ *   @spinner_until_ready('uncached')
+ *   class Clients_View_Action extends Spa_Action { }
+ */
+function spinner_until_ready(mode) {
+    if (mode !== 'uncached' && mode !== 'always') {
+        throw new Error(`@spinner_until_ready() takes 'uncached' or 'always', got ${JSON.stringify(mode)}. See rsx:man spa.`);
+    }
+    return function (target) {
+        target._spa_spinner_until_ready = mode;
+        return target;
+    };
+}
+
+/**
+ * @decorator
  * Declare the authorization gates this action requires
  *
  * ONE decorator, variadic check names, AND semantics: every named check must be

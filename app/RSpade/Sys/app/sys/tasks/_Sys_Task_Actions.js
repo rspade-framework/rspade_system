@@ -35,7 +35,7 @@ class _Sys_Task_Actions extends Component {
             e.stopPropagation();
 
             const action = $element.attr('data-task-action');
-            const result = await _Sys_Task_Action_Form.open(that.args.task, action);
+            const result = await that.alive(_Sys_Task_Action_Form.open(that.args.task, action));
             if (result) {
                 that.trigger('acted', { action: action, result: result });
             }

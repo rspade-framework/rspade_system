@@ -66,7 +66,7 @@ class _Sys_Email_View_Action extends Spa_Action {
                 return;
             }
 
-            const result = await _Sys_Email_Controller.resend({ id: email.id, force: email.resend_needs_force });
+            const result = await that.alive(_Sys_Email_Controller.resend({ id: email.id, force: email.resend_needs_force }));
             Flash_Alert.success('Email #' + result.id + ' is ' + result.status_label + ' again - the queue drain has been kicked.');
             that.reload();
         });

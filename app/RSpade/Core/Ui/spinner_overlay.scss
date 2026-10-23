@@ -1,0 +1,25 @@
+/* Spinner_Overlay (Spinner_Overlay.js). The overlay is the hidden component's previous
+   sibling: a zero-height block, so the layout around it does not move, with the stage
+   floating over the component. Spinner_Overlay._place() sets the stage's top and height
+   to the visible part of the component; the spinner inside it is centered both ways and
+   decides its own size.
+
+   The component is hidden with visibility - never display - so its tree lays out and
+   measures normally while it loads. Removing the overlay is the whole reveal. */
+.Spinner_Overlay {
+    position: relative;
+    height: 0;
+
+    .Spinner_Overlay__stage {
+        position: absolute;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    & + * {
+        visibility: hidden;
+    }
+}

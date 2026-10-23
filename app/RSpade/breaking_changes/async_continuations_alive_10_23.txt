@@ -1,0 +1,79 @@
+EVERY WAIT OUTSIDE on_load() GOES THROUGH this.alive(), SO NOTHING RESUMES ON A STOPPED COMPONENT
+Date: 2026-10-23
+
+IF YOU DO NOTHING: a component or action of yours that awaits a request outside on_load() and then touches a child component, re-renders, or navigates keeps throwing a TypeError (or yanking the user to another page) whenever the user leaves the page before the answer arrives - and each such unhandled exception switches the SPA to full page loads for the rest of the visit.
+
+SUMMARY
+    Category 2. jqhtml adds two public component methods, alive() and
+    is_stopped(), and RSpade adopts one rule for them: every wait outside
+    on_load() whose continuation acts on the component goes through
+    this.alive(), which never settles once the component has stopped. Code
+    that must keep going after a stop uses is_stopped() instead. A new
+    conformance audit, async_continuations_check_stopped, finds the places
+    that do neither. Run it over your application and apply what it reports.
+
+THE CHANGE
+    - component.alive(promise): a promise that settles like the wrapped one
+      while the component lives, and NEVER settles if the component is
+      stopped when it is called or when the wrapped promise settles - so
+      nothing after `await this.alive(...)` runs on a stopped component. A
+      rejection that arrives after the stop is swallowed.
+    - component.is_stopped(): true from the moment the component (or an
+      ancestor, a parent re-render, a jQuery removal, an SPA navigation)
+      began stopping, and never false again. The explicit alternative.
+    - Both THROW inside on_load(). on_load() may be deduplicated - identical
+      components loading at the same moment share one run of it - so 'this'
+      there is not one component. No guard is needed there: jqhtml discards
+      the result of a load whose component stopped.
+    - await child.ready() and await child.rendered() also resolve when the
+      component stops; wait on them through alive() too.
+    - Full rule: php artisan rsx:man jqhtml, ASYNC CONTINUATIONS; skill
+      rspade:jqhtml, rule 28.
+
+ACTION REQUIRED
+    1. Run the audit over your application. Print it with
+
+           php artisan rsx:conformance:show async_continuations_check_stopped
+
+       and hand that prompt to a read-only agent, or follow it yourself. Its
+       "Find every instance" command lists the component classes that wait on
+       anything; the audit says which continuations are findings and which
+       are not.
+
+    2. For each finding, wrap the wait:
+
+           const res = await this.alive(My_Controller.resolve({id: this.args.id}));
+           this.sid('picker').val(res.id);
+
+       Wrap every await in a sequence - each is its own resume point. A
+       .then() callback, a timer or a debounced function that acts on the
+       component starts with `if (this.is_stopped()) return;`.
+
+    3. Where the code must keep going after a stop - a download the user asked
+       for, a value a caller is awaiting, recovery codes that exist only in
+       this response - keep the plain await and test is_stopped() where the
+       component-specific part begins:
+
+           const result = await My_Controller.export_csv(params);
+           trigger_file_download(result);
+           if (this.is_stopped()) return;
+           Flash_Alert.success('Exported');
+
+       Note that a finally after an alive() wait does not run when the
+       component stopped.
+
+    4. Remove any alive() or is_stopped() call inside an on_load() (it
+       throws), and any hand-rolled stopped flag of your own (a this._stopped
+       set in on_stop(), for example - that name is also jqhtml's internal
+       field) in favour of alive() / is_stopped().
+
+    Reference: system/app/RSpade/resource/reference_app/app/frontend/tasks/edit/Tasks_Edit_Action.js
+    (_refresh_project(): the derived-project lookup that runs after the page
+    may have been left) and the reference app's datagrids' exports (the
+    is_stopped() form, after the download).
+
+VERIFICATION
+    - The audit reports PASS.
+    - On a page that starts a request after it is ready, navigate away before
+      the response arrives: the console shows no TypeError, and the next link
+      click is still an in-page (SPA) navigation rather than a full page load.

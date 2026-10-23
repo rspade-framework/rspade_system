@@ -42,7 +42,7 @@ class _Sys_User_Session_View_Action extends Spa_Action {
         const that = this;
 
         this.$.off('click._sys_user_session_view').on('click._sys_user_session_view', '[data-action="terminate"]', async function () {
-            if (await _Sys_User_Actions.end_session(that.data.user.id, that.data.user.email, that.data.session)) {
+            if (await that.alive(_Sys_User_Actions.end_session(that.data.user.id, that.data.user.email, that.data.session))) {
                 that.reload();
             }
         });

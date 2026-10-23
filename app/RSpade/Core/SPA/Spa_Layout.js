@@ -58,7 +58,8 @@ class Spa_Layout extends Component {
             return null;
         }
 
-        let painted = this.action.get_static_title();
+        const action = this.action;
+        let painted = action.get_static_title();
 
         if (painted === null && placeholder) {
             painted = placeholder;
@@ -68,7 +69,13 @@ class Spa_Layout extends Component {
             paint(painted);
         }
 
-        const live_title = await this.action.page_title();
+        const live_title = await action.page_title();
+
+        // A navigation during the wait replaced the action: its title is still the answer
+        // for the caller to cache, but it is no longer the page's to paint.
+        if (this.action !== action || action.is_stopped()) {
+            return live_title;
+        }
 
         if (live_title && live_title !== painted) {
             paint(live_title);

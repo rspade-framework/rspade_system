@@ -115,6 +115,7 @@ class _Sys_DataGrid_Abstract extends Component {
             $search.val(this.state.search);
 
             const debounced = debounce(function (value) {
+                if (that.is_stopped()) return;
                 that.state.search = value;
                 that.load_page(1);
             }, 200);

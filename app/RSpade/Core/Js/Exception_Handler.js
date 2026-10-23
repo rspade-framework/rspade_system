@@ -134,6 +134,10 @@ class Exception_Handler {
             return;
         }
 
+        // Whatever is held behind a spinner until ready (Spinner_Overlay) may now never reach
+        // ready, and the error must not be shown inside a page nobody can see.
+        Spinner_Overlay.hide_all();
+
         // Log to console if from global handler (true unhandled error)
         // Skip if manually triggered - already logged by the catcher
         if (meta.source === 'window_error' || meta.source === 'unhandled_rejection') {

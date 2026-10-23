@@ -55,7 +55,7 @@ class _Sys_Dashboard_Health extends Component {
         this.render();
 
         try {
-            await this.reload();
+            await this.alive(this.reload());
         } finally {
             this.state.rerunning = false;
             this.render();

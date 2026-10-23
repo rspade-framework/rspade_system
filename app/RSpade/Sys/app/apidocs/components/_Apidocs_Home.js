@@ -52,6 +52,8 @@ class _Apidocs_Home extends Component {
         try {
             await _Apidocs_Controller.adopt_tester_key({ key: key });
         } catch (e) {
+            // Not through alive(): an adopted key is stored below even if this page is gone.
+            if (this.is_stopped()) return;
             this._show_error(e.message ? e.message : 'That API key could not be used.');
             return;
         }
@@ -59,6 +61,8 @@ class _Apidocs_Home extends Component {
         // The tester needs the plaintext; the server only ever had the hash.
         Rsx_Storage.session_set(_Apidocs_Key_Bar.STORAGE_KEY, key);
 
+        // The key is stored either way; only the reload belongs to this page.
+        if (this.is_stopped()) return;
         window.location.reload();
     }
 
@@ -66,6 +70,8 @@ class _Apidocs_Home extends Component {
         await _Apidocs_Controller.forget_tester_key();
         Rsx_Storage.session_remove(_Apidocs_Key_Bar.STORAGE_KEY);
 
+        // The stored key is dropped either way; only the reload belongs to this page.
+        if (this.is_stopped()) return;
         window.location.reload();
     }
 

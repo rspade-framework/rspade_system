@@ -1,0 +1,105 @@
+SPINNER UNTIL READY: VIEW AND EDIT PAGES REVEALED WHOLE, EDIT FORMS NEVER SEEN BEFORE THEIR RECORD
+Date: 2026-10-23
+
+IF YOU DO NOTHING: no page of yours uses the new spinner, and your Modal library has no spinner_until_ready option - your view pages keep painting in stages, and your edit pages and edit dialogs keep their hand-written loading overlays and "settled" flags.
+
+SUMMARY
+    Category 3. An SPA action can now be hidden behind the application's
+    spinner until its whole component tree is ready, then revealed complete,
+    with one decorator:
+
+        @spinner_until_ready('uncached')   a CRUD VIEW page: held only on a
+                                           first visit; a revisit paints from
+                                           the component cache at once
+        @spinner_until_ready('always')     a CRUD EDIT page: held on every
+                                           visit, so the form is never seen -
+                                           or typed into - before its record
+                                           is applied
+
+    The template app now declares 'uncached' on every entity view page and
+    'always' on every add/edit page and its settings forms, and its edit
+    dialog opens with the equivalent Modal.form() option. The edit actions
+    lost their loading-overlay code in the process.
+
+WHAT YOU ALREADY HAVE
+    - The decorator @spinner_until_ready(mode) on any Spa_Action.
+    - this.show_spinner() / this.hide_spinner(), public on every Spa_Action,
+      for a wait of the action's own. The spinner survives the action's
+      re-renders and is removed on the next navigation, on an error screen
+      and on any unhandled exception.
+    - Spinner_Overlay.show(component) / .hide(component), the primitive the
+      two methods wrap, for any other host (a dialog).
+    - jqhtml 2.4.0's component.was_ready_before(), which 'uncached' reads, and
+      its reserved skip_cache_read, which 'always' passes so nothing in the
+      hidden tree paints from cache (cache writes continue).
+    The spinner drawn is the one your app registers with
+    Rsx.set_default_spinner() (the framework's Rsx_Default_Spinner when none
+    is registered). Full treatment: php artisan rsx:man spa, SPINNER UNTIL
+    READY.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    Your own view and edit actions do not declare the decorator, and your edit
+    actions still carry the hand-written loading state it replaces. Your
+    application's Modal library (rsx/lib/modal/, template code your app owns)
+    does not have the spinner_until_ready option unless you port it.
+
+THE REFERENCE IMPLEMENTATION
+    system/app/RSpade/resource/reference_app/app/frontend/
+        clients/view/Clients_View_Action.js        @spinner_until_ready('uncached')
+        clients/edit/Clients_Edit_Action.js        @spinner_until_ready('always'), and
+                                                   no overlay, no settled flag, no
+                                                   on_render()/on_ready() re-seeding
+        contacts/, projects/, party/, tasks/       the same, view and edit
+        settings/profile_edit/, settings/user_settings/
+                                                   'always' on a settings form
+        settings/user_management/edit_user/        an edit DIALOG: the body loads its
+                                                   record in on_load() and binds it as
+                                                   the form's $data; edit_user_modal.js
+                                                   opens it with
+                                                   spinner_until_ready: 'always'
+    system/app/RSpade/resource/reference_app/lib/modal/modal.js
+        Modal.form()'s spinner_until_ready option: validates the mode, shows
+        Spinner_Overlay over the hosted component after it is created, hides it
+        at the component's ready(), and makes the primary button do nothing
+        while the spinner shows.
+
+PORTING IT
+    1. VIEW pages - add @spinner_until_ready('uncached') to each read-only
+       record page whose regions load data. Nothing else changes; keep its
+       three-state template.
+
+    2. EDIT pages (a dual-@route add/edit action, a settings form) - add
+       @spinner_until_ready('always'), make sure the record reaches the form as
+       its $data from on_load(), then delete the hand-written loading state:
+       the _set_form_loading() helper, an on_render() that only arms the
+       overlay, the _record_settled (or similar) instance flag, and the
+       on_ready() block that marks it settled, calls form.vals() with the
+       loaded data and clears the overlay. Keep anything else on_ready() does
+       (navigation-guard wiring, picker handlers). Find them with:
+           grep -rnE "_record_settled|_set_form_loading|set_loading\(" rsx/
+
+    3. EDIT DIALOGS - if your Modal library is the template's, port the
+       spinner_until_ready option from the reference modal.js above. Then move
+       each edit body's fetch from on_create() + populate() in on_ready() into
+       on_load(), bind the record as the form's $data, render a load failure
+       with form.render_error() in on_ready(), and open the dialog with
+       spinner_until_ready: 'always'. The reference edit_user/ directory is the
+       complete before-and-after shape.
+
+    4. A screen with a wait of its own (a long save, a rebuild) can call
+       this.show_spinner() / this.hide_spinner() in a try/finally instead of
+       a hand-rolled overlay.
+
+    form.populate() and form.set_loading() remain - for a form whose values
+    arrive AFTER it is shown. Your navigation, design and which screens count
+    as "view" or "edit" decide where each piece lands.
+
+VERIFICATION
+    - A first visit to a view page shows the spinner, then the whole page; a
+      second visit to the same record shows the page at once.
+    - An edit page shows the spinner on every visit, then the form with its
+      values already filled; nothing on it can be clicked before that.
+    - An edit dialog opens with the spinner in its body, then the filled form;
+      its save button does nothing until then.
+    - php artisan rsx:debug /your/view/path --user=1 renders with no console
+      error.

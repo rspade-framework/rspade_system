@@ -64,7 +64,7 @@ class Passkey_Sign_In extends Component {
         let assertion;
 
         try {
-            assertion = await Rsx_Two_Factor.sign_in_with_passkey();
+            assertion = await this.alive(Rsx_Two_Factor.sign_in_with_passkey());
         } catch (e) {
             this._show_error(e);
             return;
@@ -77,7 +77,7 @@ class Passkey_Sign_In extends Component {
         let result;
 
         try {
-            result = await controller[this.args.method]({ assertion: assertion });
+            result = await this.alive(controller[this.args.method]({ assertion: assertion }));
         } catch (e) {
             // A refused assertion, and the throttle refusal - both user-safe by contract,
             // both belong on screen.

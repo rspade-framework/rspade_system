@@ -88,7 +88,7 @@ class _Sys_User_Security extends Component {
             params.credential_id = credential.id;
         }
 
-        const result = await _Sys_User_Actions.call(() => _Sys_Users_Controller.remove_two_factor(params));
+        const result = await this.alive(_Sys_User_Actions.call(() => _Sys_Users_Controller.remove_two_factor(params)));
         if (result !== null) {
             Flash_Alert.success(result.is_enabled ? 'The factor is removed.' : email + ' has no second factor now.');
         }
@@ -127,7 +127,7 @@ class _Sys_User_Security extends Component {
             params.link_id = identity.id;
         }
 
-        const result = await _Sys_User_Actions.call(() => _Sys_Users_Controller.unlink_sso(params));
+        const result = await this.alive(_Sys_User_Actions.call(() => _Sys_Users_Controller.unlink_sso(params)));
         if (result !== null) {
             Flash_Alert.success(identity === null ? 'Every provider is disconnected.' : identity.provider_label + ' is disconnected.');
         }

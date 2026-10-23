@@ -330,7 +330,7 @@ class Two_Factor_Challenge extends Component {
         let state;
 
         try {
-            state = await Rsx_Two_Factor.controller().challenge_state();
+            state = await this.alive(Rsx_Two_Factor.controller().challenge_state());
         } catch (e) {
             if (e.code === Ajax.ERROR_UNAUTHORIZED) {
                 this._show_completed(null, 'moved');
@@ -408,7 +408,7 @@ class Two_Factor_Challenge extends Component {
         this.state.notice = null;
 
         try {
-            await controller[this.args.send_method]({});
+            await this.alive(controller[this.args.send_method]({}));
         } catch (e) {
             this._show_error(e);
             return;
@@ -438,7 +438,7 @@ class Two_Factor_Challenge extends Component {
      * Cancel: discard the pending challenge, then go where the host said Cancel leads.
      */
     async _cancel() {
-        await Rsx_Two_Factor.controller().challenge_abandon();
+        await this.alive(Rsx_Two_Factor.controller().challenge_abandon());
         window.location = this.args.cancel_url;
     }
 
@@ -466,7 +466,7 @@ class Two_Factor_Challenge extends Component {
         let assertion;
 
         try {
-            assertion = await Rsx_Two_Factor.authenticate_passkey();
+            assertion = await this.alive(Rsx_Two_Factor.authenticate_passkey());
         } catch (e) {
             this._show_error(e);
             return;
@@ -492,7 +492,7 @@ class Two_Factor_Challenge extends Component {
         let result;
 
         try {
-            result = await controller[this.args.method](payload);
+            result = await this.alive(controller[this.args.method](payload));
         } catch (e) {
             // Everything the challenge can legitimately answer with lands here: a wrong code,
             // an expired window, and the throttle refusal. All three are user-safe messages

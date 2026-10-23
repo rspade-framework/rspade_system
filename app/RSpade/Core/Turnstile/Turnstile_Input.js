@@ -97,7 +97,7 @@ class Turnstile_Input extends Component {
      * Render Cloudflare's widget into our container. Safe to call again after a re-render.
      */
     _activate() {
-        if (this._stopped || !this.$.is_in_dom() || !Turnstile.is_active()) {
+        if (this.is_stopped() || !this.$.is_in_dom() || !Turnstile.is_active()) {
             return;
         }
 

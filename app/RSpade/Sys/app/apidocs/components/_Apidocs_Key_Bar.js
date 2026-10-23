@@ -124,11 +124,15 @@ class _Apidocs_Key_Bar extends Component {
         try {
             result = await _Apidocs_Controller.mint_temporary_key();
         } catch (e) {
+            // Not through alive(): a minted key is stored below even if this bar is gone.
+            if (this.is_stopped()) return;
             this._show_error(e.message ? e.message : 'That temporary key could not be created.');
             return;
         }
 
+        // The key exists now, so it is kept for the page's testers even if this bar is gone.
         this._store(result.key);
+        if (this.is_stopped()) return;
         this.state.key = result.key;
         this.render();
     }
@@ -148,9 +152,9 @@ class _Apidocs_Key_Bar extends Component {
         let response;
 
         try {
-            response = await fetch(_Apidocs_Key_Bar.VERIFY_PATH, {
+            response = await this.alive(fetch(_Apidocs_Key_Bar.VERIFY_PATH, {
                 headers: { 'Authorization': 'Bearer ' + value },
-            });
+            }));
         } catch (e) {
             this._show_error('Could not reach the server to check that key.');
             return;

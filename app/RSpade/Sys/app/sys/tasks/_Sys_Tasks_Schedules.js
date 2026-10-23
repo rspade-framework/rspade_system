@@ -56,7 +56,7 @@ class _Sys_Tasks_Schedules extends Component {
                 return;
             }
 
-            const result = await _Sys_Tasks_Controller.run_schedule_now({ class: row.class, method: row.method });
+            const result = await that.alive(_Sys_Tasks_Controller.run_schedule_now({ class: row.class, method: row.method }));
 
             if (result.outcome === 'coalesced') {
                 Flash_Alert.info(name + ' is ' + result.concurrency + ' and already has a queued run (task #' + result.id + '); nothing new was queued.');

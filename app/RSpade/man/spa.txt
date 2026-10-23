@@ -321,6 +321,12 @@ JAVASCRIPT ACTIONS
             metadata, but that string is then never painted. See PAGE TITLES.
             Example: @title('Contacts')
 
+        @spinner_until_ready(mode)
+            Hide the action behind the application's spinner until its whole
+            component tree is ready. mode is required: 'uncached' (only when
+            jqhtml has no record of this action, with these args, reaching
+            ready) or 'always' (every visit). See SPINNER UNTIL READY.
+
     URL Parameters:
         Parameters from route pattern and query string available in this.args:
 
@@ -339,6 +345,13 @@ JAVASCRIPT ACTIONS
         on_load()       Fetch data, populate this.data (read-only this.args)
         on_render()     Template rendering
         on_ready()      DOM ready, setup event handlers
+
+    An action is stopped the moment the user navigates away, so every wait
+    OUTSIDE on_load() - in a save handler, a helper started from on_ready() -
+    goes through alive(): `const r = await this.alive(Controller.save(...))`
+    never resumes on a stopped action. Code that must keep going after a
+    stop uses is_stopped() instead; neither belongs in on_load(), where both
+    throw (rsx:man jqhtml, ASYNC CONTINUATIONS).
 
     See Also:
         rsx:man jqhtml for complete lifecycle documentation
@@ -880,6 +893,91 @@ PAGE TITLES
         breadcrumb_label() defaults to page_title(), so a fixed-title action
         gets its breadcrumb from @title as well. A dynamic breadcrumb override
         awaits await_loaded() exactly as the title override does.
+
+SPINNER UNTIL READY
+    A page whose components load their own data paints in stages: the action
+    renders, then each child pops in as its load lands. An edit form shown
+    before its record arrives is worse - it can be read, and typed into,
+    with values that are about to change. One decorator hides the action
+    behind the application's spinner until its whole tree is ready, then
+    reveals it complete:
+
+        @route('/clients/view/:id')
+        @layout('Frontend_Spa_Layout')
+        @spa('Frontend_Spa_Controller::index')
+        @auth('is_logged_in', 'can_view_data')
+        @spinner_until_ready('uncached')
+        class Clients_View_Action extends Spa_Action { ... }
+
+    Ready is reached bottom-up, so the action's ready means every component
+    in its tree is ready.
+
+    THE TWO MODES. The mode is required, so the choice is visible in the
+    declaration.
+
+        'uncached'  Hold only when jqhtml has no record of this action, with
+                    these args, reaching ready in the current cache scope
+                    (the component's was_ready_before(), rsx:man jqhtml). A
+                    revisit is not held: its tree booted before and will very
+                    probably paint from the component cache at once, which a
+                    spinner would only hide. A child that misses its cache
+                    anyway pops in when its load lands. For a page that SHOWS
+                    data - a CRUD view page.
+
+        'always'    Hold on every visit. For a page that must never be seen
+                    before its data is final - a CRUD edit page, where a form
+                    painted from cache could be typed into while its record
+                    is still being fetched. The action is also created with
+                    jqhtml's skip_cache_read (rsx:man jqhtml), so nothing in
+                    its hidden tree paints from the component cache - work
+                    nobody would see. Cache writes continue, so the same
+                    components stay warm wherever else they are used.
+
+    The decorator takes the place of hand-written loading state: an edit
+    action declaring 'always' needs no loading overlay, no "settled" flag and
+    no re-seeding of its form in on_ready(), because nothing is visible until
+    the record has been applied.
+
+    show_spinner() / hide_spinner(). The decorator is built on two public
+    methods of every action, which an action may call itself for a wait of
+    its own:
+
+        async save_and_continue() {
+            this.show_spinner();
+            try { await My_Controller.rebuild({id: this.args.id}); }
+            finally { this.hide_spinner(); }
+        }
+
+    show_spinner() on an action already showing one re-measures where it
+    sits and does nothing else; hide_spinner() with none shown does nothing.
+
+    THE SPINNER. It is the component registered with
+    Rsx.set_default_spinner() from a static on_app_modules_define() (the
+    framework's Rsx_Default_Spinner when nothing is registered), centered horizontally
+    over the action and vertically in the part of it on screen: from its top
+    edge to its bottom edge, or to the bottom of the window when the action
+    runs past it. That placement is measured when the spinner is shown and
+    is not recalculated on resize. The spinner component decides its own
+    size.
+
+    It survives the action's re-renders: the spinner is an element placed
+    beside the action (a render replaces only what is inside the action's
+    own element), and the action is hidden with visibility, never display,
+    so its tree lays out and measures normally while it loads.
+
+    WHEN IT IS REMOVED. At ready (for the decorator), by hide_spinner(), when
+    the next navigation starts, when an error screen replaces the action, and
+    on any unhandled exception from the page's code - an error is never left
+    behind a spinner nobody can see past.
+
+    A dialog hosting a form has the same behaviour through Modal.form()'s
+    spinner_until_ready option in the template application (app skill
+    modals). Any other host uses the framework's Spinner_Overlay.show(c) /
+    Spinner_Overlay.hide(c), which the action methods wrap.
+
+    Reference: system/app/RSpade/resource/reference_app/app/frontend/
+    clients/view/Clients_View_Action.js ('uncached') and
+    clients/edit/Clients_Edit_Action.js ('always').
 
 SPA EVENTS
     The SPA system fires global events that can be used to hook into the

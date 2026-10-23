@@ -46,7 +46,7 @@ class _Sys_Site_View_Action extends Spa_Action {
         this.$.off('click._sys_site_view');
 
         this.$.on('click._sys_site_view', '[data-action="rename"]', async function () {
-            if (await _Sys_Site_Rename_Form.open(that.data.site)) {
+            if (await that.alive(_Sys_Site_Rename_Form.open(that.data.site))) {
                 that.reload();
             }
         });
@@ -74,7 +74,7 @@ class _Sys_Site_View_Action extends Spa_Action {
                 return;
             }
 
-            await _Sys_Sites_Controller.set_enabled({ id: site.id, enabled: enable });
+            await that.alive(_Sys_Sites_Controller.set_enabled({ id: site.id, enabled: enable }));
             Flash_Alert.success(site.name + (enable ? ' is enabled.' : ' is disabled.'));
             that.reload();
         });

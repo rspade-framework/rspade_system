@@ -65,7 +65,6 @@ class _Sys_Log_View_Action extends Spa_Action {
 
         this._generation = 0;
         this._poll_timer = null;
-        this._stopped = false;
         _Sys_Log_View_Action._instance_count++;
         this._visibility_ns = 'visibilitychange._sys_log_view_' + _Sys_Log_View_Action._instance_count;
 
@@ -89,6 +88,7 @@ class _Sys_Log_View_Action extends Spa_Action {
         });
 
         const apply_filter = debounce(function () {
+            if (that.is_stopped()) return;
             const value = str(that.$sid('filter').val()).trim();
 
             if (value === that.state.filter) {
@@ -112,8 +112,6 @@ class _Sys_Log_View_Action extends Spa_Action {
     }
 
     on_stop() {
-        this._stopped = true;
-
         if (this._poll_timer !== null && this._poll_timer !== undefined) {
             clearTimeout(this._poll_timer);
             this._poll_timer = null;
@@ -179,15 +177,13 @@ class _Sys_Log_View_Action extends Spa_Action {
         this._paint_status(null);
 
         try {
-            const response = await _Sys_Logs_Controller.read({
+            const response = await this.alive(_Sys_Logs_Controller.read({
                 file: this.args.file,
                 lines: _Sys_Log_View_Action.PAGE_LINES,
                 filter: this.state.filter,
-            });
+            }));
 
-            if (!this._stopped) {
-                this._show_window(response, notice);
-            }
+            this._show_window(response, notice);
         } finally {
             this.state.busy = false;
             this._paint_status(notice);
@@ -204,21 +200,21 @@ class _Sys_Log_View_Action extends Spa_Action {
         const generation = this._generation;
 
         try {
-            const response = await _Sys_Logs_Controller.read({
+            const response = await this.alive(_Sys_Logs_Controller.read({
                 file: this.args.file,
                 before: this.state.start,
                 lines: _Sys_Log_View_Action.PAGE_LINES,
                 filter: this.state.filter,
-            });
+            }));
 
-            if (this._stopped || generation !== this._generation) {
+            if (generation !== this._generation) {
                 return;
             }
 
             // Keep the lines the reader was looking at where they are on screen.
             const $pane = this.$sid('pane');
             const before_height = $pane[0].scrollHeight;
-            await this._mount(response.entries, 'prepend');
+            await this.alive(this._mount(response.entries, 'prepend'));
             $pane.scrollTop($pane.scrollTop() + ($pane[0].scrollHeight - before_height));
 
             this.state.start = response.start;
@@ -254,7 +250,7 @@ class _Sys_Log_View_Action extends Spa_Action {
     async _poll() {
         this._poll_timer = null;
 
-        if (this._stopped || !this.state.following || document.hidden) {
+        if (this.is_stopped() || !this.state.following || document.hidden) {
             return;
         }
 
@@ -262,25 +258,25 @@ class _Sys_Log_View_Action extends Spa_Action {
         let more = false;
 
         try {
-            const response = await _Sys_Logs_Controller.follow({
+            const response = await this.alive(_Sys_Logs_Controller.follow({
                 file: this.args.file,
                 offset: this.state.end,
                 identity: this.state.identity,
                 lines: _Sys_Log_View_Action.PAGE_LINES,
                 filter: this.state.filter,
-            });
+            }));
 
-            if (this._stopped || generation !== this._generation) {
+            if (generation !== this._generation) {
                 return;
             }
 
             if (response.rotated) {
-                await this._load_tail('The file was rotated or truncated; showing its new tail.');
+                await this.alive(this._load_tail('The file was rotated or truncated; showing its new tail.'));
             } else if (response.end > this.state.end) {
                 const $pane = this.$sid('pane');
                 const at_bottom = $pane[0].scrollHeight - $pane.scrollTop() - $pane.innerHeight() < 40;
 
-                await this._mount(response.entries, 'append');
+                await this.alive(this._mount(response.entries, 'append'));
                 this.state.end = response.end;
                 this.state.size = response.size;
                 this.state.lines_loaded += response.line_count;
@@ -300,7 +296,7 @@ class _Sys_Log_View_Action extends Spa_Action {
             return;
         }
 
-        if (!this._stopped && this.state.following && this._poll_timer === null) {
+        if (this.state.following && this._poll_timer === null) {
             const that = this;
             this._poll_timer = setTimeout(function () {
                 that._poll();

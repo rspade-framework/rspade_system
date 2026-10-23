@@ -67,7 +67,6 @@ class Task_Output extends Component {
             lines: 0,
             is_live: null,
         };
-        this._stopped = false;
         // The time of every line written, in order: line N of the terminal is entry N.
         this._line_times = [];
         this._read_soon = debounce(() => this.__read(), Rsx_Task.LIVE_UPDATE_DELAY);
@@ -82,10 +81,7 @@ class Task_Output extends Component {
             that.read();
         });
 
-        const xterm = await Task_Output._load_xterm();
-        if (this._stopped) {
-            return;
-        }
+        const xterm = await this.alive(Task_Output._load_xterm());
 
         this._terminal = new xterm.Terminal({
             convertEol: true,
@@ -207,16 +203,17 @@ class Task_Output extends Component {
      * reader has since changed is dropped (show_streams() has already reset the terminal).
      */
     async __read() {
-        if (!this._terminal) {
+        // Reached through a debounced function, which may fire after the stop.
+        if (this.is_stopped() || !this._terminal) {
             return;
         }
 
         let more = true;
-        while (more && !this._stopped) {
+        while (more) {
             const asked_streams = this.state.streams;
             const streams = asked_streams === 'both' ? ['stdout', 'stderr', 'operator'] : (asked_streams === 'stderr' ? ['stderr', 'operator'] : ['stdout']);
-            const response = await Rsx_Task.output_after(this.args.task_id, this.state.last_id, streams);
-            if (this._stopped || asked_streams !== this.state.streams) {
+            const response = await this.alive(Rsx_Task.output_after(this.args.task_id, this.state.last_id, streams));
+            if (asked_streams !== this.state.streams) {
                 return;
             }
             this.__write(response);
@@ -243,7 +240,6 @@ class Task_Output extends Component {
     }
 
     on_stop() {
-        this._stopped = true;
         if (this._resize_observer) {
             this._resize_observer.disconnect();
         }

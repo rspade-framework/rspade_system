@@ -64,7 +64,7 @@ class Passkey_Register extends Component {
         let result;
 
         try {
-            result = await Rsx_Two_Factor.register_passkey(label === '' ? null : label);
+            result = await this.alive(Rsx_Two_Factor.register_passkey(label === '' ? null : label));
         } catch (e) {
             // A stale ceremony or a refused attestation - the server's message is user-safe
             // by contract. Anything the browser itself throws also lands here, which is the
@@ -93,7 +93,7 @@ class Passkey_Register extends Component {
      * Put the codes on the clipboard, one per line.
      */
     async _copy() {
-        await navigator.clipboard.writeText(this.state.recovery_codes.join('\n'));
+        await this.alive(navigator.clipboard.writeText(this.state.recovery_codes.join('\n')));
 
         this.state.copied = true;
         this.render();

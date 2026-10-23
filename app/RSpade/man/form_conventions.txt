@@ -69,7 +69,7 @@ DESCRIPTION
                 See form_input(3).
 
     Everything else is chrome. Modal.form() is a dialog that hosts a form and
-    drives THAT form's submit(); it has no pipeline of its own. See modals(3).
+    drives THAT form's submit(); it has no pipeline of its own. See rsx:man modals.
 
     Contract summary in code: the class docblock of
     system/app/RSpade/Core/Forms/Rsx_Form.js.
@@ -474,49 +474,42 @@ VALUES AND INPUT ACCESS
 
 THE PAGE PATTERN (SPA add/edit action)
 
-    A dual-@route action loads in on_load(), so the form never renders blank -
-    but a CACHED revisit re-renders immediately while revalidation is in flight,
-    which is what the overlay is for.
+    A dual-@route action loads its record in on_load() and hands it to the form
+    as $data, and declares @spinner_until_ready('always'): the action is hidden
+    behind the application's spinner on EVERY visit until it is ready, so the
+    form is never seen - or typed into - before its record has been applied,
+    a cached revisit included. No loading overlay, no "settled" flag and no
+    re-seeding of the form in on_ready() is written by hand.
 
     Worked example, complete and current:
         system/app/RSpade/resource/reference_app/app/frontend/tasks/edit/
             Tasks_Edit_Action.js
             Tasks_Edit_Action.jqhtml
 
-        on_create() {
-            this.data.is_edit = !!this.args.id;
-            this.data.form_data = { title: '', status: Task_Model.STATUS_PENDING };
-            this._record_settled = false;      // INSTANCE property, never this.data
+        @route('/tasks/add')
+        @route('/tasks/edit/:id')
+        ...
+        @spinner_until_ready('always')
+        class Tasks_Edit_Action extends Spa_Action {
+            on_create() {
+                this.data.is_edit = !!this.args.id;
+                this.data.form_data = { title: '', status: Task_Model.STATUS_PENDING };
+            }
+
+            async on_load() {
+                if (!this.data.is_edit) return;
+                const task = await Task_Model.fetch(this.args.id);
+                this.data.form_data = { id: task.id, title: task.title || '' };
+            }
         }
 
-        async on_load() {
-            if (!this.data.is_edit) return;
-            const task = await Task_Model.fetch(this.args.id);
-            this.data.form_data = { id: task.id, title: task.title || '' };
-        }
+        <Rsx_Form $data=this.data.form_data $controller="Tasks_Controller" $method="save">
 
-        on_render() {
-            // Renders REBUILD the DOM, so the overlay is re-armed every render.
-            this._set_form_loading(this.data.is_edit && !this._record_settled);
-        }
-
-        on_ready() {
-            // The load is complete BY DEFINITION here.
-            if (!this.data.is_edit) return;
-            this._record_settled = true;
-            this.$.find('.Rsx_Form').first().component().vals(this.data.form_data);
-            this._set_form_loading(false);
-        }
-
-    _record_settled is an INSTANCE property and deliberately not this.data:
-    this.data is the maybe-cached result of on_load(), and a cached "already
-    settled" lies on the next visit while the real fetch is in flight.
-
-    The template renders the REAL form unconditionally. A "loading..."
-    placeholder branch in place of the form is the anti-pattern this replaces:
-    the overlay is what the user waits behind, with the form's own structure
-    underneath. A LOAD FAILURE is different - an error page branch is correct,
-    because there is no form to wait for.
+    The template renders the REAL form, never a "loading..." placeholder branch:
+    the spinner is what the user waits behind. A LOAD FAILURE is different - an
+    error page branch is correct, because there is no form to wait for. The
+    decorator and its 'uncached' mode for view pages: rsx:man spa, SPINNER
+    UNTIL READY.
 
 THE MODAL PATTERN
 
@@ -527,28 +520,27 @@ THE MODAL PATTERN
         system/app/RSpade/resource/reference_app/app/frontend/settings/api_keys/
             add_api_key_modal_form.jqhtml     (template only - no JS class)
 
-    An EDIT modal's body IS the loader, and that needs three hooks:
+    An EDIT modal's body loads its record in on_load() and binds it as the
+    form's $data, exactly as a page does, and the dialog is opened with
+    spinner_until_ready: 'always' - the body is hidden behind the spinner until
+    it is ready, and the primary button does nothing meanwhile:
 
         system/app/RSpade/resource/reference_app/app/frontend/settings/
             user_management/edit_user/edit_user_modal_form.js
 
-        on_create() { this._record = Controller.get_user_for_edit({...}); }
-        on_render() { if (!this._record_settled) this._get_form()?.set_loading(true); }
-        on_ready()  { /* guarded once */ this._populate(); }
-
-        async _populate() {
-            const form = this._get_form();
-            try { await form.populate(this._record); }
-            catch (e) { this._record_settled = true; await form.render_error(e); return; }
-            this._record_settled = true;
+        async on_load() {
+            try { this.data.record = await Controller.get_user_for_edit({...}); }
+            catch (e) { this.data.error_data = e; }
+        }
+        on_ready() {
+            if (this.data.error_data) this.sid('form').render_error(this.data.error_data);
         }
 
-    on_create() STARTS the fetch (earliest legal moment - it then races the
-    children's initialization instead of queueing behind it); starting a promise
-    there is legal, awaiting it is not. on_ready() is guarded because populate()
-    can itself trigger a render, which reaches ready again.
+        Modal.form({ title: 'Edit User', component: 'Edit_User_Modal_Form',
+                     component_args: { user_id }, spinner_until_ready: 'always' });
 
-    Full option list and dialog semantics: modals(3).
+    The Modal library and its options are template-application code: app skill
+    modals.
 
 LOADING
 
@@ -564,7 +556,10 @@ LOADING
 
     populate(data) is the procedure: overlay on, await, vals(), overlay off in a
     finally - so it cannot leak on success or on rejection. set_loading() is the
-    primitive for an irregular load sequence.
+    primitive for an irregular load sequence. Both are for a form whose values
+    arrive AFTER it is shown (a field filled on demand, a form re-seeded in
+    place); a page or dialog that loads its record before anything is shown
+    uses spinner_until_ready instead (THE PAGE PATTERN).
 
     CLEARING IS EXPLICIT, owned by whoever set it - never automatic. Both
     auto-clear candidates were examined and rejected: an on_ready() auto-clear is
@@ -680,8 +675,7 @@ FORM SEEDS LIVE IN this.state, NEVER this.data
 
     this.data is the maybe-cached result of on_load(), frozen outside
     on_create()/on_load() (the framework throws), and possibly served stale on a
-    repeat invocation. A form seed is neither a load result nor cacheable. The
-    same reasoning produces the page pattern's _record_settled instance property.
+    repeat invocation. A form seed is neither a load result nor cacheable.
 
 FIELD ALIGNMENT
 

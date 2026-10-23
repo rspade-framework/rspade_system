@@ -19,7 +19,10 @@ class _Sys_Tasks_DataGrid extends _Sys_DataGrid_Abstract {
         const that = this;
         this.state.live_paused = false;
         this._row_watches = [];
-        this._live_reload = debounce(() => that.reload({ dim: false }), Rsx_Task.LIVE_UPDATE_DELAY);
+        this._live_reload = debounce(() => {
+            if (that.is_stopped()) return;
+            return that.reload({ dim: false });
+        }, Rsx_Task.LIVE_UPDATE_DELAY);
 
         this.subscribe('Task_List_Changed_Topic', {}, () => that.__on_frame());
     }
@@ -35,7 +38,7 @@ class _Sys_Tasks_DataGrid extends _Sys_DataGrid_Abstract {
         });
 
         this.$.off('click._sys_sample').on('click._sys_sample', '[data-action="start_sample"]', async function () {
-            const result = await _Sys_Tasks_Controller.start_sample();
+            const result = await that.alive(_Sys_Tasks_Controller.start_sample());
             that.reload();
             _Sys_Task_Detail.open(result.task_id);
         });
@@ -56,7 +59,7 @@ class _Sys_Tasks_DataGrid extends _Sys_DataGrid_Abstract {
 
     /** A realtime frame: reload (debounced, undimmed) unless live updates are paused. */
     __on_frame() {
-        if (this.state.live_paused) {
+        if (this.is_stopped() || this.state.live_paused) {
             return;
         }
 
@@ -68,6 +71,9 @@ class _Sys_Tasks_DataGrid extends _Sys_DataGrid_Abstract {
         const that = this;
 
         this.__stop_row_watches();
+
+        // A load that lands after on_stop() would open watches nothing ever stops.
+        if (this.is_stopped()) return;
 
         this.$.find('tr[data-task-id]').each(function () {
             const $element = $(this);

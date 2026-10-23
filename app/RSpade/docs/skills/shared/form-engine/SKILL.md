@@ -195,48 +195,35 @@ Worked example: `system/app/RSpade/resource/reference_app/lib/modal/modal.js` an
 
 ## The page pattern (SPA add/edit)
 
-The action loads in `on_load()`, so the form is never blank on a first visit - but a
-**cached revisit** re-renders instantly while revalidation is in flight, and that is what
-the overlay is for.
+The action loads its record in `on_load()`, binds it as the form's `$data`, and declares
+`@spinner_until_ready('always')`: it is hidden behind the spinner on EVERY visit until it is
+ready, so the form is never seen - or typed into - before its record is applied, a cached
+revisit included. No loading overlay, no "settled" flag, no re-seeding in `on_ready()`.
 
 ```javascript
-on_create() {
-    this.data.is_edit = !!this.args.id;
-    this.data.form_data = { title: '', status: Task_Model.STATUS_PENDING };
-    this._record_settled = false;          // INSTANCE property, never this.data
-}
+@spinner_until_ready('always')
+class Tasks_Edit_Action extends Spa_Action {
+    on_create() {
+        this.data.is_edit = !!this.args.id;
+        this.data.form_data = { title: '', status: Task_Model.STATUS_PENDING };
+    }
 
-async on_load() {
-    if (!this.data.is_edit) return;
-    const task = await Task_Model.fetch(this.args.id);
-    this.data.form_data = { id: task.id, title: task.title || '' };
-}
-
-on_render() {
-    // Renders REBUILD the DOM, so the overlay is re-armed every render.
-    this._set_form_loading(this.data.is_edit && !this._record_settled);
-}
-
-on_ready() {
-    if (!this.data.is_edit) return;
-    this._record_settled = true;
-    this.$.find('.Rsx_Form').first().component().vals(this.data.form_data);
-    this._set_form_loading(false);
+    async on_load() {
+        if (!this.data.is_edit) return;
+        const task = await Task_Model.fetch(this.args.id);
+        this.data.form_data = { id: task.id, title: task.title || '' };
+    }
 }
 ```
 
-`_record_settled` is an instance property **deliberately not `this.data`**: `this.data`
-is the maybe-cached result of `on_load()`, and a cached "already settled" lies on the
-next visit while the real fetch is in flight.
-
-**The template renders the REAL form unconditionally.** A spinner placeholder branch in
-place of the form is the anti-pattern this replaces - the overlay is what the user waits
-behind, with the form's structure underneath. A **load failure** is different: an
-error-page branch is correct, because there is no form to wait for.
+**The template renders the REAL form**, never a "loading..." placeholder branch - the spinner
+is what the user waits behind. A **load failure** is different: an error-page branch is correct,
+because there is no form to wait for. `rsx:man spa`, SPINNER UNTIL READY.
 
 A modal is chrome around a form: `Modal.form()` finds the `<Rsx_Form>` in the hosted
-component and drives its `submit()`. The dialog system is application code - app skill
-`modals`.
+component and drives its `submit()`; an edit dialog's body loads in `on_load()` the same way
+and is opened with `spinner_until_ready: 'always'`. The dialog system is application code -
+app skill `modals`.
 
 ## Loading
 
@@ -245,6 +232,9 @@ The overlay is **state**, not a DOM operation - `set_loading()` flips it and
 
 `form.populate(data_or_promise)` is the procedure: overlay on -> await -> `vals()` ->
 overlay off in a `finally`, so it cannot leak on success or rejection.
+It is for a form whose values arrive AFTER it is shown (a field filled on demand, a form
+re-seeded in place) - a page or dialog that loads before anything is shown uses
+`spinner_until_ready` instead.
 
 **Clearing is always explicit**, owned by whoever set it. `on_ready()` is the wrong hook
 by definition (ready means loaded), and an auto-clear on data-set misfires on partial

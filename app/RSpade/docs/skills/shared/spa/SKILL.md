@@ -169,6 +169,37 @@ Template order: `<Loading_Spinner>` -> `<Universal_Error_Page_Component>` -> con
 
 **Skip the three-state pattern for**: DataGrid pages (the grid loads itself), static pages, and redirect-only actions. Full treatment: `php artisan rsx:man view_action_patterns`; CRUD module shape: the app skill `crud-patterns`.
 
+### Spinner until ready: `@spinner_until_ready(mode)`
+
+One decorator hides the action behind the registered spinner until its whole tree is ready, then
+reveals it complete. The mode is required:
+
+- **`'uncached'` - CRUD view pages.** Held only when jqhtml's `was_ready_before()` is false for
+  this action + args; a revisit paints from cache at once (a child that misses its cache pops in).
+- **`'always'` - CRUD edit pages.** Held on every visit: a form must never be visible, or typed
+  into, before its record is applied. It replaces hand-written loading state - no form loading
+  overlay, no "settled" flag, no re-seeding the form in `on_ready()` - and boots the action with
+  jqhtml's `skip_cache_read`, so nothing in the hidden tree paints from cache (writes continue).
+
+Built on `this.show_spinner()` / `this.hide_spinner()`, public on every `Spa_Action` for a wait of
+the action's own. The spinner survives re-renders (it is a sibling of the action's element; the
+action is hidden with visibility) and is removed at ready, on the next dispatch, on an error
+screen and on any unhandled exception. A form dialog gets the same through `Modal.form({...,
+spinner_until_ready: 'always'})` (app skill `modals`). Never hand-roll a spinner-until-`on_ready()`
+swap. `rsx:man spa`, SPINNER UNTIL READY.
+
+### Code that resumes after an await
+
+An action is STOPPED the moment the user navigates away, often while one of its requests is in
+flight. Every wait outside `on_load()` - a save handler, a helper started from `on_ready()`, a wait
+on a child - goes through `this.alive()`: `const r = await this.alive(Controller.save(...))` never
+resumes on a stopped action, so nothing after it touches a child component, re-renders, or calls
+`Spa.dispatch()` / `Modal` / `Flash_Alert` on the page the user moved to (unguarded, that throws -
+and the unhandled exception switches the SPA to full page loads - or yanks the user away).
+**The alternative is `is_stopped()`**, for code that must keep going after a stop (a download the
+user asked for, then `if (this.is_stopped()) return;` before the flash). Neither in `on_load()`,
+where both throw (a deduplicated load serves several components). Skill `rspade:jqhtml`, rule 28.
+
 ## Page titles
 
 One ladder, two rungs. **Declare the title once and let the layout paint it.**

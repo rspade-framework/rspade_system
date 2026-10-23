@@ -32,6 +32,23 @@ class Spa_Action extends Component {
     }
 
     /**
+     * Hide this page behind the application's spinner (Rsx.set_default_spinner()). The
+     * spinner survives the action's re-renders and is removed by hide_spinner(), by the
+     * next navigation, and on an unhandled exception. @spinner_until_ready calls the pair
+     * itself; call it directly for a wait of the action's own. See rsx:man spa.
+     */
+    show_spinner() {
+        Spinner_Overlay.show(this);
+    }
+
+    /**
+     * Reveal this page. Nothing happens when no spinner is shown.
+     */
+    hide_spinner() {
+        Spinner_Overlay.hide(this);
+    }
+
+    /**
      * Generate URL for this action class with given parameters
      * Static method for use without an instance
      */

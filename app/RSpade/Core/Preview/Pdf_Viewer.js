@@ -67,7 +67,6 @@ class Pdf_Viewer extends Component {
             pdf: null,
             loading_task: null,
         };
-        this._stopped = false;
         this._last_dims = { width: 0, height: 0, ratio: 0 };
 
         this._fit = this.args.fit ? str(this.args.fit) : 'width';
@@ -100,14 +99,14 @@ class Pdf_Viewer extends Component {
 
     async on_ready() {
         try {
-            const pdfjs = await Pdf_Viewer._load_pdfjs();
-            if (this._stopped) return;
+            const pdfjs = await this.alive(Pdf_Viewer._load_pdfjs());
 
             const loading_task = pdfjs.getDocument({ url: this.args.url });
             this.state.loading_task = loading_task;
 
+            // Not through alive(): a document that arrives after the stop must still be destroyed.
             const pdf = await loading_task.promise;
-            if (this._stopped) {
+            if (this.is_stopped()) {
                 try { pdf.destroy(); } catch (e) { /* already torn down */ }
                 return;
             }
@@ -120,8 +119,7 @@ class Pdf_Viewer extends Component {
             if (page > this.state.pages) page = this.state.pages;
             this.state.page = page;
 
-            await this._render_page(page);
-            if (this._stopped) return;
+            await this.alive(this._render_page(page));
 
             // Observe only AFTER the first render: the observer fires once on observe(), and doing
             // that before there is a rendered size would race the initial render for the canvas.
@@ -129,7 +127,8 @@ class Pdf_Viewer extends Component {
 
             this._report('loaded');
         } catch (e) {
-            if (this._stopped) return;
+            // on_stop() destroys the loading task, which rejects the plain wait above.
+            if (this.is_stopped()) return;
             // pdf.js could not be loaded, or the document could not be fetched or parsed. The
             // message is on screen, so this is reported like every other outcome - a host
             // waiting on this viewer is answered rather than left waiting.
@@ -139,7 +138,6 @@ class Pdf_Viewer extends Component {
     }
 
     on_stop() {
-        this._stopped = true;
         if (this._resize_observer) {
             this._resize_observer.disconnect();
             this._resize_observer = null;
@@ -166,7 +164,7 @@ class Pdf_Viewer extends Component {
         this.state.page = n;
         this._report_owed = true;
         this._render_page(n).then((painted) => {
-            if (!painted || this._stopped) return;
+            if (!painted || this.is_stopped()) return;
             // The geometry in 'preview_loaded' is the page on screen, so a new page re-reports it.
             this._report('loaded');
             this.trigger('page_changed', { page: n });
@@ -195,7 +193,7 @@ class Pdf_Viewer extends Component {
      * renders at a zero scale.
      *
      * Returns true when THIS call is the one that painted, false when it was superseded by a newer
-     * render (or the component stopped) before it finished.
+     * render before it finished. Never settles once the component has stopped.
      */
     async _render_page(n) {
         const token = ++this._render_seq;
@@ -203,8 +201,8 @@ class Pdf_Viewer extends Component {
         const pdf = this.state.pdf;
         if (!pdf) return false;
 
-        const page = await pdf.getPage(n);
-        if (this._stopped || token !== this._render_seq) return false;
+        const page = await this.alive(pdf.getPage(n));
+        if (token !== this._render_seq) return false;
 
         const canvas = this.$sid('canvas')[0];
         const container_width = this.$.width() || 800;
@@ -245,9 +243,9 @@ class Pdf_Viewer extends Component {
         this._last_render_size = frame_box;
 
         const ctx = canvas.getContext('2d');
-        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+        await this.alive(page.render({ canvasContext: ctx, viewport: viewport }).promise);
 
-        return !this._stopped && token === this._render_seq;
+        return token === this._render_seq;
     }
 
     /**
@@ -267,7 +265,7 @@ class Pdf_Viewer extends Component {
      * idempotent; skips a box that has not moved since the current canvas was drawn.
      */
     _handle_resize() {
-        if (this._stopped) return;
+        if (this.is_stopped()) return;
         if (!this.state.pdf) return;
 
         const box = this._measure_frame();
@@ -279,7 +277,7 @@ class Pdf_Viewer extends Component {
             // A resize re-raster shows the same page, so it normally has nothing to report. It
             // does when it superseded the render a page change started: this is then the paint
             // that put the new page on screen.
-            if (!painted || this._stopped || !this._report_owed) return;
+            if (!painted || this.is_stopped() || !this._report_owed) return;
             this._report('loaded');
         });
     }

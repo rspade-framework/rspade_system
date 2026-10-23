@@ -916,6 +916,15 @@ class Spa {
                 action_args = { ...route_match.args, _loader_title_hint: opts.loader_title_hint };
             }
 
+            // @spinner_until_ready('always'): the page is hidden until ready on every visit,
+            // so a cached first paint anywhere in its tree is work nobody sees. jqhtml's
+            // reserved skip_cache_read turns the cache READ off for the action and everything
+            // created inside it; writes continue, so the same components stay warm elsewhere.
+            // It is not part of the cache key and never reaches this.args.
+            if (action_class._spa_spinner_until_ready === 'always') {
+                action_args = { ...action_args, skip_cache_read: true };
+            }
+
             // Log successful SPA navigation
             console.warn('[Spa.dispatch] Executing SPA navigation', {
                 url: url,
@@ -1113,6 +1122,11 @@ class Spa {
 
         console_debug('Spa', `Divergence at index ${divergence_index}, reusing ${reusable_layouts.length} layouts`);
 
+        // The previous action's spinner sits OUTSIDE the content area that is emptied below.
+        if (Spa._action) {
+            Spa._action.hide_spinner();
+        }
+
         // Destroy everything from divergence point down
         if (divergence_index === 0) {
             // Complete replacement - destroy top-level layout
@@ -1151,6 +1165,13 @@ class Spa {
                 // This is the action - set reference but don't wait
                 Spa._action = component;
 
+                // @spinner_until_ready: the page is hidden behind the spinner until the whole
+                // tree is ready - on every visit, or only on one jqhtml has no record of.
+                const spinner_until_ready = Spa._spinner_until_ready_applies(component);
+                if (spinner_until_ready) {
+                    component.show_spinner();
+                }
+
                 // Exception_Handler routes an unhandled exception into the layout's
                 // debug error box only while the action is mid-load. ready() never
                 // rejects - a boot failure simply leaves it pending - so the flag
@@ -1162,6 +1183,16 @@ class Spa {
 
                 // After action is fully ready (on_load + on_ready complete)
                 component.ready().then(() => {
+                    // The spinner comes off whatever happened, so none lingers on a stopped action.
+                    if (spinner_until_ready) {
+                        component.hide_spinner();
+                    }
+
+                    // ready() also resolves when the action is stopped - superseded by a later
+                    // dispatch, which owns the layout's loading flag, the scroll and its own
+                    // spa_dispatch_ready from here.
+                    if (component.is_stopped()) return;
+
                     if (loading_layout) {
                         loading_layout._action_is_loading = false;
                     }
@@ -1500,6 +1531,25 @@ class Spa {
      * Called before loading new content to ensure clean state
      * @param {jQuery} $container - The container element to clear
      */
+    /**
+     * Whether @spinner_until_ready hides a freshly created action until it is ready.
+     *
+     * 'always' holds on every visit. 'uncached' holds only when jqhtml has no record of
+     * this action with these args reaching ready in the cache scope (was_ready_before()):
+     * ready is reached bottom-up, so a record means the whole tree booted once and will
+     * very probably paint from cache at once - a spinner would only hide that. A child that
+     * misses its cache anyway simply pops in when its load lands.
+     *
+     * @param {Spa_Action} action
+     * @returns {boolean}
+     */
+    static _spinner_until_ready_applies(action) {
+        const mode = action.constructor._spa_spinner_until_ready;
+        if (!mode) return false;
+        if (mode === 'always') return true;
+        return !action.was_ready_before();
+    }
+
     static _clear_container_attributes($container) {
         if (!$container || !$container.length) return;
 

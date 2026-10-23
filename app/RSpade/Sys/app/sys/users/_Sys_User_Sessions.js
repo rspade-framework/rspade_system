@@ -39,7 +39,7 @@ class _Sys_User_Sessions extends Component {
     }
 
     async _terminate(session) {
-        if (await _Sys_User_Actions.end_session(this.args.login_user_id, this.args.email, session)) {
+        if (await this.alive(_Sys_User_Actions.end_session(this.args.login_user_id, this.args.email, session))) {
             this.reload();
         }
     }

@@ -1719,6 +1719,32 @@ CACHING AND CACHEABLE DESIGN
     plain-object argument therefore caches but does not share loads; that
     is expected.
 
+    WAS IT READY BEFORE. this.was_ready_before() answers whether a previous
+    instance of this component, under the same cache key (name + args, or
+    cache_id()), reached ready in the current cache scope - for components
+    with or without on_load(). Ready is reached bottom-up, so true means the
+    whole subtree booted once and will very probably paint from cache at
+    once. It is a hint for the application (show a spinner on a cold first
+    visit only); jqhtml never acts on it. Callable from on_create(); the
+    answer is captured the first time it is asked for a key and frozen, so
+    this instance reaching ready does not flip its own answer. Opt-in: only
+    a component that asks records a marker when it reaches ready. False for
+    unkeyable args or a detached component. An SPA action uses it through
+    @spinner_until_ready('uncached') (rsx:man spa) rather than by hand.
+
+    SKIPPING THE CACHE READ. The reserved argument skip_cache_read (true)
+    boots a component exactly as on a cache miss - no data hydration, no
+    cached HTML first paint - while every cache WRITE carries on, so the
+    component stays warm wherever else it is used. Every component created
+    inside it inherits it, recursively, later re-renders included. It is not
+    part of the cache key and is never left in this.args. jqhtml applies the
+    same skip by itself to a component created with no layout box (display:
+    none on it or an ancestor): a cached first paint nobody can see is wasted
+    work. Visibility: hidden still has a layout box and still reads. RSpade
+    passes skip_cache_read for @spinner_until_ready('always') and Modal.form's
+    spinner_until_ready: 'always' (rsx:man spa); an application rarely passes
+    it by hand.
+
     FINDING UNCACHED COMPONENTS. An empty result is the healthy state:
 
         php artisan rsx:debug /path --user=1 --eval="return $('[data-nocache]').map((i, e) => e.className.split(' ')[0] + ' ' + e.getAttribute('data-nocache')).get()"
@@ -2480,7 +2506,9 @@ LIFECYCLE MANIPULATION METHODS
             - RESOLVES when the component stops (a stopped or failed
               component never fires 'ready' again, so a waiter is released
               rather than left hanging); the optional callback runs only
-              when 'ready' itself fires
+              when 'ready' itself fires. Wait through alive() -
+              await this.alive(child.ready()) - so the code after it never
+              runs on a stopped component (ASYNC CONTINUATIONS)
             - Use when: You need component to be fully interactive
 
     rendered()
@@ -2503,6 +2531,81 @@ LIFECYCLE MANIPULATION METHODS
             await layout.rendered();
             layout.$sid('nav').find('.active').removeClass('active');
             layout.$sid('nav').find(`[href="${url}"]`).addClass('active');
+
+    alive(promise)
+        Returns a promise that settles like the one it wraps while the
+        component lives, and NEVER settles if the component is stopped when it
+        is called or when the wrapped promise settles - so nothing after
+        `await this.alive(...)` runs on a stopped component. A rejection that
+        arrives after the stop is swallowed. Throws in on_load(). The standard
+        way to wait outside on_load() (ASYNC CONTINUATIONS).
+
+    is_stopped()
+        True from the moment stop() began on this component or an ancestor,
+        and never false again; false in every other state, before ready
+        included. Not the same question as is_attached(): a component can be
+        detached and alive, or stopped with its element still in the DOM.
+        The explicit alternative to alive() for code that must keep going
+        after a stop. Throws in on_load() (ASYNC CONTINUATIONS).
+
+ASYNC CONTINUATIONS
+    Code that continues after an await - or in a .then() callback, a timer,
+    a debounce()d function - runs outside every lifecycle hook, and the
+    component may have been STOPPED while it waited: the user navigated
+    away, a parent re-rendered, the dialog closed. jqhtml cannot cancel the
+    suspended function, but it can decline to resume it. Every wait outside
+    on_load() goes through alive():
+
+        async _refresh_project(parent) {
+            const res = await this.alive(Tasks_Controller.resolve_parent_project({...}));
+            this.sid('project_select').val(res.project_id);   // only on a live component
+        }
+
+    If the component stops before the wrapped promise settles, the promise
+    alive() returned never settles, so the rest of the function never runs:
+    no check to remember, no early return. While the component lives it
+    settles exactly like the wrapped promise, so try/catch around it works
+    as usual. Wrap EVERY wait in a sequence - each is its own resume point.
+
+    Without it, a child handle on the stopped component is null
+    (this.sid(), this.$sid('x').component()) and the call throws; reload(),
+    refresh() and load() reject; a Spa.dispatch(), modal or flash lands on
+    the page the user has moved to; and in RSpade an unhandled exception
+    switches the SPA to full page loads for the rest of the visit.
+
+    Where it applies: a helper started without being awaited from
+    on_ready() or an event handler, on_ready()/on_loaded() after an await,
+    a handler's own awaits, and waits on a child -
+    await this.alive(child.ready()) - since ready() and rendered() resolve
+    when the component stops, too.
+
+    WHEN alive() IS NOT THE TOOL. A finally after an alive() wait does not
+    run when the component stopped - by design, since what it restores
+    belongs to the component that is gone. Code that must keep going on a
+    stopped component awaits the plain promise and tests is_stopped() at the
+    point where the component-specific part begins:
+
+        const result = await Controller.export_csv(params);
+        trigger_file_download(result);            // the user asked for this file
+        if (this.is_stopped()) return;            // the flash is the page's
+        Flash_Alert.success('Exported');
+
+    The cases: a download or other work the user asked for that must
+    complete, a value a caller is waiting on (a framework method that
+    resolves with the server result), a cleanup that must run.
+
+    NEVER in on_load(): alive() and is_stopped() both THROW there. on_load()
+    may be deduplicated - identical components loading at the same moment
+    share ONE run of it - so inside on_load() 'this' is not any one
+    component and "stopped" has no answer. No guard is needed: jqhtml
+    abandons the result of a load whose component was stopped.
+
+    Harmless unguarded: reading this.data or this.args (the page_title()
+    override that awaits await_loaded() and returns a string), and plain
+    jQuery reads and writes on this.$ / this.$sid(...), which are inert on a
+    stopped component's element.
+
+    Audited by conformance async_continuations_check_stopped.
 
 THE LIFECYCLE LOCK
     Every component has ONE lifecycle lock. Boot holds it from on_create()
