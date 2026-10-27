@@ -193,10 +193,50 @@ try {
 }
 ```
 
-A task looping over several sites declares each in turn; a task that means EVERY site at once uses
-`Model::without_site_scope(fn () => ...)`. The declared site must exist - the first scoped query
-checks it and throws for an id with no `sites` row. An `#[Emitter]` needs none of this: the
-realtime engine declares the site around every emitter call (`rsx:man realtime`, EMITTERS).
+A task looping over several sites declares each in turn. The declared site must exist - the first
+scoped query checks it and throws for an id with no `sites` row. An `#[Emitter]` needs none of
+this: the realtime engine declares the site around every emitter call (`rsx:man realtime`, EMITTERS).
+
+**Use `set_temporary_site_id()` in a task, never the permanent `set_site_id()`.** Both work in a
+virtual session, but a leaked `set_site_id()` is inherited by the next run on the same worker and,
+run inline, repoints the caller's own session; the temporary one restores cleanly and refuses in an
+API request and on a frozen `#[Run_As_Dispatcher]` run, where the tenant is not the task's to change.
+
+### A task whose subject is EVERY tenant reads across sites - and writes each row under its own
+
+An hourly "expire every pending invitation" or "unpin every note past its date" has no site to
+declare. It reads with `Model::without_site_scope()` - but that is a bypass for what runs INSIDE the
+callback, not for the rows it returns. **`save()` of an existing row whose `site_id` is not the
+ambient one is REFUSED** (`shouldnt_happen`: "Attempted to save X with site_id 7 but current session
+site_id is 0. This indicates a serious security issue." - the message names the symptom; the mistake
+is saving outside the bypass at the wrong site). Two correct shapes:
+
+```php
+// A plain change to each row: write inside the same callback (the save check and the create
+// stamp are suspended there too).
+Note_Model::without_site_scope(function () {
+    foreach (Note_Model::where('pinned_until', '<', now())->result_set() as $note) {
+        $note->pinned_until = null;
+        $note->save();
+    }
+});
+
+// Writes that should run AS each tenant (its hooks, realtime frames, revisions): read across
+// sites, then declare each group's site around its writes.
+$rows = Note_Model::without_site_scope(fn () => Note_Model::where('pinned_until', '<', now())->get());
+foreach ($rows->groupBy('site_id') as $site_id => $site_rows) {
+    Session::set_temporary_site_id((int) $site_id);
+    try {
+        foreach ($site_rows as $note) { $note->pinned_until = null; $note->save(); }
+    } finally {
+        Session::clear_temporary_site_id();
+    }
+}
+```
+
+**A raw `DB::table()` / `DB::statement()` write is checked by nothing** - no scope narrows it and no
+save guard stands in front of it. A site-scoped read with no site declared now fails loud; a raw
+write that persists a value computed from it does not. Keep a task's writes on the model layer.
 
 ---
 

@@ -550,6 +550,54 @@ A Site-Scoped Query Needs a Declared Site:
     Creating a record with no site declared still stamps the session's site
     (0, the Default site); only reads require a declaration.
 
+    THE SCOPE GUARDS WRITES TOO. Saving an EXISTING row whose site_id differs
+    from the session's site is refused outright, never re-scoped:
+
+        Attempted to save Note_Model with site_id 7 but current session site_id is 0.
+        This indicates a serious security issue.
+
+    without_site_scope() suspends the scope for what runs INSIDE its callback -
+    the read filter, this save check and the create-time site_id stamp alike
+    (on Rsx_Site_Model_Abstract the switch is one flag shared by every model
+    beneath it). A row it RETURNED is an ordinary record afterwards: saving it
+    outside the callback, under a different ambient site, is refused. So a
+    sweep across every tenant writes in one of two ways:
+
+        // A plain change to each row, no per-tenant context needed:
+        // write inside the same callback.
+        Note_Model::without_site_scope(function () {
+            foreach (Note_Model::where('pinned_until', '<', now())->result_set() as $note) {
+                $note->pinned_until = null;
+                $note->save();
+            }
+        });
+
+        // Writes that should run AS each tenant (its hooks, its realtime
+        // frames, its revisions): read across sites, then declare each row's site.
+        $rows = Note_Model::without_site_scope(fn () => Note_Model::where(...)->get());
+        foreach ($rows->groupBy('site_id') as $site_id => $site_rows) {
+            Session::set_temporary_site_id((int) $site_id);
+            try {
+                foreach ($site_rows as $note) { ...; $note->save(); }
+            } finally {
+                Session::clear_temporary_site_id();
+            }
+        }
+
+    A raw DB::table() / DB::statement() write is checked by NOTHING: no read
+    scope narrowed what it touches and no save guard stands in front of it. A
+    site-scoped read with no site declared now fails loud; a raw write does not.
+
+    WHICH SETTER IN A TASK. A background task declares its tenant with
+    Session::set_temporary_site_id() and clears it in a finally. The permanent
+    Session::set_site_id() also works in a virtual session, but a leaked one is
+    inherited by whatever the worker runs next, and run INLINE it repoints the
+    caller's own session; set_temporary_site_id() is restorable, writes nothing,
+    and refuses in an API request and on a frozen #[Run_As_Dispatcher] run,
+    where the tenant is not the task's to change. set_site_id() remains the
+    call for a command or test declaring its own context, and for a guest
+    request.
+
 SITE SCOPING AS AN ADOPTABLE TRAIT (Site_Scoped):
 
     The implementation lives in the Site_Scoped trait, and

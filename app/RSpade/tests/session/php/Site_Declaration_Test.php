@@ -92,4 +92,26 @@ class Site_Declaration_Test extends Rsx_Test_Abstract
 
         Session::clear_temporary_site_id();
     }
+
+    /**
+     * without_site_scope() is a bypass for what runs INSIDE its callback: a save there passes. A
+     * row it returned, saved afterwards under a different ambient site, is refused.
+     */
+    public static function test_a_row_read_across_sites_saves_inside_the_bypass_and_is_refused_outside()
+    {
+        static::__reset_session();
+        Session::set_site_id(0);
+
+        User_Model::without_site_scope(function () {
+            $user = User_Model::find(1);
+            $user->phone = '5550001234';
+            $user->save();
+        });
+
+        $carried = User_Model::without_site_scope(fn () => User_Model::find(1));
+        $carried->phone = '5550004321';
+        static::__assert_throws(\Throwable::class, fn () => $carried->save(), 'serious security issue');
+
+        static::__reset_session();
+    }
 }
