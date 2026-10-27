@@ -497,6 +497,36 @@ Admin Operations (Bypass Site Scoping):
         return Project_Model::where('site_id', 2)->get();
     });
 
+The Scope Is Additive - Naming a Site in a Query Does Not Change It:
+
+    The scope is ANDed with your own conditions, never replaced by them. A
+    where('site_id', $n) of your own is ADDED to the session's site, not
+    substituted for it:
+
+        // session site_id = 0 (a plain background task, a command)
+        Project_Model::where('site_id', 1)->get();
+        // SELECT * FROM projects WHERE site_id = 1 AND projects.site_id = 0  -> nothing
+
+    So with no site in force - a plain #[Task] run, an artisan command - every
+    site-scoped read matches nothing and Model::find($id) answers NULL, whatever
+    site you named, and silently: zero rows look like a legitimate empty
+    result. Code that serves ONE site there DECLARES it for the span of the
+    work, and the scope then reads that site:
+
+        $prior = Session::has_temporary_site_id() ? Session::get_site_id() : null;
+        Session::set_temporary_site_id($site_id);   // writes nothing, creates no session
+        try {
+            $project = Project_Model::find($id);      // site $site_id
+        } finally {
+            $prior === null ? Session::clear_temporary_site_id()
+                            : Session::set_temporary_site_id($prior);
+        }
+
+    Code that means EVERY site opts out with without_site_scope(). Naming the
+    site in the query does neither. A realtime #[Emitter] is already run with
+    its site declared (rsx:man realtime); a task bound to its dispatcher
+    (#[Run_As_Dispatcher]) already runs as the requester's site (rsx:man tasks).
+
 SITE SCOPING AS AN ADOPTABLE TRAIT (Site_Scoped):
 
     The implementation lives in the Site_Scoped trait, and

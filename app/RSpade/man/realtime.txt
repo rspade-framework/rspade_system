@@ -728,8 +728,8 @@ EMITTERS
             #[Emitter('Unread_Count_Topic')]
             public static function unread_count(int $site_id, array $filter): mixed
             {
-                return Notification_Model::where('site_id', $site_id)
-                    ->where('portal_user_id', $filter['portal_user_id'])
+                // Site-scoped: the engine has declared $site_id, so no where('site_id')
+                return Notification_Model::where('portal_user_id', $filter['portal_user_id'])
                     ->where('is_read', false)
                     ->count();
             }
@@ -757,10 +757,15 @@ EMITTERS
     non-matching filters). The constraint is per-emitter, so multiple emitters may
     share one topic with different constraints.
 
-    Headless execution. An emitter runs in a background task with NO session -
-    derive everything from its $site_id and $filter arguments (the $filter is
-    the subscriber's own subscription filter). Never read Session:: /
-    Portal_Session:: inside an emitter.
+    Headless execution, with the site DECLARED. An emitter runs in a background
+    task with no browser and no identity, but the engine declares the site it is
+    computing for around each call (Session::set_temporary_site_id($site_id),
+    restored afterwards), so site-scoped models read THAT site exactly as they do
+    in a request: Model::find($id) and every scoped query just work, and the
+    emitter never writes where('site_id', ...) of its own. Everything else is
+    derived from the $filter argument (the subscriber's own subscription
+    filter). Never read the user or the realm from Session:: / Portal_Session::
+    inside an emitter - there is none; take who the value is for from $filter.
 
     NO TIMER - write-kicked. Nothing polls. A destructive model-layer write (any
     non-$realtime_silent save/delete) marks emitters dirty; the commit flush then

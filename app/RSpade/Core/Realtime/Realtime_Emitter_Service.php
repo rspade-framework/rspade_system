@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Realtime;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Task\Task_Instance;
 
 /**
@@ -302,7 +303,7 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
                     continue;
                 }
 
-                $value = $emitter['class']::{$emitter['method']}($item['site_id'], $item['filter']);
+                $value = self::_call_emitter($emitter, (int) $item['site_id'], $item['filter']);
                 $ran++;
 
                 $value_hash = sha1(json_encode($value));
@@ -425,7 +426,7 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
             $canonical = self::_canonical_filter_json($filter);
 
             foreach ($serving as $emitter) {
-                $value = $emitter['class']::{$emitter['method']}($site_id, $filter);
+                $value = self::_call_emitter($emitter, $site_id, $filter);
                 $identity = self::_emitter_identity($emitter, $site_id, $topic, $canonical);
 
                 Realtime::emitter_hash_put($identity, sha1(json_encode($value)), self::HASH_TTL);
@@ -434,6 +435,39 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
         }
 
         return ['entries' => $counted, 'seeded' => $seeded];
+    }
+
+    /**
+     * Run one emitter with its site DECLARED, not only passed.
+     *
+     * The run loop and the seed engine execute as plain tasks - a blank virtual session,
+     * site 0 - and the site-scoped global scope is ANDED with any where('site_id', $n) an
+     * emitter writes, so an emitter handed $site_id as an argument would still read site 0:
+     * find() answers null and every scoped query matches nothing, silently. The engine is
+     * the one component that knows the site at this moment, so it declares it here for the
+     * span of the call (set_temporary_site_id() writes nothing and creates no session), and
+     * restores whatever declaration was in force before - an outer one is put back, never
+     * cleared.
+     *
+     * @param array $emitter A registry entry: class, method
+     * @param int $site_id
+     * @param array $filter
+     * @return mixed The emitter's value
+     */
+    private static function _call_emitter(array $emitter, int $site_id, array $filter)
+    {
+        $prior = Session::has_temporary_site_id() ? Session::get_site_id() : null;
+        Session::set_temporary_site_id($site_id);
+
+        try {
+            return $emitter['class']::{$emitter['method']}($site_id, $filter);
+        } finally {
+            if ($prior === null) {
+                Session::clear_temporary_site_id();
+            } else {
+                Session::set_temporary_site_id($prior);
+            }
+        }
     }
 
     /**

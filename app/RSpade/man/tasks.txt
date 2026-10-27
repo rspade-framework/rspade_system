@@ -414,6 +414,20 @@ THE RETURN CONTRACT
     The settle matches only a row still RUNNING, so a run a kill worker already settled
     KILLED keeps that verdict.
 
+    PHP ERRORS ALSO REACH THE LARAVEL LOG. A run that fails by a THROW - a PHP warning or
+    notice (raised as an ErrorException), an Error, an uncaught exception - writes the
+    error to the Laravel log as well as recording it on the run, prefixed with the run's
+    id:
+
+        [2026-10-27 10:15:02] local.ERROR: [TASK #4182] Reports_Service::rebuild: ErrorException: Undefined array key "total" in /var/www/html/rsx/services/reports_service.php:88
+
+    A FATAL error (memory exhausted, a time limit, a compile error) ends the process
+    mid-run: the run then records "PHP Fatal error: <message> in <file>:<line>" (on its
+    stderr, and on its error when it was inline) and the same line reaches the Laravel log
+    under its id, beside Laravel's own fatal entry. A failure the task RETURNS (false, an
+    integer) is its own verdict and stays on the run only, as does anything the task
+    writes to stderr itself.
+
 STARTING A RUN
 
     1. Background: Task::dispatch($service, $method, $params = [], $options = []): int

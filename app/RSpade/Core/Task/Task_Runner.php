@@ -33,6 +33,15 @@ use App\RSpade\Core\Task\Task_Run_Outcome;
  */
 class Task_Runner
 {
+    /** The error_get_last() types that end a process: a run they interrupt is told why. */
+    const FATAL_ERROR_TYPES = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR];
+
+    /** The run executing in this process right now, for the fatal-error shutdown hook. */
+    private static ?Task_Instance $_executing = null;
+
+    /** Whether this process has registered _log_fatal_on_shutdown(). */
+    private static bool $_fatal_hook_registered = false;
+
     /**
      * The claim tiers (_tasks.priority): a worker claims the lowest first, and the oldest due
      * run within a tier (Task_Worker_Command::claim_pending_run()).
@@ -183,6 +192,13 @@ class Task_Runner
 
         $lock_checkpoint = RsxLocks::_checkpoint();
 
+        if (!self::$_fatal_hook_registered) {
+            register_shutdown_function([static::class, '_log_fatal_on_shutdown']);
+            self::$_fatal_hook_registered = true;
+        }
+        $outer_executing = self::$_executing;
+        self::$_executing = $instance;
+
         try {
             if (!class_exists($class)) {
                 throw new \RuntimeException("Class not found: {$class}");
@@ -217,6 +233,8 @@ class Task_Runner
             // Throwable, not Exception: a TypeError inside a task is a failed run like any other.
             $outcome = Task_Run_Outcome::from_throwable($e);
         } finally {
+            self::$_executing = $outer_executing;
+
             if ($own_context) {
                 Session::_end_virtual();
             }
@@ -248,6 +266,15 @@ class Task_Runner
     {
         if (!$outcome->success) {
             $instance->stderr('Task failed: ' . $outcome->error);
+
+            // A failure the task THREW - a PHP warning or notice (raised as an ErrorException),
+            // an Error, an uncaught exception - is a PHP error, so it reaches the Laravel log
+            // too, under the run's id. A failure the task RETURNED (false, a return code) is
+            // the task's own verdict and is recorded on the run only.
+            if ($outcome->throwable !== null) {
+                $e = $outcome->throwable;
+                Log::error(static::log_prefix($instance) . "{$outcome->error} in {$e->getFile()}:{$e->getLine()}");
+            }
         }
         $instance->flush();
 
@@ -289,6 +316,42 @@ class Task_Runner
     }
 
     /**
+     * The prefix every Laravel log line about one run carries: its task id and its method.
+     */
+    public static function log_prefix(Task_Instance $instance): string
+    {
+        return '[TASK #' . $instance->get_id() . '] ' . class_basename($instance->get_class()) . '::' . $instance->get_method() . ': ';
+    }
+
+    /**
+     * The process is ending: when a FATAL PHP error (out of memory, a time limit, a compile
+     * error) is what ended it in the middle of a run, record the error on that run and write
+     * it to the Laravel log under the run's id. Laravel's own shutdown handler logs the same
+     * fatal without knowing which run it ended; the run row would otherwise say only that its
+     * process went away. The run is then settled as abandoned by the usual paths - the inline
+     * settle registered by Task::internal(), or the reaper for a worker run.
+     *
+     * Registered once per process, from execute(). A no-op when no run is executing or the
+     * process ended without a fatal error.
+     */
+    public static function _log_fatal_on_shutdown(): void
+    {
+        $instance = self::$_executing;
+        $error = error_get_last();
+
+        if ($instance === null || $error === null
+            || !in_array($error['type'], self::FATAL_ERROR_TYPES, true)) {
+            return;
+        }
+
+        $message = "PHP Fatal error: {$error['message']} in {$error['file']}:{$error['line']}";
+        Log::error(static::log_prefix($instance) . $message);
+
+        $instance->stderr($message);
+        $instance->flush();
+    }
+
+    /**
      * Settle an INLINE run its own process left RUNNING - a fatal error ended the request or
      * command mid-task. Registered as a shutdown function by Task::internal(); a no-op for a run
      * that settled normally.
@@ -296,6 +359,13 @@ class Task_Runner
     public static function settle_abandoned_inline(int $task_id): void
     {
         $now = now()->format('Y-m-d H:i:s.v');
+
+        // A fatal PHP error is the usual reason; when it is, the run says which.
+        $error = 'The process running this task ended before the task returned.';
+        $last = error_get_last();
+        if ($last !== null && in_array($last['type'], self::FATAL_ERROR_TYPES, true)) {
+            $error .= " PHP Fatal error: {$last['message']} in {$last['file']}:{$last['line']}";
+        }
 
         $settled = DB::table('_tasks')
             ->where('id', $task_id)
@@ -305,7 +375,7 @@ class Task_Runner
             ->update([
                 'status_id' => Task_Run_Model::STATUS_FAILED,
                 'return_code' => 1,
-                'error' => 'The process running this task ended before the task returned.',
+                'error' => $error,
                 'completed_at' => $now,
                 'updated_at' => $now,
             ]);

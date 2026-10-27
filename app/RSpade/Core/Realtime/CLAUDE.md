@@ -165,7 +165,11 @@ own column, else session site, else 0.
 `#[Emitter('Topic')]` on a public static `(int $site_id, array $filter): mixed`. Attribute is
 reflection metadata only (never define a class; linter strips `use`). Discovery = manifest
 attribute scan (like `#[Task]`). Emitter topics are ordinary topic classes; emitters run
-HEADLESS (no session — everything from `$site_id`/`$filter`).
+HEADLESS (no browser, no identity — who the value is for comes from `$filter`) but with the SITE
+DECLARED: both engines call through `Realtime_Emitter_Service::_call_emitter()`, which wraps the
+call in `Session::set_temporary_site_id($site_id)` and restores the prior declaration after, so
+site-scoped models read that site (the scope is ANDed with any `where('site_id')`, so passing the
+argument alone would read site 0).
 
 - **Optional model constraint** — `#[Emitter('Topic', 'Model_Name')]` (2nd positional arg)
   scopes the emitter to registry entries whose `filter.model` matches. Narrows the dispatch

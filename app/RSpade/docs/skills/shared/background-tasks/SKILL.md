@@ -62,6 +62,8 @@ The return value is the **return code**, compared with `===`:
 
 Data goes in `summary()`, `state()`, the queue or an attachment. A failure is **never retried** - only work a dead worker ABANDONED is (below).
 
+**A PHP error in a run also reaches the Laravel log**, prefixed `[TASK #<id>] <Service>::<method>: ` - a throw (a warning or notice raised as an `ErrorException`, an `Error`, an uncaught exception) and a FATAL that ends the process mid-run (which the run then records too, as `PHP Fatal error: ...`). Grep the log for `[TASK #` to find them. A failure the task RETURNS, and anything it writes to stderr itself, stays on the run only.
+
 ---
 
 ## Reporting - the whole `Task_Instance` API
@@ -170,6 +172,29 @@ $run_id = Task::dispatch('Records_Service', 'bulk_set_status', ['ids' => $ids, '
 - **Never on a timer, never an alias**: `#[Schedule]` or `#[Command]` beside it is a build FATAL (`TASK-RUN-AS-01`). A rerun runs bound to whoever asked for it.
 
 `rsx:man tasks`, RUNNING AS THE DISPATCHER.
+
+### A system task that serves ONE tenant declares its site
+
+Not every task is either a user's request or tenant-agnostic: a per-site sweep, a sync engine, a
+recompute for one site is system work ABOUT one site. `#[Run_As_Dispatcher]` is wrong for it (there
+is no requester, and it is refused on a `#[Schedule]`), and so is doing nothing: a plain run is at
+**site 0**, so `Model::find($id)` answers null and the site scope is **ANDed** with any
+`where('site_id', $n)` you write - passing the site through your queries reads NOTHING, silently,
+in the shape of a legitimate empty result. Declare the tenant for the span of the work and put the
+prior state back:
+
+```php
+$prior = Session::has_temporary_site_id() ? Session::get_site_id() : null;
+Session::set_temporary_site_id($site_id);       // writes nothing; has_session() answers true
+try {
+    // site-scoped models read $site_id here, find() included - no where('site_id') of your own
+} finally {
+    $prior === null ? Session::clear_temporary_site_id() : Session::set_temporary_site_id($prior);
+}
+```
+
+A task looping over several sites declares each in turn. An `#[Emitter]` needs none of this: the
+realtime engine declares the site around every emitter call (`rsx:man realtime`, EMITTERS).
 
 ---
 

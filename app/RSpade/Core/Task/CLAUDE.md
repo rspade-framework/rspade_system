@@ -43,9 +43,13 @@ says what is in this DIRECTORY and what must stay true when editing it.
   unfrozen context with `user_session_id`/`audit_session_id` null; a dispatched run always
   needs the user session, because `Task_Dispatcher_Context::begin()` rebuilds from it alone),
   `execute()` (`pre_task()`, the method, echo captured line by line as stdout, a throw is an
-  outcome, a worker's leaked locks released and named; with `$own_context` - worker and
+  outcome, a worker's leaked locks released and named; the run in progress is held in
+  `$_executing` for `_log_fatal_on_shutdown()`, registered once per process: a fatal that ends
+  the process mid-run is written to the run's stderr and to the Laravel log under
+  `log_prefix()` (`[TASK #<id>] <Service>::<method>: `); with `$own_context` - worker and
   `--once` - a fresh revision unit and virtual session before, `Session::_end_virtual()`
-  after), `settle()` (flush, guarded
+  after), `settle()` (a failure that was THROWN also goes to the Laravel log under
+  `log_prefix()`; a returned failure does not; then flush, guarded
   RUNNING -> COMPLETED/STOPPED/FAILED, schedule statistics, run lock release + re-anchor of a
   coalesced pending run, THEN the lifecycle frame - the waiters it tells must read the lock
   free), `settle_abandoned_inline()`, `running_fields()`.

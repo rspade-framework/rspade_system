@@ -180,7 +180,7 @@ public static function unpaid_total(int $site_id, array $filter): array {
 }
 ```
 
-The value is recomputed and **hash-diffed - it publishes only when it actually changed**. **There is NO timer**: non-silent model writes kick a `#[Debounce(2)]` recompute task, and that task is gated to run only while a live subscriber watches an emitter topic. The optional second argument is a model constraint, REQUIRED to compose a derived value onto the shared `Model_Changed_Topic` - which is what keeps a page on the single `subscribe(Model, id)` idiom without losing the no-churn gate. `#[Emitter]` is reflection metadata; never define the attribute class.
+The value is recomputed and **hash-diffed - it publishes only when it actually changed**. **There is NO timer**: non-silent model writes kick a `#[Debounce(2)]` recompute task, and that task is gated to run only while a live subscriber watches an emitter topic. The optional second argument is a model constraint, REQUIRED to compose a derived value onto the shared `Model_Changed_Topic` - which is what keeps a page on the single `subscribe(Model, id)` idiom without losing the no-churn gate. `#[Emitter]` is reflection metadata; never define the attribute class. **An emitter runs headless but with its site DECLARED**: the engine sets `$site_id` as the ambient site around the call, so site-scoped models read that site (`find()` works) and the emitter never writes its own `where('site_id', ...)`; who the value is for comes from `$filter`, never from `Session::`.
 
 **Aggregate ladder, in order of preference**: touch cascade (the inputs are model writes) -> `realtime_emit()` (the writer knows an aggregate moved) -> `#[Emitter]` (computed, cross-record, or non-model inputs).
 

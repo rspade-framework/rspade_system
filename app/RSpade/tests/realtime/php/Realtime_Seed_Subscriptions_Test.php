@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Realtime\Php;
 
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Realtime\Realtime_Emitter_Service;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Realtime\Php\Realtime_Emitter_Fixture_Service;
 
@@ -186,5 +187,50 @@ class Realtime_Seed_Subscriptions_Test extends Rsx_Test_Abstract
             'the reseed left a live TTL on the key'
         );
         static::__assert_count(0, Realtime::_testing_published(), 'reseeding never publishes');
+    }
+
+    /**
+     * An emitter runs with its site DECLARED, not only passed: a plain task starts at site 0,
+     * and the site scope is ANDed with any where('site_id') an emitter writes, so the argument
+     * alone reads nothing. Both engines declare it around the call and put the prior state back.
+     */
+    public static function test_both_engines_declare_the_site_around_the_emitter()
+    {
+        static::__clean_redis();
+        Realtime::_testing_start_publish_capture();
+        $before = ['site' => Session::get_site_id(), 'declared' => Session::has_temporary_site_id()];
+
+        Realtime_Emitter_Fixture_Service::$seen = [];
+        Realtime_Emitter_Fixture_Service::$next_value = 'seed';
+        Realtime_Emitter_Service::seed_subscriptions_engine([static::__entry(self::TOPIC, self::FILTER, 7)]);
+
+        static::__seed_registry(5);
+        Realtime_Emitter_Fixture_Service::$next_value = 'run';
+        Realtime_Emitter_Service::run_emitters_engine();
+
+        $seen = Realtime_Emitter_Fixture_Service::$seen;
+        static::__assert_equals(['argument' => 7, 'ambient' => 7, 'has_session' => true], $seen[0], 'the seed engine declared site 7');
+        static::__assert_equals(['argument' => 5, 'ambient' => 5, 'has_session' => true], $seen[1], 'the run loop declared site 5');
+
+        static::__assert_equals($before['site'], Session::get_site_id(), 'the ambient site is back afterwards');
+        static::__assert_equals($before['declared'], Session::has_temporary_site_id(), 'no declaration is left behind');
+    }
+
+    public static function test_an_outer_declaration_is_restored_not_cleared()
+    {
+        static::__clean_redis();
+        Realtime::_testing_start_publish_capture();
+
+        Session::set_temporary_site_id(3);
+        try {
+            Realtime_Emitter_Fixture_Service::$seen = [];
+            Realtime_Emitter_Service::seed_subscriptions_engine([static::__entry(self::TOPIC, self::FILTER, 9)]);
+
+            static::__assert_equals(9, Realtime_Emitter_Fixture_Service::$seen[0]['ambient'], 'the emitter saw its own site');
+            static::__assert_true(Session::has_temporary_site_id(), 'the outer declaration is still in force');
+            static::__assert_equals(3, Session::get_site_id(), 'the outer declaration is restored');
+        } finally {
+            Session::clear_temporary_site_id();
+        }
     }
 }

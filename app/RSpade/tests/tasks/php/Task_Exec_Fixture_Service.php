@@ -147,6 +147,30 @@ class Task_Exec_Fixture_Service extends Rsx_Service_Abstract
     }
 
     /**
+     * Reads a missing array key - a PHP warning, which the framework raises as an
+     * ErrorException, so the run fails with it.
+     */
+    #[Task('exec fixture that raises a PHP warning')]
+    public static function raises_warning(Task_Instance $task, array $params = [])
+    {
+        $empty = [];
+
+        return $empty['fixture_missing_key'];
+    }
+
+    /**
+     * Exhausts a small memory limit - a FATAL error that ends the process mid-run.
+     */
+    #[Task('exec fixture that dies of a fatal error')]
+    public static function dies_of_a_fatal_error(Task_Instance $task, array $params = [])
+    {
+        ini_set('memory_limit', '64M');
+        $hog = str_repeat('x', 256 * 1024 * 1024);
+
+        return strlen($hog);
+    }
+
+    /**
      * Always throws an \Error (not an Exception) - recorded like any other failure.
      */
     #[Task('exec fixture that raises a TypeError')]

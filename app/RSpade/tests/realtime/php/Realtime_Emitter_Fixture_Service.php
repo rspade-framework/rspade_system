@@ -26,9 +26,22 @@ class Realtime_Emitter_Fixture_Service
      */
     public static mixed $next_value = 0;
 
+    /**
+     * What each call saw: the $site_id argument beside the ambient site the session
+     * answers and whether it reports a session context - the engine declares the site
+     * around the call, so the two must agree.
+     */
+    public static array $seen = [];
+
     #[Emitter('Realtime_Test_Public_Topic')]
     public static function fixture_value(int $site_id, array $filter): mixed
     {
+        self::$seen[] = [
+            'argument' => $site_id,
+            'ambient' => \App\RSpade\Core\Session\Session::get_site_id(),
+            'has_session' => \App\RSpade\Core\Session\Session::has_session(),
+        ];
+
         return self::$next_value;
     }
 }
