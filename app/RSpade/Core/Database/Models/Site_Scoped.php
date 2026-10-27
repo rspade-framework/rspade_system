@@ -136,6 +136,40 @@ trait Site_Scoped
      *
      * @return int
      */
+    /**
+     * A site-scoped READ needs a site somebody declared. Without one the scope used to read
+     * site 0 - so find() answered null and every query matched nothing, silently, in the
+     * shape of a legitimate empty result (a plain #[Task] or command names no site). A
+     * portal request always has its site, read from the URL (Portal_Session throws for an
+     * unresolved one itself).
+     *
+     * @throws \RuntimeException when no staff site is declared
+     */
+    private static function __require_declared_site($model): void
+    {
+        // A portal request's site was resolved from the database, from its URL.
+        if (Rsx_Portal::is_portal_request()) {
+            return;
+        }
+
+        if (Session::has_declared_site()) {
+            // A declared site is checked where it first matters - here, not when it was set.
+            Session::_assert_site_exists(static::get_current_site_id(), 'Site-scoped query of ' . class_basename($model));
+
+            return;
+        }
+
+        throw new \RuntimeException(
+            'Site-scoped read of ' . class_basename($model) . ' with no site declared. '
+            . 'A plain background task, command or guest request has no site, and the scope '
+            . 'is ANDed with any where(\'site_id\', ...) of your own, so the read would match nothing. '
+            . 'Declare the tenant for the work - Session::set_temporary_site_id($site_id) '
+            . '(writes nothing; clear it in a finally), or Session::set_site_id() in a command - '
+            . 'or, to read EVERY site, wrap the query in ' . class_basename($model) . '::without_site_scope(fn () => ...). '
+            . 'See: php artisan rsx:man model (A Site-Scoped Query Needs a Declared Site)'
+        );
+    }
+
     public static function get_current_site_id(): int
     {
         if (Rsx_Portal::is_portal_request()) {
@@ -287,6 +321,7 @@ trait Site_Scoped
         // Add global scope to filter by site_id
         static::addGlobalScope('site', function (Builder $builder) {
             if (static::$apply_site_scope) {
+                static::__require_declared_site($builder->getModel());
                 $site_id = static::get_current_site_id();
                 $builder->where($builder->getModel()->getTable() . '.site_id', $site_id);
             }
@@ -298,6 +333,9 @@ trait Site_Scoped
                 // Always set site_id from session, even if already set
                 // This ensures consistency and prevents injection attacks
                 $model->site_id = static::get_current_site_id();
+                if (!Rsx_Portal::is_portal_request()) {
+                    Session::_assert_site_exists($model->site_id, 'Creating ' . class_basename($model));
+                }
             }
         });
 

@@ -112,9 +112,11 @@ abstract class Sms_Recipient_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     public static function is_blocked(int $site_id, string $number, int $category_id): bool
     {
-        $recipient = static::where('site_id', $site_id)
+        // The site is NAMED: the session's own site scope would be ANDed with it (the queue
+        // drain runs at no site), so the lookup reads exactly the named site instead.
+        $recipient = static::without_site_scope(fn () => static::where('site_id', $site_id)
             ->where('number', trim($number))
-            ->first();
+            ->first());
 
         if (!$recipient) {
             return false;

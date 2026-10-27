@@ -364,9 +364,11 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     public static function find_by_dedupe_key(int $site_id, string $dedupe_key): ?self
     {
-        return static::where('site_id', $site_id)
+        // The site is NAMED: the session's own site scope would be ANDed with it, so the
+        // lookup reads exactly the named site instead.
+        return static::without_site_scope(fn () => static::where('site_id', $site_id)
             ->where('dedupe_key', $dedupe_key)
-            ->first();
+            ->first());
     }
 
     /**

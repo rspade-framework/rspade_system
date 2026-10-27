@@ -348,6 +348,8 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
      */
     public static function test_orm_fetch_denial_is_indistinguishable_from_not_found()
     {
+        // The open-gate half reads User_Model, a site-scoped model: it needs a declared site.
+        static::__acting_as_user(1);
         static::__install(['denies']);
 
         $denied = Orm_Controller::fetch(static::__ajax_request(), ['model' => 'User_Model', 'ids' => [1]]);

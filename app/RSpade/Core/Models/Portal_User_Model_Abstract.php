@@ -317,9 +317,11 @@ abstract class Portal_User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      */
     public static function find_by_email(int $site_id, string $email): ?self
     {
-        return static::where('site_id', $site_id)
+        // The site is NAMED: the session's own site scope would be ANDed with it, so the
+        // lookup reads exactly the named site instead.
+        return static::without_site_scope(fn () => static::where('site_id', $site_id)
             ->where('email', strtolower(trim($email)))
-            ->first();
+            ->first());
     }
 
     // =========================================================================

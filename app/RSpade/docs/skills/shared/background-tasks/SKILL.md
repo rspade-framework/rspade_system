@@ -177,10 +177,10 @@ $run_id = Task::dispatch('Records_Service', 'bulk_set_status', ['ids' => $ids, '
 
 Not every task is either a user's request or tenant-agnostic: a per-site sweep, a sync engine, a
 recompute for one site is system work ABOUT one site. `#[Run_As_Dispatcher]` is wrong for it (there
-is no requester, and it is refused on a `#[Schedule]`), and so is doing nothing: a plain run is at
-**site 0**, so `Model::find($id)` answers null and the site scope is **ANDed** with any
-`where('site_id', $n)` you write - passing the site through your queries reads NOTHING, silently,
-in the shape of a legitimate empty result. Declare the tenant for the span of the work and put the
+is no requester, and it is refused on a `#[Schedule]`), and so is doing nothing: a plain run has
+**no site**, and a site-scoped read there **THROWS** (`Site-scoped read of X_Model with no site
+declared`). Passing the site through your own `where('site_id', $n)` does not help - the scope is
+**ANDed** with it, never replaced by it. Declare the tenant for the span of the work and put the
 prior state back:
 
 ```php
@@ -193,7 +193,9 @@ try {
 }
 ```
 
-A task looping over several sites declares each in turn. An `#[Emitter]` needs none of this: the
+A task looping over several sites declares each in turn; a task that means EVERY site at once uses
+`Model::without_site_scope(fn () => ...)`. The declared site must exist - the first scoped query
+checks it and throws for an id with no `sites` row. An `#[Emitter]` needs none of this: the
 realtime engine declares the site around every emitter call (`rsx:man realtime`, EMITTERS).
 
 ---

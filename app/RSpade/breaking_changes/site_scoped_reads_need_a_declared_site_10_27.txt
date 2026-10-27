@@ -1,0 +1,122 @@
+A SITE-SCOPED READ WITH NO SITE DECLARED NOW THROWS; A DECLARED SITE MUST EXIST
+Date: 2026-10-27
+
+IF YOU DO NOTHING: any background task, command or guest code of yours that reads a site-scoped model without declaring a site - most often a #[Task] run by the cron scheduler or a worker - now throws "Site-scoped read of X_Model with no site declared" where it used to read nothing, and a declared site id with no sites row throws "there is no site N" at its first query.
+
+SUMMARY
+    Category 2. Two changes to site scoping, both turning a silent wrong answer
+    into a loud one.
+
+    1. A site-scoped READ needs a DECLARED site. Previously a process with no
+       site (a plain #[Task] run by a worker or the cron scheduler, a command
+       that named none, a guest request) read as "site 0": Model::find($id)
+       answered NULL and every scoped query matched nothing - including one
+       that named its site with its own where('site_id', $n), because the scope
+       is ANDed with your conditions, never replaced by them. Such code
+       returned empty results that looked legitimate. It now throws.
+
+    2. A declared site must EXIST. Session::set_site_id(),
+       set_temporary_site_id(), impersonate(), set_request_site_id_override()
+       and Portal_Session::set_site_id() still only record the id (setting one
+       queries nothing); the first site-scoped read or create that uses it
+       checks for a sites row (soft-deleted included) and throws when there is
+       none.
+
+    Unchanged: creating a record with no site declared still stamps the
+    session's site (0, the Default site) - only READS need a declaration. Site
+    0 may still be declared by name (Session::set_site_id(0)). A portal
+    request's site comes from its URL, as before. Realtime #[Emitter]s run with
+    their site declared by the engine, and #[Run_As_Dispatcher] tasks run as
+    the requester's site.
+
+THE CHANGE
+    - Site_Scoped's read scope throws when Session::has_declared_site() is
+      false (new; true for a signed-in staff session bound to a site, an API
+      key, set_site_id(), impersonate(), set_temporary_site_id(), or a request
+      override).
+    - The read scope and the creating hook check the current site exists,
+      once per process.
+    - Framework lookups that NAME their site now read exactly that site:
+      Email_Recipient_Model::is_blocked(), Sms_Recipient_Model::is_blocked(),
+      Email_Queue_Model::find_by_dedupe_key(), Sms_Queue_Model::find_by_dedupe_key()
+      and Portal_User_Model::find_by_email(). The two is_blocked() lookups had
+      the additive-scope defect themselves: a send drained at no site read
+      every other site's opt-out as "not blocked".
+    - Full rule: php artisan rsx:man model, "A Site-Scoped Query Needs a
+      Declared Site"; skill rspade:background-tasks, "A system task that serves
+      ONE tenant declares its site".
+
+ACTION REQUIRED
+    1. AUDIT EVERY BACKGROUND TASK AND COMMAND OF YOURS THAT TOUCHES SITE-SCOPED
+       DATA - start with the scheduled ones (#[Schedule], run by cron through a
+       worker, which starts every run with no site):
+
+           grep -rln "#\[Task\|#\[Command\|#\[Emitter" rsx/
+
+       For each, decide which it is, and make it say so:
+
+       a. It works for ONE site at a time (a per-tenant sweep, a sync, a
+          recompute): declare the site for the span of the work.
+
+              $prior = Session::has_temporary_site_id() ? Session::get_site_id() : null;
+              Session::set_temporary_site_id($site_id);
+              try {
+                  // site-scoped reads here read $site_id
+              } finally {
+                  $prior === null ? Session::clear_temporary_site_id()
+                                  : Session::set_temporary_site_id($prior);
+              }
+
+          A task that loops over sites declares each in turn.
+
+       b. It means EVERY site at once (a global purge, a cross-tenant report):
+          wrap the query in without_site_scope():
+
+              Invitation_Model::without_site_scope(fn () => Invitation_Model::where(...)->update([...]));
+
+       c. It is a person's request moved to the background: it should already
+          be #[Run_As_Dispatcher] (breaking_changes run_as_dispatcher_tasks_10_21).
+
+       Then RUN each one - rsx:task:run <Service> <method> from a shell, or
+       Task::dispatch() and let a worker take it - and confirm it no longer
+       throws. A task that "worked" before may have been silently doing
+       nothing; check that it now does what it was written to do.
+
+    2. Remove where('site_id', $n) clauses you added to work around a missing
+       site. Either declare the site (1a) - and drop the clause, which the
+       scope now applies - or keep the clause inside without_site_scope() (1b).
+       A scoped query that names its site is never a substitute for declaring
+       it.
+
+    3. Any helper of yours that takes a $site_id argument and reads a
+       site-scoped model with it (a common shape for code called from a task)
+       has the same choice: declare the site around the read, or read inside
+       without_site_scope() with the explicit where.
+
+    4. Guest pages and public endpoints: a guest request has no site unless
+       your Main::init() or the controller declares one. A public page or a
+       model fetch with #[Auth('public')] that reads a site-scoped model now
+       throws for a guest; declare the site the page serves
+       (Session::set_site_id($site_id) for the request) or read across sites
+       with without_site_scope() if that is what you mean.
+
+    5. Tests that switch to a fictional site id (Session::set_site_id(999),
+       __acting_as_site(2) with no such row) now throw at the first query:
+       create a real Site_Model row for the test (it rolls back with the test).
+
+    6. If you override Portal_User_Model and redeclared find_by_email(), make it
+       read inside without_site_scope() as the framework's base now does.
+
+    Reference: system/app/RSpade/resource/reference_app/services/portal_invitation_service.php
+    (expire_stale(): an every-site sweep through without_site_scope()), and
+    system/app/RSpade/resource/reference_app/resource/migrations/2026_07_16_143237_import_sample_documents.php
+    (a lookup that decides which site to use, made across sites).
+
+VERIFICATION
+    - Every task and command you audited runs to completion with
+      rsx:task:run, and a worker-run (dispatched or scheduled) instance of each
+      completes with no "no site declared" failure: php artisan rsx:health shows
+      no new "Task Schedule Failures", and /_sys/tasks shows the runs COMPLETED.
+    - grep -rn "no site declared\|there is no site" on your Laravel log after a
+      day of cron runs finds nothing.
+    - Your application test suite passes.

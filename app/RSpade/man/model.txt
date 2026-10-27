@@ -497,21 +497,33 @@ Admin Operations (Bypass Site Scoping):
         return Project_Model::where('site_id', 2)->get();
     });
 
-The Scope Is Additive - Naming a Site in a Query Does Not Change It:
+A Site-Scoped Query Needs a Declared Site:
 
-    The scope is ANDed with your own conditions, never replaced by them. A
-    where('site_id', $n) of your own is ADDED to the session's site, not
-    substituted for it:
+    A site-scoped READ with no site declared THROWS:
 
-        // session site_id = 0 (a plain background task, a command)
+        RuntimeException: Site-scoped read of Project_Model with no site declared. ...
+
+    A site is declared by a signed-in staff session bound to a site, a portal
+    request (its URL), an API key, Session::set_site_id() (a guest request's
+    override, or a command / task / test), Session::impersonate(), or
+    Session::set_temporary_site_id(). Nothing else is: a plain #[Task] run, a
+    command that named no site, a guest request that declared none. Site 0 (the
+    Default site) is a real site and may be declared by name; it is never
+    assumed. Session::has_declared_site() answers the question.
+
+    Why it throws rather than reading "site 0": the scope is ANDed with your own
+    conditions, never replaced by them. A where('site_id', $n) of your own is
+    ADDED to the session's site, not substituted for it:
+
         Project_Model::where('site_id', 1)->get();
-        // SELECT * FROM projects WHERE site_id = 1 AND projects.site_id = 0  -> nothing
+        // SELECT * FROM projects WHERE site_id = 1 AND projects.site_id = <session site>
 
-    So with no site in force - a plain #[Task] run, an artisan command - every
-    site-scoped read matches nothing and Model::find($id) answers NULL, whatever
-    site you named, and silently: zero rows look like a legitimate empty
-    result. Code that serves ONE site there DECLARES it for the span of the
-    work, and the scope then reads that site:
+    With no site declared, every such read used to match nothing and
+    Model::find($id) answered NULL, whatever site you named - silently, in the
+    shape of a legitimate empty result.
+
+    So code that serves ONE site DECLARES it for the span of the work, and the
+    scope then reads that site:
 
         $prior = Session::has_temporary_site_id() ? Session::get_site_id() : null;
         Session::set_temporary_site_id($site_id);   // writes nothing, creates no session
@@ -522,10 +534,21 @@ The Scope Is Additive - Naming a Site in a Query Does Not Change It:
                             : Session::set_temporary_site_id($prior);
         }
 
-    Code that means EVERY site opts out with without_site_scope(). Naming the
-    site in the query does neither. A realtime #[Emitter] is already run with
-    its site declared (rsx:man realtime); a task bound to its dispatcher
-    (#[Run_As_Dispatcher]) already runs as the requester's site (rsx:man tasks).
+    Code that means EVERY site - or names its site itself - opts out with
+    without_site_scope(fn () => Model::where('site_id', $site_id)->...).
+    Naming the site in a scoped query does neither. A realtime #[Emitter] is
+    already run with its site declared (rsx:man realtime); a task bound to its
+    dispatcher (#[Run_As_Dispatcher]) already runs as the requester's site
+    (rsx:man tasks).
+
+    THE DECLARED SITE MUST EXIST. The setters only record a site; the first
+    site-scoped read or create of the process confirms that a sites row with
+    that id exists (soft-deleted included) and throws when it does not:
+
+        RuntimeException: Site-scoped query of Project_Model: there is no site 1000 (no sites row with that id).
+
+    Creating a record with no site declared still stamps the session's site
+    (0, the Default site); only reads require a declaration.
 
 SITE SCOPING AS AN ADOPTABLE TRAIT (Site_Scoped):
 

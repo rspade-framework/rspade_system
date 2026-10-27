@@ -1688,6 +1688,63 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
+     * Whether a staff site has been DECLARED for this execution - as opposed to
+     * get_site_id() answering 0 only because nothing said otherwise.
+     *
+     * Declared: an API key's identity, set_temporary_site_id(), a request override
+     * (set_site_id() for a guest, the subdomain override), a virtual session's site
+     * (set_site_id() / impersonate() in a command, task or test - site 0 included, when it
+     * was named), or a signed-in staff user session bound to a site. Not declared: a plain
+     * task or command that named no site, a guest request that declared none, and a
+     * sign-in not yet bound to a site.
+     *
+     * A site-scoped read with no site declared THROWS (Site_Scoped): reading "site 0"
+     * by default answered every query with nothing, silently.
+     *
+     * @return bool
+     */
+    public static function has_declared_site(): bool
+    {
+        if (self::$_api_identity !== null || self::$_temporary_site_id !== null || self::$_request_site_id_override !== null) {
+            return true;
+        }
+
+        if (self::__is_virtual()) {
+            return self::$_cli_site_id !== null;
+        }
+
+        return (int) (self::__user_session(self::REALM_STAFF)?->site_id ?? 0) > 0;
+    }
+
+    /** Site ids this process has confirmed exist (a site row is soft-deleted, never removed). */
+    private static array $_existing_site_ids = [];
+
+    /**
+     * Refuse a site id with no sites row behind it. The setters only RECORD a site - setting
+     * one is a no-op until something uses it, and a boot-time declaration may precede the
+     * sites table itself (migrate on a fresh database) - so the check is made where the site
+     * MATTERS: the first site-scoped read or create (Site_Scoped). A typo or a stale id would
+     * otherwise be the tenant every scoped query uses, silently. Confirmed once per process.
+     * A soft-deleted site still EXISTS here - its data does, and administrative work on it
+     * must be able to declare it; whether a deleted site may be SIGNED IN to is the
+     * membership rules' question, not this one.
+     *
+     * @throws \RuntimeException
+     */
+    public static function _assert_site_exists(int $site_id, string $call): void
+    {
+        if (isset(self::$_existing_site_ids[$site_id])) {
+            return;
+        }
+
+        if (!Site_Model::withTrashed()->where('id', $site_id)->exists()) {
+            throw new \RuntimeException("{$call}: there is no site {$site_id} (no sites row with that id).");
+        }
+
+        self::$_existing_site_ids[$site_id] = true;
+    }
+
+    /**
      * MISUSE GUARD - Session is NOT a session-variable bag; there is no get($key).
      *
      * Session extends the Eloquent model for the _sessions table, so a bare

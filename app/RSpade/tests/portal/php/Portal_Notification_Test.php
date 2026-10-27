@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Portal\Php;
 
 use App\RSpade\Core\Models\Portal_Notification_Model;
 use App\RSpade\Core\Models\Portal_User_Model;
+use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -198,7 +199,11 @@ class Portal_Notification_Test extends Rsx_Test_Abstract
 
         // Move the staff Session (which drives the model global scope) to another
         // site; the site-A notification must be invisible there.
-        Session::set_site_id(self::SITE_ID + 999);
+        $site_b = new Site_Model();
+        $site_b->slug = 'notification-isolation-' . uniqid();
+        $site_b->name = 'Notification isolation probe tenant';
+        $site_b->save();
+        Session::set_site_id((int) $site_b->id);
         static::__assert_count(0, Portal_Notification_Model::feed($user->id), 'notification in site A invisible from site B');
         static::__assert_equals(0, Portal_Notification_Model::unread_count($user->id));
 

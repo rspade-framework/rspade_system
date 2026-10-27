@@ -122,6 +122,17 @@ SIGNING IN AND OUT
         anywhere - for a first-run request, a webhook that names its tenant,
         a script. Outranks everything but an API identity.
 
+    Session::has_declared_site(): bool
+        Whether a staff site has been DECLARED - by a signed-in session bound
+        to a site, an API key, or one of the setters above - rather than
+        get_site_id() answering 0 because nothing said otherwise. A
+        site-scoped READ with no site declared throws (rsx:man model, A
+        Site-Scoped Query Needs a Declared Site).
+
+    The setters RECORD a site and query nothing. The first site-scoped read or
+    create that uses it confirms a sites row with that id exists, once per
+    process, and throws when it does not ("there is no site N").
+
     Session::begin_impersonation($login_user_id) / stop_impersonation()
         "Sign in as this user" from the current staff sign-in, and back.
         IMPERSONATION in part two.

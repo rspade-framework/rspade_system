@@ -90,6 +90,10 @@ class Api_File_Route_Bearer_Test extends Rsx_Test_Abstract
 
     private static function __attachment(): File_Attachment_Model
     {
+        // A previous dispatch cleared the CLI identity declaration; the attachment is created
+        // (and looked up) on the key holder's site.
+        static::__acting_as_user(1);
+
         $site_id = (int) static::__key_user()->site_id;
         $bytes = "file route bearer fixture " . bin2hex(random_bytes(12)) . "\n";
         $attachment = File_Attachment_Model::create_from_string($bytes, 'bearer_fixture.txt', ['site_id' => $site_id]);
