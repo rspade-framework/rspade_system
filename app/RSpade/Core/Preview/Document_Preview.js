@@ -53,9 +53,12 @@ class Document_Preview extends Component {
         // A refetch a frame caused is not somebody opening the document, so it does not ask the
         // server to attend the view (File_Preview_Controller::get_preview_info, $attend). Were it
         // to, a retry whose outcome is another failure would publish a frame, the frame a
-        // refetch, the refetch another retry - for as long as the page stayed open.
+        // refetch, the refetch another retry - for as long as the page stayed open. The fact
+        // travels as an ARGUMENT, never as this.state: on_load() may read only this.args, and a
+        // load shared by identical components is keyed on their args, so the argument is what
+        // keeps an attending load and a frame's refetch from being served as one.
         this.subscribe(File_Attachment_Model, int(this.args.attachment_id), () => {
-            this.state.frame_refetch = true;
+            this.args.attend = false;
             this.refresh();
         });
     }
@@ -65,7 +68,7 @@ class Document_Preview extends Component {
         try {
             this.data.info = await File_Preview_Controller.get_preview_info({
                 attachment_id: this.args.attachment_id,
-                attend: !this.state.frame_refetch,
+                attend: this.args.attend !== false,
             });
         } catch (e) {
             // SURFACE the failure, never substitute a payload for it (the catch-substitution rule):

@@ -176,6 +176,48 @@ async function run() {
             late !== 'nothing' && late.state === 'loaded' && late.attachment_id === ids.png.id && late.width === 64,
             late);
 
+        // -- PREVIEW-ATTEND: a mount attends the view, a realtime frame's refetch does not ------
+        // The frame is delivered the way the relay's would be, through the component's own watch
+        // entry; with realtime off there is no subscription and only the mount half is asserted.
+        const attend = await page.evaluate(async (id) => {
+            const real = File_Preview_Controller.get_preview_info;
+            const sent = [];
+            File_Preview_Controller.get_preview_info = (params) => {
+                sent.push(params.attend);
+                return real.call(File_Preview_Controller, params);
+            };
+            try {
+                window.__preview.mount('attend', { attachment_id: id });
+                await window.__preview.settled('attend');
+                const component = window.__preview.mounted.attend.component;
+
+                let framed = null;
+                if (Rsx_Realtime.is_enabled()) {
+                    const entry = Array.from(Rsx_Realtime._watches.values())
+                        .find((w) => w.filter && w.filter.model === 'File_Attachment_Model' && int(w.filter.id) === id);
+                    framed = !!entry;
+                    if (entry) {
+                        const before = sent.length;
+                        Rsx_Realtime._fire_callbacks(entry, { model: 'File_Attachment_Model', id: id }, false);
+                        while (sent.length === before) {
+                            await new Promise((resolve) => requestAnimationFrame(resolve));
+                        }
+                        await component.ready();
+                    }
+                }
+                return { sent, framed, state: component.data.error_data ? 'error' : 'ok' };
+            } finally {
+                File_Preview_Controller.get_preview_info = real;
+            }
+        }, ids.png.id);
+        check('a mounted preview asks the server to attend the view, and loads without error',
+            attend.sent[0] === true && attend.state === 'ok', attend);
+        if (attend.framed !== null) {
+            // The subscription's resync (its ack fires the callback once) is a refetch too.
+            check('a realtime frame\'s refetch does not ask the server to attend',
+                attend.framed === true && attend.sent.length >= 2 && attend.sent.slice(1).every((a) => a === false), attend);
+        }
+
         // -- PREVIEW-EVENT-DYNAMIC: a dynamically instantiated viewer (Markdown_Viewer) ---------
         const markdown = await stage('markdown', ids.md.id);
         check('a dynamically instantiated viewer that reports for itself is forwarded, once',
