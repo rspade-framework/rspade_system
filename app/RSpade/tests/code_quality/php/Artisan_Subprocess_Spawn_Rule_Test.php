@@ -25,11 +25,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Fixtures are written to temp files and the rule is driven directly.
  *
- * The LINE-NUMBER test is not incidental. The first implementation of this rule scanned
- * FileSanitizer::sanitize_php()['lines'], which is not index-aligned with the file (194
- * entries for a 182-line file), and consequently reported line 163 for a call on line 153.
- * The rule now tokenizes the file and takes the line from the token. See backlog B-86,
- * which tracks the same latent defect in the other rules that use that pattern.
+ * The LINE-NUMBER test pins that the reported line is the one the call is written on. The
+ * rule tokenizes the file and takes the line from the token.
  */
 class Artisan_Subprocess_Spawn_Rule_Test extends Rsx_Test_Abstract
 {
@@ -77,7 +74,7 @@ class Artisan_Subprocess_Spawn_Rule_Test extends Rsx_Test_Abstract
         // The two banned-outright names are ASSEMBLED rather than written as literals:
         // PHP-EXEC-01 and PHP-PROC-01 scan text, so a fixture string containing them reads
         // to those rules as a real call in this file. (That imprecision is exactly what
-        // ARTISAN-SPAWN-01 avoids by tokenizing - see backlog B-86.) Same technique
+        // ARTISAN-SPAWN-01 avoids by tokenizing.) Same technique
         // Parent_Call_Chain_Rule_Test uses to keep its own fixtures from being misread.
         $banned_exec = 'exe' . 'c';
         $banned_proc = 'proc_' . 'open';
@@ -159,7 +156,7 @@ class Artisan_Subprocess_Spawn_Rule_Test extends Rsx_Test_Abstract
     }
 
     // =====================================================================
-    // Position reporting (see B-86)
+    // Position reporting
     // =====================================================================
 
     public static function test_the_reported_line_is_the_real_line()

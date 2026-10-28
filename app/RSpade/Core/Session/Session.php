@@ -349,6 +349,7 @@ class Session extends Rsx_System_Model_Abstract
     private static $_login_user = null; // Authentication identity (Login_User_Model)
 
     private static $_user = null; // Site-specific user (User_Model)
+    private static $_user_key = null; // "<login_user_id>:<site_id>" $_user was resolved for
 
     private static $_session_token = null;
 
@@ -1811,7 +1812,8 @@ class Session extends Rsx_System_Model_Abstract
     /**
      * Get site-specific user ID for current session
      * This is the users.id (site-specific), not login_users.id
-     * In CLI mode: returns static CLI property
+     * In CLI mode: the user impersonate() named, otherwise the one derived from the declared
+     * login identity + site exactly as a web request derives it (get_user())
      * @return int|null
      */
     public static function get_user_id()
@@ -1821,8 +1823,8 @@ class Session extends Rsx_System_Model_Abstract
             return self::$_api_identity['user_id'];
         }
 
-        // CLI mode: return static property
-        if (self::__is_virtual()) {
+        // CLI mode: the user impersonate() named; otherwise derived like a web request's
+        if (self::__is_virtual() && self::$_cli_user_id !== null) {
             return self::$_cli_user_id;
         }
 
@@ -1872,10 +1874,14 @@ class Session extends Rsx_System_Model_Abstract
             return null;
         }
 
-        if (empty(self::$_user)) {
+        // Keyed on the pair: a later set_site_id() or temporary site must not answer the
+        // previous site's user.
+        $key = $login_user_id . ':' . $site_id;
+        if (empty(self::$_user) || self::$_user_key !== $key) {
             self::$_user = User_Model::where('login_user_id', $login_user_id)
                 ->where('site_id', $site_id)
                 ->first();
+            self::$_user_key = $key;
         }
 
         return self::$_user;
@@ -3456,7 +3462,7 @@ class Session extends Rsx_System_Model_Abstract
      *
      * VOCABULARY: framework only. can_admin_role() is a framework primitive on the app's
      * Permission class (Permission_Abstract::can_admin_role, resolved by simple name through
-     * the autoloader - same spelling as Rsx_Formdata_Generator_Controller). An #[Auth_Check]
+     * the autoloader). An #[Auth_Check]
      * name is APPLICATION vocabulary and must never appear in core; a check name that exists
      * in one app and not another would make this function undefined behavior downstream.
      *

@@ -40,9 +40,14 @@ class Manifest_Scanner
     * BUMP IT WHEN REFLECTION_CACHED_KEYS CHANGES. An entry written by an older version is
     * treated as a miss and overwritten under the same key (the file's hash), so the fix is
     * self-healing and leaves no orphan directory behind. v2 added `extends_fqcn`, which v1
-    * omitted.
+    * omitted. v3: `public_instance_methods` carries the instance methods of the class's
+    * non-vendor traits.
+    *
+    * Bump it, too, when what an existing key HOLDS changes: the cache is keyed on the source
+    * file's content, never on this extractor, so an entry written by an older extractor is
+    * restored for an unchanged file until the version moves.
     */
-    public const REFLECTION_CACHE_VERSION = 2;
+    public const REFLECTION_CACHE_VERSION = 3;
 
     public const REFLECTION_CACHED_KEYS = [
         'abstract',
@@ -768,16 +773,27 @@ class Manifest_Scanner
             $data['public_static_methods'] = $public_static_methods;
         }
 
-        // Extract public instance methods for code-quality rules
+        // Public instance methods: the class's own and its traits', exactly as the static map
+        // above takes them. An instance method a TRAIT supplies (a #[Relationship], a
+        // #[Realtime_Touch]) is the class's method - leaving it out made its attribute
+        // invisible to every registry reading this map.
         $public_instance_methods = [];
         foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
-            // Skip inherited methods unless from same file
-            if ($method->getFileName() !== $file_path) {
+            // Skip static methods - we only want instance methods
+            if ($method->isStatic()) {
                 continue;
             }
 
-            // Skip static methods - we only want instance methods
-            if ($method->isStatic()) {
+            $method_file = $method->getFileName();
+
+            // A VENDOR trait's instance methods are not taken: they carry no RSX attribute,
+            // and listing them (Laravel's authorize(), restore(), ...) would read to the
+            // instance-method rules as methods this class declares.
+            $is_from_trait = in_array($method_file, $trait_files)
+                && !str_contains(str_replace('\\', '/', (string) $method_file), '/vendor/');
+
+            // Skip inherited methods from parent classes (but include trait methods)
+            if (rsxrealpath($method_file) !== $normalized_file_path && !$is_from_trait) {
                 continue;
             }
 
@@ -790,6 +806,11 @@ class Manifest_Scanner
                 'visibility' => 'public',  // Always public since we filtered for public
                 'line' => $method->getStartLine(),
             ];
+
+            // For trait methods, store the file path (only if different from class file)
+            if ($is_from_trait) {
+                $method_data['file'] = $method_file;
+            }
 
             // Extract method attributes (using simple names, not FQCNs)
             $method_attributes = [];

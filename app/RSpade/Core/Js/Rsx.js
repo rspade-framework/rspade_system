@@ -1690,11 +1690,9 @@ class Rsx {
      */
     static async validate_session() {
         try {
-            // Call the session validation endpoint. Pass is_portal so the server
-            // validates against the portal session (Portal_Session) on portal pages
-            // rather than the staff session (which is empty in portal context and
-            // would otherwise force a refresh on every navigation).
-            const server_state = await Spa_Session_Controller.get_state({ is_portal: Rsx_Portal.is_portal() });
+            // The server answers for the experience the request arrives on: a portal page's
+            // call is rebased onto the portal channel, so it reads the portal session.
+            const server_state = await Spa_Session_Controller.get_state();
 
             // Compare with current client state
             const client_state = window.rsxapp;

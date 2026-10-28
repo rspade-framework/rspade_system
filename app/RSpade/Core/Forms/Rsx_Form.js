@@ -920,20 +920,4 @@ class Rsx_Form extends Component {
 
         delete action[this._parking_key];
     }
-
-    // =========================================================================
-    // Debug seeding
-    // =========================================================================
-
-    /** Fill fields from their $seeder endpoints (debug tooling). */
-    async seed() {
-        const promises = [];
-        this.$.shallowFind('.Form_Field').each(function () {
-            const component = $(this).component();
-            if (component && 'seed' in component) {
-                promises.push(component.seed());
-            }
-        });
-        await Promise.all(promises);
-    }
 }

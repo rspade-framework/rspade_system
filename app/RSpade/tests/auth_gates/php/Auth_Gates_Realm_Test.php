@@ -194,7 +194,7 @@ class Auth_Gates_Realm_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(
             Auth_Gates::REALM_STAFF,
-            $surfaces['Rsx_Formdata_Generator_Controller::email']['realm']
+            $surfaces['Rsx_Dark_Mode_Controller::get_settings']['realm']
         );
     }
 

@@ -302,6 +302,10 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
      abstract that executes AS the abstract. Both silent at runtime
    - NOT covered (legitimate on an abstract): `#[Relationship]` and `#[Auth_Check]` (consumed
      through a lineage union), `#[Replaceable]`, `#[Instantiatable]`, `#[Monoprogenic]`, `#[Sealed]`
+   - Second half: a class declaring one of those attributes is FINAL - no class may extend a
+     CONCRETE carrier (directly or through an abstract), reported on the subclass; covers the
+     carriers with no `#[Monoprogenic]` base (`#[OnEvent]` handlers, `#[Health_Check]` classes).
+     The model-fetch exemption holds in both halves
    - Cross-file, pure compiled-manifest walk (no AST); runs at manifest-time; honors
      `@ABSTRACT-ATTR-01-EXCEPTION`
    - Severity: Critical

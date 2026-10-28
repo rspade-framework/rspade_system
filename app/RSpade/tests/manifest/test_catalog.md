@@ -96,3 +96,11 @@ that only regroups data already in the manifest derives its section in full, eve
 | `Repeated_Attribute_Test::test_the_same_attribute_with_different_arguments_is_allowed` | php | implemented | Two groups, bare beside a group, two routes, and a positional beside a named spelling all pass. |
 | `Repeated_Attribute_Test::test_every_kind_of_declaration_is_checked` | php | implemented | A repeat on a property, a constant and a parameter is refused, each named. |
 | `Repeated_Attribute_Test::test_the_class_itself_is_checked` | php | implemented | A repeat on the class declaration is refused. |
+
+`Manifest_Trait_Instance_Methods_Test` - the instance map takes a class's traits' methods.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| TRAIT-INST-01 | a trait's public instance method is in the class's `public_instance_methods`, with its attribute and its `file`; the class's own stays; a trait static stays in the static map only | php | fixture trait with `#[Relationship]` on an instance method + a static, used by a fixture class, through `_extract_reflection_data()` | present, attributed, `file` = the trait file | implemented | 2026-10-28 |
+| TRAIT-INST-02 | a vendor trait's instance methods are not recorded | php | the same class using `ValidatesRequests` | no `validate` | implemented | 2026-10-28 |
+

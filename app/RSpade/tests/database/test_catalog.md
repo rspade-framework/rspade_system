@@ -87,7 +87,7 @@ it is written on a path save() never sees, and a restore CLEARS it.
 
 | ID | Purpose | Type | Reason | Status |
 |----|---------|------|--------|--------|
-| db-lint-01 | DB-UNBOUNDED-01 fires on a bare get()/pluck() on an $unbounded model, and stays silent for limit()/result_set() | cli | verified manually by planting violations in a framework file; a permanent test needs a fixture-file harness the rsx:check runner does not have yet | deferred |
+| db-lint-01 | DB-UNBOUNDED-01 fires on a bare get()/pluck() on an $unbounded model - rooted at a builder method or at the `Session::_portal_query()` seam - and stays silent for first()/limit()/result_set() | php | `tests/code_quality/php/Unbounded_Result_Set_Rule_Test.php`, fixtures written under a scratch `.../app/RSpade/...` path and the rule driven directly | implemented 2026-10-28 |
 
 ## Actor model layer (Actor_Model_Test)
 

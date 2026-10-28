@@ -66,8 +66,9 @@ bundle)**
   session the request HOLDS, never the incoming cookie, so a session created or rotated while
   a page rendered still matches). Called only by
   `Rsx.validate_session()` (`Core/Js/Rsx.js`) after a navigation; a mismatch is a
-  `window.location.reload()`. The caller passes `is_portal` because an Ajax request cannot
-  self-detect the portal context server-side - it drives staleness only, never authorization.
+  `window.location.reload()`. Which session it reports (staff or portal) is decided from the
+  request - `Rsx_Portal::is_portal_request()` - since a portal page's Ajax arrives on the portal
+  channel; the client sends nothing.
 
 ## How a dispatch runs
 

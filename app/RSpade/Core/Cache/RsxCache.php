@@ -771,11 +771,22 @@ class RsxCache
      * It dials its OWN connection and PINGs it rather than going through _init(): the probe
      * must report an unreachable server as a FAIL row, where _init() fails the process.
      *
+     * Under a raised maintenance flag Redis is stopped on purpose, so the row is INFO. The
+     * flag is read off DISK: a probe reports the box as it is right now.
+     *
      * @return array
      */
     #[Health_Check('Redis Connectivity')]
     public static function redis_connectivity(): array
     {
+        if (Framework_Maintenance::is_active_on_disk()) {
+            return [
+                'status' => 'INFO',
+                'detail' => 'the maintenance flag is up - Redis is stopped on purpose'
+                    . ' (cache reads miss, writes are dropped)',
+            ];
+        }
+
         $host = env('REDIS_HOST', '127.0.0.1');
         $port = (int) env('REDIS_PORT', 6379);
         $socket = env('REDIS_SOCKET', null);

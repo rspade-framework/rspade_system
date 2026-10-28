@@ -28,7 +28,8 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  * Detected (AST):
  *   - ->get() / ->pluck() reached through a Model::where()/query()/... builder chain whose
- *     root model declares $unbounded.
+ *     root model declares $unbounded, or through a framework query seam that returns such
+ *     a builder (Session::_portal_query()).
  *
  * Suppressed when:
  *   (a) the chain carries a bound or an iteration strategy - ->limit(), ->take(),
@@ -50,6 +51,13 @@ class UnboundedResultSet_CodeQualityRule extends CodeQualityRule_Abstract
         'withTrashed', 'onlyTrashed', 'orderBy', 'orderByDesc', 'select', 'groupBy',
         'having', 'latest', 'oldest', 'when', 'has', 'doesntHave',
     ];
+
+    /**
+     * Framework query SEAMS: static methods that return a builder over their model's own
+     * table, so a read rooted at one is a read of that model. Session::_portal_query() is
+     * the one every portal session read goes through.
+     */
+    private const SEAM_ROOT_METHODS = ['_portal_query'];
 
     /**
      * Anything in the chain that already bounds the read or turns it into an iteration.
@@ -177,6 +185,7 @@ class UnboundedResultSet_CodeQualityRule extends CodeQualityRule_Abstract
 
         $root_method = $node->name->name;
         if (!in_array($root_method, self::BUILDER_ROOT_METHODS, true)
+            && !in_array($root_method, self::SEAM_ROOT_METHODS, true)
             && !in_array($root_method, self::BOUNDING_METHODS, true)) {
             return;
         }

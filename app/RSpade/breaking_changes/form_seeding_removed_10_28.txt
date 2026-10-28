@@ -1,0 +1,50 @@
+FORM SEEDING REMOVED: Rsx_Formdata_Generator_Controller AND Rsx_Form.seed() ARE GONE
+Date: 2026-10-28
+
+IF YOU DO NOTHING: any page of yours that still names Rsx_Formdata_Generator_Controller - the template's client edit page passes Rsx.Route('Rsx_Formdata_Generator_Controller::...') as a $seeder on its fields - throws when it renders, because the route no longer exists.
+
+SUMMARY
+    Category 2. Form seeding - filling a form with random test values from a
+    debug-mode button - is removed from the framework and the template.
+
+    The button itself was removed with the old form component when the form
+    engine moved into framework core; what remained could not be reached:
+    Rsx_Form.seed(), a seed() method on the template's field base and several
+    inputs, $seeder arguments on the client and contact edit pages, and the
+    Rsx_Formdata_Generator_Controller Ajax endpoints those arguments pointed at
+    (random names, cities, phone numbers and words from bundled word lists).
+    The controller was a live web surface that nothing used.
+
+    Realistic test data belongs in the database, made by a task: the
+    template's Seeder_Service (seed_clients, seed_contacts, seed_all) is the
+    worked example.
+
+THE CHANGE
+    - Deleted: system/app/RSpade/Core/Testing/Rsx_Formdata_Generator_Controller.php
+      and its word lists (Core/Testing/resource/).
+    - Deleted: Rsx_Form.seed().
+    - Template: the seed() methods of Form_Field_Abstract, Text_Input,
+      Select_Input, Checkbox_Input, Profile_Photo_Input, Wysiwyg_Input and
+      Raw_Text_Input, the $seeder argument documentation in their templates,
+      and every $seeder argument on Clients_Edit_Action and
+      Contacts_Edit_Action.
+
+ACTION REQUIRED
+    1. Remove every $seeder argument from your templates. A Route() to the
+       controller throws; a plain string is inert and only noise:
+
+           grep -rn 'seeder' rsx/ --include=*.jqhtml
+
+    2. Remove any seed() method from your form fields and inputs, and any call
+       to a form's or a component's seed():
+
+           grep -rn 'seed()' rsx/
+
+    3. If your application relied on filling forms with test data, seed the
+       database instead - a #[Task] in the shape of
+       system/app/RSpade/resource/reference_app/services/seeder_service.php.
+
+VERIFICATION
+    - grep -rn 'Rsx_Formdata_Generator_Controller\|seeder=' rsx/ finds nothing.
+    - Your client and contact add/edit pages render with no console error
+      (php artisan rsx:debug /clients/add --user=1).

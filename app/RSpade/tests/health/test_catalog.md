@@ -180,3 +180,12 @@ shape, because a database missing `users.login_user_id` is not one a test may cr
 | SEC-IMAGICK-OK | under the shipped ImageMagick policy every vector/scripting coder is refused | php | installed policy (the RSpade image) | OK; skipped where the policy is absent | implemented (`Security_Posture_Health_Test`) | 2026-09-25 |
 | SEC-IMAGICK-FAIL | the ImageMagick row FAILs, naming the coders, on a box with the distribution policy | php | a box without the RSpade policy | FAIL naming SVG, MSVG, MVG, MSL, TEXT, LABEL | planned (demonstrated by hand on the development container 2026-09-25) | 2026-09-25 |
 | LARAVEL-ROUTE-TABLE | the booted Laravel route table is empty and the "Laravel Route Table" row is OK; a registered route turns it into a FAIL naming the route | php | the booted router; then a route registered at runtime | OK; FAIL naming the route | implemented (`Laravel_Route_Table_Health_Test`) | 2026-09-25 |
+
+Maintenance window, via `Health_Maintenance_Test` (flag raised through `Framework_Maintenance::$force_active_for_tests`).
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| HEALTH-MAINT-01 | the services a window stops on purpose report INFO, the JSON names the window, and the report exits 0 | php | `rsx:health --json` under the flag | Lock Server / Realtime Relay / Redis Connectivity INFO; `maintenance` set; exit 0 | implemented | 2026-10-28 |
+| HEALTH-MAINT-02 | the plain report announces the window above the table | php | `rsx:health` under the flag | `[WARNING] Maintenance mode is up` | implemented | 2026-10-28 |
+| HEALTH-MAINT-03 | no window, no announcement | php | `rsx:health --json`, flag forced off | `maintenance` null | implemented | 2026-10-28 |
+

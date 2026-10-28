@@ -84,6 +84,19 @@ _type_refs (
 2. **Memory Cache**: Static properties survive within a request
 3. **Database**: Source of truth, queried on cache miss
 
+## Registration commits on its own
+
+`_create_type_ref()` writes the `_type_refs` row on a SIDE CONNECTION
+(`Core/Database/Rsx_Side_Connection`), never on the caller's. The new id goes into memory and
+Redis at once and into every row the caller writes, so the registry row must not share the
+caller's fate: when it rolled back with the caller's transaction (a failed request, a task that
+threw, every test's own transaction), the cached id named nothing, and the next registration
+minted a DIFFERENT id for the same class - the data written in between pointed at the wrong
+type or at nothing. A class registration is shared, append-only reference data, so no caller's
+rollback undoes it. `INSERT IGNORE` then a read-back keeps it race-safe. A consequence: the test
+database now accumulates its registry like any other. Pinned by
+`tests/polymorphic/php/Type_Ref_Side_Connection_Test.php`.
+
 ## Laravel Integration - the dual-alias morph map
 
 `Type_Ref_Registry::register_morph_map()` runs at framework boot

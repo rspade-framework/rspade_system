@@ -31,68 +31,41 @@ class FileSanitizer
     protected const CACHE_NAMESPACE = 'js-sanitized';
 
     /**
-     * Get PHP content with comments removed
-     * This ensures we don't match patterns inside comments
-     * Uses PHP tokenizer to properly strip comments (from line 711 of monolith)
+     * PHP content with every comment BLANKED, through the tokenizer, so patterns inside a
+     * comment never match.
+     *
+     * Line- and column-preserving: a comment's characters become spaces and its newlines
+     * survive (a `//` or `#` comment token carries the newline that ends it), so
+     * 'lines' has exactly as many entries as 'original_lines' and index N of one is line
+     * N + 1 of the other.
+     *
+     * @return array{content: string, lines: string[], original_lines: string[]}
      */
     public static function sanitize_php(string $content): array
     {
-        // Use PHP tokenizer to properly strip comments
-        $tokens = token_get_all($content);
-        $lines = [];
-        $current_line = '';
-        
-        foreach ($tokens as $token) {
-            if (is_array($token)) {
-                $token_type = $token[0];
-                $token_content = $token[1];
-                
-                // Skip comment tokens
-                if ($token_type === T_COMMENT || $token_type === T_DOC_COMMENT) {
-                    // Add empty lines to preserve line numbers
-                    $comment_lines = explode("\n", $token_content);
-                    foreach ($comment_lines as $idx => $comment_line) {
-                        if ($idx === 0 && $current_line !== '') {
-                            // First line of comment - complete current line
-                            $lines[] = $current_line;
-                            $current_line = '';
-                        } elseif ($idx > 0) {
-                            // Additional comment lines
-                            $lines[] = '';
-                        }
-                    }
-                } else {
-                    // Add non-comment content
-                    $content_parts = explode("\n", $token_content);
-                    foreach ($content_parts as $idx => $part) {
-                        if ($idx > 0) {
-                            $lines[] = $current_line;
-                            $current_line = $part;
-                        } else {
-                            $current_line .= $part;
-                        }
-                    }
-                }
-            } else {
-                // Single character tokens
-                $current_line .= $token;
+        $sanitized = '';
+
+        foreach (token_get_all($content) as $token) {
+            if (!is_array($token)) {
+                $sanitized .= $token;
+                continue;
             }
+
+            if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                $sanitized .= preg_replace('/[^\n]/', ' ', $token[1]);
+                continue;
+            }
+
+            $sanitized .= $token[1];
         }
-        
-        // Add the last line if any
-        if ($current_line !== '' || count($lines) === 0) {
-            $lines[] = $current_line;
-        }
-        
-        $sanitized_content = implode("\n", $lines);
-        
+
         return [
-            'content' => $sanitized_content,
-            'lines' => $lines,
+            'content' => $sanitized,
+            'lines' => explode("\n", $sanitized),
             'original_lines' => explode("\n", $content),
         ];
     }
-    
+
     /**
      * Get sanitized JavaScript content for checking
      * Removes comments and string contents to avoid false positives

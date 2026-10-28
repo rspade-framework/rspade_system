@@ -43,8 +43,8 @@ COMMAND BEHAVIOR
     rsx:prod:verify), ASCII only, ending in a [OK] or [FAIL] bracket summary.
 
     --json: a machine-readable payload only:
-        {"generated_at": ..., "mode": "development", "ok": bool,
-         "skipped": ["label", ...],
+        {"generated_at": ..., "mode": "development", "maintenance": null | "reason",
+         "ok": bool, "skipped": ["label", ...],
          "checks": [{label, status, detail, remediation}]}
 
     Both forms report the MODE they ran in and the labels of the checks that do
@@ -52,6 +52,12 @@ COMMAND BEHAVIOR
     "Not applicable in this mode: ..."), the "mode" and "skipped" fields in the
     JSON. A row an operator expected and did not get is therefore explained on
     the same screen.
+
+    Under a raised maintenance flag (read off disk) the table is preceded by
+    "[WARNING] Maintenance mode is up (<reason>)" and the JSON carries the reason
+    as "maintenance" (null otherwise). The services the window stops on purpose -
+    Lock Server, Realtime Relay, Redis Connectivity - report INFO, not FAIL, so a
+    report run inside the window exits 0 when nothing else is wrong.
 
     Exit code: 1 if and only if at least one FAIL row exists. WARN and INFO NEVER flip
     the exit code - they are advisory - so a deploy pipeline or container healthcheck
@@ -393,10 +399,12 @@ FRAMEWORK INVENTORY
                                  comparison rsx:prod:verify performs, reported on
                                  the command an operator already runs. FAIL on
                                  drift, naming rsx:build --force.
-        Realtime Relay           WebSocket relay reachable when enabled
+        Realtime Relay           WebSocket relay reachable when enabled (INFO
+                                 under maintenance)
         Redis Connectivity       Redis reachable (cache, realtime, full page cache,
                                  counters). The task worker pools do not use
-                                 Redis - see Task Worker Pools.
+                                 Redis - see Task Worker Pools. INFO under
+                                 maintenance.
         Schema Contract          what the framework READS BY NAME on
                                  application-owned (non-underscore) tables is still
                                  there. One row per contracted table (`schema: users`,

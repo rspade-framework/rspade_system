@@ -30,6 +30,15 @@ class name - simple name and fully-qualified name alike - from then on.
 
     php artisan rsx:overrides:list     # every override in force
 
+A CLASS CARRYING A REGISTRATION IS CHANGED BY OVERRIDE, NEVER BY A SUBCLASS. A
+class that declares a task, a schedule, a route, an Ajax or API endpoint, an event
+handler or a health check is FINAL: a subclass would inherit its methods and none of
+its registrations, so extending one fails the manifest build (ABSTRACT-ATTR-01). To
+change such a framework class, copy it as above; to share code between two classes
+of your own, put it in an abstract base or a helper as plain methods and let each
+concrete class declare its own attributes. A core model's fetch() is the exception -
+it is meant to be redeclared on the concrete model.
+
 ONLY PHP CLASSES ARE OVERRIDABLE. A JS class or a jqhtml component declared in
 rsx/ with the name of a framework one fails the manifest build; browser-side
 framework behaviour changes through the extension points the framework

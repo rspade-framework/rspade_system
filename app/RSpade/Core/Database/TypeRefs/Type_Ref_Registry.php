@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Database\Rsx_Side_Connection;
 use App\RSpade\Core\Database\TypeRefs\Retired_Type_Ref;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -463,15 +464,21 @@ class Type_Ref_Registry
         // Get the table name for the model
         $table_name = static::_get_table_name($class_name);
 
-        // Insert with duplicate key handling (race condition protection)
-        // Use INSERT IGNORE to handle concurrent requests
-        DB::statement(
-            "INSERT IGNORE INTO _type_refs (class_name, table_name, created_at, updated_at) VALUES (?, ?, NOW(3), NOW(3))",
-            [$class_name, $table_name]
-        );
+        // On a SIDE CONNECTION, so the row commits whatever the caller's transaction does. The
+        // id goes into memory and Redis at once, and every row the caller writes carries it: if
+        // the registry row rolled back with the caller (a failed request, every test's
+        // transaction), the cached id would name nothing, and the next insert would mint a
+        // different id for the same class. Registering a class is shared, append-only reference
+        // data - no caller's rollback may undo it. INSERT IGNORE then read back: race-safe
+        // against a concurrent registration of the same class.
+        $row = Rsx_Side_Connection::run(function ($db) use ($class_name, $table_name) {
+            $db->statement(
+                "INSERT IGNORE INTO _type_refs (class_name, table_name, created_at, updated_at) VALUES (?, ?, NOW(3), NOW(3))",
+                [$class_name, $table_name]
+            );
 
-        // Fetch the ID (whether we just inserted or it already existed)
-        $row = DB::table('_type_refs')->where('class_name', $class_name)->first(['id']);
+            return $db->table('_type_refs')->where('class_name', $class_name)->first(['id']);
+        });
 
         if (!$row) {
             throw new RuntimeException("Failed to create type ref for class: {$class_name}");

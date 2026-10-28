@@ -6,7 +6,8 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
 /**
- * ABSTRACT-ATTR-01 - registry attributes may not be declared on an abstract class.
+ * ABSTRACT-ATTR-01 - registry attributes may not be declared on an abstract class, and a
+ * class that declares one may not be extended.
  *
  * A registry attribute is one whose whole purpose is to enrol the DECLARING class into a
  * runtime registry: a route table, the task scheduler, the event handler index, the health
@@ -35,6 +36,16 @@ use App\RSpade\Core\Manifest\Manifest;
  * Model_Fetch_Lineage takes the nearest declaration and the auth index records the surface
  * under the CONCRETE model that gets dispatched - and it is how a core model carries fetch()
  * on its base while shipping a three-line concrete an application replaces.
+ *
+ * THE SECOND HALF - A REGISTRY CLASS IS FINAL. The same inheritance blindness applies to a
+ * CONCRETE class: a subclass of a class carrying a task, a route, an endpoint, an event handler
+ * or a health check inherits the methods and none of the registrations. So no class may extend
+ * a concrete class that declares a registry attribute - directly or through an abstract in
+ * between. Services, controllers and models are single-generation already (#[Monoprogenic],
+ * MANIFEST-MONO-01); this states the rule once for every carrier, the ones with no common base
+ * (#[OnEvent] handlers, #[Health_Check] classes) included. The model-fetch exemption below
+ * holds here too. Customising such a class is a class override (a same-name copy), never a
+ * subclass; sharing code between two of them is an abstract base or helper with plain methods.
  *
  * Detection is a pure compiled-manifest walk - the abstract flag and the attribute names
  * are already indexed. No AST parsing is needed or done.
@@ -78,12 +89,12 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function get_name(): string
     {
-        return 'Registry Attribute On Abstract Class';
+        return 'Registry Attribute On An Abstract Or Extended Class';
     }
 
     public function get_description(): string
     {
-        return 'Attributes that register a class into a runtime registry may not be declared on an abstract class';
+        return 'Attributes that register a class into a runtime registry may not be declared on an abstract class, and a class declaring one may not be extended';
     }
 
     public function get_file_patterns(): array
@@ -175,6 +186,164 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
                 Manifest::php_is_subclass_of($file_metadata['class'], 'Rsx_Model_Abstract')
             );
         }
+
+        // The second half: no class extends a concrete registry class. A subclass is judged
+        // when it or any ancestor changed, since adding the attribute to a parent breaks
+        // subclasses that did not change.
+        foreach ($files as $rel_path => $file_metadata) {
+            if (($file_metadata['extension'] ?? '') !== 'php' || empty($file_metadata['class'])) {
+                continue;
+            }
+            if (empty($file_metadata['extends'])) {
+                continue;
+            }
+
+            $ancestors = $this->ancestor_records($file_metadata);
+            if (empty($ancestors)) {
+                continue;
+            }
+
+            if ($changed_lookup !== null) {
+                $touched = isset($changed_lookup[str_replace('\\', '/', $rel_path)]);
+                foreach ($ancestors as $ancestor) {
+                    $touched = $touched || isset($changed_lookup[$ancestor['file']]);
+                }
+                if (!$touched) {
+                    continue;
+                }
+            }
+
+            $this->evaluate_registry_inheritance(base_path($rel_path), $file_metadata['class'], $ancestors);
+        }
+    }
+
+    /**
+     * The manifest records of a class's ancestors, nearest first, as far as the manifest
+     * indexes them (a vendor parent ends the walk).
+     *
+     * @return array<int, array{class: string, file: string, abstract: bool, is_model: bool, class_attributes: array, methods: array}>
+     */
+    private function ancestor_records(array $file_metadata): array
+    {
+        $ancestors = [];
+        $parent = $file_metadata['extends'] ?? null;
+
+        while (!empty($parent)) {
+            $simple = substr((string) strrchr('\\' . ltrim($parent, '\\'), '\\'), 1);
+
+            try {
+                $record = Manifest::php_get_metadata_by_class($simple);
+            } catch (\Throwable $e) {
+                break;
+            }
+
+            if (empty($record) || empty($record['file'])) {
+                break;
+            }
+
+            $ancestors[] = [
+                'class' => $simple,
+                'file' => str_replace('\\', '/', $record['file']),
+                'abstract' => !empty($record['abstract']),
+                'is_model' => Manifest::php_is_subclass_of($simple, 'Rsx_Model_Abstract'),
+                'class_attributes' => $record['attributes'] ?? [],
+                'methods' => $this->merge_method_maps($record),
+            ];
+
+            $parent = $record['extends'] ?? null;
+        }
+
+        return $ancestors;
+    }
+
+    /**
+     * Judge one class against its ancestors (nearest first): it may not extend a CONCRETE
+     * class that declares a registry attribute. An abstract ancestor is the first half's
+     * business and is skipped here.
+     *
+     * The testable seam for the second half: production builds $ancestors from the manifest
+     * (ancestor_records()); tests hand in that shape over a real fixture file.
+     *
+     * @param array<int, array{class: string, abstract: bool, is_model: bool, class_attributes: array, methods: array}> $ancestors
+     */
+    public function evaluate_registry_inheritance(string $file, string $class_name, array $ancestors): void
+    {
+        foreach ($ancestors as $ancestor) {
+            if (!empty($ancestor['abstract'])) {
+                continue;
+            }
+
+            $found = $this->registry_attribute_on(
+                $ancestor['class_attributes'] ?? [],
+                $ancestor['methods'] ?? [],
+                !empty($ancestor['is_model'])
+            );
+
+            if ($found === null) {
+                continue;
+            }
+
+            $contents = $this->source()->content($file);
+            $lines = $contents === false ? [] : explode("\n", $contents);
+            $class_line = $this->find_class_line($lines, $class_name);
+
+            if ($this->has_exception_marker($lines, $class_line)) {
+                return;
+            }
+
+            [$attribute_name, $method_name] = $found;
+            $where = $method_name === null ? $ancestor['class'] : "{$ancestor['class']}::{$method_name}()";
+            $code_snippet = ($class_line > 0 && isset($lines[$class_line - 1])) ? trim($lines[$class_line - 1]) : '';
+
+            $message = "{$class_name} extends {$ancestor['class']}, which declares #[{$attribute_name}] on {$where}.\n\n"
+                . "A class carrying a registry attribute (a task, a route, an endpoint, an event handler, a "
+                . "health check) is FINAL. The registries are built from the manifest, which indexes "
+                . "attributes per file and never inherits them - so {$class_name} inherits the methods and "
+                . "none of the registrations, silently.";
+
+            $suggestion = "Do not extend {$ancestor['class']}.\n"
+                . "- To CHANGE a framework class of this kind, class-override it: a class of the same simple "
+                . "name in rsx/ replaces it (rsx:man class_override).\n"
+                . "- To SHARE code between two such classes, move it to an abstract base or a helper class as "
+                . "plain methods with no registry attributes, and let each concrete class declare its own.";
+
+            $this->add_violation($file, $class_line > 0 ? $class_line : 1, $message, $code_snippet, $suggestion, 'critical');
+
+            return;
+        }
+    }
+
+    /**
+     * The first registry attribute a class declares, as [attribute, method|null], or null.
+     * The model-fetch exemption applies: a model's fetch surface and its #[Auth] are consumed
+     * through a lineage walk and are not a registration the subclass loses.
+     *
+     * @return array{0: string, 1: ?string}|null
+     */
+    private function registry_attribute_on(array $class_attributes, array $methods, bool $is_model): ?array
+    {
+        foreach (self::FORBIDDEN_ON_ABSTRACT as $attribute_name) {
+            if (isset($class_attributes[$attribute_name]) && !($is_model && $attribute_name === 'Auth')) {
+                return [$attribute_name, null];
+            }
+        }
+
+        foreach ($methods as $method_name => $method_data) {
+            $model_fetch_member = $is_model && isset($method_data['attributes']['Ajax_Endpoint_Model_Fetch']);
+
+            foreach (self::FORBIDDEN_ON_ABSTRACT as $attribute_name) {
+                if (!isset($method_data['attributes'][$attribute_name])) {
+                    continue;
+                }
+                if ($model_fetch_member && ($attribute_name === 'Ajax_Endpoint_Model_Fetch' || $attribute_name === 'Auth')) {
+                    continue;
+                }
+
+                return [$attribute_name, $method_name];
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -97,7 +97,7 @@ async function run() {
 
         const first = await page.evaluate(async () => {
             window.__session_hash_mark = 'alive';
-            const state = await Spa_Session_Controller.get_state({ is_portal: false });
+            const state = await Spa_Session_Controller.get_state();
             return { page_hash: window.rsxapp.session_hash, server_hash: state.session_hash };
         });
 

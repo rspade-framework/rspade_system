@@ -79,19 +79,14 @@ class ArtisanSubprocessSpawn_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        // The $contents handed to a rule is pre-processed and is NOT line-aligned with the
-        // file on disk, so read the file itself. Everything below reports real line numbers.
+        // The tokenizer below needs the file as written (the $contents handed to a rule has
+        // its comments blanked), so read the file itself.
         $source = $this->source()->content($file_path);
         $original_lines = explode("\n", $source);
 
-        // TOKENS, not a line scan. Two reasons, both learned the hard way here:
-        //
-        //   - Comments and string literals must not produce violations, and the ONLY
-        //     reliable way to tell code from text is to ask the parser.
-        //   - FileSanitizer::sanitize_php()['lines'] is NOT index-aligned with the file
-        //     (it returned 194 entries for a 182-line file), so pairing a sanitized index
-        //     with a line number silently reports the WRONG LINE. Token line numbers are
-        //     correct by construction.
+        // TOKENS, not a line scan: comments and string literals must not produce
+        // violations, and the only reliable way to tell code from text is to ask the
+        // parser. Token line numbers are the file's own.
         foreach ($this->__find_spawn_calls($source) as $call) {
             $function = $call['function'];
             $line_num = $call['line'] - 1;

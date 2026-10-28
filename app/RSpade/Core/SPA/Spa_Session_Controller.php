@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Portal\Portal_Session;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -42,12 +43,10 @@ class Spa_Session_Controller extends Rsx_Controller_Abstract
         // value the page was rendered with as window.rsxapp.build_key
         $build_key = Manifest::get_state_key();
 
-        // ONE cookie, one session hash. The identity to report still depends on the
-        // EXPERIENCE the page belongs to, and the caller passes is_portal (from
-        // Rsx_Portal.is_portal()) because an Ajax request cannot reliably self-detect
-        // the portal context server-side. This only drives client-side
-        // staleness/refresh, never authorization, so trusting the flag is safe.
-        if (!empty($params['is_portal'])) {
+        // ONE cookie, one session hash. The identity to report depends on the EXPERIENCE the
+        // page belongs to, which the request itself carries: a portal page's Ajax is rebased
+        // onto the portal's address and arrives on the portal channel.
+        if (Rsx_Portal::is_portal_request()) {
             $user = Portal_Session::get_portal_user();
             $site = Portal_Session::get_site();
         } else {

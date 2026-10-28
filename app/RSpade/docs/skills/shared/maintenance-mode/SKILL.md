@@ -23,7 +23,7 @@ One flag file (`storage/state/.maintenance.mode.framework.update`) whose **conte
 ```bash
 php artisan rsx:maintenance:enable --reason="upgrading the customer index"
 # ... do the work ...
-php artisan rsx:health           # runs fine in the window
+php artisan rsx:health           # runs fine in the window; the stopped services read INFO
 php artisan rsx:maintenance:disable
 ```
 

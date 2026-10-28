@@ -116,7 +116,9 @@ class Realtime
      * rsx:health probe: is the Node WebSocket relay listening? A public static
      * `#[Health_Check('label')]` (bare marker attribute - never a defined class). When
      * realtime is disabled it is an INFO, not a FAIL. When enabled it opens (and closes)
-     * a TCP connection to the configured ws_port - a read-only liveness probe.
+     * a TCP connection to the configured ws_port - a read-only liveness probe. Under a raised
+     * maintenance flag (read off DISK, the box as it is now) the relay is stopped on purpose
+     * and the row is INFO.
      *
      * @return array
      */
@@ -125,6 +127,14 @@ class Realtime
     {
         if (!self::is_enabled()) {
             return ['status' => 'INFO', 'detail' => 'disabled (REALTIME_ENABLED=false)'];
+        }
+
+        if (Framework_Maintenance::is_active_on_disk()) {
+            return [
+                'status' => 'INFO',
+                'detail' => 'the maintenance flag is up - the relay is stopped on purpose'
+                    . ' (realtime frames are discarded)',
+            ];
         }
 
         $port = (int) config('rsx.realtime.ws_port');

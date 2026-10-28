@@ -48,3 +48,11 @@ Lint coverage for POLY-01 (the manifest-fatal string-morph rule) lives in the
 | POLY-SPELL-01 | Every registry lookup (`class_to_id`, `find_id_by_class_name`, `has_class`, `class_resolves`) accepts the short name, `Model::class`, a leading backslash and a former namespace, and answers the same id; `id_to_class` answers the short name | php | four spellings of `Site_Model` | one id | implemented | 2026-09-08 |
 | POLY-SPELL-02 | No stored `_type_refs` row carries a namespace | php | `_type_refs` scan | 0 rows with a backslash | implemented | 2026-09-08 |
 | POLY-SPELL-03 | A genuinely unknown class is refused whatever the spelling | php | a namespaced nonexistent name | throws | implemented | 2026-09-08 |
+
+`Type_Ref_Side_Connection_Test` - a type registration commits on its own.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| TYPEREF-SIDE-01 | a type id registered inside a transaction that rolls back is still a committed `_type_refs` row under the same id; a fresh load answers it without minting another | php | `class_to_id()` of a fixture model between `DB::beginTransaction()` and `rollBack()`, inside the per-test transaction | committed row, same id, `id_to_class()` resolves | implemented | 2026-10-28 |
+| TYPEREF-SIDE-02 | `Rsx_Side_Connection` reaches the default connection's database and is closed after the call | php | `run()` returning its connection's name and database | same database; name gone from `DB::getConnections()` | implemented | 2026-10-28 |
+

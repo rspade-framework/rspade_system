@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Health\Health_Check_Runner;
 use App\RSpade\Core\Time\Rsx_Time;
 use Illuminate\Console\Command;
@@ -25,6 +26,10 @@ use Illuminate\Console\Command;
  * reported either way - a footer line under the table, a `mode` and a `skipped` field in
  * the JSON - so the axis is visible and an operator can see WHY a row they expected is
  * absent.
+ *
+ * A raised maintenance flag is announced above the table (and as `maintenance` in the JSON):
+ * the services the window stops on purpose report INFO, and the whole report is read in
+ * that light.
  */
 class Health_Command extends Command
 {
@@ -48,10 +53,14 @@ class Health_Command extends Command
         }
         $ok = $fail_count === 0;
 
+        // Read off DISK: the report describes the box as it is right now.
+        $maintenance = Framework_Maintenance::is_active_on_disk() ? Framework_Maintenance::reason() : null;
+
         if ($this->option('json')) {
             $this->line(json_encode([
                 'generated_at' => Rsx_Time::now_iso(),
                 'mode' => $report['mode'],
+                'maintenance' => $maintenance,
                 'ok' => $ok,
                 'skipped' => $report['skipped'],
                 'checks' => array_map(static fn ($row) => [
@@ -71,6 +80,11 @@ class Health_Command extends Command
             $row['detail'],
             $row['remediation'] ?? '',
         ], $rows);
+
+        if ($maintenance !== null) {
+            $this->warn('[WARNING] Maintenance mode is up (' . $maintenance . ') - services it stops on purpose report INFO');
+            $this->newLine();
+        }
 
         $this->table(['Check', 'Status', 'Detail', 'Remediation'], $table);
         $this->newLine();

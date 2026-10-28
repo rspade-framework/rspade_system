@@ -34,6 +34,27 @@ framework publishes. WRITING ONE: there are three kinds and each has one shape -
 An aggregate is a function that answers the number in SQL
 (`File_Storage_Model::usage_report()`), never rows added up in PHP.
 
+## Side connections (framework internal)
+
+`Rsx_Side_Connection::run(fn (Connection $db) => ...)` runs a callback on a second connection to
+the default connection's database, so what it writes COMMITS whatever the caller's transaction
+does. Framework-internal: documented here only, never in a man page or skill. Its one caller
+today is the type registry (`TypeRefs/CLAUDE.md`, "Registration commits on its own").
+
+- **Use it for shared, append-only reference data** a rollback of the caller's work must not
+  undo. Its opposite is DEFERRING a side effect until the caller commits
+  (`Lifecycle/Model_Lifecycle_Emissions`, `Realtime_Emissions`) - pick by whether the effect
+  must happen even if the caller's work is thrown away.
+- **The config is cloned from the default connection at the call**, and the connection is named
+  for its database and host, so a process that switches its default database (the test runner)
+  never writes through a connection opened for the old one. It is closed when the callback
+  returns.
+- **Never write a row the caller's open transaction has written or locked**: the side connection
+  waits on its parent's lock while the parent waits on it - a cycle MySQL cannot see, which ends
+  only at the lock-wait timeout. It also sees only COMMITTED data.
+- `Migrate_Dump_Rollback`'s migrate lock opens a connection of its own the same way, held for a
+  whole run rather than one call.
+
 ## Naming Conventions
 
 - **Primary keys**: All tables must have `id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY` (exception: sessions table uses Laravel's VARCHAR id)

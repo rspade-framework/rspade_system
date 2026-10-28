@@ -566,3 +566,8 @@ Children are real `php artisan` processes on the test database: a task being sto
 | task-errlog-01 | a PHP warning in a run (raised as an ErrorException) fails it and writes `[TASK #<id>] <Service>::<method>: ErrorException: ...` to the Laravel log | cli | `cli/Task_Error_Log_Cli_Test.php`, `rsx:task:run` of `raises_warning` | run FAILED with the warning; the log gains the prefixed line | implemented | 2026-10-27 |
 | task-errlog-02 | a FATAL error mid-run (memory exhausted) is recorded on the run as `PHP Fatal error: ...` and logged under the run's id | cli | `rsx:task:run` of `dies_of_a_fatal_error` | inline run settled FAILED with the fatal in its error; the log gains the prefixed fatal line | implemented | 2026-10-27 |
 | task-errlog-03 | a failure the task RETURNS writes no log line | cli | `rsx:task:run` of `returns_kind --kind=false` | run FAILED; no `[TASK #<id>]` line | implemented | 2026-10-27 |
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| TASK-LIST-01 | `rsx:task:list` lists a concrete service at any depth below `Rsx_Service_Abstract` (one under an abstract intermediate) and never the abstract | php | `Task_List_Fixture_Service` extends `Task_List_Fixture_Base_Abstract` | the service and its task listed, the base not | implemented | 2026-10-28 |
+

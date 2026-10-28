@@ -140,10 +140,8 @@ against it.
 | SPAWN-07 | A METHOD named like a spawn function is not the global function | php | `$runner->passthru(...)`, `Some_Class::passthru(...)` | 0 violations | implemented | 2026-08-11 |
 | SPAWN-08 | The reported line is the REAL file line (regression: sanitizer indices drift) | php | heredoc ahead of the call, so sanitized indices diverge | violation reports line 14 | implemented | 2026-08-11 |
 
-SPAWN-08 exists because the first implementation scanned `FileSanitizer::sanitize_php()['lines']`,
-which is not index-aligned with the file (194 entries for a 182-line file) and reported line 163
-for a call on line 153. The rule now tokenizes the file and takes the line from the token.
-Backlog **B-86** tracks the same latent defect in the other rules that still use that pattern.
+SPAWN-08 pins the line taken from the token: the rule tokenizes the file rather than scanning
+the sanitized lines.
 
 
 RELATIONSHIP-OVERRIDE-01 (RelationshipOverride_CodeQualityRule), via
@@ -167,7 +165,8 @@ the attribute on `Client_Model` aborted `rsx:manifest:build` with the rule's mes
 ABSTRACT-ATTR-01 (AbstractRegistryAttribute_CodeQualityRule), via
 `Abstract_Registry_Attribute_Rule_Test`. An attribute that enrols its DECLARING class into
 a manifest-built runtime registry may not sit on an abstract class - the registration
-either reaches no subclass or becomes a phantom entry keyed to the abstract.
+either reaches no subclass or becomes a phantom entry keyed to the abstract. The second half
+(ABS-ATTR-FINAL-*): a concrete class carrying one is FINAL, and a subclass of it is flagged.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
@@ -177,6 +176,13 @@ either reaches no subclass or becomes a phantom entry keyed to the abstract.
 | ABS-ATTR-04 | lineage-consumed and class-descriptive attributes are NOT flagged | php | Relationship, Auth_Check, Replaceable, Instantiatable, Monoprogenic, Sealed | 0 violations each | implemented | 2026-08-13 |
 | ABS-ATTR-05 | `@ABSTRACT-ATTR-01-EXCEPTION` above the declaration suppresses it | php | fixture with the marker | 0 violations | implemented | 2026-08-13 |
 | ABS-ATTR-06 | a forbidden attribute beside an allowed one reports exactly once | php | `#[Replaceable]` + `#[Task]` on one method | 1 violation naming Task | implemented | 2026-08-13 |
+| ABS-ATTR-FINAL-01 | a subclass of a CONCRETE class declaring a registry attribute (#[Task]) is flagged on the subclass declaration, naming the declaring member | php | `evaluate_registry_inheritance()` over a fixture subclass | 1 violation at the class line | implemented | 2026-10-28 |
+| ABS-ATTR-FINAL-02 | a carrier with no common base (#[OnEvent] handlers) is final too | php | ancestor declaring #[OnEvent] | 1 violation | implemented | 2026-10-28 |
+| ABS-ATTR-FINAL-03 | an abstract in between does not hide the registry class (concrete -> abstract -> concrete) | php | ancestors [abstract, concrete #[Route]] | 1 violation | implemented | 2026-10-28 |
+| ABS-ATTR-FINAL-04 | an attribute on an ABSTRACT ancestor is left to the first half | php | abstract ancestor with #[Task] | 0 violations | implemented | 2026-10-28 |
+| ABS-ATTR-FINAL-05 | a non-registry attribute (#[Relationship]) does not make a class final | php | concrete ancestor with #[Relationship] | 0 violations | implemented | 2026-10-28 |
+| ABS-ATTR-FINAL-06 | the model-fetch exemption holds: a model's fetch() + #[Auth] does not make it final | php | model ancestor with #[Ajax_Endpoint_Model_Fetch] + #[Auth] | 0 violations | implemented | 2026-10-28 |
+| ABS-ATTR-FINAL-07 | `@ABSTRACT-ATTR-01-EXCEPTION` above the subclass declaration suppresses it | php | fixture with the marker | 0 violations | implemented | 2026-10-28 |
 
 End-to-end (manual, during implementation): planting a class-level `#[Health_Check]` on
 `Rsx_Site_Model_Abstract` aborted `rsx:manifest:build` with the rule's message; removing it
@@ -523,3 +529,14 @@ nothing.
 | RHW-09 | a bare marker suppresses nothing; a marker two lines up does not reach | php | bare marker; marker + unrelated line + write | 2; 1 | implemented | 2026-10-20 |
 | RHW-10 | through the real driver, one granted write does not hide an ungranted one in the same file | php | driver run, honor_exception_comments | 1 violation, the ungranted line | implemented | 2026-10-20 |
 | RHW-11 | scope: node scripts, resource/, tests/, vendor/ and `.min.js` are skipped | php | the same write at five paths | 0 each | implemented | 2026-10-20 |
+
+
+FileSanitizer::sanitize_php(), via `File_Sanitizer_Php_Test`. Every PHP rule that scans
+`['lines']` reports `$index + 1` and pairs it with the same index of the file, so the two must
+stay aligned.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| SANITIZE-PHP-01 | sanitized output has exactly the file's line count and byte length | php | `//`, `#`, docblock, inline and multi-line block comments, a trailing comment at EOF; with and without a final newline | counts and lengths equal | implemented | 2026-10-28 |
+| SANITIZE-PHP-02 | code keeps its line AND column; comments become whitespace; an attribute and a string holding `//` are untouched | php | the same fixture | per-line assertions | implemented | 2026-10-28 |
+| SANITIZE-PHP-03 | a rule reports the line a call is written on below a run of comments | php | PHP-EXEC-01 over 12 `//` lines + a docblock + the call | one violation at the call's line | implemented | 2026-10-28 |

@@ -13,7 +13,8 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Unit tests for the ABSTRACT-ATTR-01 rule (AbstractRegistryAttribute_CodeQualityRule).
+ * Unit tests for the ABSTRACT-ATTR-01 rule (AbstractRegistryAttribute_CodeQualityRule): no registry
+ * attribute on an abstract class, and no subclass of a concrete class that declares one.
  *
  * The rule fatals a manifest build when an abstract class declares a registry attribute -
  * one whose effect is to enrol the DECLARING class into an inheritance-blind runtime
@@ -208,5 +209,117 @@ class Abstract_Registry_Attribute_Rule_Test extends Rsx_Test_Abstract
         static::__assert_count(1, $violations, 'only the forbidden attribute reports');
         $violation = array_values($violations)[0];
         static::__assert_contains('Task', $violation->message, 'the reported attribute is the forbidden one');
+    }
+
+    // =====================================================================
+    // The second half: a class carrying a registry attribute is FINAL
+    // =====================================================================
+
+    private const SUBCLASS_NAME = 'Registry_Final_Fixture_Child';
+
+    /**
+     * Write a concrete subclass fixture (optionally with an exception marker above its
+     * declaration), drive evaluate_registry_inheritance() with manifest-shaped ancestors, and
+     * return the violations and the class line.
+     *
+     * @return array{0: array, 1: int}
+     */
+    private static function __run_inheritance(array $ancestors, bool $with_exception_marker = false): array
+    {
+        $dir = Rsx_Project_Paths::tmp_path() . '/registry_final_fixture_' . uniqid();
+        ensure_directory($dir);
+
+        $lines = ['<?php', ''];
+        if ($with_exception_marker) {
+            $lines[] = '// @' . self::RULE_ID . '-EXCEPTION - fixture: verifying suppression';
+        }
+        $lines[] = 'class ' . self::SUBCLASS_NAME . ' extends ' . $ancestors[0]['class'];
+        $class_line = count($lines);
+        $lines[] = '{';
+        $lines[] = '}';
+
+        $file = $dir . '/' . self::SUBCLASS_NAME . '.php';
+        file_put_contents($file, implode("\n", $lines) . "\n");
+
+        $collector = new ViolationCollector();
+        (new AbstractRegistryAttribute_CodeQualityRule($collector))
+            ->evaluate_registry_inheritance($file, self::SUBCLASS_NAME, $ancestors);
+
+        @unlink($file);
+        @rmdir($dir);
+
+        return [$collector->get_by_rule(self::RULE_ID), $class_line];
+    }
+
+    /** One manifest-shaped ancestor carrying $attribute_name on a method (or nothing when null). */
+    private static function __ancestor(string $class, bool $abstract, ?string $attribute_name, bool $is_model = false, array $method_attributes = []): array
+    {
+        $attributes = $method_attributes ?: ($attribute_name === null ? [] : [$attribute_name => [[]]]);
+
+        return [
+            'class' => $class,
+            'file' => 'fixture/' . $class . '.php',
+            'abstract' => $abstract,
+            'is_model' => $is_model,
+            'class_attributes' => [],
+            'methods' => $attributes ? [self::METHOD => ['name' => self::METHOD, 'line' => 3, 'attributes' => $attributes]] : [],
+        ];
+    }
+
+    public static function test_extending_a_concrete_task_service_is_caught()
+    {
+        [$violations, $class_line] = self::__run_inheritance([self::__ancestor('Parent_Service', false, 'Task')]);
+
+        static::__assert_count(1, $violations, 'a subclass of a concrete class declaring #[Task] is flagged');
+        $violation = array_values($violations)[0];
+        static::__assert_equals($class_line, $violation->line_number, 'reported on the subclass declaration');
+        static::__assert_contains('Parent_Service::' . self::METHOD . '()', $violation->message, 'the message names the declaring member');
+    }
+
+    public static function test_a_handler_class_with_no_common_base_is_final_too()
+    {
+        [$violations] = self::__run_inheritance([self::__ancestor('Some_Handlers', false, 'OnEvent')]);
+
+        static::__assert_count(1, $violations, 'an #[OnEvent] class is final although it has no framework base');
+    }
+
+    public static function test_an_abstract_in_between_does_not_hide_the_registry_class()
+    {
+        [$violations] = self::__run_inheritance([
+            self::__ancestor('Middle_Abstract', true, null),
+            self::__ancestor('Top_Controller', false, 'Route'),
+        ]);
+
+        static::__assert_count(1, $violations, 'concrete -> abstract -> concrete still extends the registry class');
+    }
+
+    public static function test_an_abstract_ancestor_is_left_to_the_first_half()
+    {
+        [$violations] = self::__run_inheritance([self::__ancestor('Base_Abstract', true, 'Task')]);
+
+        static::__assert_count(0, $violations, 'an attribute on an abstract ancestor is the first half\'s finding, not this one');
+    }
+
+    public static function test_extending_a_class_with_no_registry_attribute_is_allowed()
+    {
+        [$violations] = self::__run_inheritance([self::__ancestor('Plain_Parent', false, 'Relationship')]);
+
+        static::__assert_count(0, $violations, 'only registry attributes make a class final');
+    }
+
+    public static function test_a_models_fetch_surface_does_not_make_it_final()
+    {
+        [$violations] = self::__run_inheritance([
+            self::__ancestor('Some_Model', false, null, true, ['Ajax_Endpoint_Model_Fetch' => [[]], 'Auth' => [[]]]),
+        ]);
+
+        static::__assert_count(0, $violations, 'the model-fetch exemption holds for inheritance too');
+    }
+
+    public static function test_exception_marker_suppresses_the_inheritance_violation()
+    {
+        [$violations] = self::__run_inheritance([self::__ancestor('Parent_Service', false, 'Task')], true);
+
+        static::__assert_count(0, $violations, 'the exception marker above the subclass declaration suppresses it');
     }
 }

@@ -56,8 +56,9 @@ class Task_List_Command extends Command
                 continue;
             }
 
-            // Check if class extends Rsx_Service_Abstract
-            if (!isset($info['extends']) || $info['extends'] !== 'Rsx_Service_Abstract') {
+            // A concrete service at any depth: one under an abstract intermediate (a shared base)
+            // is a service like any other.
+            if (!empty($info['abstract']) || !Manifest::php_is_subclass_of($info['class'], 'Rsx_Service_Abstract')) {
                 continue;
             }
 
