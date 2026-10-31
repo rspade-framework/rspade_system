@@ -97,7 +97,8 @@ MODELS
                                BYTE RESIDENCY). Manifest-resolved.
             handler_ref        Opaque JSON owned by the handler; the framework
                                never reads its contents.
-            file_name          Original filename
+            file_name          Original filename, made safe on every save (FILE
+                               NAMES)
             file_extension     Lowercased extension (jpeg normalized to jpg)
             mime_type          Authoritative raw byte-sniff mime. Persisted at
                                ingest; the value used when serving.
@@ -1102,6 +1103,34 @@ DOWNLOAD AND INLINE VIEWING
         <a href="/_download/<?= $file->key ?>">Download</a>
 
     Both run the cascading authorization hooks (see SECURITY HOOKS).
+
+FILE NAMES
+
+    A file name comes from whoever uploaded the file - the browser's original
+    name, or filename_override - and leaves as the name another user saves it
+    under. Rsx_File_Name::safe($name) is the ONE rule for it, applied when a
+    name is stored and again when it is served:
+
+        - Replaced with "_": / \ : * ? " < > |  (illegal on Windows, macOS or
+          Linux), control characters, and the Unicode text-direction controls
+          (which can make "invoice<RLO>fdp.exe" display as "invoiceexe.pdf").
+        - Everything else is kept: accented and non-Latin names survive whole
+          ("Résumé.pdf", "報告書.xlsx"), as does ordinary punctuation.
+        - Leading and trailing dots and spaces are trimmed; a Windows device
+          name (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with any extension) gains a
+          "_" prefix; Unicode is composed (NFC); the name is capped at 255 bytes
+          keeping its extension; a name with nothing left becomes "file".
+
+    File_Attachment_Model applies it to file_name on every save, whichever path
+    wrote it; Rsx_Temp_Files names temp files with it. The extension is kept as
+    given - the rule makes a name safe and never decides the file's type.
+
+    Rsx_File_Name::disposition('inline'|'attachment', $name) builds every
+    Content-Disposition header the framework sends with a file name: the safe
+    name as RFC 5987 filename*, plus a transliterated ASCII filename ("Resume.pdf")
+    for clients that read only that. A name stored before the rule is made safe
+    on the way out. An application endpoint that returns a file with a name
+    builds its header the same way.
 
 MULTI-FILE ZIP DOWNLOAD
 

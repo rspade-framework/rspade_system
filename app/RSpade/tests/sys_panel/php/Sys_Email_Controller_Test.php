@@ -96,7 +96,7 @@ class Sys_Email_Controller_Test extends Rsx_Test_Abstract
         $site_id = static::__second_site_id();
 
         static::__assert_equals(
-            ['pending', 'sending', 'sent', 'failed', 'blocked', 'suppressed'],
+            ['pending', 'sending', 'sent', 'failed', 'blocked', 'suppressed', 'test'],
             array_column($before['counts'], 'status'),
             'one count per status, in the enum order, as words'
         );
@@ -163,7 +163,7 @@ class Sys_Email_Controller_Test extends Rsx_Test_Abstract
         $sites = array_column(static::__endpoint('site_options'), 'label', 'value');
         static::__assert_equals('#' . $site_id . ' Sys Email Second Site', $sites[$site_id] ?? null, 'site_options lists the second site');
         static::__assert_equals(
-            ['pending', 'sending', 'sent', 'failed', 'blocked', 'suppressed'],
+            ['pending', 'sending', 'sent', 'failed', 'blocked', 'suppressed', 'test'],
             array_column(static::__endpoint('status_options'), 'value'),
             'status_options are the words'
         );

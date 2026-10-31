@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Files;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Controller;
+use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 
 /**
@@ -97,7 +98,7 @@ abstract class Temp_File_Model_Abstract extends Rsx_Model_Abstract
     public function download_response(?string $file_name = null)
     {
         return File_Attachment_Controller::harden_file_response(
-            \Illuminate\Support\Facades\Response::download($this->__existing_path(), $file_name ?? $this->file_name, ['Content-Type' => $this->mime_type])
+            \Illuminate\Support\Facades\Response::download($this->__existing_path(), Rsx_File_Name::safe($file_name ?? $this->file_name), ['Content-Type' => $this->mime_type])
         );
     }
 
@@ -109,7 +110,7 @@ abstract class Temp_File_Model_Abstract extends Rsx_Model_Abstract
     public function inline_response(?string $file_name = null)
     {
         $headers = ['Content-Type' => $this->mime_type];
-        $headers['Content-Disposition'] = \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition('inline', $file_name ?? $this->file_name, 'file');
+        $headers['Content-Disposition'] = Rsx_File_Name::disposition('inline', $file_name ?? $this->file_name);
 
         return File_Attachment_Controller::harden_file_response(
             \Illuminate\Support\Facades\Response::file($this->__existing_path(), $headers)

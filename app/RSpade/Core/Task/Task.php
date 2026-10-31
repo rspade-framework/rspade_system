@@ -59,7 +59,7 @@ class Task
      * answer - only after the system is back on and the run has settled. See
      * __queue_and_wait().
      *
-     * @param string $rsx_service Service name (e.g., 'Seeder_Service')
+     * @param string $rsx_service Service name (e.g., 'Sample_Data_Service')
      * @param string $rsx_task Task/method name (e.g., 'seed_clients')
      * @param array $params Parameters to pass to the task
      * @param array{0: resource|null, 1: resource|null}|null $console_streams RUNNER-ONLY.
@@ -223,7 +223,7 @@ class Task
      * is ever pending (Task_Concurrency), and the id returned is that pending run's, whether it
      * already existed or was just created.
      *
-     * @param string $rsx_service Service name (basename, e.g. 'Seeder_Service')
+     * @param string $rsx_service Service name (basename, e.g. 'Sample_Data_Service')
      * @param string $rsx_task    Static task method (e.g. 'seed_clients')
      * @param array  $params      Parameters to pass to the task
      * @param array  $options     Optional:

@@ -68,9 +68,6 @@ class Rsx_Preboot_Service
             static::__handle_sequential_debug_lock();
         }
 
-        // Handle console debug trace mode if enabled
-        \App\RSpade\Core\Debug\Debugger::_try_enable_trace_mode();
-
         // Future initialization directives will go here
     }
 

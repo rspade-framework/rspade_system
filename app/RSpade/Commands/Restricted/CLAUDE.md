@@ -28,6 +28,11 @@ Each restricted command:
 - **db:wipe** - Would drop all tables, views, and types
 - **down** - Laravel's web-only maintenance mode; use `rsx:maintenance:enable --reason="..."`
 - **up** - the other half of it; use `rsx:maintenance:disable`
+- **config:cache**, **config:clear**, **optimize**, **optimize:clear** - RSX never caches
+  Laravel's config (env() is read at runtime; only the .env PARSE is cached, by run mode -
+  `rsx:man app_mode`, LOADING .env). What a box serves is built by `rsx:build` and discarded
+  by `rsx:clean`. (`optimize:cache` is not a stub: it is the build's own step, refused
+  outside a build.)
 
 ## Alternative Approaches
 

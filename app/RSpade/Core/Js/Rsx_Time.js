@@ -44,6 +44,14 @@ class Rsx_Time {
     static _ajax_synced = false;
 
     /**
+     * Whether this page stopped adopting the zone from Ajax envelopes: set when the browser's
+     * zone changed under an open page (Rsx_Timezone_Cookie), so one screen never shows times
+     * in two zones. The page's next full load renders in the new one.
+     * @type {boolean}
+     */
+    static _timezone_frozen = false;
+
+    /**
      * Framework initialization hook
      * Reads initial time configuration from window.rsxapp on page load
      */
@@ -75,10 +83,10 @@ class Rsx_Time {
     static sync_from_ajax(config) {
         if (!config) return;
 
-        const timezone_changed = config.user_timezone && config.user_timezone !== this._user_timezone;
+        const timezone_changed = !this._timezone_frozen && config.user_timezone && config.user_timezone !== this._user_timezone;
 
-        // Always update timezone if provided
-        if (config.user_timezone) {
+        // Adopt the envelope's zone - unless this page has frozen its zone
+        if (config.user_timezone && !this._timezone_frozen) {
             this._user_timezone = config.user_timezone;
         }
 
@@ -89,6 +97,14 @@ class Rsx_Time {
             this._server_time_offset = server_ms - client_ms;
             this._ajax_synced = true;
         }
+    }
+
+    /**
+     * Keep this page's zone until its next full load (Rsx_Timezone_Cookie calls it when the
+     * browser's zone changes under an open page).
+     */
+    static _freeze_timezone() {
+        this._timezone_frozen = true;
     }
 
     // =========================================================================

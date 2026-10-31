@@ -242,7 +242,7 @@ SEE ALSO
        rsx:man scripting - booting the shell from a PHP script OUTSIDE the application
        skill rspade:task-commands - the recipe, a worked transcript, the FATAL catalogue
        skill rspade:background-tasks - writing the task in the first place
-       system/app/RSpade/resource/reference_app/services/seeder_service.php - rsx_app:seed
+       system/app/RSpade/resource/reference_app/services/sample_data/sample_data_service.php - rsx_app:seed
 
 AUTHORS
        RSX Framework Team

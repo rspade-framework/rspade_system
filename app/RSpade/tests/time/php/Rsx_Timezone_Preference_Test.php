@@ -20,9 +20,10 @@ use App\RSpade\Core\Time\Rsx_Time;
  * The user timezone PREFERENCE surface: Rsx_Time::set_user_timezone() /
  * timezone_options() and the Rsx_Timezone_Controller endpoints that expose them.
  *
- * The setter's cache invalidation is the load-bearing part: get_user_timezone()
- * memoizes per (experience, user, site), so without an explicit clear the setter's
- * own response would carry the zone resolved BEFORE the write.
+ * The preference is ONE value: an identifier, or null for automatic. The setter's cache
+ * invalidation is the load-bearing part: get_user_timezone() memoizes per (experience,
+ * user, site, browser zone), so without an explicit clear the setter's own response would
+ * carry the zone resolved BEFORE the write.
  */
 class Rsx_Timezone_Preference_Test extends Rsx_Test_Abstract
 {
@@ -53,6 +54,7 @@ class Rsx_Timezone_Preference_Test extends Rsx_Test_Abstract
     private static function __sign_out(): void
     {
         static::__reset_session();
+        Rsx_Time::$browser_timezone_cookie_for_tests = null;
         Rsx_Time::_clear_user_timezone_cache();
     }
 
@@ -92,7 +94,10 @@ class Rsx_Timezone_Preference_Test extends Rsx_Test_Abstract
         static::__sign_out();
     }
 
-    public static function test_timezone_auto_only_change_persists_without_reporting_a_change()
+    /**
+     * Null is AUTOMATIC: the column holds no zone and the request resolves the browser's.
+     */
+    public static function test_null_makes_the_user_automatic()
     {
         if (static::__sign_in() === null) {
             static::__skip('no User_Model record in the test database');
@@ -100,15 +105,16 @@ class Rsx_Timezone_Preference_Test extends Rsx_Test_Abstract
             return;
         }
 
-        Rsx_Time::set_user_timezone(static::ZONE_A, true);
-        $changed = Rsx_Time::set_user_timezone(static::ZONE_A, false);
+        Rsx_Time::set_user_timezone(static::ZONE_A);
+        Rsx_Time::$browser_timezone_cookie_for_tests = static::ZONE_B;
 
-        static::__assert_false($changed, 'only the zone drives a re-render');
-        static::__assert_false((bool) Session::get_login_user()->timezone_auto);
+        static::__assert_equals(static::ZONE_A, Rsx_Time::get_user_timezone(), 'an explicit zone outranks the browser');
 
-        // And back on again.
-        Rsx_Time::set_user_timezone(static::ZONE_A, true);
-        static::__assert_true((bool) Session::get_login_user()->timezone_auto);
+        $changed = Rsx_Time::set_user_timezone(null);
+
+        static::__assert_true($changed, 'the resolved zone moved to the browser\'s');
+        static::__assert_null(Session::get_login_user()->timezone, 'automatic stores no zone');
+        static::__assert_equals(static::ZONE_B, Rsx_Time::get_user_timezone());
 
         static::__sign_out();
     }
@@ -256,10 +262,9 @@ class Rsx_Timezone_Preference_Test extends Rsx_Test_Abstract
         static::__assert_array_has_key('value', $options[0]);
         static::__assert_array_has_key('label', $options[0]);
 
-        $result = Ajax::internal('Rsx_Timezone_Controller', 'set_timezone', [
-            'timezone' => static::ZONE_B,
-            'timezone_auto' => false,
-        ]);
+        Ajax::internal('Rsx_Timezone_Controller', 'set_timezone', ['timezone' => static::ZONE_A]);
+
+        $result = Ajax::internal('Rsx_Timezone_Controller', 'set_timezone', ['timezone' => static::ZONE_B]);
 
         static::__assert_true($result['changed']);
         static::__assert_equals(static::ZONE_B, $result['timezone']);
@@ -267,7 +272,15 @@ class Rsx_Timezone_Preference_Test extends Rsx_Test_Abstract
         $settings = Ajax::internal('Rsx_Timezone_Controller', 'get_settings');
         static::__assert_equals(static::ZONE_B, $settings['timezone']);
         static::__assert_equals(static::ZONE_B, $settings['resolved_timezone']);
-        static::__assert_false($settings['timezone_auto']);
+
+        // '' (the screen's Automatic option) and null both mean automatic.
+        Rsx_Time::$browser_timezone_cookie_for_tests = static::ZONE_A;
+        $result = Ajax::internal('Rsx_Timezone_Controller', 'set_timezone', ['timezone' => '']);
+        static::__assert_null($result['timezone']);
+
+        $settings = Ajax::internal('Rsx_Timezone_Controller', 'get_settings');
+        static::__assert_null($settings['timezone'], 'automatic');
+        static::__assert_equals(static::ZONE_A, $settings['resolved_timezone'], 'resolved from the browser');
 
         static::__sign_out();
     }
@@ -282,14 +295,6 @@ class Rsx_Timezone_Preference_Test extends Rsx_Test_Abstract
 
         // The internal entry point raises the validation response as the coded
         // form-error exception, carrying the per-field details.
-        $missing = static::__assert_throws(
-            AjaxFormErrorException::class,
-            function () {
-                Ajax::internal('Rsx_Timezone_Controller', 'set_timezone', []);
-            }
-        );
-        static::__assert_array_has_key('timezone', $missing->get_details());
-
         $unknown = static::__assert_throws(
             AjaxFormErrorException::class,
             function () {

@@ -159,6 +159,9 @@ class Spa {
         // See: /docs.dev/SPA_BROWSER_INTEGRATION.md for details
         console.log('[Spa] Using History API for browser integration');
         Spa.setup_browser_integration();
+
+        // A page that lives across a timezone change notices it (Rsx_Timezone_Cookie).
+        Rsx_Timezone_Cookie.watch();
     }
 
     /**

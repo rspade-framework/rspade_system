@@ -641,13 +641,12 @@ abstract class Rsx_Bundle_Abstract
         $rsxapp_data['server_time'] = \App\RSpade\Core\Time\Rsx_Time::now_iso();
         $rsxapp_data['user_timezone'] = \App\RSpade\Core\Time\Rsx_Time::get_user_timezone();
 
-        // Whether the browser's detected zone may auto-set this user's preference.
-        // A PERSONAL fact, so it exists only when a staff login identity does: null
-        // for a portal request or a signed-out page, where no user's preference is
-        // being described (the boot hook guards on is_auth anyway, and null reads
-        // false at every consumer).
+        // The signed-in staff user's EXPLICIT zone, or null: automatic, a portal page, or
+        // nobody signed in. Rsx_Timezone_Cookie.js keeps the rsx_tz cookie current exactly
+        // when this is null, and clears it otherwise. user_timezone above stays the zone
+        // this page was RENDERED in.
         $login_user = $is_portal ? null : Session::get_login_user();
-        $rsxapp_data['user_timezone_auto'] = $login_user ? (bool) $login_user->timezone_auto : null;
+        $rsxapp_data['user_timezone_preference'] = \App\RSpade\Core\Time\Rsx_Time::explicit_user_timezone();
 
         // The developer flag, present ONLY when it is true. Client code asks
         // window.rsxapp.is_developer as a truthiness question, so an ordinary page ships

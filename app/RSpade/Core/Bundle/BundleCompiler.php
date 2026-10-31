@@ -2000,6 +2000,9 @@ class BundleCompiler
         $portal_auth_controller_sources = [
             'app/RSpade/Core/TwoFactor/Rsx_Portal_Two_Factor_Controller.php',
             'app/RSpade/Core/Sso/Rsx_Portal_Sso_Controller.php',
+            // Not a portal twin but the same situation: <Password_Confirmation_Form> (Core_Bundle)
+            // calls it from any page of either realm.
+            'app/RSpade/Core/Confirmation/Rsx_Password_Confirmation_Controller.php',
         ];
         foreach ($portal_auth_controller_sources as $portal_auth_controller_source) {
             if (isset($manifest_files[$portal_auth_controller_source]['js_stub'])) {

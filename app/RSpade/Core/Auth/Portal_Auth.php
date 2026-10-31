@@ -35,10 +35,10 @@ class Portal_Auth
      *
      * THE ORDER, and why it is the same as staff:
      *
-     *   1. Login_Throttle::require_not_throttled() is the FIRST statement and THROWS
-     *      Auth_Throttled_Exception for a client IP that has spent its failure budget (one
-     *      budget across both realms) - before the lookup, so a locked-out address cannot probe
-     *      which accounts exist.
+     *   1. Login_Throttle::require_not_throttled($email) is the FIRST statement and THROWS
+     *      Auth_Throttled_Exception when the client address or the account has too many recent
+     *      failures (one limit across both realms) - before the lookup, so a throttled caller
+     *      cannot probe which accounts exist.
      *   2. Malformed input (no email or no password) answers null and records nothing.
      *   3. An unknown address and a wrong password both answer null - indistinguishable to the
      *      caller - recorded as Portal_Login_History::record_failure() with
@@ -50,7 +50,7 @@ class Portal_Auth
      *      Auth_Password_Reset_Required_Exception, carrying the portal user - only now, once the
      *      password matched, so it discloses nothing to a guesser. Recorded as a
      *      _portal_login_history ROW (STATUS_FAILED_PASSWORD_RESET_REQUIRED) EVEN WHEN $record
-     *      is false, because the outcome is final; never counted against the throttle.
+     *      is false, because the outcome is final.
      *   5. Success: a SUCCESS row when $record is true, and the portal user is answered.
      *
      * $record = false is the opt-out for a caller whose check is not yet a sign-in - a second
@@ -72,13 +72,13 @@ class Portal_Auth
      * @param array $credentials Requires 'email' and 'password'
      * @param bool $record Whether to record the outcome to Portal_Login_History (default true)
      * @return Portal_User_Model|null The portal user the credentials prove, or null
-     * @throws Auth_Throttled_Exception when this client IP is locked out
+     * @throws Auth_Throttled_Exception when this client or account is over the sign-in rate limit
      * @throws Auth_Password_Reset_Required_Exception when the credentials are correct and the
      *         portal user must reset its password first
      */
     public static function verify_credentials(int $site_id, array $credentials, bool $record = true): ?Portal_User_Model
     {
-        Login_Throttle::require_not_throttled();
+        Login_Throttle::require_not_throttled(is_string($credentials['email'] ?? null) ? $credentials['email'] : null);
 
         $email = $credentials['email'] ?? null;
         $password = $credentials['password'] ?? null;

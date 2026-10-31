@@ -17,8 +17,8 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  *
  * ```php
  * #[Task('Seed the demo dataset')]
- * #[Command('rsx_app:seed', 'Seed clients, contacts, projects and tasks')]
- * public static function seed_all(Task_Instance $task, array $params = []) { }
+ * #[Command('rsx_app:seed', 'Seed the sample dataset into an empty site')]
+ * public static function seed(Task_Instance $task, array $params = []) { }
  * ```
  *
  * and the manifest records it here as

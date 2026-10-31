@@ -31,7 +31,7 @@ use App\RSpade\Core\Session\Session;
  * browser's session is known) for PHP output, and the window.rsxapp.console_debug
  * block the bundle renders for JS output. Both call overlay(), so the two languages see
  * the same override. Only its own keys are overridden - outputs (cli/web/ajax/
- * laravel_log) and enable_get_trace stay configuration.
+ * laravel_log) stay configuration.
  *
  * Shape (normalize() is the one validator):
  *   enabled            bool
@@ -60,7 +60,7 @@ class Console_Debug_Override
     /** The boolean prefix switches the override carries. */
     public const FLAGS = ['include_benchmark', 'include_location', 'include_backtrace'];
 
-    /** The rsx.console_debug keys an override replaces (outputs and enable_get_trace are not among them). */
+    /** The rsx.console_debug keys an override replaces (the outputs are not among them). */
     public const OVERRIDDEN_KEYS = [
         'enabled', 'filter_mode', 'whitelist', 'blacklist', 'specific_channel',
         'include_benchmark', 'include_location', 'include_backtrace',

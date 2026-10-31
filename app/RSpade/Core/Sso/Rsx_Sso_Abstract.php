@@ -372,7 +372,8 @@ abstract class Rsx_Sso_Abstract
      * THE ORDER IS THE CONTRACT:
      *
      *  1. Login_Throttle::require_not_throttled() is the FIRST statement and it THROWS. A
-     *     callback is a login attempt like any other and spends the same budget; the throw
+     *     callback is a login attempt like any other and is judged by the client address (it
+     *     names no account until the provider answers); the throw
      *     is let through untouched because "we did not check" is a different answer from
      *     "that did not work".
      *  2. The parked ceremony is read and FORGOTTEN IMMEDIATELY, before anything is
@@ -382,14 +383,13 @@ abstract class Rsx_Sso_Abstract
      *  4. Only then is the code exchanged with the provider.
      *  5. Any failure is recorded ONCE through the realm - Login_History::record_failure()
      *     or Portal_Login_History::record_failure() with STATUS_FAILED_SSO (which ALREADY
-     *     feeds Login_Throttle). Never twice: one
-     *     failure counted twice halves the real budget, and the halving would only ever be
-     *     discovered by a user locked out early.
+     *     feeds Login_Throttle). Never twice: one failure counted twice halves the real limit,
+     *     and the halving would only ever be discovered by a user throttled early.
      *
      * @param string $key
      * @param Request $request The callback request.
      * @return RedirectResponse
-     * @throws \App\RSpade\Core\Auth\Auth_Throttled_Exception When this client IP is locked out.
+     * @throws \App\RSpade\Core\Auth\Auth_Throttled_Exception When this client is over the sign-in rate limit.
      * @throws RuntimeException When the provider is unknown, disabled or half-configured.
      */
     public static function handle_callback(string $key, Request $request): RedirectResponse

@@ -99,12 +99,6 @@ class Rsx_Front_Controller
             }
         }
 
-        // ?__trace=1 (config rsx.console_debug.enable_get_trace): the trace dump is
-        // printed by a shutdown handler, in place of the response.
-        if (Debugger::is_trace_output_request()) {
-            die();
-        }
-
         return $response;
     }
 

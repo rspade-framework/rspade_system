@@ -22,6 +22,7 @@ use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Builder;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
+use App\RSpade\Core\Mail\Rsx_Test_Recipients;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Email_Recipient_Model;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
@@ -91,6 +92,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                 'server_errors' => 0,
                 'failed' => 0,
                 'suppressed' => 0,
+                'test' => 0,
                 'blocked' => 0,
                 'reclaimed' => 0,
                 'stale' => 0,
@@ -155,12 +157,12 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
             // the list of mail that left, and the list of mail that did not and why.
             $label = fn ($row) => "#{$row->id} to {$row->to_address} \"" . mb_strimwidth((string) $row->subject, 0, 80, '...') . '"';
             $outcome = function () use (&$counts) {
-                return "{$counts['sent']} sent, {$counts['suppressed']} suppressed, {$counts['blocked']} blocked, "
+                return "{$counts['sent']} sent, {$counts['test']} test, {$counts['suppressed']} suppressed, {$counts['blocked']} blocked, "
                     . "{$counts['server_errors']} server error(s), {$counts['failed']} failed, {$counts['stale']} refused as stale";
             };
 
             while (true) {
-                $done = $counts['sent'] + $counts['suppressed'] + $counts['blocked'] + $counts['server_errors'] + $counts['failed'];
+                $done = $counts['sent'] + $counts['test'] + $counts['suppressed'] + $counts['blocked'] + $counts['server_errors'] + $counts['failed'];
                 $task->progress_count($done, max($total, $done));
 
                 // Between messages: no row is claimed here, so stopping leaves nothing SENDING.
@@ -192,6 +194,18 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                 // one permitted reconnect. Every other path breaks out of it.
                 while (true) {
                     try {
+                        // A TEST recipient (Rsx_Test_Recipients), in every mode: rendered and
+                        // recorded as sent, never handed to a transport. Before the suppressed
+                        // branch - Test is the more specific answer.
+                        if (Rsx_Test_Recipients::is_test_email($row->dev_original_to ?: $row->to_address)) {
+                            Rsx_Mail_Builder::build($row);
+                            $row->mark_test();
+                            static::_recipient($row)->increment_sent();
+                            $task->stdout('Test ' . $label($row) . ': recorded as sent, never delivered (test address)');
+                            $counts['test']++;
+                            break;
+                        }
+
                         if ($delivery_suppressed) {
                             // Build anyway: the rendered bodies are recorded on the row, so
                             // a suppressed send is still reviewable.
@@ -273,7 +287,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
 
             // The closing line. An idle drain says so: it runs every minute, and a run with
             // no output is indistinguishable from one that never looked.
-            $handled = $counts['sent'] + $counts['suppressed'] + $counts['blocked'] + $counts['server_errors'] + $counts['failed'];
+            $handled = $counts['sent'] + $counts['test'] + $counts['suppressed'] + $counts['blocked'] + $counts['server_errors'] + $counts['failed'];
             $task->stdout($handled === 0 && $counts['stale'] === 0 && $counts['reclaimed'] === 0
                 ? 'No mail was due.'
                 : 'Done: ' . $outcome() . '.');

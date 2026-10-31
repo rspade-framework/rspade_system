@@ -26,6 +26,7 @@ class _Sys_Status_Badge extends Component {
         sent: 'ok',
         blocked: 'warn',
         suppressed: 'muted',
+        test: 'info',
 
         // Login identities (login_users.status_id, as the lowercased enum label).
         active: 'ok',

@@ -13,6 +13,8 @@ TEST_NAME="IDE bridge hardening"
 #      reach them with a navigation.
 #   3. git/diff refuses a path that would read as a git option ('--output=...') and a path
 #      that climbs out of the project, and the option never writes its file.
+#   4. refactor refuses an option the named command does not declare, and the rename
+#      commands refuse a class or method name that is not a PHP identifier.
 
 BASE="http://localhost"
 SYSTEM_DIR="$(cd "$(dirname "$0")/../../../../.." && pwd)"
@@ -104,6 +106,33 @@ case "$body" in
         ;;
 esac
 echo "[TEST] 3. OK - option and climbing paths refused, a project path served" >&2
+
+# 4. Refactor arguments: an option the command does not declare is refused at the bridge,
+# and a name that is not a PHP identifier is refused by the command. Neither reaches the
+# manifest, so no file is touched.
+post_refactor() {
+    curl -s -X POST -H "X-Ide-Token: $TOKEN" -H 'Content-Type: application/json' \
+        --data "$1" "$BASE/_ide/service/refactor"
+}
+
+body="$(post_refactor '{"command":"rsx:refactor:rename_php_class","arguments":["Foo","Bar","--env=testing"]}')"
+case "$body" in
+    *'Refactor option not allowed'*) ;;
+    *)
+        echo "FAIL: $TEST_NAME - an undeclared refactor option was not refused: $body"
+        exit 1
+        ;;
+esac
+
+body="$(post_refactor '{"command":"rsx:refactor:rename_php_class","arguments":["Foo","Bar;x()","--dry-run"]}')"
+case "$body" in
+    *'must be a PHP class name'*) ;;
+    *)
+        echo "FAIL: $TEST_NAME - a non-identifier class name was not refused: $body"
+        exit 1
+        ;;
+esac
+echo "[TEST] 4. OK - undeclared refactor option and non-identifier name refused" >&2
 
 echo "PASS: $TEST_NAME"
 exit 0

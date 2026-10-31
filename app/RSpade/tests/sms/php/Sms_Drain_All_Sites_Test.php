@@ -41,7 +41,7 @@ class Sms_Drain_All_Sites_Test extends Rsx_Test_Abstract
         try {
             return Sms_Queue_Model::enqueue(
                 (int) $site->id,
-                '+1555555' . random_int(1000, 9999),
+                '+1555556' . random_int(1000, 9999),
                 'All sites probe',
                 Sms_Queue_Model::CATEGORY_TRANSACTIONAL
             );

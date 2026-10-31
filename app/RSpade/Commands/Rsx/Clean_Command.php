@@ -120,6 +120,7 @@ class Clean_Command extends Command
         }
 
         $cleaned_items = [];
+        $left_in_place = [];
 
         // THIS PROCESS IS NOW A BUILD CONTEXT. Everything below rewrites the build tree,
         // which is exactly what the guard exists to stop happening by accident - so the
@@ -129,7 +130,7 @@ class Clean_Command extends Command
         // 1. Clear the build tree recursively - EVERYTHING
         $build_path = Rsx_Project_Paths::build_root();
         if (is_dir($build_path)) {
-            $this->clear_directory($build_path);
+            $left_in_place = array_merge($left_in_place, static::clear_directory($build_path));
             $cleaned_items[] = '[OK] Build storage cleaned';
         }
 
@@ -159,7 +160,7 @@ class Clean_Command extends Command
 
         $tmp_path = Rsx_Project_Paths::tmp_root();
         if (is_dir($tmp_path)) {
-            $this->clear_directory($tmp_path);
+            $left_in_place = array_merge($left_in_place, static::clear_directory($tmp_path));
             $cleaned_items[] = '[OK] Temp storage cleaned';
         }
 
@@ -205,6 +206,12 @@ class Clean_Command extends Command
             if ($note !== null) {
                 $cleaned_items[] = $note;
             }
+        }
+
+        // A directory another process kept writing into is not a failure (clear_directory()),
+        // but it is not clean either - said even under --silent.
+        foreach ($left_in_place as $directory) {
+            $this->warn('[WARNING] Left ' . $directory . ' in place: another process is writing into it.');
         }
 
         // Display results
@@ -382,16 +389,35 @@ class Clean_Command extends Command
     }
 
     /**
-     * Clean a directory recursively
+     * Test seam: called with a directory's path just before clear_directory() removes it, so a
+     * test can stand in for a process writing into the tree mid-clean. Null outside tests.
+     *
+     * @var callable|null
+     */
+    public static $before_rmdir_for_tests = null;
+
+    /**
+     * Empty $path, keeping the directory itself.
+     *
+     * The trees this empties are written to while it runs - a task worker mid-build, a node
+     * helper storing a cache entry - so a directory can gain a file between the walk that
+     * emptied it and the rmdir() that removes it. That is somebody else's work in progress,
+     * never an error: the directory is emptied once more and removed, and if it has been
+     * written to AGAIN it is left in place and returned. Everything here is a derived cache,
+     * so what a concurrent writer left behind is either current or regenerated on demand.
+     * A file or directory that vanished first (another process removed it) is likewise
+     * already done. Any other failure - a permission, a read-only tree - throws.
      *
      * @param string $path
-     * @return void
+     * @return array<int, string> Directories left in place because another process kept writing into them
      */
-    protected function clear_directory($path)
+    public static function clear_directory(string $path): array
     {
         if (!is_dir($path)) {
-            return;
+            return [];
         }
+
+        $left = [];
 
         $files = new RecursiveIteratorIterator(
             new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS),
@@ -404,20 +430,89 @@ class Clean_Command extends Command
             // answers with the directory they point AT - so resolving here would aim the
             // wipe at the application's logs. The iterator does not descend into a
             // symlinked directory, so removing the link itself is the whole job.
-            if ($file->isLink()) {
-                unlink($file->getPathname());
+            if ($file->isLink() || !$file->isDir()) {
+                static::__unlink($file->getPathname());
 
                 continue;
             }
 
-            if ($file->isDir()) {
-                rmdir($file->getPathname());
-            } else {
-                unlink($file->getPathname());
+            $directory = $file->getPathname();
+
+            // A directory already left whole (its child could not be removed) is not
+            // retried: it is reported through that child.
+            if (static::__contains_left($left, $directory)) {
+                continue;
+            }
+
+            if (static::__rmdir($directory)) {
+                continue;
+            }
+
+            // Written to since the walk emptied it: empty it once more, then try again.
+            $left = array_merge($left, static::clear_directory($directory));
+            if (static::__contains_left($left, $directory) || !static::__rmdir($directory)) {
+                $left = array_values(array_filter($left, fn ($kept) => !str_starts_with($kept, $directory . '/')));
+                $left[] = $directory;
             }
         }
+
+        return $left;
     }
 
+    /** True when $directory is, or contains, a directory already left in place. */
+    private static function __contains_left(array $left, string $directory): bool
+    {
+        foreach ($left as $kept) {
+            if ($kept === $directory || str_starts_with($kept, $directory . '/')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Remove one file or link; a path that is already gone counts as removed. */
+    private static function __unlink(string $path): void
+    {
+        if (@unlink($path)) {
+            return;
+        }
+
+        clearstatcache(true, $path);
+        if (!file_exists($path) && !is_link($path)) {
+            return;
+        }
+
+        throw new \RuntimeException('rsx:clean could not remove ' . $path . ': ' . (error_get_last()['message'] ?? 'unknown error'));
+    }
+
+    /**
+     * Remove one directory. True when it is gone, false when another process has written
+     * into it since it was emptied; any other failure throws.
+     */
+    private static function __rmdir(string $path): bool
+    {
+        if (static::$before_rmdir_for_tests !== null) {
+            (static::$before_rmdir_for_tests)($path);
+        }
+
+        if (@rmdir($path)) {
+            return true;
+        }
+
+        $error = error_get_last()['message'] ?? 'unknown error';
+        clearstatcache(true, $path);
+        if (!is_dir($path)) {
+            return true;
+        }
+
+        $entries = @scandir($path);
+        if (is_array($entries) && count($entries) > 2) {
+            return false;
+        }
+
+        throw new \RuntimeException('rsx:clean could not remove ' . $path . ': ' . $error);
+    }
 
     /**
      * Remove orphaned ".tmp_<digits>" staging directories from the code tree.

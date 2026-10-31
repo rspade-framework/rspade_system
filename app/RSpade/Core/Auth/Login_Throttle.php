@@ -12,67 +12,72 @@ use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Session\Session;
 
 /**
- * Brute-force throttle for the authentication surface.
+ * Rate limit for the authentication surface.
  *
- * WHAT IT COUNTS: FAILURES, not requests, keyed by CLIENT IP. Two Rsx_Counter keys per
- * address (redis database 3, the transient-counter store) - a failure counter that expires
- * with the window, and a lockout marker written when the counter reaches the budget. A
- * request that authenticates costs nothing, so a real user signing in fifty times a day
- * never approaches the budget; only wrong answers accumulate.
+ * WHAT IT COUNTS: FAILED ATTEMPTS - wrong answers, not requests - against two buckets at
+ * once: the CLIENT ADDRESS and the ACCOUNT (the email the attempt names). Every attempt is
+ * CHECKED first, and either bucket over its limit refuses it. A sign-in that succeeds costs
+ * nothing, so an office behind one address signing in at nine o'clock never approaches the
+ * limit; guessing and spraying are made of failures, and those are what accumulate. The
+ * address bucket stops one source spraying many accounts; the account bucket stops many
+ * sources (an IPv6 range, a botnet) working one account. An IPv6 address counts by its /64,
+ * the block one subscriber is handed, so rotating addresses inside it buys nothing.
  *
- * WHY PER IP AND NOT PER EMAIL: the attacker chooses the email. Spraying one password across
- * a thousand addresses would never trip a per-email budget, while the address it is sprayed
- * FROM is the one thing the attacker has to keep using. The per-email counter Login_History
- * keeps is still there, still readable, and still not enforced by the framework.
+ * THE LIMIT: rsx.sessions.login_throttle - `attempts` failures per `seconds` (8 per 60 by
+ * default). Two rules enforce it:
+ *   1. the trailing `seconds`: once `attempts` failures fall inside it, attempts are refused;
+ *   2. the trailing SUSTAINED_WINDOW_SECONDS: once it holds at least `attempts` failures,
+ *      their average rate since the first of them may not exceed `attempts` per `seconds` -
+ *      so a client cannot hold the limit by spacing its bursts just outside rule 1.
+ * A refused attempt is not a failure: the window frees on its own as time passes.
  *
- * WHERE IT IS ENFORCED: RsxAuth::verify_credentials() and Portal_Auth::verify_credentials() call
- * require_not_throttled() as their first statement, before any lookup - so a locked-out address
- * cannot even probe which addresses exist. Login_History::record_failure() and
- * Portal_Login_History::record_failure() call record_failure() here, which is what makes
- * every recorded failure feed the throttle: password misses, unknown addresses, and the
- * outcomes an application records itself (a second factor, an account status).
+ * WHY THE LIMIT IS LOOSE. Turnstile and second factors are what protect an account; this is
+ * a brake on automated attempts that somehow get past Turnstile, so a flood cannot happen.
  *
- * A CALLER WITH NO CLIENT IP IS NEVER THROTTLED. Session::get_client_ip() answers null
- * outside a request - CLI, tasks, programmatic work - and there is no remote party to
- * throttle there: a command that authenticates a thousand fixtures is not an attack, and
- * throttling it would collapse every such process onto one shared bucket. The web request
- * is the surface being defended, and it always has an address.
+ * WHERE IT IS ENFORCED: require_not_throttled() is the FIRST statement of
+ * RsxAuth::verify_credentials(), Portal_Auth::verify_credentials(), the second-factor and
+ * passkey verifications and the federated sign-in - before any lookup, so a throttled caller
+ * learns nothing. It THROWS Auth_Throttled_Exception (an HTTP 429 when nothing catches it); a
+ * login function catches it and renders the message as an ordinary form error. Failures
+ * arrive through Login_History::record_failure() / Portal_Login_History::record_failure(),
+ * which call record_failure() here - so an outcome an application records itself (a bad
+ * second factor, an account status) counts without anything extra.
+ *
+ * A CALLER WITH NO CLIENT ADDRESS IS NEVER THROTTLED. Session::get_client_ip() answers null
+ * outside a request - CLI, tasks, tests - and there is no remote party to limit there.
  *
  * FAIL CLOSED. Nothing here catches a cache error: a redis failure propagates and the login
- * fails loud rather than proceeding unthrottled. The ONE tolerated degradation is maintenance
- * mode, where redis is deliberately stopped and Rsx_Counter answers 0 without touching it -
- * the throttle is then inert, which costs nothing because the web tier is answering 503.
+ * fails loud. The ONE tolerated degradation is maintenance mode, where Rsx_Counter answers no
+ * events without touching redis - the web tier is answering 503 then anyway.
  *
- * Config: rsx.sessions.login_throttle (enabled, attempts, window_minutes, lockout_minutes).
- * See rsx:man session, LOGIN THROTTLE.
+ * Storage: Rsx_Counter event logs (redis database 3). See rsx:man session, LOGIN THROTTLE.
  */
 class Login_Throttle
 {
     /**
-     * Per-IP failure counter (transient-counter store - see Rsx_Counter::increment).
+     * The span rule 2 averages over. Internal: the configured limit is failures per seconds.
      */
-    private const FAILURE_KEY_PREFIX = 'login_throttle:failures:ip:';
+    private const SUSTAINED_WINDOW_SECONDS = 600;
+
+    private const IP_KEY_PREFIX = 'login_throttle:ip:';
+
+    private const ACCOUNT_KEY_PREFIX = 'login_throttle:account:';
 
     /**
-     * Per-IP lockout marker (transient-counter store). Holds the UNIX TIME the lockout
-     * expires, so retry_after_seconds() is one read rather than a TTL introspection, and the
-     * key carries the same expiry as a redis TTL so it cleans itself up.
-     */
-    private const LOCKOUT_KEY_PREFIX = 'login_throttle:lockout:ip:';
-
-    /**
-     * Refuse a client that has spent its failure budget.
+     * Refuse an attempt from a client or for an account that is over the limit.
      *
      * Call this BEFORE anything that could confirm or deny a credential - a lookup, a hash
      * comparison, a second-factor check. A throttled caller must learn nothing at all.
      *
-     * @param string|null $ip Client IP; defaults to Session::get_client_ip()
+     * @param string|null $account The account the attempt names (an email); null when the
+     *        attempt names none yet (a passkey or federated sign-in) - the address alone counts
+     * @param string|null $ip Client address; defaults to Session::get_client_ip()
      * @return void
-     * @throws Auth_Throttled_Exception when the IP is locked out
+     * @throws Auth_Throttled_Exception when the address or the account is over the limit
      */
-    public static function require_not_throttled(?string $ip = null): void
+    public static function require_not_throttled(?string $account = null, ?string $ip = null): void
     {
-        $retry_after_seconds = self::retry_after_seconds($ip);
+        $retry_after_seconds = self::retry_after_seconds($account, $ip);
 
         if ($retry_after_seconds > 0) {
             throw new Auth_Throttled_Exception($retry_after_seconds);
@@ -80,58 +85,37 @@ class Login_Throttle
     }
 
     /**
-     * Count one authentication failure against the client's IP, locking it out when the
-     * budget is spent.
+     * Count one failed attempt against the client's address and, when it names one, the
+     * account.
      *
-     * Called by Login_History::record_failure() and Portal_Login_History::record_failure(), so
-     * an application that records its own failure outcomes (a bad second factor, a disabled
-     * account) feeds the throttle without doing anything extra. Call it directly only from a
-     * path that checks a secret and records through neither (a PIN, an access code).
+     * Called by Login_History::record_failure() and Portal_Login_History::record_failure().
+     * Call it directly only from a path that checks a secret and records through neither (a
+     * PIN, an access code).
      *
-     * @param string|null $ip Client IP; defaults to Session::get_client_ip()
+     * @param string|null $account The account the failed attempt named (an email)
+     * @param string|null $ip Client address; defaults to Session::get_client_ip()
      * @return void
      */
-    public static function record_failure(?string $ip = null): void
+    public static function record_failure(?string $account = null, ?string $ip = null): void
     {
-        $config = self::_config();
-
-        if (!$config['enabled']) {
+        if (!self::_config()['enabled']) {
             return;
         }
 
-        $ip = self::_resolve_ip($ip);
-
-        if ($ip === null) {
-            return;
+        foreach (self::_keys($account, $ip) as $key) {
+            Rsx_Counter::record_event($key, self::SUSTAINED_WINDOW_SECONDS);
         }
-
-        $failures = Rsx_Counter::increment(
-            self::FAILURE_KEY_PREFIX . $ip,
-            $config['window_minutes'] * 60
-        );
-
-        // 0 means the cache is unavailable (maintenance mode) - nothing was counted, so there
-        // is nothing to act on.
-        if ($failures < $config['attempts']) {
-            return;
-        }
-
-        $lockout_seconds = $config['lockout_minutes'] * 60;
-
-        Rsx_Counter::set_flag(
-            self::LOCKOUT_KEY_PREFIX . $ip,
-            $lockout_seconds,
-            time() + $lockout_seconds
-        );
     }
 
     /**
-     * How long this client must wait, in seconds. 0 when it is not locked out.
+     * How long this client (and account) must wait before an attempt is accepted, in seconds.
+     * 0 when it would be accepted now.
      *
-     * @param string|null $ip Client IP; defaults to Session::get_client_ip()
+     * @param string|null $account
+     * @param string|null $ip Client address; defaults to Session::get_client_ip()
      * @return int
      */
-    public static function retry_after_seconds(?string $ip = null): int
+    public static function retry_after_seconds(?string $account = null, ?string $ip = null): int
     {
         $config = self::_config();
 
@@ -139,93 +123,174 @@ class Login_Throttle
             return 0;
         }
 
-        $ip = self::_resolve_ip($ip);
-
-        if ($ip === null) {
-            return 0;
+        $retry_after_seconds = 0;
+        foreach (self::_keys($account, $ip) as $key) {
+            $retry_after_seconds = max($retry_after_seconds, self::_retry_after($key, $config));
         }
 
-        $expires_at = Rsx_Counter::flag_value(self::LOCKOUT_KEY_PREFIX . $ip);
-
-        if ($expires_at <= 0) {
-            return 0;
-        }
-
-        return max(0, $expires_at - time());
+        return $retry_after_seconds;
     }
 
     /**
-     * Clear an address's failure counter and lockout.
+     * Clear the failure history of an address and/or an account.
      *
-     * For a test, and for an operator releasing a customer who locked themselves out.
-     * A null IP outside a request clears nothing (nothing was ever counted).
+     * For a test, and for an operator releasing a customer - from the command line too: an
+     * account is cleared whether or not there is a client address.
      *
-     * @param string|null $ip Client IP; defaults to Session::get_client_ip()
+     * @param string|null $account
+     * @param string|null $ip Client address; defaults to Session::get_client_ip()
      * @return void
      */
-    public static function reset(?string $ip = null): void
+    public static function reset(?string $account = null, ?string $ip = null): void
     {
-        $ip = self::_resolve_ip($ip);
+        $keys = [];
 
-        if ($ip === null) {
-            return;
+        $ip = $ip ?? Session::get_client_ip();
+        if ($ip !== null && trim($ip) !== '') {
+            $keys[] = self::IP_KEY_PREFIX . self::address_bucket(trim($ip));
         }
 
-        Rsx_Counter::reset(self::FAILURE_KEY_PREFIX . $ip);
-        Rsx_Counter::reset(self::LOCKOUT_KEY_PREFIX . $ip);
+        $account = $account === null ? '' : mb_strtolower(trim($account));
+        if ($account !== '') {
+            $keys[] = self::ACCOUNT_KEY_PREFIX . $account;
+        }
+
+        foreach ($keys as $key) {
+            Rsx_Counter::reset($key);
+        }
     }
 
     /**
-     * The client IP this call is about, or null when there is no remote party.
+     * The bucket an address counts in: an IPv4 address as itself, an IPv6 address by its /64
+     * (an IPv4-mapped IPv6 address as the IPv4 address it carries).
      *
-     * @param string|null $ip
-     * @return string|null
+     * @param string $ip
+     * @return string
      */
-    private static function _resolve_ip(?string $ip): ?string
+    public static function address_bucket(string $ip): string
+    {
+        $packed = @inet_pton($ip);
+
+        if ($packed === false || strlen($packed) !== 16) {
+            return $ip;
+        }
+
+        if (substr($packed, 0, 12) === str_repeat("\0", 10) . "\xff\xff") {
+            return inet_ntop(substr($packed, 12));
+        }
+
+        return inet_ntop(substr($packed, 0, 8) . str_repeat("\0", 8)) . '/64';
+    }
+
+    /**
+     * Seconds until an attempt under $key would be accepted (0 = now).
+     *
+     * @param string $key
+     * @param array $config
+     * @return int
+     */
+    private static function _retry_after(string $key, array $config): int
+    {
+        $times = Rsx_Counter::event_times($key, max($config['seconds'], self::SUSTAINED_WINDOW_SECONDS));
+
+        return self::retry_after_for($times, microtime(true), $config['attempts'], $config['seconds']);
+    }
+
+    /**
+     * THE DECISION, as a pure function: given the times of the failures in one bucket, how many
+     * seconds until an attempt is accepted (0 = now)?
+     *
+     * Rule 1: at most $limit failures in the trailing $seconds - the wait is until enough of
+     * them leave that span for one more to fit. Rule 2: once the trailing
+     * SUSTAINED_WINDOW_SECONDS holds $limit failures, their average rate since the first of
+     * them may not exceed $limit per $seconds - the wait is until enough time has passed for
+     * the average to fall back to the limit, or until the first attempt leaves the window,
+     * whichever comes first.
+     *
+     * @param float[] $times Failures, in seconds, oldest first
+     * @param float $now The current time, in seconds
+     * @param int $limit Attempts allowed per $seconds
+     * @param int $seconds The span the limit is stated over
+     * @return int
+     */
+    public static function retry_after_for(array $times, float $now, int $limit, int $seconds): int
+    {
+        $times = array_values(array_filter($times, fn ($t) => $t > $now - max($seconds, self::SUSTAINED_WINDOW_SECONDS)));
+        $wait = 0.0;
+
+        $recent = array_values(array_filter($times, fn ($t) => $t > $now - $seconds));
+        if (count($recent) >= $limit) {
+            $wait = max($wait, $recent[count($recent) - $limit] + $seconds - $now);
+        }
+
+        $count = count($times);
+        if ($count >= $limit) {
+            $first = $times[0];
+            $elapsed = max($now - $first, $seconds);
+
+            if ($count / $elapsed > $limit / $seconds) {
+                $until_average = $first + ($count * $seconds / $limit) - $now;
+                $until_expiry = $first + self::SUSTAINED_WINDOW_SECONDS - $now;
+                $wait = max($wait, min($until_average, $until_expiry));
+            }
+        }
+
+        return $wait > 0 ? (int) ceil($wait) : 0;
+    }
+
+    /**
+     * The event-log keys an attempt is judged by: the address bucket (when there is a client)
+     * and the account (when the attempt names one). None at all for a caller with no
+     * client address.
+     *
+     * @param string|null $account
+     * @param string|null $ip
+     * @return string[]
+     */
+    private static function _keys(?string $account, ?string $ip): array
     {
         $ip = $ip ?? Session::get_client_ip();
 
         if ($ip === null || trim($ip) === '') {
-            return null;
+            return [];
         }
 
-        return trim($ip);
+        $keys = [self::IP_KEY_PREFIX . self::address_bucket(trim($ip))];
+
+        $account = $account === null ? '' : mb_strtolower(trim($account));
+        if ($account !== '') {
+            $keys[] = self::ACCOUNT_KEY_PREFIX . $account;
+        }
+
+        return $keys;
     }
 
     /**
      * The validated throttle configuration.
      *
-     * A nonsensical value is a broken deployment, not an input to work around: a zero or
-     * negative budget would lock every visitor out on their first mistake, and a zero window
-     * cannot even be handed to a counter TTL.
+     * A nonsensical value is a broken deployment, not an input to work around: a zero budget
+     * would refuse every visitor's first attempt, and a zero span cannot hold an attempt.
      *
-     * @return array{enabled: bool, attempts: int, window_minutes: int, lockout_minutes: int}
+     * @return array{enabled: bool, attempts: int, seconds: int}
      */
     private static function _config(): array
     {
         $enabled = (bool) config('rsx.sessions.login_throttle.enabled', true);
-
-        $attempts = (int) config('rsx.sessions.login_throttle.attempts', 10);
-        $window_minutes = (int) config('rsx.sessions.login_throttle.window_minutes', 15);
-        $lockout_minutes = (int) config('rsx.sessions.login_throttle.lockout_minutes', 15);
+        $attempts = (int) config('rsx.sessions.login_throttle.attempts', 8);
+        $seconds = (int) config('rsx.sessions.login_throttle.seconds', 60);
 
         if ($attempts <= 0) {
-            shouldnt_happen('rsx.sessions.login_throttle.attempts must be a positive number of failures');
+            shouldnt_happen('rsx.sessions.login_throttle.attempts must be a positive number of attempts');
         }
 
-        if ($window_minutes <= 0) {
-            shouldnt_happen('rsx.sessions.login_throttle.window_minutes must be a positive number of minutes');
-        }
-
-        if ($lockout_minutes <= 0) {
-            shouldnt_happen('rsx.sessions.login_throttle.lockout_minutes must be a positive number of minutes');
+        if ($seconds <= 0) {
+            shouldnt_happen('rsx.sessions.login_throttle.seconds must be a positive number of seconds');
         }
 
         return [
             'enabled' => $enabled,
             'attempts' => $attempts,
-            'window_minutes' => $window_minutes,
-            'lockout_minutes' => $lockout_minutes,
+            'seconds' => $seconds,
         ];
     }
 }

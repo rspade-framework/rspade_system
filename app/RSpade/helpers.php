@@ -1045,17 +1045,49 @@ function shell_exec_pretty($command, $real_time = true, $throw_on_error = false)
 }
 
 /**
- * Check if a command exists in the system PATH.
+ * Check if a command exists: an executable file of that name on the PATH, or - for a name
+ * containing a directory separator - at that path.
+ *
+ * Answered in PHP, the way `which` answers it, so no shell is involved and the name is never
+ * part of a command line: whatever it holds, it is only ever a file name looked up.
  *
  * @param string $command
  * @return bool
  */
 function command_exists($command)
 {
-    $which = PHP_OS_FAMILY === 'Windows' ? 'where' : 'which';
-    $result = shell_exec('bash -c ' . escapeshellarg("$which $command 2>&1"));
+    $command = (string) $command;
+    if ($command === '' || str_contains($command, "\0")) {
+        return false;
+    }
 
-    return !empty($result) && !str_contains($result, 'not found') && !str_contains($result, 'Could not find');
+    // On Windows a bare name also matches with each executable extension (PATHEXT).
+    $extensions = [''];
+    if (PHP_OS_FAMILY === 'Windows') {
+        $extensions = array_merge($extensions, explode(';', (string) (getenv('PATHEXT') ?: '.COM;.EXE;.BAT;.CMD')));
+    }
+
+    if (str_contains($command, '/') || str_contains($command, DIRECTORY_SEPARATOR)) {
+        $candidates = [$command];
+    } else {
+        $candidates = [];
+        foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $directory) {
+            if ($directory !== '') {
+                $candidates[] = rtrim($directory, '/\\') . DIRECTORY_SEPARATOR . $command;
+            }
+        }
+    }
+
+    foreach ($candidates as $candidate) {
+        foreach ($extensions as $extension) {
+            $path = $candidate . $extension;
+            if (is_file($path) && is_executable($path)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 /**

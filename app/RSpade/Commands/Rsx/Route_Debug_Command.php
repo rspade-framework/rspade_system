@@ -155,6 +155,8 @@ class Route_Debug_Command extends Command
         {--post= : Send POST request with JSON data (e.g., --post=\'{"key":"value"}\')}
         {--cookies : Display all browser cookies with domains and expiry}
         {--wait-for= : Wait for CSS selector before capture (e.g., --wait-for=".loaded")}
+        {--no-realtime : Refuse the realtime relay connection in the headless browser, as if the relay were down}
+        {--timezone= : Run the headless browser in this IANA timezone (e.g. America/Chicago); default the container\'s own (UTC)}
         {--all-logs : Display Laravel log and nginx logs after test}
         {--expect-element= : Verify element exists by CSS selector (fails if not found)}
         {--dump-element= : Extract and display HTML of element by CSS selector}
@@ -520,6 +522,22 @@ class Route_Debug_Command extends Command
         if ($wait_for) {
             $command_args[] = "--wait-for={$wait_for}";
         }
+
+        if ($this->option('no-realtime')) {
+            $command_args[] = '--no-realtime';
+        }
+
+        // The browser's zone reaches the server only as its rsx_tz cookie, so emulating a
+        // zone is how a render is checked in it; the account's own preference is untouched.
+        $timezone = $this->option('timezone');
+        if ($timezone !== null && $timezone !== '') {
+            if (!\App\RSpade\Core\Time\Rsx_Time::is_timezone($timezone)) {
+                $this->error("[ERROR] --timezone={$timezone} is not an IANA timezone identifier (e.g. America/Chicago).");
+
+                return 1;
+            }
+            $command_args[] = "--timezone={$timezone}";
+        }
         
         if ($all_logs) {
             $command_args[] = '--all-logs';
@@ -667,6 +685,8 @@ class Route_Debug_Command extends Command
         $this->line('  php artisan rsx:debug / --eval="return Rsx_Date.today()"             # Get today\'s date');
         $this->line('  php artisan rsx:debug / --console --eval="console.log(Rsx_Time.get_user_timezone())"');
         $this->line('                                                                       # Use console.log with --console');
+        $this->line('  php artisan rsx:debug /dashboard --user=1 --timezone=America/Chicago --eval="return Rsx_Time.get_user_timezone()"');
+        $this->line('                                                                       # Render as a browser in that zone');
         $this->line('');
 
         $this->comment('POST-LOAD INTERACTIONS (click buttons, test modals, etc):');

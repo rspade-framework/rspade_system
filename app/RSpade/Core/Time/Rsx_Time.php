@@ -23,8 +23,10 @@ use App\RSpade\Core\Session\Session;
  * - All datetimes stored in database as UTC
  * - All serialization uses ISO 8601 format
  * - External APIs return strings, not Carbon
- * - User timezone stored per user (login_users.timezone); a PORTAL request resolves the
- *   SITE's timezone instead - portal accounts have no personal zone (see get_user_timezone)
+ * - The display zone is resolved per request (get_user_timezone): a signed-in staff user's
+ *   EXPLICIT zone (login_users.timezone; NULL means automatic), then the browser's own zone
+ *   (the rsx_tz cookie the framework's boot script keeps current), then the site's, then
+ *   the server's, then UTC. A portal account has no personal zone and starts at the cookie.
  * - Formatting happens on-demand, not on storage
  * - PHP and JS APIs are parallel (same method names)
  * - Datetime functions THROW if passed a date-only string
@@ -68,6 +70,51 @@ class Rsx_Time
      * @var bool|null
      */
     private static ?bool $_cached_is_portal = null;
+
+    /**
+     * The browser zone the cached timezone was resolved with (part of the cache key).
+     *
+     * @var string|null
+     */
+    private static ?string $_cached_browser_timezone = null;
+
+    /**
+     * Test seam: a BROWSER standing in for a command's missing one. null (the default) is no
+     * browser at all - what a command or task is; '' is a browser that sent no rsx_tz cookie;
+     * any other value is the cookie it sent. Read by every caller but an external API
+     * request; the test harness clears it at every method boundary (_testing_reset()).
+     *
+     * @var string|null
+     */
+    public static ?string $browser_timezone_cookie_for_tests = null;
+
+    // =========================================================================
+    // THE BROWSER TIMEZONE COOKIE
+    // =========================================================================
+
+    /**
+     * The cookie the browser's zone travels in: its IANA identifier, written by
+     * Rsx_Timezone_Cookie.js on every page load (and by the first-visit interstitial), read
+     * by get_user_timezone(). Not HttpOnly - JavaScript writes it. The JS twin carries the
+     * same spellings (Rsx_Timezone_Cookie.COOKIE_NAME etc.).
+     */
+    public const TIMEZONE_COOKIE = 'rsx_tz';
+
+    /** The cookie's value when the browser could not report a zone: not a zone, never used as one. */
+    public const TIMEZONE_COOKIE_ERROR = 'error_reading_browser_timezone';
+
+    /** Lifetime of a zone in the cookie (refreshed on every load anyway). */
+    public const TIMEZONE_COOKIE_MAX_AGE = 31536000;
+
+    /** Lifetime of the error value: short, so a browser that failed once tries again. */
+    public const TIMEZONE_COOKIE_ERROR_MAX_AGE = 86400;
+
+    /**
+     * The query parameter the first-visit interstitial's reload carries. A request bearing
+     * it and still no cookie is a browser refusing cookies, and renders without one rather
+     * than being sent the interstitial again.
+     */
+    public const TIMEZONE_RELOAD_MARKER = '_rsx_tz';
 
     // =========================================================================
     // CURRENT TIME
@@ -246,19 +293,24 @@ class Rsx_Time
     }
 
     /**
-     * Get the current user's timezone
+     * The zone THIS REQUEST displays times in. Every tier is skipped when its value is
+     * absent or not an IANA identifier, so the answer is always a real zone:
      *
-     * Resolution, STAFF request/CLI: user setting -> site default -> config default
-     * Resolution, PORTAL request:                   site default -> config default
+     *   1. a signed-in staff user's EXPLICIT timezone - login_users.timezone when non-null
+     *      (NULL means automatic). It outranks the cookie, which can be stale on the first
+     *      request after the preference changed in another browser.
+     *   2. the browser's zone - the rsx_tz cookie (Rsx_Timezone_Cookie.js); its error value
+     *      is not a zone and falls through. Never read for an external API request, and a
+     *      task, a command or a #[Run_As_Dispatcher] run has no cookie to read.
+     *   3. the site's timezone (sites.timezone)
+     *   4. the server's (get_server_timezone(), RSX_SERVER_TIMEZONE)
+     *   5. UTC
      *
-     * The portal has no user tier because portal_users carries no timezone column: a
-     * portal account has no personal zone to prefer, so the SITE is the portal's only
-     * meaningful source - and reading the STAFF user's personal zone for a client-portal
-     * page (which is what asking the staff facade did, whenever the same browser also
-     * held a staff session) is exactly the defect being closed. If portal users ever get
-     * a timezone preference, this is the one place that changes.
+     * A PORTAL request starts at tier 2: a portal account has no personal zone, and a
+     * staff sign-in on the same browser never lends it one.
      *
-     * Result is cached and invalidated when the experience, user or site changes.
+     * An invalid stored value is never an exception here - it falls through. The result is
+     * cached and invalidated when the experience, the user, the site or the cookie changes.
      *
      * @return string IANA timezone identifier
      */
@@ -268,75 +320,169 @@ class Rsx_Time
         $raw_user_id = $is_portal ? Portal_Session::get_portal_user_id() : Session::get_login_user_id();
         $current_user_id = $raw_user_id === null ? null : (int) $raw_user_id;
         $current_site_id = (int) ($is_portal ? Portal_Session::get_site_id() : Session::get_site_id());
+        $browser_timezone = static::browser_timezone();
 
-        // Check if cache is valid
         if (static::$_cached_user_timezone !== null
             && static::$_cached_is_portal === $is_portal
             && static::$_cached_user_id === $current_user_id
-            && static::$_cached_site_id === $current_site_id) {
+            && static::$_cached_site_id === $current_site_id
+            && static::$_cached_browser_timezone === $browser_timezone) {
             return static::$_cached_user_timezone;
         }
 
-        // Cache miss - recalculate
-        $timezone = null;
+        $timezone = $is_portal ? null : static::explicit_user_timezone();
 
-        // Check logged-in user's preference (staff only - see the docblock)
-        if (!$is_portal) {
-            $login_user = Session::get_login_user();
-            if ($login_user && !empty($login_user->timezone)) {
-                $timezone = $login_user->timezone;
-            }
+        if ($timezone === null) {
+            $timezone = $browser_timezone;
         }
 
-        // Check site default
         if ($timezone === null) {
             $site = static::__current_site();
-            if ($site && !empty($site->timezone)) {
+            if ($site && static::is_timezone($site->timezone)) {
                 $timezone = $site->timezone;
             }
         }
 
-        // The server's zone
         if ($timezone === null) {
             $timezone = static::get_server_timezone();
         }
 
-        // Cache the result
         static::$_cached_user_timezone = $timezone;
         static::$_cached_is_portal = $is_portal;
         static::$_cached_user_id = $current_user_id;
         static::$_cached_site_id = $current_site_id;
+        static::$_cached_browser_timezone = $browser_timezone;
 
         return $timezone;
     }
 
     /**
-     * Set the signed-in user's timezone preference (STAFF only).
+     * The signed-in staff user's EXPLICIT timezone, or null when they are automatic (or the
+     * stored value is not a zone), on a portal request, or with nobody signed in.
      *
-     * Writes login_users.timezone (and optionally login_users.timezone_auto), then
-     * INVALIDATES the resolution cache below - without that, code running later in
-     * this same request (including the Ajax envelope's own _user_timezone field,
-     * Ajax.php:552) would keep serving the zone resolved before the write.
+     * @return string|null
+     */
+    public static function explicit_user_timezone(): ?string
+    {
+        if (Rsx_Portal::is_portal_request()) {
+            return null;
+        }
+
+        $login_user = Session::get_login_user();
+
+        return ($login_user && static::is_timezone($login_user->timezone)) ? $login_user->timezone : null;
+    }
+
+    /**
+     * The browser's zone from the rsx_tz cookie, or null when there is none, it holds the
+     * error value or anything that is not a zone, or this is an external API request (the
+     * key holder is described by the account, never by a cookie a client chose to send).
+     *
+     * @return string|null
+     */
+    public static function browser_timezone(): ?string
+    {
+        if (Session::is_api_request()) {
+            return null;
+        }
+
+        return static::normalize_timezone(static::__timezone_cookie());
+    }
+
+    /**
+     * The raw rsx_tz cookie (the test seam first), or null outside a web request.
+     */
+    private static function __timezone_cookie(): ?string
+    {
+        if (static::$browser_timezone_cookie_for_tests !== null) {
+            return static::$browser_timezone_cookie_for_tests === '' ? null : static::$browser_timezone_cookie_for_tests;
+        }
+
+        if (php_sapi_name() === 'cli') {
+            return null;
+        }
+
+        $value = request()->cookies->get(self::TIMEZONE_COOKIE);
+
+        return is_string($value) ? $value : null;
+    }
+
+    /**
+     * Is this an IANA timezone identifier PHP knows?
+     *
+     * @param mixed $value
+     * @return bool
+     */
+    public static function is_timezone($value): bool
+    {
+        static $known = null;
+
+        if (!is_string($value) || $value === '') {
+            return false;
+        }
+
+        if ($known === null) {
+            $known = array_flip(\DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC));
+        }
+
+        return isset($known[$value]);
+    }
+
+    /**
+     * The identifier PHP knows for a zone a BROWSER reported, or null when it is none.
+     *
+     * Browsers report ICU's canonical names, some of which are older spellings PHP's own
+     * zone database may not carry at all (Chromium reports Asia/Calcutta; PHP knows only
+     * Asia/Kolkata). Such a name is mapped through ICU to the equivalent identifier PHP
+     * knows, so the user renders in their own zone rather than falling to the site's.
+     *
+     * @param mixed $value
+     * @return string|null
+     */
+    public static function normalize_timezone($value): ?string
+    {
+        if (static::is_timezone($value)) {
+            return $value;
+        }
+
+        if (!is_string($value) || $value === '' || !str_contains($value, '/')) {
+            return null;
+        }
+
+        $count = \IntlTimeZone::countEquivalentIDs($value);
+        for ($i = 0; $i < $count; $i++) {
+            $equivalent = \IntlTimeZone::getEquivalentID($value, $i);
+            if (is_string($equivalent) && str_contains($equivalent, '/') && static::is_timezone($equivalent)) {
+                return $equivalent;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Set the signed-in user's timezone preference (STAFF only): an IANA identifier, or
+     * null for AUTOMATIC (each browser's own zone, through the rsx_tz cookie).
+     *
+     * Writes login_users.timezone, then INVALIDATES the resolution cache - without that,
+     * code running later in this same request (including the Ajax envelope's own
+     * _user_timezone field) would keep serving the zone resolved before the write.
      *
      * REFUSALS:
      * - Unknown IANA identifier -> InvalidArgumentException. This is the one refusal
      *   driven by user-supplied data; a controller converts it to a validation error.
      * - Portal request, or no signed-in login user -> shouldnt_happen(). Both are
-     *   broken assumptions, not input: get_user_timezone() gives a portal request no
-     *   user tier at all (portal accounts have no personal zone), so there is nothing
-     *   for a portal caller to set, and the surfaces that call this are gated
-     *   is_logged_in.
+     *   broken assumptions, not input: a portal account has no personal zone, and the
+     *   surfaces that call this are gated is_logged_in.
      *
-     * @param string $timezone IANA timezone identifier (e.g. "America/Chicago")
-     * @param bool|null $timezone_auto Also write the auto-set preference when non-null
-     * @return bool Whether the RESOLVED user timezone changed. A timezone_auto-only
-     *              change returns false: only the zone affects rendering, and this
-     *              flag is what drives a client reload.
+     * @param string|null $timezone IANA timezone identifier (e.g. "America/Chicago"), or null
+     * @return bool Whether the RESOLVED zone of this request changed - what tells the
+     *              client its page is now in the wrong zone
      * @throws \InvalidArgumentException If $timezone is not a known identifier
      */
-    public static function set_user_timezone(string $timezone, ?bool $timezone_auto = null): bool
+    public static function set_user_timezone(?string $timezone): bool
     {
-        if (!in_array($timezone, timezone_identifiers_list(), true)) {
+        if ($timezone !== null && !in_array($timezone, timezone_identifiers_list(), true)) {
             throw new \InvalidArgumentException(
                 "Rsx_Time::set_user_timezone() received unknown timezone identifier '{$timezone}'."
             );
@@ -355,14 +501,188 @@ class Rsx_Time
 
         // Explicit assignment - no mass assignment.
         $login_user->timezone = $timezone;
-        if ($timezone_auto !== null) {
-            $login_user->timezone_auto = $timezone_auto;
-        }
         $login_user->save();
 
         static::_clear_user_timezone_cache();
 
         return static::get_user_timezone() !== $before;
+    }
+
+    /**
+     * The timezone a NEW login identity starts with when its creator set none, from
+     * rsx.datetime.default_user_timezone: 'automatic' -> null; 'site' -> the creating
+     * site's zone (the server's when no site is declared); 'server' -> the server's; an
+     * IANA identifier -> itself. 'site' and 'server' are COPIED: a later change to either
+     * does not reach an account created before it.
+     *
+     * @return string|null
+     * @throws \RuntimeException When the configured value is none of those
+     */
+    public static function default_user_timezone(): ?string
+    {
+        $configured = (string) config('rsx.datetime.default_user_timezone');
+
+        if ($configured === '' || $configured === 'automatic') {
+            return null;
+        }
+
+        if ($configured === 'site') {
+            return static::get_site_timezone();
+        }
+
+        if ($configured === 'server') {
+            return static::get_server_timezone();
+        }
+
+        if (static::is_timezone($configured)) {
+            return $configured;
+        }
+
+        throw new \RuntimeException(
+            "RSX_DEFAULT_USER_TIMEZONE is '{$configured}': it must be automatic, site, server or an IANA "
+            . "timezone identifier (e.g. America/Chicago). Correct it in .env, or leave it blank for automatic."
+        );
+    }
+
+    /**
+     * Make sure this page is rendered knowing the browser's zone: the first-visit
+     * interstitial. The framework's page dispatch calls it for every matched page route
+     * after the gates (Dispatcher); it is public so a test, or a route the framework does
+     * not dispatch, can ask the same question.
+     *
+     * Answers:
+     *   false      not a request this concerns - not a GET document navigation that wants
+     *              HTML (Ajax, the external API, a task or a command, a POST, a download,
+     *              a JSON route, a webhook) - or a signed-in user with an explicit zone (the
+     *              cookie is never consulted), or the cookie holds the error value, or the
+     *              reload marker is present and the cookie is still missing (the browser
+     *              refuses cookies: render down the remaining tiers rather than loop)
+     *   true       the cookie holds a zone
+     *   Response   no cookie yet: a minimal page whose script writes rsx_tz and reloads the
+     *              same URL with the marker; a <noscript> refresh does the same for a
+     *              client that runs no script
+     *
+     * @param \Illuminate\Http\Request $request
+     * @return bool|\Symfony\Component\HttpFoundation\Response
+     */
+    public static function ensure_timezone(\Illuminate\Http\Request $request)
+    {
+        // A task or a command has no browser to send the page to (the seam stands one in).
+        if (php_sapi_name() === 'cli' && static::$browser_timezone_cookie_for_tests === null) {
+            return false;
+        }
+
+        if (Session::is_api_request()
+            || \App\RSpade\Core\Dispatch\Rsx_Request_Channel::current() !== \App\RSpade\Core\Dispatch\Rsx_Request_Channel::PAGE
+            || $request->getMethod() !== 'GET'
+            || !str_contains((string) $request->headers->get('Accept', ''), 'text/html')
+            || !in_array((string) $request->headers->get('Sec-Fetch-Dest', 'document'), ['document', ''], true)) {
+            return false;
+        }
+
+        if (static::explicit_user_timezone() !== null) {
+            return false;
+        }
+
+        $cookie = static::__timezone_cookie();
+
+        if (static::normalize_timezone($cookie) !== null) {
+            return true;
+        }
+
+        if ($cookie !== null && $cookie !== '') {
+            // The error value (or garbage): the browser answered; render without it.
+            return false;
+        }
+
+        if ($request->query->has(self::TIMEZONE_RELOAD_MARKER)) {
+            return false;
+        }
+
+        return static::__timezone_interstitial($request);
+    }
+
+    /**
+     * The first-visit page: no content, one nonce'd script that writes the cookie exactly as
+     * Rsx_Timezone_Cookie.js does and replaces the location with the marked URL.
+     */
+    private static function __timezone_interstitial(\Illuminate\Http\Request $request): \Symfony\Component\HttpFoundation\Response
+    {
+        $uri = $request->getRequestUri();
+        $marked = $uri . (str_contains($uri, '?') ? '&' : '?') . self::TIMEZONE_RELOAD_MARKER . '=1';
+
+        $config = json_encode([
+            'name' => self::TIMEZONE_COOKIE,
+            'error' => self::TIMEZONE_COOKIE_ERROR,
+            'max_age' => self::TIMEZONE_COOKIE_MAX_AGE,
+            'error_max_age' => self::TIMEZONE_COOKIE_ERROR_MAX_AGE,
+            'url' => $marked,
+        ], JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+
+        $nonce = htmlspecialchars(\App\RSpade\Core\Csp\Rsx_Csp::nonce(), ENT_QUOTES);
+        $refresh = htmlspecialchars('0;url=' . $marked, ENT_QUOTES);
+
+        $html = <<<HTML
+<!doctype html>
+<html><head><meta charset="utf-8"><title></title>
+<noscript><meta http-equiv="refresh" content="{$refresh}"></noscript>
+<script nonce="{$nonce}">
+(function (c) {
+    var zone = null;
+    try {
+        zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        new Intl.DateTimeFormat('en-US', {timeZone: zone});
+    } catch (e) {
+        zone = null;
+    }
+    var ok = typeof zone === 'string' && zone !== '';
+    document.cookie = c.name + '=' + encodeURIComponent(ok ? zone : c.error)
+        + '; Path=/; Max-Age=' + (ok ? c.max_age : c.error_max_age) + '; SameSite=Lax'
+        + (location.protocol === 'https:' ? '; Secure' : '');
+    location.replace(c.url);
+})({$config});
+</script>
+</head><body></body></html>
+HTML;
+
+        return response($html, 200, [
+            'Content-Type' => 'text/html; charset=UTF-8',
+            'Cache-Control' => 'no-store',
+        ]);
+    }
+
+    /**
+     * One timestamp as an external API carries it: the UTC value, the same instant in the
+     * request's zone with its offset, and that zone's identifier.
+     *
+     *     ['last_action_at' => '2026-10-29T10:13:03.000Z',
+     *      'last_action_at__localized' => '2026-10-29T05:13:03.000-05:00',
+     *      'last_action_at__localized_tz' => 'America/Chicago']
+     *
+     * The model serializer uses it for every DATETIME/TIMESTAMP column of an API response;
+     * a controller building an API payload by hand uses it for each timestamp it writes, so
+     * an API response is never half-localized. A null value gives three nulls. Never for a
+     * DATE: a calendar date has no zone, and converting one moves it a day.
+     *
+     * @param string $field
+     * @param mixed $value Anything parse() accepts, or null
+     * @return array<string,string|null>
+     */
+    public static function encode_for_output(string $field, $value): array
+    {
+        $utc = ($value === null || $value === '') ? null : static::to_iso($value);
+
+        if ($utc === null) {
+            return [$field => null, $field . '__localized' => null, $field . '__localized_tz' => null];
+        }
+
+        $timezone = static::get_user_timezone();
+
+        return [
+            $field => $utc,
+            $field . '__localized' => static::parse($utc)->setTimezone($timezone)->format('Y-m-d\TH:i:s.vP'),
+            $field . '__localized_tz' => $timezone,
+        ];
     }
 
     /**
@@ -378,6 +698,17 @@ class Rsx_Time
         static::$_cached_is_portal = null;
         static::$_cached_user_id = null;
         static::$_cached_site_id = null;
+        static::$_cached_browser_timezone = null;
+    }
+
+    /**
+     * The test harness's request boundary: forget the browser cookie a test stood in for
+     * ($browser_timezone_cookie_for_tests) and every resolved zone.
+     */
+    public static function _testing_reset(): void
+    {
+        static::$browser_timezone_cookie_for_tests = null;
+        static::_clear_user_timezone_cache();
     }
 
     /**
@@ -418,7 +749,7 @@ class Rsx_Time
     public static function get_site_timezone(): string
     {
         $site = static::__current_site();
-        if ($site && !empty($site->timezone)) {
+        if ($site && static::is_timezone($site->timezone)) {
             return $site->timezone;
         }
 

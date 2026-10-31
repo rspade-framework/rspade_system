@@ -64,6 +64,8 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
   write-only, wait-forever defaults, semaphore quotas, and the deadlock refusal (which needs a
   second process, spawned as a background helper). `Lock_Logging_Test` is the PHP half of
   event logging: `set_lock_logging()` / `lock_logging_status()` against the running daemon.
+  `Lock_Server_Health_Check_Test` drives the `Lock Server` health probe through its four
+  outcomes (OK, nothing listening, a wedged port, maintenance INFO).
 - **http** (shell, against a SCRATCH daemon) - everything that only exists between processes:
   cross-process mutual exclusion, release-on-`kill -9`, FIFO grant order, deadlock cycles, and
   the wait-forever regression. Plus the wire protocol through the daemon's export seam and
@@ -79,8 +81,12 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
   line says, TIMEOUT naming the holder, DROP and FORCE_CLEAR before the grants they cause),
   the logger (level gating, nothing a destination does can throw into the daemon), and the
   live `log` op (refused before hello, on/off without a restart, every key validated).
+  Config (`lockd_config_unit.sh`, no daemon): the search order and total validation.
+  Upgrade (`lockd_upgrade.sh`): two readers upgrading at once - one granted, one behind it,
+  no deadlock.
 - **cli** (shell) - `lockd exec`: exit-code contract (child code, 124 timeout), `--quiet`,
-  release-on-child-exit, and two concurrent execs serializing.
+  release-on-child-exit, and two concurrent execs serializing. `lockd dump`
+  (`lockd_dump.sh`): the ASCII report and `--json` against a known held/queued state.
 
 ## Testing notes
 

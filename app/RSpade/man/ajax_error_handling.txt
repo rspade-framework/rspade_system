@@ -31,7 +31,7 @@ RESPONSE FORMATS
     -----------------------------------------
     {
         "_success": false,
-        "error_code": "validation|not_found|unauthorized|auth_required|session_expired|question|generic",
+        "error_code": "validation|not_found|unauthorized|auth_required|session_expired|too_many_requests|question|generic",
         "reason": "User-friendly message",
         "metadata": { /* optional, e.g., field-specific validation errors */ },
         "console_debug": [ /* optional debug messages */ ]
@@ -44,8 +44,16 @@ RESPONSE FORMATS
     AjaxFormErrorException "validation", AjaxQuestionException "question",
     AjaxAuthRequiredException "auth_required". An abort() inside an endpoint is
     the envelope too, never an HTML page: 404 is "not_found", 403
-    "unauthorized", 401 "auth_required", any other status "generic" with the
-    abort's message.
+    "unauthorized", 401 "auth_required", 429 "too_many_requests", any other
+    status "generic" with the abort's message.
+
+    "too_many_requests" is a rate limit refusing the call - any HTTP 429
+    exception thrown and not caught (Symfony's TooManyRequestsHttpException, or
+    Auth_Throttled_Exception, the login throttle's). The same exception
+    answers a page or an API call with a real 429 and Retry-After. Because it
+    is an ordinary exception, the caller decides: catch it to answer a 200 form
+    error of your own (a login form does - rsx:man session, LOGIN THROTTLE), or
+    let it through to get the code.
 
     "session_expired" is the framework's own: the sign-in outlived
     rsx.sessions.* and was just ended (metadata.cause is "length" or "idle"), or
@@ -274,8 +282,8 @@ CLIENT-SIDE IMPLEMENTATION
     Rejected promises receive standard Error objects with additional properties:
 
         error.code       - 'validation'|'not_found'|'unauthorized'|
-                           'auth_required'|'session_expired'|'question'|
-                           'generic'|'fatal', or one the client raises
+                           'auth_required'|'session_expired'|
+                           'too_many_requests'|'question'|'generic'|'fatal', or one the client raises
                            itself: 'php_exception' (a fatal carrying
                            file/line, for a developer caller),
                            'server_error', 'network_error'

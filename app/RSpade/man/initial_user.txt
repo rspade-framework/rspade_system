@@ -72,6 +72,16 @@ THE THREE CREATION PATHS (plus a direct call)
                     privileged account. The pre-boot APP_URL screen before it applies
                     the same rule to its submit (rsx_first_run_is_loopback()).
 
+                    SAMPLE DATA. While config('rsx.first_run.sample_data_task') names a
+                    #[Task] ('Service::method'), the form also offers "Add sample
+                    data to the new site". Ticked, that task is DISPATCHED after the
+                    account exists, with ['site' => <the initial site>] as its params;
+                    the success page names the run, or says why it could not be
+                    queued (a misnamed task is reported there, never thrown - the
+                    account already exists). Null or empty hides the option; the
+                    framework names no seeder of its own. The template's is
+                    Sample_Data_Service::seed (rsx/services/sample_data/).
+
     post_migrate    Rsx_Initial_User::create_from_env_if_needed(), called by
                     Maint_Migrate at the END of every `php artisan migrate` - after
                     the final normalize pass - when the database still needs an

@@ -58,7 +58,6 @@ Every other key takes its default from `Debugger` unless the application's confi
 * specific_channel - comma-separated channel(s) for the specific mode (null)
 * include_benchmark - timing prefix on each message (false)
 * include_location, include_backtrace - JavaScript output only (false)
-* enable_get_trace - allow `?__trace=1` on a page URL (off)
 
 ## FILTER MODES
 
@@ -90,8 +89,8 @@ The environment keys console_debug reads:
 The template application's own config (`rsx/resource/config/rsx.php`) maps the rest of
 the keys to environment variables too: CONSOLE_DEBUG_LOG, CONSOLE_DEBUG_FILTER_MODE,
 CONSOLE_DEBUG_SPECIFIC, CONSOLE_DEBUG_WHITELIST, CONSOLE_DEBUG_BLACKLIST,
-CONSOLE_DEBUG_BENCHMARK, CONSOLE_DEBUG_LOCATION, CONSOLE_DEBUG_BACKTRACE and
-ENABLE_GET_TRACE. An application whose config does not map a key sets it in the config
+CONSOLE_DEBUG_BENCHMARK, CONSOLE_DEBUG_LOCATION and CONSOLE_DEBUG_BACKTRACE. An
+application whose config does not map a key sets it in the config
 file, or per browser through the override below.
 
 `rsx:debug` additionally reads CONSOLE_DEBUG_FILTER and CONSOLE_DEBUG_BENCHMARK as the
@@ -116,7 +115,7 @@ browsers, other developers and CLI processes never see it. It applies only:
 * where console_debug is active at all (development and debug modes; never strict
   production).
 
-It leaves `outputs.*` and `enable_get_trace` to the configuration, replaces
+It leaves `outputs.*` to the configuration, replaces
 CONSOLE_DEBUG_FILTER for that browser, and ends with the developer's staff sign-in on it -
 signing out, or a sign-in limit passing, clears it (the screen's Reset
 removes it sooner). Precedence, lowest to highest: config file, environment, the

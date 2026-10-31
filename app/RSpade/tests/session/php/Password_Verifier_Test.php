@@ -8,7 +8,6 @@
 namespace App\RSpade\Tests\Session\Php;
 
 use Illuminate\Support\Facades\Hash;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Auth\Password_Verifier;
 use App\RSpade\Core\Auth\Portal_Auth;
 use App\RSpade\Core\Auth\RsxAuth;
@@ -44,7 +43,6 @@ class Password_Verifier_Test extends Rsx_Test_Abstract
 
     public static function teardown(): void
     {
-        Login_Throttle::reset('CLI');
         Portal_Session::cli_set_portal_user_id(0);
         Rsx_Portal::set_portal_request(false);
         Portal_Session::_testing_reset();
@@ -89,7 +87,6 @@ class Password_Verifier_Test extends Rsx_Test_Abstract
         $site->is_enabled = true;
         $site->save();
 
-        Login_Throttle::reset('CLI');
         Portal_Session::_testing_reset();
         Portal_Session::set_site_id((int) $site->id);
         Rsx_Portal::set_portal_request(true);
@@ -121,7 +118,6 @@ class Password_Verifier_Test extends Rsx_Test_Abstract
 
     public static function test_dummy_plaintext_never_authenticates_an_unknown_address()
     {
-        Login_Throttle::reset('CLI');
 
         static::__assert_null(
             RsxAuth::verify_credentials(
@@ -138,7 +134,6 @@ class Password_Verifier_Test extends Rsx_Test_Abstract
 
     public static function test_staff_unknown_address_pays_one_dummy_verification()
     {
-        Login_Throttle::reset('CLI');
         $email = static::__fresh_email('unknown');
 
         $result = 'unset';
@@ -152,7 +147,6 @@ class Password_Verifier_Test extends Rsx_Test_Abstract
 
     public static function test_staff_soft_deleted_identity_pays_one_dummy_verification()
     {
-        Login_Throttle::reset('CLI');
         $email = static::__fresh_email('deleted');
         static::__make_login_user($email)->delete();
 
@@ -167,7 +161,6 @@ class Password_Verifier_Test extends Rsx_Test_Abstract
 
     public static function test_staff_known_address_pays_the_real_hash_not_the_dummy()
     {
-        Login_Throttle::reset('CLI');
         $email = static::__fresh_email('known');
         static::__make_login_user($email);
 

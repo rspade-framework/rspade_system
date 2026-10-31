@@ -477,6 +477,22 @@ abstract class Rsx_Model_Abstract extends Model
             }
         }
 
+        // EXTERNAL API: every DATETIME/TIMESTAMP column also carries the same instant in the
+        // key holder's zone - <col>__localized (ISO 8601 with its offset) and
+        // <col>__localized_tz (the identifier) - through the one encoder a hand-built API
+        // payload uses too (Rsx_Time::encode_for_output()). Ajax payloads carry UTC alone
+        // (the envelope's _user_timezone is the browser's conversion key), and a DATE column
+        // never gets companions: a calendar date has no zone.
+        if (\App\RSpade\Core\Session\Session::is_api_request()) {
+            foreach ($this->getCasts() as $column => $cast) {
+                if ($cast === \App\RSpade\Core\Time\Rsx_DateTime_Cast::class && array_key_exists($column, $array)) {
+                    foreach (\App\RSpade\Core\Time\Rsx_Time::encode_for_output($column, $array[$column]) as $key => $value) {
+                        $array[$key] = $value;
+                    }
+                }
+            }
+        }
+
         // Add enum field extra data - ALL properties (BEM-style: field__property)
         foreach (static::$enums as $column => $definitions) {
             if (isset($this->$column) && isset($definitions[$this->$column])) {

@@ -76,6 +76,7 @@ place.
 | `nginx`, `libnginx-mod-http-brotli-filter` | the web server, with Brotli for compiled bundles |
 | `redis-server`, `redis-tools` | cache, session and realtime plumbing; `redis-cli` is what the entrypoint and `rsx:health` probe with |
 | `supervisor` | starts and restarts every service; the container's process manager |
+| `unattended-upgrades` | the automatic security updates (Security updates, below), held to an allow-list |
 | `mysql-client` | `migrate`, `db:query`, the schema-cache restore and operator access all shell out to it. The SERVER is a dev-target concern |
 | `ca-certificates`, `curl`, `wget`, `gnupg2`, `unzip` | fetching and verifying at build time and at run time (composer, mirrored assets, package keys) |
 | `imagemagick`, `ghostscript`, `optipng` | thumbnails and uploads: ImageMagick rasterises, Ghostscript is how it reads a PDF's first page, optipng shrinks what is stored |
@@ -141,6 +142,7 @@ All under supervisor; `supervisorctl status` lists them.
 | `rsx-lockd` | cluster lock daemon — load-bearing, see its config |
 | `tasks` | **the cron replacement**: ticks `rsx:task:process` once a minute |
 | `dockerd` | dev target only — the container's own Docker Engine, for the test runner |
+| `security-updates` | installs security updates and PHP patch releases every 4 hours (below) |
 
 That last one matters. The framework's documented driver for all background and
 scheduled work is a single crontab line, and a container has no crontab. Without
@@ -222,6 +224,50 @@ does). Get it wrong and the realtime socket dials the wrong port.
 | `RSPADE_APP_URL` | written into `.env` as `APP_URL` at start |
 | `RSPADE_CONTAINER_TARGET` | `dev` or `prod`; set by the image, not by you |
 | `PHP_FPM_WORKER_COUNT` | prod only: the total php-fpm worker count, instead of the one calculated from the machine (below) |
+| `RSX_AUTO_SECURITY_UPDATES` | `0` (or `false`/`no`/`off`) turns the automatic security updates off; on when unset (below) |
+| `RSPADE_SECURITY_UPDATE_HOURS` | hours between the scheduled security update checks; `4` when unset |
+
+## Security updates
+
+**The container patches its own PHP.** PHP comes from the ondrej PPA, unpinned within the
+image's minor version (8.5), so a PHP security release is a patch release (8.5.x) that apt
+can install into a running container. A release that hands a remote shell to anyone who can
+reach an unpatched PHP does not wait for an image rebuild, so the container does not either:
+
+- **At every start, before PHP serves anything**, the entrypoint installs the security
+  updates the container may take. If `apt-get update` or the upgrade fails it tries once
+  more a minute later, then starts regardless on whatever is installed - an unreachable
+  mirror never stops a container - and the scheduled check keeps trying.
+- **Every 4 hours** (within 10 minutes either side of the slot, so a fleet does not arrive at
+  the PPA at once) the `security-updates` program checks again. When something was installed
+  it reloads php-fpm in place onto the new PHP (a request in flight at that instant is cut,
+  as on any php-fpm reload), restarts nginx when nginx changed, and leaves anything else that
+  changed to load at the next container restart. Running CLI processes - task workers
+  included - keep the PHP they started with and pick up the new one when they next start.
+
+**What may be installed** is `unattended-upgrades` held to an allow-list
+(`apt/52rspade-security-updates`): the Ubuntu security pocket, and the ondrej PHP PPA. Nothing
+from the release or `-updates` pockets, nodesource or Docker. A new PHP minor version is a
+different package set, so it only ever arrives with a new image. The dev image also holds
+MySQL back (`apt/53rspade-security-updates-dev`): its package scripts work on the data
+directory, which a `migrate` may be snapshotting.
+
+**Every check is reported** in `/var/lib/rspade/security-updates.json`, which the
+`rsx:health` "Security Updates" row reads, and in the container log.
+
+**Turning it off** is for an operator whose own change control installs updates:
+
+```
+docker run -e RSX_AUTO_SECURITY_UPDATES=0 ...
+```
+
+or `RSX_AUTO_SECURITY_UPDATES: "0"` under the service's `environment:` in a compose file.
+The `rsx:health` row then warns, so the decision stays visible.
+
+**It is a safety net, not the upgrade path.** A container that patches itself drifts from
+the image it was started from, and only packages that the allow-list covers are refreshed.
+Pull or rebuild the image periodically - and promptly when a PHP security release is
+announced - so the base system, the bundled services and the PHP minor version stay current.
 
 ## PHP-FPM is sized to the machine (prod)
 

@@ -1482,7 +1482,8 @@ abstract class Rsx_Two_Factor_Abstract
      *  1. Login_Throttle::require_not_throttled() is the FIRST statement, and it THROWS
      *     Auth_Throttled_Exception rather than returning false. An unthrottled second
      *     factor is a six-digit guessing oracle - a million codes, three of them live at
-     *     any moment - so the budget has to be spent before any work happens. The throw is
+     *     any moment - so the client address is judged before any work happens (the
+     *     identity's own caps, below, cover attempts spread across addresses). The throw is
      *     let through untouched: "we did not check" is a different answer from "that was
      *     wrong", and a login function must be able to say so.
      *  2. The pending identity is loaded, or the window has closed.
@@ -1499,9 +1500,8 @@ abstract class Rsx_Two_Factor_Abstract
      *     kind the challenge does not accept is a wrong answer, and so is a wrong or dead link.
      *  4. A failure is recorded ONCE, through the realm (Login_History::record_failure()
      *     or Portal_Login_History::record_failure() with STATUS_FAILED_2FA, which already
-     *     feeds Login_Throttle). Never twice: one
-     *     failure counted twice halves the real budget, and the halving would only be
-     *     discovered by a user locked out early. The failure also counts once against
+     *     feeds Login_Throttle). Never twice: one failure counted twice halves the real
+     *     limit, and the halving would only be discovered by a user locked out early. The failure also counts once against
      *     the challenge and once against the identity (the attempt caps, independent of
      *     IP); the answer that spends the challenge's budget destroys the challenge, and
      *     that answer or the one that locks the identity destroys its live issued code.
@@ -1521,7 +1521,7 @@ abstract class Rsx_Two_Factor_Abstract
      * @param array $input {assertion: array}, {code: string} or {email_link: string}.
      * @return Rsx_Model_Abstract The identity now signed in (Login_User_Model for staff,
      *                            Portal_User_Model for the portal).
-     * @throws \App\RSpade\Core\Auth\Auth_Throttled_Exception When the client IP is locked out.
+     * @throws \App\RSpade\Core\Auth\Auth_Throttled_Exception When the client is over the sign-in rate limit.
      * @throws Two_Factor_Failed_Exception When the window has closed, the answer is wrong, or the
      *         realm will not admit the identity. reason() says which: REASON_WINDOW_EXPIRED,
      *         REASON_WRONG_ANSWER, REASON_CHALLENGE_SPENT (the wrong answer that was the
@@ -1711,7 +1711,7 @@ abstract class Rsx_Two_Factor_Abstract
      * reasons:
      *
      *  1. Login_Throttle::require_not_throttled() is the FIRST statement and THROWS. This
-     *     endpoint is reachable by anyone, so it spends the same budget a password does.
+     *     endpoint is reachable by anyone, so it is throttled like a password is.
      *  2. The assertion is verified in the REALM's table with user verification REQUIRED
      *     (see Passkeys::discoverable_assertion_options()). The identity comes from the
      *     credential row, never from anything the client said.
@@ -1730,7 +1730,7 @@ abstract class Rsx_Two_Factor_Abstract
      * @param array $assertion {id, clientDataJSON, authenticatorData, signature}, base64url.
      * @return Rsx_Model_Abstract The identity now signed in (Login_User_Model for staff,
      *                            Portal_User_Model for the portal).
-     * @throws \App\RSpade\Core\Auth\Auth_Throttled_Exception When the client IP is locked out.
+     * @throws \App\RSpade\Core\Auth\Auth_Throttled_Exception When the client is over the sign-in rate limit.
      * @throws Two_Factor_Failed_Exception When the assertion does not sign anybody in.
      */
     public static function verify_passkey_login(array $assertion): Rsx_Model_Abstract

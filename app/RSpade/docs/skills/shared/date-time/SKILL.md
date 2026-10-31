@@ -1,6 +1,6 @@
 ---
 name: date-time
-description: "Working with dates and times in RSX using Rsx_Time and Rsx_Date classes. Use when formatting dates/times for display, handling user timezones, working with datetime columns, converting between formats, or displaying relative times like \"2 hours ago\"."
+description: "Working with dates and times in RSX using Rsx_Time and Rsx_Date classes. Use when formatting dates/times for display, handling user timezones (the per-request resolution, the rsx_tz browser cookie, NULL = automatic, rsx.datetime.default_user_timezone), working with datetime columns, the external API's __localized / __localized_tz timestamp companions and Rsx_Time::encode_for_output(), converting between formats, or displaying relative times like \"2 hours ago\"."
 ---
 
 # RSX Date & Time Handling
@@ -158,9 +158,11 @@ const server_now = Rsx_Time.now();  // Synced with server, corrects for clock sk
 
 ## User Timezone
 
-Stored in `login_users.timezone` (IANA format, e.g., `America/Chicago`).
+A staff user's EXPLICIT choice is `login_users.timezone` (IANA format, e.g., `America/Chicago`); **NULL means automatic** - each browser's own zone.
 
-**Resolution chain**: `login_users.timezone` -> `sites.timezone` -> the server timezone (`Rsx_Time::get_server_timezone()`: `RSX_SERVER_TIMEZONE`, UTC when unset). **Every process runs in UTC regardless** - PHP and the MySQL session both - and the server zone is read only for that fallback, `#[Schedule]` wall-clock times and a new site's default zone; log timestamps alone use the host OS zone (`get_system_timezone()`). A PORTAL request has no user tier (portal accounts carry no timezone column) and starts at the site.
+**Resolution, per request** (`Rsx_Time::get_user_timezone()`, each tier skipped when absent or not a zone): the explicit `login_users.timezone` -> the browser's zone, the `rsx_tz` cookie -> `sites.timezone` -> the server timezone (`Rsx_Time::get_server_timezone()`: `RSX_SERVER_TIMEZONE`) -> UTC. **Every process runs in UTC regardless** - PHP and the MySQL session both - and the server zone is read only for that tier, `#[Schedule]` wall-clock times and a new site's default zone; log timestamps alone use the host OS zone (`get_system_timezone()`). A PORTAL request has no user tier (portal accounts carry no timezone column) and starts at the cookie. **An external API request, a task and a command have no cookie**, so an automatic user's emails and task output render in the site zone.
+
+**The browser's zone never reaches the account.** `Rsx_Timezone_Cookie.js` writes `rsx_tz` at core init on every page (signed out, portal, automatic) and clears it for an explicit-zone user; an SPA page re-reads the zone every minute and on focus, and on a change updates the cookie, calls `Spa.disable()` and freezes the page's zone against later Ajax envelopes. A browser's first page view gets a one-round-trip interstitial (`Rsx_Time::ensure_timezone()`, run by the page dispatcher) that writes the cookie and reloads with `?_rsx_tz=1`. Check a render in a zone with `rsx:debug --timezone=America/Chicago`.
 
 ```php
 // Get the resolved timezone for the current viewer
@@ -178,9 +180,10 @@ $site_tz = Rsx_Time::get_site_timezone();
 ## Setting the Timezone
 
 ```php
-// Staff only. Writes login_users.timezone (+ timezone_auto when non-null),
-// clears the resolution cache, returns whether the RESOLVED zone moved.
-$changed = Rsx_Time::set_user_timezone('Europe/Berlin', false);
+// Staff only. Writes login_users.timezone (null = automatic), clears the
+// resolution cache, returns whether the RESOLVED zone moved.
+$changed = Rsx_Time::set_user_timezone('Europe/Berlin');
+$changed = Rsx_Time::set_user_timezone(null);
 
 // identifier => 'Europe/Berlin (UTC+02:00)', DST-honest at call time
 $options = Rsx_Time::timezone_options();
@@ -192,11 +195,13 @@ From JavaScript, use the framework controller directly (staff realm, `#[Auth('is
 
 ```javascript
 await Rsx_Timezone_Controller.timezone_options();   // [{value, label}, ...]
-await Rsx_Timezone_Controller.get_settings();       // {timezone, resolved_timezone, timezone_auto}
-await Rsx_Timezone_Controller.set_timezone({timezone, timezone_auto});  // {changed, timezone}
+await Rsx_Timezone_Controller.get_settings();       // {timezone (null = automatic), resolved_timezone}
+await Rsx_Timezone_Controller.set_timezone({timezone});  // {changed, timezone}; null or '' = automatic
 ```
 
-**Auto-set at boot**: `login_users.timezone_auto` defaults to 1, so on the first signed-in page load of a browser session `Rsx_Timezone_Auto` compares the browser's IANA identifier with the rendered zone and, on a mismatch, sets it, halts boot and reloads (one attempt per session, sentinel-guarded; staff only). A manual choice in the UI posts `timezone_auto: false`. Contract: `rsx:man time` (TIMEZONE PREFERENCE). Worked example: `/rsx/app/frontend/settings/user_settings/`.
+A NEW login identity whose creator set no zone starts at `rsx.datetime.default_user_timezone` (`RSX_DEFAULT_USER_TIMEZONE`): `automatic` (NULL, the default), `site` / `server` (a COPY of that zone), or an identifier - applied once, at creation. Contract: `rsx:man time` (TIMEZONE PREFERENCE). Worked example: `/rsx/app/frontend/settings/user_settings/` (one select, its first option `''` = Automatic).
+
+**External API timestamps** carry `<field>__localized` (ISO 8601 with offset, the key holder's zone) and `<field>__localized_tz` beside each UTC DATETIME value - added by the model serializer; a hand-built API payload writes each timestamp with `...Rsx_Time::encode_for_output('uploaded_at', $value)`. A DATE gets none. `rsx:man time`, EXTERNAL API.
 
 ---
 

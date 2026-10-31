@@ -198,6 +198,8 @@ FRAMEWORK INVENTORY
         Schema Contract             all           what the framework code reads
                                                   by name on application-owned
                                                   tables; one row per table
+        Security Updates            all           INFO outside the RSpade
+                                                  container
         Storage Writable            all           build/ row in development
                                                   only - branches internally
         Submodule Visibility        development   a git REVIEW surface; a
@@ -425,6 +427,19 @@ FRAMEWORK INVENTORY
                                  the only check that reads the framework's assumptions
                                  against a database it did not build - see
                                  rsx:man database_schema_architecture.
+        Security Updates         whether the RSpade container takes its security
+                                 updates: reads the status rspade-security-update
+                                 writes after every check (at each start, before
+                                 PHP serves, and every 4 hours). OK with the PHP
+                                 version and when it was last checked; WARN when
+                                 no check has run (an image that predates the
+                                 feature - pull or rebuild it), when it is off
+                                 (RSX_AUTO_SECURITY_UPDATES=0), when the last
+                                 check failed, and when installed packages wait
+                                 for a container restart. INFO outside the
+                                 container: the host's package manager owns PHP
+                                 there. resource/docker/README.md, SECURITY
+                                 UPDATES.
         Storage Writable         the project trees this process must be able to
                                  write: storage/ (user data) and tmp/ (derived
                                  caches) in every mode, build/ in development only -

@@ -418,8 +418,8 @@ HOW IT WORKS
                throttle.
             3. Login_Throttle::record_failure() is therefore NEVER called
                here. Calling both counts one failure twice and halves the
-               real budget, and the halving is only ever discovered by a user
-               locked out early.
+               real limit, and the halving is only ever discovered by a user
+               throttled early.
 
         A BLANK ANSWER IS NOT A GUESS. verify_challenge() given no assertion
         and no code, or a code that is empty or only whitespace, refuses with
@@ -430,7 +430,7 @@ HOW IT WORKS
         still come first.
 
     ATTEMPT CAPS (COUNTS, NOT TIMEOUTS)
-        The per-IP throttle alone is not enough: an attacker who holds the
+        The address throttle alone is not enough: an attacker who holds the
         password rotates addresses. Every wrong answer to a challenge - a TOTP
         code, a recovery code, a passkey assertion - also counts against two
         caps that are independent of IP:
@@ -439,7 +439,7 @@ HOW IT WORKS
                            answer that reaches it DESTROYS the parked
                            challenge ('Too many incorrect codes. Please sign
                            in again.'); the user re-enters the password,
-                           which spends the per-IP budget again. Each
+                           which passes the login throttle again. Each
                            begin_challenge() starts its own count at zero.
             PER IDENTITY   rsx.two_factor.identity_max_failures (10) inside
                            identity_failure_window_minutes (60), across every
@@ -747,6 +747,12 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
                                         impersonating
             recovery_regenerate     -> {recovery_codes}; offer it only
                                         when issues_recovery_codes is true
+
+        Every one of those but credentials_list adds or removes a factor or
+        replaces the codes, so each first requires a recent password
+        confirmation (Rsx_Password_Confirmation::require_confirmed()); the
+        settings page asks for it before calling (rsx:man
+        password_confirmation).
 
         #[Auth('public')]           - the half-authenticated population
             challenge_state         -> challenge_pending(): {challenge_id,

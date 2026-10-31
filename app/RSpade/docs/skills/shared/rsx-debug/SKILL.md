@@ -139,6 +139,7 @@ says how to fix it.
 | `--console-debug-filter=CHANNEL` | narrow `console_debug()` to one channel |
 | `--xhr-list` / `--xhr-dump` | which endpoints the page called; full request/response detail |
 | `--wait-for=".selector"` | wait for a selector before capture |
+| `--no-realtime` | the page meets a DOWN realtime relay (every `/ws` connection refused in the headless browser only) - for checking a page still loads without it |
 | `--expect-element=".selector"` | fail the command if the element is absent (assertion-style checks) |
 | `--dump-element=".selector"` | print just that element's HTML |
 | `--input-elements` | list form inputs with their values |

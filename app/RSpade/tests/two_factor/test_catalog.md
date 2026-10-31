@@ -92,9 +92,9 @@ cached after that transaction rolls back. Impersonation uses the raw CLI seam
 
 Two stores, so two isolation strategies (the same shape as tests/session): success rows are database
 writes rolled back with the per-test transaction, while the throttle and failure counters are redis
-keys outside both the transaction and the process. Every test uses a unique email; teardown clears
-the shared per-IP throttle through `Login_Throttle::reset('CLI')` and deletes the per-email counters
-it created.
+keys outside both the transaction and the process. Every test uses a unique email; teardown deletes
+the per-email counters it created (a CLI caller has no client address, so nothing reaches the
+throttle).
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
@@ -107,7 +107,7 @@ it created.
 | tfa-chal-07 | a wrong code is refused, counted ONCE, and the challenge survives for a retry | '000000' | exception, email counter +1, not signed in, pending intact, 0 success rows | implemented |
 | tfa-chal-08 | another identity's TOTP code does not answer this challenge | their live code | exception, not signed in | implemented |
 | tfa-chal-09 | an empty answer is refused | [] | exception, not signed in | implemented |
-| tfa-chal-10 | the throttle budget locks an address out and THROWS | budget failures against an explicit IP | Auth_Throttled_Exception, retry_after_seconds > 0 | implemented |
+| tfa-chal-10 | the throttle limit refuses an address and THROWS | the limit's failures against an explicit IP | Auth_Throttled_Exception, retry_after_seconds > 0 | implemented |
 | tfa-chal-11 | each failed challenge reaches record_failure exactly ONCE (no double count) | 3 wrong codes | the email counter increments by exactly 1 each time | implemented |
 | tfa-chal-12 | a correct code signs in, clears the pending value, writes exactly ONE success row | a live unspent code | identity returned and signed in, pending gone, 1 success row | implemented |
 | tfa-chal-13 | a used code cannot be replayed - the timestep is persisted | the same code at a second challenge | counter advanced, last_used_at stamped, second attempt throws | implemented |
@@ -116,7 +116,7 @@ it created.
 | tfa-chal-16 | a recovery code answers the challenge and is spent | codes[0], then again | signed in, remaining 9, 1 success row; the second attempt throws | implemented |
 | tfa-chal-17 | a live TOTP code never burns a recovery code (TOTP is tried first) | a live code with codes present | remaining still 10 | implemented |
 | tfa-chal-18 | verify_challenge stamps last_login through RsxAuth::login() | a live code over real HTTP | last_login bumped | implemented (http - `two_factor_login_flow.sh`; unreachable from php, where `Session::set_login_user_id()` returns from its CLI branch before the stamp) |
-| tfa-chal-19 | verify_challenge's OWN throttle call refuses a locked-out client | wrong codes over real HTTP until the budget is spent | Auth_Throttled_Exception surfaced to the screen as itself | implemented (http - `two_factor_login_flow.sh`; unreachable from php, where `Session::get_client_ip()` is null by design) |
+| tfa-chal-19 | verify_challenge's OWN throttle call refuses a throttled client | the limit's failures recorded for loopback, then one wrong code over real HTTP | Auth_Throttled_Exception surfaced to the screen as itself | implemented (http - `two_factor_login_flow.sh`; unreachable from php, where `Session::get_client_ip()` is null by design) |
 | tfa-chal-20 | THE PER-CHALLENGE CAP: the wrong answer that reaches challenge_max_failures destroys the challenge | max wrong codes, then a correct one; then a fresh challenge | below the cap 'That code is not valid.' and pending survives; at the cap 'Please sign in again.', pending null, the correct code then 'expired'; a fresh challenge signs in and the identity count is cleared | implemented |
 | tfa-chal-21 | THE PER-IDENTITY CAP spans challenges, counts every answer kind, refuses a correct code, and clear_failures() lifts it | identity_max 4 / challenge_max 2: a TOTP-shaped, a recovery-shaped, an empty assertion and another wrong code over two challenges, then a live code | is_locked after 4; the live code refused with the account message, nobody signed in, pending discarded; after clear_failures the live code signs in | implemented |
 | tfa-chal-22 | a cap or window below one fails loud | each key set to 0 | the accessor throws | implemented |
@@ -195,6 +195,9 @@ endpoint declares, the wire shape of each payload, which failures become a user-
 `Error_Response` and which are left to surface, and the impersonation refusal the controller adds on
 top of the facade's own.
 
+The mutating endpoints require a password confirmation, which is `tests/password_confirmation`'s
+subject, so this class sets `Rsx_Password_Confirmation::$force_confirmed_for_tests` for its run.
+
 Endpoints are called as STATIC METHODS, which is what the dispatcher does once the gate has passed -
 so `#[Auth]` is NOT evaluated by these calls and the declarations are asserted separately through
 `Auth_Gates::surface_gates()`, which reads the same manifest index the dispatcher enforces from.
@@ -258,7 +261,7 @@ a seed in a session value and creates no row, and the script deliberately stops 
 |----|---------|-------|----------|--------|
 | tfa-http-01 | challenge_state is genuinely PUBLIC over real HTTP | anonymous POST | 200 envelope, _success true, value null | implemented |
 | tfa-http-02 | totp_begin is refused AT THE GATE, not by the facade | anonymous POST | _success false, error_code 'unauthorized'; the facade's own message never appears | implemented |
-| tfa-http-03 | totp_begin ACCEPTS a signed-in caller - the other side of the split | login + csrf + POST | _success true, payload carries qr_svg | implemented |
+| tfa-http-03 | totp_begin refuses a signed-in caller with no password confirmation, then ACCEPTS one that confirmed - the other side of the split | login + csrf + POST, verify, POST | 'password confirmation has timed out', then {confirmed: true}, then _success true with qr_svg | implemented |
 
 ## The verification endpoint (php) - MOVED TO THE APPLICATION SUITE
 
@@ -298,7 +301,7 @@ the only path to it is application code.
 | tfa-http-04 | a correct password stops at the challenge instead of entering the app | POST /login with a live factor enrolled | 302 to /login/verify; the application's landing page still refuses the half-authenticated session | implemented |
 | tfa-http-05 | the challenge screen renders and carries a CSRF token | GET /login/verify | 200 hosting `<Two_Factor_Challenge>`, window.rsxapp.csrf present | implemented |
 | tfa-chal-18 | a live code completes the login, stamps last_login, and writes exactly ONE success row | POST verify_2fa with a live code | {redirect}, the landing page 200, last_login changed, success rows +1 | implemented |
-| tfa-chal-19 | the ambient throttle refuses a locked-out client, as itself and never as a wrong code | wrong codes until the budget is spent | a refusal saying "too fast" before the 25th attempt; no wrong code ever succeeds | implemented |
+| tfa-chal-19 | the ambient throttle refuses a throttled client, as itself and never as a wrong code | the limit's failures recorded for loopback, then one wrong code | a refusal saying "too fast"; the wrong code never succeeds | implemented |
 
 ## Passkey_Login_Test (php, default isolation) - passwordless sign-in, staff realm
 

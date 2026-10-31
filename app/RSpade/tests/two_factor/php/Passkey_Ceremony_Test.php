@@ -9,7 +9,6 @@ namespace App\RSpade\Tests\TwoFactor\Php;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
@@ -54,7 +53,6 @@ class Passkey_Ceremony_Test extends Rsx_Test_Abstract
 
     public static function teardown()
     {
-        Login_Throttle::reset('CLI');
         Portal_Session::cli_set_impersonator_user_id(null);
         Portal_Session::cli_set_portal_user_id(0);
         Rsx_Portal::set_portal_request(false);
@@ -97,7 +95,6 @@ class Passkey_Ceremony_Test extends Rsx_Test_Abstract
         $site->is_enabled = true;
         $site->save();
 
-        Login_Throttle::reset('CLI');
         Portal_Session::_testing_reset();
         Portal_Session::set_site_id((int) $site->id);
         Rsx_Portal::set_portal_request(true);

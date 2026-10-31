@@ -27,6 +27,7 @@ class Ajax {
     static ERROR_UNAUTHORIZED = 'unauthorized';
     static ERROR_AUTH_REQUIRED = 'auth_required';
     static ERROR_SESSION_EXPIRED = 'session_expired';   // The sign-in outlived its limits and was just ended
+    static ERROR_TOO_MANY_REQUESTS = 'too_many_requests';  // A rate limit refused the call
     static ERROR_FATAL = 'fatal';
     static ERROR_GENERIC = 'generic';
     static ERROR_QUESTION = 'question';             // Not a failure: a pending server-driven question

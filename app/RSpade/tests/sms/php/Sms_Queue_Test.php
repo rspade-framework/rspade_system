@@ -41,7 +41,7 @@ class Sms_Queue_Test extends Rsx_Test_Abstract
 
         return Sms_Queue_Model::enqueue(
             self::SITE_ID,
-            '+1555555' . random_int(1000, 9999),
+            '+1555556' . random_int(1000, 9999),
             'Test message body',
             Sms_Queue_Model::CATEGORY_TRANSACTIONAL
         );

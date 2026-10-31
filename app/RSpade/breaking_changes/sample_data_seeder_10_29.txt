@@ -1,0 +1,80 @@
+SAMPLE DATA SEEDER AND TEST RECIPIENTS - PORT THE REFERENCE IMPLEMENTATION
+Date: 2026-10-29
+
+IF YOU DO NOTHING: nothing breaks, and the first-run setup screen never offers to add sample data, because your application names no seeder.
+
+SUMMARY
+    Category 3: a framework feature with a template implementation to port.
+
+    A new install can be filled with sample data from the first-run setup
+    screen ("Add sample data to the new site"), or at any time with an
+    artisan command. The framework provides the option and the test
+    recipients the data relies on; the seeder and its data are the
+    template's.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - rsx.first_run.sample_data_task (default null). While it names a
+      #[Task] ('Service::method'), the first-run screen offers the option and,
+      ticked, dispatches that task with ['site' => <initial site>].
+      rsx:man initial_user.
+    - TEST RECIPIENTS. An email address whose domain matches
+      rsx.mail.test_domains (default ['test.*'] - test.com, test.org, ...) and
+      any (nnn) 555-nnnn phone number is queued, rendered and recorded as the
+      new status Test, and NEVER delivered, in every mode, production
+      included. Email_Queue_Model / Sms_Queue_Model::STATUS_TEST,
+      Rsx_Test_Recipients::is_test_email() / is_test_phone(). A real message
+      to such an address is no longer sent - if your application genuinely
+      mails a test.* domain, that mail now stops. rsx:man email, TEST
+      ADDRESSES; rsx:man sms, TEST NUMBERS.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    A seeder, its data, and the config line that names it. Without them
+    nobody can fill a new install with demonstration records.
+
+    Your fork may still carry two things the template no longer has: the
+    import_sample_documents migration (which imported two documents into
+    every install) and Seeder_Service (rsx_app:seed). Both keep working where
+    they are; the reference replaces them.
+
+THE REFERENCE IMPLEMENTATION
+    Under system/app/RSpade/resource/reference_app/:
+
+    services/sample_data/sample_data_service.php
+        Sample_Data_Service::seed - #[Task] + #[Command('rsx_app:seed')],
+        --site=<id>. Refuses a site that already holds application data. Runs
+        as the site's first user; one revision unit per client.
+    services/sample_data/resource/sample_data.json
+        The data: clients, contacts, projects, tasks, documents, request
+        threads, announcements, parties, products.
+    services/sample_data/resource/seed_gags.txt
+        The cast the data follows.
+    services/sample_data/resource/documents/
+        The committed documents (pdf, docx, xlsx, png, jpg), plus
+        generate_documents.php that produces them.
+    services/sample_data/CLAUDE.md
+        The procedure for refreshing the data as the application grows.
+    resource/config/rsx.php
+        'first_run' => ['sample_data_task' => 'Sample_Data_Service::seed'].
+    tests/Sample_Data_Seed_Test.php
+        The seeder's test.
+
+PORTING IT
+    Every step is optional.
+
+       a. Copy services/sample_data/ into rsx/services/. The data names the
+          template's models (clients, contacts, projects, tasks, parties,
+          products); edit sample_data.json and the service for your own
+          domain, or write a seeder of your own.
+
+       b. Name it in rsx/resource/config/rsx.php:
+              'first_run' => ['sample_data_task' => 'Sample_Data_Service::seed'],
+
+       c. If your fork still has Seeder_Service and nothing else uses its
+          command, delete it - rsx_app:seed is the new seeder's name.
+
+VERIFICATION
+    On a site with no application data: php artisan rsx_app:seed --site=<id>
+    completes, and the screens show the sample records. Run it again: it
+    refuses, naming the data already there.

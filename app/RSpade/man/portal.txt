@@ -724,9 +724,10 @@ PORTAL LOGIN FLOW
       The portal twin of RsxAuth::verify_credentials() (rsx:man session), in
       the same order:
 
-        1. Login_Throttle::require_not_throttled() FIRST - throws
-           Auth_Throttled_Exception for a locked-out client IP (one budget per
-           IP across both realms), before any lookup.
+        1. Login_Throttle::require_not_throttled($email) FIRST - throws
+           Auth_Throttled_Exception when the client address or the account has
+           too many recent failures (one limit across both realms), before any
+           lookup.
         2. Missing email or password: null, nothing recorded.
         3. The lookup reads exactly $site_id (whatever tenant the process is
            scoped to). An unknown address and a wrong password are the same

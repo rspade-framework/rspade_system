@@ -137,8 +137,9 @@ php artisan list                 # aliases appear under their own prefix, with d
 php artisan rsx:task:list        # every task, with the COMMAND column ('-' when it has none)
 ```
 
-The reference app's worked example is `rsx_app:seed` on `Seeder_Service::seed_all`
-(`system/app/RSpade/resource/reference_app/services/seeder_service.php`).
+The reference app's worked example is `rsx_app:seed` on `Sample_Data_Service::seed`
+(`system/app/RSpade/resource/reference_app/services/sample_data/sample_data_service.php`),
+which also shows a `--site=<id>` parameter validated in the task.
 
 ---
 

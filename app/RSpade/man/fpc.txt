@@ -211,6 +211,14 @@ RESPONSE HEADERS
     X-FPC-Cache: HIT     - Response served from Redis cache
     X-FPC-Cache: MISS    - Response served from PHP (and cached for next time)
     ETag: {hash}         - Content hash for 304 validation
+    Security headers     - Content-Security-Policy (and -Report-Only),
+                           X-Content-Type-Options, X-Frame-Options,
+                           Referrer-Policy, Permissions-Policy,
+                           Strict-Transport-Security, Cross-Origin-Opener-
+                           Policy and Cross-Origin-Resource-Policy: whichever
+                           the MISS response carried are cached with the body
+                           and replayed verbatim on a HIT, so the policy names
+                           the nonce in the body (rsx:man csp, THE NONCE)
 
     The internal X-RSpade-FPC header (set by PHP to signal cacheability)
     is stripped by the proxy and never sent to clients.

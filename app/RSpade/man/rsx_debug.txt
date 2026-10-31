@@ -114,6 +114,20 @@ DOM INSPECTION
     Wait for a CSS selector to appear before capturing output. Useful for
     pages with async content loading or SPAs.
 
+--no-realtime
+    Refuse the realtime relay connection inside the headless browser, as if
+    the relay were down: every /ws connection is closed at once, so the
+    client's reconnect backoff and the subscription load gate run exactly as
+    they do against a stopped relay. The box's real relay is not touched.
+
+--timezone=<IANA>
+    Run the headless browser in this timezone (Playwright's timezoneId;
+    default the container's own, UTC). The browser reports it, so it writes it
+    into its rsx_tz cookie and the page renders as a browser in that zone
+    would. The account's own preference is never touched: a browser's zone
+    lives in its cookie (rsx:man time, TIMEZONE INITIALIZATION).
+        --timezone=America/Chicago --eval="return Rsx_Time.get_user_timezone()"
+
 HTTP TESTING
 
 --post=<json>
@@ -429,6 +443,13 @@ IMPORTANT NOTES
 
 * The tool uses a real Chromium browser, so JavaScript executes exactly as
   it would for end users.
+
+* WHEN IT CAPTURES: after the network goes idle, the framework finishes
+  booting, and - on a SPA page - the current action reaches ready (bounded
+  by --timeout, with a warning). The last wait matters with realtime: a
+  component subscribing in on_create() holds its first load until the
+  subscription is live or rsx.realtime.load_gate_timeout_ms passes, which
+  with the relay down is after the network has gone quiet.
 
 * For more details on console_debug: php artisan rsx:man console_debug
   For config options: php artisan rsx:man config_rsx

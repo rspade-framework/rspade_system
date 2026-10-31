@@ -521,6 +521,9 @@ THE QUEUE AND ITS STATUSES
         6   Suppressed   Rendered and recorded, deliberately not handed to a transport.
                          Delivery mode is suppressed, or a dev host left no deliverable
                          address. Terminal, and NOT a failure.
+        7   Test         The recipient is a TEST address (TEST ADDRESSES below): rendered
+                         and recorded as sent, never handed to a transport, in every mode
+                         but disabled. Terminal, and NOT a failure.
 
     Columns worth knowing: email_class (the class, which is also the view id), tag (the
     class's tag() for that send, null when it declares none), attempt_count (a first send IS an attempt), next_attempt_at, last_attempt_at,
@@ -574,7 +577,10 @@ THE DRAIN AND THE FAILURE POLICY
            is still in the future. Two drains can never take the same message.
         2b. STALE SWEEP (after the reclaim, so a rescued row is judged on how long it has
            been WAITING). See THE STALE-MESSAGE WINDOW below.
-        3. Delivery mode 'suppressed' -> build anyway (so the bodies are recorded), then
+        3. A TEST recipient (the real `to`, before any dev redirect) -> build anyway,
+           then mark_test, in any mode. Before the suppressed branch: Test is the more
+           specific answer.
+        3a. Delivery mode 'suppressed' -> build anyway (so the bodies are recorded), then
            mark_suppressed.
         3b. Delivery mode 'aiosmtpd' -> the connection's SMTP greeting must contain
            'aiosmtpd'. If it does not, this message is refused as a SERVER ERROR with
@@ -621,9 +627,9 @@ THE DRAIN AND THE FAILURE POLICY
                                           with the reason recorded. Read as an outage, one
                                           poisoned message would stop the queue forever.
 
-    The task records its counts as its run's state report ($task->state(): sent,
+    The task records its counts as its run's state report ($task->state(): sent, test,
     server_errors, failed, suppressed, reclaimed, stale) and writes a stdout line per
-    message delivered, blocked or suppressed and a stderr line per failure - all visible
+    message delivered, settled as test, blocked or suppressed and a stderr line per failure - all visible
     on the run in /_sys/tasks.
 
 THE STALE-MESSAGE WINDOW
@@ -747,7 +753,8 @@ WILL IT ARRIVE? - delivers() AND deliverable_to()
                                                 THIS address, rely on it?
 
     deliverable_to() asks the layers enqueue() applies that make an address genuinely
-    unreachable, with the same exemptions: the mode; the site block list, which SECURITY
+    unreachable, with the same exemptions: the mode (for a TEST address, any mode but
+    disabled - its message is recorded as sent); the site block list, which SECURITY
     escapes; and the recipient's opt-out, which TRANSACTIONAL and SECURITY escape. It reads
     the current site's lists, like enqueue(). The dev-site gate is NOT one of them: on a
     `.dev.` host a message outside the whitelist goes to the catchall or is recorded in the
@@ -762,6 +769,32 @@ WILL IT ARRIVE? - delivers() AND deliverable_to()
 
     Neither is a precondition of send(): code that simply sends still just sends. rsx:health
     reports the mode for an operator; these answer it for code.
+
+TEST ADDRESSES
+
+    An address on a TEST DOMAIN is never delivered - in every mode, production included -
+    yet goes through the whole sending path, so sample data, demos and a developer's own
+    experiments behave as sent everywhere the system looks:
+
+        rsx.mail.test_domains   ['test.*']   shell patterns against the domain,
+                                             case-insensitive: test.com, test.org,
+                                             test.co.uk. An application's list ADDS
+                                             patterns (the two-tier config merge).
+
+    - A test `to` is queued exactly as addressed (the dev-site layer never redirects it),
+      rendered by the drain, and settled as status Test (7): sent_at stamped, the
+      recipient's sent count incremented, no transport opened.
+    - A test cc/bcc on a REAL message is withheld at enqueue and recorded in
+      withheld_recipients with the reason "test address: recorded, never sent"; the real
+      recipient is sent as usual.
+    - The site block list and the recipient opt-out still apply to a test address - a
+      listed one is Blocked like any other.
+    - deliverable_to() answers true for a test address in any mode but disabled.
+    - rsx:mail:test <someone@test.com> ends Test, a success.
+
+    The SMS twin is fixed rather than configured: any North American number whose
+    exchange is 555 - (nnn) 555-nnnn, written any way (rsx:man sms). One home for both
+    rules: App\RSpade\Core\Mail\Rsx_Test_Recipients.
 
 THE DEVELOPMENT CATCHER
 
@@ -931,6 +964,7 @@ CONFIGURATION
         retry.delay_minutes             -                                3
         retention_days                  -                                30
         stale_after_days                -                                2
+        test_domains                    -                                ['test.*']
         unsubscribe_secret              -                                null (= app.key)
         branding.logo_url               -                                null
         branding.footer_text            -                                null

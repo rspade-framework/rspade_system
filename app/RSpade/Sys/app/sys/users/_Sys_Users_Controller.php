@@ -88,7 +88,7 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
      *
      * @param array $params id (login_users.id)
      * @return array {user: {id, email, status_id, status, status_label, is_developer,
-     *                is_verified, is_activated, last_login, timezone, timezone_auto,
+     *                is_verified, is_activated, last_login, timezone (null = automatic),
      *                created_at, updated_at, is_self, membership_count, status_refusal,
      *                status_options, impersonate_refusal},
      *                memberships: [{id, site_id, site_name, site_is_enabled, site_is_deleted,
@@ -120,7 +120,6 @@ class _Sys_Users_Controller extends _Sys_Endpoint_Controller_Abstract
                 'is_activated' => (bool) $login_user->is_activated,
                 'last_login' => Rsx_Time::to_iso($login_user->last_login),
                 'timezone' => $login_user->timezone,
-                'timezone_auto' => (bool) $login_user->timezone_auto,
                 'created_at' => Rsx_Time::to_iso($login_user->created_at),
                 'updated_at' => Rsx_Time::to_iso($login_user->updated_at),
                 'is_self' => static::__is_self($login_user),

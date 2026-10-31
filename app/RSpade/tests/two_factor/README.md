@@ -105,7 +105,7 @@ The APPLICATION half of the flow, which the framework deliberately does not own:
   address is masked, an expired window reads as absent and cannot be redeemed, a wrong
   answer is counted exactly once, a correct answer signs in and writes exactly one success
   row, and a used TOTP code cannot be replayed. (php)
-- The throttle budget and its `Auth_Throttled_Exception`, driven with an EXPLICIT ip.
+- The throttle limit and its `Auth_Throttled_Exception`, driven with an EXPLICIT ip.
   `Session::get_client_ip()` is null in CLI by design, so the ambient call inside
   `verify_challenge()` cannot be tripped from php; the end-to-end refusal is proved over
   real HTTP instead. (php + http)

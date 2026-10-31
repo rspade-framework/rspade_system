@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Files;
 
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Temp_File_Model;
 use App\RSpade\Core\Task\Task_Instance;
@@ -159,7 +160,7 @@ class Rsx_Temp_Files
         }
 
         $file->site_id = Rsx_Site_Model_Abstract::get_current_site_id();
-        $file->file_name = $file_name;
+        $file->file_name = Rsx_File_Name::safe($file_name);
         $file->mime_type = $mime_type ?? (mime_content_type($path) ?: 'application/octet-stream');
         $file->size = (int) filesize($path);
         $file->expires_at = Rsx_Time::add(Rsx_Time::now_iso(), $days * 86400);

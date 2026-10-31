@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Auth\Auth_Gates;
+use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Session\Session;
@@ -47,8 +48,16 @@ class Two_Factor_Controller_Test extends Rsx_Test_Abstract
 
     private const PASSWORD = 'correct-horse-battery-staple';
 
+    public static function setup()
+    {
+        // The endpoints under test sit behind a password confirmation, which is not this
+        // class's subject (tests/password_confirmation).
+        Rsx_Password_Confirmation::$force_confirmed_for_tests = true;
+    }
+
     public static function teardown()
     {
+        Rsx_Password_Confirmation::$force_confirmed_for_tests = null;
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();

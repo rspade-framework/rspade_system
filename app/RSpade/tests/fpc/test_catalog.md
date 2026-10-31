@@ -1,7 +1,7 @@
 # Test catalog: fpc
 
 Status legend: `implemented` | `deferred` | `blocked` | `planned`.
-Type: http / php. Last updated: 2026-10-01.
+Type: http / php. Last updated: 2026-10-28.
 
 ## http/fpc_cache_behavior.sh (http - live FPC proxy)
 
@@ -10,6 +10,7 @@ Type: http / php. Last updated: 2026-10-01.
 | fpc-http-01 | cache MISS then HIT for a cacheable route | two GETs | second served from cache (hit header) | implemented |
 | fpc-http-02 | cache headers present and well-formed | GET | expected FPC headers | implemented |
 | fpc-http-03 | proxy-unavailable safe skip | proxy down | test SKIPs, not fails | implemented |
+| fpc-http-04 | a HIT replays the security headers issued with the cached body | MISS then HIT on a fresh URL | same Content-Security-Policy on both | implemented (skips while `Rsx_FPC::ENABLED` is false, B-132) |
 
 (See the script for the exact assertions; migrated from the prior bash suite.)
 

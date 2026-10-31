@@ -178,9 +178,9 @@ class Zip_Download_Naming_Test extends Rsx_Test_Abstract
         static::__assert_equals('foo.zip', File_Attachment_Controller::_sanitize_zip_filename('/etc/foo.zip'));
     }
 
-    public static function test_zip_filename_quotes_stripped()
+    public static function test_zip_filename_quotes_replaced()
     {
-        static::__assert_equals('ab.zip', File_Attachment_Controller::_sanitize_zip_filename('a"b.zip'));
+        static::__assert_equals('a_b.zip', File_Attachment_Controller::_sanitize_zip_filename('a"b.zip'));
     }
 
     // =====================================================================

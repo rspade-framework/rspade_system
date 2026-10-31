@@ -46,6 +46,8 @@ function parse_args() {
         console.log('  --post=<data>      Send POST request with JSON data (e.g., --post=\'{"key":"value"}\')'); 
         console.log('  --cookies          Display all cookies');
         console.log('  --wait-for=<sel>   Wait for element selector before capturing');
+        console.log('  --no-realtime      Refuse the realtime relay connection, as if the relay were down');
+        console.log('  --timezone=<IANA>  Run the browser in this timezone (Playwright timezoneId)');
         console.log('  --all-logs         Display all log files (Laravel, nginx access/error)');
         console.log('  --expect-element=<sel> Verify element exists (fail if not found)');
         console.log('  --dump-element=<sel>   Extract and display HTML of specific element');
@@ -91,6 +93,8 @@ function parse_args() {
         post_data: null,
         cookies: false,
         wait_for: null,
+        no_realtime: false,
+        timezone: null,
         all_logs: false,
         expect_element: null,
         dump_element: null,
@@ -150,6 +154,10 @@ function parse_args() {
             }
         } else if (arg === '--cookies') {
             options.cookies = true;
+        } else if (arg === '--no-realtime') {
+            options.no_realtime = true;
+        } else if (arg.startsWith('--timezone=')) {
+            options.timezone = arg.substring('--timezone='.length);
         } else if (arg.startsWith('--wait-for=')) {
             options.wait_for = arg.substring(11);
         } else if (arg === '--all-logs') {
@@ -280,6 +288,11 @@ function parse_args() {
         ignoreHTTPSErrors: true
     };
 
+    // --timezone: the browser reports this zone, and so writes it into its rsx_tz cookie.
+    if (options.timezone) {
+        contextOptions.timezoneId = options.timezone;
+    }
+
     if (options.screenshot_path) {
         // Default to 1920 if width not specified
         const screenshot_width = options.screenshot_width || 1920;
@@ -293,6 +306,14 @@ function parse_args() {
     const context = await browser.newContext(contextOptions);
     
     const page = await context.newPage();
+
+    // --no-realtime: the page meets a DOWN relay. Every connection to /ws is accepted by
+    // Playwright and closed at once, which is what the client sees from a relay that is not
+    // running behind nginx, so its reconnect backoff and the subscription load gate run
+    // exactly as they would in production.
+    if (options.no_realtime) {
+        await page.routeWebSocket(/\/ws(\?|$)/, (ws) => ws.close({ code: 1006, reason: 'relay down (rsx:debug --no-realtime)' }));
+    }
     
     // Collect console messages
     const consoleErrors = [];
@@ -594,6 +615,28 @@ function parse_args() {
             }
         });
     });
+
+    // Wait for the SPA action to finish its lifecycle. _debug_ready marks the end of BOOT, not
+    // of the components' loads, and network idle does not cover a load that starts late: a
+    // component that subscribes to realtime in on_create() holds its first load until the
+    // subscription is live or rsx.realtime.load_gate_timeout_ms passes, so with the relay
+    // down the page goes quiet BEFORE that load runs and would be captured empty. ready()
+    // settles on 'ready' or on stop, so a failed action releases this wait too. Bounded by
+    // --timeout like --wait-for: a wait on page code the tool does not control, which warns
+    // and captures what is there.
+    const action_wait = await page.evaluate((timeout_ms) => {
+        // A top-level `class Spa` is a global binding but not a window property.
+        if (typeof Spa === 'undefined' || !Spa.action()) {
+            return 'none';
+        }
+        return Promise.race([
+            Spa.action().ready().then(() => 'ready'),
+            new Promise((resolve) => setTimeout(() => resolve('timeout'), timeout_ms)),
+        ]);
+    }, options.timeout);
+    if (action_wait === 'timeout') {
+        console.log(`Warning: the SPA action did not reach ready within ${options.timeout / 1000} seconds; capturing the page as it stands`);
+    }
 
     // Wait for specific element if requested
     if (options.wait_for) {

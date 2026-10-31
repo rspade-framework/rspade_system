@@ -11,7 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Hash;
 use RuntimeException;
-use App\RSpade\Core\Auth\Login_Throttle;
+use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
@@ -45,8 +45,16 @@ class Recovery_Codes_Switch_Test extends Rsx_Test_Abstract
     /** The subject belongs to a browser: each test acts as one (Rsx_Test_Abstract::__as_browser()). */
     protected static $acts_as_browser = true;
 
+    public static function setup()
+    {
+        // The endpoints under test sit behind a password confirmation, which is not this
+        // class's subject (tests/password_confirmation).
+        Rsx_Password_Confirmation::$force_confirmed_for_tests = true;
+    }
+
     public static function teardown()
     {
+        Rsx_Password_Confirmation::$force_confirmed_for_tests = null;
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();
@@ -67,7 +75,6 @@ class Recovery_Codes_Switch_Test extends Rsx_Test_Abstract
 
     private static function __start_anonymous(): void
     {
-        Login_Throttle::reset('CLI');
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();

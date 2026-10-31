@@ -30,3 +30,11 @@ the identical defect, pinned in the `env` concern's `First_Run_Token_Test`).
 | iu-token-04 | minting is random | two mints | differ | implemented |
 | iu-token-05 | malformed cookies replaced | empty, short, uppercase, non-hex, too long, newline | never reused; fresh well-formed token | implemented |
 | iu-token-06 | only this screen's cookie counts | the APP_URL screen's cookie present | not reused | implemented |
+
+## First_User_Setup_Sample_Data_Test (php) - the "Add sample data" option
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| iu-sample-01 | the option follows `rsx.first_run.sample_data_task` alone | null, '', whitespace, a name | no task and no checkbox for the first three; the name and a `rsx_sample_data` checkbox for the last | implemented |
+| iu-sample-02 | a ticked option dispatches the named task for the initial site | a framework task named | a queued run of that task with a `site` param; the note says it is being added | implemented |
+| iu-sample-03 | a task that does not exist is reported, not thrown | No_Such_Service::seed | the note says it could not be queued, naming the task | implemented |

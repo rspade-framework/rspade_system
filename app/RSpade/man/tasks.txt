@@ -742,7 +742,8 @@ RUNNING AS THE DISPATCHER
           Session::get_audit_session_id() answers the dispatch's audit session, so
           revisions, the created_by/updated_by pairs and an application's own log record the
           requester and the request's own address, user agent and browser;
-        - the timezone: Rsx_Time resolves from the dispatcher.
+        - the timezone: Rsx_Time resolves from the dispatcher - their explicit zone, else
+          the site's (a run has no browser, so an automatic user's zone is the site's).
 
        FROZEN: every identity, site, realm and impersonation setter of Session and
        Portal_Session (set_login_user_id(), logout(), set_site_id(),

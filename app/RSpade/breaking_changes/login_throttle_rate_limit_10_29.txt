@@ -1,0 +1,75 @@
+LOGIN THROTTLE: FAILURES PER ADDRESS AND PER ACCOUNT, AN HTTP 429 WHEN UNCAUGHT
+Date: 2026-10-29
+
+IF YOU DO NOTHING: a Login_Throttle::reset($ip) call in your code now clears an ACCOUNT named like that address instead of the address, a 'window_minutes' or 'lockout_minutes' override in your rsx.sessions.login_throttle is silently ignored, and any endpoint of yours that ends in a credential check without catching Auth_Throttled_Exception answers a 429 (Ajax: too_many_requests) instead of a form error.
+
+SUMMARY
+    Category 2: a public API contract change in /system/.
+
+    The login throttle counts failed sign-in attempts against the client
+    address (an IPv6 address by its /64) AND the account the attempt names, and
+    refuses further attempts once either has `attempts` failures within
+    `seconds` (8 per 60 by default). It replaces the per-address failure budget
+    and fixed lockout.
+
+THE CHANGE
+    - Login_Throttle's methods take the account first:
+          require_not_throttled(?string $account = null, ?string $ip = null)
+          record_failure(?string $account = null, ?string $ip = null)
+          retry_after_seconds(?string $account = null, ?string $ip = null)
+          reset(?string $account = null, ?string $ip = null)
+      A call with no arguments behaves as before (the request's address).
+      A call that passed an address POSITIONALLY now passes it as the account.
+    - rsx.sessions.login_throttle is { enabled, attempts, seconds }.
+      window_minutes and lockout_minutes no longer exist.
+    - Auth_Throttled_Exception is an HTTP 429 exception (it implements Symfony's
+      HttpExceptionInterface, and is still a RuntimeException). Uncaught, a page or API call answers 429 with
+      Retry-After and an Ajax call answers the new error code too_many_requests
+      (Ajax::ERROR_TOO_MANY_REQUESTS / Ajax.ERROR_TOO_MANY_REQUESTS). Its
+      message is unchanged: "You're doing that too fast".
+    - Login_History::get_failed_attempts_count*() keep a fixed 15-minute window
+      of their own (it was window_minutes).
+
+THE FIX
+    Informational: Login_Throttle, Auth_Throttled_Exception, Ajax and
+    Login_History arrived with the framework. The framework's own credential
+    checks (RsxAuth and Portal_Auth verify_credentials(), the second-factor,
+    passkey and federated sign-in verifications) already pass the account.
+
+ACTION REQUIRED
+    1. Find every call:
+           grep -rn "Login_Throttle::" rsx --include='*.php'
+       Give an address by name or as the SECOND argument:
+           Login_Throttle::reset($ip)            ->  Login_Throttle::reset(null, $ip)
+           Login_Throttle::record_failure($ip)   ->  Login_Throttle::record_failure(null, $ip)
+       Where the path checks a secret of its own for a known account (a PIN, a
+       current-password confirmation), pass the account too:
+           Login_Throttle::require_not_throttled($login_user->email);
+       (reference_app/app/frontend/settings/password_security/
+        settings_password_security_controller.php, change_password()).
+
+    2. In rsx/resource/config/rsx.php, replace any window_minutes /
+       lockout_minutes under sessions.login_throttle with attempts and seconds.
+
+    3. Every endpoint of yours that ends in a credential check catches the
+       exception and answers an ordinary form error, so a throttled sign-in reads
+       as a message and not as a 429 or a wrong password:
+           RsxAuth::verify_credentials(), Portal_Auth::verify_credentials(),
+           Rsx_Two_Factor::verify_challenge() / verify_passkey_login() and their
+           portal twins, and any Login_Throttle::require_not_throttled() of your own.
+
+           try {
+               $login_user = RsxAuth::verify_credentials($credentials);
+           } catch (Auth_Throttled_Exception $e) {
+               return response_form_error($e->getMessage());
+           }
+
+       The template's login, portal-login and password-security controllers are
+       the worked examples (reference_app/app/login/login_controller.php,
+       reference_app/portal/auth/Portal_Login_Controller.php).
+
+VERIFICATION
+    grep -rn "Login_Throttle::\(reset\|record_failure\|retry_after_seconds\)(\$ip" rsx
+    answers nothing; php artisan rsx:test passes; and on a development box,
+    eight wrong passwords from one browser are followed by "You're doing that
+    too fast" on the login form.

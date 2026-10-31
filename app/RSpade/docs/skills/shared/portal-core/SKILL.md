@@ -122,7 +122,7 @@ public static function init(): void
 - `get_site_id()` answers the request's site, else the portal sign-in's own; with neither it **throws** - **a portal that does not know its tenant must not pick one.** Login carries no site argument (`set_portal_user_id(?int)` uses the request's site). A login, register or reset handler reads `get_site_id()` and checks every credential, invite code and token against it - never adopts the site of the row it found.
 - **`Portal_Session::set_site_id()` is for commands, tasks and tests ONLY** and throws in a web request. In CLI it may be re-declared (moving a test between tenants); the runner clears it after every test method (`Portal_Session::_testing_reset()` - the runner's call, never a test's).
 
-**Every framework site seam reads that site on a portal request** - `Rsx_Site_Model_Abstract::get_current_site_id()` (global scope, forced `site_id` on create, cross-site fatals, site write lock), plus `Rsx_Mail`, `Rsx_Sms`, `Rsx_Time` (the site-timezone tier; portal accounts have no personal zone), `Rsx_Settings`, `Rsx_Throttle`. **So portal code never hand-scopes a query** with `where('site_id', ...)`, and a staff `Session::set_site_id()` is the STAFF app's tenancy only.
+**Every framework site seam reads that site on a portal request** - `Rsx_Site_Model_Abstract::get_current_site_id()` (global scope, forced `site_id` on create, cross-site fatals, site write lock), plus `Rsx_Mail`, `Rsx_Sms`, `Rsx_Time` (the site-timezone tier, after the browser's `rsx_tz` zone; portal accounts have no personal zone), `Rsx_Settings`, `Rsx_Throttle`. **So portal code never hand-scopes a query** with `where('site_id', ...)`, and a staff `Session::set_site_id()` is the STAFF app's tenancy only.
 
 ---
 

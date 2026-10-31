@@ -11,6 +11,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
@@ -159,6 +160,9 @@ class Rsx_Portal_Sso_Controller extends Rsx_Controller_Abstract
     {
         static::_refuse_impersonation();
 
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         $identity_id = isset($params['id']) ? (int) $params['id'] : 0;
 
         if ($identity_id <= 0) {
@@ -185,6 +189,9 @@ class Rsx_Portal_Sso_Controller extends Rsx_Controller_Abstract
     public static function link_begin(Request $request, array $params = [])
     {
         static::_refuse_impersonation();
+
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
 
         $key = isset($params['provider']) ? (string) $params['provider'] : '';
 

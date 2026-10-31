@@ -47,6 +47,11 @@
 
 FROM rspade/rspade-server-dev:latest
 
+# No automatic security updates in a test worker: it is started many times per run and
+# discarded, and a package check at every start would slow every run and call the PHP PPA
+# for nothing. The dev image it is built from takes the updates.
+ENV RSX_AUTO_SECURITY_UPDATES=0
+
 # -----------------------------------------------------------------------------
 # LAYER 0 - the CURRENT entrypoint, over the one baked into the dev image.
 #
@@ -111,6 +116,9 @@ RUN bash -c 'set -e; \
     # leaving a program that is not RUNNING for the CMD's readiness wrapper to \
     # wait on. Removed here, cached with this layer, like tasks.conf above. \
     rm -f /etc/supervisor/conf.d/dockerd.conf; \
+    \
+    # No scheduled security updates either (see the ENV above). \
+    rm -f /etc/supervisor/conf.d/security-updates.conf; \
     \
     bash /usr/local/bin/rspade-entrypoint bash -c "set -e; \
         if [ -f /opt/rspade/schema_cache.sql.gz ]; then \

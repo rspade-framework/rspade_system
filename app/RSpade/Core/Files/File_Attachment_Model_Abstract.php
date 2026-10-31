@@ -18,6 +18,7 @@ use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Imagick_Policy;
 use App\RSpade\Core\Files\Rsx_File_Gates;
+use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Files\Svg_Upload_Sanitizer;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
@@ -315,13 +316,20 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         // does is overwritten here, which is the contract - the caller supplies the bytes, the
         // model derives the label.
         //
-        // The column may not exist yet. A from-zero migration replay writes attachments
-        // through this model BEFORE add_file_type_label_to_file_attachments has run
-        // (import_sample_documents, 2026-07-16, does exactly that), and an unconditional
-        // assignment made that replay fail with "Unknown column 'file_type_label'" - unseen
-        // on any developer box, whose database already had the column. That migration's own
-        // backfill repairs every row written before the column arrived.
+        // The column may not exist yet. A migration that writes attachments through this
+        // model and sorts before add_file_type_label_to_file_attachments runs on a from-zero
+        // replay against a table without it, and an unconditional assignment failed that
+        // replay with "Unknown column 'file_type_label'" - unseen on any developer box, whose
+        // database already had the column. That migration's own backfill repairs every row
+        // written before the column arrived.
         static::saving(function ($attachment) {
+            // Every file_name is stored safe for every operating system and every header,
+            // whichever path wrote it (an upload, filename_override, create_from_disk(), a
+            // rename) - Rsx_File_Name is the one rule.
+            if ($attachment->isDirty('file_name')) {
+                $attachment->file_name = Rsx_File_Name::safe($attachment->file_name);
+            }
+
             if (static::__file_type_label_column_exists()) {
                 $attachment->file_type_label = static::file_type_label_for($attachment->mime_type, $attachment->file_extension);
             }
@@ -2776,7 +2784,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         // Realm-aware: /_upload stamps site_id from Portal_Session on a portal request, so
         // the claim check has to ask the same facade or a portal upload can never be claimed
         // by the portal endpoint that asked for it. See
-        // docs.dev/audits/portal_realm_session_audit_2026_08_09.md.
+        // docs.dev/audits/archive/portal_realm_session_audit_2026_08_09.md.
         $current_site_id = \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
             ? \App\RSpade\Core\Portal\Portal_Session::get_site_id()
             : \App\RSpade\Core\Session\Session::get_site_id();

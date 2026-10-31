@@ -30,6 +30,15 @@ class RenamePhpClassFunction_Command extends Command
         $skip_subclasses = $this->option('skip-subclasses');
         $dry_run = $this->option('dry-run');
 
+        // All three names are written verbatim into PHP source, so anything but a PHP
+        // identifier is refused before the manifest is consulted.
+        foreach (['class_name' => $class_name, 'old_method' => $old_method, 'new_method' => $new_method] as $label => $name) {
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name)) {
+                $this->error("[ERROR] {$label} must be a PHP identifier (letters, digits, underscores; not starting with a digit): '{$name}'");
+                return 1;
+            }
+        }
+
         // Initialize manifest
         Manifest::init();
 

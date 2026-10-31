@@ -19,6 +19,7 @@ use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 use App\RSpade\Core\Rsx;
 use Exception;
 use Illuminate\Console\Command;
+use App\RSpade\Core\Env\Rsx_LoadEnvironmentVariables;
 
 /**
  * THE build. One command produces everything the site serves.
@@ -218,6 +219,12 @@ class Build_Command extends Command
                 return 1;
             }
             $this->line('      Routes, events and compiled views built');
+
+            // The parsed .env, so the first served boot loads it instead of parsing it
+            // (Rsx_LoadEnvironmentVariables). It lives in tmp/, not build/: any later boot that finds .env
+            // newer rewrites it, and an unwritable tmp/ only means every boot parses.
+            $env_file = app()->environmentFilePath();
+            Rsx_LoadEnvironmentVariables::write_cache($env_file, Rsx_LoadEnvironmentVariables::parse_file($env_file));
         } finally {
             Cdn_Cache::$_build_phase = false;
         }

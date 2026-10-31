@@ -9,6 +9,7 @@
  *
  *   const { open_sys_page } = require('../../_lib/playwright/sys_page.js');
  *   const { browser, page, errors, on_request } = await open_sys_page();
+ *   await open_sys_page({ timezone_id: 'America/Chicago' });   // a browser in that zone
  *
  * errors      every pageerror and console.error seen so far (jqhtml reports a failed lifecycle
  *             hook through console.error, not as an uncaught exception). A script that provokes
@@ -26,12 +27,15 @@ const BASE_URL = 'http://localhost';
 const ROUTE = '/_sys';
 const USER_ID = 1;
 
-async function open_sys_page() {
+async function open_sys_page(options = {}) {
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
-    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const context = await browser.newContext({
+        ignoreHTTPSErrors: true,
+        ...(options.timezone_id ? { timezoneId: options.timezone_id } : {}),
+    });
     const page = await context.newPage();
 
     const errors = [];

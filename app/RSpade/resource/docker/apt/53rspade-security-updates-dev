@@ -1,0 +1,6 @@
+// RSpade development image: MySQL is held back from automatic security updates. Its
+// package scripts run maintenance on the data directory, which a migrate may be
+// snapshotting at that moment. It updates with a new image.
+Unattended-Upgrade::Package-Blacklist {
+    "^mysql-";
+};

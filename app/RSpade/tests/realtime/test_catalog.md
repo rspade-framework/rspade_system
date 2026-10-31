@@ -106,7 +106,7 @@ demanded -> every portal Ajax call rejected). Both now fork on
 `Rsx_Portal::is_portal_request()`, and `session_id` is gated on `has_session()` in both
 realms so opening a socket never creates a session as a side effect.
 
-Full finding: `docs.dev/audits/portal_realm_session_audit_2026_08_09.md` (D-1, D-2).
+Full finding: `docs.dev/audits/archive/portal_realm_session_audit_2026_08_09.md` (D-1, D-2).
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|

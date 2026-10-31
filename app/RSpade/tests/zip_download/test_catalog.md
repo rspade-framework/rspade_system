@@ -33,7 +33,7 @@ and deferred). Implemented php tests live in `php/Zip_Stream_Test.php` (writer),
 | ZN-16 | Zip filename default when empty | php | null / `''` | `download.zip` | implemented | 2026-07-23 |
 | ZN-17 | Zip filename suffix added | php | `myfiles` | `myfiles.zip` | implemented | 2026-07-23 |
 | ZN-18 | Zip filename path stripped | php | `/etc/foo.zip` | `foo.zip` | implemented | 2026-07-23 |
-| ZN-19 | Zip filename quotes stripped | php | `a"b.zip` | `ab.zip` | implemented | 2026-07-23 |
+| ZN-19 | Zip filename quote replaced by the file-name rule | php | `a"b.zip` | `a_b.zip` | implemented | 2026-10-29 |
 | ZN-20 | ZIP64 within limits -> null | php | `[100,200,300]` | null | implemented | 2026-07-23 |
 | ZN-21 | ZIP64 too many entries | php | 65001 entries | error message | implemented | 2026-07-23 |
 | ZN-22 | ZIP64 single file too large | php | `[0xFFFFFFFF]` | error message | implemented | 2026-07-23 |

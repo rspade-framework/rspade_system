@@ -10,6 +10,7 @@ namespace App\RSpade\Core\TwoFactor;
 use Illuminate\Http\Request;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Session\Session;
@@ -39,7 +40,10 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  *
  *   ENROLLMENT (#[Auth('is_logged_in')]) - adding, listing and removing factors. These
  *   operate on the SIGNED-IN identity and never on one named by an argument; the facade
- *   refuses them outright while impersonating, and so do the mutating endpoints here.
+ *   refuses them outright while impersonating, and so do the mutating endpoints here. Every
+ *   endpoint that adds or removes a factor, or replaces the recovery codes, first requires a
+ *   recent password confirmation (Rsx_Password_Confirmation::require_confirmed()) - the
+ *   page asks for it before calling (rsx:man password_confirmation).
  *
  *   CHALLENGE (#[Auth('public')]) - the half-authenticated state. Between a correct password
  *   and a correct second factor the session is NOT logged in (see
@@ -82,6 +86,9 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function totp_begin(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         return Rsx_Two_Factor::begin_totp_enrollment();
     }
 
@@ -95,6 +102,9 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function totp_confirm(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         $code = isset($params['code']) ? trim((string) $params['code']) : '';
 
         if ($code === '') {
@@ -126,6 +136,9 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function passkey_register_begin(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         return Rsx_Two_Factor::begin_passkey_registration();
     }
 
@@ -142,6 +155,9 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function passkey_register_confirm(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         $attestation = $params['attestation'] ?? null;
 
         if (!is_array($attestation)) {
@@ -203,6 +219,9 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
     {
         static::_refuse_impersonation();
 
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         $credential_id = isset($params['id']) ? (int) $params['id'] : 0;
 
         if ($credential_id <= 0) {
@@ -230,6 +249,9 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function recovery_regenerate(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         return ['recovery_codes' => Rsx_Two_Factor::regenerate_recovery_codes()];
     }
 

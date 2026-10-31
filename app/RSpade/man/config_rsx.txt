@@ -59,6 +59,19 @@ TWO-TIER MERGE
     defaults, development.auto_rename_files, and more). The
     framework file only carries what the framework itself must have to run.
 
+FIRST RUN
+    'first_run' => [
+        'sample_data_task' => null,
+    ]
+
+    sample_data_task     'Service::method' of a #[Task] that fills the new site
+                         with sample data. While set, the first-run setup screen
+                         offers "Add sample data to the new site" and, ticked,
+                         dispatches it with ['site' => <initial site>]. Null or
+                         empty hides the option. The framework ships no seeder;
+                         the template sets Sample_Data_Service::seed. Not an
+                         .env key. rsx:man initial_user.
+
 APPLICATION MODE
     'mode' => env('RSX_MODE', 'development')
 
@@ -363,8 +376,8 @@ SESSIONS
         'guest_expiry_minutes' => 43200,
         'impersonation_max_days' => 7,
         'max_web_sessions_per_user' => 25,
-        'login_throttle' => ['enabled' => true, 'attempts' => 10,
-                             'window_minutes' => 15, 'lockout_minutes' => 15],
+        'password_confirmation_minutes' => 5,
+        'login_throttle' => ['enabled' => true, 'attempts' => 8, 'seconds' => 60],
         'login_history_retention_days' => 365,
     ]
 
@@ -396,8 +409,14 @@ SESSIONS
     max_web_sessions_per_user - signed-in browsers per account, per realm; older
     ones are signed out at each sign-in. 0 or null = off.
 
-    login_throttle, login_history_retention_days - the brute-force throttle
-    and the login-history prune.
+    password_confirmation_minutes - how long a "confirm it's you" lasts before a
+    gated action asks for the password again (rsx:man password_confirmation).
+
+    login_throttle - failed sign-in attempts allowed per `seconds`, counted per
+    client address and per account; further attempts are refused until the
+    rate falls back under it (rsx:man session, LOGIN THROTTLE).
+
+    login_history_retention_days - the login-history prune.
 
     All are SECURITY or RETENTION WINDOWS, not operation timeouts: nothing waits
     on them. See: php artisan rsx:man session (HOW SESSIONS TIME OUT;
@@ -626,8 +645,7 @@ CONSOLE DEBUG
 
     The framework file carries ONLY the master switch and default filter
     mode. Output destinations (cli/web/ajax/laravel_log), whitelist,
-    blacklist, specific_channel, include_benchmark/location/backtrace, and
-    enable_get_trace all live in USER config (application preferences).
+    blacklist, specific_channel and include_benchmark/location/backtrace all live in USER config (application preferences).
     Per-mode stripping is driven by RSX_MODE (production strips every
     console_debug() call site). A developer can override enabled, the filter
     and the include_* switches for their own browser from the /_sys Debug
@@ -970,6 +988,11 @@ MAIL AND SMS
         # a future send_at() is never born stale. Never runs in 'disabled'. email(7).
         'stale_after_days' => 2,
         'unsubscribe_secret' => null,   # null = derived from app.key
+        # TEST ADDRESSES: a recipient whose domain matches one of these shell
+        # patterns is queued, rendered and recorded as status Test - NEVER
+        # delivered, in any mode. An application's list adds patterns. The SMS
+        # twin is fixed: any (nnn) 555-nnnn number. rsx:man email, TEST ADDRESSES.
+        'test_domains' => ['test.*'],
         'branding' => ['logo_url' => null, 'footer_text' => null],
         'dev_site' => [
             'catchall_address' => env('EMAIL_DEV_CATCHALL_ADDRESS', ''),
@@ -1035,20 +1058,26 @@ MAIL AND SMS
 DATETIME
     'datetime' => [
         'server_timezone' => env('RSX_SERVER_TIMEZONE') ?: 'UTC',
+        'default_user_timezone' => env('RSX_DEFAULT_USER_TIMEZONE') ?: 'automatic',
         'time_interval' => 15,       # Schedule_Input dropdown minutes
         'default_duration' => 60,    # Schedule_Input new-event minutes
     ]
 
     server_timezone is the server's zone (IANA; blank = UTC; unknown throws).
     Processes still run in UTC; it is read only for #[Schedule] wall-clock
-    times, the timezone of a new site created without one, and the last
-    display fallback.
+    times, the timezone of a new site created without one, and the display
+    tier after the site's.
 
-    Timezone resolution: login_users.timezone (staff user preference) ->
-    sites.timezone (the tenant's own default) -> server_timezone. A PORTAL
-    request has no user tier - portal accounts carry no timezone column - so
-    it starts at the site. login_users.timezone_auto (default 1) lets the
-    browser set tier 1 on the first signed-in page load.
+    default_user_timezone is what a NEW login identity starts with when its
+    creator set none: automatic (NULL - each browser's own zone; the default),
+    site or server (a COPY of that zone, never updated after), or an IANA
+    identifier. Applied once at creation; anything else throws then.
+
+    Timezone resolution, per request: login_users.timezone (a staff user's
+    EXPLICIT zone; NULL is automatic) -> the browser's rsx_tz cookie ->
+    sites.timezone -> server_timezone -> UTC. A PORTAL request has no user
+    tier - portal accounts carry no timezone column - so it starts at the
+    cookie. An external API request, a task and a command have no cookie.
     See: php artisan rsx:man time
 
 DEPENDENCIES
@@ -1070,7 +1099,7 @@ USER CONFIG KEYS (rsx/resource/config/rsx.php)
     default_user             Dev auto-fill login (email/password).
     js_model_base_class      Custom JS base class for generated model stubs.
     console_debug            outputs, filter_mode, whitelist, blacklist,
-                             specific_channel, include_*, enable_get_trace.
+                             specific_channel, include_*.
     log_browser_errors       Send browser JS errors to the Laravel log.
     response                 default_view, error_views, cors.
     notifications            default_expiry_days.

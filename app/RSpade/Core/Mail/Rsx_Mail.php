@@ -8,6 +8,7 @@ use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Mail\Rsx_Email_Abstract;
 use App\RSpade\Core\Mail\Rsx_Mail_Builder;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
+use App\RSpade\Core\Mail\Rsx_Test_Recipients;
 use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Models\Email_Blocked_Address_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
@@ -153,6 +154,16 @@ class Rsx_Mail
             );
         }
 
+        // TEST RECIPIENTS (Rsx_Test_Recipients). A test copy on a real message is withheld
+        // and recorded; a test `to` is queued exactly as addressed - never redirected by the
+        // dev-site layer below - and the drain renders it and settles it as Test, so nothing
+        // on the envelope is ever handed to a transport.
+        static::__withhold_copies(
+            $descriptor,
+            fn (string $address) => Rsx_Test_Recipients::is_test_email($address) ? 'test address: recorded, never sent' : null
+        );
+        $to_is_test = Rsx_Test_Recipients::is_test_email($to);
+
         // The dev-site layer exists to keep a development box from mailing REAL people,
         // so it applies to the ONE mode that can reach one: MODE_LIVE. Every other mode
         // has already made the message unable to leave - aiosmtpd files it in a Maildir
@@ -165,7 +176,7 @@ class Rsx_Mail
         // and recorded: redirecting `to` to the catchall while the real copies rode along
         // would mail exactly the people this layer exists to protect.
         $dev_undeliverable = false;
-        if (self::is_dev_mode() && Rsx_Mail_Transport::delivery_mode() === Rsx_Mail_Transport::MODE_LIVE) {
+        if (!$to_is_test && self::is_dev_mode() && Rsx_Mail_Transport::delivery_mode() === Rsx_Mail_Transport::MODE_LIVE) {
             [$descriptor['to_address'], $descriptor['dev_original_to'], $dev_undeliverable] = self::_apply_dev_redirect($to);
 
             static::__withhold_copies(
@@ -484,7 +495,7 @@ class Rsx_Mail
      * blocked address would still be mailed. CLI (the queue drain, tests) is not a portal
      * request, so it keeps the staff path unchanged.
      *
-     * See docs.dev/audits/portal_realm_session_audit_2026_08_09.md.
+     * See docs.dev/audits/archive/portal_realm_session_audit_2026_08_09.md.
      */
     private static function __current_site_id(): int
     {
@@ -1007,7 +1018,9 @@ class Rsx_Mail
      *
      * The layers enqueue() applies that make an address genuinely unreachable, asked in
      * advance and with the same exemptions:
-     *   - the delivery mode (delivers(): live or the development catcher);
+     *   - the delivery mode (delivers(): live or the development catcher) - for a TEST
+     *     address (Rsx_Test_Recipients), any mode but disabled, since its message is
+     *     recorded as sent rather than delivered;
      *   - the site block list, which a SECURITY message escapes;
      *   - the recipient's opt-out for the category, which TRANSACTIONAL and SECURITY escape.
      *
@@ -1026,7 +1039,14 @@ class Rsx_Mail
      */
     public static function deliverable_to(string $email, int $category): bool
     {
-        if (!static::delivers()) {
+        // A TEST address counts as delivered in any mode that drains the queue: its message
+        // is recorded as sent, so a flow that waits on it can be walked end to end. The
+        // block list and the opt-out below still apply to it, exactly as enqueue() applies them.
+        $drains = Rsx_Test_Recipients::is_test_email($email)
+            ? Rsx_Mail_Transport::delivery_mode() !== Rsx_Mail_Transport::MODE_DISABLED
+            : static::delivers();
+
+        if (!$drains) {
             return false;
         }
 

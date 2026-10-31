@@ -408,6 +408,10 @@ FILE STRUCTURE RESTRICTIONS
         on every request should be in Main::init(), pre_dispatch() methods,
         or implemented in Laravel outside RSX.
 
+        An anonymous class body is class scope. A file that RETURNS one
+        (return new class extends Migration { ... };) is clean; any other
+        new class at file scope instantiates on load and is reported once.
+
         Example Valid PHP Utility File:
             <?php
             namespace App\Utils;
@@ -472,6 +476,8 @@ FILE STRUCTURE RESTRICTIONS
             const timestamp = Date.now();  // NOT ALLOWED
 
     Enforcement:
+        - Applies to files the manifest loads: a file under any resource/ or
+          public/ directory (a config file, a migration) is not judged
         - Validated at manifest build time
         - Clear error messages with line numbers
         - Build fails on violations

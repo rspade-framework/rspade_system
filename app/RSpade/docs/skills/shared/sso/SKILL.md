@@ -110,6 +110,8 @@ window.location = url;                 // a NAVIGATION, not a fetch
 this.data.sso_identities = await Rsx_Sso_Controller.identity_unlink({ id });  // returns the refreshed list
 ```
 
+`link_begin` and `identity_unlink` require a recent password confirmation - gate both buttons with the app's confirmation dialog first (skill `rspade:security-settings`).
+
 Hide the whole section when `!Rsx_Sso.is_enabled()`. Render one row per LIVE provider, **plus a disconnect-only row for a connection whose provider has since been switched off** - the user must be able to remove something that is really there.
 
 ## Adding a provider
@@ -197,7 +199,7 @@ Matched exactly by providers. Apple's `client_id` is the **Services ID** (`com.e
 
 - **`window.rsxapp.sso` is ABSENT when nothing is live**, not empty. Ask `Rsx_Sso.is_enabled()`; never index the key.
 
-- **One failure, one recorder.** `Login_History::record_failure(..., STATUS_FAILED_SSO)` already feeds `Login_Throttle`. Never call `Login_Throttle::record_failure()` beside it - it halves the real budget and only a locked-out user ever finds out.
+- **One failure, one recorder.** `Login_History::record_failure(..., STATUS_FAILED_SSO)` already feeds `Login_Throttle`. Never call `Login_Throttle::record_failure()` beside it - it halves the real limit and only a throttled user ever finds out.
 
 - **Impersonation refuses** every change to what an identity is connected to: `begin(intent: link)`, `link_pending()`, `unlink()`, and the Ajax endpoints. `unlink_all()` is the shell's path and is the deliberate exception.
 

@@ -293,3 +293,17 @@ starts and after it ends (`Rsx_Schema::purge_schema_state()`, asserted in
 | PURGE-06 | --dump-rollback success is purged after the window is lowered | php | 1 pending, exit 0 | the second purge follows `maintenance_disable` | implemented | 2026-10-12 |
 | PURGE-07 | --dump-rollback failure and restore is purged around | php | 1 pending, exit 1 | same | implemented | 2026-10-12 |
 | PURGE-08 | a refused run and an abandon are purged around | php | both flags; --abandon-dump-rollback | two purges | implemented | 2026-10-12 |
+
+## Migrate_Snapshot_Run_Lock_Test (php) - one snapshot-protected run at a time; an interrupted one is restored
+
+The restore, the cleanup and the mysqld preflight are recorders and the flag is a scratch file, so
+nothing stops MySQL or touches a datadir.
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| RUNLOCK-01 | a second run refuses while SNAPSHOT_RUN_LOCK is held | php | lock held by the test | exit 1, "Another migrate", nothing run | implemented | 2026-10-29 |
+| RUNLOCK-02 | a free lock runs and is released | php | lock free | the locked run ran; the lock is free afterwards | implemented | 2026-10-29 |
+| RUNLOCK-03 | holding the lock, a flag means an interrupted run: restored and cleared before the new snapshot | php | flag present | restore, cleanup, purge, then the snapshot begins; the flag is gone | implemented | 2026-10-29 |
+| RUNLOCK-04 | a failed restore keeps the flag and takes no snapshot | php | flag present, restore fails | restore only; the flag stays; migrate:restore named | implemented | 2026-10-29 |
+| RUNLOCK-05 | no flag means no restore | php | no flag | the snapshot begins; no restore | implemented | 2026-10-29 |
+| RUNLOCK-06 | migrate:restore refuses while the lock is held, runs once it is free | php | lock held, then free | exit 1 with nothing run, then the restore runs | implemented | 2026-10-29 |

@@ -29,6 +29,7 @@ use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Errors\Error_Screens;
+use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
@@ -37,6 +38,7 @@ use App\RSpade\Core\Response\Rsx_Response_Abstract;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Rsx_Csrf;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Lib\Flash\Flash_Alert;
 
 /**
@@ -452,6 +454,23 @@ class Dispatcher
             console_debug('DISPATCH', 'Auth gates denied:', $gate_surface);
 
             return static::__transform_response($realm, static::__build_response($realm, response_unauthorized()), $original_method, $request);
+        }
+
+        // --- The browser's timezone (the first-visit interstitial) ---
+        // A browser's first page view arrives without the rsx_tz cookie, so it cannot be
+        // rendered in its own zone. Rsx_Time::ensure_timezone() answers that request - a GET
+        // document navigation wanting HTML, with no explicit-zone user signed in - with a
+        // page that writes the cookie and reloads; every other request passes straight on.
+        // An anonymous full-page-cached route is never asked: its output is shared, and its
+        // request cookies are blanked above.
+        if (!$has_fpc) {
+            $timezone_answer = Rsx_Time::ensure_timezone($request);
+
+            if ($timezone_answer instanceof \Symfony\Component\HttpFoundation\Response) {
+                return static::__transform_response($realm, $timezone_answer, $original_method, $request);
+            }
+
+            unset($params[Rsx_Time::TIMEZONE_RELOAD_MARKER]);
         }
 
         // A CODED failure raised by the application from here on - abort(404), a thrown
@@ -1256,7 +1275,7 @@ class Dispatcher
 
                 if (isset($result['name'])) {
                     $disposition = $result['disposition'] ?? 'attachment';
-                    $response->header('Content-Disposition', "{$disposition}; filename=\"" . $result['name'] . '"');
+                    $response->header('Content-Disposition', Rsx_File_Name::disposition($disposition, $result['name']));
                 }
 
                 return $response;

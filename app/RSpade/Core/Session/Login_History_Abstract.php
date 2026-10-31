@@ -43,9 +43,8 @@ use App\RSpade\Core\Session\User_Agent;
  *   never confirmed is the browser or the phone declining, not the server refusing.
  *
  * - FAILURES are EPHEMERAL. record_failure() writes no row at all: it increments two
- *   Rsx_Counter counters (per email, per IP) that expire on
- *   rsx.sessions.login_throttle.window_minutes, feeds Login_Throttle, and emits one
- *   Log::warning() line. That log line is the forensic record; the counters exist only to
+ *   Rsx_Counter counters (per email, per IP) that expire FAILURE_WINDOW_SECONDS after the
+ *   first failure, feeds Login_Throttle, and emits one Log::warning() line. That log line is the forensic record; the counters exist only to
  *   answer "how many failures in the window".
  *
  *   WHY (2026-08-12 CR): a sign-in form is anonymous-reachable, so a persisted failure row
@@ -58,15 +57,20 @@ use App\RSpade\Core\Session\User_Agent;
  *   the horizon. Anything longer must come from the log.
  *
  * ENFORCEMENT LIVES IN Login_Throttle, not here: record_failure() hands every failure to it
- * (per client IP, one budget shared by both realms), and the credential verifiers refuse a
- * locked-out address before any lookup. The counters below are a readable per-email/per-IP
- * statistic, kept per realm, and nothing enforces the per-email one.
+ * (per client address and per account, one limit shared by both realms), and the credential
+ * verifiers refuse a throttled caller before any lookup. The counters below are a readable
+ * per-email/per-IP statistic, kept per realm, and nothing enforces them.
  *
- * Under maintenance mode redis is stopped, the increments are dropped and the counts read 0 -
- * the throttle is inert while the web tier is answering 503 anyway.
+ * Under maintenance mode redis is stopped, the increments are dropped and the counts read 0.
  */
 abstract class Login_History_Abstract
 {
+    /**
+     * How long a failure counter lives from its first failure: the horizon of
+     * get_failed_attempts_count*().
+     */
+    public const FAILURE_WINDOW_SECONDS = 15 * 60;
+
     /**
      * Status vocabulary - one spelling for both realms.
      *
@@ -259,8 +263,9 @@ abstract class Login_History_Abstract
      * Record a failed sign-in attempt
      *
      * Writes NO database row (see the class docblock - 2026-08-12 CR). It increments the
-     * per-email and per-IP counters, both expiring on the configured window, feeds
-     * Login_Throttle, and logs one warning line carrying the whole event for forensics.
+     * per-email and per-IP counters, both expiring FAILURE_WINDOW_SECONDS after the first
+     * failure, feeds Login_Throttle, and logs one warning line carrying the whole event for
+     * forensics.
      *
      * Safe to call with anything a stranger typed: nothing here is trusted, and no secret ever
      * reaches this function (the password is never a parameter).
@@ -279,17 +284,15 @@ abstract class Login_History_Abstract
     ): void {
         // The per-IP counter of a caller with no client (CLI) is keyed 'CLI'.
         $ip_address = Session::get_client_ip() ?? 'CLI';
-        $window_seconds = self::_failure_window_seconds();
 
-        Rsx_Counter::increment(self::_email_counter_key($email), $window_seconds);
-        Rsx_Counter::increment(self::_ip_counter_key($ip_address), $window_seconds);
+        Rsx_Counter::increment(self::_email_counter_key($email), self::FAILURE_WINDOW_SECONDS);
+        Rsx_Counter::increment(self::_ip_counter_key($ip_address), self::FAILURE_WINDOW_SECONDS);
 
         // Every recorded failure feeds the framework throttle - password misses, unknown
         // addresses, and whatever outcomes the application records here itself (a second
-        // factor, an account status). The throttle keeps its own per-IP counter, one budget
-        // for both realms, and reads the client IP the same way every other framework seam
-        // does, so a CLI caller (no remote party) is not throttled.
-        Login_Throttle::record_failure();
+        // factor, an account status) - against the client address and this account, one
+        // limit for both realms. A CLI caller (no remote party) is not throttled.
+        Login_Throttle::record_failure($email);
 
         $context = [
             'email' => $email,
@@ -308,7 +311,7 @@ abstract class Login_History_Abstract
     /**
      * Get count of failed attempts for an email within the failure window, in this realm.
      *
-     * THE ANSWER IS BOUNDED BY rsx.sessions.login_throttle.window_minutes. Failures live in a
+     * THE ANSWER IS BOUNDED BY FAILURE_WINDOW_SECONDS (15 minutes). Failures live in a
      * counter that expires with that window, so a request for a LARGER window returns the
      * window's count, not a longer history. $minutes is retained so existing call sites keep
      * working; shrink such a stat to the window rather than trusting a number that cannot mean
@@ -317,8 +320,8 @@ abstract class Login_History_Abstract
      * Returns 0 when the cache is unavailable (maintenance mode) - throttling fails open.
      *
      * @param string $email
-     * @param int $minutes Requested time window in minutes (see above - the configured window wins)
-     * @return int Number of failed attempts inside the configured window
+     * @param int $minutes Requested time window in minutes (see above - the fixed window wins)
+     * @return int Number of failed attempts inside the fixed window
      */
     public static function get_failed_attempts_count(string $email, int $minutes = 15): int
     {
@@ -331,8 +334,8 @@ abstract class Login_History_Abstract
      * Same window semantics as get_failed_attempts_count().
      *
      * @param string $ip_address
-     * @param int $minutes Requested time window in minutes (see above - the configured window wins)
-     * @return int Number of failed attempts inside the configured window
+     * @param int $minutes Requested time window in minutes (see above - the fixed window wins)
+     * @return int Number of failed attempts inside the fixed window
      */
     public static function get_failed_attempts_count_by_ip(string $ip_address, int $minutes = 15): int
     {
@@ -499,22 +502,6 @@ abstract class Login_History_Abstract
             'failure_reason' => $reason === null ? null : mb_substr($reason, 0, 255),
             'created_at' => now(),
         ] + static::__row_columns($identity_id));
-    }
-
-    /**
-     * Length of the failure-counter window, in seconds.
-     *
-     * @return int
-     */
-    private static function _failure_window_seconds(): int
-    {
-        $minutes = (int) config('rsx.sessions.login_throttle.window_minutes', 15);
-
-        if ($minutes <= 0) {
-            shouldnt_happen('rsx.sessions.login_throttle.window_minutes must be a positive number of minutes');
-        }
-
-        return $minutes * 60;
     }
 
     /**

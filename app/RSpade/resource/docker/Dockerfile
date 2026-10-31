@@ -47,6 +47,9 @@ RUN echo "$TZ" > /etc/timezone
 RUN apt-get update && apt-get install -y \
     # web server, cache, process supervision
         nginx libnginx-mod-http-brotli-filter redis-server redis-tools supervisor \
+    # automatic security updates at start and every 4 hours (rspade-security-update):
+    # Ubuntu's own tool, held to the allow-list in apt/52rspade-security-updates
+        unattended-upgrades \
     # talking to a database (the SERVER is a dev-target concern)
         mysql-client \
     # fetching and unpacking. No software-properties-common: it exists to provide
@@ -219,6 +222,12 @@ COPY supervisor/conf.d/fpc-proxy.conf  /etc/supervisor/conf.d/fpc-proxy.conf
 COPY supervisor/conf.d/realtime.conf   /etc/supervisor/conf.d/realtime.conf
 COPY supervisor/conf.d/rsx-lockd.conf  /etc/supervisor/conf.d/rsx-lockd.conf
 COPY supervisor/conf.d/tasks.conf      /etc/supervisor/conf.d/tasks.conf
+COPY supervisor/conf.d/security-updates.conf /etc/supervisor/conf.d/security-updates.conf
+# AUTOMATIC SECURITY UPDATES. What unattended-upgrades may install: the Ubuntu security
+# pocket and PHP patch releases from the ondrej PPA (rspade-security-update says why and
+# when). Runs before PHP serves anything at every start and every 4 hours after; off with
+# RSX_AUTO_SECURITY_UPDATES=0 in the container's environment.
+COPY apt/52rspade-security-updates /etc/apt/apt.conf.d/52rspade-security-updates
 # ImageMagick reads raster coders only: its SVG/MVG/MSL/TEXT/LABEL coders turn an uploaded
 # file into a local-file read. rsx:health "ImageMagick Coder Policy" FAILs without this.
 COPY imagemagick/policy.xml        /etc/ImageMagick-6/policy.xml
@@ -236,6 +245,7 @@ RUN chmod 644 /etc/nginx/nginx.conf \
               /etc/redis/redis.conf \
               /etc/supervisor/supervisord.conf \
               /etc/supervisor/conf.d/*.conf \
+              /etc/apt/apt.conf.d/52rspade-security-updates \
               /etc/ImageMagick-6/policy.xml
 
 COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
@@ -243,6 +253,8 @@ COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run
 COPY task-run.sh       /usr/local/bin/rspade-task-run
 COPY retry-run.sh      /usr/local/bin/rspade-retry-run
 COPY php-fpm-workers.sh /usr/local/bin/rspade-php-fpm-workers
+COPY security-update.sh /usr/local/bin/rspade-security-update
+COPY security-updates-run.sh /usr/local/bin/rspade-security-updates-run
 COPY claude-run.sh     /usr/local/bin/claude
 
 # git IS the RSpade git proxy in this container.
@@ -272,12 +284,14 @@ RUN chmod 755 /usr/local/bin/rspade-entrypoint \
               /usr/local/bin/rspade-task-run \
               /usr/local/bin/rspade-retry-run \
               /usr/local/bin/rspade-php-fpm-workers \
+              /usr/local/bin/rspade-security-update \
+              /usr/local/bin/rspade-security-updates-run \
               /usr/local/bin/claude \
               /usr/local/bin/git \
               /usr/local/bin/npm
 
 # Runtime directories the services expect to exist before they start.
-RUN mkdir -p /run/php /var/log/supervisor /var/run/redis /var/log/redis /var/lib/redis \
+RUN mkdir -p /run/php /var/log/supervisor /var/run/redis /var/log/redis /var/lib/redis /var/lib/rspade \
     && chown -R redis:redis /var/run/redis /var/log/redis /var/lib/redis
 
 # The RSpade container marker.
@@ -336,6 +350,11 @@ RUN apt-get update && apt-get install -y \
     # developer quality of life for anyone who shells in
         fzf jq man-db gh \
     && rm -rf /var/lib/apt/lists/*
+
+# MySQL is held back from the automatic security updates here: its package scripts run
+# maintenance on the data directory, which a migrate may be snapshotting.
+COPY apt/53rspade-security-updates-dev /etc/apt/apt.conf.d/53rspade-security-updates-dev
+RUN chmod 644 /etc/apt/apt.conf.d/53rspade-security-updates-dev
 
 # -----------------------------------------------------------------------------
 # Docker-in-docker: this image runs its own Docker Engine

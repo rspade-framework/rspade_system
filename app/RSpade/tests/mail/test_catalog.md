@@ -336,3 +336,13 @@ The SITE's ruling that no email reaches an address, in every category; checked a
 | MAIL-321 | the dev-site gate never makes an address undeliverable | php | `.dev.` host, live and aiosmtpd: no whitelist and no catchall; then a catchall | true each time (redirected, or recorded and readable in the queue) | implemented (`Mail_Deliverability_Test`) | 2026-10-21 |
 | MAIL-322 | the site block list spares only SECURITY | php | a listed address, each category | SECURITY true, the rest false | implemented | 2026-10-19 |
 | MAIL-323 | the recipient opt-out spares TRANSACTIONAL and SECURITY | php | opt-outs per category | the opted-out category false, others true; TRANSACTIONAL and SECURITY true even when opted out | implemented | 2026-10-19 |
+
+## Test_Recipients_Test (php) - test addresses and numbers are never delivered
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| MAIL-330 | which addresses and numbers are test recipients | php | test.com/TEST.ORG/test.co.uk vs example/testing/nottest/sub.test.com; an app pattern; (nnn) 555-nnnn spellings vs area-code 555, 556, a UK number, 7 digits | as stated | implemented | 2026-10-29 |
+| MAIL-331 | a test `to` is rendered and settled Test with no transport call, live and suppressed alike, and never dev-redirected | php | fixture to x@test.com, drained through a stub | STATUS_TEST, 0 sends, sent_at set, no dev_original_to | implemented | 2026-10-29 |
+| MAIL-332 | a test cc on a real message is withheld and recorded; the real `to` is sent | php | real to + test.org cc, live | withheld_recipients names it "test address"; cc emptied; Sent, 1 send | implemented | 2026-10-29 |
+| MAIL-333 | deliverable_to(): a test address is delivered unless disabled; the block list still applies | php | suppressed, disabled, a listed test address | true, false, false (and a real address false under suppressed) | implemented | 2026-10-29 |
+| MAIL-334 | a test SMS number is settled Test and never redirected | php | (212) 555-0142, suppressed | STATUS_TEST, no dev_original_to | implemented | 2026-10-29 |

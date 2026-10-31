@@ -326,8 +326,8 @@ THE CEREMONY
         Login_History::record_failure(..., Login_History::STATUS_FAILED_SSO),
         WHICH ALREADY FEEDS Login_Throttle. Login_Throttle::record_failure()
         is never called beside it - that would count one failure twice and
-        halve the real budget, and the halving would only ever be discovered
-        by a user locked out early. The same rule as STATUS_FAILED_2FA.
+        halve the real limit, and the halving would only ever be discovered
+        by a user throttled early. The same rule as STATUS_FAILED_2FA.
 
         THE USER-FACING SENTENCES, and they are deliberately few:
 
@@ -829,6 +829,10 @@ FRAMEWORK ENDPOINTS
         Rsx_Sso_Controller.link_begin({provider})
             {url} to navigate to. Refuses a provider that is not live, and
             refuses while impersonating.
+
+    link_begin and identity_unlink first require a recent password
+    confirmation (Rsx_Password_Confirmation::require_confirmed()); the
+    settings page asks for it before calling (rsx:man password_confirmation).
 
     The controller is FORCE-INCLUDED in every bundle, like
     Rsx_Two_Factor_Controller: the buttons render on the LOGIN page (its own

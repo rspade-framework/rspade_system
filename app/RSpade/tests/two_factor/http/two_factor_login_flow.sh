@@ -59,7 +59,7 @@ cleanup() {
     # The factor and the throttle are the two pieces of state this script leaves outside its
     # own scope. Both are cleared unconditionally.
     $ARTISAN rsx:users:2fa:remove --user="$LOGIN_EMAIL" --force --json >/dev/null 2>&1 || true
-    $ARTISAN tinker --execute='\App\RSpade\Core\Auth\Login_Throttle::reset("127.0.0.1"); \App\RSpade\Core\Auth\Login_Throttle::reset("::1");' >/dev/null 2>&1 || true
+    $ARTISAN tinker --execute="\\App\\RSpade\\Core\\Auth\\Login_Throttle::reset(null, '127.0.0.1'); \\App\\RSpade\\Core\\Auth\\Login_Throttle::reset(null, '::1'); \\App\\RSpade\\Core\\Auth\\Login_Throttle::reset('${LOGIN_EMAIL}');" >/dev/null 2>&1 || true
     rm -f "$JAR" "$JAR2"
 }
 trap cleanup EXIT
@@ -105,7 +105,7 @@ sql_value() {
 # ---------------------------------------------------------------------------
 echo "[TEST] 0. Enrolling a TOTP factor for ${LOGIN_EMAIL}..." >&2
 $ARTISAN rsx:users:2fa:remove --user="$LOGIN_EMAIL" --force --json >/dev/null 2>&1 || true
-$ARTISAN tinker --execute='\App\RSpade\Core\Auth\Login_Throttle::reset("127.0.0.1"); \App\RSpade\Core\Auth\Login_Throttle::reset("::1");' >/dev/null 2>&1
+$ARTISAN tinker --execute="\\App\\RSpade\\Core\\Auth\\Login_Throttle::reset(null, '127.0.0.1'); \\App\\RSpade\\Core\\Auth\\Login_Throttle::reset(null, '::1'); \\App\\RSpade\\Core\\Auth\\Login_Throttle::reset('${LOGIN_EMAIL}');" >/dev/null 2>&1
 
 setup_json="$($ARTISAN rsx:users:2fa:setup --user="$LOGIN_EMAIL" --json 2>/dev/null)"
 SECRET="$(printf '%s' "$setup_json" | grep -oE '"secret": *"[A-Z2-7]+"' | head -1 | grep -oE '[A-Z2-7]{16,}')"
@@ -181,7 +181,7 @@ echo "[TEST] 3. OK - signed in, last_login stamped, one success row" >&2
 # Test 4 (tfa-chal-19): the ambient throttle refuses a locked-out client, and the refusal
 # reaches the screen as ITSELF - never as a wrong code.
 # ---------------------------------------------------------------------------
-echo "[TEST] 4. Wrong codes spend the budget and the throttle refuses..." >&2
+echo "[TEST] 4. A throttled client is refused at the challenge..." >&2
 
 curl -s -o /dev/null -c "$JAR2" -b "$JAR2" \
     --data-urlencode "email=${LOGIN_EMAIL}" \
@@ -193,30 +193,21 @@ page="$(curl -s -b "$JAR2" -c "$JAR2" "${BASE}/login/verify" 2>/dev/null)"
 TOKEN2="$(printf '%s' "$page" | grep -oE '"csrf": *"[a-f0-9]+"' | head -1 | grep -oE '[a-f0-9]{16,}' || true)"
 [ -n "$TOKEN2" ] || fail "could not read the CSRF token for the throttle run"
 
-throttled=0
-attempt=0
+# The challenge's own cap (rsx.two_factor.challenge_max_failures) destroys a challenge before
+# wrong codes alone could reach the throttle's limit, so the limit's worth of failures is
+# recorded against both loopback spellings directly - exactly what a run of failed sign-ins
+# from this address leaves behind - and the challenge is then answered once.
+$ARTISAN tinker --execute="for (\$i = 0; \$i < (int) config('rsx.sessions.login_throttle.attempts'); \$i++) { \\App\\RSpade\\Core\\Auth\\Login_Throttle::record_failure(null, '127.0.0.1'); \\App\\RSpade\\Core\\Auth\\Login_Throttle::record_failure(null, '::1'); }" >/dev/null 2>&1
 
-# The budget is rsx.sessions.login_throttle.attempts (10 by default). 25 wrong answers is
-# comfortably past any sane setting; the loop stops the moment the refusal appears.
-while [ $attempt -lt 25 ]; do
-    attempt=$((attempt + 1))
+response="$(curl -s -b "$JAR2" -c "$JAR2" -X POST \
+    -H 'Content-Type: application/json' \
+    -H "X-CSRF-TOKEN: ${TOKEN2}" \
+    -d '{"code":"000000"}' "${BASE}/_ajax/Login_Controller/verify_2fa" 2>/dev/null)"
 
-    response="$(curl -s -b "$JAR2" -c "$JAR2" -X POST \
-        -H 'Content-Type: application/json' \
-        -H "X-CSRF-TOKEN: ${TOKEN2}" \
-        -d '{"code":"000000"}' "${BASE}/_ajax/Login_Controller/verify_2fa" 2>/dev/null)"
+printf '%s' "$response" | grep -q '"_success":true' && fail "a wrong code SUCCEEDED: $response"
+printf '%s' "$response" | grep -qi 'too fast' || fail "a throttled client was not refused at the challenge - verify_challenge()'s require_not_throttled() is not enforcing over HTTP: $response"
 
-    printf '%s' "$response" | grep -q '"_success":true' && fail "a wrong code SUCCEEDED on attempt ${attempt}: $response"
-
-    if printf '%s' "$response" | grep -qi 'too fast'; then
-        throttled=1
-        break
-    fi
-done
-
-[ "$throttled" = "1" ] || fail "25 wrong codes never reached the throttle - verify_challenge()'s require_not_throttled() is not enforcing over HTTP"
-
-echo "[TEST] 4. OK - refused by the throttle after ${attempt} wrong answers" >&2
+echo "[TEST] 4. OK - refused by the throttle, shown as itself" >&2
 
 echo "PASS: $TEST_NAME"
 exit 0

@@ -100,6 +100,7 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     const STATUS_FAILED = 4;
     const STATUS_BLOCKED = 5;
     const STATUS_SUPPRESSED = 6;
+    const STATUS_TEST = 7;
     const CATEGORY_TRANSACTIONAL = 1;
     const CATEGORY_NOTIFICATION = 2;
     const CATEGORY_MARKETING = 3;
@@ -147,6 +148,9 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
             // 'suppressed' (the only possible state today - no SMS provider is wired),
             // or a dev host left no deliverable number. Not a failure.
             6 => ['constant' => 'STATUS_SUPPRESSED', 'label' => 'Suppressed', 'badge' => 'bg-dark'],
+            // A TEST recipient (Rsx_Test_Recipients): rendered and recorded like a sent
+            // message and never handed to a provider, in every mode. Not a failure.
+            7 => ['constant' => 'STATUS_TEST', 'label' => 'Test', 'badge' => 'bg-info'],
         ],
         'category_id' => [
             1 => ['constant' => 'CATEGORY_TRANSACTIONAL', 'label' => 'Transactional', 'badge' => 'bg-primary'],
@@ -308,6 +312,18 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     }
 
     /**
+     * Rendered and recorded as if sent, and never delivered: the recipient is a test
+     * address or number (Rsx_Test_Recipients). Terminal and NOT a failure.
+     */
+    public function mark_test(): void
+    {
+        $this->status_id = self::STATUS_TEST;
+        $this->sent_at = now();
+        $this->last_error = null;
+        $this->save();
+    }
+
+    /**
      * The provider answered with an error for THIS message: retry on its own clock
      * until the attempt cap, then FAILED with the provider's reply recorded.
      */
@@ -445,7 +461,7 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     public static function cleanup_old(int $days = 30): int
     {
-        return static::whereIn('status_id', [self::STATUS_SENT, self::STATUS_FAILED, self::STATUS_BLOCKED, self::STATUS_SUPPRESSED])
+        return static::whereIn('status_id', [self::STATUS_SENT, self::STATUS_FAILED, self::STATUS_BLOCKED, self::STATUS_SUPPRESSED, self::STATUS_TEST])
             ->where('created_at', '<', now()->subDays($days))
             ->delete();
     }

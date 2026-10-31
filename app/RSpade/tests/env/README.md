@@ -37,6 +37,10 @@ curl / `rsx:debug` testing channel). A loopback-VALUED APP_URL is NOT exempt.
     comparison (the old suffix rule is gone with RSX_HOSTNAME).
   - `is_loopback_host()` / `normalize_request_host()` - pure helpers.
 
+- `app/RSpade/Core/Env/Rsx_LoadEnvironmentVariables.php` - Laravel's environment bootstrapper (bound in
+  `bootstrap/app.php`), caching the .env parse in `tmp/env_cache.php` in a production-like
+  mode; development is Laravel's path unchanged.
+
 - `app/RSpade/Core/Prod/Rsx_Env_Symlink.php` (the heal, not the symlink half)
   - `full_heal()` - .env.dist required, .env created from the ROOT dist, symlink
     invariant, development-only key sync, credential validation, APP_KEY.

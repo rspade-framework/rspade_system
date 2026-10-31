@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Api\Api_Dispatcher;
 use App\RSpade\Core\Api\Rsx_Api_Controller_Abstract;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Identity_Api_Controller - GET /api/v1/me
@@ -72,8 +73,8 @@ class Identity_Api_Controller extends Rsx_Api_Controller_Abstract
             'key' => [
                 'name' => $key ? $key->name : null,
                 'prefix' => $key ? $key->key_prefix : null,
-                'expires_at' => $key ? $key->expires_at : null,
-                'last_used_at' => $key ? $key->last_used_at : null,
+                ...Rsx_Time::encode_for_output('expires_at', $key ? $key->expires_at : null),
+                ...Rsx_Time::encode_for_output('last_used_at', $key ? $key->last_used_at : null),
 
                 // Whether this credential may write at all. A client that just took a 403
                 // read_only_key can confirm the refusal is the KEY's shape rather than a

@@ -10,7 +10,6 @@ namespace App\RSpade\Tests\Portal\Php;
 use Illuminate\Support\Facades\DB;
 use Redis;
 use App\RSpade\Core\Auth\Auth_Password_Reset_Required_Exception;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Auth\Portal_Auth;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
@@ -46,7 +45,6 @@ class Portal_Auth_Test extends Rsx_Test_Abstract
 
     public static function teardown(): void
     {
-        Login_Throttle::reset('CLI');
         Portal_Session::cli_set_portal_user_id(0);
         Rsx_Portal::set_portal_request(false);
         Portal_Session::_testing_reset();
@@ -81,7 +79,6 @@ class Portal_Auth_Test extends Rsx_Test_Abstract
 
     private static function __as_portal(int $site_id): void
     {
-        Login_Throttle::reset('CLI');
         Portal_Session::_testing_reset();
         Portal_Session::set_site_id($site_id);
         Rsx_Portal::set_portal_request(true);

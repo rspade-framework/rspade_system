@@ -11,7 +11,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use RuntimeException;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Portal_User_Model;
@@ -87,7 +86,6 @@ class Portal_Sso_Test extends Rsx_Test_Abstract
 
         self::$config_backup = [];
 
-        Login_Throttle::reset('CLI');
         Portal_Session::cli_set_impersonator_user_id(null);
         Portal_Session::cli_set_portal_user_id(0);
         Rsx_Portal::set_portal_request(false);
@@ -126,7 +124,6 @@ class Portal_Sso_Test extends Rsx_Test_Abstract
     private static function __as_portal(int $site_id): void
     {
         Event_Registry::_clear_test_handlers();
-        Login_Throttle::reset('CLI');
         static::__acting_as_site($site_id);
         Portal_Session::_testing_reset();
         Portal_Session::set_site_id($site_id);

@@ -36,7 +36,8 @@ The Config directory contains Laravel configuration files that define how the ap
 2. **Configuration Loading**:
    - Configuration values are accessed using the `config()` helper
    - Environment-specific values can override config files via `.env`
-   - Configuration is cached in production using `php artisan config:cache`
+   - Configuration is never cached: `config:cache` is a restricted command, and only the
+     `.env` parse is cached, in a production-like mode (`rsx:man app_mode`, LOADING .env)
 
 3. **Key Configuration Patterns**:
    - Service providers are registered in app.php

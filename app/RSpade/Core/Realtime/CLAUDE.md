@@ -108,7 +108,7 @@ anonymous caller. `Realtime::connection_token()` picks the facade by the REALM O
 `_current_site_id()` forks identically — it must, or Node's site-match rejects every portal
 subscribe. (Branching on `Portal_Session::is_logged_in()` sent unauthenticated portal callers
 down the staff branch, where `get_session_id()` minted a staff session and set the session cookie
-on a portal response — audit `docs.dev/audits/portal_realm_session_audit_2026_08_09.md`.)
+on a portal response — audit `docs.dev/audits/archive/portal_realm_session_audit_2026_08_09.md`.)
 Subscribe: `{topic, filter, site_id, exp}`
 
 ## Model Change Emission

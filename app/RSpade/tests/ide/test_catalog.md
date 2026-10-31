@@ -28,7 +28,10 @@
 | IDE-GATE-SEALED | the pre-boot gate refuses debug and production before any token is read - the bridge is development-only by construction | php | `php -r` child per mode with RSX_MODE in its environment | 403 body "IDE services are development-only"; never "Authentication required" | implemented | 2026-09-15 |
 | IDE-GATE-DEV | development falls through the mode gate to the credential question | php | same child, RSX_MODE=development | "Authentication required" | implemented | 2026-09-15 |
 | IDE-GATE-NO-OPT-IN | the RSX_IDE_SERVICES_ENABLED opt-in is retired - the gate reads no such key and an environment carrying one changes nothing | php | auth.php source + a production child | key absent; still refused | implemented | 2026-09-15 |
+| IDE-AMBIGUITY-ORDER | an untyped identifier resolves jqhtml template, PHP class, JS class, Blade view id, stylesheet id; the lookup by `id` ranks template > view > stylesheet whatever the map order, ties to the first path; `scss` sees stylesheets only | php | `ide_resolution_order.php` over synthetic file maps (`Ide_Resolution_Order_Test`) | the ranked match | implemented | 2026-10-28 |
 | refactor_allowlist | `handle_refactor_service` rejects a non-allowlisted command | http | command not in allowlist | 403 not allowed | deferred (pre-boot standalone; manual) | 2026-07-29 |
+| refactor_options | `handle_refactor_service` refuses an option the command does not declare | http | `--env=testing` | 403 option not allowed | implemented (`http/ide_bridge_hardening.sh`) | 2026-10-29 |
+| refactor_identifiers | both rename commands refuse a name that is not a PHP identifier | http | `Bar;x()` via the bridge | `must be a PHP class name`, nothing touched | implemented (`http/ide_bridge_hardening.sh`) | 2026-10-29 |
 | web_exposure_ok | `Web Exposure` health rows are OK on a correct docroot | http | `rsx:health` | OK rows, exit 0 | deferred (manual via rsx:health) | 2026-07-29 |
 
 Notes:

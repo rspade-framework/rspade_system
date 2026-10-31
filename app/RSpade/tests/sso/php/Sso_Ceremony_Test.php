@@ -10,7 +10,6 @@ namespace App\RSpade\Tests\Sso\Php;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
@@ -48,7 +47,7 @@ use App\RSpade\Tests\Sso\Php\Fake_Sso_Provider;
  *    enrolled one did not consent to it being skippable by signing in another way.
  *  - EVERY FAILURE IS COUNTED EXACTLY ONCE. Login_History::record_failure() already feeds
  *    Login_Throttle, so Rsx_Sso never calls the throttle itself; double counting would halve
- *    the real budget and would only be discovered by a user locked out early.
+ *    the real limit and would only be discovered by a user throttled early.
  *
  * TWO STORES, so two isolation strategies (the same shape as tests/two_factor): rows are
  * rolled back with the per-test transaction, while throttle and failure counters are redis
@@ -81,7 +80,6 @@ class Sso_Ceremony_Test extends Rsx_Test_Abstract
             ],
         ]);
 
-        Login_Throttle::reset('CLI');
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();
@@ -97,7 +95,6 @@ class Sso_Ceremony_Test extends Rsx_Test_Abstract
 
         self::$config_backup = [];
 
-        Login_Throttle::reset('CLI');
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();
@@ -207,7 +204,6 @@ class Sso_Ceremony_Test extends Rsx_Test_Abstract
     private static function __anonymous(): void
     {
         Event_Registry::_clear_test_handlers();
-        Login_Throttle::reset('CLI');
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();
@@ -468,10 +464,8 @@ class Sso_Ceremony_Test extends Rsx_Test_Abstract
         static::__assert_null(Rsx_Sso::pending(), 'the pending identity is discarded, not left live');
         static::__assert_false(Session::is_logged_in());
 
-        // COUNTED EXACTLY ONCE. Login_History::record_failure() already feeds
-        // Login_Throttle, so Rsx_Sso never calls the throttle itself - a second call would
-        // halve the real budget, and the halving would only ever be discovered by a user
-        // locked out early.
+        // COUNTED EXACTLY ONCE. Login_History::record_failure() already feeds Login_Throttle,
+        // so Rsx_Sso never calls the throttle itself.
         static::__assert_equals(1, Login_History::get_failed_attempts_count($email), 'recorded once');
     }
 

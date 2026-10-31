@@ -95,10 +95,17 @@ otherwise truncate: the snapshot/rollback narrative IS the diagnostic, and a tru
 run hides which step failed.
 
 **A migrate cancelled mid-run** (Ctrl-C, killed process) leaves the migration flag and
-the snapshot behind with nobody to restore them. `php artisan migrate:restore` performs
-the exact restore a failed run performs automatically - and reports "No migration is in
-progress - nothing to restore" when there is no flag. A FAILED restore keeps the flag
-and the snapshot in place (the snapshot is the only copy of the pre-migration data).
+the snapshot behind. **The next `migrate` restores it first** - the database as it stood
+before the cancelled run - says so, then takes its own snapshot and runs. `php artisan
+migrate:restore` performs the same restore without migrating (and reports "No migration
+is in progress - nothing to restore" when there is no flag). A FAILED restore keeps the
+flag and the snapshot in place (the snapshot is the only copy of the pre-migration data).
+
+**One snapshot-protected `migrate` at a time.** It and `migrate:restore` hold one lockd lock
+(`Maint_Migrate::SNAPSHOT_RUN_LOCK`) for the whole run; a second one started meanwhile
+refuses with "Another migrate (or migrate:restore) is running against this database." and
+changes nothing. That lock is also how a run knows a flag on disk was left by a run that
+died rather than one still going.
 
 **Never put a timeout anywhere on the snapshot/rollback path.** A 60-second cap on `run_privileged_command()` once failed a MySQL datadir snapshot on a large database, and the same cap sat unnoticed on the ROLLBACK path - where firing would have abandoned a half-copied datadir and destroyed the very state the snapshot existed to protect. A datadir copy takes as long as the data requires; slowness here is normal and is never evidence of a hang.
 

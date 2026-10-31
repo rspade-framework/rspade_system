@@ -127,7 +127,7 @@ API
 NOT HERE
     The login throttle and the failed-login counters (Login_Throttle,
     Login_History::record_failure()) are keyed on the address string in the
-    cache and never touch _ip_addresses.
+    counter store and never touch _ip_addresses.
 
 SEE ALSO
     rsx:man session                      - AUDIT SESSIONS, Audit_Session::join(),

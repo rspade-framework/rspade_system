@@ -64,7 +64,22 @@ const FPC_REDIS_DB = 2;
 // "cache this"; its VALUE is the lifetime - MARKER_NO_EXPIRY, or a number of seconds.
 // Mirrors Rsx_FPC::MARKER_HEADER / MARKER_NO_EXPIRY.
 const MARKER_HEADER = 'x-rspade-fpc';
+
 const MARKER_NO_EXPIRY = 'none';
+
+// The security headers a cached entry replays with its body: whichever of these the response
+// that populated the entry carried, verbatim.
+const SECURITY_HEADERS = [
+    'content-security-policy',
+    'content-security-policy-report-only',
+    'x-content-type-options',
+    'x-frame-options',
+    'referrer-policy',
+    'permissions-policy',
+    'strict-transport-security',
+    'cross-origin-opener-policy',
+    'cross-origin-resource-policy',
+];
 
 // The volatile-tree roots, resolved exactly as PHP resolves them.
 const rsx_paths = require(path.join(__dirname, 'lib', 'rsx_paths.js'));
@@ -251,6 +266,20 @@ function proxy_to_backend(client_req, client_res, cache_key) {
                 cached_at: new Date().toISOString(),
             };
 
+            // THE POLICY RIDES WITH THE PAGE. The body carries the nonce the dispatcher
+            // stamped into its inline tags, and only the policy issued with that body names
+            // the same nonce - so the security headers (CSP enforcing and/or report-only, and
+            // the rest of SECURITY_HEADERS) are cached with the entry and replayed verbatim on
+            // every hit. Every viewer of one entry shares its nonce for the entry's lifetime:
+            // weaker than a per-request nonce, and the reason only anonymous pages are
+            // cacheable at all.
+            entry.security_headers = {};
+            for (const name of SECURITY_HEADERS) {
+                if (proxy_res.headers[name] !== undefined) {
+                    entry.security_headers[name] = proxy_res.headers[name];
+                }
+            }
+
             if (is_redirect) {
                 entry.location = proxy_res.headers['location'] || '';
                 entry.html = '';
@@ -341,15 +370,17 @@ const server = http.createServer(async (req, res) => {
                     'Location': entry.location,
                     'ETag': entry.etag,
                     'X-FPC-Cache': 'HIT',
+                    ...(entry.security_headers || {}),
                 });
                 return res.end();
             }
 
-            // Serve cached HTML
+            // Serve cached HTML, with the security headers issued alongside it
             res.writeHead(entry.status_code || 200, {
                 'Content-Type': entry.content_type || 'text/html; charset=UTF-8',
                 'ETag': entry.etag,
                 'X-FPC-Cache': 'HIT',
+                ...(entry.security_headers || {}),
             });
             return res.end(entry.html);
         }

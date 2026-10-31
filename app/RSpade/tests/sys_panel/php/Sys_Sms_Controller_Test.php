@@ -81,7 +81,7 @@ class Sys_Sms_Controller_Test extends Rsx_Test_Abstract
         $site_id = static::__second_site_id();
 
         static::__assert_equals(
-            ['pending', 'sending', 'sent', 'failed', 'blocked', 'suppressed'],
+            ['pending', 'sending', 'sent', 'failed', 'blocked', 'suppressed', 'test'],
             array_column($before['counts'], 'status'),
             'one count per status, in the enum order, as words'
         );

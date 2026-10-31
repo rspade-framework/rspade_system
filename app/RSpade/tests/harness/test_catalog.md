@@ -45,3 +45,4 @@ boundary").
 | harness-p-02 | __skip records skipped (not failed) status | php | needs runner-result introspection | planned |
 | harness-p-03 | application vs framework suite partition (--framework) | php/cli | runner-level; assert discovery split | planned |
 | harness-c-01 | Two overlapping rsx:debug runs serialize on the rsx_debug system lock: both render with a 200, and one reports on stderr that it waited | cli | `rsx:debug /` and `rsx:debug /login` started together | Both 200; one "Waiting for another rsx:debug to finish" line | implemented |
+| harness-c-02 | rsx:debug captures a SPA page after its action is ready, so a load gated on a realtime subscription has run even with the relay down (`--no-realtime`) | cli | `rsx:debug /_sys/workers --user=1 --no-realtime --eval=...` (`rsx_debug_relay_down.sh`) | 200; the realtime client never authenticated; the worker list loaded. SKIPs where user 1 is not a developer | implemented |

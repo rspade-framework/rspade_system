@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Core\Sms;
 
+use App\RSpade\Core\Mail\Rsx_Test_Recipients;
 use App\RSpade\Core\Models\Sms_Queue_Model;
 use App\RSpade\Core\Models\Sms_Recipient_Model;
 use App\RSpade\Core\Portal\Portal_Session;
@@ -97,7 +98,9 @@ class Rsx_Sms
         // destination in dev_original_to when redirected/suppressed.
         $dev_original_to = null;
         $dev_undeliverable = false;
-        if (self::is_dev_mode()) {
+        // A TEST number (Rsx_Test_Recipients: (nnn) 555-nnnn) is queued exactly as addressed
+        // - never redirected - and the drain records it as Test without a provider.
+        if (self::is_dev_mode() && !Rsx_Test_Recipients::is_test_phone($to)) {
             [$actual_to, $dev_original_to, $dev_undeliverable] = self::_apply_dev_redirect($to);
             $to = $actual_to;
         }

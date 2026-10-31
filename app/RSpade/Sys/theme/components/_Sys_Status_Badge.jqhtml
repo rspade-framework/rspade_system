@@ -4,7 +4,7 @@ _Sys_Status_Badge - one status pill, coloured by a fixed tone map.
 $status - the status key (required, case-insensitive). Either a tone -
           ok | warn | fail | info | muted - or a known status word:
             tasks: pending, running, completed, failed, killed
-            mail/SMS: pending, sending, sent, failed, blocked, suppressed
+            mail/SMS: pending, sending, sent, failed, blocked, suppressed, test
             login identities: active, inactive, suspended
 $label - the text shown [optional; default: the status word, capitalised]
 $title - a tooltip saying WHY the record has this status [optional]

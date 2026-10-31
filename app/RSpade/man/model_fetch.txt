@@ -838,7 +838,9 @@ LAZY RELATIONSHIPS
         }
 
     Get Available Relationships:
-        // Static method returns array of relationship names
+        // Static method returns the FETCHABLE relationship names - those carrying
+        // #[Ajax_Endpoint_Model_Fetch]. PHP's get_relationships() returns every
+        // #[Relationship]; the JS one lists only what the browser can fetch.
         const rels = Project_Model.get_relationships();
         // ["created_by", "updated_by", "client", "contact", "tasks", "owner"]
         // created_by/updated_by are the framework audit relations every model has.

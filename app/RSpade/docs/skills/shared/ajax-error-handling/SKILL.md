@@ -51,6 +51,7 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 | `Ajax::ERROR_UNAUTHORIZED` | User lacks permission |
 | `Ajax::ERROR_AUTH_REQUIRED` | User not logged in |
 | `Ajax::ERROR_FATAL` | Uncaught PHP exceptions |
+| `Ajax::ERROR_TOO_MANY_REQUESTS` | A rate limit refused the call: any uncaught HTTP 429 exception (`Auth_Throttled_Exception`, Symfony `TooManyRequestsHttpException`). The same exception is a real 429 on a page or API call; catch it to answer your own 200 form error instead |
 | `Ajax::ERROR_SESSION_EXPIRED` | The sign-in outlived its limits (`metadata.cause` `length`/`idle`), or the call carried the session token a sign-in or sign-out just rotated away (`rotated`); announced once per page to `Rsx.set_session_expired_handler()` |
 | `Ajax::ERROR_QUESTION` | Not a failure: a pending question (`response_form_question($key, $question)`); the form engine answers it, a non-form caller reads `metadata.key`/`metadata.question`, an in-process `Ajax::internal()` raises `AjaxQuestionException`. `rsx:man form_conventions`, QUESTIONS |
 

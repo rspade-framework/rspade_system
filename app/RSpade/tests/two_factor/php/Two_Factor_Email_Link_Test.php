@@ -9,7 +9,6 @@ namespace App\RSpade\Tests\TwoFactor\Php;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Portal_User_Model;
@@ -58,8 +57,6 @@ class Two_Factor_Email_Link_Test extends Rsx_Test_Abstract
 
     public static function teardown()
     {
-        Login_Throttle::reset('CLI');
-
         Portal_Session::cli_set_portal_user_id(0);
         Rsx_Portal::set_portal_request(false);
         Portal_Session::_testing_reset();
@@ -77,7 +74,6 @@ class Two_Factor_Email_Link_Test extends Rsx_Test_Abstract
      */
     private static function __make_login_user(string $suffix): Login_User_Model
     {
-        Login_Throttle::reset('CLI');
         Session::logout();
         static::__reset_session();
 
@@ -235,7 +231,6 @@ class Two_Factor_Email_Link_Test extends Rsx_Test_Abstract
         // That browser's own sign-in: the link is no answer there, the code is.
         Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
         static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['email_link' => $sent['token']]), 'not valid');
-        Login_Throttle::reset('CLI');
 
         Rsx_Two_Factor::verify_challenge(['code' => $sent['code']]);
         static::__assert_equals((int) $login_user->id, (int) Session::get_login_user_id(), 'the code signed in the other browser');
@@ -313,7 +308,6 @@ class Two_Factor_Email_Link_Test extends Rsx_Test_Abstract
         $before = static::__identity_failures(Rsx_Two_Factor::class, $identity_id);
 
         static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['email_link' => str_repeat('0', 64)]), 'not valid');
-        Login_Throttle::reset('CLI');
         static::__assert_equals($before + 1, static::__identity_failures(Rsx_Two_Factor::class, $identity_id), 'counted once');
         static::__assert_not_null(Rsx_Two_Factor::challenge_pending(), 'the challenge survives one wrong answer');
 
@@ -322,7 +316,6 @@ class Two_Factor_Email_Link_Test extends Rsx_Test_Abstract
         Rsx_Two_Factor::issue_code();
 
         static::__assert_throws(Two_Factor_Failed_Exception::class, fn () => Rsx_Two_Factor::verify_challenge(['email_link' => $sent['token']]), 'not valid');
-        Login_Throttle::reset('CLI');
         static::__assert_equals($before + 2, static::__identity_failures(Rsx_Two_Factor::class, $identity_id), 'counted again');
         static::__assert_null(Session::get_login_user_id(), 'nobody signed in');
 
@@ -400,7 +393,6 @@ class Two_Factor_Email_Link_Test extends Rsx_Test_Abstract
         // The baseline site (tests/CLAUDE.md: the test baseline carries site 1).
         $site_id = 1;
 
-        Login_Throttle::reset('CLI');
         Portal_Session::_testing_reset();
         Portal_Session::set_site_id($site_id);
         Rsx_Portal::set_portal_request(true);

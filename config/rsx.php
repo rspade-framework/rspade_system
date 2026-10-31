@@ -51,9 +51,6 @@
  * - console_debug.include_backtrace - Include call stack in debug output
  *   Reason: User debugging preference
  *
- * - console_debug.enable_get_trace - Enable ?__trace=1 for plain text output
- *   Reason: User debugging preference
- *
  * - log_browser_errors - Log JavaScript errors to Laravel log
  *   Reason: User preference for client-side error tracking
  *
@@ -254,6 +251,9 @@ return [
         \App\RSpade\Core\Portal\Portal_Spa_ManifestSupport::class,
         \App\RSpade\Core\Manifest\Modules\Model_ManifestSupport::class,
         \App\RSpade\Integrations\Jqhtml\Jqhtml_ManifestSupport::class,
+        // A stylesheet's id names what it styles, which other files decide: derived from
+        // the complete file map, so cold and warm builds agree.
+        \App\RSpade\Integrations\Scss\Scss_Id_ManifestSupport::class,
         \App\RSpade\Core\SPA\Spa_ManifestSupport::class,
         \App\RSpade\Core\Api\Api_Endpoint_ManifestSupport::class,
         // After the last producers of `routes` (staff, SPA, API): judges PORTAL_URL and
@@ -787,6 +787,26 @@ return [
             'Component',            // JQHTML components can have flexible naming
             'Rsx_System_Model_Abstract',   // System models (e.g., Session) have special naming
         ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Run
+    |--------------------------------------------------------------------------
+    |
+    | The first-run setup screen (Rsx_First_User_Setup) creates the initial account.
+    |
+    | 'sample_data_task' - 'Service::method' of a #[Task] that fills the NEW site with
+    | sample data. When set, the screen offers a "Add sample data" checkbox and, if it is
+    | ticked, dispatches that task for site 1 ({site: 1} in its params) once the account
+    | exists. Null (the framework's default) or empty hides the option. The framework
+    | ships no seeder: the application names its own (the template's is
+    | Sample_Data_Service::seed, rsx/services/sample_data/). Nothing checks that the
+    | named task exists - a wrong name surfaces as a failed run in /_sys/tasks.
+    |
+    */
+    'first_run' => [
+        'sample_data_task' => null,
     ],
 
     /*
@@ -2009,47 +2029,42 @@ return [
         'max_web_sessions_per_user' => 25,
 
         // Brute-force throttle on the authentication surface, enforced by the
-        // framework (Login_Throttle, called first by RsxAuth::attempt()).
+        // framework (Login_Throttle, the first statement of every credential check).
         //
-        // WHAT IS COUNTED: FAILURES, not requests. A request that authenticates
-        // costs nothing, so a normal user never approaches the budget however
-        // often they sign in; only wrong answers accumulate.
-        //
-        // KEYED PER CLIENT IP (Session::get_client_ip(), the one place the proxy
-        // header chain is interpreted). Per-IP rather than per-email because the
-        // attacker chooses the email - spraying one password across a thousand
-        // addresses would never trip a per-email budget. A request with no client
-        // IP at all (CLI, tasks) is never throttled: there is no remote party to
-        // throttle, and a command is not an attack surface.
-        //
-        // The counter's window is FIXED, not sliding - it runs from the first
-        // failure, then the counter disappears and the next failure opens a new
-        // one. A sliding window would let a slow attacker hold a counter alive
-        // forever. The same window bounds the per-email and per-IP counts
-        // Login_History::get_failed_attempts_count*() read back.
+        // WHAT IS COUNTED: every sign-in ATTEMPT, right or wrong, against both the
+        // client address (an IPv6 address by its /64) and the account the attempt
+        // names. A request with no client address at all (CLI, tasks) is never
+        // throttled: there is no remote party to throttle.
         //
         // ON BY DEFAULT: an unthrottled login endpoint is an unlimited password
         // and second-factor guessing oracle, so the secure posture is the one you
-        // get without doing anything. 'enabled' => false turns the whole feature
-        // off (nothing is counted and nothing is enforced) for an environment that
-        // throttles at the edge instead.
+        // get without doing anything. 'enabled' => false turns it off for an
+        // environment that throttles at the edge instead.
         //
-        // Under maintenance mode Redis is stopped, the increments drop and the
-        // counts read 0: the throttle is inert while the web tier is answering
-        // 503 anyway. Any OTHER cache failure is loud - the login fails rather
-        // than proceeding unthrottled.
+        // A throttled attempt throws Auth_Throttled_Exception (HTTP 429 when
+        // nothing catches it); a login function catches it and shows its message.
+        // Under maintenance mode Redis is stopped and the throttle is inert while
+        // the web tier answers 503. Any OTHER cache failure is loud.
+        // How long a password confirmation lasts (Rsx_Password_Confirmation): the minutes
+        // after a user re-enters their password (or uses a passkey) during which the gated
+        // actions - adding or removing a passkey, an authenticator app, recovery codes, a
+        // federated sign-in, and whatever an application gates - go through without asking
+        // again. A SECURITY WINDOW set by owner ruling (2026-10-29), not an operation
+        // timeout: it bounds how long a confirmed browser keeps the right, cancels no work,
+        // and its expiry degrades to the password being asked for again.
+        'password_confirmation_minutes' => 5,
+
         'login_throttle' => [
             // Master switch for counting and enforcement.
             'enabled' => true,
 
-            // Failures from one IP inside the window that trigger the lockout.
-            'attempts' => 10,
-
-            // How long the failure counter lives, in minutes.
-            'window_minutes' => 15,
-
-            // How long the IP is refused after the budget is spent, in minutes.
-            'lockout_minutes' => 15,
+            // Sign-in attempts allowed per `seconds`, counted per client address and per
+            // account; one more is refused until the rate falls back under it. Loose on
+            // purpose: Turnstile and second factors protect accounts, and this only stops a
+            // flood of automated attempts. Applies to staff and portal sign-in, second
+            // factors, passkeys, federated sign-in and the password confirmation.
+            'attempts' => 8,
+            'seconds' => 60,
         ],
 
         // Days a login-history row - `_login_history` (staff) and `_portal_login_history`
@@ -2479,6 +2494,16 @@ return [
             'footer_text' => null,
         ],
 
+        // TEST ADDRESSES - never delivered, in EVERY mode, production included. A message
+        // whose recipient's domain matches one of these (shell-style, case-insensitive) is
+        // queued and rendered like any other, then recorded as status Test instead of
+        // being handed to a transport; a test cc/bcc on a real message is withheld and
+        // recorded. Sample data and demos use them so they behave as sent without ever
+        // reaching an inbox. The SMS twin is fixed: any (nnn) 555-nnnn number
+        // (App\RSpade\Core\Mail\Rsx_Test_Recipients). An application's list ADDS patterns
+        // to this one (the two-tier merge combines lists).
+        'test_domains' => ['test.*'],
+
         // Dev-site (.dev. hostname) recipient gating - a second layer, independent
         // of 'delivery'. Empty whitelists + empty catchall = nothing deliverable.
         'dev_site' => [
@@ -2725,9 +2750,21 @@ return [
         // and the MySQL session both - and this zone is consulted in three places only:
         //   - #[Schedule] wall-clock times ("daily at 2am" is 2am in this zone)
         //   - the timezone a new site record gets when none was assigned
-        //   - the last display tier: login_users.timezone -> sites.timezone -> this
+        //   - the display tier after the user's explicit zone, the browser's zone (the rsx_tz
+        //     cookie) and the site's: login_users.timezone -> rsx_tz -> sites.timezone -> this
         // Blank or absent means UTC; an unknown identifier throws.
         'server_timezone' => env('RSX_SERVER_TIMEZONE') ?: 'UTC',
+
+        // The timezone a NEW login identity starts with when its creator set none. Applied
+        // once, when the login_users row is created - never on a later save.
+        //   automatic  NULL: the account follows each browser's own zone (the default)
+        //   site       the creating site's timezone, COPIED as an identifier
+        //   server     server_timezone above, COPIED as an identifier
+        //   <IANA id>  that identifier (e.g. America/Chicago)
+        // `site` and `server` are snapshots, as a new site's zone is: changing the site's or
+        // the server's zone later does not move an account created before. Anything else
+        // throws when a login identity is created.
+        'default_user_timezone' => env('RSX_DEFAULT_USER_TIMEZONE') ?: 'automatic',
 
         // Time dropdown interval in minutes (for Schedule_Input component)
         'time_interval' => 15,

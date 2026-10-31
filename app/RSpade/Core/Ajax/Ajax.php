@@ -81,6 +81,7 @@ class Ajax
     const ERROR_UNAUTHORIZED = 'unauthorized';
     const ERROR_AUTH_REQUIRED = 'auth_required';
     const ERROR_SESSION_EXPIRED = 'session_expired';  // The sign-in outlived rsx.sessions.* and was just ended
+    const ERROR_TOO_MANY_REQUESTS = 'too_many_requests';  // A rate limit refused the call (HTTP 429 elsewhere)
     const ERROR_FATAL = 'fatal';
     const ERROR_GENERIC = 'generic';
     const ERROR_QUESTION = 'question';        // Not a failure: the endpoint is asking the user something
@@ -193,6 +194,7 @@ class Ajax
             self::ERROR_UNAUTHORIZED => 'You do not have permission to perform this action',
             self::ERROR_AUTH_REQUIRED => 'Please log in to continue',
             self::ERROR_SESSION_EXPIRED => 'Your session has expired. Please sign in again.',
+            self::ERROR_TOO_MANY_REQUESTS => "You're doing that too fast",
             self::ERROR_FATAL => 'A fatal error has occurred',
             self::ERROR_SERVER => 'A server error occurred. Please try again.',
             self::ERROR_NETWORK => 'Could not connect to server. Please check your connection.',
@@ -589,6 +591,7 @@ class Ajax
                 401 => self::ERROR_AUTH_REQUIRED,
                 403 => self::ERROR_UNAUTHORIZED,
                 404 => self::ERROR_NOT_FOUND,
+                429 => self::ERROR_TOO_MANY_REQUESTS,
                 default => self::ERROR_GENERIC,
             };
         }

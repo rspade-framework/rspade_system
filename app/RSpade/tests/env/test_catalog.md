@@ -156,6 +156,21 @@ The APP_URL screen runs pre-boot and carries its own copy of `is_loopback_ip()`,
 | fr-loop-02 | the copy agrees with `is_loopback_ip()` on every shape | the fr-loop-01 cases, as bound requests | equal answers | implemented |
 | fr-loop-03 | a non-loopback POST to the APP_URL screen is 403 and writes nothing; the first-user screen answers a remote caller 403 with no form | a remote browser on a box with a blank APP_URL / an empty login_users | 403 | planned (needs a box in first-run state; verified by reading) |
 
+## Env_Loader_Cache_Test (php, no transactions) - the cached .env parse
+
+Rsx_LoadEnvironmentVariables, bound in bootstrap/app.php in place of Laravel's LoadEnvironmentVariables.
+Scratch .env and tmp/ (Rsx_Project_Paths::_override); never the box's own.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| ENVC-01 | the cached parse loads exactly what phpdotenv loads | fixture with quotes, single-quoted `${}`, references, a reference after a multibyte char, empty, `export` | identical chars, reference positions and loaded values | implemented |
+| ENVC-02 | references resolve against the LIVE environment at load time | one cache loaded under two live values | two different resolved values | implemented |
+| ENVC-03 | a real environment variable still wins | live PLAIN, file PLAIN | the live value | implemented |
+| ENVC-04 | freshness is strictly-newer mtime | equal, newer, edited .env, another file's cache | stale, fresh, stale, unused | implemented |
+| ENVC-05 | an unwritable tmp/ writes nothing and throws nothing | tmp/ is a file | no cache; next boot parses | implemented |
+| ENVC-06 | development never touches the cache; production writes it, answers from it while fresh, re-parses a newer .env | RSX_MODE flipped around bootstrap() on the running app | as stated | implemented |
+| ENVC-07 | Laravel makes this loader for LoadEnvironmentVariables | app(LoadEnvironmentVariables::class) | Rsx_LoadEnvironmentVariables | implemented |
+
 ## Deferred / planned
 
 | ID | Purpose | Type | Status | Last updated |

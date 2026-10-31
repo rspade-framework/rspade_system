@@ -9,7 +9,7 @@ related: rsx:man session, rsx:man auth, rsx:man two_factor, rsx:man sso, skill r
 
 ## The contract
 
-Every path in the application that checks a guessable credential is covered by the per-IP login throttle: it refuses a locked-out address BEFORE any lookup or comparison, counts a failure exactly once, and renders a throttled refusal as a message rather than an error page or a "wrong password". An unthrottled credential path is an unlimited guessing oracle sitting beside the protected one - a six-digit code is a million guesses, and an attacker holding the password only needs the open door.
+Every path in the application that checks a guessable credential is covered by the login throttle: it refuses a throttled caller BEFORE any lookup or comparison, counts a failure exactly once, and renders a throttled refusal as a message rather than an error page or a "wrong password". An unthrottled credential path is an unlimited guessing oracle sitting beside the protected one - a six-digit code is a million guesses, and an attacker holding the password only needs the open door.
 
 Read `php artisan rsx:man session` (LOGIN THROTTLE) and `rsx:man auth` first.
 
@@ -24,9 +24,9 @@ Then read every endpoint that accepts a secret from the caller: password and cur
 
 ## What does not conform
 
-- A credential comparison (`check_password()`, `Hash::check()`, `password_verify()`, a code lookup) with no `Login_Throttle::require_not_throttled()` before it, and no failure fed after it (`Login_Throttle::record_failure()`, or `Login_History::record_failure()`, which already feeds it).
-- `require_not_throttled()` placed AFTER the lookup, the comparison or an account-state check - a locked-out address must learn nothing.
-- A failure counted twice: `Login_History::record_failure()` and `Login_Throttle::record_failure()` on the same event halves the budget.
+- A credential comparison (`check_password()`, `Hash::check()`, `password_verify()`, a code lookup) with no `Login_Throttle::require_not_throttled($account)` before it, and no failure fed after it (`Login_Throttle::record_failure()`, or `Login_History::record_failure()`, which already feeds it).
+- `require_not_throttled()` placed AFTER the lookup, the comparison or an account-state check - a throttled caller must learn nothing.
+- A failure counted twice: `Login_History::record_failure()` and `Login_Throttle::record_failure()` on the same event halves the limit.
 - `RsxAuth::verify_credentials($c, record: false)` whose caller does not then call `Login_History::record_failure()` on a miss (portal: `Portal_Auth::verify_credentials($site_id, $c, record: false)` without `Portal_Login_History::record_failure()`) - with `record: false` the throttle refuses but never counts.
 - `Auth_Throttled_Exception` not caught where a sign-in method can throw it (`verify_credentials()`, `verify_challenge()`, `verify_passkey_login()`) - an anonymous form answers 500. It is a separate exception from `Two_Factor_Failed_Exception` / `Sso_Failed_Exception` and needs its own catch. So does `Auth_Password_Reset_Required_Exception`, which either `verify_credentials()` throws for a correct password on an account flagged `password_reset_required`.
 - A throttled attempt reported as "invalid email or password".

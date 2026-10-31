@@ -1665,8 +1665,8 @@ LOGIN HISTORY
     FAILURES ARE EPHEMERAL - NO ROW AT ALL:
         record_failure() writes NO database row. It increments two counters - one
         keyed by email (hashed and normalized, so casing or stray whitespace
-        cannot open a fresh window), one by client IP - both expiring on
-        rsx.sessions.login_throttle.window_minutes (default 15), and it emits ONE
+        cannot open a fresh window), one by client IP - both expiring 15
+        minutes after the first failure - feeds Login_Throttle, and emits ONE
         Log::warning('Login failure', [...]) carrying email, IP, status and
         reason. That log line is the forensic record; the counters exist only to
         answer "how many failures in the window".
@@ -1681,7 +1681,7 @@ LOGIN HISTORY
         $count = Login_History::get_failed_attempts_count($email, $minutes = 15);
         $count = Login_History::get_failed_attempts_count_by_ip($ip, $minutes = 15);
 
-        BOTH ANSWERS ARE BOUNDED BY THE CONFIGURED WINDOW. $minutes is retained so
+        BOTH ANSWERS ARE BOUNDED BY THE 15-MINUTE WINDOW. $minutes is retained so
         existing call sites keep working, but asking for a larger window returns
         the window's count, not a longer history: a 30-day failed-attempt count
         is no longer answerable from this API, and a "Failed logins (30d)" stat
@@ -1693,8 +1693,8 @@ LOGIN HISTORY
         window would let a slow attacker hold a counter alive forever.
 
         THESE COUNTS ARE A STATISTIC, NOT THE ENFORCEMENT. Brute-force
-        enforcement is the framework's own, in Login_Throttle (next section),
-        which keeps its own per-IP counter. Nothing enforces the per-email count;
+        enforcement is the framework's own, in Login_Throttle (LOGIN THROTTLE),
+        which keeps its own failure logs. Nothing enforces these counts;
         read it, display it, alert on it - do not build a second throttle on it.
 
     STATUS CONSTANTS:
@@ -1776,7 +1776,7 @@ LOGIN HISTORY
             - the per-email/per-IP STATISTICS are kept under their own keys
               ('portal_login_failures:...'), so get_failed_attempts_count*() on
               each class reads its own realm - while Login_Throttle, the
-              enforcement, is ONE per-IP budget across both realms;
+              enforcement, is ONE limit across both realms;
             - location is always null (the portal table has no location columns);
             - rows cascade with their portal user (a FOREIGN KEY ... ON DELETE
               CASCADE, like the other portal-user-keyed system tables).
@@ -1860,59 +1860,56 @@ LOGIN THROTTLE (BRUTE FORCE)
     guessing oracle, so the protection is ON by default and an app inherits it
     without writing anything.
 
+    THE LIMIT IS LOOSE ON PURPOSE. Turnstile and second factors are what protect
+    an account. This is a brake on automated attempts that somehow get past
+    Turnstile, so they cannot arrive as a flood - eight failures a minute is far
+    beyond a person mistyping and far below a script.
+
     THE CONTRACT:
         App\RSpade\Core\Auth\Login_Throttle
 
-        require_not_throttled(?string $ip = null): void
-            Throws Auth_Throttled_Exception when this client IP is locked out.
-            RsxAuth::verify_credentials() and Portal_Auth::verify_credentials()
-            call it as their FIRST statement, before the lookup - a locked-out
-            address cannot even probe which addresses exist. Call it yourself
-            only on a path that goes through neither.
+        require_not_throttled(?string $account = null, ?string $ip = null): void
+            Throws Auth_Throttled_Exception when the client address or the
+            account has too many recent failures. RsxAuth::verify_credentials()
+            and Portal_Auth::verify_credentials() call it with the email as their
+            FIRST statement, before the lookup - a throttled caller cannot even
+            probe which addresses exist; the second-factor, passkey and federated
+            sign-in verifications call it with no account. Call it yourself only
+            on a path that goes through none of them.
 
-        record_failure(?string $ip = null): void
-            Counts one failure against the IP and locks the address out when the
-            budget is spent. Login_History::record_failure() and
-            Portal_Login_History::record_failure() call it, so every recorded
-            failure feeds the throttle - password misses, unknown addresses, and
-            the outcomes an APP records itself (a bad second factor, a disabled
-            account). One budget per IP covers both realms. Call it directly only
-            where you record through neither.
+        record_failure(?string $account = null, ?string $ip = null): void
+            Counts one failure against the address and, when given, the account.
+            Login_History::record_failure() and Portal_Login_History::
+            record_failure() call it with the email, so every recorded failure
+            feeds the throttle - password misses, unknown addresses, and the
+            outcomes an APP records itself (a bad second factor, a disabled
+            account). One limit covers both realms. Call it directly only where
+            you record through neither.
 
-        retry_after_seconds(?string $ip = null): int
-            Seconds left on the lockout; 0 when the address is free. For a
-            Retry-After header or an operator log line.
+        retry_after_seconds(?string $account = null, ?string $ip = null): int
+            Seconds until an attempt would be accepted; 0 when it would be now.
+            For a Retry-After header or an operator log line.
 
-        reset(?string $ip = null): void
-            Clears the counter and the lockout - a test, or an operator
-            releasing a customer.
+        reset(?string $account = null, ?string $ip = null): void
+            Clears an address's and/or an account's failures - a test, or an
+            operator releasing a customer (works from the command line).
 
         $ip defaults to Session::get_client_ip() (THE CLIENT ADDRESS below).
 
-    WHERE THE COUNTERS LIVE:
-        Rsx_Counter (App\RSpade\Core\Cache\Rsx_Counter), redis database 3 -
-        the transient-counter store, NOT the cache. Two keys per address: a
-        failure counter opened by the first failure, and a lockout marker
-        holding the UNIX time the lockout expires. Login_History's per-email
-        and per-IP failure counts are the same store.
+    WHAT IS COUNTED - FAILURES, PER ADDRESS AND PER ACCOUNT:
+        Every attempt is CHECKED; only wrong answers are COUNTED. A sign-in that
+        succeeds costs nothing, so an office behind one address signing in at
+        nine o'clock never approaches the limit. Failures count against two
+        buckets at once, and either over the limit refuses the attempt:
 
-        Counters are deliberately not in the cache database: RsxCache::clear()
-        runs on every database transaction rollback, so a counter kept there
-        would have a rolled-back request silently zero a throttle budget. They
-        are also not build-scoped - a counter measures real time and must
-        survive a manifest rebuild, or an attacker could clear their budget by
-        waiting for a deploy. See `rsx:man caching`.
+            the ADDRESS   stops one source spraying many accounts. An IPv6
+                          address counts by its /64 - the block one subscriber is
+                          handed - so rotating addresses inside it buys nothing.
+            the ACCOUNT   stops many sources (an address range, a botnet) working
+                          one account.
 
-    WHAT IS COUNTED - FAILURES, NOT REQUESTS, PER IP:
-        A request that authenticates costs nothing, so a real user signing in
-        fifty times a day never approaches the budget; only wrong answers
-        accumulate. The key is the CLIENT IP and not the email because the
-        attacker chooses the email: spraying one password across a thousand
-        addresses would never trip a per-email budget, while the address it is
-        sprayed FROM is the one thing the attacker must keep using.
-
-        The counter window is FIXED, not sliding - it runs from the first failure,
-        then the counter disappears and the next failure opens a new one.
+        A refused attempt is not a failure: the limit frees on its own as time
+        passes.
 
     THE CLIENT ADDRESS:
         Session::get_client_ip() is $request->ip(), resolved once by the
@@ -1928,29 +1925,25 @@ LOGIN THROTTLE (BRUTE FORCE)
         proxy -> nginx hops) plus config('rsx.http.trusted_proxies'), empty by
         default. A box behind a load balancer, TLS terminator or CDN MUST list
         that device's addresses or CIDRs in TRUSTED_PROXIES in .env; until it does, every request
-        appears to come from the device and the per-IP throttle counts every
+        appears to come from the device and the address bucket counts every
         visitor as one (rsx:man prod, rsx:man launch_checklist).
 
-    A CALLER WITH NO CLIENT IP IS NEVER THROTTLED:
+    A CALLER WITH NO CLIENT ADDRESS IS NEVER THROTTLED:
         Session::get_client_ip() answers null outside a request - CLI, tasks,
         programmatic work - and there is no remote party to throttle there. A
-        command that authenticates a thousand fixtures is not an attack, and
-        throttling it would collapse every such process onto one shared bucket.
-        The web request is the surface being defended, and it always has an
-        address.
+        command that authenticates a thousand fixtures is not an attack. The web
+        request is the surface being defended, and it always has an address.
 
     CONFIGURATION - rsx.sessions.login_throttle:
-        enabled          true   count and enforce at all
-        attempts         10     failures from one IP inside the window
-        window_minutes   15     how long the failure counter lives
-        lockout_minutes  15     how long the address is refused afterwards
+        enabled    true   count and enforce at all
+        attempts   8      failures allowed per `seconds`
+        seconds    60     the span the limit is stated over
 
-        window_minutes is ALSO the window bounding Login_History's per-email and
-        per-IP counts (there is one window, not two). A non-positive value in any
-        of the three numbers is a broken deployment and fails loud.
-
-        'enabled' => false turns the whole feature off for a deployment that
-        throttles at the edge instead. There is no per-endpoint switch.
+        Once `attempts` failures fall within `seconds`, further attempts are
+        refused until the rate falls back under the limit. A non-positive value
+        in either number is a broken deployment and fails loud. 'enabled' =>
+        false turns the whole feature off for a deployment that throttles at the
+        edge instead. There is no per-endpoint switch.
 
     THE MESSAGE AND THE THROW:
         Auth_Throttled_Exception carries exactly "You're doing that too fast" and
@@ -1958,8 +1951,15 @@ LOGIN THROTTLE (BRUTE FORCE)
         because "we did not check" is not the same answer as "those credentials
         are wrong" - a false there would report an invalid password to a user
         whose password may be perfectly correct. The message says nothing about
-        which accounts exist, how many attempts remain, or when to try again;
-        retry_after_seconds is for YOUR logs and headers, not for the attacker.
+        which accounts exist or when to try again; retry_after_seconds is for
+        YOUR logs and headers, not for the attacker.
+
+        It is an HTTP 429 exception (Symfony HttpExceptionInterface, with
+        Retry-After). UNCAUGHT, a page or an API call answers 429 and an Ajax
+        call answers the error code `too_many_requests` (rsx:man
+        ajax_error_handling). A login function CATCHES it and shows the message
+        as an ordinary form error, answered 200 like any other refusal - a robot
+        is told nothing a status code would add.
 
     APP RECIPE - A LOGIN FUNCTION:
         Catch it around the check and render the message as the form error
@@ -1971,6 +1971,10 @@ LOGIN THROTTLE (BRUTE FORCE)
             } catch (Auth_Throttled_Exception $e) {
                 $error = $e->getMessage();
             }
+
+        Every endpoint that ends in a credential check catches it the same way:
+        the password stage, the second-factor verify, a passkey sign-in, a
+        password confirmation.
 
     APP RECIPE - A SECOND FACTOR:
         A 6-digit code is a million guesses inside a 30-second window, so the
@@ -1989,7 +1993,7 @@ LOGIN THROTTLE (BRUTE FORCE)
         The shape it implements, for any OTHER factor an app verifies itself -
         refuse first, then let the recorded failure do the counting:
 
-            Login_Throttle::require_not_throttled();     // may throw - catch it
+            Login_Throttle::require_not_throttled($email);   // may throw - catch it
 
             if (!$factor_verified) {
                 Login_History::record_failure($email, Login_History::STATUS_FAILED_2FA,
@@ -2007,13 +2011,13 @@ LOGIN THROTTLE (BRUTE FORCE)
         and records to neither history does BOTH halves itself:
 
             try {
-                Login_Throttle::require_not_throttled();
+                Login_Throttle::require_not_throttled($account);
             } catch (Auth_Throttled_Exception $e) {
                 return $this_form_with_error($e->getMessage());
             }
 
             if (!hash_equals($expected_pin, $offered_pin)) {
-                Login_Throttle::record_failure();
+                Login_Throttle::record_failure($account);
                 $error = 'That PIN is not right.';
             }
 
@@ -2021,15 +2025,17 @@ LOGIN THROTTLE (BRUTE FORCE)
         Nothing in Login_Throttle catches a cache error: a redis failure
         propagates and the login fails LOUD rather than proceeding unthrottled.
         The single exception is MAINTENANCE MODE, where redis is deliberately
-        stopped and RsxCache answers 0/false without touching it - the throttle is
-        then inert, which costs nothing because the web tier is answering 503 to
-        every request anyway.
+        stopped and the counter store answers without touching it - the throttle
+        is then inert, which costs nothing because the web tier is answering 503
+        to every request anyway.
 
     STORAGE:
-        Two redis keys per address, both in the persistent RsxCache namespace:
-        a failure counter carrying the window as its TTL, and a lockout marker
-        holding the instant the lockout expires. Both disappear on their own; the
-        THROTTLE never writes a database row.
+        Rsx_Counter (App\RSpade\Core\Cache\Rsx_Counter), redis database 3 -
+        the transient-counter store, NOT the cache: one failure log per address
+        bucket and per account, each expiring on its own. Counters are not in
+        the cache database because RsxCache::clear() runs on every database
+        transaction rollback, and not build-scoped because a counter measures
+        real time (rsx:man caching). The throttle never writes a database row.
 
 USER AGENT PARSING
     The User_Agent class parses user agent strings into human-readable

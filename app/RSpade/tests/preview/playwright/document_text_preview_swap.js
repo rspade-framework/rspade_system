@@ -21,7 +21,7 @@
  * Self-contained: mints its own dev-auth headers through tests/_lib/dev_auth.js (the
  * node twin of Dev_Auth_Token, keyed on the local development grant), so it runs with a bare `node document_text_preview_swap.js`. Runs against
  * the dev web server on localhost. Requires: realtime enabled, and the sample documents imported
- * (import_sample_documents migration).
+ * (the application's sample data - php artisan rsx_app:seed).
  *
  * NOT RUNNABLE AS SHIPPED: /dev/document_preview declares #[Auth('closed')] (B-99), so the harness
  * reports the closed gate rather than passing vacuously. Open that surface in your own tree to run

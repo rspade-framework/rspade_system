@@ -1,0 +1,13 @@
+// RSpade: what the automatic security updates may install (rspade-security-update).
+//
+// The Ubuntu security pocket, and the ondrej PHP PPA - PHP PATCH releases of the image's PHP
+// minor version, plus the libraries that PPA ships with them. Nothing from the release or
+// -updates pockets, nodesource or Docker: those arrive with a new image.
+#clear Unattended-Upgrade::Allowed-Origins;
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "LP-PPA-ondrej-php:${distro_codename}";
+};
+
+// The container restarts nothing by itself; rspade-security-update reloads what it must.
+Unattended-Upgrade::Automatic-Reboot "false";

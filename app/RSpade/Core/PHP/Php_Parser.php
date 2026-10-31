@@ -9,6 +9,7 @@ namespace App\RSpade\Core\PHP;
 
 use App\RSpade\CodeQuality\RuntimeChecks\ManifestErrors;
 use App\RSpade\Core\Debug\Rsx_File_Exception;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Paths;
 
 class Php_Parser
@@ -30,30 +31,25 @@ class Php_Parser
     }
 
     /**
-     * THE TWO STRUCTURE VALIDATORS ARE OFF, ON PURPOSE. Set true to arm them.
+     * The two structure validators' switch.
      *
      * `__validate_class_file_structure()` and `__validate_classless_file_structure()` refuse
-     * global functions, global define()s and unapproved include paths in an rsx/ file, and
-     * their findings become CRITICAL violations (PhpFileStructure_CodeQualityRule), i.e. a
-     * manifest-build FATAL.
-     *
-     * They have never once run. The gate was `str_starts_with($file_path, 'rsx/')` while
-     * every caller passes an ABSOLUTE path, so it was false for every file in the tree since
-     * the day it was written. The path test is CORRECT now (__is_rsx_source_path), and this
-     * constant is what keeps the behaviour unchanged: arming a rule that has never executed
-     * is a POLICY decision, not a bug fix, and the reference app does trip it (see
-     * docs.dev/manifest_review/RESULTS.md, "dead validators" - the findings are recorded
-     * there, with no file changed and no severity touched).
+     * global functions, global define()s, executed code and unapproved include paths in an
+     * rsx/ source file, and their findings become CRITICAL violations
+     * (PhpFileStructure_CodeQualityRule), i.e. a manifest-build FATAL. A constant rather than
+     * a config key: turning them off is a framework change, never a per-install setting.
      */
-    private const VALIDATE_RSX_FILE_STRUCTURE = false;
+    private const VALIDATE_RSX_FILE_STRUCTURE = true;
 
     /**
-     * Is this path an application source file (under rsx/)?
+     * Is this path an application SOURCE file - under rsx/, and outside every directory the
+     * manifest never loads (Manifest::EXCLUDED_DIRS: any `resource/`, `public/`, ...)?
      *
-     * ONE spelling, because the old one was wrong in a way nothing could see: the callers
-     * pass absolute paths, so a relative-prefix test was permanently false. Rsx_Paths is
-     * that one spelling now, for the whole framework - `/rsx/` as a WHOLE SEGMENT matches
-     * both the project path and the system/rsx symlink form, and matches no framework path.
+     * The validators judge what the framework loads, so a config file returning an array of
+     * env() calls or a migration returning an anonymous class is outside their subject
+     * wherever it sits - the filter is here, not in each caller. `/rsx/` is matched as a
+     * WHOLE SEGMENT (Rsx_Paths), so the project path and the system/rsx symlink form both
+     * answer, and no framework path does.
      */
     private static function __is_rsx_source_path(string $file_path): bool
     {
@@ -61,7 +57,14 @@ class Php_Parser
             return false;
         }
 
-        return Rsx_Paths::is_application($file_path);
+        $subpath = Rsx_Paths::application_subpath($file_path);
+        if ($subpath === null) {
+            return false;
+        }
+
+        $directories = array_slice(explode('/', $subpath), 0, -1);
+
+        return array_intersect($directories, Manifest::EXCLUDED_DIRS) === [];
     }
 
     /**
@@ -797,6 +800,29 @@ class Php_Parser
                 continue;
             }
 
+            // AN ANONYMOUS CLASS BODY IS CLASS SCOPE. Its methods and the calls inside them
+            // run when the object's methods are called, not when the file loads, so the body
+            // is skipped whole. `return new class ... { }` is the shape of a file whose value
+            // IS that class (a migration) and executes nothing on load; any other
+            // `new class` at file scope instantiates on load and is reported once, as T_NEW.
+            if (is_array($tokens[$i]) && $tokens[$i][0] === T_NEW) {
+                $close = self::__anonymous_class_close($tokens, $i);
+                if ($close !== null) {
+                    if (!self::__previous_code_token_is($tokens, $i, T_RETURN)) {
+                        $violations[] = [
+                            'line' => $tokens[$i][2] ?? 0,
+                            'token' => 'T_NEW',
+                            'message' => 'Disallowed construct at global scope: T_NEW (an anonymous class instantiated when the file loads).' .
+                                ' Classless PHP files are loaded on every request and should only define functions/constants, not execute code. ' .
+                                'Code that runs on every request should be in Main::init(), pre_dispatch() methods, or implemented in Laravel outside RSX.',
+                        ];
+                        $has_disallowed_code = true;
+                    }
+                    $i = $close;
+                    continue;
+                }
+            }
+
             // Check if this token is allowed at global scope
             if (is_array($tokens[$i])) {
                 $token_type = $tokens[$i][0];
@@ -867,6 +893,87 @@ class Php_Parser
             'global_functions' => $structure['global_functions'],
             'global_constants' => $structure['global_constants'],
         ];
+    }
+
+    /**
+     * When the T_NEW at $new_index starts an anonymous class (`new class`, attributes allowed
+     * between), the index of the '}' closing its body; otherwise null. Braces are counted on
+     * TOKENS, as method_body_span() counts them, so a brace in a string or comment cannot
+     * miscount and "${" / "{$" open a brace their plain "}" closes.
+     */
+    private static function __anonymous_class_close(array $tokens, int $new_index): ?int
+    {
+        $count = count($tokens);
+
+        $j = $new_index + 1;
+        while ($j < $count) {
+            $token = $tokens[$j];
+            if (is_array($token) && in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                $j++;
+                continue;
+            }
+            if (is_array($token) && $token[0] === T_ATTRIBUTE) {
+                // Skip to the attribute's closing ']'
+                $depth = 1;
+                for ($j++; $j < $count && $depth > 0; $j++) {
+                    if ($tokens[$j] === '[') {
+                        $depth++;
+                    } elseif ($tokens[$j] === ']') {
+                        $depth--;
+                    }
+                }
+                continue;
+            }
+            break;
+        }
+
+        if ($j >= $count || !is_array($tokens[$j]) || $tokens[$j][0] !== T_CLASS) {
+            return null;
+        }
+
+        // The body opens at the first '{' outside the constructor arguments' parentheses
+        $paren_depth = 0;
+        for ($j++; $j < $count; $j++) {
+            $text = is_array($tokens[$j]) ? $tokens[$j][1] : $tokens[$j];
+            if ($text === '(') {
+                $paren_depth++;
+            } elseif ($text === ')') {
+                $paren_depth--;
+            } elseif ($text === '{' && $paren_depth === 0) {
+                break;
+            }
+        }
+
+        $depth = 0;
+        for (; $j < $count; $j++) {
+            $token = $tokens[$j];
+            $text = is_array($token) ? $token[1] : $token;
+            if ($text === '{' || (is_array($token) && $token[0] === T_DOLLAR_OPEN_CURLY_BRACES)) {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+                if ($depth === 0) {
+                    return $j;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** Is the nearest code token before $index (whitespace and comments skipped) of $type? */
+    private static function __previous_code_token_is(array $tokens, int $index, int $type): bool
+    {
+        for ($j = $index - 1; $j >= 0; $j--) {
+            $token = $tokens[$j];
+            if (is_array($token) && in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            return is_array($token) && $token[0] === $type;
+        }
+
+        return false;
     }
 
     /**

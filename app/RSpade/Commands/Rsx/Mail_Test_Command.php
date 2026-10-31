@@ -39,7 +39,8 @@ use Illuminate\Console\Command;
  * report can possibly say. In 'disabled' the drain is not even run: the queue is frozen,
  * the row stays PENDING, and that is the honest answer rather than a failure - exit 0.
  * In 'suppressed' the row ends SUPPRESSED, which is also a success: the message was
- * built and recorded exactly as configured.
+ * built and recorded exactly as configured. A TEST address (Rsx_Test_Recipients) ends
+ * TEST in every mode but disabled - a success too, recorded as sent and never delivered.
  *
  * See: php artisan rsx:man email
  */
@@ -86,6 +87,7 @@ class Mail_Test_Command extends Command
         $status_id = (int) $record->status_id;
         $succeeded = $status_id === Email_Queue_Model::STATUS_SENT
             || $status_id === Email_Queue_Model::STATUS_SUPPRESSED
+            || $status_id === Email_Queue_Model::STATUS_TEST
             || ($mode === Rsx_Mail_Transport::MODE_DISABLED
                 && $status_id === Email_Queue_Model::STATUS_PENDING);
 

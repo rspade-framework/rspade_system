@@ -11,6 +11,7 @@ use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Markdown_Rendition;
 use App\RSpade\Core\Files\Rsx_File_Gates;
+use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Rsx_Mime_Map;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -262,7 +263,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // Immutable only for a request naming the attachment's current content version.
         return File_Attachment_Controller::apply_content_version_cache_policy(Response::file($path, [
             'Content-Type' => 'text/html; charset=UTF-8',
-            'Content-Disposition' => 'inline; filename="' . static::__sheet_filename($attachment->file_name) . '"',
+            'Content-Disposition' => Rsx_File_Name::disposition('inline', static::__sheet_filename($attachment->file_name)),
             'Cache-Control' => 'public, max-age=31536000, immutable',
             // Belt and braces around already-purified markup: no script, no plugin, no frame,
             // and no outbound request of any kind. Images are inlined as data: URIs by the
@@ -423,7 +424,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     {
         return File_Attachment_Controller::harden_file_response(File_Attachment_Controller::apply_content_version_cache_policy(Response::file($path, [
             'Content-Type' => 'application/pdf',
-            'Content-Disposition' => 'inline; filename="' . $file_name . '"',
+            'Content-Disposition' => Rsx_File_Name::disposition('inline', $file_name),
             'Cache-Control' => 'public, max-age=31536000, immutable',
         ]), $attachment, $params));
     }
@@ -539,7 +540,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // a staff-facade read there gives it either null or - with the portal on the application host, where the
         // browser still carries the staff cookie - the STAFF user, which would authorize a
         // portal viewer against staff permissions. Same idiom as /_upload. See
-        // docs.dev/audits/portal_realm_session_audit_2026_08_09.md.
+        // docs.dev/audits/archive/portal_realm_session_audit_2026_08_09.md.
         $thumbnail_auth = Rsx_File_Gates::authorize(Rsx_File_Gates::THUMBNAIL, [
             'attachment' => $attachment,
             'user' => File_Attachment_Controller::_gate_user(),

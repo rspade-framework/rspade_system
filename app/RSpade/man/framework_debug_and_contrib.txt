@@ -1172,7 +1172,7 @@ SUBSYSTEM PRIMERS
     error_pages).
 
     Brute-force throttling is the framework's and is on by default: the
-    authentication entry point refuses a locked-out client address as its
+    authentication entry point refuses a throttled client address or account as its
     first statement, before the identity lookup, by throwing - so a login
     function catches that exception and renders its message rather than
     reporting a wrong password.
@@ -2201,25 +2201,26 @@ SUBSYSTEM PRIMERS
     simply compute new keys and the old entries are never read again.
 
     THE ENTRY stores the status, content type, an ETag derived from the body,
-    a timestamp and either the body or a redirect location. Note the header
-    asymmetry, which is the single most important thing to know here: a MISS
-    forwards the backend's headers, but A HIT CONSTRUCTS A FRESH RESPONSE
-    WITH ONLY THREE HEADERS - content type, ETag and the cache-status header.
-    A conditional request matching the ETag returns 304.
+    a timestamp, the security headers the response carried, and either the
+    body or a redirect location. Note the header asymmetry: a MISS forwards
+    the backend's headers, but A HIT CONSTRUCTS A FRESH RESPONSE - content
+    type, ETag, the cache-status header and the stored security headers
+    (Content-Security-Policy and its report-only twin, X-Content-Type-Options,
+    X-Frame-Options, Referrer-Policy, Permissions-Policy,
+    Strict-Transport-Security, the two Cross-Origin policies), and nothing
+    else. A conditional request matching the ETag returns 304.
 
     Tell a hit from a miss by the X-FPC-Cache header. The internal marker the
     dispatcher sets is stripped on every path and never reaches a client.
 
-    A KNOWN OPEN ITEM FOLLOWS DIRECTLY FROM THAT ASYMMETRY: the
-    Content-Security-Policy header is applied at the dispatcher seam, so it
-    is present on a miss - but the cache entry stores no headers beyond the
-    content type, so A CACHED PAGE IS SERVED WITH NO POLICY AT ALL, and the
-    nonce baked into its HTML is inert. #[FPC] pages are therefore outside
-    the policy's coverage today. The two possible resolutions are that a
-    public page whose protection matters should not be cached, or that the
-    proxy must learn to cache and replay the header with the body. The CSP
-    man page states this in its own triage section; do not "fix" it with a
-    patch that changes the contract without agreeing the direction first.
+    THE CACHED POLICY MATCHES THE CACHED BODY. The Content-Security-Policy
+    header is applied at the dispatcher seam with a per-request nonce that is
+    also baked into the HTML, so the entry keeps the header issued with that
+    body and replays it verbatim. Every viewer of one entry therefore shares
+    its nonce until the entry expires or is purged - weaker than a
+    per-request nonce, accepted because a cacheable page is anonymous by
+    construction. Re-noncing on each hit is the stronger alternative and is
+    not built.
 
     PURGE. The framework's purge helper scans and deletes the keys for the
     current build key - SCAN, never a blocking key enumeration - and can
@@ -2531,6 +2532,7 @@ SUBSYSTEM PRIMERS
                                      for everything
         --xhr-dump --xhr-list        the Ajax traffic
         --wait-for=<selector>        wait before capturing
+        --no-realtime                the browser meets a down relay
         --expect-element=<selector>  assert, for a scripted check
         --dump-element=<selector>    dump one element
         --dump-dimensions=<sel>      layout geometry

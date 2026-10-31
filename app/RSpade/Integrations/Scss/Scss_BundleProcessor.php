@@ -457,9 +457,14 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
         
         // Now check for @import directives
         if (preg_match('/@import\s+["\']/', $content_without_comments)) {
-            // Extract the actual @import lines for the error message
-            preg_match_all('/@import\s+["\'][^"\']+["\']/', $content, $imports);
-            $import_list = implode("\n  ", $imports[0]);
+            // The comment-blanked copy keeps every line where it was, so a match in it is
+            // reported at its line in the file the developer is looking at.
+            preg_match_all('/@import\s+["\'][^"\']+["\']/', $content_without_comments, $imports, PREG_OFFSET_CAPTURE);
+            $import_lines = [];
+            foreach ($imports[0] as [$text, $offset]) {
+                $import_lines[] = 'line ' . (substr_count($content_without_comments, "\n", 0, $offset) + 1) . ': ' . $text;
+            }
+            $import_list = implode("\n  ", $import_lines);
             
             throw new \RuntimeException(
                 "SCSS file '{$relative_path}' contains @import directives, which are not allowed in non-vendor files.\n\n" .

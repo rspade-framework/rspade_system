@@ -582,7 +582,19 @@ SNAPSHOT PROTECTION
        boots, with a 503 "Database migration in progress" (Retry-After: 30) - the
        same pre-boot shape as the maintenance gate, with the IDE bridge exempt. A
        run that completes or rolls back clears it; one that was interrupted leaves
-       it for php artisan migrate:restore (or the next migrate) to clear.
+       it, with its snapshot, for the next migrate (or php artisan migrate:restore).
+
+       ONE AT A TIME, AND AN INTERRUPTED RUN IS RESTORED. A snapshot-protected run
+       and migrate:restore hold one lockd lock for their whole length
+       (Maint_Migrate::SNAPSHOT_RUN_LOCK, scoped to the database); a second one
+       started meanwhile REFUSES - "Another migrate (or migrate:restore) is running
+       against this database." - and changes nothing. (Not MySQL's GET_LOCK: the
+       snapshot stops mysqld, which would drop the connection holding it.) A lockd
+       lock is released when its holder dies, so a run that finds the flag while
+       holding the lock knows the run that left it was CANCELLED or CRASHED: it
+       restores that run's snapshot - the database as it stood before that run -
+       says so, and only then takes its own. A restore that fails leaves the flag
+       and the snapshot in place and the run stops, naming migrate:restore.
 
        ANYWHERE ELSE THE RUN PROCEEDS BARE, and prints every reason protection is
        off, so an operator can tell WHICH condition disabled the undo:

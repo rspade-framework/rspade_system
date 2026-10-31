@@ -9,7 +9,6 @@ namespace App\RSpade\Tests\TwoFactor\Cli;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Hash;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
@@ -51,10 +50,6 @@ class Two_Factor_Cli_Test extends Rsx_Test_Abstract
 
     public static function teardown()
     {
-        // The per-IP throttle lives outside the transaction, shared with every other test in
-        // the run; a challenge here touches it even when it never fails.
-        Login_Throttle::reset('CLI');
-
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();

@@ -71,10 +71,6 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
 
     public static function teardown()
     {
-        // The per-IP throttle lives outside the transaction and is shared with every other
-        // test in the run. Login_Throttle::reset() is the sanctioned way to clear it.
-        Login_Throttle::reset('CLI');
-
         Session::logout();
         static::__reset_session();
 
@@ -136,7 +132,6 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
 
     private static function __start_anonymous(): void
     {
-        Login_Throttle::reset('CLI');
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();
@@ -401,8 +396,8 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
     // -------------------------------------------------------------------------
 
     /**
-     * THE THROTTLE'S BUDGET IS REAL: enough failures against one address lock it out, and
-     * require_not_throttled() THROWS Auth_Throttled_Exception rather than returning a
+     * THE THROTTLE'S LIMIT IS REAL: enough failures from one address refuse the next attempt,
+     * and require_not_throttled() THROWS Auth_Throttled_Exception rather than returning a
      * verdict - "we did not check" is a different answer from "that was wrong", and the
      * login screen has to be able to say so. An unthrottled second factor is a six-digit
      * guessing oracle, so this is the test that says the oracle is closed.
@@ -410,10 +405,10 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
      * DRIVEN WITH AN EXPLICIT IP, because Session::get_client_ip() is null in CLI BY DESIGN
      * (there is no remote party to throttle, and a command is not an attack surface). So the
      * ambient call inside verify_challenge() cannot be tripped from a PHP test at all - what
-     * is pinned here is the mechanism it calls, and that it is reached ONCE per failure. The
+     * is pinned here is the mechanism it calls. The
      * end-to-end refusal is verified live over HTTP; see test_catalog.md.
      */
-    public static function test_the_throttle_budget_locks_an_address_out()
+    public static function test_the_throttle_limit_refuses_an_address()
     {
         $config = config('rsx.sessions.login_throttle');
 
@@ -422,33 +417,33 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
             return;
         }
 
-        // A per-test IP, so this never collides with another test's shared 'CLI' counter.
+        // A per-test IP, so this never collides with another test's address.
         $ip = '203.0.113.' . random_int(1, 254);
 
-        Login_Throttle::reset($ip);
+        Login_Throttle::reset(null, $ip);
 
         try {
-            $budget = (int) $config['attempts'];
+            $limit = (int) $config['attempts'];
 
-            // Inside the budget nothing is refused.
-            for ($i = 0; $i < $budget; $i++) {
-                Login_Throttle::require_not_throttled($ip);
-                Login_Throttle::record_failure($ip);
+            // Inside the limit nothing is refused.
+            for ($i = 0; $i < $limit; $i++) {
+                Login_Throttle::require_not_throttled(null, $ip);
+                Login_Throttle::record_failure(null, $ip);
             }
 
             static::__assert_throws(
                 Auth_Throttled_Exception::class,
-                fn () => Login_Throttle::require_not_throttled($ip),
+                fn () => Login_Throttle::require_not_throttled(null, $ip),
                 'too fast'
             );
 
             static::__assert_greater_than(
                 0,
-                Login_Throttle::retry_after_seconds($ip),
+                Login_Throttle::retry_after_seconds(null, $ip),
                 'and the refusal says when to come back'
             );
         } finally {
-            Login_Throttle::reset($ip);
+            Login_Throttle::reset(null, $ip);
         }
     }
 
@@ -456,12 +451,9 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
      * A FAILED CHALLENGE REACHES THE THROTTLE EXACTLY ONCE. verify_challenge() records its
      * failure through Login_History::record_failure(), which ALREADY calls
      * Login_Throttle::record_failure() - so verify_challenge() must never call it as well.
-     * Double counting would halve the real budget, and the halving would only ever be
-     * discovered by a user locked out early.
-     *
-     * The per-IP throttle counter is unreachable in CLI (see above), so the single count is
-     * observed on the per-EMAIL failure counter that record_failure() increments in the same
-     * breath - one increment per failure means one call to record_failure().
+     * Double counting would halve the real limit, and the halving would only ever be
+     * discovered by a user throttled early. Observed on the per-EMAIL failure counter
+     * record_failure() increments - one increment per failure means one call.
      */
     public static function test_each_failure_is_recorded_exactly_once()
     {

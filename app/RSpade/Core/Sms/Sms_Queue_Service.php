@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Core\Sms;
 
+use App\RSpade\Core\Mail\Rsx_Test_Recipients;
 use App\RSpade\Core\Models\Sms_Queue_Model;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Sms\Rsx_Sms;
@@ -43,7 +44,7 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
         // consumer, and a worker's declared site says nothing about which messages are due.
         $summary = null;
         $task->state(Sms_Queue_Model::without_site_scope(function () use ($task, &$summary) {
-            $counts = ['sent' => 0, 'server_errors' => 0, 'failed' => 0, 'suppressed' => 0, 'reclaimed' => 0];
+            $counts = ['sent' => 0, 'server_errors' => 0, 'failed' => 0, 'suppressed' => 0, 'test' => 0, 'reclaimed' => 0];
 
             if (Rsx_Sms::delivery_mode() === Rsx_Sms::MODE_DISABLED) {
                 $pending = Sms_Queue_Model::pending_count();
@@ -68,11 +69,11 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
             $total = Sms_Queue_Model::due_count();
 
             while (true) {
-                $task->progress_count($counts['suppressed'], max($total, $counts['suppressed']));
+                $task->progress_count($counts['suppressed'] + $counts['test'], max($total, $counts['suppressed'] + $counts['test']));
 
                 // Between messages: no row is claimed here, so stopping leaves nothing SENDING.
                 if ($task->is_stop_requested()) {
-                    $summary = "Stopped after recording {$counts['suppressed']} SMS message(s) suppressed.";
+                    $summary = "Stopped after recording {$counts['suppressed']} SMS message(s) suppressed and {$counts['test']} test.";
                     $task->stdout('Stop requested - ' . $summary);
 
                     return $counts;
@@ -82,6 +83,20 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
                 $queued = Sms_Queue_Model::claim_next();
                 if (!$queued) {
                     break;
+                }
+
+                // A TEST number, whatever the delivery mode: recorded as sent, never handed
+                // to a provider.
+                if (Rsx_Test_Recipients::is_test_phone($queued->dev_original_to ?: $queued->to_number)) {
+                    $queued->mark_test();
+                    $task->stdout(
+                        "Test SMS #{$queued->id} to {$queued->to_number} \""
+                        . mb_strimwidth(str_replace(["\r", "\n"], ' ', (string) $queued->body), 0, 60, '...')
+                        . '": recorded as sent, never delivered (test number)'
+                    );
+                    $counts['test']++;
+
+                    continue;
                 }
 
                 $queued->mark_suppressed('no SMS provider configured');
@@ -94,11 +109,11 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
                 $counts['suppressed']++;
             }
 
-            $summary = "Recorded {$counts['suppressed']} SMS message(s) suppressed: no SMS provider is configured.";
+            $summary = "Recorded {$counts['suppressed']} SMS message(s) suppressed (no SMS provider is configured) and {$counts['test']} test.";
 
-            $task->stdout($counts['suppressed'] === 0 && $counts['reclaimed'] === 0
+            $task->stdout($counts['suppressed'] === 0 && $counts['test'] === 0 && $counts['reclaimed'] === 0
                 ? 'No SMS was due.'
-                : "Done: {$counts['suppressed']} SMS message(s) recorded as suppressed.");
+                : "Done: {$counts['suppressed']} SMS message(s) recorded as suppressed, {$counts['test']} test.");
 
             return $counts;
         }));

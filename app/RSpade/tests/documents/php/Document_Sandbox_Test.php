@@ -490,7 +490,7 @@ class Document_Sandbox_Test extends Rsx_Test_Abstract
             return;
         }
 
-        $sample = rsx_project_file_path('rsx/resource/sample_documents/sample_memo.docx');
+        $sample = rsx_project_file_path('rsx/services/sample_data/resource/documents/reference/sample_memo.docx');
         if (!file_exists($sample)) {
             static::__skip('sample_memo.docx fixture not present');
             return;
@@ -568,7 +568,7 @@ class Document_Sandbox_Test extends Rsx_Test_Abstract
             return;
         }
 
-        $sample = rsx_project_file_path('rsx/resource/sample_documents/sample_report.pdf');
+        $sample = rsx_project_file_path('rsx/services/sample_data/resource/documents/reference/sample_report.pdf');
         if (!file_exists($sample)) {
             static::__skip('sample_report.pdf fixture not present');
             return;

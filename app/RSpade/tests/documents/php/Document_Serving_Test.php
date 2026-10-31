@@ -116,7 +116,7 @@ class Document_Serving_Test extends Rsx_Test_Abstract
             mkdir(dirname($path), 0755, true);
         }
 
-        copy(rsx_project_file_path('rsx/resource/sample_documents/sample_report.pdf'), $path);
+        copy(rsx_project_file_path('rsx/services/sample_data/resource/documents/reference/sample_report.pdf'), $path);
         static::$created_files[] = $path;
 
         return $path;

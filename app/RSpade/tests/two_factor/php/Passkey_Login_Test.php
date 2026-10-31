@@ -9,7 +9,6 @@ namespace App\RSpade\Tests\TwoFactor\Php;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Login_History;
@@ -52,7 +51,6 @@ class Passkey_Login_Test extends Rsx_Test_Abstract
 
     public static function teardown()
     {
-        Login_Throttle::reset('CLI');
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();
@@ -77,7 +75,6 @@ class Passkey_Login_Test extends Rsx_Test_Abstract
 
     private static function __anonymous(): void
     {
-        Login_Throttle::reset('CLI');
         Session::cli_set_impersonator_login_user_id(null);
         Session::logout();
         static::__reset_session();

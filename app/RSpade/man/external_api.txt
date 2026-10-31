@@ -311,6 +311,19 @@ SERIALIZATION
       does its own redaction, an endpoint may return a model directly without
       worrying about leaking private columns.
 
+    Timestamps. Every DATETIME/TIMESTAMP value is UTC ISO 8601, and beside it
+    the response carries the same instant in the key holder's zone (their
+    explicit timezone, else the site's, the server's, UTC):
+
+        "created_at": "2026-10-29T10:13:03.000Z",
+        "created_at__localized": "2026-10-29T05:13:03.000-05:00",
+        "created_at__localized_tz": "America/Chicago"
+
+    A DATE column carries no companions (a calendar date has no zone). A model
+    gets them from the serializer; a HAND-BUILT payload writes each timestamp
+    with ...Rsx_Time::encode_for_output('uploaded_at', $value), the same
+    encoder, so no response is ever half-localized (rsx:man time, EXTERNAL API).
+
 AUTHENTICATION
     Authorization: Bearer rsx_... is the ONLY accepted credential (the scheme
     name is case-insensitive, per RFC 7235: 'bearer' is accepted). There is no

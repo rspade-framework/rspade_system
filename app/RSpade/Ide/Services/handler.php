@@ -111,6 +111,9 @@ require_once ide_framework_path('app/RSpade/Core/Paths/Rsx_Project_Paths.php');
 // Load exec_safe() function
 require_once ide_framework_path('app/RSpade/helpers.php');
 
+// The order an ambiguous identifier resolves in (pure; pinned by tests/ide).
+require_once __DIR__ . '/ide_resolution_order.php';
+
 // Helper to normalize file paths for IDE consumption
 // Framework files (not starting with rsx/) need system/ prefix
 function normalize_ide_path($path) {
@@ -601,40 +604,12 @@ function handle_definition_service($data) {
             break;
 
         default:
-            // Try to auto-detect type
-            // First try as class
-            if (isset($manifest['php']['classes'][$identifier])) {
-                $class_data = $manifest['php']['classes'][$identifier];
-                $result = [
-                    'found' => true,
-                    'file' => $class_data['file'],
-                    'line' => $class_data['line'] ?? 1
-                ];
-            }
-            // Try as view
-            if (!$result) {
-                foreach ($manifest['blade']['views'] ?? [] as $view) {
-                    if ($view['name'] === $identifier || $view['rsx_id'] === $identifier) {
-                        $result = [
-                            'found' => true,
-                            'file' => $view['file'],
-                            'line' => 1
-                        ];
-                        break;
-                    }
-                }
-            }
-            // Try as jqhtml component
-            if (!$result) {
-                foreach ($manifest['jqhtml']['components'] ?? [] as $component_name => $component) {
-                    if ($component_name === $identifier) {
-                        $result = [
-                            'found' => true,
-                            'file' => $component['file'] ?? $component['js_file'],
-                            'line' => 1
-                        ];
-                        break;
-                    }
+            // No type: the identifier is ambiguous, and resolves in the one order.
+            foreach (ide_ambiguous_type_order() as $candidate_type) {
+                $candidate = ide_resolve_typed($candidate_type, $identifier, $method, $manifest);
+                if ($candidate && ($candidate['found'] ?? false)) {
+                    $result = $candidate;
+                    break;
                 }
             }
     }
@@ -819,8 +794,10 @@ function handle_git_diff_service($data) {
  * (the editor-driven rename/sort actions). This is the ONLY command-execution surface on
  * the IDE bridge, and it is deliberately narrow: the command string is EXACT-matched
  * against a hardcoded allowlist of three metacharacter-free literals, and every argument
- * is escapeshellarg'd individually, so no shell-injection vector exists. Reachable only
- * after the local-file grant check in auth.php.
+ * is escapeshellarg'd individually, so no shell-injection vector exists. An argument that
+ * starts with '-' must be one of the options the named command declares, and the rename
+ * commands themselves refuse a name that is not a PHP identifier. Reachable only after the
+ * local-file grant check in auth.php.
  */
 function handle_refactor_service($data) {
     $command = $data['command'] ?? null;
@@ -844,12 +821,28 @@ function handle_refactor_service($data) {
         error_response('Refactor command not allowed: ' . $command, 403);
     }
 
+    // An argument that starts with '-' is read by artisan as an option, so only the options
+    // each command declares are accepted; anything else could reach a global artisan option.
+    $allowed_options = [
+        'rsx:refactor:rename_php_class' => ['--dry-run', '--skip-rename-file'],
+        'rsx:refactor:rename_php_class_function' => ['--dry-run', '--force-rename-static-self', '--skip-subclasses'],
+        'rsx:refactor:sort_php_class_functions' => ['--sort-alpha'],
+    ];
+    foreach ($arguments as $arg) {
+        if (!is_string($arg)) {
+            error_response('Refactor arguments must be strings');
+        }
+        if (str_starts_with($arg, '-') && !in_array($arg, $allowed_options[$command], true)) {
+            error_response('Refactor option not allowed for ' . $command . ': ' . $arg, 403);
+        }
+    }
+
     // argv: fixed 'php <artisan> <command>' + escapeshellarg'd args. The command is a
     // trusted literal; each argument is individually escaped -> no shell injection.
     $artisan_path = IDE_BASE_PATH . '/artisan';
     $parts = ['php', escapeshellarg($artisan_path), $command];
     foreach ($arguments as $arg) {
-        $parts[] = escapeshellarg((string) $arg);
+        $parts[] = escapeshellarg($arg);
     }
     $full_command = implode(' ', $parts) . ' 2>&1';
 
@@ -894,19 +887,47 @@ function ide_php_class_finder(array $manifest_data) {
 }
 
 /**
- * A finder over the manifest file index for a Blade view by its @rsx_id. Shared for the
- * same reason as ide_php_class_finder.
+ * A finder over the manifest file index for a file declaring an `id` - a Blade view's
+ * @rsx_id, and the jqhtml template and stylesheet that can carry the same name. Several can
+ * match at once, so the best is chosen by the one order (ide_best_id_match()), never by
+ * which record the map lists first. Shared for the same reason as ide_php_class_finder.
  */
 function ide_view_finder(array $files) {
     return function($view_name) use ($files) {
-        foreach ($files as $file_path => $file_data) {
-            if (isset($file_data['id']) && $file_data['id'] === $view_name) {
-                // The path is the KEY - the index does not repeat it as a value.
-                return ['file' => $file_path] + $file_data;
+        return ide_best_id_match($files, $view_name);
+    };
+}
+
+/**
+ * A stylesheet whose `id` is $identifier - the stylesheet that styles that component or
+ * view (Scss_Id_ManifestSupport assigns at most one per name).
+ */
+function try_resolve_scss($identifier, $files) {
+    $match = ide_best_id_match($files, $identifier, ['scss']);
+
+    if (!$match) {
+        return null;
+    }
+
+    $line_number = 1;
+    $absolute_path = ide_absolute_path($match['file']);
+
+    if (file_exists($absolute_path)) {
+        foreach (explode("\n", file_get_contents($absolute_path)) as $index => $line) {
+            if (preg_match('/^\s*\.' . preg_quote($identifier, '/') . '\b/', $line)) {
+                $line_number = $index + 1;
+                break;
             }
         }
-        return null;
-    };
+    }
+
+    return [
+        'found' => true,
+        'type' => 'scss',
+        'file' => $match['file'],
+        'line' => $line_number,
+        'identifier' => $identifier,
+    ];
 }
 
 /**
@@ -1347,6 +1368,56 @@ function try_resolve_jqhtml_method($identifier, $method_name, $files) {
  * - method (optional): Method name within the class
  * - type (optional): Single type or CSV list of types to try in order
  */
+/**
+ * Resolve $identifier as ONE kind of declaration ($type), or null. The one switch both the
+ * resolve_class and definition services go through, so a type means the same in each.
+ */
+function ide_resolve_typed($type, $identifier, $method_name, array $manifest_data) {
+    $files = $manifest_data['files'] ?? [];
+
+    switch ($type) {
+        case 'php_class':
+            return try_resolve_php_class($identifier, $method_name, ide_php_class_finder($manifest_data));
+
+        case 'js_class':
+            return try_resolve_js_class($identifier, $method_name, $files);
+
+        case 'jqhtml_class':
+            return try_resolve_jqhtml_class($identifier, $method_name, $files);
+
+        case 'view':
+            return try_resolve_view($identifier, ide_view_finder($files));
+
+        case 'scss':
+            return try_resolve_scss($identifier, $files);
+
+        case 'bundle_alias':
+            return try_resolve_bundle_alias($identifier, ide_php_class_finder($manifest_data), $manifest_data['bundle_aliases'] ?? []);
+
+        case 'jqhtml_template':
+            return try_resolve_jqhtml_template($identifier, $files, 'ide_camel_to_snake', 'ide_snake_to_pascal');
+
+        case 'jqhtml_class_method':
+            return $method_name ? try_resolve_jqhtml_method($identifier, $method_name, $files) : null;
+    }
+
+    return null;
+}
+
+/** PascalCase -> snake_case, a single leading framework-application underscore kept (`_Sys_Card` -> `_sys_card`). */
+function ide_camel_to_snake($input) {
+    // Collapse underscore runs so a single leading framework-application underscore
+    // survives. Shape home: App\RSpade\Core\Naming\Rsx_Identifier.
+    $result = preg_replace('/(?<!^)[A-Z]/', '_$0', $input);
+    $result = preg_replace('/(?<!^)_+/', '_', $result);
+    return strtolower($result);
+}
+
+/** snake_case -> Pascal_Case. */
+function ide_snake_to_pascal($input) {
+    return implode('_', array_map('ucfirst', explode('_', $input)));
+}
+
 function handle_resolve_class_service($data) {
     $identifier = $data['class'] ?? $data['identifier'] ?? null;
     $method_name = $data['method'] ?? null;
@@ -1367,71 +1438,19 @@ function handle_resolve_class_service($data) {
 
     // Load manifest data
     $manifest_data = ide_manifest_data_or_fail(true);
-    $files = $manifest_data['files'] ?? [];
-
-    // The manifest finders are shared with the definition service (one lookup each).
     $find_php_class = ide_php_class_finder($manifest_data);
-    $find_view = ide_view_finder($files);
 
-    // Helper function to convert PascalCase to snake_case
-    $camel_to_snake = function($input) {
-        // Collapse underscore runs so a single leading framework-application underscore
-        // survives (`_Sys_Card` -> `_root_card`). Shape home: App\RSpade\Core\Naming\Rsx_Identifier.
-        $result = preg_replace('/(?<!^)[A-Z]/', '_$0', $input);
-        $result = preg_replace('/(?<!^)_+/', '_', $result);
-        return strtolower($result);
-    };
-
-    // Helper function to convert snake_case to PascalCase
-    $snake_to_pascal = function($input) {
-        $parts = explode('_', $input);
-        return implode('_', array_map('ucfirst', $parts));
-    };
-
-    // If no type list specified, auto-detect against the 'class' type
+    // No type given: the identifier is ambiguous, and resolves in the one order.
     if (empty($type_list)) {
         // `_?[A-Z][A-Za-z0-9_]*` is the RSpade name shape (App\RSpade\Core\Naming\Rsx_Identifier).
         if (!$type || $type === 'class' || preg_match('/^_?[A-Z][A-Za-z0-9_]*$/', $identifier)) {
-            // Try each candidate type in turn, PHP class first.
-            $type_list = ['php_class', 'view', 'bundle_alias', 'jqhtml_template', 'jqhtml_class'];
+            $type_list = ide_ambiguous_type_order();
         }
     }
 
     // Try each type in priority order
     foreach ($type_list as $current_type) {
-        $result = null;
-
-        switch ($current_type) {
-            case 'php_class':
-                $result = try_resolve_php_class($identifier, $method_name, $find_php_class);
-                break;
-
-            case 'js_class':
-                $result = try_resolve_js_class($identifier, $method_name, $files);
-                break;
-
-            case 'jqhtml_class':
-                $result = try_resolve_jqhtml_class($identifier, $method_name, $files);
-                break;
-
-            case 'view':
-                $result = try_resolve_view($identifier, $find_view);
-                break;
-
-            case 'bundle_alias':
-                $result = try_resolve_bundle_alias($identifier, $find_php_class, $manifest_data['bundle_aliases'] ?? []);
-                break;
-
-            case 'jqhtml_template':
-                $result = try_resolve_jqhtml_template($identifier, $files, $camel_to_snake, $snake_to_pascal);
-                break;
-
-            case 'jqhtml_class_method':
-                if ($method_name) {
-                    $result = try_resolve_jqhtml_method($identifier, $method_name, $files);
-                }
-                break;
-        }
+        $result = ide_resolve_typed($current_type, $identifier, $method_name, $manifest_data);
 
         // If we found a result, return it immediately
         if ($result && ($result['found'] ?? false)) {

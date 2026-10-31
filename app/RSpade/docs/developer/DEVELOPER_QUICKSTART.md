@@ -919,22 +919,22 @@ always be correct.
 A background job is a public static method on a service class, marked `#[Task]`:
 
 ```php
-class Seeder_Service extends Rsx_Service_Abstract
+class Invoice_Service extends Rsx_Service_Abstract
 {
-    #[Task('Seed test clients into the database')]
-    #[Schedule('daily at 3am')]
-    public static function seed_clients(Task_Instance $task, array $params = [])
+    #[Task('Send reminders for overdue invoices')]
+    #[Schedule('every hour')]
+    public static function send_reminders(Task_Instance $task, array $params = [])
     {
-        $task->status('Seeding');
+        $task->status('Sending reminders');
         // ... work, reporting progress_count() / stdout() as it goes ...
-        $task->summary('Seeded 20 clients.');
+        $task->summary('Sent 12 reminders.');
         return null;   // the return value is the return code: null/true/0 = success
     }
 }
 ```
 
 ```php
-$id  = Task::dispatch('Seeder_Service', 'seed_clients', ['count' => 20]);
+$id  = Task::dispatch('Invoice_Service', 'send_reminders', ['days_overdue' => 30]);
 $run = Task_Run_Model::find($id);   // status, progress, summary, output...
 ```
 

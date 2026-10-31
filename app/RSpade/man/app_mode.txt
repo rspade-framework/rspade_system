@@ -189,7 +189,9 @@ THE BUILD
                        route cache: Laravel's route table is empty).
                        Precompiling Blade is what lets a served request read
                        the build tree without writing to it; a template that
-                       fails to precompile fails the build.
+                       fails to precompile fails the build. The parsed
+                       .env is cached into tmp/ here too (LOADING .env,
+                       below), so the first served boot does not parse it.
         8. the seal    written LAST and only on success.
 
     It refuses without --force when a seal is already present:
@@ -201,7 +203,10 @@ THE BUILD
     rsx:clean owns every wipe: it quiesces the node daemons, empties build/
     and tmp/ (Laravel's caches and compiled views included), flushes the
     Redis caches, sweeps orphaned atomic-write staging directories, and
-    recreates the two empty roots. In a prod mode it requires --force.
+    recreates the two empty roots. In a prod mode it requires --force. A
+    directory another process keeps writing into while the wipe runs (a task
+    worker, a node helper storing a cache entry) is left in place with a
+    [WARNING] naming it, never a failure: everything there is regenerable.
 
     Both commands check writability before touching anything and refuse with
     nothing changed.
@@ -645,6 +650,31 @@ ENV FACTS VS INVOCATION FLAGS
 
         WRONG:  SOMETHING=1 php artisan rsx:build
         RIGHT:  php artisan rsx:build --force
+
+LOADING .env
+    RSX never caches Laravel's config. config:cache would freeze env() at the
+    moment it ran, and RSX reads deployment facts through env() at runtime,
+    so config:cache, config:clear, optimize and optimize:clear are all
+    restricted commands; rsx:build and rsx:clean are what build and discard
+    a box's caches. The config files are evaluated on every boot.
+
+    What IS cached, in debug and production only, is the PARSE of .env.
+    Laravel's environment bootstrapper is bound to
+    Rsx_LoadEnvironmentVariables (in bootstrap/app.php - Laravel's own
+    bootstrapper list and its afterLoadingEnvironment() hook are untouched):
+
+        development   .env is parsed on every boot, exactly as Laravel does.
+                      No cache is read or written.
+        debug,        tmp/env_cache.php is loaded when its mtime is NEWER
+        production    than .env's (two stats - the OPcache revalidate
+                      model). Otherwise .env is parsed and the cache
+                      rewritten. A tmp/ that cannot be written means every
+                      boot parses: correct, only slower.
+
+    The cache holds the parser's output, not resolved values: ${OTHER}
+    references still resolve against the live environment on every boot,
+    and a real environment variable still beats the file. Editing .env takes
+    effect on the next boot with nothing to run.
 
 ENV FILE PREPARATION (.env.dist -> .env)
     .env is LOCAL configuration and is never distributed. .env.dist at the

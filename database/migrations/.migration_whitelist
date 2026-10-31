@@ -786,6 +786,11 @@
             "created_at": "2026-10-22T08:31:10+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_portal_columns_to_sites"
+        },
+        "2026_10_31_005555_drop_timezone_auto_from_login_users.php": {
+            "created_at": "2026-10-31T00:55:55+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe drop_timezone_auto_from_login_users"
         }
     }
 }

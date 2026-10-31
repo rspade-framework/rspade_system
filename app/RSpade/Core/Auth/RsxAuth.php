@@ -97,9 +97,10 @@ class RsxAuth
      * clock cannot enumerate accounts. A soft-deleted identity takes that same path.
      *
      * THROTTLED BEFORE ANYTHING ELSE. The first statement is
-     * Login_Throttle::require_not_throttled(), which THROWS Auth_Throttled_Exception when the
-     * client IP has spent its failure budget (rsx.sessions.login_throttle). It runs before the
-     * lookup so a locked-out address cannot even probe which addresses exist, and it throws
+     * Login_Throttle::require_not_throttled($email), which THROWS Auth_Throttled_Exception when
+     * the client address or the account has too many recent failures
+     * (rsx.sessions.login_throttle); every failure recorded below counts toward both. It runs before
+     * the lookup so a throttled caller cannot even probe which addresses exist, and it throws
      * rather than returning null because "we did not check" is not the same answer as "those
      * credentials are wrong" - a null there would report an invalid password to a user whose
      * password may be perfectly correct.
@@ -113,7 +114,7 @@ class RsxAuth
      * @param array $credentials Requires 'email' and 'password'
      * @param bool $record Whether to record the outcome to Login_History (default true)
      * @return Login_User_Model|null The identity the credentials prove, or null
-     * @throws Auth_Throttled_Exception when this client IP is locked out
+     * @throws Auth_Throttled_Exception when this client or account is over the sign-in rate limit
      * @throws Auth_Password_Reset_Required_Exception when the credentials are correct and the
      *         identity must reset its password first
      */
@@ -121,7 +122,7 @@ class RsxAuth
     {
         // Before the lookup, before the classification, before anything a caller could learn
         // something from.
-        Login_Throttle::require_not_throttled();
+        Login_Throttle::require_not_throttled(is_string($credentials['email'] ?? null) ? $credentials['email'] : null);
 
         $email = $credentials['email'] ?? null;
         $password = $credentials['password'] ?? null;

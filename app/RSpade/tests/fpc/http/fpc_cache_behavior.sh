@@ -72,6 +72,23 @@ fi
 echo "[TEST] 2. OK - Second request is HIT" >&2
 
 # ---------------------------------------------------------------------------
+# Test 2b: A HIT replays the policy issued with the cached body
+# ---------------------------------------------------------------------------
+echo "[TEST] 2b. HIT carries the MISS response's Content-Security-Policy..." >&2
+csp_url="/ssr-test?_csp_replay_test=$$"
+miss_csp=$(get_header_value "$csp_url" "Content-Security-Policy")
+hit_csp=$(get_header_value "$csp_url" "Content-Security-Policy")
+if [ -z "$miss_csp" ]; then
+    echo "FAIL: $TEST_NAME - the MISS response carried no Content-Security-Policy"
+    exit 1
+fi
+if [ "$hit_csp" != "$miss_csp" ]; then
+    echo "FAIL: $TEST_NAME - HIT policy differs from the MISS policy: '$hit_csp' vs '$miss_csp'"
+    exit 1
+fi
+echo "[TEST] 2b. OK - HIT replays the cached policy verbatim" >&2
+
+# ---------------------------------------------------------------------------
 # Test 3: ETag present on cached response
 # ---------------------------------------------------------------------------
 echo "[TEST] 3. ETag header present..." >&2

@@ -186,10 +186,10 @@ probe_account_seed() {
         $user->deleted_at = null;
         $user->save();
 
-        // is_developer is set in the database and nowhere else (rsx:man session). The fixed
-        // timezone keeps the first page from adopting the browser's zone and reloading.
+        // is_developer is set in the database and nowhere else (rsx:man session). An explicit
+        // timezone means the first page needs no browser zone, so no first-visit interstitial.
         DB::table('login_users')->where('id', $login->id)
-            ->update(['is_developer' => 1, 'timezone' => 'UTC', 'timezone_auto' => 0]);
+            ->update(['is_developer' => 1, 'timezone' => 'UTC']);
 
         echo "PROBE_ACCOUNT_SEEDED\n";
 PHP

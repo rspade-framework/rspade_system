@@ -40,7 +40,9 @@ require_once __DIR__ . '/../../helpers.php';
  * is an OPAQUE VALUE (add_value() / value()): a string the caller encoded, with an absolute
  * expiry, for short-lived state that belongs beside a counter - the second-factor engine keeps
  * an identity's issued sign-in code here, next to the failure budget that governs it. Only
- * value() reads one; a numeric read of it fails loud, exactly as before.
+ * value() reads one; a numeric read of it fails loud, exactly as before. The third is an
+ * EVENT LOG (record_event() / event_times()): a sorted set of timestamps for a sliding-window
+ * rate limit - Login_Throttle keeps its attempt history here.
  *
  * MAINTENANCE MODE. Redis is deliberately stopped inside the maintenance window, so every
  * entry point here returns 0 / null / no-ops without touching it - exactly as RsxCache does.
@@ -362,6 +364,85 @@ class Rsx_Counter
         }
 
         $redis->del(self::_make_key($key));
+    }
+
+    /**
+     * The times of the events recorded under $key within the last $window_seconds, oldest
+     * first, in seconds (float).
+     *
+     * An EVENT LOG is the third kind of entry here: a redis sorted set of timestamps, for a
+     * caller that has to know WHEN things happened inside a window rather than how many fit
+     * in a fixed one (a sliding-window rate limit). Events older than the window are pruned
+     * on read, so a log never holds more than one window of history.
+     *
+     * An unavailable store (maintenance mode) answers no events, so a limit built on this
+     * fails OPEN, like every counter here.
+     *
+     * @param string $key Event log key
+     * @param int $window_seconds How far back to look (must be > 0)
+     * @return float[]
+     */
+    public static function event_times(string $key, int $window_seconds): array
+    {
+        if ($window_seconds <= 0) {
+            throw new InvalidArgumentException(
+                "Rsx_Counter::event_times() requires a positive window_seconds for key '{$key}', got {$window_seconds}"
+            );
+        }
+
+        $redis = self::_init();
+
+        if ($redis === null) {
+            return [];
+        }
+
+        $full_key = self::_make_key($key);
+        $since = microtime(true) - $window_seconds;
+
+        $redis->zRemRangeByScore($full_key, '-inf', '(' . $since);
+
+        $scores = $redis->zRangeByScore($full_key, (string) $since, '+inf', ['withscores' => true]);
+
+        if ($scores === false) {
+            throw new RuntimeException("Rsx_Counter::event_times() failed for key '{$key}' - the key is not an event log");
+        }
+
+        $times = array_map('floatval', array_values($scores));
+        sort($times);
+
+        return $times;
+    }
+
+    /**
+     * Record one event, now, in the event log under $key.
+     *
+     * The log expires $retain_seconds after its LAST event, so an idle log cleans itself up;
+     * event_times() prunes anything older than the window it is asked about.
+     *
+     * @param string $key Event log key
+     * @param int $retain_seconds How long the log outlives its newest event (must be > 0)
+     * @return void
+     */
+    public static function record_event(string $key, int $retain_seconds): void
+    {
+        if ($retain_seconds <= 0) {
+            throw new InvalidArgumentException(
+                "Rsx_Counter::record_event() requires a positive retain_seconds for key '{$key}', got {$retain_seconds}"
+            );
+        }
+
+        $redis = self::_init();
+
+        if ($redis === null) {
+            return;
+        }
+
+        $full_key = self::_make_key($key);
+        $now = microtime(true);
+
+        // The member only has to be unique: two events in the same microtime are two events.
+        $redis->zAdd($full_key, $now, sprintf('%.6f:%s', $now, bin2hex(random_bytes(4))));
+        $redis->expire($full_key, $retain_seconds);
     }
 
     /**

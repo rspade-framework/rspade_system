@@ -13,7 +13,7 @@ whose `storage_root()` returns `Rsx_Project_Paths::files_root()` - the project s
 unless a process redirected it. The test runner redirects it to `tmp/test-storage` for the whole
 run (mirroring the DB swap) with `Rsx_Project_Paths::_override(['files' => ...])`, and forwards
 that to the migrate-provisioning subprocess as the internal flag `--_rsx-files-root`, so seed
-migrations that write blobs (e.g. the template app's `import_sample_documents`) also stay inside
+migrations that write blobs (an application's `create_from_disk()` from a migration) also stay inside
 the isolated root.
 
 ## Source under test

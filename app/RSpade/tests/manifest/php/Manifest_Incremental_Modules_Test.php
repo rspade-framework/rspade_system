@@ -233,6 +233,91 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
         }
     }
 
+    /** The `id` a stylesheet record carries in $manifest, or null. */
+    private static function __scss_id(array $manifest, string $file_name): ?string
+    {
+        return $manifest['data']['files'][static::$tree . '/' . $file_name]['id'] ?? null;
+    }
+
+    /**
+     * A stylesheet's `id` names the component it styles, and that depends on ANOTHER file:
+     * the component's template. Adding the template after the stylesheet was indexed, and
+     * removing it again, must leave each incremental build's stylesheet record exactly what
+     * a cold build of the same tree gives it - the id appears with the component and goes
+     * with it, whatever order the files were indexed in.
+     */
+    public static function test_a_stylesheet_id_follows_its_component_across_builds()
+    {
+        static::__make_tree();
+
+        try {
+            $absolute = base_path(static::$tree);
+            $template = $absolute . '/fixture_inc_panel.jqhtml';
+            $template_source = file_get_contents($template);
+
+            // 1. The stylesheet alone: nothing declares Fixture_Inc_Panel yet.
+            unlink($template);
+            clearstatcache();
+            $first = static::__build(static::$incremental_build_root);
+            static::__assert_null(static::__scss_id($first, 'fixture_inc_panel.scss'), 'no component yet, so no id');
+
+            // 2. The template arrives; the stylesheet itself is unchanged.
+            file_put_contents($template, $template_source);
+            clearstatcache();
+            $incremental = static::__build(static::$incremental_build_root);
+            $cold = static::__build(static::$cold_build_root);
+            static::__assert_equals('Fixture_Inc_Panel', static::__scss_id($incremental, 'fixture_inc_panel.scss'), 'the id appears with the component, on a warm build');
+            static::__assert_equals('Fixture_Inc_Panel', static::__scss_id($cold, 'fixture_inc_panel.scss'), 'and on a cold one');
+            static::__assert_file_records_match($incremental, $cold);
+
+            // 3. The template goes again.
+            unlink($template);
+            clearstatcache();
+            $incremental = static::__build(static::$incremental_build_root);
+            rmdir_recursive(static::$cold_build_root);
+            ensure_directory(static::$cold_build_root);
+            $cold = static::__build(static::$cold_build_root);
+            static::__assert_null(static::__scss_id($incremental, 'fixture_inc_panel.scss'), 'the id goes with the component');
+            static::__assert_file_records_match($incremental, $cold);
+        } finally {
+            static::__remove_tree();
+        }
+    }
+
+    /**
+     * Two stylesheets wrapping one component: the PRIMARY one - named like the component's
+     * file - keeps the id, even though the other sorts and is scanned first.
+     */
+    public static function test_the_primary_stylesheet_keeps_the_id_when_two_wrap_one_component()
+    {
+        static::__make_tree();
+
+        try {
+            file_put_contents(
+                base_path(static::$tree) . '/aaa_fixture_inc_panel_extra.scss',
+                ".Fixture_Inc_Panel {
+    &__footer {
+        color: #666;
+    }
+}
+"
+            );
+            clearstatcache();
+
+            $warm_first = static::__build(static::$incremental_build_root);
+            $warm = static::__build(static::$incremental_build_root);
+            $cold = static::__build(static::$cold_build_root);
+
+            foreach (['first build' => $warm_first, 'rebuild' => $warm, 'cold build' => $cold] as $label => $manifest) {
+                static::__assert_equals('Fixture_Inc_Panel', static::__scss_id($manifest, 'fixture_inc_panel.scss'), "the primary stylesheet has the id ({$label})");
+                static::__assert_null(static::__scss_id($manifest, 'aaa_fixture_inc_panel_extra.scss'), "the supplemental one does not ({$label})");
+            }
+            static::__assert_file_records_match($warm, $cold);
+        } finally {
+            static::__remove_tree();
+        }
+    }
+
     /**
      * Every derived section, field by field.
      */

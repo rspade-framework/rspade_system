@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Session\Session;
@@ -57,6 +58,10 @@ class Sso_Controller_Test extends Rsx_Test_Abstract
 
     public static function setup()
     {
+        // The endpoints under test sit behind a password confirmation, which is not this
+        // class's subject (tests/password_confirmation).
+        Rsx_Password_Confirmation::$force_confirmed_for_tests = true;
+
         parent::setup();
 
         self::__override('rsx.sso.custom', [
@@ -74,6 +79,7 @@ class Sso_Controller_Test extends Rsx_Test_Abstract
 
     public static function teardown()
     {
+        Rsx_Password_Confirmation::$force_confirmed_for_tests = null;
         foreach (self::$config_backup as $key => $value) {
             config()->set($key, $value);
         }

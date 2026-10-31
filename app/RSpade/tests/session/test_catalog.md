@@ -442,29 +442,36 @@ record: false, so nothing outside the per-test transaction is written.
 | sess-pwv-06 | portal: an unknown address pays exactly one dummy verification | php | portal request, fresh email | null; counter +1 | implemented |
 | sess-pwv-07 | portal: a known address pays its own hash, not the dummy | php | real portal user, wrong password | null; counter +0 | implemented |
 
-## Login_Throttle_Test (php, default isolation) - brute-force throttle
+## Login_Throttle_Test (php, default isolation) - the sign-in rate limit
 
-The framework's own rate limit on the authentication surface: FAILURES counted per client
-IP, a lockout when the budget is spent, and a THROWN refusal. State is two redis keys per
-address, outside the per-test transaction - every test invents its own synthetic address,
-passes it explicitly, and clears it in teardown; the throttle config is saved and restored
-around the class. Time is never waited on: the lockout stores its expiry instant, so
-"it expires" is asserted as a countdown bounded by the configured minutes.
+The framework's own rate limit on the authentication surface: every attempt CHECKED, FAILURES
+counted per client address (IPv6 by /64) and per account, `attempts` failures per `seconds`, and a
+THROWN refusal (HTTP 429 when uncaught). State is a redis failure log per bucket, outside the
+per-test transaction - every test invents its own synthetic address and account, passes them
+explicitly, and clears them in teardown; the throttle config is saved and restored around the
+class. Time is never waited on: the trailing-span rule is driven live, the sustained-average rule
+on the pure decision `retry_after_for()` over synthetic times.
 
 | ID | Purpose | Type | Input | Expected | Status |
 |----|---------|------|-------|----------|--------|
-| sess-thr-01 | the first attempts-1 failures cost nothing | php | attempts 3, two failures | retry_after_seconds 0, require_not_throttled() returns | implemented |
-| sess-thr-02 | the budgeted failure locks the address | php | attempts 3, three failures | retry_after_seconds > 0, require_not_throttled() throws Auth_Throttled_Exception | implemented |
-| sess-thr-03 | the exception carries the exact message and the remaining time | php | attempts 1, one failure | message "You're doing that too fast", retry_after_seconds > 0 and <= lockout | implemented |
-| sess-thr-04 | the lockout is a countdown inside the configured minutes | php | lockout_minutes 1 | 0 < retry_after_seconds <= 60 | implemented |
-| sess-thr-05 | reset() releases the address AND its counter | php | lock, reset, one more failure | free after reset; the next failure counts from zero | implemented |
-| sess-thr-06 | the lockout is per IP - never a denial-of-service tool | php | two addresses, one locked | attacker locked, bystander free | implemented |
-| sess-thr-07 | disabled counts nothing and enforces nothing | php | enabled false, three failures, then re-enable | free throughout; re-enabling reveals no hidden lockout | implemented |
-| sess-thr-08 | the switch releases an existing lockout | php | lock, then disable | retry_after_seconds 0 | implemented |
-| sess-thr-09 | a caller with no client IP is never throttled | php | CLI, attempts 1, two failures | nothing counted, nothing enforced | implemented |
-| sess-thr-10 | verify_credentials() therefore still works in CLI | php | CLI, failure recorded, then verify_credentials() | answers the credential question rather than refusing | implemented |
-| sess-thr-11 | Login_History::record_failure() reaches the throttle | php | record_failure() in CLI | the call is made and stays harmless (no address) | implemented |
-| sess-thr-12 | verify_credentials() THROWS for a locked-out web client, correct password included | http | 10 wrong passwords then the correct one from one X-Forwarded-For address | the 11th answers "You're doing that too fast"; another address is unaffected | deferred (no CLI observability: Session::get_client_ip() is null in CLI by design, so the ambient-IP throw cannot be driven from php; verified live over HTTP against /login and /_portal/login on 2026-08-30) |
+| sess-thr-01 | `attempts` failures are allowed; the next attempt is refused, with a wait inside the span | php | attempts 3, seconds 60 | 4th refused, 0 < retry_after_seconds <= 60 | implemented |
+| sess-thr-02 | the refusal message is fixed | php | attempts 1, one failure | "You're doing that too fast" | implemented |
+| sess-thr-03 | one account is limited across addresses | php | attempts 2, one account, three addresses | third refused; another account free | implemented |
+| sess-thr-04 | one address is limited across accounts | php | attempts 2, one address, three accounts | third refused | implemented |
+| sess-thr-05 | IPv6 counts by /64 | php | three hosts in one /64, one in another | third in the /64 refused; the other /64 free | implemented |
+| sess-thr-06 | address_bucket() normalizes IPv4, IPv4-mapped and IPv6 spellings | php | literals | equal buckets | implemented |
+| sess-thr-07 | a refused attempt is not a failure | php | one failure, five refusals | the wait did not grow | implemented |
+| sess-thr-08 | the trailing-span rule | php | synthetic times | 7 of 8 free; 8 of 8 wait for the oldest | implemented |
+| sess-thr-09 | the sustained-average rule refuses bursts spaced past the span | php | 8 at once, 61 s gap, 7 more | refused; the same count one every 8 s is free | implemented |
+| sess-thr-10 | the average applies only once the limit's worth of failures exists | php | 3 old failures | free | implemented |
+| sess-thr-11 | a successful attempt costs nothing | php | ten checks, no failures | nothing counted | implemented |
+| sess-thr-12 | disabled counts nothing and enforces nothing | php | enabled false | free throughout | implemented |
+| sess-thr-13 | a caller with no client address is never throttled | php | CLI, two failures | nothing counted | implemented |
+| sess-thr-14 | verify_credentials() therefore still works in CLI | php | CLI, two wrong passwords | answers the credential question rather than refusing | implemented |
+| sess-thr-15 | a zero limit or span fails loud | php | attempts 0; seconds 0 | throws | implemented |
+| sess-thr-16 | the exception is an HTTP 429 with Retry-After | php | new Auth_Throttled_Exception(17) | status 429, Retry-After 17 | implemented |
+| sess-thr-17 | an uncaught throttle answers Ajax `too_many_requests` | php | Ajax::is_coded_failure() | coded, not a fault | implemented |
+| sess-thr-18 | verify_credentials() THROWS for a throttled web client, correct password included | http | the limit's failures then the correct password from one address | "You're doing that too fast"; another address unaffected | deferred (no CLI observability: Session::get_client_ip() is null in CLI by design; the challenge path is scripted in `two_factor_login_flow.sh`) |
 
 Session::set_temporary_site_id() - a DECLARED tenant that writes nothing, via
 `Session_Temporary_Site_Test`.

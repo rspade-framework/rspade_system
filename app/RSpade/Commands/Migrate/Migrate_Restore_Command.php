@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Commands\Migrate;
 
+use App\RSpade\Core\Locks\RsxLocks;
+
 
 /**
  * Restore the database to the pre-migration snapshot after an INTERRUPTED migrate.
@@ -34,10 +36,30 @@ class Migrate_Restore_Command extends Maint_Migrate
 
     public function handle()
     {
+        // The same lock a snapshot-protected migrate holds: a restore must never run under a
+        // live migrate, or a migrate under a restore.
+        $run_lock = $this->acquire_snapshot_run_lock();
+
+        if ($run_lock === null) {
+            return 1;
+        }
+
+        try {
+            return $this->restore_locked();
+        } finally {
+            RsxLocks::release_lock($run_lock);
+        }
+    }
+
+    /**
+     * The restore, under the snapshot run lock.
+     */
+    protected function restore_locked(): int
+    {
         // No flag = no migration in progress. The flag is created by create_snapshot()
         // and removed by every completed migrate (commit and rollback paths alike), so
         // its absence means there is no snapshot state to restore to.
-        if (!file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
+        if (!file_exists($this->migrating_flag_file())) {
             $this->info('No migration is in progress - nothing to restore.');
             return 0;
         }
@@ -60,7 +82,7 @@ class Migrate_Restore_Command extends Maint_Migrate
             return 1;
         }
 
-        $flag = json_decode((string) file_get_contents(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file()), true) ?: [];
+        $flag = json_decode((string) file_get_contents($this->migrating_flag_file()), true) ?: [];
         $this->info(' Interrupted migration found'
             . (isset($flag['started_at']) ? ' (started ' . $flag['started_at'] . ')' : '')
             . ' - restoring pre-migration snapshot...');

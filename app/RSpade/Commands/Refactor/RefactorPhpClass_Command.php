@@ -24,6 +24,15 @@ class RefactorPhpClass_Command extends Command
         $new_class = $this->argument('new_class');
         $dry_run = $this->option('dry-run');
 
+        // Both names are written verbatim into PHP source and used to build a file name, so
+        // anything but a PHP identifier is refused before the manifest is consulted.
+        foreach (['old_class' => $old_class, 'new_class' => $new_class] as $label => $name) {
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name)) {
+                $this->error("[ERROR] {$label} must be a PHP class name (letters, digits, underscores; not starting with a digit): '{$name}'");
+                return 1;
+            }
+        }
+
         // Initialize manifest
         Manifest::init();
 

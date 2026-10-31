@@ -33,3 +33,6 @@ Type: php. Last updated: 2026-10-11.
 | helpers-h2t-02 | `html_to_text()` drops tags and decodes entities | markup, an entity-encoded JSON string, `<p><br></p>`, null | the text; the decoded JSON; ''; '' | implemented |
 | helpers-h2t-03 | `html_to_text()` parses inertly - an `<img>` in the input is never fetched | markup with an `<img>` at a watched URL | no request for it | implemented |
 | helpers-h2t-04 | PHP `nl2brhtml()` escapes and breaks lines like the JS twin; null gives '' (`php/Nl2brhtml_Test.php`) | the same LF and CRLF strings; null; an `<img>` | identical output; ''; no `<img` | implemented |
+| HELP-CMD-01 | `command_exists()` finds a binary on the PATH and refuses an unknown or empty name | php | `bash`, `php`, an unknown name, `''` | true, true, false, false | implemented | 2026-10-29 |
+| HELP-CMD-02 | a name with a directory separator is checked as an executable file | php | `PHP_BINARY`, `/etc/hostname`, `/tmp` | true, false, false | implemented | 2026-10-29 |
+| HELP-CMD-03 | shell syntax in the name runs nothing | php | `bash; touch <marker>` and five other shapes | false each; the marker never exists | implemented | 2026-10-29 |

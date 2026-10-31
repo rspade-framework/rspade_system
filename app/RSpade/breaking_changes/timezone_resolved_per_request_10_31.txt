@@ -1,0 +1,103 @@
+THE DISPLAY TIMEZONE IS RESOLVED PER REQUEST FROM A BROWSER COOKIE; NULL IS AUTOMATIC
+Date: 2026-10-31
+
+IF YOU DO NOTHING: code of yours that reads login_users.timezone_auto (or rsxapp.user_timezone_auto) fails - the column is dropped by the framework migration 2026_10_31_005555 - and a Rsx_Time::set_user_timezone($zone, $auto) call or a set_timezone({timezone, timezone_auto}) post now ignores the flag, so a settings screen that turns "automatic" off by saving the browser's zone with timezone_auto=false instead pins that zone, and its "Automatically set timezone" switch saves nothing.
+
+SUMMARY
+    Category 2: a public API contract change in /system/, with a template screen to port.
+
+    A staff user's display timezone used to be ONE stored value plus a flag
+    that let the browser overwrite it at boot - so two browsers in two zones
+    fought over it, and a headless sign-in (rsx:debug) could set somebody's
+    account to UTC. Now nothing ever writes a browser's zone to the account:
+
+        login_users.timezone  an explicit choice, or NULL for AUTOMATIC
+        rsx_tz cookie         the browser's own zone, kept current by the
+                              framework on every page
+
+    Each request resolves its zone in order: the user's explicit zone, the
+    cookie, the site's, the server's, UTC (rsx:man time, TIMEZONE
+    INITIALIZATION).
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - The migration: every timezone_auto = 1 row gets timezone = NULL (as does
+      an empty string), then the column is dropped. Run php artisan migrate.
+    - Rsx_Time::get_user_timezone() resolving per request, plus
+      explicit_user_timezone(), browser_timezone(), normalize_timezone(),
+      set_user_timezone(?string) and default_user_timezone().
+    - Core/Js/Rsx_Timezone_Cookie.js (replaces Rsx_Timezone_Auto.js): writes or
+      clears the rsx_tz cookie at core init; an SPA page watches for a zone change
+      and makes the next navigation a full page load.
+    - The first-visit interstitial: the page dispatcher answers a browser's first
+      HTML navigation that has no cookie with a page that writes it and reloads
+      (Rsx_Time::ensure_timezone()). One round trip, once per browser.
+    - rsxapp.user_timezone_preference (the explicit zone or null), replacing
+      rsxapp.user_timezone_auto. rsxapp.user_timezone is still the zone the page
+      was rendered in.
+    - Rsx_Timezone_Controller: get_settings answers {timezone, resolved_timezone}
+      (timezone null = automatic); set_timezone takes {timezone}, null or '' for
+      automatic.
+    - rsx.datetime.default_user_timezone (RSX_DEFAULT_USER_TIMEZONE): what a new
+      login identity starts with - automatic (the default), site, server or an
+      identifier. A Login_User_Model override that extends the framework's base
+      inherits it; there is nothing to state.
+    - External API responses: every DATETIME/TIMESTAMP value of a serialized
+      model now carries <field>__localized and <field>__localized_tz in the key
+      holder's zone. Rsx_Time::encode_for_output() is the encoder for a hand-built
+      payload.
+    - rsx:debug --timezone=<IANA> renders a page as a browser in that zone.
+
+    TWO BEHAVIOUR CHANGES nothing announces:
+    - A PORTAL client now sees times in their own browser's zone, where they
+      always saw the site's.
+    - An automatic user's emails and task output render in the SITE zone: a
+      task or a command has no browser, and nothing records a "last seen" zone.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    1. Your own code that reads or writes timezone_auto, user_timezone_auto or
+       the two-argument set_user_timezone().
+    2. Your copy of the template's Preferences screen, which still has the
+       "Automatically set timezone" switch and posts timezone_auto.
+    3. Any external API endpoint of yours that builds a timestamp into its
+       response by hand (it will carry UTC alone beside model payloads that are
+       localized).
+
+THE REFERENCE IMPLEMENTATION
+    reference_app/app/frontend/settings/user_settings/settings_user_settings_action.js
+    and .jqhtml: ONE Select_Input named timezone, whose first option is
+        {value: '', label: 'Automatic - follow my browser (' + Rsx_Timezone_Cookie.browser_value() + ')'}
+    followed by Rsx_Timezone_Controller.timezone_options(); the form data is
+    {timezone: settings.timezone ?? ''}; on a save answering {changed: true} it
+    calls Spa.disable() so the next navigation renders in the new zone. The
+    Checkbox_Input, its interlock and the hand-written forced-navigation click
+    handler are gone.
+
+    reference_app/app/api/v1/tasks_api_controller.php and clients_api_controller.php
+    (__attachment_payload()): a hand-built timestamp is written as
+        ...Rsx_Time::encode_for_output('uploaded_at', $attachment->created_at),
+
+PORTING IT
+    1. Find every use:
+           grep -rn "timezone_auto\|user_timezone_auto\|Rsx_Timezone_Auto" rsx
+       Replace a read of the flag with a NULL test of login_users.timezone
+       (Rsx_Time::explicit_user_timezone() === null means automatic). Replace
+       set_user_timezone($zone, false) with set_user_timezone($zone), and a
+       "turn automatic on" with set_user_timezone(null).
+    2. Port the Preferences screen as above.
+    3. In each external API endpoint that returns an array it built, write every
+       DATETIME value with ...Rsx_Time::encode_for_output('<field>', $value).
+       Never a DATE.
+    4. A page that prints a time on the server for a visitor who is signed out
+       now has the browser's zone on every request after the first; nothing to
+       change, but expect it.
+
+VERIFICATION
+    php artisan rsx:debug /frontend/settings/user_settings --user=<id> --timezone=Europe/Berlin
+        - the first timezone option reads "Automatic - follow my browser (Europe/Berlin)"
+    php artisan rsx:debug /dashboard --user=<id> --timezone=America/Chicago \
+        --eval="return Rsx_Time.get_user_timezone()"
+        - answers America/Chicago for an automatic user, and the account's
+          login_users.timezone is still NULL afterwards
+    php artisan rsx:test passes.

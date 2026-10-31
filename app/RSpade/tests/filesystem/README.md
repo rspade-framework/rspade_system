@@ -13,7 +13,7 @@ artifacts read by concurrent requests.
 
 - `app/RSpade/helpers.php` - `file_put_contents_safe()`, `_paths_on_same_filesystem()`,
   `rmdir_recursive()`, `ensure_directory()`
-- `app/RSpade/Commands/Rsx/Clean_Command.php` - sweeps orphaned `.tmp_*` staging dirs
+- `app/RSpade/Commands/Rsx/Clean_Command.php` - sweeps orphaned `.tmp_*` staging dirs; `clear_directory()` empties build/ and tmp/ while other processes may be writing into them
 
 ## Man page(s)
 

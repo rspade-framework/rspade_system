@@ -31,7 +31,7 @@ use Illuminate\Console\Command;
 class Mail_Queue_Command extends Command
 {
     protected $signature = 'rsx:mail:queue
-                            {--status= : pending|sending|sent|failed|blocked|suppressed}
+                            {--status= : pending|sending|sent|failed|blocked|suppressed|test}
                             {--recipient= : Substring of the recipient address (matches the redirected and the original)}
                             {--tag= : The tag the email class gave the send (Rsx_Email_Abstract::tag()) - exact match}
                             {--limit=25 : How many rows to list}
@@ -47,6 +47,7 @@ class Mail_Queue_Command extends Command
         'failed' => Email_Queue_Model::STATUS_FAILED,
         'blocked' => Email_Queue_Model::STATUS_BLOCKED,
         'suppressed' => Email_Queue_Model::STATUS_SUPPRESSED,
+        'test' => Email_Queue_Model::STATUS_TEST,
     ];
 
     public function handle(): int

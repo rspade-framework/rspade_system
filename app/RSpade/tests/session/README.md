@@ -41,7 +41,7 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 - `app/RSpade/Core/Auth/Password_Verifier.php` - the password comparison both front doors make, with an
   equal-cost dummy verification for an unknown address (`Password_Verifier_Test`)
 - `app/RSpade/Core/Auth/Login_Throttle.php`, `Auth_Throttled_Exception.php` - the
-  per-IP brute-force throttle (config `rsx.sessions.login_throttle`)
+  sign-in rate limit, per address and per account (config `rsx.sessions.login_throttle`)
 - `app/RSpade/Core/Models/Login_User_Model.php`, `User_Model.php`, `Site_Model.php`
 - Cleanup: `app/RSpade/Core/Session/Session_Cleanup_Service.php` (scheduled task)
 - `app/RSpade/Core/Session/Rsx_Session_Controller.php` (the SPA's page-view report)
@@ -68,9 +68,10 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   scope key and separation from the staff rows. (php)
 - Password reset required: the staff refusal (thrown last, recorded as a row even under
   record: false) and the flag's clearing on both identity models. (php)
-- Login throttle: the failure budget and the lockout it triggers, per-IP isolation,
-  the enable switch, reset(), the exact refusal message and its retry_after_seconds,
-  and the ruling that a caller with NO client IP is never throttled. The ambient-IP
+- Login throttle: failures per `seconds` and the refusal they trigger, the address and
+  account buckets, IPv6 by /64, the sustained-average rule, the enable switch, the exact
+  refusal message, the 429 it becomes uncaught, and the ruling that a caller with NO client
+  IP is never throttled. The ambient-IP
   throw out of `RsxAuth::verify_credentials()` cannot be driven from CLI (there is no client IP
   there, by design), so that half is verified live over HTTP. (php + http)
 - Credential attempts: the outcomes RsxAuth::verify_credentials() classifies and records

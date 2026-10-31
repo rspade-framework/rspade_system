@@ -232,10 +232,10 @@ the `check_migrations()` entry point.
 | MMR-EXCEPTION-BARE | a marker with NO rationale is itself the violation | php | fixture with a bare marker | 1 violation saying "no rationale" | implemented | 2026-08-30 |
 | MMR-TREE | both migration directories are clean, through the real `check_migrations()` entry point | php | the tree | 0 violations | implemented | 2026-08-30 |
 
-The one sanctioned exception in the tree is
-`rsx/resource/migrations/2026_07_16_143237_import_sample_documents.php`: template seed
-data imported THROUGH the file-attachment pipeline (content-addressed dedup, blob
-storage, the extraction-index kick), which raw SQL cannot reproduce.
+The sanctioned exceptions in the tree are the two framework migrations that recompute
+file-type labels through the model's own label map (`add_file_type_label_to_file_attachments`,
+`widen_file_type_labels`); sample data is no longer seeded by migration at all (the template's
+`Sample_Data_Service`).
 
 URL-HARDCODE-01 (HardcodedInternalUrl_CodeQualityRule), via `Url_Hardcode_Rule_Test`.
 
@@ -471,6 +471,7 @@ framework model's own record.
 | PMF-LIN-03 | an abstract base is not required to declare portal_can_read(); the real framework model and its base pass | php | `abstract` metadata; Portal_Notification_Model records | 0 violations | implemented | 2026-09-25 |
 | META-INH-01 | `$metadata['extends'] === 'X'` (either operand order) is flagged in a rule file; a fast path followed by `*_is_subclass_of()` is not | php | fixture rule bodies under a `CodeQuality/Rules/` scratch dir | 1 / 1 / 0 / 0 | implemented (`Meta_Inherit_Extends_Comparison_Rule_Test`) | 2026-09-25 |
 | PARSE-BODY-01 | Php_Parser::method_body() finds a reserved-word or by-reference method, is case-insensitive, is not ended early by a brace in a string or comment, and returns null for an abstract or absent method | php | a nowdoc fixture class | bodies / null | implemented (`Php_Parser_Method_Body_Test`) | 2026-09-25 |
+| PARSE-STRUCT-01 | Php_Parser's structure validators are armed: executed code at file scope is reported (classless and class files); an anonymous class body is class scope (`return new class` clean, other `new class` one T_NEW); a file under `resource/` is not judged | php | fixtures under a scratch `rsx/` tree | violations / none | implemented (`Php_Parser_File_Structure_Test`) | 2026-10-28 |
 | CONV-LAYOUT-01a | a layout in a module of either realm is clean: rsx/app/(module)/ and rsx/portal/(module)/, any depth | php | staff and portal layout paths | 0 findings | implemented (`Layout_Location_Rule_Test`) | 2026-10-16 |
 | CONV-LAYOUT-01b | a layout directly in a realm root, or outside both realms, is a convention finding naming where it belongs; a view that is not a layout is never examined | php | rsx/app/x_layout, rsx/portal/x_layout, rsx/lib/.../x_layout, a non-layout view | 1 / 1 / 1 / 0 | implemented (`Layout_Location_Rule_Test`) | 2026-10-16 |
 | RULE-SELF-GUARD-01 | no rule's `check()` keeps a function-level static: a tree-wide rule declares `KIND_CROSS_FILE` + `depends_on()` and the driver calls it once per pass, so a self-guard only ever skips the rule in a second pass (`Rule_Self_Guard_Test`, a structural sweep, nothing whitelisted) | php | every file under `CodeQuality/Rules/`, `check()` body tokenized, comments dropped | no file listed | implemented | 2026-10-19 |

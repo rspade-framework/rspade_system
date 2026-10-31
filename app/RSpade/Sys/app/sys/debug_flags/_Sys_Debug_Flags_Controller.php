@@ -46,7 +46,6 @@ class _Sys_Debug_Flags_Controller extends _Sys_Endpoint_Controller_Abstract
         'include_benchmark' => 'CONSOLE_DEBUG_BENCHMARK',
         'include_location' => 'CONSOLE_DEBUG_LOCATION',
         'include_backtrace' => 'CONSOLE_DEBUG_BACKTRACE',
-        'enable_get_trace' => 'ENABLE_GET_TRACE',
     ];
 
     /** The same, for rsx.development. */

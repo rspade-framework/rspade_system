@@ -492,6 +492,24 @@ if [ "$TARGET" = "prod" ]; then
 fi
 
 # -----------------------------------------------------------------------------
+# 6c. Security updates, BEFORE anything serves
+# -----------------------------------------------------------------------------
+# A PHP security release can grant a remote shell on any unpatched PHP, and an image is
+# rebuilt far less often than one is published. So the container installs the security
+# updates it may take - the Ubuntu security pocket and PHP patch releases - here, before
+# supervisor starts php-fpm: nothing serves on a PHP this check could have patched.
+#
+# One attempt, one retry a minute later, then the start continues whatever happened: a
+# mirror that cannot be reached never stops a container, and the scheduled program tries
+# again every 4 hours. RSX_AUTO_SECURITY_UPDATES=0 turns it off. The script's header has
+# the rest.
+#
+# Skipped when the script is absent: an older image under a newer entrypoint.
+if [ -f /usr/local/bin/rspade-security-update ]; then
+    bash /usr/local/bin/rspade-security-update startup
+fi
+
+# -----------------------------------------------------------------------------
 # 7. Start supervisor in the background
 # -----------------------------------------------------------------------------
 say "Starting services..."

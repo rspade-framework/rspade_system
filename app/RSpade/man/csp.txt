@@ -158,13 +158,14 @@ THE NONCE
     draw the line themselves.
 
     FULL PAGE CACHE INTERACTION. An #[FPC] page's HTML is cached by the FPC
-    proxy with its baked nonce inside it. On a cache HIT the proxy replays
-    status, content type, ETag and body only - it does NOT replay the CSP
-    header - so a cached public page is served with no policy at all, and the
-    stale nonce in its body is inert. FPC pages are therefore outside the
-    policy's coverage today; a public page whose protection matters should not
-    be #[FPC], or the proxy must learn to cache and replay the header
-    alongside the body.
+    proxy with its baked nonce inside it, and the policy header issued with
+    that body (enforcing, report-only, or both) is cached in the same entry
+    and replayed verbatim on every HIT - so a cached page and its policy
+    always name the same nonce. Every viewer of one entry shares that nonce
+    for the entry's lifetime: weaker than a per-request nonce, and acceptable
+    only because a cacheable page is anonymous by construction. A policy
+    change reaches a cached page when its entry expires or is cleared
+    (rsx:fpc:clear); a build clears every entry.
 
 THE COLLECTOR
     POST /_csp-report, served by Csp_Report_Controller, gate #[Auth('public')]
@@ -387,9 +388,10 @@ TROUBLESHOOTING
         If it is an RSX error screen it does. Vendor and ignition error pages
         never reach the dispatcher and are out of scope.
 
-    A public #[FPC] page has no policy
-        Also correct today - the FPC proxy replays a cached body without the
-        header. See THE NONCE, Full page cache interaction.
+    A public #[FPC] page serves an old policy
+        A cache HIT replays the policy issued with the cached body. Clear
+        the page cache (rsx:fpc:clear) after changing the policy, or wait
+        for the entry to expire. See THE NONCE, Full page cache interaction.
 
     Realtime will not connect
         connect-src covers wss://{APP_URL host} always and ws://{host} outside

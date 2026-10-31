@@ -495,13 +495,14 @@ kinds, both abstract base classes (NOT an interface).
 ### Built-in Per-File Modules (`config('rsx.manifest_modules')`)
 
 - `Blade_ManifestModule` (`Core/Manifest/Modules/`) - Blade directive parsing
-- `Scss_ManifestModule` (`Integrations/Scss/`) - SCSS metadata
+- `Scss_ManifestModule` (`Integrations/Scss/`) - SCSS metadata: what the file alone determines (`scss_wrapper_class`, `scss_variables_only`, ...). A per-file module never reads OTHER files' records - the scan order and the previous build would decide its answer.
 
 ### Built-in Support Modules (`config('rsx.manifest_support')`, run in order)
 
 - `Route_ManifestSupport`, `Portal_Route_ManifestSupport`, `Portal_Spa_ManifestSupport`
 - `Model_ManifestSupport` (`Core/Manifest/Modules/`) - the model registry (class, file, declared table; no database read)
 - `Jqhtml_ManifestSupport` (`Integrations/Jqhtml/`) - jqhtml component registration
+- `Scss_Id_ManifestSupport` (`Integrations/Scss/`) - a wrapped stylesheet's `id`: the wrapper class, when a jqhtml template, Blade view or Component JS class declares that name; when several stylesheets wrap one class, the one named like the declaring file wins, else the first by path
 - `Spa_ManifestSupport`, `Api_Endpoint_ManifestSupport`
 
 ### Creating a Per-File Module
@@ -568,7 +569,7 @@ over a few thousand in-memory records on the only occasion it runs, which is a c
 
 | Kind | Modules |
 |---|---|
-| **FULL** | `Route`, `Portal_Route`, `Spa`, `Portal_Spa`, `Api_Endpoint`, `Auth`, `Jqhtml`, `Externals`, `Bundle_Alias`, `Email`, `Model` |
+| **FULL** | `Route`, `Portal_Route`, `Spa`, `Portal_Spa`, `Api_Endpoint`, `Auth`, `Jqhtml`, `Scss_Id`, `Externals`, `Bundle_Alias`, `Email`, `Model` |
 | **DELTA** | `Task_Command` (reads source), and the three STUB GENERATORS `Controller_Stub` / `Model_Stub` / `Auth_Stub` (write generated files) |
 
 `Model` is full although it loads each model class to ask for its declared table: with the

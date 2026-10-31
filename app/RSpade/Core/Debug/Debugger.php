@@ -55,11 +55,6 @@ class Debugger
     protected static ?array $session_override = null;
 
     /**
-     * Flag to track if trace mode is enabled
-     */
-    protected static bool $trace_mode = false;
-
-    /**
      * Rotate all development logs
      *
      * Rotates:
@@ -555,15 +550,10 @@ class Debugger
      * Uses Session READERS only: an anonymous request creates no session here.
      *
      * The rsx:debug harness headers are applied again afterwards, so an explicit
-     * per-invocation --console-debug-* flag still beats a stored override; ?__trace=1
-     * owns the whole configuration and is left alone.
+     * per-invocation --console-debug-* flag still beats a stored override.
      */
     public static function apply_session_override(): void
     {
-        if (static::$trace_mode) {
-            return;
-        }
-
         $override = Console_Debug_Override::active();
 
         if ($override === static::$session_override) {
@@ -710,50 +700,6 @@ class Debugger
                $config['outputs']['web'] ||
                $config['outputs']['ajax'] ||
                $config['outputs']['laravel_log'];
-    }
-
-    /**
-     * Handle console debug trace mode
-     *
-     * When enabled via config and ?__trace=1 is in GET parameters, captures all
-     * console_debug messages and outputs them as plain text for curl/console viewing.
-     */
-    public static function _try_enable_trace_mode(): void
-    {
-        // Check if __trace=1 is in GET parameters
-        if (!isset($_GET['__trace']) || !config('rsx.console_debug.enable_get_trace')) {
-            return;
-        }
-
-        // Import Debugger class
-        $debugger = 'App\RSpade\Core\Debug\Debugger';
-
-        // Set trace mode in Debugger
-        self::$trace_mode = true;
-
-        // Set request start time for benchmarking
-        $debugger::set_request_start_time(defined('LARAVEL_START') ? LARAVEL_START : microtime(true));
-
-        // Force console_debug configuration for trace mode
-        config([
-            'rsx.console_debug.enabled' => true,
-            'rsx.console_debug.filter_mode' => 'all',
-            'rsx.console_debug.include_benchmark' => true,
-            'rsx.console_debug.outputs.cli' => false,
-            'rsx.console_debug.outputs.web' => true,
-            'rsx.console_debug.outputs.ajax' => true,
-            'rsx.console_debug.outputs.laravel_log' => false,
-        ]);
-
-        // Start output buffering to capture all output
-        // error_log('OB Level before ob_start: ' . ob_get_level());
-        ob_start();
-        // error_log('OB Level after ob_start: ' . ob_get_level());
-
-        // Register shutdown handler for trace output
-        register_shutdown_function([$debugger, 'dump_trace_output']);
-
-        console_debug('TRACE', 'Trace mode activated - capturing all console_debug messages');
     }
 
     /**
@@ -980,8 +926,8 @@ class Debugger
             $channel_with_prefixes = $benchmark_prefix . $location_prefix . "[{$channel}]";
             static::$console_messages[] = [$channel_with_prefixes, $prepared_values];
 
-            // Register shutdown function only once and only in non-production (skip in trace mode)
-            if (!static::$shutdown_registered && !app()->environment('production') && !static::$trace_mode) {
+            // Register shutdown function only once and only in non-production
+            if (!static::$shutdown_registered && !app()->environment('production')) {
                 register_shutdown_function([static::class, 'dump_console_debug_messages_to_html']);
                 static::$shutdown_registered = true;
             }
@@ -1055,7 +1001,6 @@ class Debugger
      * Outputs JavaScript that logs batched messages to the browser console.
      * Clears the message array after output.
      * In production mode, outputs nothing.
-     * In trace mode, skips output since trace mode has its own handler.
      * Also registers a shutdown function to output any remaining messages.
      *
      * @return void
@@ -1074,11 +1019,6 @@ class Debugger
 
         // Don't output if console HTML is disabled (e.g., for AJAX requests)
         if (static::$console_html_disabled) {
-            return;
-        }
-
-        // Don't output in trace mode (trace mode has its own output handler)
-        if (static::$trace_mode) {
             return;
         }
 
@@ -1127,13 +1067,12 @@ class Debugger
      *
      * This is useful for ensuring console messages are output even after fatal errors.
      * Only registers once and only in non-production mode.
-     * Skipped in trace mode since trace mode has its own output handler.
      *
      * @return void
      */
     public static function register_console_dump_shutdown(): void
     {
-        if (!static::$shutdown_registered && !app()->environment('production') && !static::$trace_mode) {
+        if (!static::$shutdown_registered && !app()->environment('production')) {
             register_shutdown_function([static::class, 'dump_console_debug_messages_to_html']);
             static::$shutdown_registered = true;
         }
@@ -1300,87 +1239,4 @@ class Debugger
         return ['status' => 'logged', 'count' => count($errors)];
     }
 
-    public static function is_trace_output_request()
-    {
-        return static::$trace_mode;
-    }
-
-    /**
-     * Dump trace output for console/curl viewing
-     *
-     * Called as a shutdown handler when trace mode is enabled.
-     * Outputs all console_debug messages as plain text with millisecond timing.
-     *
-     * @return void
-     */
-    public static function dump_trace_output(): void
-    {
-        console_debug('TRACE', 'Script execution complete');
-
-        // Debug to verify this is being called
-        error_log('DUMP_TRACE_OUTPUT CALLED');
-
-        // Clean all output buffers
-        while (ob_get_level() > 0) {
-            ob_end_clean();
-        }
-
-        // Set content type to plain text
-        if (!headers_sent()) {
-            header('Content-Type: text/plain; charset=UTF-8');
-        }
-
-        // Get request start time
-        $start_time = static::$request_start_time ?? (defined('LARAVEL_START') ? LARAVEL_START : $_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true));
-
-        // Output header
-        echo "====== REQUEST TRACE ======\n";
-        echo 'URL: ' . ($_SERVER['REQUEST_URI'] ?? 'unknown') . "\n";
-        echo 'Method: ' . ($_SERVER['REQUEST_METHOD'] ?? 'unknown') . "\n";
-        echo 'Time: ' . date('Y-m-d H:i:s') . "\n";
-        echo "===========================\n\n";
-
-        // Output each console_debug message
-        if (!empty(static::$console_messages)) {
-            foreach (static::$console_messages as $message) {
-                // Messages are [channel_with_prefixes, [arguments]]
-                $channel_line = $message[0];
-                $arguments = $message[1];
-
-                // Extract timing from channel line if present
-                $timing_pattern = '/^\[(\d{2}\.\d{4})\]/';
-                if (preg_match($timing_pattern, $channel_line, $matches)) {
-                    // Format seconds with 3 decimal places
-                    $seconds = (float)$matches[1];
-                    $formatted_seconds = number_format($seconds, 3, '.', '');
-                    $channel_line = preg_replace($timing_pattern, "[{$formatted_seconds}s]", $channel_line);
-                }
-
-                // Output the channel line
-                echo $channel_line;
-
-                // Output arguments
-                foreach ($arguments as $arg) {
-                    if (is_scalar($arg) || is_null($arg)) {
-                        $output = is_bool($arg) ? ($arg ? 'true' : 'false') :
-                                 (is_null($arg) ? 'null' : (string)$arg);
-                        echo ' ' . $output;
-                    } else {
-                        // Complex types - output as JSON on new lines
-                        $json = json_encode($arg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                        echo "\n" . $json;
-                    }
-                }
-                echo "\n";
-            }
-        }
-
-        // Calculate and output total request time in seconds
-        $total_time = microtime(true) - $start_time;
-        $formatted_total = number_format($total_time, 3, '.', '');
-
-        echo "\n===========================\n";
-        echo "Total request time: {$formatted_total}s\n";
-        echo "===========================\n";
-    }
 }

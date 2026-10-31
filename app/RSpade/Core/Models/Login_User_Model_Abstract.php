@@ -57,7 +57,6 @@ use App\RSpade\Core\Session\Session;
  * @property string $remember_token
  * @property int $status_id
  * @property string $timezone
- * @property int $timezone_auto
  * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
@@ -113,6 +112,14 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
     protected static function booted()
     {
         parent::booted();
+
+        // A new identity whose creator set no zone gets rsx.datetime.default_user_timezone
+        // (automatic = NULL by default). Creation only: a later save never applies it.
+        static::creating(function ($model) {
+            if (!$model->isDirty('timezone')) {
+                $model->timezone = \App\RSpade\Core\Time\Rsx_Time::default_user_timezone();
+            }
+        });
 
         static::saving(function ($model) {
             if ($model->isDirty('password') && !$model->isDirty('password_reset_required')) {

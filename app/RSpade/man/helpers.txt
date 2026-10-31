@@ -264,8 +264,10 @@ API REFERENCE
         capturing a value.
 
     command_exists(string $command): bool
-        Whether a binary is on PATH. The right guard before a __skip() in a test
-        or an INFO row in a health check.
+        Whether a binary is on PATH (or, for a name with a directory separator,
+        is an executable file at that path). Answered without a shell, so a
+        configured or untrusted name is safe to pass. The right guard before a
+        __skip() in a test or an INFO row in a health check.
 
   Formatting
 

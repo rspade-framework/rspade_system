@@ -7,6 +7,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Blob_Locks;
+use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Search\Search_Index_Model;
 
@@ -352,7 +353,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     public function download_response(string $file_name, ?string $mime_type = null)
     {
         return File_Attachment_Controller::harden_file_response(
-            \Illuminate\Support\Facades\Response::download($this->__existing_path(), $file_name, $this->__type_header($mime_type))
+            \Illuminate\Support\Facades\Response::download($this->__existing_path(), Rsx_File_Name::safe($file_name), $this->__type_header($mime_type))
         );
     }
 
@@ -366,7 +367,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
     public function inline_response(string $file_name, ?string $mime_type = null)
     {
         $headers = $this->__type_header($mime_type);
-        $headers['Content-Disposition'] = \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition('inline', $file_name, 'file');
+        $headers['Content-Disposition'] = Rsx_File_Name::disposition('inline', $file_name);
 
         return File_Attachment_Controller::harden_file_response(
             \Illuminate\Support\Facades\Response::file($this->__existing_path(), $headers)

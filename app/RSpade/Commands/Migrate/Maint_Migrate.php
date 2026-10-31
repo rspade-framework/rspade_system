@@ -29,6 +29,7 @@ use App\RSpade\SchemaQuality\SchemaQualityChecker;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Env\Rsx_Initial_User;
+use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Revisions\Revision_Dictionary;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
@@ -644,7 +645,71 @@ class Maint_Migrate extends Command
      * mode, in the RSpade DEVELOPMENT container, against a local database. The snapshot is
      * discarded on success - a developer wants the undo, not a growing pile of copies.
      */
+    /**
+     * The lockd lock a snapshot-protected run (and migrate:restore) holds from start to
+     * finish, scoped to the database by RsxLocks.
+     *
+     * Not MySQL's GET_LOCK, which the --dump-rollback path uses: the snapshot path STOPS
+     * mysqld to copy and to restore the datadir, and that drops the connection a GET_LOCK
+     * lives on at exactly the moment the run is most exposed. Not held around the
+     * --dump-rollback path either: that path raises maintenance mode, which stops lockd.
+     *
+     * A lockd lock is released when its holder dies, so with the lock held the migration flag
+     * can only have been left by a run that was cancelled or crashed - which is how
+     * create_snapshot() tells an interrupted run from a running one.
+     */
+    public const SNAPSHOT_RUN_LOCK = 'migrate.snapshot_run';
+
+    /**
+     * The flag a snapshot-protected run leaves while it holds a snapshot. A seam so the flow
+     * can be tested against a scratch file.
+     */
+    protected function migrating_flag_file(): string
+    {
+        return Rsx_Project_Paths::migrating_flag_file();
+    }
+
+    /**
+     * Take the snapshot run lock, or refuse when another migrate holds it.
+     *
+     * Refusing rather than waiting: two migrates at once are almost always a mistake, and
+     * the one that would wait has nothing to do once the other finishes. Two that start in
+     * the same instant can both see the lock free; the second then waits for the first in
+     * named_write_lock() and runs after it, which is safe.
+     *
+     * @return string|null The lock token, or null when refused (reported here).
+     */
+    protected function acquire_snapshot_run_lock(): ?string
+    {
+        if (RsxLocks::get_lock_stats(RsxLocks::CLUSTER_LOCK, self::SNAPSHOT_RUN_LOCK)['writer_active']) {
+            $this->error('[ERROR] Another migrate (or migrate:restore) is running against this database.');
+            $this->info('  Wait for it to finish, then run this again.');
+
+            return null;
+        }
+
+        return RsxLocks::named_write_lock(self::SNAPSHOT_RUN_LOCK);
+    }
+
     protected function run_with_snapshot(): int
+    {
+        $run_lock = $this->acquire_snapshot_run_lock();
+
+        if ($run_lock === null) {
+            return 1;
+        }
+
+        try {
+            return $this->run_with_snapshot_locked();
+        } finally {
+            RsxLocks::release_lock($run_lock);
+        }
+    }
+
+    /**
+     * The snapshot-protected run, under the snapshot run lock.
+     */
+    protected function run_with_snapshot_locked(): int
     {
         $this->info(' Development container: automatic snapshot protection');
         $this->info('');
@@ -1160,11 +1225,25 @@ class Maint_Migrate extends Command
      */
     protected function create_snapshot(): bool
     {
-        // Check if already in migration mode (shouldn't happen with new unified command)
-        if (file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
-            // Clean up stale migration mode
-            $this->warn('[WARNING]  Found stale migration mode flag. Cleaning up...');
+        // AN INTERRUPTED RUN. This run holds the snapshot run lock, so no other migrate is
+        // running: a flag on disk was left by one that was cancelled or crashed part-way, and
+        // the backup beside it is the database as it stood before that run began. That is the
+        // only known-good state, so it is put back before anything else - never deleted, and
+        // never overwritten by a snapshot of the half-migrated database.
+        if (file_exists($this->migrating_flag_file())) {
+            $this->warn('[WARNING]  An earlier migrate was interrupted. Restoring the database to its state before that run...');
+
+            if (!$this->rollback_snapshot()) {
+                $this->error('[ERROR] The interrupted run could not be restored; its flag and snapshot are left in place.');
+                $this->info('  Flag: ' . $this->migrating_flag_file());
+                $this->info('  Retry with: php artisan migrate:restore');
+
+                return false;
+            }
+
             $this->cleanup_migration_mode();
+            $this->purge_schema_state();
+            $this->info('[OK] Restored. Taking a fresh snapshot.');
         }
 
         try {
@@ -1212,7 +1291,7 @@ class Maint_Migrate extends Command
             $this->wait_for_mysql_ready();
 
             // Create migration flag file
-            file_put_contents_safe(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file(), json_encode([
+            file_put_contents_safe($this->migrating_flag_file(), json_encode([
                 'started_at' => now()->toIso8601String(),
                 'started_by' => get_current_user(),
                 'backup_dir' => $this->backup_dir,
@@ -1302,8 +1381,8 @@ class Maint_Migrate extends Command
         }
 
         // Remove migration flag
-        if (file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
-            unlink(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file());
+        if (file_exists($this->migrating_flag_file())) {
+            unlink($this->migrating_flag_file());
         }
 
         $this->info('[OK] Snapshot committed - backup removed.');
@@ -1318,8 +1397,8 @@ class Maint_Migrate extends Command
             $this->run_privileged_command(['rm', '-rf', $this->backup_dir]);
         }
 
-        if (file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
-            unlink(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file());
+        if (file_exists($this->migrating_flag_file())) {
+            unlink($this->migrating_flag_file());
         }
     }
 

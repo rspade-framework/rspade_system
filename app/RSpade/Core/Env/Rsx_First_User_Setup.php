@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Env;
 use App\RSpade\Core\Env\Rsx_Env_Writer;
 use App\RSpade\Core\Env\Rsx_Initial_User;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Task\Task;
 
 /**
  * FIRST-USER SETUP SCREEN
@@ -118,19 +119,22 @@ class Rsx_First_User_Setup
         $email = trim((string) ($_POST['rsx_email'] ?? ''));
         $password = (string) ($_POST['rsx_password'] ?? '');
         $autofill = isset($_POST['rsx_autofill']);
+        $sample_data = isset($_POST['rsx_sample_data']) && self::sample_data_task() !== null;
 
         $error = self::validate($email, $password);
         if ($error !== null) {
-            self::__render_form($error, $email, $autofill);
+            self::__render_form($error, $email, $autofill, $sample_data);
             return;
         }
 
         try {
             self::__create_initial_user($email, $password);
         } catch (\Throwable $e) {
-            self::__render_form('Could not create the account: ' . $e->getMessage(), $email, $autofill);
+            self::__render_form('Could not create the account: ' . $e->getMessage(), $email, $autofill, $sample_data);
             return;
         }
+
+        $sample_note = $sample_data ? self::__queue_sample_data() : null;
 
         // Record the credentials in .env so this account is the one the login
         // form offers to fill in - but ONLY when asked, and scoped to this host.
@@ -139,7 +143,37 @@ class Rsx_First_User_Setup
             $env_note = self::__enable_autofill($email, $password);
         }
 
-        self::__render_success($email, $password, $autofill, $env_note);
+        self::__render_success($email, $password, $autofill, $env_note, $sample_note);
+    }
+
+    /**
+     * The #[Task] the screen offers to seed the new site with ('Service::method'), or null when
+     * the application offers none: config('rsx.first_run.sample_data_task'). Whether that task
+     * exists is the application's business - a wrong name is a failed run in /_sys/tasks.
+     */
+    public static function sample_data_task(): ?string
+    {
+        $task = trim((string) config('rsx.first_run.sample_data_task', ''));
+
+        return $task === '' ? null : $task;
+    }
+
+    /**
+     * Dispatch the sample-data task for the initial site, which Rsx_Initial_User::create() has
+     * just populated with its first account. Answers the line the success page shows.
+     */
+    private static function __queue_sample_data(): string
+    {
+        [$service, $method] = array_pad(explode('::', self::sample_data_task(), 2), 2, '');
+
+        try {
+            $run_id = Task::dispatch($service, $method, ['site' => Rsx_Initial_User::resolve_site_id()]);
+        } catch (\Throwable $e) {
+            // The account exists either way; a misnamed task is the application's to fix.
+            return 'Sample data could not be queued (' . self::sample_data_task() . '): ' . $e->getMessage();
+        }
+
+        return 'Sample data is being added to the new site in the background (task run #' . $run_id . ').';
     }
 
     /**
@@ -249,21 +283,13 @@ class Rsx_First_User_Setup
         return bin2hex(random_bytes(16));
     }
 
-    private static function __render_form(
-        ?string $error = null,
-        string $email = '',
-        bool $autofill = false
-    ): void {
-        // The token the browser already holds when it has one - see token_for(). The
-        // cookie is re-set either way so its expiry runs from the latest render.
-        $token = self::token_for($_COOKIE);
-        setcookie(self::COOKIE_NAME, $token, [
-            'expires' => time() + 1800,
-            'path' => '/',
-            'httponly' => true,
-            'samesite' => 'Lax',
-        ]);
-
+    /**
+     * The account form's markup - pure, so a test can read it without the page shell (which
+     * ends the request). The sample-data checkbox appears only while sample_data_task()
+     * names a task.
+     */
+    public static function form_body(string $token, ?string $error = null, string $email = '', bool $autofill = false, bool $sample_data = false): string
+    {
         $body = '';
 
         if ($error !== null) {
@@ -294,8 +320,37 @@ class Rsx_First_User_Setup
         anyone else.
       </div>
 
+      ' . (self::sample_data_task() === null ? '' : '<label class="check">
+        <input type="checkbox" name="rsx_sample_data" value="1"' . ($sample_data ? ' checked' : '') . '>
+        <span>Add sample data to the new site</span>
+      </label>
+      <div class="hint">Fictional clients, contacts, projects, tasks and documents to explore the
+        application with. Every address and phone number in it is a test one that is never
+        sent to.</div>') . '
+
       <button type="submit" name="rsx_create_user" value="1">Create account</button>
     </form>';
+
+        return $body;
+    }
+
+    private static function __render_form(
+        ?string $error = null,
+        string $email = '',
+        bool $autofill = false,
+        bool $sample_data = false
+    ): void {
+        // The token the browser already holds when it has one - see token_for(). The
+        // cookie is re-set either way so its expiry runs from the latest render.
+        $token = self::token_for($_COOKIE);
+        setcookie(self::COOKIE_NAME, $token, [
+            'expires' => time() + 1800,
+            'path' => '/',
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+
+        $body = self::form_body($token, $error, $email, $autofill, $sample_data);
 
         self::__render_page(
             'Create your first account',
@@ -325,7 +380,8 @@ class Rsx_First_User_Setup
         string $email,
         string $password,
         bool $autofill,
-        ?string $env_note
+        ?string $env_note,
+        ?string $sample_note
     ): void {
         $body = '<div class="cred">
       <div class="cred-label">Email</div>
@@ -343,6 +399,10 @@ class Rsx_First_User_Setup
             $body .= '<div class="error" style="margin-top:1.25rem">' . self::__e($env_note) . '</div>';
         } else {
             $body .= '<p class="note">Write this password down - it is not stored anywhere you can read it back.</p>';
+        }
+
+        if ($sample_note !== null) {
+            $body .= '<p class="note">' . self::__e($sample_note) . '</p>';
         }
 
         $body .= '<form method="get" action="/"><button type="submit">Continue to login</button></form>';

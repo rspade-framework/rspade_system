@@ -140,12 +140,8 @@ class Schema_Contract
                     'is_verified' => ['where' => 'Login_User_Model::is_active()'],
                     'status_id' => ['where' => 'Login_User_Model::is_active(), Rsx_Initial_User::create()'],
                     'timezone' => [
-                        'where' => 'Rsx_Time::get_user_timezone()/set_user_timezone()',
+                        'where' => 'Rsx_Time::get_user_timezone()/set_user_timezone() (NULL = automatic), Rsx_Bundle_Abstract page payload',
                         'migration' => '2025_12_24_210213 (login_users.timezone)',
-                    ],
-                    'timezone_auto' => [
-                        'where' => 'Rsx_Bundle_Abstract page payload, Rsx_Time::set_user_timezone()',
-                        'migration' => '2026_08_18_145643 (login_users.timezone_auto)',
                     ],
                     'dark_mode' => [
                         'where' => 'Rsx_Dark_Mode::get_mode()/set_mode()',

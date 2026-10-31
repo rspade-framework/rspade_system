@@ -19,7 +19,8 @@ TEST_NAME="Two-Factor Endpoint Gates"
 #      not demand a login: between a correct password and a correct second factor the session
 #      is deliberately logged OUT (Rsx_Two_Factor::begin_challenge).
 #   2. totp_begin REFUSES an anonymous caller, at the gate, before the facade is reached.
-#   3. totp_begin ACCEPTS a signed-in caller and returns the enrollment payload - the accept
+#   3. totp_begin REFUSES a signed-in caller with no password confirmation, and after one
+#      (Rsx_Password_Confirmation_Controller::verify) ACCEPTS it and returns the enrollment payload - the accept
 #      side of the same split.
 #
 # No CSRF token is needed for 1 and 2: a session-less POST is not token-gated (see
@@ -99,7 +100,29 @@ if [ -z "$token" ]; then
     exit 1
 fi
 
-echo "[TEST] 3. Authenticated totp_begin returns the enrollment payload..." >&2
+echo "[TEST] 3. Authenticated totp_begin needs a password confirmation first..." >&2
+response="$(curl -s -b "$JAR" -X POST \
+    -H 'Content-Type: application/json' \
+    -H "X-CSRF-TOKEN: ${token}" \
+    -d '{}' "${AJAX}/totp_begin" 2>/dev/null)"
+
+if ! printf '%s' "$response" | grep -q 'password confirmation has timed out'; then
+    echo "FAIL: $TEST_NAME - an unconfirmed totp_begin was not refused for want of a confirmation: $response"
+    exit 1
+fi
+
+confirm="$(curl -s -b "$JAR" -X POST \
+    -H 'Content-Type: application/json' \
+    -H "X-CSRF-TOKEN: ${token}" \
+    -d "{\"password\":\"${LOGIN_PASSWORD}\",\"__turnstile\":\"inactive\"}" \
+    "${BASE}/_ajax/Rsx_Password_Confirmation_Controller/verify" 2>/dev/null)"
+
+if ! printf '%s' "$confirm" | grep -q '"confirmed":true'; then
+    echo "FAIL: $TEST_NAME - the password confirmation was not given: $confirm"
+    exit 1
+fi
+
+echo "[TEST] 3. Confirmed; authenticated totp_begin returns the enrollment payload..." >&2
 response="$(curl -s -b "$JAR" -X POST \
     -H 'Content-Type: application/json' \
     -H "X-CSRF-TOKEN: ${token}" \

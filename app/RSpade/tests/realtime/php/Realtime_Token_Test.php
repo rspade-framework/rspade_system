@@ -43,7 +43,7 @@ class Realtime_Token_Test extends Rsx_Test_Abstract
      * on portal-login state - branching on identity sent every UNAUTHENTICATED portal
      * caller down the staff branch, where get_session_id() MINTS a staff session and
      * sets the staff cookie on a portal response (audit
-     * docs.dev/audits/portal_realm_session_audit_2026_08_09.md). CLI reports
+     * docs.dev/audits/archive/portal_realm_session_audit_2026_08_09.md). CLI reports
      * is_portal_request() false by default, so a portal test has to say so.
      *
      * @param int|null $portal_user_id null = an ANONYMOUS portal visitor, which is

@@ -18,7 +18,7 @@ use App\RSpade\Sys\Theme\Components\_Sys_DataGrid_Abstract;
  * scope, so every tenant's rows are here.
  *
  * Filters (each a top-level request param, declared on _Sys_Email_DataGrid.jqhtml):
- *   status   - a status word (pending, sending, sent, failed, blocked, suppressed)
+ *   status   - a status word (pending, sending, sent, failed, blocked, suppressed, test)
  *   category - a category word (transactional, notification, marketing)
  *   site     - one site id
  * An unknown word or a non-numeric site filters nothing.

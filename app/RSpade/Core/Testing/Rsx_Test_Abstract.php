@@ -434,6 +434,10 @@ abstract class Rsx_Test_Abstract
                     // Clear every revision static, suppression included: a test that threw
                     // inside Revision::without() must not leave recording off for the next.
                     \App\RSpade\Core\Revisions\Revision::_testing_reset();
+
+                    // Forget a browser timezone cookie a test stood in for, and the zone
+                    // resolved from it: the next test is another request, from no browser.
+                    \App\RSpade\Core\Time\Rsx_Time::_testing_reset();
                 }
             }
         }

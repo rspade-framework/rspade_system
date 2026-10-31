@@ -13,6 +13,7 @@ use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Gates;
+use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Rsx_File_Upload;
 use App\RSpade\Core\Files\Rsx_Mime_Map;
@@ -289,7 +290,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // in" is an identity test and gets both directions wrong (an anonymous portal upload
         // would be handed the staff user, and a staff upload from a browser that also holds a
         // portal cookie would be authorized as the PORTAL user). See
-        // docs.dev/audits/portal_realm_session_audit_2026_08_09.md.
+        // docs.dev/audits/archive/portal_realm_session_audit_2026_08_09.md.
         $outcome = Rsx_File_Upload::accept(
             $request,
             $file,
@@ -532,7 +533,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // current content version - see apply_content_version_cache_policy().
         return static::harden_file_response(static::apply_content_version_cache_policy(Response::download(
             $storage->get_full_path(),
-            $attachment->file_name,
+            Rsx_File_Name::safe($attachment->file_name),
             $headers
         ), $attachment, $params));
     }
@@ -601,7 +602,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // the browser can sniff.
         $headers = [
             'Cache-Control' => 'public, max-age=31536000', // 1 year
-            'Content-Disposition' => 'inline; filename="' . $attachment->file_name . '"',
+            'Content-Disposition' => Rsx_File_Name::disposition('inline', $attachment->file_name),
         ];
         if (!empty($attachment->mime_type)) {
             $headers['Content-Type'] = $attachment->mime_type;
@@ -794,7 +795,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
 
         $response->headers->set('Content-Type', 'application/zip');
         static::harden_file_response($response);
-        $response->headers->set('Content-Disposition', 'attachment; filename="' . $zip_name . '"');
+        $response->headers->set('Content-Disposition', Rsx_File_Name::disposition('attachment', $zip_name, 'download.zip'));
         // Defeat nginx proxy buffering so the archive streams to the client immediately.
         $response->headers->set('X-Accel-Buffering', 'no');
         $response->headers->set('Cache-Control', 'no-store');
@@ -826,7 +827,8 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      *
      * Rejected (-> attachment file_name): backslashes, control characters, any '..'
      * segment, and a value that cleans to empty. Sanitized: leading slashes stripped,
-     * duplicate slashes collapsed.
+     * duplicate slashes collapsed, each segment through the file-name rule
+     * (Rsx_File_Name::safe()).
      *
      * @param string|null $provided        Caller-supplied name (may be null).
      * @param string      $attachment_name The attachment's own file_name (the safe default).
@@ -863,37 +865,28 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Reject any parent-directory traversal segment.
-        foreach (explode('/', $clean) as $segment) {
+        $segments = explode('/', $clean);
+        foreach ($segments as $segment) {
             if ($segment === '..') {
                 return $safe_default;
             }
         }
 
-        return $clean;
+        // Each folder and the file name are made safe on their own, so the archive extracts
+        // on every operating system.
+        return implode('/', array_map(fn ($segment) => Rsx_File_Name::safe($segment), $segments));
     }
 
     /**
-     * Reduce a value to a safe bare filename (no directory components, no control
-     * characters). Used as the degraded target for an invalid custom entry name.
+     * Reduce a value to a safe bare filename (no directory components, then the file-name
+     * rule). Used as the degraded target for an invalid custom entry name.
      *
      * @param string $name
      * @return string
      */
     private static function __clean_bare_filename(string $name): string
     {
-        $base = basename(str_replace('\\', '/', $name));
-
-        $out = '';
-        for ($i = 0, $len = strlen($base); $i < $len; $i++) {
-            $ord = ord($base[$i]);
-            if ($ord >= 0x20 && $ord !== 0x7f) {
-                $out .= $base[$i];
-            }
-        }
-
-        $out = trim($out);
-
-        return $out === '' ? 'file' : $out;
+        return Rsx_File_Name::safe(basename(str_replace('\\', '/', $name)));
     }
 
     /**
@@ -972,8 +965,8 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
 
     /**
      * Sanitize the download filename for the Content-Disposition header: drop path
-     * components, strip control characters and double-quotes (header safety), and ensure
-     * a '.zip' suffix. Empty / missing input yields 'download.zip'.
+     * components, apply the file-name rule (Rsx_File_Name::safe()), and ensure a '.zip'
+     * suffix. Empty / missing input yields 'download.zip'.
      *
      * @param string|null $zip_name
      * @return string
@@ -984,17 +977,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             return 'download.zip';
         }
 
-        $name = basename(str_replace('\\', '/', $zip_name));
-
-        $out = '';
-        for ($i = 0, $len = strlen($name); $i < $len; $i++) {
-            $ord = ord($name[$i]);
-            if ($ord >= 0x20 && $ord !== 0x7f && $name[$i] !== '"') {
-                $out .= $name[$i];
-            }
-        }
-
-        $out = trim($out);
+        $out = Rsx_File_Name::safe(basename(str_replace('\\', '/', $zip_name)), '');
         if ($out === '') {
             return 'download.zip';
         }

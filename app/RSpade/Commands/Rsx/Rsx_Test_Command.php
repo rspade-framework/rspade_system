@@ -914,8 +914,8 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * while the child queues for the same lock. Observed live, twice, for 10-12 hours.
      *
      * The subprocess does NOT inherit our in-process files-root override, so a data-seed
-     * migration that writes blobs (the template app's import_sample_documents runs
-     * create_from_disk) would land in the REAL blob store. Per-invocation intent rides as
+     * migration that writes blobs (create_from_disk() from a migration) would land in the
+     * REAL blob store. Per-invocation intent rides as
      * a --flag (owner ruling: NO env prefixes for invocation intent):
      * Rsx_Project_Paths::child_flags() spells the override as --_rsx-files-root, which the
      * pre-boot strip lifts before Symfony parses, so provisioning stays inside the

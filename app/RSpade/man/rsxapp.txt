@@ -125,8 +125,16 @@ OBJECT STRUCTURE
         server_time         String. ISO 8601 UTC timestamp from server.
                             Used by Rsx_Time to correct client clock skew.
 
-        user_timezone       String. IANA timezone (e.g., "America/Chicago").
-                            Resolved: user preference > site > config > default.
+        user_timezone       String. IANA timezone this page was RENDERED in
+                            (e.g., "America/Chicago"). Resolved: the user's
+                            explicit zone > the browser's rsx_tz cookie > site
+                            > server > UTC (rsx:man time).
+
+        user_timezone_preference
+                            String|null. The signed-in staff user's EXPLICIT
+                            zone; null when automatic, on a portal page, or
+                            with nobody signed in. Rsx_Timezone_Cookie keeps
+                            the rsx_tz cookie current exactly when it is null.
 
     Custom Data:
 

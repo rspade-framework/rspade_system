@@ -120,6 +120,8 @@ STATUSES
         6   Suppressed   Recorded, deliberately not delivered - no provider, or a
                          dev host left no deliverable number. Terminal, and NOT a
                          failure.
+        7   Test         A TEST number (TEST NUMBERS below): recorded as sent, never
+                         handed to a provider. Terminal, and NOT a failure.
 
     Columns mirror the mail queue: attempt_count (a first send IS an attempt),
     next_attempt_at, last_attempt_at, last_error, transport, transport_response,
@@ -147,6 +149,15 @@ QUEUE PROCESSING
 
     Retention: Sms_Queue_Service::cleanup, in the maintenance window, deletes
     whole rows in a terminal status older than rsx.sms.retention_days (30).
+
+TEST NUMBERS
+    A North American number whose exchange is 555 - (nnn) 555-nnnn, written any way:
+    (212) 555-0142, +1 212 555 0142, 2125550142 - is a TEST number. It is queued exactly
+    as addressed (the dev-site layer never redirects it) and the drain settles it as
+    status Test in every mode that drains, production included - never a provider call,
+    even once one is wired. Sample data and demos use these numbers. The rule is fixed,
+    not configured; the email twin is rsx.mail.test_domains (rsx:man email, TEST
+    ADDRESSES), and both live in App\RSpade\Core\Mail\Rsx_Test_Recipients.
 
 DEV SITE SMS SAFETY
     On a dev host (Rsx::is_dev_site() - the hostname contains '.dev.') outbound

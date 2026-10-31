@@ -329,6 +329,12 @@ class Rsx_Project_Paths
         return self::tmp_path($name);
     }
 
+    /** The parsed .env a production-like boot loads instead of parsing (Rsx_LoadEnvironmentVariables). */
+    public static function env_cache_file(): string
+    {
+        return self::tmp_path('env_cache.php');
+    }
+
     /** The pre-boot env heal's "nothing changed" stamp. */
     public static function env_heal_stamp_file(): string
     {

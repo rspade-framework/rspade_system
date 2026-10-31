@@ -178,7 +178,7 @@ THE FRAMEWORK LIBRARY
         Every wait outside on_load() goes through alive() (is_stopped() where
         the code must keep going), so nothing resumes on a stopped component.
     credential_throttle_coverage
-        Every credential check spends the per-IP login throttle.
+        Every credential check is guarded by the login throttle.
     datetime_display_and_columns
         Dates render through Rsx_Time / Rsx_Date; calendar facts are DATE
         columns.

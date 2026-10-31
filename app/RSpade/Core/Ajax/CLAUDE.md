@@ -91,7 +91,7 @@ envelope: the sign-in rotated the browser's tokens, and the client swaps
 - anything thrown (`error_envelope()`): the coded exception family keeps its code
   (`AjaxUnauthorizedException` -> `unauthorized`, `AjaxNotFoundException` -> `not_found`,
   `AjaxFormErrorException` -> `validation`, `AjaxQuestionException` -> `question`,
-  `AjaxAuthRequiredException` -> `auth_required`; an `HttpException` 401/403/404 likewise,
+  `AjaxAuthRequiredException` -> `auth_required`; an `HttpException` 401/403/404 likewise, 429 `too_many_requests`,
   any other status `generic`); everything else is `error_code: fatal` with an `error`
   object - file, line, message, backtrace for a caller `Rsx_Diagnostics` admits, a generic
   sentence and an `error_id` otherwise. `Ajax::is_coded_failure($e)` is the coded/fault

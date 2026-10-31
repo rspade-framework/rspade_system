@@ -10,6 +10,7 @@ namespace App\RSpade\Core\TwoFactor;
 use Illuminate\Http\Request;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
@@ -62,6 +63,9 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function totp_begin(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         return Rsx_Portal_Two_Factor::begin_totp_enrollment();
     }
 
@@ -75,6 +79,9 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function totp_confirm(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         $code = isset($params['code']) ? trim((string) $params['code']) : '';
 
         if ($code === '') {
@@ -106,6 +113,9 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function passkey_register_begin(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         return Rsx_Portal_Two_Factor::begin_passkey_registration();
     }
 
@@ -122,6 +132,9 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function passkey_register_confirm(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         $attestation = $params['attestation'] ?? null;
 
         if (!is_array($attestation)) {
@@ -184,6 +197,9 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
     {
         static::_refuse_impersonation();
 
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         $credential_id = isset($params['id']) ? (int) $params['id'] : 0;
 
         if ($credential_id <= 0) {
@@ -211,6 +227,9 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]
     public static function recovery_regenerate(Request $request, array $params = [])
     {
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         return ['recovery_codes' => Rsx_Portal_Two_Factor::regenerate_recovery_codes()];
     }
 

@@ -125,6 +125,16 @@ $app->useStoragePath(rsx_paths_tmp_root());
 // keeps the two spellings one file.
 $app->useEnvironmentPath(dirname(__DIR__, 2));
 
+// THE ENVIRONMENT LOADER. Laravel makes each bootstrapper through the container, so binding
+// its class name swaps in RSpade's subclass while the kernels' lists and the bootstrapper
+// event names (afterLoadingEnvironment below) stay Laravel's own. Development parses .env
+// every boot exactly as Laravel does; a production-like mode loads the cached parse from
+// tmp/ when it is newer than .env. See App\RSpade\Core\Env\Rsx_LoadEnvironmentVariables.
+$app->bind(
+    Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables::class,
+    App\RSpade\Core\Env\Rsx_LoadEnvironmentVariables::class
+);
+
 /*
 |--------------------------------------------------------------------------
 | Resolve APP_URL ($HOSTNAME token)

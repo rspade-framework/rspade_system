@@ -18,6 +18,9 @@ surface (replaced by a narrow `refactor` allowlist).
   `rsx.ide_integration.enabled`.
 - `app/RSpade/Ide/Services/auth.php` - pre-boot grant verification (`X-Ide-Token`
   constant-time compare, always required + the development-only hard gate).
+- `app/RSpade/Ide/Services/ide_resolution_order.php` - the order an ambiguous
+  go-to-definition identifier resolves in, and the ranked lookup by `id` (pure, required
+  by handler.php).
 - `app/RSpade/Ide/Services/handler.php` - service router + `handle_refactor_service`
   exact-match allowlist (`rsx:refactor:rename_php_class`,
   `rename_php_class_function`, `sort_php_class_functions`).

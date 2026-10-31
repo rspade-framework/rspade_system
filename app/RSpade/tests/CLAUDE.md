@@ -162,7 +162,7 @@ the thumbnail cache, and the rendition cache - to `tmp/test-storage` (mirroring 
 DB swap). The runner calls `Rsx_Project_Paths::_override(['files' => ...])`, which
 `App\RSpade\Core\Files\Rsx_File_Paths` reads through `files_root()`, and forwards it
 to the migrate-provisioning subprocess as the internal flag `--_rsx-files-root` so
-seed migrations that write blobs (the template app's `import_sample_documents`) stay
+seed migrations that write blobs (an application's `create_from_disk()` from a migration) stay
 isolated too. Without this, a test-DB attachment delete unlinks a shared disk file
 and can destroy a developer-database blob whose bytes match (backlog B-38). The test
 root persists across runs like the dump cache and is wiped by `rsx:clean`. Tests

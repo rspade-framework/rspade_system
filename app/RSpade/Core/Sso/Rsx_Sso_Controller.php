@@ -11,6 +11,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Ajax;
+use App\RSpade\Core\Confirmation\Rsx_Password_Confirmation;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Session\Session;
@@ -68,6 +69,11 @@ use App\RSpade\Core\Sso\Rsx_Sso;
  * which is its own bundle outside the SPA, and the Connected Accounts list is in a settings
  * SPA - while its PHP source is framework core and therefore in no bundle's file set. Without
  * the force-include, the login page would carry "Rsx_Sso_Controller is not defined".
+ *
+ * CONNECTING AND DISCONNECTING ASK FOR A RECENT PASSWORD CONFIRMATION. link_begin() and
+ * identity_unlink() add or remove a way into the account, so each first requires
+ * Rsx_Password_Confirmation::require_confirmed() - the settings page asks for it before calling
+ * (rsx:man password_confirmation). The portal twin does the same.
  *
  * ERROR SHAPE. The ceremony NEVER returns an error to the browser: every path out of
  * handle_callback() is a redirect, because this is a navigation and there is nowhere to render
@@ -193,6 +199,9 @@ class Rsx_Sso_Controller extends Rsx_Controller_Abstract
     {
         static::_refuse_impersonation();
 
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
+
         $identity_id = isset($params['id']) ? (int) $params['id'] : 0;
 
         if ($identity_id <= 0) {
@@ -219,6 +228,9 @@ class Rsx_Sso_Controller extends Rsx_Controller_Abstract
     public static function link_begin(Request $request, array $params = [])
     {
         static::_refuse_impersonation();
+
+        // A way into the account is being added or removed: the user re-confirmed recently.
+        Rsx_Password_Confirmation::require_confirmed();
 
         $key = isset($params['provider']) ? (string) $params['provider'] : '';
 

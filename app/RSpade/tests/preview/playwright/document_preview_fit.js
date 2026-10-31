@@ -14,7 +14,7 @@
  * Self-contained: mints its own dev-auth headers through tests/_lib/dev_auth.js (the
  * node twin of Dev_Auth_Token, keyed on the local development grant), so it runs with a bare
  * `node document_preview_fit.js`. Runs against the dev web server on localhost. Depends on the
- * sample documents having been imported (import_sample_documents migration).
+ * sample documents having been imported (the application's sample data - php artisan rsx_app:seed).
  *
  * Exit 0 on pass, 1 on any failure. Prints PASS:/FAIL: lines.
  */

@@ -322,7 +322,9 @@ Static Methods:
   (which is how the framework audit relations created_by / updated_by / deleted_by,
   declared on Rsx_Model_Abstract, reach every model). An override of an ancestor's
   relationship method must redeclare #[Relationship] - see RELATIONSHIP-OVERRIDE-01 in
-  `rsx:man code_quality`.
+  `rsx:man code_quality`. The JS model's get_relationships() answers a narrower question:
+  only the relationships the browser can FETCH (those also carrying
+  #[Ajax_Endpoint_Model_Fetch]) - rsx:man model_fetch.
 
 Instance Methods:
 - make_new() - Create new model instance (recommended over new Model())

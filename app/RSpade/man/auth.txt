@@ -203,7 +203,7 @@ AUTHENTICATION
 
             IT THROWS TWO REFUSALS that are not "wrong credentials", and a login
             function catches both and renders getMessage():
-            Auth_Throttled_Exception (the client IP is locked out - before the
+            Auth_Throttled_Exception (the client address or the account is throttled - before the
             lookup) and Auth_Password_Reset_Required_Exception (the password
             matched, the membership is active, and the identity is flagged
             login_users.password_reset_required; ->identity carries it, and the
@@ -241,13 +241,14 @@ AUTHENTICATION
         verify_credentials() itself and pruned on
         rsx.sessions.login_history_retention_days.
         FAILURES are NOT database rows: record_failure() increments a per-email
-        and a per-IP counter that expire on
-        rsx.sessions.login_throttle.window_minutes and logs one warning line, so
+        and a per-IP counter that expire 15 minutes after the first failure and
+        logs one warning line, so
         an anonymous caller cannot grow a table by failing to log in. The
         consequence to plan around: get_failed_attempts_count*() answers are
         BOUNDED BY THAT WINDOW - a 30-day failed-attempt stat is not answerable.
         Those counts are a STATISTIC; ENFORCEMENT is Login_Throttle's, per client
-        IP, and it is on by default: verify_credentials() refuses a locked-out address
+        address and per account, and it is on by default: verify_credentials()
+        refuses a throttled caller
         before the lookup by throwing Auth_Throttled_Exception ("You're doing
         that too fast"), so a login function CATCHES it and renders the message.
         Full treatment (including the portal and custom-status recipes):
