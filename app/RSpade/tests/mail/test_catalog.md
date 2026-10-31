@@ -346,3 +346,12 @@ The SITE's ruling that no email reaches an address, in every category; checked a
 | MAIL-332 | a test cc on a real message is withheld and recorded; the real `to` is sent | php | real to + test.org cc, live | withheld_recipients names it "test address"; cc emptied; Sent, 1 send | implemented | 2026-10-29 |
 | MAIL-333 | deliverable_to(): a test address is delivered unless disabled; the block list still applies | php | suppressed, disabled, a listed test address | true, false, false (and a real address false under suppressed) | implemented | 2026-10-29 |
 | MAIL-334 | a test SMS number is settled Test and never redirected | php | (212) 555-0142, suppressed | STATUS_TEST, no dev_original_to | implemented | 2026-10-29 |
+
+## Email_Recent_To_Address_Test (php) - an address's history
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MAIL-RECENT-01 | newest first across a direct and a rerouted message, cut to the limit, the address trimmed | php | three messages | ids in order | implemented | 2026-10-31 |
+| MAIL-RECENT-02 | a rerouted message does not count for the catchall | php | one rerouted message | empty | implemented | 2026-10-31 |
+| MAIL-RECENT-03 | another site's messages are not listed | php | a row on another site | empty | implemented | 2026-10-31 |
+| MAIL-RECENT-04 | each reading is served by its own index | php | EXPLAIN of each query shape | the index named | implemented | 2026-10-31 |

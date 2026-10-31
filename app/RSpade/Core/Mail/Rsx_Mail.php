@@ -836,6 +836,34 @@ class Rsx_Mail
     }
 
     /**
+     * The newest $limit messages to one address on the current site, newest first.
+     *
+     * An address is the ORIGINAL recipient, the reading the block list makes: a row whose
+     * dev_original_to is the address, or whose to_address is and which carries no
+     * dev_original_to - so a message a development box rerouted to a catchall counts for who
+     * it was for, not for the catchall.
+     *
+     * One query per reading, each served in order by its own index, then merged: an OR across
+     * the two columns could use neither to order, and would scan the site's queue.
+     *
+     * @return array<int, Email_Queue_Model>
+     */
+    public static function recent_to_address(string $email, int $limit): array
+    {
+        $email = trim($email);
+        $newest = fn ($query) => $query->orderBy('created_at', 'desc')->orderBy('id', 'desc')->limit($limit)->get()->all();
+
+        $rows = array_merge(
+            $newest(Email_Queue_Model::where('dev_original_to', $email)),
+            $newest(Email_Queue_Model::where('to_address', $email)->whereNull('dev_original_to'))
+        );
+
+        usort($rows, fn ($a, $b) => [$b->created_at, $b->id] <=> [$a->created_at, $a->id]);
+
+        return array_slice($rows, 0, $limit);
+    }
+
+    /**
      * Is $email on the current site's block list? Case- and whitespace-insensitive.
      */
     public static function is_address_blocked(string $email): bool

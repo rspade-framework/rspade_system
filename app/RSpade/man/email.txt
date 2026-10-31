@@ -348,6 +348,17 @@ ATTACHMENTS AND INLINE IMAGES
     no retention window of its own: the bytes go only when rsx.mail.retention_days deletes
     the queue row, its attachment rows cascade with it, and nothing else points at the blob.
 
+MESSAGES SENT TO AN ADDRESS
+    An address's history is Rsx_Mail::recent_to_address(), never a query of the system
+    table:
+
+        Rsx_Mail::recent_to_address($email, 10);    // Email_Queue_Model[], newest first
+
+    The current site's newest messages to the address, by the ORIGINAL recipient, the
+    reading the block list makes: a message a development box rerouted to a catchall
+    counts for who it was for. It is indexed, so an address mailed rarely costs the same
+    as one mailed often, however long the queue is kept.
+
 DISPLAYING A STORED MESSAGE
 
     Rsx_Mail::displayable_html(Email_Queue_Model $row): ?string
