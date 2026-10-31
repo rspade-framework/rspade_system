@@ -55,9 +55,17 @@ class Form_Utils {
      * @returns {Promise} Promise that resolves when all animations complete
      */
     static apply_form_errors(parent_selector, errors, options = {}) {
-        // The one deliberate console surface in the form stack: a failed submit is an
-        // error, and rsx:debug reads it.
-        console.error(errors);
+        // A VALIDATION REFUSAL is the server answering correctly, and the form shows it. In
+        // development and debug it is still logged at ERROR level, so a refused submit appears
+        // in rsx:debug's "JavaScript Console Errors" and in a developer's console unasked. In
+        // production it is not an error: it would reach every user's console and every
+        // monitor counting console.error, burying real faults - so it goes to console_debug,
+        // which production strips. A failure that is not a refusal is logged by its caller.
+        if (window.rsxapp.mode === 'production') {
+            console_debug('FORM', errors);
+        } else {
+            console.error(errors);
+        }
 
         const $parent = $(parent_selector);
 
@@ -175,6 +183,8 @@ class Form_Utils {
             if (error.code === Ajax.ERROR_VALIDATION && error.metadata) {
                 await Form_Utils.apply_form_errors(form_selector, error.metadata);
             } else {
+                // Not a refusal: an error in every mode.
+                console.error(error);
                 await Form_Utils.apply_form_errors(form_selector, error.message || 'An error occurred');
             }
 

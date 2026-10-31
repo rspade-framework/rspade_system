@@ -3,6 +3,9 @@ TIME(7)                     RSpade Framework Manual                    TIME(7)
 NAME
        Rsx_Time, Rsx_Date - Date and datetime handling for RSpade applications
 
+TAGS
+       time, stdlib, models, api
+
 SYNOPSIS
        PHP Datetime:
            use App\RSpade\Core\Time\Rsx_Time;
@@ -192,6 +195,13 @@ RSX_TIME CLASS
        get_user_timezone()
            Returns the IANA zone this request displays in (e.g.
            "America/Chicago") - see TIMEZONE INITIALIZATION.
+
+       local_date($time, $zone) / local_clock($time, $zone)
+       combine_date_and_time($date, $clock, $zone)
+       day_start_utc($date, $zone) / day_after_utc($date, $zone)
+           A day and a wall clock in a NAMED zone - the day an instant falls on
+           there, the instant a date + clock typed there mean, the bounds of a
+           date window. See rsx:man time_value_design.
 
        encode_for_output($field, $value)  (PHP only)
            One timestamp as an external API carries it: the UTC value plus
@@ -650,8 +660,12 @@ CONFIGURATION
        system/config/rsx.php:
            'datetime' => [
                'server_timezone' => env('RSX_SERVER_TIMEZONE') ?: 'UTC',
-               'default_user_timezone' => env('RSX_DEFAULT_USER_TIMEZONE') ?: 'automatic',
+               'default_user_timezone' => 'automatic',
            ],
+
+       default_user_timezone is application behaviour, so it has no .env key: an
+       application sets it in rsx/resource/config/rsx.php
+       ('datetime' => ['default_user_timezone' => 'site']).
 
        default_user_timezone is the zone a NEW login identity starts with when
        its creator set none, applied once at creation and never on a later save:
@@ -748,6 +762,8 @@ SEE ALSO
        Rsx_Time, Rsx_Date, Rsx_DateTime_Cast, Rsx_Date_Cast,
        Rsx_Timezone_Controller, Rsx_Timezone_Cookie
 
+       rsx:man time_value_design - storing the dates and times users record:
+       the three kinds, the rules, the dead ends
        rsx:man external_api - the API response contract (timestamp companions)
        rsx:man rsx_debug - --timezone, rendering a page as a browser in a zone
 

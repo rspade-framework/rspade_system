@@ -1,10 +1,15 @@
 NAME
     man - RSX manual page system
 
+TAGS
+    debugging
+
 SYNOPSIS
     php artisan rsx:man              # List all available topics
     php artisan rsx:man <topic>      # Display documentation for topic
     php artisan rsx:man responsive   # Example: show responsive docs
+    php artisan rsx:man --tag=time   # Only the topics tagged time
+    php artisan rsx:man --tags       # The tag vocabulary, with counts
 
 DESCRIPTION
     The man page system provides detailed technical documentation for RSX
@@ -50,6 +55,7 @@ FILE FORMAT
     Standard sections:
 
         NAME        Feature name and one-line description
+        TAGS        What the page is about, from the tag vocabulary (TAGS)
         SYNOPSIS    Quick usage example
         DESCRIPTION Overview and purpose
         USAGE       Detailed instructions
@@ -72,6 +78,27 @@ EXAMPLES
         php artisan rsx:man bundle    # Matches bundle_api
         php artisan rsx:man spa       # Matches spa
 
+TAGS
+    A page names what it is about in a TAGS section, right after NAME: one
+    indented line of lowercase tags separated by commas. A page carries a few
+    tags, not many - one per subject it actually covers.
+
+        NAME
+            portal_tenancy - per-site client portals by path or domain
+
+        TAGS
+            portal, tenancy, deploy
+
+    Use the SHARED VOCABULARY, so the framework and every application tag a
+    subject the same way: php artisan rsx:man --tags lists it, with what each
+    tag means and how many topics carry it. An application may add tags of
+    its own besides; they are listed separately.
+
+    rsx:man --tag=<tag> lists only the topics carrying that tag - framework
+    and application pages together. Repeat --tag to require several at once
+    (a topic must carry every tag named). An untagged page still appears in
+    the full list.
+
 CREATING MAN PAGES
     Framework man pages go in /system/app/RSpade/man/*.txt
     Project man pages go in /rsx/resource/man/*.txt
@@ -82,6 +109,9 @@ CREATING MAN PAGES
 
         NAME
             feature_name - brief description
+
+        TAGS
+            forms, ui
 
         SYNOPSIS
             Most common usage example

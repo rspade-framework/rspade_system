@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Time\Rsx_Date;
 
 /**
  * Rsx_Time - Datetime handling for RSpade (moments in time with timezone)
@@ -539,8 +540,8 @@ class Rsx_Time
         }
 
         throw new \RuntimeException(
-            "RSX_DEFAULT_USER_TIMEZONE is '{$configured}': it must be automatic, site, server or an IANA "
-            . "timezone identifier (e.g. America/Chicago). Correct it in .env, or leave it blank for automatic."
+            "rsx.datetime.default_user_timezone is '{$configured}': it must be automatic, site, server or an IANA "
+            . "timezone identifier (e.g. America/Chicago). Correct it in rsx/resource/config/rsx.php."
         );
     }
 
@@ -863,6 +864,107 @@ HTML;
         } catch (\Exception $e) {
             return '';
         }
+    }
+
+    // =========================================================================
+    // A DAY AND A CLOCK IN A NAMED ZONE (rsx:man time_value_design)
+    // =========================================================================
+
+    /**
+     * The calendar date an instant falls on in $zone ("2026-10-29"). Never slice a date out of
+     * an ISO string or take SQL DATE() of an instant: that is the UTC date, which is the next
+     * day for every evening instant west of UTC.
+     *
+     * @param mixed $time Anything parse() accepts
+     * @param string $zone IANA timezone identifier
+     * @return string|null "Y-m-d", or null for null
+     */
+    public static function local_date($time, string $zone): ?string
+    {
+        $carbon = static::parse($time);
+
+        return $carbon ? $carbon->setTimezone(static::__zone($zone))->format('Y-m-d') : null;
+    }
+
+    /**
+     * The wall-clock time an instant shows in $zone ("22:30").
+     *
+     * @param mixed $time Anything parse() accepts
+     * @param string $zone IANA timezone identifier
+     * @return string|null "H:i", or null for null
+     */
+    public static function local_clock($time, string $zone): ?string
+    {
+        $carbon = static::parse($time);
+
+        return $carbon ? $carbon->setTimezone(static::__zone($zone))->format('H:i') : null;
+    }
+
+    /**
+     * The instant a person means by a DATE and a wall CLOCK typed in $zone - the inverse of
+     * local_date() + local_clock(). A clock skipped by a daylight-saving jump resolves to the
+     * instant after it, the way the clock itself moves.
+     *
+     * @param string $date "Y-m-d"
+     * @param string|null $clock "H:i" or "H:i:s"; null or '' answers null (no time was given)
+     * @param string $zone IANA timezone identifier
+     * @return string|null ISO 8601 UTC
+     * @throws \InvalidArgumentException For a malformed date or clock, or an unknown zone
+     */
+    public static function combine_date_and_time(string $date, ?string $clock, string $zone): ?string
+    {
+        if ($clock === null || $clock === '') {
+            return null;
+        }
+
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || !preg_match('/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/', $clock)) {
+            throw new \InvalidArgumentException("Rsx_Time::combine_date_and_time() needs a Y-m-d date and an H:i clock, got '{$date}' and '{$clock}'.");
+        }
+
+        $local = Carbon::createFromFormat('Y-m-d H:i:s', $date . ' ' . (strlen($clock) === 5 ? $clock . ':00' : $clock), static::__zone($zone));
+
+        return static::to_iso($local->setTimezone('UTC'));
+    }
+
+    /**
+     * The instant $date begins in $zone: the inclusive lower bound of a date window over
+     * instants. Converted per date, so a window crossing a daylight-saving change is right.
+     *
+     *     ->where('started_at', '>=', Rsx_Time::to_database(Rsx_Time::day_start_utc($from, $zone)))
+     *     ->where('started_at', '<', Rsx_Time::to_database(Rsx_Time::day_after_utc($to, $zone)))
+     *
+     * @param string $date "Y-m-d"
+     * @param string $zone IANA timezone identifier
+     * @return string ISO 8601 UTC
+     */
+    public static function day_start_utc(string $date, string $zone): string
+    {
+        return static::combine_date_and_time($date, '00:00', $zone);
+    }
+
+    /**
+     * The instant the day AFTER $date begins in $zone: the EXCLUSIVE upper bound of a date
+     * window ending on $date.
+     *
+     * @param string $date "Y-m-d"
+     * @param string $zone IANA timezone identifier
+     * @return string ISO 8601 UTC
+     */
+    public static function day_after_utc(string $date, string $zone): string
+    {
+        return static::day_start_utc(Rsx_Date::add_days($date, 1), $zone);
+    }
+
+    /**
+     * A zone a caller named: refused loudly when it is not one.
+     */
+    private static function __zone(string $zone): \DateTimeZone
+    {
+        if (!static::is_timezone($zone)) {
+            throw new \InvalidArgumentException("'{$zone}' is not an IANA timezone identifier (e.g. America/Chicago).");
+        }
+
+        return new \DateTimeZone($zone);
     }
 
     // =========================================================================

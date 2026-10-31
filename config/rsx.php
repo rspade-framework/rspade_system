@@ -2763,8 +2763,9 @@ return [
         //   <IANA id>  that identifier (e.g. America/Chicago)
         // `site` and `server` are snapshots, as a new site's zone is: changing the site's or
         // the server's zone later does not move an account created before. Anything else
-        // throws when a login identity is created.
-        'default_user_timezone' => env('RSX_DEFAULT_USER_TIMEZONE') ?: 'automatic',
+        // throws when a login identity is created. Application behaviour, not deployment:
+        // an application changes it in rsx/resource/config/rsx.php, never in .env.
+        'default_user_timezone' => 'automatic',
 
         // Time dropdown interval in minutes (for Schedule_Input component)
         'time_interval' => 15,

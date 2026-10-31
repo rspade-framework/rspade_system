@@ -199,9 +199,15 @@ await Rsx_Timezone_Controller.get_settings();       // {timezone (null = automat
 await Rsx_Timezone_Controller.set_timezone({timezone});  // {changed, timezone}; null or '' = automatic
 ```
 
-A NEW login identity whose creator set no zone starts at `rsx.datetime.default_user_timezone` (`RSX_DEFAULT_USER_TIMEZONE`): `automatic` (NULL, the default), `site` / `server` (a COPY of that zone), or an identifier - applied once, at creation. Contract: `rsx:man time` (TIMEZONE PREFERENCE). Worked example: `/rsx/app/frontend/settings/user_settings/` (one select, its first option `''` = Automatic).
+A NEW login identity whose creator set no zone starts at `rsx.datetime.default_user_timezone` (config only, set in `rsx/resource/config/rsx.php`): `automatic` (NULL, the default), `site` / `server` (a COPY of that zone), or an identifier - applied once, at creation. Contract: `rsx:man time` (TIMEZONE PREFERENCE). Worked example: `/rsx/app/frontend/settings/user_settings/` (one select, its first option `''` = Automatic).
 
 **External API timestamps** carry `<field>__localized` (ISO 8601 with offset, the key holder's zone) and `<field>__localized_tz` beside each UTC DATETIME value - added by the model serializer; a hand-built API payload writes each timestamp with `...Rsx_Time::encode_for_output('uploaded_at', $value)`. A DATE gets none. `rsx:man time`, EXTERNAL API.
+
+---
+
+## Storing what users record
+
+Which KIND a recorded value is - an instant, a calendar date, or an intended day with an optional actual time and its entered-in zone - and the rules that keep evening work on its own day: skill `rspade:time-value-design`, `rsx:man time_value_design`.
 
 ---
 

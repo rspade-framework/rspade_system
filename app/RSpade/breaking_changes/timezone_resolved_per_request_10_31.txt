@@ -39,7 +39,7 @@ WHAT YOU ALREADY HAVE
     - Rsx_Timezone_Controller: get_settings answers {timezone, resolved_timezone}
       (timezone null = automatic); set_timezone takes {timezone}, null or '' for
       automatic.
-    - rsx.datetime.default_user_timezone (RSX_DEFAULT_USER_TIMEZONE): what a new
+    - rsx.datetime.default_user_timezone (config only - rsx/resource/config/rsx.php): what a new
       login identity starts with - automatic (the default), site, server or an
       identifier. A Login_User_Model override that extends the framework's base
       inherits it; there is nothing to state.

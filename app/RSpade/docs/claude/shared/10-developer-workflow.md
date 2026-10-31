@@ -9,7 +9,7 @@
 | `rsx:check` | Code-quality pass. Run before commits; every finding carries its own remediation text. An app adds its own `APP-` rules as `rsx/` classes extending `CodeQualityRule_Abstract` (`rsx:man coding_standards`). |
 | `rsx:debug /path` | Render a route through Playwright with full JS execution. Skill: `rspade:rsx-debug`. |
 | `rsx:test` | Run the test suite (class name, `--filter=`, `--group=` narrow it). Skill: `rspade:rsx-testing`. |
-| `rsx:man <topic>` | Framework documentation. **With no argument it lists every topic** — never work from a memorized list. |
+| `rsx:man <topic>` | Framework documentation. **With no argument it lists every topic** — never work from a memorized list. `--tag=<tag>` lists the topics on a subject (repeat to narrow), `--tags` the tag vocabulary; a page names its tags in a TAGS section (`rsx:man man`). |
 | `rsx:conformance:list` · `:show <id>` · `:for <path>` | The conformance audits: list them (`--when=launch`), print one, name those governing a file. |
 | `rsx:health [--json]` | Verify dependencies, services, environment. **Exit 1 iff a FAIL; WARN/INFO advisory.** |
 | `rsx:heal <target>` · `--list` | Run the remedy a `rsx:health` row names. **Creates only what is definitionally absent**; anything present-but-wrong is REFUSED, never overwritten. |

@@ -285,6 +285,122 @@ class Rsx_Time {
     // SERIALIZATION
     // =========================================================================
 
+    // =========================================================================
+    // A DAY AND A CLOCK IN A NAMED ZONE (rsx:man time_value_design)
+    // =========================================================================
+
+    /**
+     * The calendar date an instant falls on in a zone ("2026-10-29") - never a slice of the
+     * ISO string, which is the UTC date. Twin of Rsx_Time::local_date().
+     *
+     * @param {*} time
+     * @param {string} zone - IANA timezone identifier
+     * @returns {string|null}
+     */
+    static local_date(time, zone) {
+        const date = this.parse(time);
+        if (!date) return null;
+        const p = this._zone_parts(date.getTime(), zone);
+        return p.year + '-' + p.month + '-' + p.day;
+    }
+
+    /**
+     * The wall-clock time an instant shows in a zone ("22:30"). Twin of Rsx_Time::local_clock().
+     *
+     * @param {*} time
+     * @param {string} zone - IANA timezone identifier
+     * @returns {string|null}
+     */
+    static local_clock(time, zone) {
+        const date = this.parse(time);
+        if (!date) return null;
+        const p = this._zone_parts(date.getTime(), zone);
+        return p.hour + ':' + p.minute;
+    }
+
+    /**
+     * The instant meant by a DATE and a wall CLOCK typed in a zone that need not be the
+     * browser's. Twin of Rsx_Time::combine_date_and_time(): an ambiguous fall-back clock is its
+     * FIRST occurrence, a clock a spring-forward jump skips resolves to the instant after it.
+     *
+     * @param {string} date - "YYYY-MM-DD"
+     * @param {string|null} clock - "HH:MM" or "HH:MM:SS"; null or '' answers null
+     * @param {string} zone - IANA timezone identifier
+     * @returns {string|null} ISO 8601 UTC
+     */
+    static combine_date_and_time(date, clock, zone) {
+        if (clock === null || clock === undefined || clock === '') return null;
+
+        const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+        const c = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/.exec(clock);
+        if (!d || !c) {
+            throw new Error(`Rsx_Time.combine_date_and_time() needs a YYYY-MM-DD date and an HH:MM clock, got '${date}' and '${clock}'.`);
+        }
+
+        // The wall clock read as if it were UTC, then shifted by the zone's offset: the offset
+        // from a day before is tried first (the first occurrence of an ambiguous clock), then
+        // the one from a day after; a clock neither reproduces does not exist (the jump).
+        const wall = Date.UTC(+d[1], +d[2] - 1, +d[3], +c[1], +c[2], c[3] ? +c[3] : 0);
+        const day = 86400000;
+        const before = wall - this._zone_offset_ms(wall - day, zone);
+        if (this._zone_wall_ms(before, zone) === wall) return this.to_iso(new Date(before));
+        const after = wall - this._zone_offset_ms(wall + day, zone);
+        if (this._zone_wall_ms(after, zone) === wall) return this.to_iso(new Date(after));
+        return this.to_iso(new Date(before));
+    }
+
+    /**
+     * The instant a date begins in a zone - the inclusive lower bound of a date window.
+     * Twin of Rsx_Time::day_start_utc().
+     *
+     * @param {string} date - "YYYY-MM-DD"
+     * @param {string} zone
+     * @returns {string} ISO 8601 UTC
+     */
+    static day_start_utc(date, zone) {
+        return this.combine_date_and_time(date, '00:00', zone);
+    }
+
+    /**
+     * The instant the day after a date begins in a zone - the EXCLUSIVE upper bound of a date
+     * window ending on that date. Twin of Rsx_Time::day_after_utc().
+     *
+     * @param {string} date - "YYYY-MM-DD"
+     * @param {string} zone
+     * @returns {string} ISO 8601 UTC
+     */
+    static day_after_utc(date, zone) {
+        return this.day_start_utc(Rsx_Date.add_days(date, 1), zone);
+    }
+
+    /**
+     * The wall-clock fields of an instant in a zone, zero-padded strings. Throws a RangeError
+     * for an unknown zone (Intl's own refusal).
+     */
+    static _zone_parts(ms, zone) {
+        const parts = {};
+        const format = new Intl.DateTimeFormat('en-US', {
+            timeZone: zone, hourCycle: 'h23',
+            year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+        });
+        for (const part of format.formatToParts(new Date(ms))) {
+            parts[part.type] = part.value;
+        }
+        return parts;
+    }
+
+    /** The wall clock an instant shows in a zone, as milliseconds read as if UTC. */
+    static _zone_wall_ms(ms, zone) {
+        const p = this._zone_parts(ms, zone);
+        return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+    }
+
+    /** The zone's offset from UTC at an instant, in milliseconds (whole seconds). */
+    static _zone_offset_ms(ms, zone) {
+        const whole = Math.floor(ms / 1000) * 1000;
+        return this._zone_wall_ms(whole, zone) - whole;
+    }
+
     /**
      * Convert to ISO 8601 UTC string
      *

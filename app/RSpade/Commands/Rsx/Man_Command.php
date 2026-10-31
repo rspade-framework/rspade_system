@@ -11,7 +11,10 @@ class Man_Command extends Command
      *
      * @var string
      */
-    protected $signature = 'rsx:man {term? : The documentation term to look up (partial matches allowed)} {--agent-helper-message : Output agent helper message with available topics}';
+    protected $signature = 'rsx:man {term? : The documentation term to look up (partial matches allowed)}
+        {--tag=* : List only the topics carrying this tag (repeatable: a topic must carry every tag named)}
+        {--tags : List the shared tag vocabulary, with how many topics carry each tag}
+        {--agent-helper-message : Output agent helper message with available topics}';
 
     /**
      * The console command description.
@@ -19,6 +22,40 @@ class Man_Command extends Command
      * @var string
      */
     protected $description = 'Display RSX documentation from man pages (pretty formatted)';
+
+    /**
+     * THE SHARED TAG VOCABULARY: a man page's TAGS section names one or more of these, so the
+     * framework and every application tag a subject the same way. An application may tag its
+     * own pages with tags of its own besides; `rsx:man --tags` lists those separately.
+     *
+     * @var array<string,string> tag => what a page carrying it is about
+     */
+    public const TAG_VOCABULARY = [
+        'api' => 'the external API: endpoints, keys, scopes',
+        'auth' => 'sign-in, second factors, SSO, passwords, auth gates',
+        'build' => 'the manifest, bundles, compilation, sealed builds',
+        'components' => 'jqhtml components and their lifecycle',
+        'config' => 'configuration, .env, paths',
+        'debugging' => 'rsx:debug, console_debug, diagnostics',
+        'deploy' => 'production, modes, hosting, upgrades, maintenance',
+        'files' => 'uploads, attachments, documents, previews',
+        'forms' => 'forms, inputs, validation, modals',
+        'mail' => 'email and SMS',
+        'models' => 'the ORM, model fetch, enums, revisions, text types',
+        'permissions' => 'roles, ACLs, permission checks',
+        'portal' => 'the client portal',
+        'realtime' => 'realtime frames, subscriptions, emitters',
+        'schema' => 'migrations, tables, columns',
+        'security' => 'threats, hardening, CSP, throttles, secrets',
+        'sessions' => 'the Session facade, sign-in lifetimes, session values',
+        'spa' => 'SPA routing, actions, layouts, navigation',
+        'stdlib' => 'the shared helper library in PHP and JS',
+        'tasks' => 'background tasks, schedules, locks, commands',
+        'tenancy' => 'sites, tenancy, site scoping',
+        'testing' => 'the test suites and their harness',
+        'time' => 'dates, times, timezones',
+        'ui' => 'styling, SCSS, theme, responsive, UI widgets',
+    ];
 
     /**
      * The documentation directory paths.
@@ -63,6 +100,15 @@ class Man_Command extends Command
             mkdir($this->docs_dirs[0], 0755, true);
         }
 
+        if ($this->option('tags')) {
+            return $this->list_tags();
+        }
+
+        $tags = array_values(array_filter(array_map(fn ($tag) => strtolower(trim((string) $tag)), (array) $this->option('tag'))));
+        if ($tags !== []) {
+            return $this->list_all_documentation($tags);
+        }
+
         $term = $this->argument('term');
 
         // If no term provided, list all available documentation
@@ -99,11 +145,69 @@ class Man_Command extends Command
     }
 
     /**
-     * List all available documentation files.
+     * The tags a man page carries: its TAGS section, one indented line of lowercase,
+     * comma-separated tags right after the heading. An untagged page carries none.
+     *
+     * @param string $content
+     * @return string[]
+     */
+    public static function page_tags(string $content): array
+    {
+        if (!preg_match('/^TAGS[ \t]*\n[ \t]+(\S[^\n]*)$/m', $content, $matches)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(array_map(
+            fn ($tag) => strtolower(trim($tag)),
+            explode(',', $matches[1])
+        ))));
+    }
+
+    /**
+     * `rsx:man --tags`: the shared vocabulary with a count per tag, then any tag an
+     * application's pages use that the vocabulary does not have.
      *
      * @return int
      */
-    protected function list_all_documentation()
+    protected function list_tags(): int
+    {
+        $counts = [];
+        foreach ($this->get_all_files_deduplicated() as $file) {
+            foreach (static::page_tags((string) file_get_contents($file)) as $tag) {
+                $counts[$tag] = ($counts[$tag] ?? 0) + 1;
+            }
+        }
+
+        $this->info('Man page tags:');
+        $this->line('');
+        foreach (self::TAG_VOCABULARY as $tag => $meaning) {
+            $this->line(sprintf("  <info>%-13s</info> %3d  %s", $tag, $counts[$tag] ?? 0, $meaning));
+        }
+
+        $other = array_diff_key($counts, self::TAG_VOCABULARY);
+        if ($other !== []) {
+            ksort($other);
+            $this->line('');
+            $this->info('Other tags (not in the shared vocabulary):');
+            foreach ($other as $tag => $count) {
+                $this->line(sprintf("  <info>%-13s</info> %3d", $tag, $count));
+            }
+        }
+
+        $this->line('');
+        $this->line('Usage: <comment>php artisan rsx:man --tag=<tag></comment> (repeat --tag to require several)');
+
+        return 0;
+    }
+
+    /**
+     * List the available documentation files - every one, or with $tags, only the pages
+     * carrying every tag named.
+     *
+     * @param string[] $tags
+     * @return int
+     */
+    protected function list_all_documentation(array $tags = [])
     {
         $files = $this->get_all_files_deduplicated();
 
@@ -115,7 +219,7 @@ class Man_Command extends Command
             return 1;
         }
 
-        $this->info('Available Documentation:');
+        $this->info($tags === [] ? 'Available Documentation:' : 'Documentation tagged ' . implode(' + ', $tags) . ':');
         $this->line('');
 
         $docs = [];
@@ -124,6 +228,10 @@ class Man_Command extends Command
             // Read file to extract description from NAME section
             $content = file_get_contents($file);
             $description = '';
+
+            if ($tags !== [] && array_diff($tags, static::page_tags($content)) !== []) {
+                continue;
+            }
 
             // Look for NAME section in man page format
             if (preg_match('/^NAME\s*\n\s*(.+?)(?:\n|$)/m', $content, $matches)) {
@@ -166,8 +274,12 @@ class Man_Command extends Command
             $this->line(sprintf("  <info>%-25s</info> %s", $doc['name'], $doc['description']));
         }
 
+        if ($tags !== [] && $docs === []) {
+            $this->line('  (none - rsx:man --tags lists the tags in use)');
+        }
+
         $this->line('');
-        $this->line('Usage: <comment>php artisan rsx:man <term></comment>');
+        $this->line('Usage: <comment>php artisan rsx:man <term></comment>  |  <comment>rsx:man --tag=<tag></comment>  |  <comment>rsx:man --tags</comment>');
 
         return 0;
     }

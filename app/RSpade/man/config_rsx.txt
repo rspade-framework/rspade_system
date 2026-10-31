@@ -1058,7 +1058,7 @@ MAIL AND SMS
 DATETIME
     'datetime' => [
         'server_timezone' => env('RSX_SERVER_TIMEZONE') ?: 'UTC',
-        'default_user_timezone' => env('RSX_DEFAULT_USER_TIMEZONE') ?: 'automatic',
+        'default_user_timezone' => 'automatic',   # config only - set it in rsx/resource/config/rsx.php
         'time_interval' => 15,       # Schedule_Input dropdown minutes
         'default_duration' => 60,    # Schedule_Input new-event minutes
     ]

@@ -1,0 +1,50 @@
+TIME-VALUE CONVENTIONS: THE FRAMEWORK NOW SHIPS THE GUIDANCE; AUDIT YOUR OWN DOCS AGAINST IT
+Date: 2026-10-31
+
+IF YOU DO NOTHING: guidance of your own about storing recorded dates and times - in your CLAUDE.md files, rsx/resource/skills, rsx/resource/man or directory docs - keeps being loaded beside the framework's, spending context on every session where it repeats it and misleading wherever it contradicts it.
+
+SUMMARY
+    Guidance: no code breaks.
+
+    The framework now publishes the conventions for the times an application's
+    users record: three kinds of value (an INSTANT, a CALENDAR DATE, an INTENDED
+    DAY with an optional actual time and the zone it was entered in), the rules
+    that keep evening work on its own day, the column conventions, and the
+    designs that look right and damage data. It is recommended that every
+    application follow them.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    - rsx:man time_value_design - the contract, with worked shapes and dead ends.
+    - skill rspade:time-value-design - triggered when a date or time column, a
+      work log, a calendar, a timecard or a day-grouped report is being built.
+    - A pointer in the always-on stdlib-and-time guidance.
+    - Rsx_Time::local_date(), local_clock(), combine_date_and_time(),
+      day_start_utc() and day_after_utc(), in PHP and JavaScript, same names and
+      answers. A local helper of yours that does the same can be replaced by them.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    Nothing to build. What may need attention is guidance of your own that was
+    written before the framework had any.
+
+PORTING IT
+    1. Find your own time-value guidance:
+           grep -rln -i "timezone\|time zone\|all_day\|entry_date\|work_date\|DATE(" \
+               rsx/resource/skills rsx/resource/man $(find rsx -name CLAUDE.md)
+    2. Where it REPEATS rsx:man time_value_design, delete it, so your docs stop
+       restating the framework in every session's context.
+    3. Where it CONTRADICTS the framework on purpose, keep it - as a stated
+       exception under a final "## DIVERGENCES FROM FRAMEWORK DOCS" section of
+       that file, with the reason (the living-documentation rule: the framework
+       text is the before, your file is the after).
+    4. Where your CODE contradicts it - a total grouped by an instant's date, a
+       clock time stored without its zone, substr($time, 0, 10) or SQL DATE() of
+       an instant, a sweep that judges everyone by the server's midnight - the
+       man page's rules say what to change; the data such code wrote may need an
+       audit (rsx:man time_value_design, MEASURING, before trusting a query).
+
+VERIFICATION
+    php artisan rsx:man time_value_design renders, and a fresh agent session on
+    your application, asked to add a timecard, follows the skill rather than a
+    local document that disagrees with it.

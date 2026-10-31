@@ -1,0 +1,261 @@
+TIME_VALUE_DESIGN(7)        RSpade Framework Manual       TIME_VALUE_DESIGN(7)
+
+NAME
+       time_value_design - how to store the dates and times users record:
+       instants, calendar dates, and an intended day with an actual time
+
+TAGS
+       time, models, schema
+
+SYNOPSIS
+       An INSTANT          UTC DATETIME                 created_at, a meeting
+       A CALENDAR DATE     DATE                         a due date, a holiday
+       AN INTENDED DAY,    DATE (the day)               "3 hours on the proposal,
+       OPTIONALLY WITH AN  + optional UTC DATETIMEs      Monday" - maybe "10 PM
+       ACTUAL TIME         + the zone it was entered in  to 1 AM"
+
+       Totals, timecards, quotas, per-day views and billing read the DAY.
+       A record with a clock time stores the zone that clock was ENTERED in.
+
+       Every RSpade application is recommended to follow these conventions.
+
+DESCRIPTION
+       Rsx_Time and Rsx_Date are the primitives: an instant (UTC, converted per
+       viewer) and a calendar date (no zone, the same for every viewer). Most
+       business applications - project management, work tracking, calendars,
+       timecards, billing - also record a COMPOUND value no primitive names on
+       its own: the DAY a piece of work belongs to, chosen by the person who
+       logged it, and sometimes the actual TIME it happened. This page is the
+       framework's guidance for that value, and for the mistakes every such
+       application otherwise discovers from a client report that evening work
+       "moved to Tuesday".
+
+       What is a framework PRIMITIVE and what is GUIDANCE:
+
+           Primitives   Rsx_Time, Rsx_Date, the display-zone resolution
+                        (rsx:man time), and the day-and-clock helpers below.
+           Guidance     everything else here: the three kinds, the rules, the
+                        column conventions, the dead ends. Nothing enforces it;
+                        an application that follows it does not lose data.
+
+THE THREE KINDS OF TIME VALUE
+   An Instant
+       A moment: a meeting at 1:00 PM, created_at, a timer start. Stored as a
+       UTC DATETIME, transported as UTC ISO 8601, shown in each viewer's zone.
+
+   A Calendar Date
+       A day that has no zone: a holiday, a due date, an invoice date. Stored as
+       DATE and read identically by every viewer (Rsx_Date). Never converted:
+       converting a date moves it a day for any evening value west of UTC.
+
+   An Intended Day, Optionally With An Actual Time
+       "3 hours on the proposal, Monday" - and perhaps "from 10 PM to 1 AM".
+       Stored as a DATE (the day), optional UTC DATETIMEs (the actual time),
+       and the IANA zone the time was ENTERED in.
+
+       The DAY is a business fact - which day of the week, which week's
+       timecard, which quota day, which invoice period the work belongs to -
+       chosen by the person who logged it. The TIME, when given, is a record
+       of what actually happened. They are DIFFERENT FACTS and legitimately
+       disagree for a reader: 11 PM Central on Monday is 12:00 AM Tuesday in
+       Eastern, and the work is still Monday's. That drift is correct and must
+       never be "fixed".
+
+RULES
+       1.  Totals, timecards, quotas, per-day views and billing read the DAY
+           column, never a date derived from the time. Grouping hours by the
+           instant's date moves a person's evening work onto the next day for
+           every viewer east of them, silently.
+
+       2.  A record with a clock time stores the zone that clock was ENTERED
+           in. A UTC instant alone cannot say what wall clock the person typed,
+           on which day; without the zone, any surface that shows the DAY beside
+           the TIME must guess one, and the viewer's zone is wrong whenever
+           viewer and author differ.
+
+       3.  An edit surface reads and re-applies the clock in the RECORDED zone,
+           never the editor's. A form that shows the day with the time read in
+           the editor's zone, then saves both back in the editor's zone, moves
+           the work a day for an editor elsewhere who changed nothing.
+
+       4.  A writer that re-applies the SAME instant keeps the recorded zone. A
+           form that seeds the date and the time in the viewer's zone and posts
+           them back reproduces the instant; that is not a re-entry, and
+           re-labelling the zone would re-derive the day.
+
+       5.  A record whose day and time live on two rows keeps them on one day
+           by rule, in the MODEL: a saving hook refuses a move it cannot make
+           (with a sentence a person can act on), a saved hook carries the move
+           it can.
+
+       6.  A downstream copy of the day is FROZEN. A billing line that copies a
+           time entry's day locks the entry from then on, so the copy cannot
+           drift; an application that lets the source change after a copy owes
+           a sync rule, stated.
+
+       7.  "Today" in background code is somebody's today, named explicitly. A
+           task has no viewer: Rsx_Date::today() there is the SITE's day. Code
+           about a PERSON resolves that person's zone; code about a RECORD with a
+           recorded zone uses that zone.
+
+       8.  Cron is wall-clock in the SERVER zone (rsx:man tasks, SCHEDULES AND
+           TIMEZONES). A task whose correctness depends on a person's midnight
+           cannot be one daily schedule: run it hourly and judge each record in
+           its own zone.
+
+       9.  Never derive a date by slicing a string or by SQL DATE() of an
+           instant. substr($time, 0, 10) and DATE(started_at) read the UTC date,
+           the next day for every evening record in the Americas. Convert to the
+           zone, then take the date: Rsx_Time::local_date($time, $zone).
+
+       10. A list mixing dated and timed rows needs a sort EXPRESSION, not a
+           column: a NULL instant on every dated row sorts to one end whatever
+           its date. Place a dated row at 01:01 on its own day in the viewer's
+           zone, computed at query time and never stored - 01:01, not midnight,
+           because a fixed offset applied across a daylight-saving boundary is
+           an hour out, and an anchor at midnight is one hour from the previous
+           day.
+
+       11. A date window over instants converts each bound PER DATE -
+           day_start_utc($from, $zone) inclusive, day_after_utc($to, $zone)
+           exclusive - which keeps it right across a daylight-saving change;
+           dated rows match by plain date in the same query.
+
+COLUMN CONVENTIONS
+       For a record of the third kind:
+
+           work_date      DATE NOT NULL     the intended day
+           started_at     DATETIME NULL     the actual start (UTC), if given
+           ended_at       DATETIME NULL     the actual end (UTC), if given
+           timezone       VARCHAR(64) NULL  the zone started_at/ended_at were
+                                            entered in; NULL exactly when no
+                                            time was given; validated with
+                                            Rsx_Time::is_timezone() on save
+
+       A date is stored as a DATE. A "placeholder time" (00:00 or 06:00 meaning
+       "no time") is never a substitute: see DEAD ENDS.
+
+THE DAY-AND-CLOCK HELPERS
+       PHP and JavaScript, same names, same answers (rsx:man time):
+
+           Rsx_Time::local_date($time, $zone)      "2026-10-26" - the day an
+                                                   instant falls on in $zone
+           Rsx_Time::local_clock($time, $zone)     "23:00"
+           Rsx_Time::combine_date_and_time($date, $clock, $zone)
+                                                   the instant a date + wall
+                                                   clock typed in $zone mean;
+                                                   null clock = null
+           Rsx_Time::day_start_utc($date, $zone)   the instant $date begins
+           Rsx_Time::day_after_utc($date, $zone)   the instant the next day
+                                                   begins (exclusive bound)
+
+       Every one returns ISO strings (a date as "Y-m-d"); a raw query binding
+       wraps an instant in Rsx_Time::to_database(). A clock skipped by a
+       spring-forward jump resolves to the instant after it, an ambiguous
+       fall-back clock to its first occurrence. The JavaScript twins work in any
+       named zone, not only the browser's - which is what a calendar drawn in a
+       user's chosen zone needs.
+
+WORKED SHAPES
+   The Writer, Keeping The Recorded Zone On An Unchanged Instant
+           public function set_work_time(string $work_date, ?string $start_clock,
+                                         ?string $end_clock = null, ?string $zone = null): void
+           {
+               $zone = $zone ?? Rsx_Time::get_user_timezone();
+               $starts_at = Rsx_Time::combine_date_and_time($work_date, $start_clock, $zone);
+               $ends_at = Rsx_Time::combine_date_and_time($work_date, $end_clock, $zone);
+
+               $unchanged = $this->started_at !== null && Rsx_Time::is_timezone($this->timezone)
+                   && Rsx_Time::to_iso($this->started_at) === $starts_at
+                   && ($this->ended_at ? Rsx_Time::to_iso($this->ended_at) : null) === $ends_at;
+
+               $this->work_date = $work_date;
+               $this->started_at = $starts_at;
+               $this->ended_at = $ends_at;
+               if ($starts_at === null) {
+                   $this->timezone = null;
+               } elseif (!$unchanged) {
+                   $this->timezone = $zone;
+               }
+           }
+
+   The Edit Surface, Re-Applying In The Recorded Zone
+           $zone = $entry->exists && $entry->started_at !== null ? $entry->timezone : null;
+           $entry->set_work_time($params['work_date'], $params['start'] ?: null,
+                                 $params['end'] ?: null, $zone);
+
+       And the form is SEEDED in that zone too:
+           'start' => Rsx_Time::local_clock($entry->started_at, $entry->timezone)
+
+   One Day For A Container And Its Child, In The Model
+           static::saving(function (self $item) {   // refuse what cannot move
+               if ($item->exists && $item->isDirty('work_date') && $item->child_is_billed()) {
+                   throw new \RuntimeException('This work is already billed; it cannot move to another day.');
+               }
+           });
+           static::saved(function (self $item) {    // move what can
+               if ($item->wasChanged('work_date')) {
+                   $item->sync_child_day();
+               }
+           });
+
+   A Sweep Judged In Each Record's Own Zone
+           #[Task] #[Schedule('hourly')]
+           public static function stop_stale_timers(Task_Instance $task, array $params = [])
+           {
+               foreach ($running as $timer) {
+                   $zone = Rsx_Time::is_timezone($timer->timezone) ? $timer->timezone : $site_zone;
+                   if ($timer->work_date < Rsx_Time::local_date(Rsx_Time::now(), $zone)) {
+                       // the timer's own day is over
+                   }
+               }
+           }
+
+   A Date Window Over Both Shapes
+           $query->where(fn ($timed) => $timed->whereNotNull('started_at')
+                   ->where('started_at', '<', Rsx_Time::to_database(Rsx_Time::day_after_utc($to, $zone)))
+                   ->whereRaw('COALESCE(ended_at, started_at) >= ?',
+                       [Rsx_Time::to_database(Rsx_Time::day_start_utc($from, $zone))]))
+               ->orWhere(fn ($dated) => $dated->whereNull('started_at')
+                   ->whereBetween('work_date', [$from, $to]));
+
+DEAD ENDS
+       Each is the obvious first design, and each has damaged real data.
+
+       A floating midnight plus a flag. One DATETIME holds either a real instant
+           or "Y-m-d 00:00:00" meaning "this date, no zone", with is_all_day
+           saying which. Every reader that ignores the flag shows an imported
+           14 September entry as 13 September, 7:00 PM; every reader that takes
+           the first ten characters of a real instant shows evening work on the
+           next day.
+
+       A placeholder time plus "do not print the clock". Date-only work stored
+           as 06:00 local with is_time_unspecified. Right on screen, and still a
+           rule every reader must remember - the ones that do not print "6:00 AM"
+           for work nobody timed. Store a date as a date: there is nothing to
+           forget.
+
+       One stored zone per account, overwritten by "automatic". Two browsers
+           fight over it, and a headless sign-in sets a real person's account to
+           UTC. (The framework's own display zone no longer works this way:
+           rsx:man time, TIMEZONE INITIALIZATION.)
+
+       A zone per session. Mints sessions for visitors who need none, and still
+           cannot render the first page right.
+
+       A UTC instant with no recorded zone, read in the viewer's zone beside a
+           stored DAY. The day-shift defect of rule 3.
+
+MEASURING
+       MySQL's CONVERT_TZ() with a NAMED zone returns NULL on a server whose
+       zone tables are not loaded - the default in many images - and a
+       comparison against NULL is never true, so an audit query "count rows
+       whose local date disagrees with work_date" silently reports zero. Audit
+       in PHP (Rsx_Time::local_date()), or with explicit offsets - never with a
+       named-zone CONVERT_TZ() you have not checked returns a value.
+
+SEE ALSO
+       rsx:man time - the primitives, the display zone, the API companions
+       rsx:man tasks - schedules and the server timezone
+       rsx:man migrations - adding the columns
+       skill rspade:time-value-design - choosing the kind for a new column

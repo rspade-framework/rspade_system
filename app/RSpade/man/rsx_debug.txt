@@ -430,7 +430,10 @@ Test pagination or other interactive behavior:
 
 Test form validation feedback:
     php artisan rsx:debug /users/add --user=1 --eval="$('form').submit(); await sleep(500)" --dump-element=".invalid-feedback"
-    # Submits empty form, shows validation errors
+    # Submits empty form, shows validation errors. A refused submit (a validation
+    # error) is also logged at ERROR level in development and debug, so it appears
+    # under "JavaScript Console Errors" - expected when the run tested a refusal.
+    # Production logs a refusal through console_debug('FORM'), which it strips.
 
 IMPORTANT NOTES
 

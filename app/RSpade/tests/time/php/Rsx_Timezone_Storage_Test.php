@@ -111,7 +111,7 @@ class Rsx_Timezone_Storage_Test extends Rsx_Test_Abstract
         config(['rsx.datetime.default_user_timezone' => 'Mars/Olympus_Mons']);
 
         try {
-            static::__assert_throws(\RuntimeException::class, fn () => static::__new_login_user(), 'RSX_DEFAULT_USER_TIMEZONE');
+            static::__assert_throws(\RuntimeException::class, fn () => static::__new_login_user(), 'rsx.datetime.default_user_timezone');
         } finally {
             // Configuration is process state, not a row: the rollback does not restore it.
             config(['rsx.datetime.default_user_timezone' => static::$default_user_timezone]);

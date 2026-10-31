@@ -59,7 +59,7 @@ Type: php. Last updated: 2026-09-01.
 | time-store-01 | timezone_auto is gone; NULL is automatic | login_users columns | timezone present, timezone_auto absent | implemented |
 | time-store-02 | Each default_user_timezone form applies on create | automatic / server / site / an identifier | NULL / server zone / site zone / itself | implemented |
 | time-store-03 | An explicit create value wins; an update is untouched | explicit Berlin, explicit NULL, a later save | as given; NULL stays NULL | implemented |
-| time-store-04 | An unknown default throws | Mars/Olympus_Mons | RuntimeException naming RSX_DEFAULT_USER_TIMEZONE | implemented |
+| time-store-04 | An unknown default throws | Mars/Olympus_Mons | RuntimeException naming rsx.datetime.default_user_timezone | implemented |
 | time-api-01 | An API payload localizes every DATETIME in the key holder's zone | API identity, Chicago | __localized with offset, __localized_tz, NULL gets nulls, helper identical to serializer | implemented |
 | time-api-02 | An Ajax payload carries UTC alone | no API identity | no companions | implemented |
 | time-api-03 | encode_for_output handles null and a database-format value | null; '2026-10-29 10:13:03' in Tokyo | three nulls; +09:00 | implemented |
@@ -94,3 +94,8 @@ Type: php. Last updated: 2026-09-01.
 | time-t-04 | Rsx_Time to_iso/to_ms/to_database serialization | php | not yet authored | planned |
 | time-t-05 | timezone resolution (user/site/config) | php | needs site/user context fixtures | planned |
 | time-t-06 | JS parity of Rsx_Date / Rsx_Time | playwright | JS surface, needs browser harness | planned |
+| time-zh-01 | An evening instant is the local day, not the UTC one | 04:00Z in Chicago | 2026-10-26, 23:00 | implemented |
+| time-zh-02 | A date and clock combine in the named zone | 2026-10-26 23:00 Chicago; null clock | 04:00Z next day; null | implemented |
+| time-zh-03 | Daylight-saving days | 02:30 on 8 Mar; 01:30 on 1 Nov; day bounds of 1 Nov | the instant after the jump; the first occurrence; a 25-hour day | implemented |
+| time-zh-04 | Bad input is refused | a US-format date, "11pm", an unknown zone | InvalidArgumentException | implemented |
+| time-zh-js-01 | The JS twins answer what PHP answers | the same table, a browser in UTC | identical | implemented (playwright/zone_helpers.js) |
