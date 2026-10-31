@@ -69,10 +69,10 @@ with a refusal explains it instead of confirming.
                             <_Sys_Detail_Item $label="Developer" $value=(_u.is_developer ? 'Yes - may open this panel' : 'No') />
                             <_Sys_Detail_Item $label="Verified" $value=(_u.is_verified ? 'Yes' : 'No') />
                             <_Sys_Detail_Item $label="Activated" $value=(_u.is_activated ? 'Yes' : 'No') />
-                            <_Sys_Detail_Item $label="Last sign-in" $value=(_u.last_login ? Rsx_Time.format_datetime(_u.last_login) : 'Never') />
+                            <_Sys_Detail_Item $label="Last sign-in" $value=(_u.last_login ? Rsx_Time.format_timestamp(_u.last_login) : 'Never') />
                             <_Sys_Detail_Item $label="Timezone" $value=(_u.timezone ? _u.timezone : 'Automatic (follows each browser)') />
-                            <_Sys_Detail_Item $label="Created" $value=(_u.created_at ? Rsx_Time.format_datetime(_u.created_at) : null) />
-                            <_Sys_Detail_Item $label="Updated" $value=(_u.updated_at ? Rsx_Time.format_datetime(_u.updated_at) : null) />
+                            <_Sys_Detail_Item $label="Created" $value=(_u.created_at ? Rsx_Time.format_timestamp(_u.created_at) : null) />
+                            <_Sys_Detail_Item $label="Updated" $value=(_u.updated_at ? Rsx_Time.format_timestamp(_u.updated_at) : null) />
                         </_Sys_Detail_List>
                     </_Sys_Section>
                     <_Sys_User_Memberships $memberships=this.data.memberships />

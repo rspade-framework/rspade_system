@@ -18,6 +18,7 @@ use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Portal_Login_History;
 use App\RSpade\Core\Session\Session_Cleanup_Service;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Portal_Login_History - the client portal's sign-in history store, and its place in the
@@ -95,6 +96,29 @@ class Portal_Login_History_Test extends Rsx_Test_Abstract
         static::__assert_equals('Success', $history[1]['status_label']);
         static::__assert_null($history[0]['location'], 'the portal table records no location');
         static::__assert_equals(0, Portal_Login_History::get_failed_attempts_count($portal_user->email), 'a refusal is never a failure count');
+    }
+
+    /**
+     * plh-06: a portal row records the browser's zone, else its site's - a portal account has
+     * no zone of its own.
+     */
+    public static function test_a_row_records_the_browser_zone_else_the_sites()
+    {
+        $portal_user = static::__make_portal_user();
+        $id = (int) $portal_user->id;
+        $site_zone = Site_Model::find($portal_user->site_id)->timezone;
+
+        Rsx_Time::$browser_timezone_cookie_for_tests = 'Asia/Tokyo';
+        Portal_Login_History::record_success($id, $portal_user->email);
+        Rsx_Time::$browser_timezone_cookie_for_tests = '';
+        Portal_Login_History::record_success($id, $portal_user->email);
+
+        $history = Portal_Login_History::get_history_for_user($id);
+
+        static::__assert_equals('Asia/Tokyo', $history[1]['timezone']);
+        static::__assert_equals(Rsx_Time::TIMEZONE_SOURCE_BROWSER, $history[1]['timezone_source']);
+        static::__assert_equals($site_zone, $history[0]['timezone'], 'no browser zone: the portal user\'s site');
+        static::__assert_equals(Rsx_Time::TIMEZONE_SOURCE_SITE, $history[0]['timezone_source']);
     }
 
     /**

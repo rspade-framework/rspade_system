@@ -22,7 +22,7 @@ does not hold, _Sys_Error for anything else), and the viewer.
     <% } else { %>
         <% const _f = this.data.first; %>
         <_Sys_Page_Header $title=_f.file $icon="bi-file-earmark-text"
-            $subtitle=(_f.size_human + ', modified ' + Rsx_Time.format_datetime(_f.modified))>
+            $subtitle=(_f.size_human + ', modified ' + Rsx_Time.format_timestamp(_f.modified))>
             <Slot:meta>
                 <span class="_Sys_Log_View_Action__chip"><%= _f.format %></span>
                 <% if (_f.compressed) { %>

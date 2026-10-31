@@ -102,9 +102,9 @@ class Api_Key_List_Command extends Command
             Api_Key_Cli_Support::key_state($key),
             Api_Key_Cli_Support::key_access_summary($key),
             Api_Key_Cli_Support::key_scope_summary($key),
-            $key->expires_at ? Rsx_Time::format_datetime($key->expires_at) : 'never',
+            $key->expires_at ? Rsx_Time::format_timestamp($key->expires_at) : 'never',
             $key->last_used_at ? Rsx_Time::relative($key->last_used_at) : 'never used',
-            Rsx_Time::format_datetime($key->created_at),
+            Rsx_Time::format_timestamp($key->created_at),
         ], $keys);
 
         $this->newLine();

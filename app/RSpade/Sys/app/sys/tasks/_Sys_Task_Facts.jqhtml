@@ -41,19 +41,19 @@ Fires 'acted' after a lifecycle action.
         <_Sys_Detail_Item $label="ID" $value=_t.id $mono=true />
         <_Sys_Detail_Item $label="Origin" $value=_t.origin />
         <_Sys_Detail_Item $label="Pool" $value=_t.pool />
-        <_Sys_Detail_Item $label="Queued" $value=(_t.created_at ? Rsx_Time.format_datetime(_t.created_at) : null) />
-        <_Sys_Detail_Item $label="Scheduled for" $value=(_t.scheduled_for ? Rsx_Time.format_datetime(_t.scheduled_for) : null) />
-        <_Sys_Detail_Item $label="Started" $value=(_t.started_at ? Rsx_Time.format_datetime(_t.started_at) : null) />
-        <_Sys_Detail_Item $label="Finished" $value=(_t.completed_at ? Rsx_Time.format_datetime(_t.completed_at) : null) />
+        <_Sys_Detail_Item $label="Queued" $value=(_t.created_at ? Rsx_Time.format_timestamp(_t.created_at) : null) />
+        <_Sys_Detail_Item $label="Scheduled for" $value=(_t.scheduled_for ? Rsx_Time.format_timestamp(_t.scheduled_for) : null) />
+        <_Sys_Detail_Item $label="Started" $value=(_t.started_at ? Rsx_Time.format_timestamp(_t.started_at) : null) />
+        <_Sys_Detail_Item $label="Finished" $value=(_t.completed_at ? Rsx_Time.format_timestamp(_t.completed_at) : null) />
         <%-- While the run is live the ETA counts down by itself; afterwards it is the last
              estimate the run reported, shown as a plain time. --%>
         <% if (_t.eta_at && _t.is_live) { %>
             <_Sys_Detail_Item $label="ETA"><_Sys_Time_Until $time=_t.eta_at /> (<%= Rsx_Time.format_time(_t.eta_at) %>)</_Sys_Detail_Item>
         <% } else { %>
-            <_Sys_Detail_Item $label="ETA" $value=(_t.eta_at ? Rsx_Time.format_datetime(_t.eta_at) : null) />
+            <_Sys_Detail_Item $label="ETA" $value=(_t.eta_at ? Rsx_Time.format_timestamp(_t.eta_at) : null) />
         <% } %>
         <% if (_t.stop_requested_at) { %>
-            <_Sys_Detail_Item $label="Stop requested" $value=Rsx_Time.format_datetime(_t.stop_requested_at) />
+            <_Sys_Detail_Item $label="Stop requested" $value=Rsx_Time.format_timestamp(_t.stop_requested_at) />
         <% } %>
         <% if (_t.worker_pid) { %>
             <_Sys_Detail_Item $label="Worker" $value=('PID ' + _t.worker_pid + ' on ' + _t.worker_host + (_t.worker_state ? ' (' + _t.worker_state + ')' : '')) $mono=true />

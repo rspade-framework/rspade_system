@@ -20,7 +20,7 @@ for anything else), and the record. The body tabs keep the hash key "body".
     <% } else { %>
         <%
             const _e = this.data.email;
-            const _when = (iso) => iso ? Rsx_Time.format_datetime(iso) : null;
+            const _when = (iso) => iso ? Rsx_Time.format_timestamp(iso) : null;
             const _address = _Sys_Email_View_Action.address;
             const _list = _Sys_Email_View_Action.address_list;
             const _is_suppressed = _e.status === 'suppressed';

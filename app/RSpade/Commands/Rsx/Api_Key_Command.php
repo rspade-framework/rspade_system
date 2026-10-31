@@ -92,7 +92,7 @@ class Api_Key_Command extends Command
         $this->line('  User:    ' . $user->id . ' (' . $user->email . ')  site ' . $user->site_id);
         $this->line('  Name:    ' . $result['model']->name);
         $this->line('  Id:      ' . $result['model']->id);
-        $this->line('  Expires: ' . ($expires_at ? Rsx_Time::format_datetime($expires_at->toIso8601String()) : 'never'));
+        $this->line('  Expires: ' . ($expires_at ? Rsx_Time::format_timestamp($expires_at->toIso8601String()) : 'never'));
         $this->line('  Access:  ' . Api_Key_Cli_Support::key_access_summary($result['model']));
         $this->line('  Scope:   ' . Api_Key_Cli_Support::key_scope_summary($result['model']));
 

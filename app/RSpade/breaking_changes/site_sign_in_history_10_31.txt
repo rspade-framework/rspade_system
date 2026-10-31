@@ -1,0 +1,84 @@
+A SITE'S SIGN-IN HISTORY IS ITS OWN RECORD (Site_Sign_In_History); EVERY SIGN-IN RECORD CARRIES ITS TIMEZONE
+Date: 2026-10-31
+
+IF YOU DO NOTHING: nothing breaks. A screen of yours that shows a site's users their sign-in history from Login_History keeps working, but it is reading the login IDENTITY's history - every tenant that identity uses, with no site - and it never shows an administrator's impersonation; and Rsx_Time::get_user_timezone_source() and the timezone fields below go unused.
+
+THIS IS NOT AN INVITATION TO ADD A SCREEN. The template ships no sign-in history
+screen, and an application that has none needs none. This document is for an
+application that ALREADY shows sign-in history somewhere, so its existing screens
+read the right record and filter it correctly.
+
+SUMMARY
+    Category 2: a public API addition in /system/ that existing screens should
+    adopt.
+
+    A staff sign-in is TWO events, and they are now two records:
+
+        Login_History          the login IDENTITY signed in. Before any site is
+                               chosen, so no site. The system's record (the
+                               /_sys panel shows it).
+        Site_Sign_In_History   the browser's session ENTERED A SITE: bound to it
+                               at sign-in, moved to it from another site, or an
+                               impersonation begun on it. One row each time,
+                               written by the framework - an application never
+                               records here. The record a SITE's screens read.
+
+    Every audit session, login history row and site sign-in row now records the
+    display zone in effect (timezone) and where it came from (timezone_source:
+    explicit | browser | site | server). The zone is part of the audit session's
+    identity, so a browser that changes zone mid-sign-in starts a new audit
+    session.
+
+WHAT YOU ALREADY HAVE
+    Arrived in system/, nothing to do:
+
+    - The migration (2026_10_31_041303): timezone + timezone_source on
+      _audit_sessions, _login_history and _portal_login_history (NULL on rows
+      recorded before it), and the _site_sign_ins table. Run php artisan migrate.
+    - Site_Sign_In_History::get_history_for_user($user_id, $impersonation,
+      $limit) and ::list_page(['user_id' => ..., 'impersonation' => ...]), by
+      MEMBERSHIP (users.id). impersonation is REQUIRED: 'include' | 'exclude' |
+      'only' (the IMPERSONATION_* constants). Rows carry is_impersonation and
+      impersonator_login_user_id.
+    - timezone and timezone_source on Session::get_audit_session(),
+      Audit_Session::join() (audit_timezone, audit_timezone_source) and
+      Audit_Session::column(), and on every Login_History /
+      Portal_Login_History row.
+    - Rsx_Time::get_user_timezone_source().
+    - Rows are pruned with the login histories
+      (rsx.sessions.login_history_retention_days).
+
+WHAT TO CHECK IN YOUR APPLICATION
+    Only screens that already exist. Add nothing.
+
+    1. A SITE-FACING screen that lists sign-ins from Login_History (a user's
+       "recent sign-ins", an admin's view of a member). Login_History is the
+       identity's history across every tenant; on a site's screen read
+       Site_Sign_In_History by the membership instead:
+           Site_Sign_In_History::list_page(['user_id' => $user->id, 'impersonation' => 'exclude'])
+
+    2. IMPERSONATIONS ARE NOW ON RECORD, as entry_type 'impersonation' (and a
+       'site_switch' that carries an impersonator). If an existing screen shows a
+       STANDARD USER their own sign-in history, it must leave out an
+       administrator's visits - pass 'exclude' - or a person sees sign-ins they
+       never made. An existing screen where an administrator reviews an account
+       passes 'include', and may label rows by is_impersonation.
+
+    3. A screen that SHOWS a recorded zone as where the person was must check
+       timezone_source: 'site' and 'server' mean the framework did not know, and
+       must not be shown as their location.
+
+    Again: if none of these screens exist in your application, there is nothing
+    to do.
+
+THE REFERENCE IMPLEMENTATION
+    None in the template: it ships no sign-in history screen. The readers'
+    contract is rsx:man session, SITE SIGN-IN HISTORY; the zones, rsx:man time,
+    RECORDED ZONES.
+
+VERIFICATION
+    grep -rn "Login_History::\(get_history_for_user\|list_page\)" rsx
+        - any hit on a site-facing screen is item 1 above
+    Sign in through your login page, then:
+        php artisan tinker --execute='print_r(\App\RSpade\Core\Session\Site_Sign_In_History::get_history_for_user(<users.id>, "include", 1));'
+        - one row, entry_type sign_in, with the browser's zone

@@ -641,6 +641,11 @@ abstract class Rsx_Bundle_Abstract
         $rsxapp_data['server_time'] = \App\RSpade\Core\Time\Rsx_Time::now_iso();
         $rsxapp_data['user_timezone'] = \App\RSpade\Core\Time\Rsx_Time::get_user_timezone();
 
+        // The application's long-form date and clock patterns (rsx.datetime.display), which
+        // Rsx_Time.format_timestamp() and its siblings print with - validated here, so a
+        // pattern the two languages could not both print fails the page, not one browser.
+        $rsxapp_data['datetime_display'] = \App\RSpade\Core\Time\Rsx_Timestamp_Format::display_patterns();
+
         // The signed-in staff user's EXPLICIT zone, or null: automatic, a portal page, or
         // nobody signed in. Rsx_Timezone_Cookie.js keeps the rsx_tz cookie current exactly
         // when this is null, and clears it otherwise. user_timezone above stays the zone

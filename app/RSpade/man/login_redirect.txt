@@ -237,7 +237,7 @@ PORTAL PARITY
         Portal login-flow routes come from config('rsx.login_redirect.
         portal_excluded_prefixes'), expressed in portal-NAMESPACE (unprefixed)
         terms - default ['/login','/logout','/register','/password/reset',
-        '/request-access','/impersonate']. The portal prefix is stripped from
+        '/impersonate']. The portal prefix is stripped from
         the target before this comparison (nothing to strip when it is empty). Staff requests keep using excluded_prefixes unchanged.
 
     Template wiring (shipped)

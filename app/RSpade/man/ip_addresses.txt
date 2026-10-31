@@ -29,8 +29,8 @@ DESCRIPTION
     The framework's own answers give the address back as a string, so code
     reading them never sees the id: `ip_address` in
     Session::get_sessions_for_user(), get_current_session_info(),
-    Portal_Session::get_sessions_for_user(), Login_History and
-    Session::get_audit_session(); audit_ip_address from Audit_Session::join();
+    Portal_Session::get_sessions_for_user(), Login_History,
+    Site_Sign_In_History and Session::get_audit_session(); audit_ip_address from Audit_Session::join();
     and the model properties $session->ip_address,
     $attachment->created_by_ip_address, $log->ip (Api_Request_Log_Model) and
     $transaction->ip (Transaction_Model). Assigning one of those properties

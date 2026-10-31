@@ -133,7 +133,7 @@ class Absolute_Url_Request_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(
             'https://portal-host.example.test/register/abc',
-            static::__absolute_during('https://portal-host.example.test/request-access', '/register/abc'),
+            static::__absolute_during('https://portal-host.example.test/login', '/register/abc'),
             'the PORTAL_URL host is served'
         );
 

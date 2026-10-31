@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Session;
 
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Models\Portal_User_Model;
+use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Session\Login_History_Abstract;
 
 /**
@@ -80,6 +81,19 @@ class Portal_Login_History extends Login_History_Abstract
         }
 
         return ['site_id' => (int) $site_id];
+    }
+
+    /**
+     * A portal account has no zone of its own; its site's is the tier after the browser's.
+     */
+    protected static function __timezone_inputs(int $identity_id): array
+    {
+        $site_id = static::__row_columns($identity_id)['site_id'];
+
+        return [
+            'explicit' => null,
+            'site' => Site_Model::withTrashed()->where('id', $site_id)->value('timezone'),
+        ];
     }
 
     /**

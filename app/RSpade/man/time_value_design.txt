@@ -149,6 +149,13 @@ THE DAY-AND-CLOCK HELPERS
            Rsx_Time::day_after_utc($date, $zone)   the instant the next day
                                                    begins (exclusive bound)
 
+       PRINTING a record of this kind uses the recorded zone too, which names
+       itself only when it is not the reader's (rsx:man time, FORMATTING):
+
+           Rsx_Time::format_time_range($entry->started_at, $entry->ended_at, $entry->timezone)
+                                                   "Oct 9, 2026 10:00 - 11:30 AM IST"
+                                                   for a Chicago reader
+
        Every one returns ISO strings (a date as "Y-m-d"); a raw query binding
        wraps an instant in Rsx_Time::to_database(). A clock skipped by a
        spring-forward jump resolves to the instant after it, an ambiguous

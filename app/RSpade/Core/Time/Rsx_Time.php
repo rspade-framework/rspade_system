@@ -7,6 +7,7 @@ use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Date;
+use App\RSpade\Core\Time\Rsx_Timestamp_Format;
 
 /**
  * Rsx_Time - Datetime handling for RSpade (moments in time with timezone)
@@ -46,6 +47,12 @@ class Rsx_Time
      * @var string|null
      */
     private static ?string $_cached_user_timezone = null;
+
+    /**
+     * Where the cached timezone came from (a TIMEZONE_SOURCE_* value)
+     * @var string|null
+     */
+    private static ?string $_cached_user_timezone_source = null;
 
     /**
      * User ID when timezone was cached (for invalidation)
@@ -116,6 +123,22 @@ class Rsx_Time
      * than being sent the interstitial again.
      */
     public const TIMEZONE_RELOAD_MARKER = '_rsx_tz';
+
+    // =========================================================================
+    // WHERE A RESOLVED ZONE CAME FROM (get_user_timezone_source())
+    // =========================================================================
+
+    /** The signed-in staff user's own choice, login_users.timezone. */
+    public const TIMEZONE_SOURCE_EXPLICIT = 'explicit';
+
+    /** The browser's zone, from the rsx_tz cookie. */
+    public const TIMEZONE_SOURCE_BROWSER = 'browser';
+
+    /** Neither: the site's timezone. Not evidence of where the person was. */
+    public const TIMEZONE_SOURCE_SITE = 'site';
+
+    /** Nothing better: the server's timezone (or UTC). Not evidence of where the person was. */
+    public const TIMEZONE_SOURCE_SERVER = 'server';
 
     // =========================================================================
     // CURRENT TIME
@@ -331,30 +354,71 @@ class Rsx_Time
             return static::$_cached_user_timezone;
         }
 
-        $timezone = $is_portal ? null : static::explicit_user_timezone();
+        $explicit = $is_portal ? null : static::explicit_user_timezone();
 
-        if ($timezone === null) {
-            $timezone = $browser_timezone;
+        // The site is read only when it is needed: a portal request with no declared site
+        // throws on reading it (__current_site()).
+        $site_timezone = null;
+        if ($explicit === null && $browser_timezone === null) {
+            $site_timezone = static::__current_site()?->timezone;
         }
 
-        if ($timezone === null) {
-            $site = static::__current_site();
-            if ($site && static::is_timezone($site->timezone)) {
-                $timezone = $site->timezone;
-            }
-        }
-
-        if ($timezone === null) {
-            $timezone = static::get_server_timezone();
-        }
+        [$timezone, $source] = static::_resolve_timezone($explicit, $browser_timezone, $site_timezone);
 
         static::$_cached_user_timezone = $timezone;
+        static::$_cached_user_timezone_source = $source;
         static::$_cached_is_portal = $is_portal;
         static::$_cached_user_id = $current_user_id;
         static::$_cached_site_id = $current_site_id;
         static::$_cached_browser_timezone = $browser_timezone;
 
         return $timezone;
+    }
+
+    /**
+     * Where get_user_timezone()'s answer came from: TIMEZONE_SOURCE_EXPLICIT (the user's own
+     * choice), _BROWSER (the rsx_tz cookie), _SITE or _SERVER. The last two say the framework
+     * did NOT know where the person was - a reader must never present such a zone as their
+     * location. Recorded beside every sign-in and acting context (rsx:man time, RECORDED
+     * ZONES).
+     *
+     * @return string A TIMEZONE_SOURCE_* value
+     */
+    public static function get_user_timezone_source(): string
+    {
+        static::get_user_timezone();
+
+        return static::$_cached_user_timezone_source;
+    }
+
+    /**
+     * The resolution order, as a pure function: [zone, TIMEZONE_SOURCE_*] from an explicit
+     * zone, a browser zone and a site zone, each skipped when it is null or not a zone, then
+     * the server's. get_user_timezone() is this over the request; a sign-in record is this
+     * over the identity being recorded, which need not be signed in yet.
+     *
+     * FRAMEWORK INTERNAL.
+     *
+     * @param string|null $explicit
+     * @param string|null $browser
+     * @param string|null $site
+     * @return array{0: string, 1: string}
+     */
+    public static function _resolve_timezone(?string $explicit, ?string $browser, ?string $site): array
+    {
+        if (static::is_timezone($explicit)) {
+            return [$explicit, self::TIMEZONE_SOURCE_EXPLICIT];
+        }
+
+        if (static::is_timezone($browser)) {
+            return [$browser, self::TIMEZONE_SOURCE_BROWSER];
+        }
+
+        if (static::is_timezone($site)) {
+            return [$site, self::TIMEZONE_SOURCE_SITE];
+        }
+
+        return [static::get_server_timezone(), self::TIMEZONE_SOURCE_SERVER];
     }
 
     /**
@@ -696,6 +760,7 @@ HTML;
     public static function _clear_user_timezone_cache(): void
     {
         static::$_cached_user_timezone = null;
+        static::$_cached_user_timezone_source = null;
         static::$_cached_is_portal = null;
         static::$_cached_user_id = null;
         static::$_cached_site_id = null;
@@ -848,22 +913,18 @@ HTML;
     }
 
     /**
-     * Get timezone abbreviation for a time (e.g., "CST", "CDT")
-     * Handles DST correctly based on the actual date
+     * The zone abbreviation at an instant ("CST" in January, "CDT" in July, "IST", "UTC-3"),
+     * from the tz database through Rsx_Timestamp_Format - the same string the JS twin answers.
      *
      * @param mixed $time
      * @param string|null $timezone If null, uses user's timezone
-     * @return string
+     * @return string '' for null or an unparseable value
      */
     public static function get_timezone_abbr($time, ?string $timezone = null): string
     {
-        $tz = $timezone ?? static::get_user_timezone();
-        try {
-            $carbon = static::to_timezone($time, $tz);
-            return $carbon->format('T');
-        } catch (\Exception $e) {
-            return '';
-        }
+        $epoch = static::__epoch_to_format($time);
+
+        return $epoch === null ? '' : Rsx_Timestamp_Format::zone_abbreviation($epoch, $timezone ?? static::get_user_timezone());
     }
 
     // =========================================================================
@@ -1192,30 +1253,104 @@ HTML;
     }
 
     // =========================================================================
-    // FORMATTING (PHP-side - prefer client-side formatting when possible)
+    // FORMATTING - Rsx_Timestamp_Format, byte-identical to the JavaScript twins
     // =========================================================================
 
     /**
-     * Format time using pattern (internal helper)
-     *
-     * @param mixed $time
-     * @param string $format PHP date() format string
-     * @param string|null $timezone If null, uses user's timezone
-     * @return string
+     * The instant a formatter prints, as epoch seconds: null for null, '' or an unparseable
+     * value (the formatter answers ''); a date-only value THROWS (a calendar date is
+     * Rsx_Date's, and printing it as a moment moves it a day west of UTC).
      */
-    private static function _format($time, string $format, ?string $timezone = null): string
+    private static function __epoch_to_format($time): ?int
     {
-        $tz = $timezone ?? static::get_user_timezone();
-        try {
-            $carbon = static::to_timezone($time, $tz);
-            return $carbon->format($format);
-        } catch (\Exception $e) {
-            return '';
+        if (is_string($time) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $time)) {
+            static::parse($time);
         }
+
+        try {
+            $carbon = static::parse($time);
+        } catch (\InvalidArgumentException $e) {
+            return null;
+        }
+
+        return $carbon ? $carbon->getTimestamp() : null;
     }
 
     /**
-     * Format as date: "Dec 24, 2024"
+     * A moment, long form: "Oct 9, 2026 2:30 PM" - the application's patterns
+     * (rsx.datetime.display.date + ' ' + .time) - plus " IST" when $timezone differs from the
+     * viewer's at that instant (by offset or by abbreviation). The JS twin prints the same string.
+     *
+     * @param mixed $time
+     * @param string|null $timezone The zone to print in; null = the viewer's (get_user_timezone())
+     * @return string '' for null or an unparseable value
+     */
+    public static function format_timestamp($time, ?string $timezone = null): string
+    {
+        $epoch = static::__epoch_to_format($time);
+        if ($epoch === null) {
+            return '';
+        }
+
+        $viewer = static::get_user_timezone();
+
+        return Rsx_Timestamp_Format::timestamp($epoch, $timezone ?? $viewer, $viewer);
+    }
+
+    /**
+     * A moment, dense form, for grid cells, logs and history rows: "10-09 2:30p", with the year
+     * ("10-09-25 2:30p") only when it is not the current year - both judged in the zone printed -
+     * plus the zone suffix. Not configurable.
+     *
+     * @param mixed $time
+     * @param string|null $timezone
+     * @return string
+     */
+    public static function format_timestamp_short($time, ?string $timezone = null): string
+    {
+        $epoch = static::__epoch_to_format($time);
+        if ($epoch === null) {
+            return '';
+        }
+
+        $viewer = static::get_user_timezone();
+
+        return Rsx_Timestamp_Format::timestamp_short($epoch, $timezone ?? $viewer, $viewer, static::now()->getTimestamp());
+    }
+
+    /**
+     * A start and an end in one zone: "Oct 9, 2026 2:30 - 4:00 PM" on one local day (the date
+     * once, the shared meridiem once), "Oct 9, 2026 11:00 PM - Oct 10, 2026 1:00 AM" across days,
+     * the start alone for a null end; the zone suffix once, at the end. $short gives
+     * "10-09 2:30-4:00p". (The separator is an en dash.)
+     *
+     * @param mixed $start
+     * @param mixed $end
+     * @param string|null $timezone
+     * @param bool $short
+     * @return string '' when $start is null or unparseable
+     */
+    public static function format_time_range($start, $end, ?string $timezone = null, bool $short = false): string
+    {
+        $start_epoch = static::__epoch_to_format($start);
+        if ($start_epoch === null) {
+            return '';
+        }
+
+        $viewer = static::get_user_timezone();
+
+        return Rsx_Timestamp_Format::time_range(
+            $start_epoch,
+            static::__epoch_to_format($end),
+            $timezone ?? $viewer,
+            $viewer,
+            $short,
+            static::now()->getTimestamp()
+        );
+    }
+
+    /**
+     * The date part of a moment: "Oct 9, 2026" (rsx.datetime.display.date).
      *
      * @param mixed $time
      * @param string|null $timezone
@@ -1223,11 +1358,13 @@ HTML;
      */
     public static function format_date($time, ?string $timezone = null): string
     {
-        return static::_format($time, 'M j, Y', $timezone);
+        $epoch = static::__epoch_to_format($time);
+
+        return $epoch === null ? '' : Rsx_Timestamp_Format::pattern($epoch, $timezone ?? static::get_user_timezone(), Rsx_Timestamp_Format::display_patterns()['date']);
     }
 
     /**
-     * Format as time: "3:30 PM"
+     * The clock part of a moment: "2:30 PM" (rsx.datetime.display.time).
      *
      * @param mixed $time
      * @param string|null $timezone
@@ -1235,31 +1372,9 @@ HTML;
      */
     public static function format_time($time, ?string $timezone = null): string
     {
-        return static::_format($time, 'g:i A', $timezone);
-    }
+        $epoch = static::__epoch_to_format($time);
 
-    /**
-     * Format as datetime: "Dec 24, 2024 3:30 PM"
-     *
-     * @param mixed $time
-     * @param string|null $timezone
-     * @return string
-     */
-    public static function format_datetime($time, ?string $timezone = null): string
-    {
-        return static::_format($time, 'M j, Y g:i A', $timezone);
-    }
-
-    /**
-     * Format as datetime with timezone: "Dec 24, 2024 3:30 PM CST"
-     *
-     * @param mixed $time
-     * @param string|null $timezone
-     * @return string
-     */
-    public static function format_datetime_with_tz($time, ?string $timezone = null): string
-    {
-        return static::_format($time, 'M j, Y g:i A T', $timezone);
+        return $epoch === null ? '' : Rsx_Timestamp_Format::pattern($epoch, $timezone ?? static::get_user_timezone(), Rsx_Timestamp_Format::display_patterns()['time']);
     }
 
     // =========================================================================

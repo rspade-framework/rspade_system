@@ -210,7 +210,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
 
                 $task->stdout(
                     "Yielding after {$minutes} minute(s): {$processed} document(s) processed, {$retrying} to retry, {$failed} failed;"
-                    . " {$remaining} still waiting. The next pass is set for " . Rsx_Time::format_datetime($resume_at) . '.'
+                    . " {$remaining} still waiting. The next pass is set for " . Rsx_Time::format_timestamp($resume_at) . '.'
                 );
                 $task->state(['processed' => $processed, 'retrying' => $retrying, 'failed' => $failed, 'yielded' => true, 'remaining' => $remaining, 'resume_at' => $resume_at]);
                 $task->summary("Processed {$processed} blob(s): {$retrying} to retry, {$failed} failed. Yielded with {$remaining} still waiting; the next pass is set.");
@@ -251,13 +251,13 @@ class Document_Render_Service extends Rsx_Service_Abstract
                 $soft_failed++;
                 $task->stderr(
                     "Could not run {$label}: {$result['reason']}"
-                    . ' - no attempt charged; will check again at ' . Rsx_Time::format_datetime($result['next_attempt_at'])
+                    . ' - no attempt charged; will check again at ' . Rsx_Time::format_timestamp($result['next_attempt_at'])
                 );
             } elseif ($result['outcome'] === self::OUTCOME_RETRY) {
                 $retrying++;
                 $task->stderr(
                     "Attempt {$result['attempt']} of {$result['max_attempts']} failed for {$label}: {$result['reason']}"
-                    . ' - will retry at ' . Rsx_Time::format_datetime($result['next_attempt_at'])
+                    . ' - will retry at ' . Rsx_Time::format_timestamp($result['next_attempt_at'])
                 );
             } elseif ($result['outcome'] === self::OUTCOME_FAILED) {
                 $failed++;

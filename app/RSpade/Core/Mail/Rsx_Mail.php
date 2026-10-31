@@ -488,8 +488,7 @@ class Rsx_Mail
      * The tenant this send/blocklist call belongs to, resolved from the realm that is
      * actually being served.
      *
-     * The template app's portal endpoints send mail (password reset, request access,
-     * request threads), and those run as PORTAL requests where the staff facade knows
+     * The template app's portal endpoints send mail (password reset, request threads), and those run as PORTAL requests where the staff facade knows
      * nothing: the queue row would be filed under the wrong site and - worse - the
      * recipient's unsubscribe state for their REAL site would never be consulted, so a
      * blocked address would still be mailed. CLI (the queue drain, tests) is not a portal

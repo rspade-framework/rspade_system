@@ -84,6 +84,16 @@ Type: php. Last updated: 2026-09-01.
 | time-srv-07 | the log tap stamps records in the system timezone | TZ=America/Chicago; tap a logger | logger timezone America/Chicago | implemented |
 | time-srv-08 | every log channel taps System_Timezone_Log_Tap | config('logging.channels') | each but 'null' lists the tap | implemented |
 
+## Rsx_Timestamp_Format_Test (php, no DB) - one formatter, one string, both languages
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| tf-01 | the committed zone-name table is what this box's tz database generates | the file vs abbreviation_table_js() | identical (else: run rsx:time:abbreviations) | implemented |
+| tf-02 | the long and short forms and the suffix rule | Chicago, Kolkata, Winnipeg, Sao Paulo, Los Angeles for Phoenix; short this/another year; the year boundary in the printed zone | the stated strings | implemented |
+| tf-03 | ranges | same day shared/mixed meridiem, across midnight, null end, long and short, another zone | the stated strings; the suffix once | implemented |
+| tf-04 | configured patterns are honoured; a letter outside the set is refused at read; an escaped letter is literal | 'D, j F Y' / 'H:i'; 'M jS, Y'; '\\D\\a\\y j' | the strings; RuntimeException naming 'S'; 'Day 9' | implemented |
+| tf-05 | PHP and the browser's vendor files (under node) print byte-identical strings | 5 instants x 8 zones x 2 viewers x 2 pattern sets, every function | identical | implemented |
+
 ## Planned
 
 | ID | Purpose | Type | Reason | Status |

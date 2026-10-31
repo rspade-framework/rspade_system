@@ -16,6 +16,7 @@ use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Audit_Session;
 use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Rsx_Session_Cookie;
+use App\RSpade\Core\Session\Site_Sign_In_History;
 use App\RSpade\Core\Session\User_Agent;
 use App\RSpade\Core\Time\Rsx_Time;
 
@@ -2764,6 +2765,10 @@ class Session extends Rsx_System_Model_Abstract
             ]);
 
             self::__forget_user_sessions();
+
+            self::__record_site_sign_in((int) $current->id, $identity, $identity['impersonator_login_user_id'] === null
+                ? Site_Sign_In_History::ENTRY_SIGN_IN
+                : Site_Sign_In_History::ENTRY_IMPERSONATION);
         } else {
             self::__sign_in(self::REALM_STAFF, $identity, self::SIGN_OUT_SITE_SWITCHED, [
                 'signed_in_at' => $current->signed_in_at,
@@ -4352,6 +4357,16 @@ class Session extends Rsx_System_Model_Abstract
 
         self::__point($session_id, $realm_id, $user_session_id);
 
+        if ($realm_id === self::REALM_STAFF) {
+            $entry_type = match (true) {
+                $previous_reason === self::SIGN_OUT_SITE_SWITCHED => Site_Sign_In_History::ENTRY_SITE_SWITCH,
+                $identity['impersonator_login_user_id'] !== null => Site_Sign_In_History::ENTRY_IMPERSONATION,
+                default => Site_Sign_In_History::ENTRY_SIGN_IN,
+            };
+
+            self::__record_site_sign_in($user_session_id, $identity, $entry_type);
+        }
+
         if ($previous === null || (int) $previous->id === $user_session_id || $previous_reason === null) {
             return;
         }
@@ -4372,6 +4387,35 @@ class Session extends Rsx_System_Model_Abstract
         }
 
         self::_sign_out_user_sessions($ended, $previous_reason, false);
+    }
+
+    /**
+     * Record a staff sign-in entering a site (Site_Sign_In_History), now that this browser
+     * points at it - so the zone recorded is the one the sign-in now resolves. A sign-in with
+     * no site yet records nothing here (its site is recorded when it is bound), and neither
+     * does the rsx:debug harness.
+     *
+     * @param int $user_session_id
+     * @param array $identity login_user_id, site_id, impersonator_login_user_id
+     * @param string $entry_type A Site_Sign_In_History::ENTRY_* constant
+     * @return void
+     */
+    private static function __record_site_sign_in(int $user_session_id, array $identity, string $entry_type): void
+    {
+        $site_id = (int) $identity['site_id'];
+
+        if ($site_id === 0 || (int) self::$_session->type_id === self::TYPE_PLAYWRIGHT) {
+            return;
+        }
+
+        Site_Sign_In_History::_record(
+            $user_session_id,
+            $site_id,
+            self::__membership_id((int) $identity['login_user_id'], $site_id),
+            (int) $identity['login_user_id'],
+            $identity['impersonator_login_user_id'] === null ? null : (int) $identity['impersonator_login_user_id'],
+            $entry_type
+        );
     }
 
     /**

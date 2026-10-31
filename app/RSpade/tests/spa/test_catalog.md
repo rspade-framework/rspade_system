@@ -4,7 +4,7 @@ The title rows live in `playwright/spa_action_title.js` (one browser session ove
 template app's `/contacts` and `/contacts/view/:id`); the guard rows live in
 `playwright/navigation_guard.js` (the framework's own `/_sys` panel, so it depends on no
 application code; links, code navigation and real page exits) and the Back/Forward half of
-the guard in `playwright/history_scroll_and_veto.js` (the HISTORY rows); the fragment rows live in `playwright/fragment_popstate.js`
+the guard in `playwright/history_scroll_and_veto.js` (the HISTORY rows); the REFRESH rows live in `playwright/refresh_scroll_restoration.js`; the fragment rows live in `playwright/fragment_popstate.js`
 (same `/_sys` session shape); the ResizeObserver rows live in `playwright/resize_observer_notice.js` (same shape), the rejection-origin rows in `playwright/unhandled_rejection_origin.js` (same shape). The decorator half - `@title` surviving the transform
 as `_spa_title` - is JT-03f in the `js_transform` concern.
 
@@ -48,6 +48,12 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-HISTORY-04 | The entry's own state follows the page while it is on screen | playwright | scroll to 450 | `history.state.scroll.y` 450 | implemented | 2026-10-11 |
 | SPA-HISTORY-05 | `Rsx.url_hash_set()` keeps the entry state | playwright | set and clear a hash key | run, index and scroll intact | implemented | 2026-10-11 |
 | SPA-HISTORY-06 | A layout that scrolls inside a container is measured and restored on the container | playwright | action root as the scrolling box, at 600 -> B -> Back | container at 600, window at 0 | implemented | 2026-10-11 |
+| SPA-REFRESH-01 | The SPA owns restoration: the browser's is off | playwright | `playwright/refresh_scroll_restoration.js`, `/_sys` | `history.scrollRestoration === 'manual'` | implemented | 2026-10-31 |
+| SPA-REFRESH-02 | A refresh returns the page to where it was, and it is there once the action is ready (was: restored, then sent to the top at ready) | playwright | at 1500, reload | 1500 at ready and two frames later | implemented | 2026-10-31 |
+| SPA-REFRESH-03 | A refresh during which the user scrolls leaves the page where the user put it, at ready too | playwright | at 1500, Ajax held 1.5 s, reload, wheel -600 mid-load | the wheel's position after ready; restoration ended | implemented | 2026-10-31 |
+| SPA-REFRESH-04 | A position the page cannot hold is clamped and settled | playwright | entry scroll y 999999, reload | at the maximum | implemented | 2026-10-31 |
+| SPA-REFRESH-05 | Nothing is carried into the next navigation | playwright | then dispatch B | B at 0, no restoration running | implemented | 2026-10-31 |
+| SPA-REFRESH-06 | A layout that scrolls inside a container is restored on the container on refresh | playwright | container at 600, reload | container 600, window 0 | implemented | 2026-10-31 |
 | SPA-HISTORY-07 | Guard on: a Back/Forward between SPA pages raises the browser confirm box with the unload wording | playwright | `[A, B*, C]`, guard on, Forward, dismiss | one `confirm`, message `Leave site?\n\nChanges you made may not be saved.` | implemented | 2026-10-12 |
 | SPA-HISTORY-08 | A declined Forward leaves the address, the stack length and the entry index as they were | playwright | same | on B, length and index unchanged, `Spa._history_index` unchanged | implemented | 2026-10-12 |
 | SPA-HISTORY-09 | Nothing is dispatched - neither the move nor the step back - the restoring popstate is not asked about, and the page and the guard are untouched | playwright | same | asked once, no dispatch, same action instance, guard on | implemented | 2026-10-12 |

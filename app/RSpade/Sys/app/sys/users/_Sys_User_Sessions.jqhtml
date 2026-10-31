@@ -80,14 +80,14 @@ to its own detail screen.
                                             <span class="_Sys_User_Sessions__mono">#<%= row.site_id %></span> <%= row.site_name || '' %>
                                         <% } %>
                                     </td>
-                                    <td><%= row.signed_in_at ? Rsx_Time.format_datetime(row.signed_in_at) : '' %></td>
+                                    <td><%= row.signed_in_at ? Rsx_Time.format_timestamp(row.signed_in_at) : '' %></td>
                                     <td><%= row.last_active ? Rsx_Time.relative(row.last_active) : '' %></td>
                                     <td><%= row.sign_in_count %></td>
                                     <td>
                                         <% if (row.impersonator_login_user_id) { %>
                                             by <a href="<%= Rsx.Route('_Sys_User_View_Action', row.impersonator_login_user_id) %>"><%= row.impersonator_email || ('#' + row.impersonator_login_user_id) %></a>
                                             <% if (row.impersonation_started_at) { %>
-                                                <span class="_Sys_User_Sessions__dim">since <%= Rsx_Time.format_datetime(row.impersonation_started_at) %></span>
+                                                <span class="_Sys_User_Sessions__dim">since <%= Rsx_Time.format_timestamp(row.impersonation_started_at) %></span>
                                             <% } %>
                                         <% } %>
                                     </td>

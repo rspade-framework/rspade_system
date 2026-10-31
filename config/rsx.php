@@ -471,7 +471,7 @@ return [
         'excluded_prefixes' => ['/login', '/logout'],
 
         'portal_excluded_prefixes' => [
-            '/login', '/logout', '/register', '/password/reset', '/request-access', '/impersonate',
+            '/login', '/logout', '/register', '/password/reset', '/impersonate',
         ],
     ],
 
@@ -2766,6 +2766,18 @@ return [
         // throws when a login identity is created. Application behaviour, not deployment:
         // an application changes it in rsx/resource/config/rsx.php, never in .env.
         'default_user_timezone' => 'automatic',
+
+        // The application's house format for a moment: Rsx_Time::format_timestamp() prints
+        // date + ' ' + time, format_date() / format_time() each part, format_time_range()
+        // both (PHP and JS alike - the browser receives them in rsxapp). A CLOSED subset of PHP
+        // date() letters, implemented identically in both languages:
+        //     d j m n M F y Y D l g G h H i s A a     (a backslash makes a letter literal)
+        // Any other letter throws when the configuration is read. Application behaviour: set in
+        // rsx/resource/config/rsx.php. format_timestamp_short() is fixed and not configurable.
+        'display' => [
+            'date' => 'M j, Y',
+            'time' => 'g:i A',
+        ],
 
         // Time dropdown interval in minutes (for Schedule_Input component)
         'time_interval' => 15,

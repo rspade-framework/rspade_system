@@ -66,7 +66,7 @@ from.
                                         <% } %>
                                     </td>
                                     <td class="_Sys_Portal_User_Sessions__mono"><%= row.ip_address %></td>
-                                    <td><%= row.signed_in_at ? Rsx_Time.format_datetime(row.signed_in_at) : '' %></td>
+                                    <td><%= row.signed_in_at ? Rsx_Time.format_timestamp(row.signed_in_at) : '' %></td>
                                     <td><%= row.last_active ? Rsx_Time.relative(row.last_active) : '' %></td>
                                     <td><%= row.sign_in_count %></td>
                                     <td>

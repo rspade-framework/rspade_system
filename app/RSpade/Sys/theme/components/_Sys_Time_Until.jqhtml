@@ -12,5 +12,5 @@ element's title.
 --%>
 <Define:_Sys_Time_Until tag="span">
     <% if (!this.args.time) { throw new Error('_Sys_Time_Until requires $time'); } %>
-    <span $sid="text" title="<%= Rsx_Time.format_datetime(this.args.time) %>"><%= _Sys_Time_Until.phrase(Rsx_Time.seconds_until(this.args.time)) %></span>
+    <span $sid="text" title="<%= Rsx_Time.format_timestamp(this.args.time) %>"><%= _Sys_Time_Until.phrase(Rsx_Time.seconds_until(this.args.time)) %></span>
 </Define:_Sys_Time_Until>

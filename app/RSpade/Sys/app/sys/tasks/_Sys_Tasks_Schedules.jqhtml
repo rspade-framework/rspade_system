@@ -64,7 +64,7 @@ rsx.tasks.failing_schedule_warn_after is toned fail.
                                     <% if (!_r) { %>
                                         <td colspan="5" class="_Sys_Tasks_Schedules__dim">not yet registered (rsx:task:process registers it on its next tick)</td>
                                     <% } else { %>
-                                        <td><%= Rsx_Time.format_datetime(_r.next_run_at) %></td>
+                                        <td><%= Rsx_Time.format_timestamp(_r.next_run_at) %></td>
                                         <td>
                                             <% if (_r.last_task_id) { %>
                                                 <a href="#" data-action="open_run" data-task-id="<%= _r.last_task_id %>">#<%= _r.last_task_id %></a>
@@ -75,7 +75,7 @@ rsx.tasks.failing_schedule_warn_after is toned fail.
                                                 <span class="_Sys_Tasks_Schedules__dim">never</span>
                                             <% } %>
                                         </td>
-                                        <td><%= _r.last_success_at ? Rsx_Time.format_datetime(_r.last_success_at) : 'never' %></td>
+                                        <td><%= _r.last_success_at ? Rsx_Time.format_timestamp(_r.last_success_at) : 'never' %></td>
                                         <td class="<%= row.failing ? '_Sys_Tasks_Schedules__failures' : '' %>"><%= _r.consecutive_failures || '' %></td>
                                         <td>
                                             <% if (_r.consecutive_failures > 0 && _r.error_excerpt) { %>

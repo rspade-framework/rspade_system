@@ -604,29 +604,45 @@ NAVIGATION
           spa_hash_change fires (see SPA EVENTS). A change of path or query
           always re-dispatches, and actions are never reused.
         - URL updates in address bar via pushState()
-        - Back/Forward returns a page to where it was scrolled (below)
+        - Back/Forward and a refresh return a page to where it was scrolled
+          (below)
         - Links to external or non-SPA routes perform full page load
 
     Scroll Position:
-        A new navigation opens at the top. Back and Forward return a page to
-        where it was scrolled when it was left, and that is the framework's -
-        an action does nothing for it and calls no scrollTop() of its own.
+        A new navigation opens at the top. Back, Forward and a REFRESH return a
+        page to where it was scrolled when it was left, and that is the
+        framework's - an action does nothing for it and calls no scrollTop() of
+        its own. The browser's own restoration is off on an SPA page
+        (history.scrollRestoration = 'manual'); a server-rendered page keeps it.
 
         Each history entry records the position of ITS OWN page, kept current
-        while the page is on screen, so it is there however the page is left:
-        a link, Back/Forward, or a full page load. The position is measured on,
-        and restored to, the element the page actually scrolls in - the action
-        root when that is the scrolling box, else its nearest scrollable
-        ancestor, else the document - so a layout that scrolls inside a
-        container works the same as one that scrolls the window.
+        while the page is on screen and written once more as the page unloads,
+        so it is there however the page is left: a link, Back/Forward, a refresh
+        or a full page load - a history entry survives a reload, and a reload or a
+        return from another document reads it exactly as Back/Forward does. The
+        position is measured on, and restored to, the element the page actually
+        scrolls in - the action root when that is the scrolling box, else its
+        nearest scrollable ancestor, else the document - so a layout that scrolls
+        inside a container works the same as one that scrolls the window.
 
-        Restoration waits for the page. It is applied once the action has
-        rendered and again, for good, when the action is ready (on_load and
-        on_ready complete), so content that arrives by Ajax is there to scroll
-        to. A page that comes back shorter than it was is scrolled as far as it
-        goes. An `at` anchor in the URL outranks a restoration (rsx:man
-        anchors), and a layout marked data-anchor-scroll="manual" opts out of
-        the scroll-to-top, as before.
+        A restoration is decided when the dispatch STARTS, and while it runs
+        nothing sends the page to the top. It is applied instantly (never
+        animated) after the action's first render - a page painted from cache may
+        already be full height - again when the action is ready (on_load and
+        on_ready complete), and while the page settles after that: whenever the
+        content's height changes it is applied again, until a change notification
+        reports none. A page that comes back shorter than it was is scrolled as
+        far as it goes, and the restoration ends there.
+
+        THE USER'S OWN SCROLL WINS. A wheel, a touch, a scrolling key outside a
+        text field, a press on the scrollbar, or any scroll to a position the
+        restoration did not put the page at ends it for the rest of that load,
+        and the page stays where the person put it - it is not sent to the top
+        at ready either.
+
+        An `at` anchor in the URL outranks a restoration (rsx:man anchors), and a
+        layout marked data-anchor-scroll="manual" is left alone entirely - no
+        restoration, no scroll-to-top.
 
         history.state on an SPA entry is the framework's: {spa_run, spa_index,
         scroll, form_data}. Code that calls history.replaceState() itself must

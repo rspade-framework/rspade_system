@@ -68,10 +68,10 @@ user; _Sys_Error for anything else), and the record - a header over four tabs (h
                         <_Sys_Detail_Item $label="Verified" $value=(_u.is_verified ? 'Yes' : 'No') />
                         <_Sys_Detail_Item $label="Can sign in" $value=(_u.can_login ? 'Yes - active and verified' : 'No - a portal sign-in needs an active, verified account') />
                         <_Sys_Detail_Item $label="Password reset" $value=(_u.password_reset_required ? 'Required - the next password sign-in is refused until it is changed' : 'Not required') />
-                        <_Sys_Detail_Item $label="Last sign-in" $value=(_u.last_login ? Rsx_Time.format_datetime(_u.last_login) : 'Never') />
-                        <_Sys_Detail_Item $label="Last seen" $value=(_u.last_seen ? Rsx_Time.format_datetime(_u.last_seen) : 'Never') />
-                        <_Sys_Detail_Item $label="Created" $value=(_u.created_at ? Rsx_Time.format_datetime(_u.created_at) : null) />
-                        <_Sys_Detail_Item $label="Updated" $value=(_u.updated_at ? Rsx_Time.format_datetime(_u.updated_at) : null) />
+                        <_Sys_Detail_Item $label="Last sign-in" $value=(_u.last_login ? Rsx_Time.format_timestamp(_u.last_login) : 'Never') />
+                        <_Sys_Detail_Item $label="Last seen" $value=(_u.last_seen ? Rsx_Time.format_timestamp(_u.last_seen) : 'Never') />
+                        <_Sys_Detail_Item $label="Created" $value=(_u.created_at ? Rsx_Time.format_timestamp(_u.created_at) : null) />
+                        <_Sys_Detail_Item $label="Updated" $value=(_u.updated_at ? Rsx_Time.format_timestamp(_u.updated_at) : null) />
                     </_Sys_Detail_List>
                 </_Sys_Section>
             </Slot:overview>

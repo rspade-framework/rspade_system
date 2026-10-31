@@ -56,8 +56,8 @@ class and the tag under its subject. Every row links to its detail screen
             <td><%= row.category_id__label %></td>
             <td class="_Sys_Email_DataGrid__site">#<%= row.site_id %><% if (row.site_name) { %> <%= row.site_name %><% } %></td>
             <td><%= row.attempt_count %></td>
-            <td><%= Rsx_Time.format_datetime(row.created_at) %></td>
-            <td><%= row.sent_at ? Rsx_Time.format_datetime(row.sent_at) : '' %></td>
+            <td><%= Rsx_Time.format_timestamp(row.created_at) %></td>
+            <td><%= row.sent_at ? Rsx_Time.format_timestamp(row.sent_at) : '' %></td>
         </tr>
     </Slot:row>
     <Slot:empty>

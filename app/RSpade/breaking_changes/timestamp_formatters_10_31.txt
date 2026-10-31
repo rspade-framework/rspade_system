@@ -1,0 +1,74 @@
+ONE TIMESTAMP FORMATTER IN BOTH LANGUAGES: format_datetime() AND format_datetime_with_tz() ARE REPLACED BY format_timestamp()
+Date: 2026-10-31
+
+IF YOU DO NOTHING: every Rsx_Time::format_datetime() / format_datetime_with_tz() call in your PHP, Blade, JavaScript and jqhtml throws (an undefined method in PHP, "is not a function" in the browser), and a page or email that prints a moment through one of them fails.
+
+SUMMARY
+    Category 2: a public API contract change in /system/.
+
+    Rsx_Time's moment formatters now run on ONE engine per language over one
+    committed zone-name table, so PHP and JavaScript print byte-identical strings.
+    Before, PHP printed "Dec 24, 2024 3:30 PM" and JS "Dec 24, 2024, 3:30 PM", and
+    outside the US the two disagreed on every zone name ("IST" vs "GMT+5:30").
+
+        Rsx_Time::format_timestamp($time, $tz = null)        "Oct 9, 2026 2:30 PM"
+        Rsx_Time::format_timestamp_short($time, $tz = null)  "10-09 2:30p"
+        Rsx_Time::format_time_range($start, $end, $tz = null, $short = false)
+                                                             "Oct 9, 2026 2:30 - 4:00 PM"
+
+    Identical names, arguments and output in JS (Rsx_Time.format_timestamp() ...).
+    A zone suffix (" IST") is added ONLY when the zone printed differs from the
+    viewer's at that instant - so format_timestamp($t, $entry->timezone) prints a
+    record in its own zone and says so exactly when that is not yours.
+    format_datetime() and format_datetime_with_tz() are gone.
+
+WHAT YOU ALREADY HAVE
+    Arrived in system/, nothing to do:
+
+    - The three functions above, in PHP and JS; format_date(), format_time() and
+      get_timezone_abbr() now run on the same engine (same default output; JS
+      get_timezone_abbr() now answers tz database names, "IST" not "GMT+5:30").
+    - rsx.datetime.display.date / .time (default 'M j, Y' / 'g:i A'): the long
+      form's patterns, set in rsx/resource/config/rsx.php, read by both languages
+      (window.rsxapp.datetime_display). A closed subset of PHP date() letters -
+      d j m n M F y Y D l g G h H i s A a - and any other letter throws when the
+      configuration is read.
+    - The engine's JavaScript half and its zone table ship in the VENDOR bundle
+      (Core/Time/vendor/), so nothing is added to your app bundle.
+    - The code-quality remediation texts (JQHTML-DATETIME-01, EMAIL-TEMPLATE-01,
+      the model-fetch date rule) name the new functions.
+
+    TWO BEHAVIOUR CHANGES nothing announces:
+    - format_datetime_with_tz() always appended the zone; format_timestamp()
+      appends it only when it differs from the viewer's. An email rendered in a
+      task prints in the site zone with no suffix.
+    - The JS long form loses Intl's comma ("Dec 24, 2024 3:30 PM").
+
+WHAT IS MISSING IN YOUR APPLICATION
+    Every call to the two retired functions, in rsx/.
+
+THE REFERENCE IMPLEMENTATION
+    reference_app/ - every template screen, email and component prints moments
+    with format_timestamp(); for example
+    reference_app/app/frontend/settings/password_security/settings_password_security_action.jqhtml
+    and reference_app/emails/portal_shared_content_email.blade.php.
+
+PORTING IT
+    1. Find them:
+           grep -rn "format_datetime" rsx
+    2. Replace format_datetime( and format_datetime_with_tz( with
+       format_timestamp( - the arguments are unchanged.
+    3. Where a zone label must ALWAYS print (an email whose reader's zone is
+       unknown), pass the zone you mean and print it yourself:
+           Rsx_Time::format_timestamp($t, $zone) . ' ' . Rsx_Time::get_timezone_abbr($t, $zone)
+    4. Optional: a grid cell or history row can move to format_timestamp_short(),
+       a start/end pair to format_time_range(); a record that stores the zone its
+       time was entered in passes that zone (rsx:man time_value_design).
+    5. Optional: set your house long form in rsx/resource/config/rsx.php:
+           'datetime' => ['display' => ['date' => 'j M Y', 'time' => 'H:i']],
+
+VERIFICATION
+    grep -rn "format_datetime" rsx            - no output
+    php artisan rsx:check                     - clean
+    php artisan rsx:debug /dashboard --user=<id> --eval="return Rsx_Time.format_timestamp(Rsx_Time.now_iso(), 'Asia/Kolkata')"
+        - ends " IST" for a viewer outside India

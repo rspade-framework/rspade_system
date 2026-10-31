@@ -66,8 +66,8 @@ instead.
                                 <tr>
                                     <td><%= row.type_id__label %></td>
                                     <td><%= row.label || '' %></td>
-                                    <td><%= row.confirmed_at ? Rsx_Time.format_datetime(row.confirmed_at) : '' %></td>
-                                    <td><%= row.last_used_at ? Rsx_Time.format_datetime(row.last_used_at) : 'Never' %></td>
+                                    <td><%= row.confirmed_at ? Rsx_Time.format_timestamp(row.confirmed_at) : '' %></td>
+                                    <td><%= row.last_used_at ? Rsx_Time.format_timestamp(row.last_used_at) : 'Never' %></td>
                                     <td class="_Sys_User_Security__actions">
                                         <button type="button" class="btn btn-sm btn-danger" data-action="remove-factor" data-credential-id="<%= row.id %>">Remove</button>
                                     </td>
@@ -108,8 +108,8 @@ instead.
                                     <td><%= row.provider_label %></td>
                                     <td><%= row.email || '' %></td>
                                     <td><%= row.name || '' %></td>
-                                    <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
-                                    <td><%= row.last_login_at ? Rsx_Time.format_datetime(row.last_login_at) : 'Never' %></td>
+                                    <td><%= row.created_at ? Rsx_Time.format_timestamp(row.created_at) : '' %></td>
+                                    <td><%= row.last_login_at ? Rsx_Time.format_timestamp(row.last_login_at) : 'Never' %></td>
                                     <td class="_Sys_User_Security__actions">
                                         <button type="button" class="btn btn-sm btn-danger" data-action="unlink" data-link-id="<%= row.id %>">Disconnect</button>
                                     </td>

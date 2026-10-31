@@ -194,7 +194,7 @@ class Email_Template_Rule_Test extends Rsx_Test_Abstract
     {
         $violations = self::__run(self::__interpolate('$created_at'));
 
-        static::__assert_contains('Rsx_Time::format_datetime', $violations[0]->suggestion, 'names the moment formatter');
+        static::__assert_contains('Rsx_Time::format_timestamp', $violations[0]->suggestion, 'names the moment formatter');
         static::__assert_contains('Rsx_Date::format', $violations[0]->suggestion, 'names the date formatter');
         static::__assert_contains('rsx:man time', $violations[0]->suggestion, 'names the man page');
         static::__assert_contains(self::MARKER, $violations[0]->suggestion, 'names the exception marker');
@@ -207,10 +207,10 @@ class Email_Template_Rule_Test extends Rsx_Test_Abstract
     public static function test_a_formatted_datetime_is_clean()
     {
         $expressions = [
-            'Rsx_Time::format_datetime($created_at)',
-            'Rsx_Time::format_datetime_with_tz($expires_at)',
+            'Rsx_Time::format_timestamp($created_at)',
+            'Rsx_Time::format_timestamp_short($expires_at)',
             'Rsx_Date::format($due_date)',
-            '\\App\\RSpade\\Core\\Time\\Rsx_Time::format_datetime($row->sent_at)',
+            '\\App\\RSpade\\Core\\Time\\Rsx_Time::format_timestamp($row->sent_at)',
         ];
 
         foreach ($expressions as $expression) {

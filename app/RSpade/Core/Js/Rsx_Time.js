@@ -52,6 +52,12 @@ class Rsx_Time {
     static _timezone_frozen = false;
 
     /**
+     * The application's long-form patterns (rsx.datetime.display), from window.rsxapp
+     * @type {{date: string, time: string}}
+     */
+    static _display_patterns = {date: 'M j, Y', time: 'g:i A'};
+
+    /**
      * Framework initialization hook
      * Reads initial time configuration from window.rsxapp on page load
      */
@@ -60,6 +66,14 @@ class Rsx_Time {
             // Set timezone from rsxapp (always set, may be logged-in user's or default)
             if (window.rsxapp.user_timezone) {
                 this._user_timezone = window.rsxapp.user_timezone;
+            }
+
+            // The house patterns, validated by the same rule the server applied
+            if (window.rsxapp.datetime_display) {
+                const patterns = window.rsxapp.datetime_display;
+                Rsx_Timestamp_Format.validate_pattern(patterns.date, 'rsx.datetime.display.date');
+                Rsx_Timestamp_Format.validate_pattern(patterns.time, 'rsx.datetime.display.time');
+                this._display_patterns = {date: patterns.date, time: patterns.time};
             }
 
             // Calculate initial server time offset from page load time
@@ -263,22 +277,17 @@ class Rsx_Time {
     }
 
     /**
-     * Get timezone abbreviation for a time (e.g., "CST", "CDT")
-     * Handles DST correctly based on the actual date
+     * The zone abbreviation at an instant ("CST" in January, "CDT" in July, "IST", "UTC-3"),
+     * from the tz database table - the same string Rsx_Time::get_timezone_abbr() answers.
      *
      * @param {*} time
      * @param {string} [timezone]
      * @returns {string}
      */
     static get_timezone_abbr(time, timezone) {
-        const date = this.parse(time);
-        if (!date) return '';
-
-        const tz = timezone || this._user_timezone;
-        const options = { timeZone: tz, timeZoneName: 'short' };
-        const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(date);
-        const tz_part = parts.find(p => p.type === 'timeZoneName');
-        return tz_part ? tz_part.value : '';
+        const epoch = this._epoch_to_format(time);
+        if (epoch === null) return '';
+        return Rsx_Timestamp_Format.zone_abbreviation(epoch, timezone || this._user_timezone);
     }
 
     // =========================================================================
@@ -612,68 +621,88 @@ class Rsx_Time {
     }
 
     // =========================================================================
-    // FORMATTING
+    // FORMATTING - Rsx_Timestamp_Format, byte-identical to the PHP twins
     // =========================================================================
 
     /**
-     * Format as date: "Dec 24, 2024"
+     * The instant a formatter prints, as epoch seconds; null for null or an unparseable value.
+     * A date-only value throws (parse()).
+     */
+    static _epoch_to_format(time) {
+        const date = this.parse(time);
+        return date ? Math.floor(date.getTime() / 1000) : null;
+    }
+
+    /**
+     * A moment, long form: "Oct 9, 2026 2:30 PM" (the application's rsx.datetime.display
+     * patterns) plus " IST" when the zone differs from the viewer's at that instant.
+     *
+     * @param {*} time
+     * @param {string} [timezone] - the zone to print in; omitted = the viewer's
+     * @returns {string}
+     */
+    static format_timestamp(time, timezone) {
+        const epoch = this._epoch_to_format(time);
+        if (epoch === null) return '';
+        return Rsx_Timestamp_Format.timestamp(epoch, timezone || this._user_timezone, this._user_timezone, this._display_patterns);
+    }
+
+    /**
+     * A moment, dense form: "10-09 2:30p", "10-09-25 2:30p" in another year, plus the suffix.
+     *
+     * @param {*} time
+     * @param {string} [timezone]
+     * @returns {string}
+     */
+    static format_timestamp_short(time, timezone) {
+        const epoch = this._epoch_to_format(time);
+        if (epoch === null) return '';
+        return Rsx_Timestamp_Format.timestamp_short(epoch, timezone || this._user_timezone, this._user_timezone, this._epoch_to_format(this.now()));
+    }
+
+    /**
+     * A start and an end in one zone: "Oct 9, 2026 2:30 - 4:00 PM" (an en dash) on one day,
+     * both sides in full across days, the start alone for a null end.
+     *
+     * @param {*} start
+     * @param {*} end
+     * @param {string} [timezone]
+     * @param {boolean} [short=false]
+     * @returns {string}
+     */
+    static format_time_range(start, end, timezone, short = false) {
+        const start_epoch = this._epoch_to_format(start);
+        if (start_epoch === null) return '';
+        return Rsx_Timestamp_Format.time_range(
+            start_epoch, this._epoch_to_format(end), timezone || this._user_timezone, this._user_timezone,
+            short, this._epoch_to_format(this.now()), this._display_patterns
+        );
+    }
+
+    /**
+     * The date part of a moment: "Oct 9, 2026" (rsx.datetime.display.date).
      *
      * @param {*} time
      * @param {string} [timezone]
      * @returns {string}
      */
     static format_date(time, timezone) {
-        return this.format_in_timezone(time, {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-        }, timezone);
+        const epoch = this._epoch_to_format(time);
+        if (epoch === null) return '';
+        return Rsx_Timestamp_Format.pattern(epoch, timezone || this._user_timezone, this._display_patterns.date);
     }
 
     /**
-     * Format as time: "3:30 PM"
+     * The clock part of a moment: "2:30 PM" (rsx.datetime.display.time).
      *
      * @param {*} time
      * @param {string} [timezone]
      * @returns {string}
      */
     static format_time(time, timezone) {
-        return this.format_in_timezone(time, {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-        }, timezone);
-    }
-
-    /**
-     * Format as datetime: "Dec 24, 2024, 3:30 PM"
-     *
-     * @param {*} time
-     * @param {string} [timezone]
-     * @returns {string}
-     */
-    static format_datetime(time, timezone) {
-        return this.format_in_timezone(time, {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-        }, timezone);
-    }
-
-    /**
-     * Format as datetime with timezone: "Dec 24, 2024, 3:30 PM CST"
-     *
-     * @param {*} time
-     * @param {string} [timezone]
-     * @returns {string}
-     */
-    static format_datetime_with_tz(time, timezone) {
-        const formatted = this.format_datetime(time, timezone);
-        const abbr = this.get_timezone_abbr(time, timezone);
-        return `${formatted} ${abbr}`;
+        const epoch = this._epoch_to_format(time);
+        if (epoch === null) return '';
+        return Rsx_Timestamp_Format.pattern(epoch, timezone || this._user_timezone, this._display_patterns.time);
     }
 
     // =========================================================================

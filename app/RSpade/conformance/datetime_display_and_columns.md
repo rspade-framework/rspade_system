@@ -29,7 +29,7 @@ Audit A - display the rules cannot reach:
     grep -rnE '(_at|_date)\b' rsx --include='*.php' | grep '/emails/'
     grep -rniE 'build_csv|Csv\\?Writer|->download\(|Response::file|page\.pdf' rsx --include='*.php' --include='*.js' | grep -v '^rsx/tests/'
 
-The PHP grep is noisy (every model read): triage for values that reach a string, a Blade echo or a browser payload. The two-identifier jqhtml grep finds a mixed expression the rule passes (`Rsx_Time.format_datetime(a_at) + ' / ' + b_at`); the next two find component arguments and statement-built strings the rule does not scan.
+The PHP grep is noisy (every model read): triage for values that reach a string, a Blade echo or a browser payload. The two-identifier jqhtml grep finds a mixed expression the rule passes (`Rsx_Time.format_timestamp(a_at) + ' / ' + b_at`); the next two find component arguments and statement-built strings the rule does not scan.
 
 Audit B - column types:
 
@@ -41,7 +41,7 @@ Audit B - column types:
 
 - A temporal value printed, concatenated or sent to the browser as display text without the formatter matching its column type: DATETIME -> `Rsx_Time.*`, DATE -> `Rsx_Date.*`. The wrong class is a finding too (they throw on each other).
 - `new Date()`, `toLocaleDateString()`, `Intl.DateTimeFormat`, string slicing or offset arithmetic used to display a value in application code.
-- An email or export datetime formatted in the process's zone. Format server-side, preferably in the email class's `data()` (the value freezes into the queue row), passing the recipient's zone explicitly (`Rsx_Time::format_datetime($t, $zone)`) or the tenant's (`Rsx_Time::get_site_timezone()`) - a queued or task render has no signed-in viewer to resolve. A CSV cell gets an explicit zone too (`rsx:man csv_exports` has none of its own).
+- An email or export datetime formatted in the process's zone. Format server-side, preferably in the email class's `data()` (the value freezes into the queue row), passing the recipient's zone explicitly (`Rsx_Time::format_timestamp($t, $zone)`) or the tenant's (`Rsx_Time::get_site_timezone()`) - a queued or task render has no signed-in viewer to resolve. A CSV cell gets an explicit zone too (`rsx:man csv_exports` has none of its own).
 - A calendar fact in a DATETIME/TIMESTAMP column. Report the column AND its pipeline, each item on its own line: the migration to DATE; the model (the DATE cast then yields `YYYY-MM-DD`); `fetch()` and every payload shape; the input (native `type="date"`, never `datetime-local`); the display (`Rsx_Date`); and every other reader - comparisons, sorts, filters, exports, emails, reports, API responses. A column reported without its pipeline is an incomplete finding.
 - A raw-SQL or `DB::table()` write of a local-zone datetime string into a moment column (runtime sessions are UTC, so `NOW()` agrees with PHP writes; a hand-formatted local string does not).
 

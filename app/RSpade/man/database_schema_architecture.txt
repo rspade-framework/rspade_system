@@ -83,6 +83,8 @@ of framework classes:
     sign-in history               Login_History::list_page() (a grid page),
                                   get_history_for_user() (the newest few);
                                   Portal_Login_History, the same, for portal users
+    a site's sign-ins             Site_Sign_In_History::list_page(),
+                                  get_history_for_user() (by membership)
     who performed a logged act    Session::get_audit_session()
     a record's change history     $record->revisions(), Revision_Model::diff()
     background runs               Task_Run_Model::find_page(), Rsx_Task

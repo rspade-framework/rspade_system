@@ -102,7 +102,7 @@ class Documents_Failed_Command extends Command
                 Document_Render_Service::representative_file_name($storage) ?? '(orphan blob)',
                 $this->__excerpt($reason),
                 (int) $storage->process_soft_failure_count,
-                Rsx_Time::format_datetime($storage->process_due_at),
+                Rsx_Time::format_timestamp($storage->process_due_at),
             ];
             $shown++;
         }
@@ -206,7 +206,7 @@ class Documents_Failed_Command extends Command
                 $storage ? substr((string) $storage->hash, 0, 12) : '(gone)',
                 $storage ? (Document_Render_Service::representative_file_name($storage) ?? '(orphan blob)') : '(gone)',
                 $this->__excerpt((string) $index->error),
-                $index->indexed_at === null ? '-' : Rsx_Time::format_datetime($index->indexed_at),
+                $index->indexed_at === null ? '-' : Rsx_Time::format_timestamp($index->indexed_at),
                 $storage ? $this->__next_attempt($storage) : '-',
             ];
             $shown++;
@@ -243,7 +243,7 @@ class Documents_Failed_Command extends Command
     {
         return $storage->process_due_at === null
             ? 'none - out of attempts'
-            : Rsx_Time::format_datetime($storage->process_due_at);
+            : Rsx_Time::format_timestamp($storage->process_due_at);
     }
 
     /**

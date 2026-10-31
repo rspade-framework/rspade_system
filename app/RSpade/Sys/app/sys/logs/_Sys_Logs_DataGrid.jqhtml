@@ -29,7 +29,7 @@ name; sort name / size / modified). State lives in the URL hash under the grid k
             </td>
             <td class="_Sys_Logs_DataGrid__format"><%= row.format %><%= row.compressed ? ', gzip' : '' %></td>
             <td><%= row.size_human %></td>
-            <td><%= Rsx_Time.format_datetime(row.modified) %></td>
+            <td><%= Rsx_Time.format_timestamp(row.modified) %></td>
         </tr>
     </Slot:row>
     <Slot:empty>

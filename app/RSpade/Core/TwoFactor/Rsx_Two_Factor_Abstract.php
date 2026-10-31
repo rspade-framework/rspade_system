@@ -773,6 +773,7 @@ abstract class Rsx_Two_Factor_Abstract
                 'begun_at' => Rsx_Time::now_iso(),
                 'ip_address' => $client_context['ip_address'],
                 'user_agent' => $client_context['user_agent'],
+                'browser_timezone' => $client_context['browser_timezone'],
             ],
             Passkeys::challenge_expires_at(),
             static::SESSION_REALM
@@ -985,6 +986,7 @@ abstract class Rsx_Two_Factor_Abstract
             [
                 'ip_address' => $marker['ip_address'] ?? null,
                 'user_agent' => $marker['user_agent'] ?? null,
+                'browser_timezone' => $marker['browser_timezone'] ?? null,
             ]
         );
     }

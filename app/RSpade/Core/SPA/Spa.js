@@ -67,9 +67,19 @@ class Spa {
     // navigation.
     static _undoing_vetoed_move = false;
 
-    // True for a dispatch that is restoring a recorded scroll position (Back/Forward),
-    // so that the page is not sent to the top once the restoration has been applied.
-    static _restoring_scroll = false;
+    // The scroll restoration the current dispatch is carrying out, or null: a recorded
+    // position being returned to (Back/Forward, a reload, a return from another
+    // document). See _begin_scroll_restoration().
+    static _scroll_restoration = null;
+
+    // True for the whole of a dispatch that BEGAN as a restoration, even once the
+    // restoration has ended - so a page the user scrolled during the load is never sent
+    // to the top when the action is ready.
+    static _dispatch_is_restoration = false;
+
+    // Keys that scroll the page. One pressed outside a text field while a restoration
+    // is running is the user scrolling, and the restoration yields to it.
+    static _SCROLL_KEYS = ['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '];
 
     // The exact scroll position each entry was LEFT at, by `${run}:${index}`, for
     // entries left by Back/Forward in this page's lifetime. The entry's own state is
@@ -178,12 +188,22 @@ class Spa {
         }
 
         // The entry this page loaded on is the first one the SPA knows about. A reload
-        // or a return from another document finds its stamp still there.
+        // or a return from another document finds its stamp still there - and the
+        // position it was left at, which this load returns to exactly as Back/Forward
+        // between SPA pages does.
         Spa._adopt_current_entry();
 
         const initial_url = window.location.pathname + window.location.search + window.location.hash;
+        const navigation = performance.getEntriesByType('navigation')[0];
+        const returning = navigation && (navigation.type === 'reload' || navigation.type === 'back_forward');
+        const options = { history: 'none' };
+
+        if (returning) {
+            options.scroll = history.state?.scroll || null;
+        }
+
         console_debug('Spa', 'Dispatching to initial URL: ' + initial_url);
-        await Spa.dispatch(initial_url, { history: 'none' });
+        await Spa.dispatch(initial_url, options);
     }
 
     /**
@@ -446,6 +466,11 @@ class Spa {
     static setup_browser_integration() {
         console_debug('Spa', 'Setting up browser integration (History API mode)');
 
+        // The SPA restores scroll positions itself, from the history entry (reload and
+        // Back/Forward alike); the browser's own restoration would run early, against a
+        // page that is not there yet, and compete with it.
+        history.scrollRestoration = 'manual';
+
         // Keep the current entry's recorded scroll position current while the page is on
         // screen, so it is there whichever way the page is left - a link, Back/Forward,
         // or a full page load. Capturing, because a scroll inside a container does not
@@ -462,6 +487,14 @@ class Spa {
                 save_scroll();
             }
         }, { capture: true, passive: true });
+
+        // A page being unloaded (a refresh, a full page load) writes its exact position
+        // first: the rate-limited writer above may be a fraction of a second behind.
+        window.addEventListener('pagehide', () => {
+            if (!Spa.is_dispatching) {
+                Spa._save_scroll_to_current_entry();
+            }
+        });
 
         // Handle browser back/forward buttons
         window.addEventListener('popstate', (e) => {
@@ -722,9 +755,9 @@ class Spa {
         // Errors from previous page's pending requests should be ignored for 10 seconds
         Spa._navigation_timestamp = Date.now();
 
-        // Reset any pending scroll restoration from previous navigation
-        // (Browser refresh scroll is handled separately by Rsx._restore_scroll_on_refresh)
-        Rsx.reset_pending_scroll();
+        // A restoration still running for the page being left ends with it.
+        Spa._end_scroll_restoration();
+        Spa._dispatch_is_restoration = false;
 
         // Reset ORM fetch cache - cached data is per-page, not cross-navigation
         Rsx_Js_Model.orm_cache_reset();
@@ -938,41 +971,25 @@ class Spa {
                 history_mode: opts.history
             });
 
-            // Scroll handling. A position to RESTORE (Back/Forward) is queued rather
-            // than applied: the page that can hold it does not exist yet. It is tried
-            // once the action has rendered and settled when the action is ready
-            // (Rsx.try_restore_scroll()), on whichever element actually scrolls.
-            Spa._restoring_scroll = !!opts.scroll;
-
+            // Scroll handling, decided HERE, before anything renders: a recorded position
+            // to return to makes this dispatch a restoration (applied after the first
+            // render, again at ready, and while the page settles - see
+            // _begin_scroll_restoration()), and while one runs nothing sends the page to
+            // the top. A new navigation opens at the top. null leaves the page alone.
             if (opts.scroll) {
-                console_debug('Spa', 'Queueing scroll restoration: ' + opts.scroll.x + ', ' + opts.scroll.y);
-                Rsx._pending_scroll = {
-                    x: opts.scroll.x,
-                    y: opts.scroll.y,
-                    scroller: Spa._page_scroller,
-                    from_history: true,
-                };
+                console_debug('Spa', 'Restoring scroll position: ' + opts.scroll.x + ', ' + opts.scroll.y);
+                Spa._begin_scroll_restoration(opts.scroll);
             } else if (opts.scroll === undefined) {
-                // Default: scroll to top for new navigation (only if scroll not explicitly set)
-                // BUT skip on page reload - let Rsx._restore_scroll_on_refresh handle it
-                const nav_entries = performance.getEntriesByType('navigation');
-                const is_reload = nav_entries.length > 0 && nav_entries[0].type === 'reload';
-                if (is_reload) {
-                    console_debug('Spa', 'Skipping scroll-to-top on page reload (Rsx handles refresh scroll restore)');
-                } else {
-                    console_debug('Spa', 'Scrolling to top (new navigation)');
-                    window.scrollTo({ left: 0, top: 0, behavior: 'instant' });
-                }
+                console_debug('Spa', 'Scrolling to top (new navigation)');
+                window.scrollTo({ left: 0, top: 0, behavior: 'instant' });
             }
-            // If opts.scroll === null, don't scroll (let Navigation API or browser handle it)
 
             // Resolve layout chain - find divergence point and reuse matching layouts
             await Spa._resolve_layout_chain(target_layouts, action_name, action_args, url);
 
-            // First restoration attempt: the action has rendered, and one that painted
-            // from cached data may already be tall enough. If not, the position stays
-            // queued and is settled when the action is ready.
-            Rsx.try_restore_scroll();
+            // The action has rendered - and one that painted from cached data may already
+            // be full height - so a restoration is applied now.
+            Spa._apply_scroll_restoration();
 
             console_debug('Spa', `Rendered ${action_name} with ${target_layouts.length} layout(s)`);
 
@@ -1200,15 +1217,10 @@ class Spa {
                         loading_layout._action_is_loading = false;
                     }
 
-                    // The action has loaded everything it is going to. A Back/Forward
-                    // restoration is settled here - scrolled as far as the content
-                    // allows - and a refresh restoration gets another attempt.
-                    Rsx.try_restore_scroll(!!(Rsx._pending_scroll && Rsx._pending_scroll.from_history));
-
-                    // Anchor deep-link / scroll-to-top. Deliberately here and not at
-                    // dispatch time: dispatch does not await the action (see the
-                    // fire-and-forget ready() above), so scrolling any earlier races
-                    // a page whose content has not been rendered yet.
+                    // Anchor deep-link / restoration / scroll-to-top. Deliberately here and
+                    // not at dispatch time: dispatch does not await the action (see the
+                    // fire-and-forget ready() above), so scrolling any earlier races a
+                    // page whose content has not been rendered yet.
                     Spa._apply_scroll_position();
 
                     // Trigger spa_dispatch_ready event - action is fully loaded and rendered
@@ -1336,8 +1348,8 @@ class Spa {
      */
     static _apply_scroll_position() {
         // Opt-out: a layout that manages its own scroll position entirely.
-        const layout = Spa.layout;
-        if (layout && layout.$ && layout.$.attr('data-anchor-scroll') === 'manual') {
+        if (Spa._layout_manages_scroll()) {
+            Spa._end_scroll_restoration();
             return;
         }
 
@@ -1345,18 +1357,231 @@ class Spa {
 
         if (anchor) {
             // A deep link overrides restoring the previous scroll position.
-            Rsx._pending_scroll = null;
+            Spa._end_scroll_restoration();
             Spa.scroll_to_anchor(anchor);
             return;
         }
 
-        // A back/forward or refresh restoration owns the scroll position, whether it is
-        // still waiting for the content or has already been applied; leave it.
-        if (Spa._restoring_scroll || Rsx._pending_scroll) {
+        // A restoration owns the scroll position: applied once more now the action is
+        // ready - as far as the content goes - and kept while the page settles.
+        if (Spa._scroll_restoration) {
+            Spa._settle_scroll_restoration();
+            return;
+        }
+
+        // A restoration the user took over: the page is where they put it.
+        if (Spa._dispatch_is_restoration) {
             return;
         }
 
         Spa._scroll_action_container_to_top();
+    }
+
+    /**
+     * Whether the current layout manages its own scroll position entirely
+     * (data-anchor-scroll="manual").
+     */
+    static _layout_manages_scroll() {
+        const layout = Spa.layout;
+
+        return !!(layout && layout.$ && layout.$.attr('data-anchor-scroll') === 'manual');
+    }
+
+    /**
+     * Make this dispatch a SCROLL RESTORATION to {x, y} - a recorded position being
+     * returned to. The position is applied instantly, on _page_scroller(), at the points
+     * the page moves: after the action's first render, when it is ready, and while it
+     * settles after that (a ResizeObserver on the scroller's content re-applies it
+     * whenever the content height changes, and disconnects on the first notification
+     * that reports no change). A page shorter than the position is scrolled as far as it
+     * goes. Never animated.
+     *
+     * THE USER'S OWN SCROLL WINS, for the rest of the load: a wheel, a touch, a
+     * scrolling key outside a text field, a press on the scrolling element itself (its
+     * scrollbar), or a scroll of the scroller to a position the restoration did not
+     * write ends the restoration and leaves the page where the person put it. While it
+     * runs, the browser's scroll anchoring is off on the scroller, so the only scrolls
+     * are the restoration's and the user's.
+     *
+     * Ended by the next dispatch, an anchor, a layout that manages its own scroll, the
+     * user, or the page settling.
+     */
+    static _begin_scroll_restoration(target) {
+        Spa._end_scroll_restoration();
+
+        const restoration = {
+            x: target.x,
+            y: target.y,
+            scroller: null,
+            written: null,
+            height: null,
+            observer: null,
+            overflow_anchor: null,
+            listeners: [],
+        };
+
+        const yield_to_user = () => {
+            if (Spa._scroll_restoration === restoration) {
+                console_debug('Spa', 'Scroll restoration abandoned: the user scrolled');
+                Spa._end_scroll_restoration();
+            }
+        };
+
+        const in_text_field = (element) =>
+            element.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') !== null;
+
+        const listen = (on, type, handler) => {
+            on.addEventListener(type, handler, { capture: true, passive: true });
+            restoration.listeners.push([on, type, handler]);
+        };
+
+        listen(window, 'wheel', yield_to_user);
+        listen(window, 'touchstart', yield_to_user);
+        listen(window, 'keydown', (e) => {
+            if (Spa._SCROLL_KEYS.includes(e.key) && !in_text_field(e.target)) {
+                yield_to_user();
+            }
+        });
+        listen(window, 'pointerdown', (e) => {
+            const scroller = restoration.scroller;
+            if (scroller && (e.target === scroller || (scroller === document.scrollingElement && e.target === document.documentElement))) {
+                yield_to_user();
+            }
+        });
+        listen(document, 'scroll', (e) => {
+            const scroller = restoration.scroller;
+            if (!scroller || restoration.written === null) {
+                return;
+            }
+
+            const scrolled = scroller === document.scrollingElement ? e.target === document : e.target === scroller;
+            if (scrolled && !Spa._scroll_is_restorations(restoration)) {
+                yield_to_user();
+            }
+        });
+
+        Spa._scroll_restoration = restoration;
+        Spa._dispatch_is_restoration = true;
+    }
+
+    /**
+     * Apply the running restoration now, on the element the page scrolls in.
+     */
+    static _apply_scroll_restoration() {
+        const restoration = Spa._scroll_restoration;
+        if (!restoration) {
+            return;
+        }
+
+        if (Spa._layout_manages_scroll()) {
+            Spa._end_scroll_restoration();
+            return;
+        }
+
+        const scroller = Spa._page_scroller();
+
+        if (restoration.scroller !== scroller) {
+            Spa._release_scroller(restoration);
+            restoration.scroller = scroller;
+            restoration.overflow_anchor = scroller.style.overflowAnchor;
+            scroller.style.overflowAnchor = 'none';
+        }
+
+        scroller.scrollTo({ left: restoration.x, top: restoration.y, behavior: 'instant' });
+
+        // What was actually written: the browser clamps a position the content cannot hold.
+        restoration.written = { x: scroller.scrollLeft, y: scroller.scrollTop };
+        restoration.height = scroller.scrollHeight;
+    }
+
+    /**
+     * The action is ready: apply once more, then keep the position while the content
+     * settles, re-applying on every change of its height until a notification reports
+     * none.
+     */
+    static _settle_scroll_restoration() {
+        Spa._apply_scroll_restoration();
+
+        const restoration = Spa._scroll_restoration;
+        if (!restoration || typeof ResizeObserver === 'undefined') {
+            Spa._end_scroll_restoration();
+            return;
+        }
+
+        const scroller = restoration.scroller;
+        const content = scroller === document.scrollingElement || scroller === document.documentElement
+            ? [document.body]
+            : Array.from(scroller.children);
+
+        // The first notification is the observation itself: it applies a change that
+        // happened since ready, and never ends the window on its own.
+        let first = true;
+
+        restoration.observer = new ResizeObserver(() => {
+            if (Spa._scroll_restoration !== restoration) {
+                return;
+            }
+
+            if (scroller.scrollHeight !== restoration.height) {
+                Spa._apply_scroll_restoration();
+            } else if (!first) {
+                console_debug('Spa', 'Scroll restoration settled');
+                Spa._end_scroll_restoration();
+                return;
+            }
+
+            first = false;
+        });
+
+        for (const element of content) {
+            restoration.observer.observe(element);
+        }
+    }
+
+    /**
+     * Whether the scroller sits where the restoration last put it - or, the content
+     * having become shorter, where the browser clamped that position to.
+     */
+    static _scroll_is_restorations(restoration) {
+        const scroller = restoration.scroller;
+        const max_top = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+        const max_left = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+        const near = (a, b) => Math.abs(a - b) <= 1;
+
+        return near(scroller.scrollTop, Math.min(restoration.written.y, max_top))
+            && near(scroller.scrollLeft, Math.min(restoration.written.x, max_left));
+    }
+
+    /**
+     * End the running restoration, if any: listeners off, observer disconnected, the
+     * scroller's scroll anchoring given back.
+     */
+    static _end_scroll_restoration() {
+        const restoration = Spa._scroll_restoration;
+        if (!restoration) {
+            return;
+        }
+
+        Spa._scroll_restoration = null;
+
+        for (const [on, type, handler] of restoration.listeners) {
+            on.removeEventListener(type, handler, { capture: true });
+        }
+
+        if (restoration.observer) {
+            restoration.observer.disconnect();
+        }
+
+        Spa._release_scroller(restoration);
+    }
+
+    /**
+     * Give a scroller back its own scroll-anchoring setting.
+     */
+    static _release_scroller(restoration) {
+        if (restoration.scroller) {
+            restoration.scroller.style.overflowAnchor = restoration.overflow_anchor || '';
+        }
     }
 
     /**

@@ -68,7 +68,7 @@ is off the screen leads with _Sys_Task_System_Notice.
                                             <td><a href="#" data-action="open_run" data-task-id="<%= _k.task_id %>">#<%= _k.task_id %></a></td>
                                             <td><%= _k.mode %></td>
                                             <td class="_Sys_Task_Workers_Action__mono"><%= _k.host %></td>
-                                            <td><%= Rsx_Time.format_datetime(_k.kill_after_at) %></td>
+                                            <td><%= Rsx_Time.format_timestamp(_k.kill_after_at) %></td>
                                             <td><%= _k.claimed ? ('PID ' + _k.worker_pid) : 'waiting for a kill worker' %></td>
                                             <td><%= _k.explanation %></td>
                                         </tr>
@@ -92,7 +92,7 @@ is off the screen leads with _Sys_Task_System_Notice.
                                     <% for (const _t of _w.queued) { %>
                                         <tr class="_Sys_Task_Workers_Action__row" data-task-id="<%= _t.id %>">
                                             <td><span class="_Sys_Task_Workers_Action__mono">#<%= _t.id %> <%= _t.name %></span></td>
-                                            <td><%= Rsx_Time.format_datetime(_t.scheduled_for) %></td>
+                                            <td><%= Rsx_Time.format_timestamp(_t.scheduled_for) %></td>
                                             <td><%= Rsx_Task.waiting_text(_t) %></td>
                                             <td class="text-end"><_Sys_Task_Actions $task=_t /></td>
                                         </tr>
@@ -114,7 +114,7 @@ is off the screen leads with _Sys_Task_System_Notice.
                                     <tr>
                                         <td class="_Sys_Task_Workers_Action__mono"><%= _s.name %></td>
                                         <td><%= _s.cron_expression %></td>
-                                        <td><%= Rsx_Time.format_datetime(_s.next_run_at) %></td>
+                                        <td><%= Rsx_Time.format_timestamp(_s.next_run_at) %></td>
                                     </tr>
                                 <% } %>
                             </tbody>

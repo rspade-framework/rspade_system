@@ -18,7 +18,7 @@ for anything else), and the record.
     <% } else { %>
         <%
             const _m = this.data.sms;
-            const _when = (iso) => iso ? Rsx_Time.format_datetime(iso) : null;
+            const _when = (iso) => iso ? Rsx_Time.format_timestamp(iso) : null;
             const _is_suppressed = _m.status === 'suppressed';
             const _site = '#' + _m.site_id + (_m.site_name ? ' ' + _m.site_name : '');
         %>

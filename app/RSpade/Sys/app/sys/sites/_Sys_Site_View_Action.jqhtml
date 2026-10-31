@@ -62,13 +62,13 @@ a missing id; _Sys_Error for anything else), and the record.
                 <_Sys_Detail_Item $label="Portal domain" $value=_s.portal_domain $mono=true />
                 <_Sys_Detail_Item $label="Members" $value=(_s.member_count + ' (' + _s.enabled_member_count + ' with the membership enabled)') />
                 <_Sys_Detail_Item $label="Created">
-                    <%= _s.created_at ? Rsx_Time.format_datetime(_s.created_at) : '' %>
+                    <%= _s.created_at ? Rsx_Time.format_timestamp(_s.created_at) : '' %>
                     <% if (_s.created_by_author) { %>
                         <span class="_Sys_Site_View_Action__hint">by <Record_Author $author=_s.created_by_author /></span>
                     <% } %>
                 </_Sys_Detail_Item>
                 <_Sys_Detail_Item $label="Updated">
-                    <%= _s.updated_at ? Rsx_Time.format_datetime(_s.updated_at) : '' %>
+                    <%= _s.updated_at ? Rsx_Time.format_timestamp(_s.updated_at) : '' %>
                     <% if (_s.updated_by_author) { %>
                         <span class="_Sys_Site_View_Action__hint">by <Record_Author $author=_s.updated_by_author /></span>
                     <% } %>

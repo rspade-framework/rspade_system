@@ -1,6 +1,6 @@
 ---
 name: date-time
-description: "Working with dates and times in RSX using Rsx_Time and Rsx_Date classes. Use when formatting dates/times for display, handling user timezones (the per-request resolution, the rsx_tz browser cookie, NULL = automatic, rsx.datetime.default_user_timezone), working with datetime columns, the external API's __localized / __localized_tz timestamp companions and Rsx_Time::encode_for_output(), converting between formats, or displaying relative times like \"2 hours ago\"."
+description: "Working with dates and times in RSX using Rsx_Time and Rsx_Date classes. Use when formatting dates/times for display (format_timestamp(), format_timestamp_short(), format_time_range(), a zone suffix like IST only when it is not the viewer's, the rsx.datetime.display patterns, "uses the letter ... which RSpade date patterns do not support"), deciding whether a timezone lives on login_users or users, reading the zone recorded on a sign-in or audit session (timezone_source), handling user timezones (the per-request resolution, the rsx_tz browser cookie, NULL = automatic, rsx.datetime.default_user_timezone), working with datetime columns, the external API's __localized / __localized_tz timestamp companions and Rsx_Time::encode_for_output(), converting between formats, or displaying relative times like \"2 hours ago\"."
 ---
 
 # RSX Date & Time Handling
@@ -55,11 +55,13 @@ use App\RSpade\Core\Time\Rsx_Time;
 Rsx_Time::now();                    // Carbon (for calculations only)
 Rsx_Time::now_iso();                // ISO 8601: 2025-12-24T15:30:00Z
 
-// Formatting for display
-Rsx_Time::format_datetime($datetime);        // "Dec 24, 2025 3:30 PM"
-Rsx_Time::format_datetime_with_tz($datetime); // "Dec 24, 2025 3:30 PM CST"
-Rsx_Time::format_time($datetime);            // "3:30 PM"
-Rsx_Time::relative($datetime);               // "2 hours ago"
+// Formatting for display - the same string as the JS twin, byte for byte
+Rsx_Time::format_timestamp($datetime);              // "Dec 24, 2025 3:30 PM"
+Rsx_Time::format_timestamp($datetime, 'Asia/Kolkata'); // "Dec 25, 2025 3:00 AM IST" (not yours: suffixed)
+Rsx_Time::format_timestamp_short($datetime);        // "12-24 3:30p" - grid cells, logs
+Rsx_Time::format_time_range($start, $end);          // "Dec 24, 2025 3:30 - 5:00 PM"
+Rsx_Time::format_time($datetime);                   // "3:30 PM"
+Rsx_Time::relative($datetime);                      // "2 hours ago"
 
 // Database storage (always UTC)
 Rsx_Time::to_database($datetime);   // Converts to MySQL format
@@ -76,16 +78,32 @@ Rsx_Time::to_user_timezone($datetime); // Convert to user's timezone
 Rsx_Time.now();                     // Date object
 Rsx_Time.now_iso();                 // ISO string
 
-// Formatting
-Rsx_Time.format_datetime(datetime);          // "Dec 24, 2025 3:30 PM"
-Rsx_Time.format_datetime_with_tz(datetime);  // "Dec 24, 2025 3:30 PM CST"
-Rsx_Time.format_time(datetime);              // "3:30 PM"
+// Formatting - identical output to PHP
+Rsx_Time.format_timestamp(datetime);                // "Dec 24, 2025 3:30 PM"
+Rsx_Time.format_timestamp(entry.started_at, entry.timezone); // in ITS zone, suffixed when not yours
+Rsx_Time.format_timestamp_short(datetime);          // "12-24 3:30p"
+Rsx_Time.format_time_range(start, end, zone, true); // "12-24 3:30-5:00p"
+Rsx_Time.format_time(datetime);                     // "3:30 PM"
 Rsx_Time.relative(datetime);                 // "2 hours ago", "in 3 days"
 
 // Arithmetic
 Rsx_Time.add(datetime, 3600);       // Add seconds, returns ISO string
 Rsx_Time.subtract(datetime, 3600);  // Subtract seconds
 ```
+
+### The formatting rules
+
+- **The zone suffix appears only when it carries information**: the zone printed differs from the viewer's at that instant, by offset OR by name (Winnipeg read in Chicago: none; Kolkata: ` IST`; Los Angeles in July read in Phoenix: ` PDT`). Never append an abbreviation by hand - pass the zone and let the formatter decide.
+- **The long form is the application's house style**: `rsx.datetime.display.date` + `.time` in `rsx/resource/config/rsx.php` (default `'M j, Y'` / `'g:i A'`), read by both languages. The pattern letters are a closed set - `d j m n M F y Y D l g G h H i s A a`, backslash for a literal - and any other letter throws when the config is read. The short form is fixed.
+- **A time a person ENTERED in their own day** (an activity's start/end) prints in the zone stored on the record; everything else (created/sent stamps, calendars, audit rows) in the viewer's. `rsx:man time_value_design`.
+
+### Where a timezone lives (the standard)
+
+**On `login_users`, the identity - never on `users`, the membership, and no setting moves it.** A person in several tenants is in one place; a per-site zone would move every clock when they switch sites. A preference about the PERSON (timezone, dark mode) is a `login_users` column; one about their role in ONE tenant belongs to `users`. The tenant's own zone is `sites.timezone`. **So only the person sets their timezone** (their Preferences screen, `Rsx_Timezone_Controller`) - an administrator never edits another user's, because the change would reach that person's other tenants.
+
+### Recorded zones
+
+Audit sessions, login history rows and site sign-in rows carry `timezone` + `timezone_source` (`explicit` | `browser` | `site` | `server`, `Rsx_Time::get_user_timezone_source()`). The zone is part of the audit session's key, so a travelling laptop starts a new one. **`site` / `server` means the framework did not know where the person was - never present it as their location.** `rsx:man time`, RECORDED ZONES.
 
 ---
 
@@ -232,7 +250,7 @@ A cleared native input submits `""`, not null. Full treatment: `php artisan rsx:
 ### Display in Template
 
 ```jqhtml
-<span><%= Rsx_Time.format_datetime(this.data.record.created_at) %></span>
+<span><%= Rsx_Time.format_timestamp(this.data.record.created_at) %></span>
 <span><%= Rsx_Time.relative(this.data.record.updated_at) %></span>
 <span><%= Rsx_Date.format(this.data.record.due_date) %></span>
 ```

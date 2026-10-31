@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Session;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Session\Login_History_Abstract;
 
 /**
@@ -21,8 +22,11 @@ use App\RSpade\Core\Session\Login_History_Abstract;
  * Portal_Login_History is the client portal's twin, over `_portal_login_history`.
  *
  * THERE IS NO SITE COLUMN, because there is no site to record: a staff sign-in authenticates
- * the login identity before any site is chosen, and a row records the identity alone. Which of
- * an identity's sessions are on a site is Session::get_sessions_for_user($login_user_id, $site_id).
+ * the login identity before any site is chosen, and a row records the identity alone - so its
+ * zone, for an automatic identity with no browser zone, is the server's. Entering a SITE is
+ * recorded separately, by the framework, in Site_Sign_In_History (the record a site's own
+ * screens read); which of an identity's sessions are on a site is
+ * Session::get_sessions_for_user($login_user_id, $site_id).
  *
  * Similar to Session class design - static methods for developers to interact with system
  * tables without needing to know the underlying table structure.
@@ -60,6 +64,18 @@ class Login_History extends Login_History_Abstract
     protected static function __row_columns(int $identity_id): array
     {
         return [];
+    }
+
+    /**
+     * The identity's own explicit zone (login_users.timezone, NULL = automatic) and no site:
+     * the identity signs in before any site is chosen.
+     */
+    protected static function __timezone_inputs(int $identity_id): array
+    {
+        return [
+            'explicit' => Login_User_Model::withTrashed()->where('id', $identity_id)->value('timezone'),
+            'site' => null,
+        ];
     }
 
     /**

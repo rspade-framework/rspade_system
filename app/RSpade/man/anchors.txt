@@ -29,7 +29,10 @@ DESCRIPTION
     after a dispatch". It handles three cases in a fixed precedence:
 
         1. An explicit anchor in the URL      -> scroll to that element
-        2. A pending back/forward restoration -> restore the old position
+        2. A restoration (Back/Forward, or a refresh)
+                                              -> restore the old position, unless
+                                                 the user scrolled during the load,
+                                                 which leaves it where they put it
         3. Neither                            -> scroll to the top
 
     Case 3 is the opinionated part. Every SPA layout used to hand-write a

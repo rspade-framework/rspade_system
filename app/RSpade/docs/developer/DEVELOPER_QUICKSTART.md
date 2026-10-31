@@ -584,7 +584,7 @@ Four rules that will catch you if you arrive from Laravel:
   write is visible in the code.
 - **No eager loading.** `->with()` throws. Load what you need, when you need it.
 - **Datetimes are ISO strings, not Carbon.** `$model->created_at` is a string;
-  never call `->format()` on it. Pass it to `Rsx_Time::format_datetime()`.
+  never call `->format()` on it. Pass it to `Rsx_Time::format_timestamp()`.
 - **No field aliasing, anywhere.** The column, the PHP property, the JSON key and
   the JavaScript field are all the same string.
 

@@ -9,8 +9,10 @@ namespace App\RSpade\Tests\Session\Php;
 
 use Illuminate\Support\Facades\DB;
 use Redis;
+use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Tests for Login_History: recording outcomes and retrieving history.
@@ -103,6 +105,43 @@ class Login_History_Test extends Rsx_Test_Abstract
             ->orderBy('id', 'desc')
             ->first();
         static::__assert_equals(42, (int) $row->login_user_id);
+    }
+
+    /**
+     * A row records the zone the IDENTITY resolves to - its explicit zone, else the browser's,
+     * else (it has no site yet) the server's - with where it came from, and the reader answers
+     * both.
+     */
+    public static function test_a_row_records_the_zone_the_identity_resolves_to()
+    {
+        $login_user = Login_User_Model::find(1);
+        $login_user->timezone = null;
+        $login_user->save();
+
+        $zone_of_newest = function (): array {
+            $row = DB::table('_login_history')->where('login_user_id', 1)->orderBy('id', 'desc')->first();
+
+            return [$row->timezone, $row->timezone_source];
+        };
+
+        Rsx_Time::$browser_timezone_cookie_for_tests = 'Asia/Kolkata';
+        Login_History::record_success(1, 'zone@example.com');
+        static::__assert_equals(['Asia/Kolkata', Rsx_Time::TIMEZONE_SOURCE_BROWSER], $zone_of_newest(), 'automatic: the browser\'s zone');
+
+        $login_user->timezone = 'America/Denver';
+        $login_user->save();
+        Login_History::record_refusal(1, 'zone@example.com', Login_History::STATUS_FAILED_PASSWORD_RESET_REQUIRED);
+        static::__assert_equals(['America/Denver', Rsx_Time::TIMEZONE_SOURCE_EXPLICIT], $zone_of_newest(), 'explicit outranks the browser, on a refusal row too');
+
+        $login_user->timezone = null;
+        $login_user->save();
+        Rsx_Time::$browser_timezone_cookie_for_tests = '';
+        Login_History::record_success(1, 'zone@example.com');
+        static::__assert_equals([Rsx_Time::get_server_timezone(), Rsx_Time::TIMEZONE_SOURCE_SERVER], $zone_of_newest(), 'nothing known: the server\'s, never a site\'s');
+
+        $entry = Login_History::get_history_for_user(1, 1)[0];
+        static::__assert_equals(Rsx_Time::get_server_timezone(), $entry['timezone']);
+        static::__assert_equals(Rsx_Time::TIMEZONE_SOURCE_SERVER, $entry['timezone_source']);
     }
 
     // -------------------------------------------------------------------------
@@ -221,6 +260,8 @@ class Login_History_Test extends Rsx_Test_Abstract
         static::__assert_array_has_key('failure_reason', $entry);
         static::__assert_array_has_key('created_at', $entry);
         static::__assert_array_has_key('location', $entry);
+        static::__assert_array_has_key('timezone', $entry);
+        static::__assert_array_has_key('timezone_source', $entry);
     }
 
     public static function test_get_history_entry_email_matches()

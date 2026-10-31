@@ -21,7 +21,7 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
  * identifier, so an expression that formats one temporal value and prints another raw
  * passes clean:
  *
- *     <%= Rsx_Time.format_datetime(row.created_at) + ' / ' + row.updated_at %>
+ *     <%= Rsx_Time.format_timestamp(row.created_at) + ' / ' + row.updated_at %>
  *
  * The alternative (per-identifier argument tracing) needs a real JS expression parse and
  * would fire on every wrapped value written in a shape the tracer did not model. A rule
@@ -175,8 +175,9 @@ class JqhtmlDatetimeFormatting_CodeQualityRule extends CodeQualityRule_Abstract
     {
         return "Wrap the value in the formatter that matches the column type:\n\n" .
             "  A DATETIME value (a real moment - created_at, sent_at, completed_at):\n" .
-            "    <%= Rsx_Time.format_datetime(this.data.model.created_at) %>      // 'Dec 24, 2025 3:30 PM'\n" .
-            "    <%= Rsx_Time.format_datetime_with_tz(this.data.model.sent_at) %> // '... 3:30 PM CST'\n" .
+            "    <%= Rsx_Time.format_timestamp(this.data.model.created_at) %>     // 'Dec 24, 2025 3:30 PM'\n" .
+            "    <%= Rsx_Time.format_timestamp_short(row.created_at) %>           // '12-24 3:30p' (a grid cell)\n" .
+            "    <%= Rsx_Time.format_timestamp(entry.started_at, entry.timezone) %> // in ITS zone, '... IST' when not yours\n" .
             "    <%= Rsx_Time.format_date(this.data.model.created_at) %>          // 'Dec 24, 2025'\n" .
             "    <%= Rsx_Time.relative(this.data.model.created_at) %>             // '2 hours ago'\n\n" .
             "  A DATE value (a calendar fact - birth_date, due_date, invoice_date):\n" .

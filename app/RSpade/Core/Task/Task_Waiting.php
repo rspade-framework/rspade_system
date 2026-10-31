@@ -103,7 +103,7 @@ class Task_Waiting
         }
 
         if ($run->scheduled_for !== null && Rsx_Time::is_future($run->scheduled_for)) {
-            return static::__answer(self::REASON_SCHEDULED, 'scheduled for ' . Rsx_Time::format_datetime($run->scheduled_for));
+            return static::__answer(self::REASON_SCHEDULED, 'scheduled for ' . Rsx_Time::format_timestamp($run->scheduled_for));
         }
 
         $class = (string) $run->class;

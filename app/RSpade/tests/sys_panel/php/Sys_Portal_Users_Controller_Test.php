@@ -280,7 +280,7 @@ class Sys_Portal_Users_Controller_Test extends Rsx_Test_Abstract
             'site_id' => null, 'login_user_id' => null, 'portal_user_id' => $id, 'portal_site_id' => $site->id,
             'impersonator_login_user_id' => null, 'impersonator_user_id' => null, 'ip_address' => $ip,
             'session_id' => null, 'user_session_id' => $user_session_id,
-            'user_agent_id' => Audit_Session::user_agent_id(self::FIREFOX), 'session_type_id' => Session::TYPE_WEB,
+            'user_agent_id' => Audit_Session::user_agent_id(self::FIREFOX), 'session_type_id' => Session::TYPE_WEB, 'timezone' => 'America/Chicago', 'timezone_source' => 'browser',
         ];
         $older = Audit_Session::_id_for_context($context($mine, '198.51.100.1'));
         $newer = Audit_Session::_id_for_context($context($mine, '198.51.100.2'));

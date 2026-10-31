@@ -89,8 +89,8 @@ run. Clicking a row opens the run (_Sys_Task_Detail); the buttons in a row act o
                 <span class="_Sys_Tasks_DataGrid__origin"><%= row.origin %></span>
             </td>
             <td><Task_Status_Badge $task=row /></td>
-            <td><%= Rsx_Time.format_datetime(row.started_at || row.scheduled_for) %></td>
-            <td><%= row.completed_at ? Rsx_Time.format_datetime(row.completed_at) : '' %></td>
+            <td><%= Rsx_Time.format_timestamp(row.started_at || row.scheduled_for) %></td>
+            <td><%= row.completed_at ? Rsx_Time.format_timestamp(row.completed_at) : '' %></td>
             <td class="_Sys_Tasks_DataGrid__progress">
                 <% if (row.is_live && _progress_text) { %>
                     <div class="_Sys_Tasks_DataGrid__bar">

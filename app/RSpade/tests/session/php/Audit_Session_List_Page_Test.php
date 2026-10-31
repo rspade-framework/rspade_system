@@ -47,6 +47,8 @@ class Audit_Session_List_Page_Test extends Rsx_Test_Abstract
             'user_session_id' => $user_session_id,
             'user_agent_id' => Audit_Session::user_agent_id($user_agent),
             'session_type_id' => Session::TYPE_WEB,
+            'timezone' => 'America/Chicago',
+            'timezone_source' => 'browser',
         ]);
 
         DB::table('_audit_sessions')->where('id', $id)->update([

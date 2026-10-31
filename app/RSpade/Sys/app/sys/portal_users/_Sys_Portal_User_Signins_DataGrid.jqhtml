@@ -30,7 +30,7 @@ failures are never rows. The portal table records no location.
     </Slot:header>
     <Slot:row>
         <tr>
-            <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+            <td><%= row.created_at ? Rsx_Time.format_timestamp(row.created_at) : '' %></td>
             <td>
                 <_Sys_Status_Badge $status=row.tone $label=row.status_label />
                 <% if (row.failure_reason) { %>

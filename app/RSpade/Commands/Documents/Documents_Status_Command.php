@@ -77,7 +77,7 @@ class Documents_Status_Command extends Command
         ]);
 
         if ($queue['next_retry_at'] !== null) {
-            $this->line('  next waiting blob comes due ' . Rsx_Time::format_datetime($queue['next_retry_at']));
+            $this->line('  next waiting blob comes due ' . Rsx_Time::format_timestamp($queue['next_retry_at']));
         }
     }
 
@@ -170,7 +170,7 @@ class Documents_Status_Command extends Command
             return;
         }
 
-        $next = Rsx_Time::format_datetime($schedule->next_run_at);
+        $next = Rsx_Time::format_timestamp($schedule->next_run_at);
         $this->line("Worker schedule: {$schedule->cron_expression}, next run {$next}");
     }
 
@@ -188,6 +188,6 @@ class Documents_Status_Command extends Command
 
         $iso = date('c', $mtime);
 
-        return Rsx_Time::format_datetime($iso) . ' (' . Rsx_Time::relative($iso) . ')';
+        return Rsx_Time::format_timestamp($iso) . ' (' . Rsx_Time::relative($iso) . ')';
     }
 }

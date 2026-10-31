@@ -35,8 +35,8 @@ records nothing.
     </Slot:header>
     <Slot:row>
         <tr>
-            <td><%= row.last_seen_at ? Rsx_Time.format_datetime(row.last_seen_at) : '' %></td>
-            <td><%= row.first_seen_at ? Rsx_Time.format_datetime(row.first_seen_at) : '' %></td>
+            <td><%= row.last_seen_at ? Rsx_Time.format_timestamp(row.last_seen_at) : '' %></td>
+            <td><%= row.first_seen_at ? Rsx_Time.format_timestamp(row.first_seen_at) : '' %></td>
             <td class="_Sys_Audit_Sessions_DataGrid__mono"><%= row.ip_address %></td>
             <td><span title="<%= row.user_agent || '' %>"><%= row.device_summary %></span></td>
             <td>

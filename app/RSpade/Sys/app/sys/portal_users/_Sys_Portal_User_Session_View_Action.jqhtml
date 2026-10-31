@@ -47,13 +47,13 @@ _Sys_Audit_Sessions_DataGrid.
                 <_Sys_Detail_Item $label="Portal user">
                     <a href="<%= Rsx.Route('_Sys_Portal_User_View_Action', _u.id) %>"><%= _u.email %></a>
                 </_Sys_Detail_Item>
-                <_Sys_Detail_Item $label="State" $value=(_s.is_signed_in ? 'Signed in' : (_s.sign_out_reason || 'Signed out') + ' - ' + Rsx_Time.format_datetime(_s.signed_out_at)) />
+                <_Sys_Detail_Item $label="State" $value=(_s.is_signed_in ? 'Signed in' : (_s.sign_out_reason || 'Signed out') + ' - ' + Rsx_Time.format_timestamp(_s.signed_out_at)) />
                 <_Sys_Detail_Item $label="Browser type" $value=_s.type_label />
                 <_Sys_Detail_Item $label="Last IP" $value=_s.ip_address $mono=true />
                 <_Sys_Detail_Item $label="User agent" $value=_s.user_agent />
-                <_Sys_Detail_Item $label="First signed in here" $value=(_s.first_seen ? Rsx_Time.format_datetime(_s.first_seen) : null) />
-                <_Sys_Detail_Item $label="This sign-in" $value=(_s.signed_in_at ? Rsx_Time.format_datetime(_s.signed_in_at) : null) />
-                <_Sys_Detail_Item $label="Last active" $value=(_s.last_active ? Rsx_Time.format_datetime(_s.last_active) + ' (' + Rsx_Time.relative(_s.last_active) + ')' : null) />
+                <_Sys_Detail_Item $label="First signed in here" $value=(_s.first_seen ? Rsx_Time.format_timestamp(_s.first_seen) : null) />
+                <_Sys_Detail_Item $label="This sign-in" $value=(_s.signed_in_at ? Rsx_Time.format_timestamp(_s.signed_in_at) : null) />
+                <_Sys_Detail_Item $label="Last active" $value=(_s.last_active ? Rsx_Time.format_timestamp(_s.last_active) + ' (' + Rsx_Time.relative(_s.last_active) + ')' : null) />
                 <_Sys_Detail_Item $label="Sign-ins" $value=_s.sign_in_count />
                 <% if (_s.is_impersonation) { %>
                     <_Sys_Detail_Item $label="Viewed as client by">
@@ -63,7 +63,7 @@ _Sys_Audit_Sessions_DataGrid.
                             staff user #<%= _s.impersonator_user_id %>
                         <% } %>
                         <% if (_s.impersonation_started_at) { %>
-                            <span class="_Sys_Portal_User_Session_View_Action__dim">since <%= Rsx_Time.format_datetime(_s.impersonation_started_at) %></span>
+                            <span class="_Sys_Portal_User_Session_View_Action__dim">since <%= Rsx_Time.format_timestamp(_s.impersonation_started_at) %></span>
                         <% } %>
                     </_Sys_Detail_Item>
                 <% } %>

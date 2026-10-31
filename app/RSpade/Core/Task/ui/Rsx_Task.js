@@ -229,7 +229,7 @@ class Rsx_Task {
         }
 
         if (waiting.reason === 'scheduled' && status.scheduled_for) {
-            return 'scheduled for ' + Rsx_Time.format_datetime(status.scheduled_for);
+            return 'scheduled for ' + Rsx_Time.format_timestamp(status.scheduled_for);
         }
 
         return waiting.text;

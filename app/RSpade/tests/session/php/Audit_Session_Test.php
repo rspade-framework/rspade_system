@@ -58,6 +58,8 @@ class Audit_Session_Test extends Rsx_Test_Abstract
             'user_session_id' => 800001,
             'user_agent_id' => Audit_Session::user_agent_id('audit-test/1.0'),
             'session_type_id' => Session::TYPE_WEB,
+            'timezone' => 'America/Chicago',
+            'timezone_source' => 'browser',
         ], $overrides);
     }
 
@@ -97,7 +99,7 @@ class Audit_Session_Test extends Rsx_Test_Abstract
         static::__assert_equals(Session::TYPE_WEB, (int) $row->session_type_id);
     }
 
-    public static function test_a_different_user_session_address_agent_or_site_is_a_different_row()
+    public static function test_a_different_user_session_address_agent_site_or_zone_is_a_different_row()
     {
         $first = Audit_Session::_id_for_context(static::__context());
 
@@ -106,6 +108,8 @@ class Audit_Session_Test extends Rsx_Test_Abstract
             'address' => Audit_Session::_id_for_context(static::__context(['ip_address' => '10.0.0.2'])),
             'user agent' => Audit_Session::_id_for_context(static::__context(['user_agent_id' => Audit_Session::user_agent_id('audit-test/2.0')])),
             'site' => Audit_Session::_id_for_context(static::__context(['site_id' => 2])),
+            'display zone' => Audit_Session::_id_for_context(static::__context(['timezone' => 'Asia/Kolkata'])),
+            'zone source' => Audit_Session::_id_for_context(static::__context(['timezone_source' => 'explicit'])),
         ];
 
         foreach ($others as $what => $id) {
@@ -194,6 +198,8 @@ class Audit_Session_Test extends Rsx_Test_Abstract
         static::__assert_equals(900001, $read['session_id']);
         static::__assert_equals(800030, $read['user_session_id']);
         static::__assert_equals(Session::TYPE_WEB, $read['session_type_id']);
+        static::__assert_equals('America/Chicago', $read['timezone'], 'the display zone the context acted in');
+        static::__assert_equals('browser', $read['timezone_source'], 'and where it came from');
         static::__assert_not_empty($read['first_seen_at']);
         static::__assert_null(Session::get_audit_session(0), 'no such audit session');
     }
@@ -233,6 +239,8 @@ class Audit_Session_Test extends Rsx_Test_Abstract
         static::__assert_equals(509, (int) $rows[0]->audit_login_user_id);
         static::__assert_equals(1, (int) $rows[0]->audit_site_id);
         static::__assert_equals(Session::TYPE_WEB, (int) $rows[0]->audit_session_type_id);
+        static::__assert_equals('America/Chicago', $rows[0]->audit_timezone);
+        static::__assert_equals('browser', $rows[0]->audit_timezone_source);
         static::__assert_not_empty($rows[0]->audit_first_seen_at);
 
         static::__assert_null($rows[1]->audit_ip_address);

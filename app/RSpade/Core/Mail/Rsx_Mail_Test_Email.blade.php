@@ -9,7 +9,7 @@ transport accepted it - the whole outbound chain works on this host.</p>
 <hr class="email-divider">
 
 <p><strong>Host:</strong> {{ $hostname }}<br>
-<strong>Queued at:</strong> {{ \App\RSpade\Core\Time\Rsx_Time::format_datetime($sent_at) }}</p>
+<strong>Queued at:</strong> {{ \App\RSpade\Core\Time\Rsx_Time::format_timestamp($sent_at) }}</p>
 
 <p style="text-align: center;">
     <a href="{{ $app_url }}" class="email-button">Open the application</a>

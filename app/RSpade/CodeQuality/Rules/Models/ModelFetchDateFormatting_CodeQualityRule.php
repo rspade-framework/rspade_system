@@ -225,8 +225,8 @@ class ModelFetchDateFormatting_CodeQualityRule extends CodeQualityRule_Abstract
     {
         return "Remove the formatted date fields from fetch(). Format dates client-side:\n\n" .
             "  JavaScript datetime formatting:\n" .
-            "    Rsx_Time.format_datetime(iso_string)     // 'Dec 24, 2024 3:30 PM'\n" .
-            "    Rsx_Time.format_datetime_with_tz(iso)    // 'Dec 24, 2024 3:30 PM CST'\n" .
+            "    Rsx_Time.format_timestamp(iso_string)    // 'Dec 24, 2024 3:30 PM'\n" .
+            "    Rsx_Time.format_timestamp_short(iso)     // '12-24 3:30p'\n" .
             "    Rsx_Time.relative(iso_string)            // '2 hours ago'\n\n" .
             "  JavaScript date formatting:\n" .
             "    Rsx_Date.format(date_string)             // 'Dec 24, 2024'\n\n" .

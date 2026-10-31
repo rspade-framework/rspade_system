@@ -1,6 +1,6 @@
 ---
 name: audit-session
-description: "Attributing logged activity to who did it and from where - Session::get_audit_session_id() to record (keyed on user session x site x address x user agent; null in a command or plain task), Session::get_audit_session() to read one back, Audit_Session::join() and Audit_Session::column() to show, search and sort audit fields (IP address, user agent, identity, impersonator) in a datagrid query, and Audit_Session::list_page_for_user_session() for a per-sign-in detail screen. Use when building an activity log, action log, audit trail or export record; adding an audit_session_id column; showing the IP address or browser behind a logged action; building the detail page of a \"where you're signed in\" entry; deciding between get_session_id() and get_audit_session_id(); or when get_audit_session_id() answers null in a command or task."
+description: "Attributing logged activity to who did it and from where - Session::get_audit_session_id() to record (keyed on user session x site x address x user agent x display zone; null in a command or plain task), Session::get_audit_session() to read one back, Audit_Session::join() and Audit_Session::column() to show, search and sort audit fields (IP address, user agent, identity, impersonator, timezone) in a datagrid query, and Audit_Session::list_page_for_user_session() for a per-sign-in detail screen. Use when building an activity log, action log, audit trail or export record; adding an audit_session_id column; showing the IP address or browser behind a logged action; building the detail page of a \"where you're signed in\" entry; deciding between get_session_id() and get_audit_session_id(); or when get_audit_session_id() answers null in a command or task."
 ---
 
 # Audit sessions
@@ -31,7 +31,7 @@ $log->save();
 ```
 
 - Creates **no session**. Safe on any code path.
-- **The key**: the acting USER SESSION (the request realm's sign-in - staff, or portal on a portal request; on an API call the key owner's API user session) x the site acted on x the client address x the user agent. A guest's act is keyed on the browser row instead (or on nothing, for a visitor with no row). When any of them changes - a sign-in, a site switch, an impersonation, a new address - the next call answers a new audit session. The row also records the identity, both impersonators, the browser (`session_id`) and the session type.
+- **The key**: the acting USER SESSION (the request realm's sign-in - staff, or portal on a portal request; on an API call the key owner's API user session) x the site acted on x the client address x the user agent x the DISPLAY ZONE (`Rsx_Time::get_user_timezone()` and its source - `explicit` / `browser` / `site` / `server`). A guest's act is keyed on the browser row instead (or on nothing, for a visitor with no row). When any of them changes - a sign-in, a site switch, an impersonation, a new address, a laptop that travelled to another zone - the next call answers a new audit session, so a record always points at the zone it was written in. The row also records the identity, both impersonators, the browser (`session_id`), the session type and the zone (`timezone`, `timezone_source`; a `site` or `server` source means the framework did not know where the person was - never show it as their location).
 - **NULL where nobody is acting**: a command, a plain task and the `rsx:debug` harness record none. **A column storing it is nullable**, and a screen shows a null as "system" or blank. A dispatched `#[Run_As_Dispatcher]` run answers the audit session stamped at dispatch (run INLINE from a command or test it is the caller's: null), so its writes count under the requester's own context (address, agent, browser).
 - One process resolves a context once, however many rows it writes; `last_seen_at` advances at most once a minute.
 - The framework stamps it on every recorded unit of work itself (`_transactions.audit_session_id`, nullable - skill `rspade:revisions`).
@@ -53,7 +53,7 @@ id, site_id, login_user_id, portal_user_id, portal_site_id,
 impersonator_login_user_id, impersonator_user_id,
 ip_address, user_agent (the full string),
 session_id (the browser), user_session_id, session_type_id,
-first_seen_at, last_seen_at
+timezone, timezone_source, first_seen_at, last_seen_at
 ```
 
 ### Many at once - a join onto your own query

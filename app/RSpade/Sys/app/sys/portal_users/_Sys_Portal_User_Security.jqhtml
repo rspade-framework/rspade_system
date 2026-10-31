@@ -53,8 +53,8 @@ unspent recovery codes) and "Sign-in providers" (each connected account).
                                 <tr>
                                     <td><%= row.type_id__label %></td>
                                     <td><%= row.label || '' %></td>
-                                    <td><%= row.confirmed_at ? Rsx_Time.format_datetime(row.confirmed_at) : '' %></td>
-                                    <td><%= row.last_used_at ? Rsx_Time.format_datetime(row.last_used_at) : 'Never' %></td>
+                                    <td><%= row.confirmed_at ? Rsx_Time.format_timestamp(row.confirmed_at) : '' %></td>
+                                    <td><%= row.last_used_at ? Rsx_Time.format_timestamp(row.last_used_at) : 'Never' %></td>
                                 </tr>
                             <% } %>
                         </tbody>
@@ -86,8 +86,8 @@ unspent recovery codes) and "Sign-in providers" (each connected account).
                                     <td><%= row.provider_label %></td>
                                     <td><%= row.email || '' %></td>
                                     <td><%= row.name || '' %></td>
-                                    <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
-                                    <td><%= row.last_login_at ? Rsx_Time.format_datetime(row.last_login_at) : 'Never' %></td>
+                                    <td><%= row.created_at ? Rsx_Time.format_timestamp(row.created_at) : '' %></td>
+                                    <td><%= row.last_login_at ? Rsx_Time.format_timestamp(row.last_login_at) : 'Never' %></td>
                                 </tr>
                             <% } %>
                         </tbody>

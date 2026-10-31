@@ -129,7 +129,7 @@ class Task_Waiting_Test extends Rsx_Test_Abstract
         $run = static::__pending('plain_task', [], ['scheduled_for' => $at]);
 
         static::__assert_equals(
-            ['reason' => 'scheduled', 'text' => 'scheduled for ' . Rsx_Time::format_datetime($at), 'lock' => null, 'held_by_task_id' => null],
+            ['reason' => 'scheduled', 'text' => 'scheduled for ' . Rsx_Time::format_timestamp($at), 'lock' => null, 'held_by_task_id' => null],
             Task_Waiting::of($run)
         );
 

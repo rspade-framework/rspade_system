@@ -265,7 +265,7 @@ class Login_Redirect {
 
             return Array.isArray(portal_configured) && portal_configured.length
                 ? portal_configured
-                : ['/login', '/logout', '/register', '/password/reset', '/request-access', '/impersonate'];
+                : ['/login', '/logout', '/register', '/password/reset', '/impersonate'];
         }
 
         const configured = window.rsxapp?.login_redirect?.excluded_prefixes;

@@ -355,7 +355,7 @@ class Login_Redirect
     {
         if (Rsx_Portal::is_portal_request()) {
             return config('rsx.login_redirect.portal_excluded_prefixes', [
-                '/login', '/logout', '/register', '/password/reset', '/request-access', '/impersonate',
+                '/login', '/logout', '/register', '/password/reset', '/impersonate',
             ]);
         }
 

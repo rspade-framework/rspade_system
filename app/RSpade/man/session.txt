@@ -678,16 +678,21 @@ AUDIT SESSIONS
 
             the acting user session (a guest: the browser row, or nothing for a
             visitor with no row) x the site acted on x client address x user
-            agent
+            agent x display zone
 
         The user session is the request realm's (staff, or portal on a portal
         request); an API call's is the key owner's REALM_API one. The site is
         part of the key because a declared tenant (set_temporary_site_id()) can
-        differ from the user session's. When any of them changes - a sign-in, a
-        site switch, an impersonation, a new address - the next act belongs to a
-        new row. The row also DESCRIBES the context: the acting realm's identity,
-        site and impersonator, the address and user agent, the browser
-        (session_id), the user session and the session type.
+        differ from the user session's. The display zone is the request's
+        Rsx_Time::get_user_timezone() plus where it came from
+        (get_user_timezone_source(): explicit | browser | site | server), so a
+        laptop that travels mid-sign-in starts a new row and every record pointing
+        here points at the zone it was written in. When any of them changes - a
+        sign-in, a site switch, an impersonation, a new address, a new zone - the
+        next act belongs to a new row. The row also DESCRIBES the context: the
+        acting realm's identity, site and impersonator, the address and user
+        agent, the browser (session_id), the user session, the session type and
+        the zone.
 
         NULL in a command, a task and the rsx:debug harness - a context with no
         person in it has nothing to attribute - EXCEPT a dispatched
@@ -711,7 +716,10 @@ AUDIT SESSIONS
             {id, site_id, login_user_id, portal_user_id, portal_site_id,
              impersonator_login_user_id, impersonator_user_id, ip_address,
              user_agent, session_id, user_session_id, session_type_id,
-             first_seen_at, last_seen_at} - null for no such row.
+             timezone, timezone_source, first_seen_at, last_seen_at} - null for
+             no such row. timezone_source 'site' or 'server' says the framework
+             did NOT know where the person was: never present that zone as their
+             location. Both are null on a row recorded before zones were.
 
         Audit_Session::list_page_for_user_session([
             'user_session_id' => $id,       // required: a get_sessions_for_user() id
@@ -1756,9 +1764,17 @@ LOGIN HISTORY
         Successes, post-password refusals and passkey enrollment outcomes, most
         recent first. Each record: id, email, ip_address, user_agent,
         user_agent_parsed, location (null until geo-IP is wired), status,
-        status_label, failure_reason, created_at. status tells a sign-in from a
-        refusal or an enrollment row; an app may also record its own outcomes
-        through record_success() / record_refusal().
+        status_label, failure_reason, timezone, timezone_source, created_at.
+        status tells a sign-in from a refusal or an enrollment row; an app may
+        also record its own outcomes through record_success() / record_refusal().
+
+        THE ZONE ON A ROW is the one the IDENTITY resolves to at that moment -
+        its explicit login_users.timezone, else the browser's (the rsx_tz
+        cookie), else the server's - with where it came from. A staff identity
+        signs in before any site is chosen, so no site zone is consulted (the
+        site sign-in row below carries it); a portal row uses the portal user's
+        site zone after the browser's. Both null on a row recorded before zones
+        were.
 
     PORTAL LOGIN HISTORY:
         Portal_Login_History is the same API over `_portal_login_history`, every
@@ -2036,6 +2052,63 @@ LOGIN THROTTLE (BRUTE FORCE)
         the cache database because RsxCache::clear() runs on every database
         transaction rollback, and not build-scoped because a counter measures
         real time (rsx:man caching). The throttle never writes a database row.
+
+SITE SIGN-IN HISTORY
+    Class: App\RSpade\Core\Session\Site_Sign_In_History (staff, `_site_sign_ins`)
+
+    A staff sign-in is TWO events. The login IDENTITY signs in (LOGIN HISTORY
+    above - no site yet), and then the browser's session is assigned a SITE: at
+    once for an identity with one membership, after the site picker for one
+    with several, again on every switch to another site, and when an
+    administrator begins an impersonation there. This is the record of the
+    second event, one row each time, written by the framework itself at the one
+    place a session gets its site - an application never records here.
+
+    It is the history a SITE's own screens read: each row names its site and the
+    membership (users.id) that entered it, so a reader scoped to a membership
+    never shows what the same person did in another tenant. The identity history
+    stays the system record (the /_sys panel's), because it belongs to no site.
+
+    A ROW: entry_type, the display zone at that moment (timezone,
+    timezone_source - for an impersonation, the zone the impersonation renders
+    in), the address and user agent, and the user session (a
+    get_sessions_for_user() entry's id).
+
+        ENTRY_SIGN_IN        the sign-in was bound to this site - directly, or
+                             by choosing the site right after signing in
+        ENTRY_SITE_SWITCH    a signed-in browser moved here from another site
+        ENTRY_IMPERSONATION  an administrator began impersonating the account
+                             here; impersonator_login_user_id names them
+
+    Not recorded: the rsx:debug harness, an API key's session, a command or a
+    task. Pruned with the login histories (rsx.sessions.login_history_retention_days).
+
+    READING IT BACK - the impersonation choice is REQUIRED, never a default:
+
+        $rows = Site_Sign_In_History::get_history_for_user(
+            $user_id,                                   // a membership, users.id
+            Site_Sign_In_History::IMPERSONATION_EXCLUDE,// include | exclude | only
+            $limit = 10
+        );
+
+        $page = Site_Sign_In_History::list_page([
+            'user_id' => $user_id,                      // required
+            'impersonation' => 'exclude',               // required
+            'filter' => 'firefox',                      // IP address or user agent
+            'sort' => 'created_at',                     // created_at | ip_address | entry_type
+            'order' => 'desc', 'offset' => 0, 'limit' => 25,
+        ]);
+
+        Each row: id, site_id, user_id, login_user_id,
+        impersonator_login_user_id, is_impersonation, entry_type,
+        entry_type_label, user_session_id, ip_address, user_agent,
+        user_agent_parsed, timezone, timezone_source, created_at (ISO).
+
+    A row an impersonation wrote is any row with an impersonator - an
+    impersonation moved to another site included (a site_switch entry). A screen
+    showing a person THEIR OWN sign-ins passes IMPERSONATION_EXCLUDE: an
+    administrator's visit is not a sign-in of theirs. A screen for an
+    administrator reviewing an account passes INCLUDE.
 
 USER AGENT PARSING
     The User_Agent class parses user agent strings into human-readable

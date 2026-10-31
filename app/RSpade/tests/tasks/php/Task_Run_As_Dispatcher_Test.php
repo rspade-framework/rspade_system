@@ -99,6 +99,8 @@ class Task_Run_As_Dispatcher_Test extends Rsx_Test_Abstract
             'user_session_id' => $fixture['staff_user_session_id'],
             'user_agent_id' => Audit_Session::user_agent_id('dispatching-browser/1.0'),
             'session_type_id' => Session::TYPE_WEB,
+            'timezone' => 'America/Chicago',
+            'timezone_source' => 'browser',
         ]);
 
         return ['browser' => $fixture['id'], 'user_session' => $fixture['staff_user_session_id'], 'audit_session' => $audit_session_id];

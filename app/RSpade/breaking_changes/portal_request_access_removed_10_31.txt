@@ -1,0 +1,50 @@
+THE PORTAL'S PUBLIC REQUEST-ACCESS PAGE IS REMOVED: PORTAL ACCESS IS BY STAFF INVITATION
+Date: 2026-10-31
+
+IF YOU DO NOTHING: your copy of the template's /request-access portal page keeps telling any visitor whether an email address has a portal account, a pending invitation or neither, and lets that visitor push any pending invitation's expiry out another 14 days, as often as they like.
+
+SUMMARY
+    Category 1: a /rsx/ template change.
+
+    The template's position is now stated: portal access is by INVITATION ONLY,
+    extended (and resent) by the site's staff. The public "request access" page -
+    which looked an address up and answered "invitation sent" / "you already have
+    an account" / "we couldn't find you", re-sending a pending invitation with a
+    refreshed expiry - is gone, and the login page now says access is by
+    invitation and who to contact. An application may still build a request page
+    of its own; it is not standard behaviour (rsx:man portal, PORTAL ACCESS IS BY
+    INVITATION).
+
+AFFECTED FILES
+    /rsx/portal/auth/Portal_Request_Access_Controller.php     delete
+    /rsx/portal/auth/portal_request_access.blade.php          delete
+    /rsx/portal/auth/portal_login_index.blade.php             the link to it
+    /rsx/portal/auth/portal_auth_bundle.php                   docblock only
+
+CHANGES REQUIRED
+
+    File: /rsx/portal/auth/portal_login_index.blade.php
+    -------------------------------------------------------------------------
+    Replace
+
+        Don't have a portal account?
+        <a href="{{ Rsx_Portal::Route('Portal_Request_Access_Controller::index') }}">Create one now</a>
+
+    with
+
+        Portal access is by invitation. To be invited, contact {{ config('rsx.name', 'us') }}.
+
+    Then delete the two request-access files above.
+
+    If you KEEP a request page by choice, make it answer every well-formed
+    address with the same page, and re-send a pending invitation WITHOUT
+    refresh_expiry() - extending an invitation stays a staff action.
+
+    The framework's default rsx.login_redirect.portal_excluded_prefixes no longer
+    lists '/request-access'; an application that keeps the page at that path adds
+    it back in rsx/resource/config/rsx.php.
+
+VERIFICATION
+    grep -rn "Request_Access" rsx answers nothing (or only your deliberate page),
+    and php artisan rsx:debug /_portal/login --portal shows the invitation line in
+    place of "Create one now".

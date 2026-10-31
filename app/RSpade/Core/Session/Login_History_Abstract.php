@@ -16,6 +16,7 @@ use App\RSpade\Core\Session\Audit_Session;
 use App\RSpade\Core\Session\Ip_Address;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Session\User_Agent;
+use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Login_History_Abstract - recording sign-in outcomes and reading them back, written once for
@@ -180,6 +181,13 @@ abstract class Login_History_Abstract
      */
     abstract protected static function __format_location(object $record): ?string;
 
+    /**
+     * What the realm knows of an identity's zone, for the zone a row records:
+     * ['explicit' => its own chosen zone or null, 'site' => its site's zone or null].
+     * The browser's zone comes from the client context.
+     */
+    abstract protected static function __timezone_inputs(int $identity_id): array;
+
     // =========================================================================
     // RECORDING
     // =========================================================================
@@ -223,7 +231,7 @@ abstract class Login_History_Abstract
      *
      * Called by the realm's second-factor facade and nothing else.
      *
-     * $client_context is the {ip_address, user_agent} pair the row carries, as captured by
+     * $client_context is the {ip_address, user_agent, browser_timezone} the row carries, as captured by
      * client_context() - passed when the outcome is recorded somewhere other than the request
      * that began the ceremony (an abandoned enrollment found by the hourly sweep is recorded
      * against the browser that began it, not against the CLI). Null = the current request.
@@ -232,7 +240,7 @@ abstract class Login_History_Abstract
      * @param string $email Its email address
      * @param string $status One of the STATUS_PASSKEY_ENROLL* constants
      * @param string|null $reason Detail (why it failed or was abandoned), null when none
-     * @param array|null $client_context {ip_address, user_agent}, null for the current request
+     * @param array|null $client_context {ip_address, user_agent, browser_timezone}, null for the current request
      * @return void
      */
     public static function record_passkey_enrollment(
@@ -246,8 +254,9 @@ abstract class Login_History_Abstract
     }
 
     /**
-     * The client a history row is attributed to: {ip_address, user_agent}, read the way every
-     * row written here reads them (ip_address null outside a request).
+     * The client a history row is attributed to: {ip_address, user_agent, browser_timezone},
+     * read the way every row written here reads them (ip_address null outside a request;
+     * browser_timezone the rsx_tz cookie's zone, Rsx_Time::browser_timezone(), or null).
      *
      * @return array
      */
@@ -256,6 +265,7 @@ abstract class Login_History_Abstract
         return [
             'ip_address' => Session::get_client_ip(),
             'user_agent' => self::_get_user_agent(),
+            'browser_timezone' => Rsx_Time::browser_timezone(),
         ];
     }
 
@@ -453,7 +463,10 @@ abstract class Login_History_Abstract
 
     /**
      * One history row in the shape get_history_for_user() answers: the attempted email, IP,
-     * raw and parsed user agent, location, status + its label, failure reason and created_at.
+     * raw and parsed user agent, location, status + its label, failure reason, the display
+     * zone in effect and where it came from (timezone, timezone_source - see
+     * Rsx_Time::get_user_timezone_source(); null on a row recorded before zones were) and
+     * created_at.
      *
      * The one presenter for the realm's table, public so a reader that pages the rows itself
      * (the /_sys panel's per-identity sign-in grid) presents them identically.
@@ -475,6 +488,8 @@ abstract class Login_History_Abstract
             'status' => $record->status,
             'status_label' => self::_get_status_label($record->status),
             'failure_reason' => $record->failure_reason,
+            'timezone' => $record->timezone,
+            'timezone_source' => $record->timezone_source,
             'created_at' => $record->created_at,
         ];
     }
@@ -485,6 +500,10 @@ abstract class Login_History_Abstract
 
     /**
      * Write one row of this realm's history.
+     *
+     * The zone recorded is the one the identity's requests resolve to - its own explicit zone,
+     * else the browser's, else its site's, else the server's - resolved for the IDENTITY, which
+     * is not signed in yet when most of these rows are written.
      */
     private static function __insert_row(
         int $identity_id,
@@ -493,6 +512,13 @@ abstract class Login_History_Abstract
         ?string $reason,
         array $client_context
     ): void {
+        $inputs = static::__timezone_inputs($identity_id);
+        [$timezone, $timezone_source] = Rsx_Time::_resolve_timezone(
+            $inputs['explicit'],
+            $client_context['browser_timezone'] ?? null,
+            $inputs['site']
+        );
+
         static::__query()->insert([
             static::__identity_column() => $identity_id,
             'email_attempted' => $email,
@@ -500,6 +526,8 @@ abstract class Login_History_Abstract
             'user_agent_id' => Audit_Session::user_agent_id($client_context['user_agent'] ?? null),
             'status' => $status,
             'failure_reason' => $reason === null ? null : mb_substr($reason, 0, 255),
+            'timezone' => $timezone,
+            'timezone_source' => $timezone_source,
             'created_at' => now(),
         ] + static::__row_columns($identity_id));
     }

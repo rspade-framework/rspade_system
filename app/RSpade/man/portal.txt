@@ -667,7 +667,6 @@ PORTAL LOGIN FLOW
       Portal_Logout_Controller          /logout
       Portal_Register_Controller        /register invitation-code signup
       Portal_Password_Reset_Controller  /password/reset  request + token
-      Portal_Request_Access_Controller  /request-access  invite lookup
       Portal_Impersonate_Controller     /impersonate/stop  ends "view as client"
 
     What the framework gives you:
@@ -804,8 +803,8 @@ PORTAL LOGIN FLOW
     a portal user whose address it just verified.
 
     WHICH SITE A SIGN-IN BELONGS TO
-      The one the URL serves. A login, registration, password-reset or
-      request-access page is reached at its tenant's portal address - a path
+      The one the URL serves. A login, registration or password-reset page
+      is reached at its tenant's portal address - a path
       or a subdomain per site, or the site's own domain - so the handler never
       resolves a site of its own; it reads Portal_Session::get_site_id().
 
@@ -1400,12 +1399,14 @@ ONBOARDING (SIGNUP MODEL)
     ANSWER_ISSUED_CODE, answered by the code or its link, sets is_verified
     (rsx:man two_factor_codes, A PASSED EMAILED ANSWER VERIFIES THE ADDRESS).
 
-    Self-service access lookup (Portal_Request_Access_Controller, /request-access,
-    public): the login page links here ("Create one now"). It does NOT create an
-    account (invite-only); it looks the email up and routes the visitor: an active
-    invitation -> re-send the invitation email (refreshes expiry); an existing account
-    -> "you already have an account, sign in"; neither -> "contact {brand} to be added".
-    {brand} is config('rsx.name').
+    PORTAL ACCESS IS BY INVITATION. The recommended position, and the template
+    app's: a portal account is created only from an invitation the site's staff
+    extend (and resend), and the portal offers no public way to ask for one - its
+    login page says access is by invitation and who to contact. An application
+    may add a public request page of its own; this is not standard behaviour,
+    and such a page must answer every address alike (never revealing which have
+    an account or an invitation) and must never let an anonymous visitor extend
+    an invitation's expiry.
 
     INVITATION LIFECYCLE (sample template app)
         The template app tracks each invitation with an explicit status_id on

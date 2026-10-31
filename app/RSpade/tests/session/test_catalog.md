@@ -147,6 +147,7 @@ and delete their keys in teardown.
 | sess-lh-17..19 | failed_attempts_count: zero start, counts failures, a success never counts | records | correct count | implemented |
 | sess-lh-20 | the count is bounded by the configured window - a 30-day request answers the window | 1 failure, $minutes = 43200 | 1 (not a 30-day history) | implemented |
 | sess-lh-21..22 | failed_attempts_by_ip: counts same IP (delta), zero for unknown IP | records | correct count | implemented |
+| sess-lh-23 | a row records the zone the IDENTITY resolves to, with its source, and the reader answers both | automatic + browser cookie; explicit zone (a refusal row); neither | browser / explicit / the server zone (never a site's) | implemented |
 
 ## Session_Cleanup_Test (php, $requires_db_reset + no-tx) - token lookup & GC
 
@@ -259,7 +260,7 @@ out with the reason, the pointer cleared, the browser row kept active.
 
 ## Audit_Session_Test (php) - the acting context a logged act points at
 
-The key is user session (a guest: the browser) x site x address x user agent; the test
+The key is user session (a guest: the browser) x site x address x user agent x display zone; the test
 process is virtual, so the keying is driven through Audit_Session::_id_for_context().
 
 | ID | Purpose | Input | Expected | Status |
@@ -267,12 +268,12 @@ process is virtual, so the keying is driven through Audit_Session::_id_for_conte
 | sess-audit-02 | a process with no browser records no audit session, and asking mints none | declared CLI identity | null; count unchanged; no session | implemented |
 | sess-audit-02b | a declared audit session is answered | _declare(id) | get_audit_session_id() = id | implemented |
 | sess-audit-01 | one context is one row however often it is asked for | one context, twice | same id; site, identity, browser, user session, TYPE_WEB recorded | implemented |
-| sess-audit-03 | a different user session, address, user agent or site is a different row; the first context is its first row again | four variants, then the first | four distinct ids; the first again | implemented |
+| sess-audit-03 | a different user session, address, user agent, site, display zone or zone source is a different row; the first context is its first row again | six variants, then the first | six distinct ids; the first again | implemented |
 | sess-audit-04 | a guest is keyed on its browser | no identity, two browsers | same browser same id; another browser another id; null identity and user session | implemented |
 | sess-audit-06 | a row minted in a rolled-back transaction is not answered again | begin, mint, roll back, mint | first row gone; a row exists for the second id | implemented |
 | sess-audit-07 | a user agent is stored once and in full | a 1000+ character string, twice; a variant | same id; different id; the whole string; one row | implemented |
 | sess-audit-08 | no user agent is null | null, '' | null id, null string | implemented |
-| sess-audit-10 | an audit session is read back through the framework, address and user agent as strings | get_audit_session($id); id 0 | the recorded context; null | implemented |
+| sess-audit-10 | an audit session is read back through the framework, address and user agent as strings | get_audit_session($id); id 0 | the recorded context, timezone and timezone_source included; null | implemented |
 | sess-audit-11 | a session row answers its user agent as the string it was given | a 400+ character agent assigned to a row | the same string from a fresh read | implemented |
 | sess-audit-12 | join() adds every get_audit_session() field as audit_<name> to the caller's query, keeps its own columns, and lists a row with no audit session | a query-builder query over two rows, one attributed | 2 rows; fields set / null; the joined names equal get_audit_session()'s keys | implemented |
 | sess-audit-13 | column() names an audit field for where() and orderBy(); an unknown field or an unqualified column is refused | filter on ip_address, sort on first_seen_at; bad names | 1 match; InvalidArgumentException | implemented |
@@ -600,6 +601,33 @@ refuses a cross-site save or delete.
 | plh-03 | list_page() takes 'portal_user_id' and refuses the staff key | three rows, limit 2; login_user_id | total 3, two rows; InvalidArgumentException naming Portal_Login_History::list_page | implemented |
 | plh-04 | the retention sweep prunes portal rows on the same window | one row aged 400 days | aged row gone, recent kept | implemented |
 | plh-05 | a user-agent string a portal row names survives the sweep | an enrollment row's agent aged 10 days | the _user_agents row kept | implemented |
+| plh-06 | a portal row records the browser's zone, else its site's | a cookie, then none | browser source; then the site zone, site source | implemented |
+
+## Site_Sign_In_History_Test (php, default isolation) - a site's record of sign-ins entering it
+
+Rows inserted as the writer inserts them; the writer itself (Session, at the one place a session
+gets its site) is proven over HTTP by http/sign_in_timezones.sh.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| ssi-01 | a membership's entries, newest first, only its own, in the published shape | two rows of one membership, one of another | two ids newest first; label, address, agent, zone fields | implemented |
+| ssi-02 | the impersonation choice is honoured and required; a moved impersonation counts | own, impersonation, site_switch with an impersonator | include 3 / exclude 1 / only 2; is_impersonation; a missing or unknown choice throws | implemented |
+| ssi-03 | list_page sorts, filters on address and agent, validates | two rows | ip order; one match each; no user_id / an unpublished sort throw | implemented |
+| ssi-04 | the login history retention sweep prunes these rows | one past the window, one recent | aged gone, recent kept | implemented |
+
+## http/sign_in_timezones.sh (http - live server)
+
+Self-seeding (an account with a second, disabled membership and an impersonation target).
+Needs a framework-development box for the `/ssr-test` probe.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sitz-http-01 | an automatic identity's sign-in records the browser's zone on its login history row AND on one site sign-in row (sign_in, its membership) | rsx_tz Asia/Kolkata, sign in | both rows Asia/Kolkata, browser | implemented |
+| sitz-http-02 | the browser's audit session carries the zone | the audit probe | timezone Asia/Kolkata, browser | implemented |
+| sitz-http-03 | a changed rsx_tz is a new audit session; unchanged reuses | Europe/Berlin, twice | a new id in Berlin; then the same id | implemented |
+| sitz-http-04 | an explicit zone outranks the browser's | login_users.timezone America/Denver, cookie Asia/Tokyo | both rows America/Denver, explicit | implemented |
+| sitz-http-05 | two memberships: no site at sign-in, no row; choosing a site records sign_in, switching records site_switch | /login/site/1, then the second site | no row; sign_in on site 1; site_switch on the second, its membership | implemented |
+| sitz-http-06 | an impersonation from /_sys records the target's entry naming the impersonator | _Sys_Users_Controller.sign_in_as | one impersonation row on the target's membership | implemented |
 
 ## Model_Never_Export_Union_Test (php, no DB) - $neverExport is one control, unioned up the chain
 

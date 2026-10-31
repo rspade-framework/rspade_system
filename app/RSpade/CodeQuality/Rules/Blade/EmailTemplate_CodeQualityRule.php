@@ -62,7 +62,7 @@ class EmailTemplate_CodeQualityRule extends CodeQualityRule_Abstract
 
     /**
      * The formatters that make a datetime safe to print. Either class, any method:
-     * format_datetime, format_date, relative, format - the rule cares that the value
+     * format_timestamp, format_date, relative, format - the rule cares that the value
      * went THROUGH one, not which one.
      */
     protected const DATETIME_FORMATTERS = ['Rsx_Time::', 'Rsx_Date::'];
@@ -384,7 +384,7 @@ class EmailTemplate_CodeQualityRule extends CodeQualityRule_Abstract
         $lines[] = 'somebody in another one.';
         $lines[] = '';
         $lines[] = 'Format it SERVER-SIDE, in the recipient\'s timezone, before it is rendered:';
-        $lines[] = '    {{ Rsx_Time::format_datetime(' . $expression . ') }}      a moment';
+        $lines[] = '    {{ Rsx_Time::format_timestamp(' . $expression . ') }}     a moment';
         $lines[] = '    {{ Rsx_Date::format(' . $expression . ') }}               a calendar date';
         $lines[] = '';
         $lines[] = 'Better still, format it in the email class\'s data() and hand the template a string -';

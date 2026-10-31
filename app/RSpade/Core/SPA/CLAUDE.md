@@ -111,6 +111,16 @@ it - reuses matching layouts, destroys from the first divergence down, and creat
 Layouts are awaited to `rendered()`; the action's `ready()` is deliberately NOT awaited, and its
 `.then()` is where `_action_is_loading` clears, scroll settles and `spa_dispatch_ready` fires.
 
+Scroll restoration is ONE mechanism (`_begin_scroll_restoration()` and its siblings), decided
+at dispatch start from `opts.scroll` - a popstate's recorded position, or, for the initial
+dispatch of a reload / back_forward document load, `history.state.scroll` (`_on_spa_init`).
+`history.scrollRestoration` is `'manual'`. It applies after `_resolve_layout_chain()`, at ready
+(`_apply_scroll_position()`), then under a `ResizeObserver` until a notification reports no
+height change; user input (wheel, touch, scroll keys, a scrollbar press, a scroll to a position
+it did not write) ends it, and `_dispatch_is_restoration` keeps such a page off the top at
+ready. Scroll anchoring is off on the scroller while it runs, so the only scrolls are its own
+and the user's.
+
 ## Invariants a change here must keep
 
 - **A SPA route is registered under its JS ACTION class, never the bootstrap controller.** The row

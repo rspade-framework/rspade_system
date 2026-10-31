@@ -22,7 +22,8 @@ use App\RSpade\Core\Task\Task_Instance;
  *   deactivate_unused_sessions  daily maintenance: makes every browser unused for
  *                               rsx.sessions.unused_session_days INACTIVE, signing out what
  *                               is still signed in on it
- *   cleanup_login_history       hourly: prunes _login_history / _portal_login_history
+ *   cleanup_login_history       hourly: prunes _login_history / _portal_login_history /
+ *                               _site_sign_ins
  *   cleanup_session_links       hourly: removes expired _session_links handshake codes
  *   cleanup_trusted_devices     daily maintenance: expired two-factor browser trust
  *   end_stale_impersonations    daily maintenance: impersonations past their age limit
@@ -53,7 +54,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
      * Every table with a user_agent_id column pointing into _user_agents. A string is an
      * orphan only when none of them names it.
      */
-    private const USER_AGENT_REFERENCES = ['_sessions', '_login_history', '_portal_login_history', '_audit_sessions'];
+    private const USER_AGENT_REFERENCES = ['_sessions', '_login_history', '_portal_login_history', '_site_sign_ins', '_audit_sessions'];
 
     /**
      * Delete rows matching a base query in bounded chunks until none remain, or until
@@ -278,8 +279,8 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
     /**
      * Delete the user-agent strings nothing refers to any more.
      *
-     * _user_agents holds each string once, and four tables point into it: _sessions,
-     * _login_history, _portal_login_history and _audit_sessions. A browser session can be
+     * _user_agents holds each string once, and five tables point into it: _sessions,
+     * _login_history, _portal_login_history, _site_sign_ins and _audit_sessions. A browser session can be
      * minted by any visitor with any string, so once the rows that named a string have
      * been collected the string goes too. One an audit session names is never an orphan,
      * because audit sessions are never collected.
@@ -336,7 +337,8 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * Prune aged rows from both realms' login-history tables.
+     * Prune aged rows from both realms' login-history tables, and from the staff site
+     * sign-in history (_site_sign_ins, Site_Sign_In_History) on the same window.
      *
      * `_login_history` (staff) and `_portal_login_history` (client portal) hold successes,
      * post-password refusals and passkey enrollment outcomes - failed sign-in attempts are
@@ -374,6 +376,7 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
         $histories = [
             fn () => DB::table('_login_history')->where('created_at', '<', $cutoff),
             fn () => DB::table('_portal_login_history')->where('created_at', '<', $cutoff),
+            fn () => DB::table('_site_sign_ins')->where('created_at', '<', $cutoff),
         ];
 
         foreach ($histories as $query) {

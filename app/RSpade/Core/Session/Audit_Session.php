@@ -22,14 +22,17 @@ use App\RSpade\Core\Time\Rsx_Time;
  *
  * An audit session is one row in _audit_sessions per
  *
- *     user session x client address x user agent
+ *     user session x client address x user agent x display zone
  *
  * - the user session of the realm the request serves (staff, or portal on a portal request;
  * an API call's is the key owner's REALM_API one, on the key's own session row). A guest's
  * act has no user session and is keyed on the browser row instead (or on no row at all, for
  * a visitor who has none). The site acted on is part of the key as well, because a declared
- * tenant (Session::set_temporary_site_id()) can differ from the user session's. When any of
- * them changes, the next act belongs to a different row. A row is minted only when something
+ * tenant (Session::set_temporary_site_id()) can differ from the user session's. So is the
+ * DISPLAY ZONE (Rsx_Time::get_user_timezone() and where it came from,
+ * get_user_timezone_source()): a laptop that travels mid-sign-in starts a new row, so every
+ * record pointing here points at the zone it was written in. When any of them changes, the
+ * next act belongs to a different row. A row is minted only when something
  * asks for it, so a visitor who logs nothing leaves nothing. It is immutable apart from
  * last_seen_at, and NEVER garbage-collected - it is the audit trail's own memory.
  *
@@ -118,7 +121,8 @@ class Audit_Session
      *
      * @param array $context site_id, login_user_id, portal_user_id, portal_site_id,
      *        impersonator_login_user_id, impersonator_user_id, ip_address (a string),
-     *        session_id, user_session_id, user_agent_id, session_type_id
+     *        session_id, user_session_id, user_agent_id, session_type_id, timezone,
+     *        timezone_source
      * @return int
      */
     public static function _id_for_context(array $context): int
@@ -133,6 +137,8 @@ class Audit_Session
             $context['portal_site_id'],
             $context['ip_address'],
             $context['user_agent_id'],
+            $context['timezone'],
+            $context['timezone_source'],
         ];
 
         $hash = hash('sha256', json_encode($tuple));
@@ -149,8 +155,8 @@ class Audit_Session
             'INSERT INTO _audit_sessions
                 (tuple_hash, site_id, login_user_id, portal_user_id, portal_site_id,
                  impersonator_login_user_id, impersonator_user_id, ip_address_id, session_id,
-                 user_session_id, user_agent_id, session_type_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 user_session_id, user_agent_id, session_type_id, timezone, timezone_source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 last_seen_at = CURRENT_TIMESTAMP(3)',
@@ -167,6 +173,8 @@ class Audit_Session
                 $context['user_session_id'],
                 $context['user_agent_id'],
                 $context['session_type_id'],
+                $context['timezone'],
+                $context['timezone_source'],
             ]
         );
 
@@ -182,7 +190,7 @@ class Audit_Session
      * null for no agent at all.
      *
      * _user_agents is PRIVATE to the framework: it exists to feed _sessions,
-     * _login_history, _portal_login_history and _audit_sessions, each of
+     * _login_history, _portal_login_history, _site_sign_ins and _audit_sessions, each of
      * which stores this id
      * where it used to store a truncated copy of the string. The string is kept whole and
      * matched by the hash of the whole, so one browser is one row everywhere. Readers get
@@ -288,8 +296,8 @@ class Audit_Session
      * row is describe()'s shape plus device_summary (User_Agent::parse()'s summary, the label
      * the session listings print): id, site_id, login_user_id, portal_user_id,
      * portal_site_id, impersonator_login_user_id, impersonator_user_id, ip_address,
-     * user_agent, device_summary, session_id, user_session_id, session_type_id,
-     * first_seen_at, last_seen_at (ISO). Anything invalid throws InvalidArgumentException.
+     * user_agent, device_summary, session_id, user_session_id, session_type_id, timezone,
+     * timezone_source (null on a row recorded before zones were), first_seen_at, last_seen_at (ISO). Anything invalid throws InvalidArgumentException.
      *
      * A user session's audit sessions are bounded by the addresses and agents it used, but
      * one sign-in kept for months on a phone that roams can gather many - hence the page.
@@ -378,6 +386,8 @@ class Audit_Session
             'session_id' => $int($row->session_id),
             'user_session_id' => $int($row->user_session_id),
             'session_type_id' => (int) $row->session_type_id,
+            'timezone' => $row->timezone,
+            'timezone_source' => $row->timezone_source,
             'first_seen_at' => Rsx_Time::to_iso($row->first_seen_at),
             'last_seen_at' => Rsx_Time::to_iso($row->last_seen_at),
         ];
@@ -400,6 +410,8 @@ class Audit_Session
         'session_id' => 'audit_session.session_id',
         'user_session_id' => 'audit_session.user_session_id',
         'session_type_id' => 'audit_session.session_type_id',
+        'timezone' => 'audit_session.timezone',
+        'timezone_source' => 'audit_session.timezone_source',
         'first_seen_at' => 'audit_session.first_seen_at',
         'last_seen_at' => 'audit_session.last_seen_at',
     ];
@@ -552,6 +564,8 @@ class Audit_Session
             'user_session_id' => $sessions['user_session_id'],
             'user_agent_id' => self::user_agent_id($_SERVER['HTTP_USER_AGENT'] ?? null),
             'session_type_id' => $sessions['session_type_id'],
+            'timezone' => Rsx_Time::get_user_timezone(),
+            'timezone_source' => Rsx_Time::get_user_timezone_source(),
         ];
 
         if (!Session::is_api_request() && Rsx_Portal::is_portal_request()) {

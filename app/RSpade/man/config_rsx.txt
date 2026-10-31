@@ -171,7 +171,7 @@ ROUTING AND DISPATCH
         'excluded_prefixes' => ['/login', '/logout'],
         'portal_excluded_prefixes' => [
             '/login', '/logout', '/register',
-            '/password/reset', '/request-access', '/impersonate',
+            '/password/reset', '/impersonate',
         ],
     ]
 

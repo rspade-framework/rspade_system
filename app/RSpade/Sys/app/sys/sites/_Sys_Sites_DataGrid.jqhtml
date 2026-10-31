@@ -41,7 +41,7 @@ Every row links to its detail screen (_Sys_Site_View_Action).
             <td><_Sys_Status_Badge $status=(row.is_enabled ? 'ok' : 'muted') $label=(row.is_enabled ? 'Enabled' : 'Disabled') /></td>
             <td><%= row.timezone %></td>
             <td><%= row.member_count %></td>
-            <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+            <td><%= row.created_at ? Rsx_Time.format_timestamp(row.created_at) : '' %></td>
         </tr>
     </Slot:row>
     <Slot:empty>
