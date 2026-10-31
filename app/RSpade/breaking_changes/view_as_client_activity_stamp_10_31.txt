@@ -1,0 +1,38 @@
+VIEW AS CLIENT NO LONGER MARKS THE CLIENT ACTIVE
+Date: 2026-10-31
+
+IF YOU DO NOTHING: your copy of rsx/portal_main.php keeps stamping clients.portal_last_activity_at on every request a staff member makes while viewing the portal as a client, so a client's "Portal Activity" reads as active whenever somebody on your staff looked at their portal.
+
+SUMMARY
+    Category 1: a /rsx/ template change.
+
+    View as Client is read-only. The framework refuses every unmarked portal Ajax
+    endpoint while the portal session is impersonated, and now refuses a portal
+    upload too (nothing to do for that - it arrived in system/). The template's
+    per-request activity stamp is application code the framework cannot see, so
+    the template now skips it while impersonating.
+
+AFFECTED FILES
+    /rsx/portal_main.php
+
+CHANGES REQUIRED
+
+    File: /rsx/portal_main.php
+    -------------------------------------------------------------------------
+    In pre_dispatch(), replace
+
+        static::__stamp_portal_activity();
+
+    with
+
+        if (!Portal_Session::is_impersonating()) {
+            static::__stamp_portal_activity();
+        }
+
+    (Portal_Session is already imported there.) Do the same for any other write
+    your Portal_Main::pre_dispatch() makes on every request.
+
+VERIFICATION
+    Note a client's portal_last_activity_at, begin View as Client on one of its
+    contacts from the staff app, browse the portal, and read the column again: it
+    has not moved. Sign in to the portal as that contact yourself and it moves.

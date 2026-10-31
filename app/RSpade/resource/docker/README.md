@@ -135,9 +135,8 @@ All under supervisor; `supervisorctl status` lists them.
 |---|---|
 | `nginx` | web server; `:80` plain, `:8000` asserting https behind a terminator |
 | `php-fpm` | two pools — `www`, and `ajax` which exists to prevent an SSR deadlock |
-| `redis` | cache, realtime delivery, short-lived counters |
+| `redis` | one instance for everything: cache, realtime delivery, the full-page cache, short-lived counters, performance metrics; LRU over all of it, capped to the machine (below) |
 | `mysql` | dev target only |
-| `fpc-proxy` | full-page cache; calls back to nginx on `:3201` for misses |
 | `realtime` | WebSocket relay behind `/ws` |
 | `rsx-lockd` | cluster lock daemon — load-bearing, see its config |
 | `tasks` | **the cron replacement**: ticks `rsx:task:process` once a minute |
@@ -223,7 +222,15 @@ does). Get it wrong and the realtime socket dials the wrong port.
 |---|---|
 | `RSPADE_APP_URL` | written into `.env` as `APP_URL` at start |
 | `RSPADE_CONTAINER_TARGET` | `dev` or `prod`; set by the image, not by you |
-| `PHP_FPM_WORKER_COUNT` | prod only: the total php-fpm worker count, instead of the one calculated from the machine (below) |
+| `PHP_FPM_WORKER_COUNT` | the total php-fpm worker count (2 or more), instead of the one calculated from the machine (below; the pools are sized in prod only) |
+| `RSPADE_PHP_MEMORY_LIMIT_MB` | `memory_limit` for php-fpm AND the CLI; `320` prod, `256` dev when unset |
+| `RSPADE_PHP_TYPICAL_MB` | what one PHP process typically holds, for the RAM ceiling; `128` when unset |
+| `RSPADE_PHP_WORKERS_PER_CORE` | the CPU ceiling; `4` when unset |
+| `RSX_TASK_MAX_WORKERS` | on-demand task workers; also read from the project `.env`; two thirds of the calculated task workers when unset |
+| `RSX_TASK_SCHEDULED_WORKERS` | scheduled task workers; also read from the project `.env`; a third of the calculated task workers (at least 1) when unset |
+| `REDIS_MAXMEMORY_MB` | the Redis cap; scaled to the machine when unset |
+| `RSPADE_RESERVED_MB` | memory to leave alone beside the container's own reservation (a co-tenant, heavy PDF rendering); `0` when unset |
+| `MYSQL_INNODB_BUFFER_MB` | dev only: the MySQL buffer pool; `64` when unset |
 | `RSX_AUTO_SECURITY_UPDATES` | `0` (or `false`/`no`/`off`) turns the automatic security updates off; on when unset (below) |
 | `RSPADE_SECURITY_UPDATE_HOURS` | hours between the scheduled security update checks; `4` when unset |
 
@@ -269,42 +276,67 @@ the image it was started from, and only packages that the allow-list covers are 
 Pull or rebuild the image periodically - and promptly when a PHP security release is
 announced - so the base system, the bundled services and the PHP minor version stay current.
 
-## PHP-FPM is sized to the machine (prod)
+## The container is sized to the machine
 
-At every start, before php-fpm runs, the production container works out how many
-workers the machine can carry and writes both pools (`rspade-php-fpm-workers`,
-`php-fpm-workers.sh` here - the formula and its reasoning are in that script):
-
-```
-total   = max(1, min(cores * 3,
-                     floor((memory_mb - 1000) * 0.9 / 320 + floor(min(swap_mb, 1000) / 450) - 4)))
-web     = max(2, floor(total / 4))         # page requests
-ajax    = max(1, ceil(total * 3 / 4))      # Ajax requests
-standby = max(1, min(4, floor(pool / 2)))  # idle workers each pool keeps
-```
-
-320 MB is one worker at its memory limit (`php/php-prod.ini`). The first 1000 MB and a
-tenth of the rest are left to the operating system; four workers' worth is held back
-for Redis, the other services and the background task workers; swap earns at most two
-more. A limit docker puts on the container (`--memory`, `--cpus`) is what is measured,
-not the host behind it.
-
-| Memory (no swap) | Total | Web | Ajax |
-|---|---|---|---|
-| 2 GB | 1 | 2 | 1 |
-| 4 GB | 4 | 2 | 3 |
-| 8 GB | 16 | 4 | 12 |
-| 16 GB | 39 | 9 | 30 |
-
-Set the total yourself with `-e PHP_FPM_WORKER_COUNT=24` (compose: `environment:`);
-the split and the standby counts are still derived from it. The start line says what
-was chosen and from what:
+At every start, before any service runs, the container measures its cores, memory and
+swap (a limit docker put on it - `--memory`, `--cpus` - not the host behind it) and works
+out a budget (`rspade-sizing`, `sizing.sh` here: the formula and the reasoning are in
+that script):
 
 ```
-[rspade] php-fpm sized from 4 cores, 7950 MB memory, 0 MB swap: 12 worker(s) -> web 3 (1 standby), ajax 9 (4 standby).
+redis      = 32 MB under 1 GB, else min(2 GB, max(64 MB, 5% of memory))
+reserved   = 600 fixed + min(2 GB, max(200 MB, 5%)) scratch + redis x 1.25 (+ dev MySQL)
+processes  = min(RAM / 128, (RAM + swap) / 320, 140)   # every PHP process; 140 is the cap
+php-fpm    = at most 4 per core, the rest of processes after the task workers
+tasks      = about php-fpm / 4 (at least 2), one more per 25 php-fpm past 16
+             split 1 scheduled : 2 on demand, at least one of each
 ```
 
-The development image is not sized: it keeps 8 on-demand workers a pool.
+The formulas, their reasoning and the reservation breakdown are in `sizing.sh`; the
+operator's view - the process cap of 140 (MySQL's default connection limit, with
+headroom), setting the counts by hand past it, sizing the database, and when to
+cluster - is `php artisan rsx:man server_sizing`.
+
+| Machine | php-fpm | Web | Ajax | Task workers (sched + on demand) | Redis |
+|---|---|---|---|---|---|
+| 2 GB, 1 core, no swap | 2 (floor) | 1 | 1 | 2 (1 + 1) | 102 MB |
+| 2 GB, 1 core, 2 GB swap | 4 | 2 | 2 | 2 (1 + 1) | 102 MB |
+| 4 GB, 2 cores, no swap | 7 | 2 | 5 | 2 (1 + 1) | 204 MB |
+| 4 GB, 2 cores, 4 GB swap | 8 | 2 | 6 | 2 (1 + 1) | 204 MB |
+| 8 GB, 4 cores, no swap | 16 | 4 | 12 | 4 (1 + 3) | 409 MB |
+| 16 GB, 8 cores, no swap | 32 | 8 | 24 | 8 (3 + 5) | 819 MB |
+| 32 GB, 16 cores, no swap | 64 | 16 | 48 | 16 (5 + 11) | 1638 MB |
+| 64 GB, 32 cores and more | 122 | 30 | 92 | 18 (6 + 12) - the cap | 2048 MB |
+
+A machine that reaches the cap says so at start, in the Laravel log once per start, and
+in `rsx:health`, unless the counts are already set by hand.
+
+Every number can be set instead (Environment, above); a value that is not a whole number
+in range stops the start, naming the switch. `rspade-sizing plan <cores> <memory_mb>
+<swap_mb> [dev|prod]` prints the budget for any machine without changing anything.
+
+What the start writes: the two pool files (production; the development image keeps its
+8 on-demand workers a pool), the `memory_limit` php-fpm and the CLI share
+(`conf.d/95-rspade-memory.ini` in each), the Redis cap (`/etc/redis/rspade-memory.conf`),
+the development MySQL buffer pool, and `/var/lib/rspade/sizing.json`, the record of every
+number and where it came from. The framework reads that record: the on-demand task pool
+follows it when `RSX_TASK_MAX_WORKERS` is unset, `rsx:health` "Resource Sizing" reports it,
+and the `/_sys` Performance screen charts what requests actually use against it. The start
+line says what was chosen:
+
+```
+[rspade] sized for 4 cores, 7950 MB memory, 0 MB swap: php-fpm 16 (web 4, ajax 12), 4 task workers (1 scheduled, 3 on demand), memory_limit 320M, redis 397 MB.
+```
+
+### Minimum machine
+
+| Target | Minimum | Comfortable |
+|---|---|---|
+| prod | 1 vCPU, 2 GB RAM, 1 GB swap | 2 vCPU, 4 GB RAM, 4 GB swap |
+| dev | 2 vCPU, 4 GB RAM, 2 GB swap | 4 vCPU, 8 GB RAM |
+
+Below the minimum the floor still applies - two php-fpm workers, one scheduled and one
+on-demand task worker - and a box that cannot hold them runs out of memory under load.
 
 Everything else is ordinary `.env` configuration — see `.env.README` in the
 project root.

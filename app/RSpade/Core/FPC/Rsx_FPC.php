@@ -202,16 +202,25 @@ class Rsx_FPC
      * rsx:health probe: FPC subsystem status. A public static
      * `#[Health_Check('label')]` (bare marker attribute - never a defined class).
      *
-     * The subsystem is always available, so there is no disabled branch to report: this
-     * verifies Redis reachability + auth (via the fail-loud _get_redis path, whose throw
-     * is caught here and reported as a FAIL row rather than crashing the runner) and a
-     * PING, plus an advisory liveness probe of the Node proxy port.
+     * While full page caching is disabled (ENABLED false) the proxy is not run and nothing
+     * is cached, so the row is one INFO line saying so. Enabled, it verifies Redis
+     * reachability + auth (via the fail-loud _get_redis path, whose throw is caught here
+     * and reported as a FAIL row rather than crashing the runner) and a PING, plus an
+     * advisory liveness probe of the Node proxy port.
      *
      * @return array
      */
     #[Health_Check('FPC')]
     public static function fpc_health(): array
     {
+        if (!self::ENABLED) {
+            return [[
+                'status' => 'INFO',
+                'detail' => 'full page caching is disabled in this release: #[FPC] routes dispatch normally,'
+                    . ' and the proxy is not run (backlog B-132)',
+            ]];
+        }
+
         $rows = [];
 
         // Redis reachability + auth. _get_redis() fails loud on any connect/auth

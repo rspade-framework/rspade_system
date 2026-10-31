@@ -108,7 +108,7 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | task-pools-01 | each pool's cap is rsx.tasks.pools.<pool>.max_workers; no global cap | config | 4 / '2' -> 2 / 1; global key absent | implemented |
-| task-pools-02 | a cap below 1 or not an integer throws; an unknown pool throws | 0, -1, 1.5, null, 'three'; 'nightly' | RuntimeException | implemented |
+| task-pools-02 | a cap below 1 or not an integer throws; an unset cap throws on the kill pool (on_demand and scheduled are automatic); an unknown pool throws | 0, -1, 1.5, 'three'; kill null; 'nightly' | RuntimeException | implemented |
 | task-pools-03 | a worker joins only a task pool | --pool=kill | exit 1 | implemented |
 | task-pools-04 | the scheduled pool runs due dispatched work before a due schedule; the schedule's run is its own row | due schedule + pending run; scheduled worker | B then A; pool_id Scheduled; origin Scheduled run; next_run_at = next cadence; last_task_id / last_success_at | implemented |
 | task-pools-05 | the on_demand pool never runs a schedule | due schedule + pending run; on_demand worker | B only; schedule still due | implemented |

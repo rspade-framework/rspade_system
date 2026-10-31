@@ -477,19 +477,21 @@ if [ "$TARGET" = "dev" ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 6b. Size the php-fpm pools to this machine (production target only)
+# 6b. Size PHP, Redis and MySQL to this machine
 # -----------------------------------------------------------------------------
-# BEFORE supervisor, because supervisor is what starts php-fpm and php-fpm reads its
-# pool files once. The count comes from this container's cores, memory and swap, or
-# from PHP_FPM_WORKER_COUNT when the container was started with one; the script holds
-# the formula and the reasoning (rspade-php-fpm-workers). The development target keeps
-# its small on-demand pools: a developer's box is not sized for traffic.
+# BEFORE supervisor, because every service it starts reads its configuration once: the
+# php-fpm pool sizes (production; the development target keeps its small on-demand pools,
+# a developer's box is not sized for traffic), the memory_limit php-fpm and the CLI share,
+# the Redis cap, and the development MySQL buffer pool. The numbers come from this
+# container's cores, memory and swap, or from the switches the container was started with
+# (RSPADE_PHP_MEMORY_LIMIT_MB, PHP_FPM_WORKER_COUNT, REDIS_MAXMEMORY_MB and the rest); the
+# script holds the formula and the reasoning (rspade-sizing), and records the budget it
+# chose in /var/lib/rspade/sizing.json, which the framework reads (rsx:health "Resource
+# Sizing", the task pools, the /_sys Performance screen).
 #
-# A failure here stops the start. php-fpm coming up with the image's placeholder
-# counts on a machine they do not fit is the outcome this step exists to prevent.
-if [ "$TARGET" = "prod" ]; then
-    rspade-php-fpm-workers apply || die "could not size the php-fpm pools (see the line above)"
-fi
+# A failure here stops the start. Services coming up with the image's placeholder sizes on
+# a machine they do not fit is the outcome this step exists to prevent.
+rspade-sizing apply "$TARGET" || die "could not size the container (see the line above)"
 
 # -----------------------------------------------------------------------------
 # 6c. Security updates, BEFORE anything serves

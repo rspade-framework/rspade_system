@@ -90,4 +90,34 @@ class File_Sanitizer_Php_Test extends Rsx_Test_Abstract
         static::__assert_count(1, $violations, 'the call is flagged once');
         static::__assert_equals($expected_line, $violations[0]->line_number, 'reported on the line it is written on');
     }
+
+    /**
+     * PHP-EXEC-01 bans the PHP function, not a method of that name: a Redis pipeline's
+     * $redis->exec() and a static ::exec() are other functions.
+     */
+    public static function test_the_exec_rule_ignores_a_method_of_that_name()
+    {
+        $banned = 'exe' . 'c';
+        $source = "<?php\n"
+            . "\$redis->{$banned}();\n"
+            . "Pipeline::{$banned}();\n"
+            . "{$banned}('true', \$out);\n"
+            . "\\{$banned}('true', \$out);\n";
+
+        $dir = Rsx_Project_Paths::tmp_path() . '/sanitizer_fixture_' . uniqid();
+        ensure_directory($dir);
+        $path = $dir . '/Exec_Method_Probe.php';
+        file_put_contents($path, $source);
+
+        try {
+            $collector = new ViolationCollector();
+            (new ExecUsage_CodeQualityRule($collector))->check($path, FileSanitizer::sanitize_php($source)['content']);
+            $lines = array_map(fn ($v) => $v->line_number, $collector->get_by_rule('PHP-EXEC-01'));
+        } finally {
+            @unlink($path);
+            @rmdir($dir);
+        }
+
+        static::__assert_equals([4, 5], $lines, 'the bare and the namespaced call only');
+    }
 }

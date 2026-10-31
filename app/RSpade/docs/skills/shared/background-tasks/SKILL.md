@@ -463,9 +463,9 @@ A worker releases any lock a task left held at the task boundary - and names it 
 
 | Pool | Runs | Cap (`rsx.tasks.pools.<pool>.max_workers`) |
 |---|---|---|
-| `on_demand` | dispatched work | 2 (`RSX_TASK_MAX_WORKERS`) |
-| `scheduled` | queued on-demand work FIRST, then due schedules | 1 |
-| `kill` | force stops and kills | 10 |
+| `on_demand` | dispatched work | automatic: two thirds of the container's task workers (task workers about a quarter of php-fpm's), else 2; `RSX_TASK_MAX_WORKERS` sets it |
+| `scheduled` | queued on-demand work FIRST, then due schedules | automatic: a third of the container's task workers (at least 1), else 1; `RSX_TASK_SCHEDULED_WORKERS` sets it |
+| `kill` | force stops and kills | 2 |
 
 **Claim order**: `#[Run_As_Dispatcher]` runs first (somebody is waiting), then every other on-demand run, then scheduled-origin runs - oldest first within each tier; no schedule is ticked while an on-demand run is due. A run whose lock is held is passed over, whatever its tier.
 

@@ -1259,9 +1259,15 @@ IMPERSONATION (VIEW AS CLIENT)
     the portal 2FA / SSO credential lists). Its portal second-factor and SSO
     WRITES are unmarked, so they are refused too.
 
-    The seam covers Ajax endpoints. A #[Portal_Route] page answering a POST is not
-    an Ajax endpoint: guard such a form handler yourself on
-    Portal_Session::is_impersonating().
+    A portal UPLOAD (Ajax.upload() to /_upload on a portal request) is refused the
+    same way, by the one ingest path before the size check or the upload gate runs:
+    403, code read_only_session, the same message. Nothing is stored.
+
+    The seam covers Ajax endpoints and uploads. A #[Portal_Route] page answering a
+    POST is neither: guard such a form handler yourself on
+    Portal_Session::is_impersonating(). So is any write the application makes on
+    every request (an activity stamp in Portal_Main::pre_dispatch()): skip it while
+    impersonating - the template's portal activity stamp does.
 
     APPLICATION RESPONSIBILITY:
       1. Mark every portal READ endpoint #[Portal_Impersonation_Readable], or

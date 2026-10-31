@@ -1,0 +1,183 @@
+SERVER_SIZING(7)            RSX Framework Manual            SERVER_SIZING(7)
+
+NAME
+    server_sizing - what machine an RSpade container needs, how it sizes PHP,
+    the task workers and Redis to the machine, and when a person takes over
+
+TAGS
+       deploy, config
+
+SYNOPSIS
+    The container sizes itself at every start; nothing to do on most boxes:
+
+        rspade-sizing plan <cores> <memory_mb> <swap_mb> [dev|prod]
+            print the budget for any machine, changing nothing
+        php artisan rsx:health
+            the "Resource Sizing" row: what this box was sized for
+
+    Past the automatic ceiling (140 PHP processes), set the counts yourself:
+
+        docker run -e PHP_FPM_WORKER_COUNT=200 \
+                   -e RSX_TASK_SCHEDULED_WORKERS=8 \
+                   -e RSX_TASK_MAX_WORKERS=16 ...
+
+    and configure the database server to accept that many connections.
+
+DESCRIPTION
+    Every PHP process the container runs - a php-fpm worker serving a page or
+    an Ajax call, a background task worker, a cron tick, a command - is the
+    same kind of thing: it holds about 128 MB of memory typically, may grow to
+    its memory_limit, takes a CPU while it works, and may hold a database
+    connection. So the container sizes them together, from what it measures at
+    start: its cores, memory and swap (a limit docker put on the container,
+    not the host behind it).
+
+    The step is rspade-sizing (system/app/RSpade/resource/docker/sizing.sh,
+    which holds every formula and its reasoning). It writes the php-fpm pool
+    sizes (production), the memory_limit php-fpm and the CLI share, the Redis
+    cap, the development MySQL buffer pool, and the record
+    /var/lib/rspade/sizing.json. The framework reads that record: the task
+    worker pools follow it (rsx:man tasks, THE WORKER POOLS), rsx:health
+    reports it, and the /_sys Performance screen charts what requests and
+    tasks actually use against it (rsx:man sys_panel).
+
+    Unlike a stock PHP install, where php-fpm's pm.max_children and the queue
+    worker count are hand-edited numbers nobody revisits when the machine
+    changes, the counts here follow the machine at every start - up to the
+    point where a machine is large enough that a person should be choosing
+    them.
+
+MINIMUM MACHINE
+                        Minimum                          Comfortable
+        production      1 vCPU, 2 GB RAM, 1 GB swap      2 vCPU, 4 GB RAM, 4 GB swap
+        development     2 vCPU, 4 GB RAM, 2 GB swap      4 vCPU, 8 GB RAM
+
+    Below the minimum the floor still applies - two php-fpm workers (one
+    page, one Ajax), one scheduled and one on-demand task worker - and a box
+    that cannot hold them runs out of memory under load.
+
+THE BUDGET
+    All in MB; L is the memory limit (320 production, 256 development - lower
+    on purpose, so growth fails on a developer's box first), A the typical
+    size (128).
+
+        redis      = 32 under 1 GB of memory,
+                     else min(2048, max(64, 5% of memory))
+        reserved   = 600 fixed + min(2048, max(200, 5% of memory)) scratch
+                     + redis x 1.25 + (development) 192 + the MySQL buffer pool
+                     + RSPADE_RESERVED_MB
+        processes  = min( (memory - reserved) / A,           typical, in RAM
+                          (memory + swap - reserved) / L,    worst case, RAM + swap
+                          140 )                              THE PROCESS CAP
+        php-fpm    = the most, at most 4 per core, for which
+                     php-fpm + tasks(php-fpm) fits in processes; at least 2
+        tasks(n)   = max(2, round(n / 4))                    up to 16 (n = 64)
+                   = 16 + floor((n - 64) / 25)               past it
+        scheduled  = max(1, round(tasks / 3))
+        on demand  = max(1, tasks - scheduled)
+        web        = a quarter of php-fpm (at least 1, 2 from 4), Ajax the rest
+
+    Fixed 600 MB is the operating system and every service that is not a PHP
+    worker (about 160 MB measured, plus OPcache's shared memory and the
+    kernel). Scratch is the page cache an upload, a PDF render or a file read
+    draws on. Redis and scratch stop growing at 2 GB: past that a larger
+    machine only takes memory from PHP.
+
+    Task workers are about one to four php-fpm workers, because a page is
+    served by php-fpm and a background job mostly waits on the database, mail
+    or another service. Past 16 task workers they grow by one per 25 php-fpm
+    workers. They split one scheduled to two on demand: the on-demand pool
+    runs dispatched work only, and the scheduled pool runs #[Schedule] work
+    and takes queued dispatched work first, so both serve dispatched work.
+
+        Machine                     php-fpm   tasks (sched + on demand)   Redis
+        2 GB, 1 core, no swap         2         2 (1 + 1)                  102 MB
+        2 GB, 1 core, 2 GB swap       4         2 (1 + 1)                  102 MB
+        4 GB, 2 cores, no swap        7         2 (1 + 1)                  204 MB
+        8 GB, 4 cores, no swap       16         4 (1 + 3)                  409 MB
+        16 GB, 8 cores, no swap      32         8 (3 + 5)                  819 MB
+        32 GB, 16 cores, no swap     64        16 (5 + 11)                1638 MB
+        64 GB, 32 cores and more    122        18 (6 + 12)                2048 MB
+
+THE PROCESS CAP
+    The calculation never plans more than 140 PHP processes, however large
+    the machine. Each process may hold a database connection, and 140 is what
+    fits under MySQL's default max_connections (151) with room for everything
+    that is not a worker: the cron tick, commands and migrations, the two kill
+    workers, an operator's shell, rsx:debug.
+
+    A machine large enough to reach the cap - from about 32 cores - is past
+    the point where defaults should decide. Its container says so three ways
+    when nobody has set the counts: a NOTICE line in the container output at
+    start, one warning in the Laravel log per container start (written by the
+    first cron tick that reads the new record), and the rsx:health "Resource
+    Sizing" row. A box with any of the three counts set by hand gets none of
+    them: somebody is already deciding.
+
+SETTING THE COUNTS BY HAND
+    Container environment (docker run -e, compose `environment:`). A value
+    that is not a whole number in range stops the container start, naming
+    the switch. A count that is set is never capped; whatever is not set is
+    still calculated around it.
+
+        PHP_FPM_WORKER_COUNT          php-fpm workers, 2 or more (split web /
+                                      Ajax as above; pools sized in production)
+        RSX_TASK_SCHEDULED_WORKERS    scheduled task workers; also read from
+                                      the project .env
+        RSX_TASK_MAX_WORKERS          on-demand task workers; also read from
+                                      the project .env
+        RSPADE_PHP_MEMORY_LIMIT_MB    memory_limit, php-fpm and the CLI
+        RSPADE_PHP_TYPICAL_MB         the typical size the RAM ceiling uses
+        RSPADE_PHP_WORKERS_PER_CORE   the CPU ceiling (4)
+        REDIS_MAXMEMORY_MB            the Redis cap
+        RSPADE_RESERVED_MB            memory to leave alone beside ours
+        MYSQL_INNODB_BUFFER_MB        development MySQL buffer pool
+
+    Choosing them on a large machine: start from what the /_sys Performance
+    screen shows - the peak memory and time of real requests and tasks, and
+    how many processes are at work minute by minute against the budget - and
+    from the database's capacity, not from the core count. Every worker you
+    add is a connection the database must accept and a query stream it must
+    serve; on most applications the database saturates long before a large
+    web server's CPUs do.
+
+SIZING THE DATABASE
+    The database server must accept every PHP process the boxes can run, at
+    once, plus headroom:
+
+        max_connections  >=  (php-fpm + task workers + ~15) per box,
+                             summed over every box that uses it
+
+    In production the database is yours: raise max_connections on it (and
+    give it the memory each connection costs - per-connection buffers, the
+    InnoDB buffer pool sized to the working set) before raising the counts.
+    A connection refused under load surfaces as "Too many connections" on
+    whichever request was unlucky. The development container's MySQL keeps
+    its defaults; a development box is not sized for traffic.
+
+WHEN TO CLUSTER
+    Past one large box, more boxes beat a bigger one: one php-fpm, one Redis
+    and one local process table per box stop being where the time goes, and a
+    single box is a single failure. RSpade's coordination already spans
+    servers - cluster locks and the task worker pools are held in rsx-lockd
+    (rsx:man locks), task pools are counted per environment across every
+    host, kill workers act on their own host's runs - but a cluster is an
+    operations design, not a switch: a shared database, Redis and rsx-lockd,
+    a shared blob store for uploads, a load balancer listed in
+    TRUSTED_PROXIES, sealed identical builds (rsx:man prod, rsx:prod:verify).
+    At that scale a professional who knows PHP and the application's load
+    makes the decisions, and the counts on each box are set by hand.
+
+SEE ALSO
+    rsx:man tasks - the worker pools, the CLI memory limit
+    rsx:man sys_panel - the Performance screen
+    rsx:man caching - the Redis database map and eviction
+    rsx:man prod - deploying, sealed builds, the cluster drift check
+    rsx:man locks - rsx-lockd and cluster locks
+    rsx:man health - the Resource Sizing row
+    system/app/RSpade/resource/docker/README.md - the container itself
+
+AUTHOR
+    RSpade Framework
+
+RSpade                        October 2026                SERVER_SIZING(7)

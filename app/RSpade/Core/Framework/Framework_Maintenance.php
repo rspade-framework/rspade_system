@@ -9,7 +9,7 @@ use App\RSpade\Core\Rsx;
  * MAINTENANCE MODE: one flag file, two ways in.
  *
  *   - `php artisan rsx:maintenance:enable [--reason=<text>]` - the operator feature
- *     (bin/maintenance-mode.sh; also stops realtime, fpc-proxy, php-fpm and redis).
+ *     (bin/maintenance-mode.sh; also stops realtime, php-fpm, redis and any fpc-proxy).
  *   - `rsx:framework:pull` - the same mechanism with the reason "framework update in progress",
  *     raised before owned_zone_sync and lifted in the exit trap (normal exit OR Ctrl-C).
  *

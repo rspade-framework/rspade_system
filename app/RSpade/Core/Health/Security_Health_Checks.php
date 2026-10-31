@@ -99,7 +99,45 @@ class Security_Health_Checks
         // IDE bridge token directory (the grant token must never be web-served).
         $rows[] = self::__probe_bridge($base);
 
+        // php-fpm's status pages: the container serves them on its loopback listener only.
+        $rows[] = self::__probe_fpm_status($base);
+
         return $rows;
+    }
+
+    /**
+     * php-fpm's status pages (the pool's process list and request counts) must answer only
+     * on the container's loopback listener. Served publicly, they would publish the box's
+     * concurrency and every in-flight request URI to anyone.
+     */
+    private static function __probe_fpm_status(string $base): array
+    {
+        foreach (['web', 'ajax'] as $pool) {
+            $url = $base . '/_fpm_status/' . $pool . '?json';
+            try {
+                $response = Http::withOptions(['verify' => false, 'allow_redirects' => false])
+                    ->timeout(self::PROBE_TIMEOUT)
+                    ->get($url);
+            } catch (\Throwable $e) {
+                continue;
+            }
+            if ($response->status() === 200 && str_contains($response->body(), 'accepted conn')) {
+                return [
+                    'label' => 'php-fpm status exposure',
+                    'status' => 'FAIL',
+                    'detail' => "SERVED over HTTP at {$url} - php-fpm's status page is public",
+                    'remediation' => 'serve /_fpm_status on a loopback-only listener and refuse it on the public one'
+                        . ' (system/app/RSpade/resource/docker/nginx/site.conf)',
+                ];
+            }
+        }
+
+        return [
+            'label' => 'php-fpm status exposure',
+            'status' => 'OK',
+            'detail' => '/_fpm_status not served publicly',
+            'remediation' => null,
+        ];
     }
 
     /**

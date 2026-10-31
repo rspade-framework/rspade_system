@@ -191,6 +191,17 @@ class Rsx_Realtime {
     // contract. Resync dispatch is NOT debounced (fires immediately).
     static _live_dispatch_debounce_ms = 250;
 
+    // THE RESYNC SPREAD. A {type:'resync'} frame (the relay found Redis lost realtime data -
+    // a restart, an eviction, a disconnect from Redis - so frames may have been missed) goes
+    // to every open page at once, and each page answers by refetching every watch. Each
+    // waits a random 0 to 8 seconds first, so a whole site's pages spread their refetches
+    // over 8 seconds instead of arriving at the server in the same instant. A LOAD SPREAD,
+    // not a timeout (owner-approved, 2026-10-31): nothing is bounded and nothing is given up
+    // on - the delay's expiry IS the work - so there is no 599/601 line for it to draw; it
+    // only decides how thinly the same refetches are spread.
+    static _resync_spread_ms = 8000;
+    static _resync_timer = null;
+
     // The socket's own state ('connecting' | 'connected' | 'disconnected' | 'reconnecting'),
     // kept for debugging only. Framework-internal: the application sees watch_connection().
     static _connection_state = 'disconnected';
@@ -1019,6 +1030,13 @@ class Rsx_Realtime {
             Rsx_Realtime._outbox_timer = null;
         }
 
+        // A pending relay resync is covered by the reconnect: auth_ok resubscribes every
+        // watch, and each subscribe ack is a resync of its own.
+        if (Rsx_Realtime._resync_timer) {
+            clearTimeout(Rsx_Realtime._resync_timer);
+            Rsx_Realtime._resync_timer = null;
+        }
+
         // Start the downtime clock (consumed by _check_stale_reconnect on the next auth_ok).
         // Only the FIRST close of a disconnected stretch counts, so a failed reconnect
         // attempt does not restart the measurement.
@@ -1168,6 +1186,20 @@ class Rsx_Realtime {
                 if (!Rsx_Realtime._matches_filter(entry.filter, msg.data)) continue;
                 Rsx_Realtime._dispatch(entry, msg.data, false);
             }
+            return;
+        }
+
+        if (msg.type === 'resync') {
+            // The relay found Redis lost realtime data: every watch refetches, exactly as
+            // after a reconnect, once the spread delay passes. A second frame while one is
+            // pending is absorbed into it - one refetch answers both.
+            if (Rsx_Realtime._resync_timer) return;
+            Rsx_Realtime._resync_timer = setTimeout(() => {
+                Rsx_Realtime._resync_timer = null;
+                for (const entry of Rsx_Realtime._watches.values()) {
+                    Rsx_Realtime._dispatch(entry, null, true);
+                }
+            }, Math.random() * Rsx_Realtime._resync_spread_ms);
             return;
         }
 

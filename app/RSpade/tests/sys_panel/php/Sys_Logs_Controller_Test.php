@@ -291,7 +291,7 @@ class Sys_Logs_Controller_Test extends Rsx_Test_Abstract
      * RP-LOGS-07 - laravel lines group under their header (level, time, env, message,
      * the trace below); a window opening inside an entry widens back to its header when
      * one is within a page, else opens on a "continued" entry; the filter keeps an entry
-     * whose trace matches; csp lines pretty-print; plain lines stand alone.
+     * whose trace matches; any other file's lines stand alone.
      */
     public static function test_laravel_grouping_filter_and_formats()
     {
@@ -329,13 +329,6 @@ class Sys_Logs_Controller_Test extends Rsx_Test_Abstract
         static::__assert_equals(7, $filtered['line_count'], 'and the line count is the window\'s');
         static::__assert_equals(['WARNING'], array_column(_Sys_Log_Reader::read_window($path, 'laravel.log', null, 100, 'production.warning')['entries'], 'level'), 'the header is searched as written');
 
-        file_put_contents(self::$dir . '/csp_violations.log', "{\"at\":\"t\",\"report\":{\"n\":1}}\n\nnot json\n");
-        $csp = _Sys_Log_Reader::read_window(_Sys_Log_Reader::resolve('csp_violations.log'), 'csp_violations.log', null, 10);
-        static::__assert_equals('csp', $csp['format']);
-        static::__assert_count(2, $csp['entries'], 'a blank line is dropped');
-        static::__assert_equals("{\n    \"at\": \"t\",\n    \"report\": {\n        \"n\": 1\n    }\n}", $csp['entries'][0]['pretty'], 'a JSON line is pretty-printed');
-        static::__assert_null($csp['entries'][1]['pretty'], 'a non-JSON line is left as text');
-
         file_put_contents(self::$dir . '/worker.log', "x\n\xff\xfebad bytes\n");
         $plain = _Sys_Log_Reader::read_window(_Sys_Log_Reader::resolve('worker.log'), 'worker.log', null, 10);
         static::__assert_equals('plain', $plain['format']);
@@ -343,7 +336,6 @@ class Sys_Logs_Controller_Test extends Rsx_Test_Abstract
         static::__assert_true(mb_check_encoding($plain['entries'][1]['text'], 'UTF-8'), 'invalid UTF-8 is scrubbed so the payload encodes');
 
         unlink(self::$dir . '/laravel.log');
-        unlink(self::$dir . '/csp_violations.log');
         unlink(self::$dir . '/worker.log');
     }
 

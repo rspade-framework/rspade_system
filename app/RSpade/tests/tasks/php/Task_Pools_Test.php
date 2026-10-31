@@ -91,7 +91,7 @@ class Task_Pools_Test extends Rsx_Test_Abstract
     {
         $original = config('rsx.tasks.pools');
         try {
-            foreach ([0, -1, 1.5, null, 'three'] as $bad) {
+            foreach ([0, -1, 1.5, 'three'] as $bad) {
                 config(['rsx.tasks.pools.on_demand.max_workers' => $bad]);
                 static::__assert_throws(
                     \RuntimeException::class,
@@ -99,6 +99,15 @@ class Task_Pools_Test extends Rsx_Test_Abstract
                     'rsx.tasks.pools.on_demand.max_workers must be an integer of at least 1'
                 );
             }
+
+            // Unset is AUTOMATIC for on_demand and scheduled (Container_Sizing_Test); the kill
+            // pool with no cap is a configuration error.
+            config(['rsx.tasks.pools.kill.max_workers' => null]);
+            static::__assert_throws(
+                \RuntimeException::class,
+                fn () => Task_Pool::max_workers(Task_Pool::KILL),
+                'rsx.tasks.pools.kill.max_workers must be an integer of at least 1'
+            );
         } finally {
             config(['rsx.tasks.pools' => $original]);
         }

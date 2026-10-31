@@ -1636,6 +1636,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Performance Metrics
+    |--------------------------------------------------------------------------
+    |
+    | Every page request, Ajax request, external API call and worker-run task records its
+    | peak memory, how long it ran and what it was, after it ends - one Redis pipeline on
+    | database 1, kept for two hours (Rsx_Metrics). The /_sys Performance screen charts it
+    | against the machine's budget. A failure to record never fails the request.
+    |
+    */
+    'metrics' => [
+        'enabled' => true,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Task System
     |--------------------------------------------------------------------------
     |
@@ -1645,9 +1660,15 @@ return [
     | Worker pools (rsx-lockd counts the members of each):
     | - on_demand: runs dispatched work (Task::dispatch, framework drains included).
     | - scheduled: runs #[Schedule] work, and takes queued on-demand work FIRST when there is
-    |   any - so a cap of 1 in each lets two on-demand runs proceed at once.
-    | - kill: the kill workers that carry out force stops and force kills.
-    | Each cap is at least 1; a lower value throws.
+    |   any - so both pools serve dispatched work.
+    | - kill: the kill workers that carry out force stops and force kills. A kill worker only
+    |   delivers a signal and exits, so two are plenty on any box.
+    | Each cap is at least 1; a lower value throws. The on_demand and scheduled caps are
+    | AUTOMATIC when unset (null or empty): inside the RSpade container they are the counts
+    | the container sized for the machine (rspade-sizing, recorded in
+    | /var/lib/rspade/sizing.json - task workers about a quarter of php-fpm's, split one
+    | scheduled to two on demand; rsx:man server_sizing), and 2 on demand + 1 scheduled
+    | anywhere else. RSX_TASK_MAX_WORKERS / RSX_TASK_SCHEDULED_WORKERS set them explicitly.
     |
     | Commands:
     | - php artisan rsx:task:process (run via cron every minute)
@@ -1657,9 +1678,9 @@ return [
     */
     'tasks' => [
         'pools' => [
-            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 2)],
-            'scheduled' => ['max_workers' => 1],
-            'kill' => ['max_workers' => 10],
+            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS')],
+            'scheduled' => ['max_workers' => env('RSX_TASK_SCHEDULED_WORKERS')],
+            'kill' => ['max_workers' => 2],
         ],
 
         // THE SILENCE LIMIT (seconds): how long a worker-run task may go WITHOUT REPORTING
@@ -1905,7 +1926,7 @@ return [
     | login history, session rows, the API request log and revision records.
     |
     | Loopback (127.0.0.1, ::1) is ALWAYS trusted: the framework's own hops are on
-    | it (nginx -> the full-page-cache proxy on 127.0.0.1:3200 -> nginx -> PHP).
+    | it (a request nginx proxies to another local service, and back).
     | List here the addresses or CIDRs of anything in FRONT of nginx that appends
     | X-Forwarded-For - a load balancer, a TLS terminator, a CDN's published ranges.
     | Until it is listed, every request appears to come from that device, and the
@@ -2380,7 +2401,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | The FPC is a Node.js reverse proxy (system/bin/fpc-proxy.js) that caches
-    | #[FPC]-marked pages in Redis (DB 2).
+    | #[FPC]-marked pages in Redis (DB 2). DISABLED IN THIS RELEASE
+    | (Rsx_FPC::ENABLED, backlog B-132): #[FPC] routes dispatch normally, and the
+    | RSpade container neither runs the proxy nor routes requests through it.
     |
     | THERE IS NO MASTER SWITCH, and that is the design: full page caching is an
     | APPLICATION decision a developer makes per route by writing #[FPC] on it,

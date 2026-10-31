@@ -1,0 +1,26 @@
+<%--
+_Sys_Performance_Recent - one kind's newest entries on the Performance screen: when, what
+ran, its peak memory and how long it took.
+
+$rows - [{at, label, peak_mb, ms}], newest first (required; an empty list says so)
+--%>
+<Define:_Sys_Performance_Recent>
+    <% const _rows = this.args.rows || []; %>
+    <% if (!_rows.length) { %>
+        <_Sys_Empty_State $icon="bi-inbox" $title="Nothing recorded yet" />
+    <% } else { %>
+        <table class="table table-sm mb-0">
+            <thead><tr><th>When</th><th>What</th><th class="text-end">Peak memory</th><th class="text-end">Time</th></tr></thead>
+            <tbody>
+                <% for (const _r of _rows) { %>
+                    <tr>
+                        <td class="text-nowrap"><%= Rsx_Time.format_timestamp_short(_r.at) %></td>
+                        <td class="_Sys_Performance_Recent__label"><%= _r.label %></td>
+                        <td class="text-end text-nowrap"><%= _r.peak_mb %> MB</td>
+                        <td class="text-end text-nowrap"><%= _r.ms %> ms</td>
+                    </tr>
+                <% } %>
+            </tbody>
+        </table>
+    <% } %>
+</Define:_Sys_Performance_Recent>

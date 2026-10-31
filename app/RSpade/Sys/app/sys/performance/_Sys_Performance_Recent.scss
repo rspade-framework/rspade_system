@@ -1,0 +1,9 @@
+._Sys_Performance_Recent {
+    display: block;
+
+    &__label {
+        font-family: var(--rsx-mono);
+        font-size: 12px;
+        word-break: break-all;
+    }
+}

@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Files;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\Rsx_File_Gates;
@@ -20,7 +21,7 @@ use App\RSpade\Core\Session\Session;
  * staff and portal) and the external REST endpoint POST /api/v1/files (Files_Api_Controller).
  * They differ ONLY in how a file arrives and how a failure is spelled back to the caller - a
  * browser gets {success:false,error} JSON, an API client gets {"error":{"code","message"}}. The
- * security-bearing middle - the mandatory authorize gate, the size ceiling, the SERVER-DERIVED
+ * security-bearing middle - the View as Client refusal, the mandatory authorize gate, the size ceiling, the SERVER-DERIVED
  * site_id, the fileable_* strip, the params/complete events - is identical, and lives here so it
  * cannot drift between them. A gate an app wrote for /_upload protects the API endpoint with no
  * extra work, because it is literally the same call.
@@ -64,6 +65,13 @@ class Rsx_File_Upload
         ?string $filename_override = null,
         array $event_params = []
     ): array {
+        // View as Client is READ-ONLY. A staff member viewing the portal as a client never
+        // writes as them - the Ajax channel refuses every unmarked portal endpoint, and an
+        // upload, which is not an Ajax endpoint, is refused here, before anything else runs.
+        if ($is_portal && Portal_Session::is_impersonating()) {
+            return static::__failure('read_only_session', Ajax::IMPERSONATION_READ_ONLY_MESSAGE, 403);
+        }
+
         // Size ceiling. Checked BEFORE the authorize gate: the gate is application code that
         // may read the real bytes, and there is no reason to run it over a file we have
         // already decided to refuse. 0 or null disables the framework ceiling entirely, which

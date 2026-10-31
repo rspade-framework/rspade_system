@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Portal\Php;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
+use App\RSpade\Core\Files\Rsx_File_Upload;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -20,7 +21,8 @@ use App\RSpade\Tests\Portal\Php\Portal_Impersonation_Fixture_Controller;
  * While Portal_Session::is_impersonating(), a portal-realm Ajax endpoint runs only when it
  * carries #[Portal_Impersonation_Readable]; every other one is refused as unauthorized,
  * before its code runs. Without impersonation both run. The mark is baked into the surface
- * index at manifest build.
+ * index at manifest build. A portal UPLOAD, which is not an Ajax endpoint, is refused by the
+ * one ingest path (Rsx_File_Upload::accept()) before anything else runs.
  */
 class Portal_Impersonation_Read_Only_Test extends Rsx_Test_Abstract
 {
@@ -80,6 +82,30 @@ class Portal_Impersonation_Read_Only_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(1, Portal_Impersonation_Fixture_Controller::$reads);
         static::__assert_equals(1, Portal_Impersonation_Fixture_Controller::$writes);
+    }
+
+    public static function test_a_portal_upload_is_refused_while_impersonating()
+    {
+        static::__fresh(true);
+
+        $path = tempnam(sys_get_temp_dir(), 'rsx_view_as_client_upload_');
+        file_put_contents($path, 'a file a staff member tried to upload as the client');
+
+        try {
+            $outcome = Rsx_File_Upload::accept(
+                \Illuminate\Http\Request::create('/_upload', 'POST'),
+                new \Illuminate\Http\UploadedFile($path, 'probe.txt', 'text/plain', null, true),
+                true
+            );
+        } finally {
+            @unlink($path);
+        }
+
+        static::__assert_false($outcome['ok']);
+        static::__assert_equals('read_only_session', $outcome['code']);
+        static::__assert_equals(403, $outcome['status']);
+        static::__assert_equals(Ajax::IMPERSONATION_READ_ONLY_MESSAGE, $outcome['error']);
+        static::__assert_null($outcome['attachment'], 'nothing was stored');
     }
 
     public static function test_the_framework_read_endpoints_a_portal_page_needs_are_marked()

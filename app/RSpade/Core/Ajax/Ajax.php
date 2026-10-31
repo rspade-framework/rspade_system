@@ -28,6 +28,7 @@ use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
@@ -228,6 +229,7 @@ class Ajax
     public static function execute(string $controller_name, string $action_name, array $params, Request $request)
     {
         $controller_class = static::_resolve_endpoint_class($controller_name, $action_name);
+        Rsx_Metrics::name_ajax_call($controller_name . '::' . $action_name);
 
         if (!Auth_Gates::surface_permits($controller_name . '::' . $action_name)) {
             // The page channel's split: nobody signed in in this realm is asked to sign in;

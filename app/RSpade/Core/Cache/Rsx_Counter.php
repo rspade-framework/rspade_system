@@ -54,7 +54,9 @@ require_once __DIR__ . '/../../helpers.php';
  *
  * EVICTION. Database 3 lives on the same redis instance as everything else, and the
  * eviction policy is per INSTANCE (allkeys-lru in the shipped conf), not per database - a
- * counter is as evictable as a cache entry. See backlog B-105.
+ * counter is as evictable as a cache entry, by design: a counter that is being hit stays
+ * hot, so what Redis evicts under pressure is a counter nobody is spending (the RsxCache
+ * header has the database map and the reasoning).
  */
 class Rsx_Counter
 {

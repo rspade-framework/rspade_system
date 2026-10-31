@@ -32,17 +32,22 @@ require_once __DIR__ . '/../../helpers.php';
  *         under 'cache:<token>:' and nothing else. It runs on every database transaction
  *         rollback (see below). Keys this class did not write - the realtime rsx_rt:* keys
  *         and AssetHandler's rspade:public_asset:* keys - therefore survive a cache reset.
- *   DB 1  UNUSED - nothing selects it. Locks are rsx-lockd connections and flock files, and
- *         the task worker pool is accounted by rsx-lockd (Task_Pool); neither is in Redis.
+ *   DB 1  PERFORMANCE METRICS (Rsx_Metrics) - each request's and task run's peak memory and
+ *         duration, kept two hours. Locks are rsx-lockd connections and flock files, and the
+ *         task worker pool is accounted by rsx-lockd (Task_Pool); neither is in Redis.
  *   DB 2  REDUCED VOLATILITY CACHE ("RVC"). Reserved. The full page cache writes here
  *         directly (Rsx_FPC and system/bin/fpc-proxy.js), and this class routes any key
  *         beginning with _RVC_ here. NEVER flushed by clear().
  *   DB 3  TRANSIENT COUNTERS (Rsx_Counter) - login throttling and friends, plus short-lived
  *         opaque values beside them (an identity's issued sign-in code).
  *
- * EVICTION IS PER INSTANCE, NOT PER DATABASE. The shipped conf
+ * EVICTION IS PER INSTANCE, NOT PER DATABASE, AND THAT IS THE DESIGN. The shipped conf
  * (system/app/RSpade/resource/docker/redis/redis.conf) sets allkeys-lru over the whole
- * instance, so a lock, a counter and a cache entry are equally evictable. See backlog B-105.
+ * instance, so a counter, a metric and a cache entry are equally evictable: every key is
+ * derived, a full Redis keeps less warm and stops nothing, and a security counter evicted
+ * under pressure is one nobody was hitting (an attacker keeps their own keys hot). The one
+ * subsystem whose loss a page could not notice by itself - realtime - detects it and
+ * resyncs every client (rsx:man realtime). The cap scales with the machine (rspade-sizing).
  *
  * clear() RUNS ON EVERY TRANSACTION ROLLBACK. A rollback can undo a database write that this
  * cache already memoized - the defect that motivated the map above was Type_Ref_Registry

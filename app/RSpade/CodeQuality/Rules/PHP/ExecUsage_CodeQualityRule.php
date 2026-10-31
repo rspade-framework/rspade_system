@@ -74,8 +74,10 @@ class ExecUsage_CodeQualityRule extends CodeQualityRule_Abstract
                 continue;
             }
 
-            // Check for exec( usage - word boundary ensures we don't match "execute(" etc.
-            if (preg_match('/\bexec\s*\(/i', $sanitized_line)) {
+            // Check for exec( usage - word boundary ensures we don't match "execute(" etc.;
+            // a method or static call of that name ($redis->exec(), a pipeline's commit) is
+            // another function and is not matched.
+            if (preg_match('/(?<!->)(?<!::)\bexec\s*\(/i', $sanitized_line)) {
                 $original_line = $original_lines[$line_num] ?? $sanitized_line;
 
                 $violation_message = "CRITICAL: exec() is BANNED - use \\exec_safe() instead

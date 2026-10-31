@@ -218,7 +218,8 @@ COPY supervisor/supervisord.conf   /etc/supervisor/supervisord.conf
 COPY supervisor/conf.d/nginx.conf      /etc/supervisor/conf.d/nginx.conf
 COPY supervisor/conf.d/php-fpm.conf    /etc/supervisor/conf.d/php-fpm.conf
 COPY supervisor/conf.d/redis.conf      /etc/supervisor/conf.d/redis.conf
-COPY supervisor/conf.d/fpc-proxy.conf  /etc/supervisor/conf.d/fpc-proxy.conf
+# supervisor/conf.d/fpc-proxy.conf is NOT installed: full page caching is disabled
+# (Rsx_FPC::ENABLED, backlog B-132) and nginx sends requests straight to php-fpm.
 COPY supervisor/conf.d/realtime.conf   /etc/supervisor/conf.d/realtime.conf
 COPY supervisor/conf.d/rsx-lockd.conf  /etc/supervisor/conf.d/rsx-lockd.conf
 COPY supervisor/conf.d/tasks.conf      /etc/supervisor/conf.d/tasks.conf
@@ -252,7 +253,7 @@ COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run
 COPY task-run.sh       /usr/local/bin/rspade-task-run
 COPY retry-run.sh      /usr/local/bin/rspade-retry-run
-COPY php-fpm-workers.sh /usr/local/bin/rspade-php-fpm-workers
+COPY sizing.sh         /usr/local/bin/rspade-sizing
 COPY security-update.sh /usr/local/bin/rspade-security-update
 COPY security-updates-run.sh /usr/local/bin/rspade-security-updates-run
 COPY claude-run.sh     /usr/local/bin/claude
@@ -283,7 +284,7 @@ RUN chmod 755 /usr/local/bin/rspade-entrypoint \
               /usr/local/bin/rspade-realtime-run \
               /usr/local/bin/rspade-task-run \
               /usr/local/bin/rspade-retry-run \
-              /usr/local/bin/rspade-php-fpm-workers \
+              /usr/local/bin/rspade-sizing \
               /usr/local/bin/rspade-security-update \
               /usr/local/bin/rspade-security-updates-run \
               /usr/local/bin/claude \
@@ -292,7 +293,16 @@ RUN chmod 755 /usr/local/bin/rspade-entrypoint \
 
 # Runtime directories the services expect to exist before they start.
 RUN mkdir -p /run/php /var/log/supervisor /var/run/redis /var/log/redis /var/lib/redis /var/lib/rspade \
-    && chown -R redis:redis /var/run/redis /var/log/redis /var/lib/redis
+    && chown -R redis:redis /var/run/redis /var/log/redis /var/lib/redis \
+    && chmod 755 /var/lib/rspade
+
+# RESOURCE SIZING. The entrypoint rewrites these at every start (rspade-sizing, which
+# holds the reasoning): the Redis cap redis.conf includes, and the memory_limit php-fpm and
+# the CLI share. The values baked here are what a PHP run DURING THE BUILD gets, and what
+# Redis would start with if it were ever started without the entrypoint; each target bakes
+# its own default limit below.
+RUN printf '%s\n' 'maxmemory 64mb' > /etc/redis/rspade-memory.conf \
+    && chmod 644 /etc/redis/rspade-memory.conf
 
 # The RSpade container marker.
 #
@@ -499,6 +509,14 @@ RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
 COPY php/opcache-dev.ini /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 
+# Development PHP: 256 MB a process, php-fpm and the CLI alike - lower than production on
+# purpose, so a request or a command that grows past what production allows fails here
+# first (rspade-sizing rewrites it at every start, from RSPADE_PHP_MEMORY_LIMIT_MB when set).
+RUN for sapi in fpm cli; do \
+        printf '%s\n' 'memory_limit = 256M' > /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini \
+        && chmod 644 /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini; \
+    done
+
 # MySQL runs under supervisor only in this target.
 COPY supervisor/conf.d/mysql.conf /etc/supervisor/conf.d/mysql.conf
 RUN chmod 644 /etc/supervisor/conf.d/mysql.conf
@@ -523,19 +541,22 @@ RUN sed -i "s/^target=.*/target=prod/" /.rspade_container
 # becomes visible within that window without a restart.
 COPY php/opcache-prod.ini /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 
-# Production PHP: 320 MB a request (development keeps php.ini's 256 MB).
-COPY php/php-prod.ini /etc/php/${PHP_VERSION}/fpm/conf.d/90-rspade-prod.ini
-
 # Production pools: www-data rather than root, and a dynamic worker pool rather
 # than ondemand. These REPLACE the development pools of the same names. The worker
 # counts in them are placeholders: the entrypoint sizes both pools to the machine at
-# every start (rspade-php-fpm-workers), before supervisor starts php-fpm.
+# every start (rspade-sizing), before supervisor starts php-fpm.
 COPY php/www-prod.conf  /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
 COPY php/ajax-prod.conf /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
 RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini \
-              /etc/php/${PHP_VERSION}/fpm/conf.d/90-rspade-prod.ini \
               /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf \
               /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
+
+# Production PHP: 320 MB a process, php-fpm and the CLI alike (rspade-sizing rewrites it at
+# every start, from RSPADE_PHP_MEMORY_LIMIT_MB when set).
+RUN for sapi in fpm cli; do \
+        printf '%s\n' 'memory_limit = 320M' > /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini \
+        && chmod 644 /etc/php/${PHP_VERSION}/${sapi}/conf.d/95-rspade-memory.ini; \
+    done
 
 # mysql-client is present (from base) on purpose: migrations, db:query and
 # operational access all need to reach the database server you provide.

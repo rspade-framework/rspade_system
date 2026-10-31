@@ -173,6 +173,39 @@ const REGISTRY_KEY = `${REDIS_PREFIX}:subs`;
 // if this Node process dies the key expires and PHP stops running emitters.
 const REGISTRY_TTL = 90;
 
+// REDIS CONTINUITY. Redis keeps nothing durable for realtime, and two things can be lost
+// without this process seeing an error: the KEYS (a Redis restart, a flush, an LRU eviction
+// under memory pressure - the registry above, the emitters' baselines) and the FRAMES PHP
+// published while this process was disconnected from Redis. Either leaves an open page
+// showing data that changed. So at connect this process writes EPOCH_KEY = its own random
+// id, and check_redis_continuity() - on every tick and after every Redis reconnect - treats
+// an epoch that is missing or not ours, or a registry missing while subscriptions are
+// registered, as data lost: it rewrites both and sends every connection a {type:'resync'}
+// frame, which makes each client refetch every watch exactly as after its own reconnect.
+// A reconnect always resyncs: the frames of the gap are gone whether or not the keys
+// survived.
+const EPOCH_KEY = `${REDIS_PREFIX}:epoch`;
+const relay_epoch = crypto.randomBytes(8).toString('hex');
+
+// How often the tick runs (stats line, registry refresh, the continuity check): 60 seconds,
+// or --tick-seconds=<n> on the command line (the test harness drives a private relay with a
+// short one). A CADENCE, not a deadline: it bounds how long a loss goes unnoticed, and must
+// stay below REGISTRY_TTL so the refresh lands before the key expires.
+const TICK_SECONDS = (() => {
+    const flag = process.argv.find((arg) => arg.startsWith('--tick-seconds='));
+    if (!flag) return 60;
+    const value = flag.slice('--tick-seconds='.length);
+    if (!/^[0-9]+$/.test(value) || parseInt(value, 10) < 1 || parseInt(value, 10) >= REGISTRY_TTL) {
+        console.error(`[realtime] --tick-seconds must be a whole number from 1 to ${REGISTRY_TTL - 1}, got '${value}'`);
+        process.exit(1);
+    }
+    return parseInt(value, 10);
+})();
+
+// Registry writes in flight. The continuity check judges the registry only when none is,
+// because last_members moves only after a write completes.
+let registry_writes_pending = 0;
+
 // node-redis v5: the pSubscribe client is locked into subscriber mode and cannot run
 // ordinary commands, so registry writes go through a SEPARATE command connection
 // (subscriber.duplicate()), created and connected in start_redis().
@@ -220,7 +253,12 @@ async function rewrite_registry() {
         multi.sAdd(REGISTRY_KEY, [...members]);
         multi.expire(REGISTRY_KEY, REGISTRY_TTL);
     }
-    await multi.exec();
+    registry_writes_pending++;
+    try {
+        await multi.exec();
+    } finally {
+        registry_writes_pending--;
+    }
 
     // Diff only AFTER a successful write. The baseline may advance only when redis really
     // holds the new set, or the two diverge and a new member is never reported again.
@@ -355,6 +393,65 @@ function flush_notify() {
 function rewrite_registry_async() {
     rewrite_registry().catch((err) => {
         console.error('[realtime] Registry rewrite failed:', err.message);
+    });
+}
+
+/**
+ * Pure: has Redis lost realtime's data? True when the epoch is missing or another relay's,
+ * or when the registry is missing while this process last wrote members into it.
+ * `registered` is null when a registry write is in flight (the registry is not judged).
+ * Exported for unit tests.
+ */
+function redis_data_lost(epoch, our_epoch, registry_exists, registered) {
+    if (epoch !== our_epoch) return true;
+    return registered !== null && registered > 0 && !registry_exists;
+}
+
+/**
+ * Check that Redis still holds what this process wrote; when it does not - or when
+ * `reconnected`, since the frames of a disconnect are lost either way - rewrite the epoch
+ * and the registry, re-report every member to PHP (so emitter baselines are reseeded), and
+ * tell every connection to resync.
+ */
+async function check_redis_continuity(reconnected = false) {
+    if (!command_client) return;
+
+    const [epoch, registry_exists] = await Promise.all([
+        command_client.get(EPOCH_KEY),
+        command_client.exists(REGISTRY_KEY),
+    ]);
+    const registered = registry_writes_pending === 0 ? last_members.size : null;
+    const lost = redis_data_lost(epoch, relay_epoch, registry_exists === 1, registered);
+    if (!lost && !reconnected) return;
+
+    await command_client.set(EPOCH_KEY, relay_epoch);
+    last_members = new Set();
+    await rewrite_registry();
+
+    const sent = broadcast_resync();
+    console.warn(`[realtime] ${reconnected ? 'Reconnected to Redis' : 'Redis lost realtime data'}`
+        + ` (epoch ${epoch === relay_epoch ? 'intact' : (epoch === null ? 'missing' : 'replaced')},`
+        + ` registry ${registry_exists === 1 ? 'present' : 'missing'}): told ${sent} connection(s) to resync`);
+}
+
+/**
+ * Send {type:'resync'} to every authenticated connection: the client refetches every watch,
+ * spread over a few seconds so a whole site does not refetch in the same instant. Returns
+ * how many connections were told.
+ */
+function broadcast_resync() {
+    let sent = 0;
+    for (const [ws, conn] of connections) {
+        if (!conn.authenticated) continue;
+        ws.send(JSON.stringify({ type: 'resync' }));
+        sent++;
+    }
+    return sent;
+}
+
+function check_redis_continuity_async(reconnected = false) {
+    return check_redis_continuity(reconnected).catch((err) => {
+        console.error('[realtime] Redis continuity check failed:', err.message);
     });
 }
 
@@ -747,6 +844,20 @@ async function start_redis() {
     // Boot DEL: clear any registry the previous (possibly crashed) instance left behind.
     // Current connections, if any, are re-registered by the next rewrite.
     await command_client.del(REGISTRY_KEY);
+    await command_client.set(EPOCH_KEY, relay_epoch);
+
+    // A reconnect of either client means frames may have been missed: once it is back,
+    // check continuity and resync everybody. Attached after the first connect, so only a
+    // RE-connect is seen.
+    for (const client of [subscriber, command_client]) {
+        let interrupted = false;
+        client.on('reconnecting', () => { interrupted = true; });
+        client.on('ready', () => {
+            if (!interrupted) return;
+            interrupted = false;
+            check_redis_continuity_async(true);
+        });
+    }
 
     // Subscribe to pattern rsx_rt:*
     await subscriber.pSubscribe(`${REDIS_PREFIX}:*`, (message, channel) => {
@@ -825,14 +936,14 @@ setInterval(() => {
     if (conn_count > 0) {
         console.log(`[realtime] Connections: ${conn_count}, Subscriptions: ${sub_count}`);
     }
-    rewrite_registry_async();
-}, 60000);
+    check_redis_continuity_async().then(rewrite_registry_async);
+}, TICK_SECONDS * 1000);
 
 } // end main()
 
 // Export seam: the pure, side-effect-free validators are exposed for unit tests.
 // require()'ing this file does NOT start the relay (main() only runs as a program).
-module.exports = { validate_token, parse_json_frame, matches_filter, diff_new_members, sign_notify_body, subscribe_refusal };
+module.exports = { validate_token, parse_json_frame, matches_filter, diff_new_members, sign_notify_body, subscribe_refusal, redis_data_lost };
 
 if (require.main === module) {
     main();

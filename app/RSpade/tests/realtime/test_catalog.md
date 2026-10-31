@@ -175,6 +175,25 @@ running them against the pre-fix client (see the Status column note).
 | LIVE-01 | A quiet link sends an application ping and the relay answers with pong | http | same script | ping sent, pong observed | implemented | 2026-08-24 |
 | LIVE-02 | A ping unanswered by the next tick forces a reconnect and the client recovers | http | same script | 1 new socket, connected | implemented | 2026-08-24 |
 
+## Redis data loss: the relay resyncs every connection
+
+Redis holds nothing durable for realtime, so a restart, an LRU eviction or a flush can take
+the subscriber registry, and a disconnect from Redis takes the frames PHP published meanwhile -
+with no error the relay would see. The relay writes an epoch key at connect and checks it and
+the registry on every tick and after every Redis reconnect; a loss (or any reconnect) rewrites
+both and sends every connection `{type:'resync'}`, and the client refetches every watch once,
+after a random 0-8 s spread.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RT-LOSS-01 | the loss decision: epoch missing or another relay's, or the registry missing while members are registered; not judged mid-write | http | http/realtime_redis_loss_resync.sh (pure half) | `redis_data_lost()` per case | implemented | 2026-10-31 |
+| RT-LOSS-02 | with nothing lost, ticks send no resync | http | same script, private relay `--tick-seconds=1` + private redis | no resync over three ticks | implemented | 2026-10-31 |
+| RT-LOSS-03 | a deleted epoch is a resync, and the same epoch is written back | http | same script, `DEL rsx_rt:epoch` | resync; epoch restored | implemented | 2026-10-31 |
+| RT-LOSS-04 | a deleted registry with a live subscription is a resync, and the registry is rewritten | http | same script, `DEL rsx_rt:subs` | resync; registry present | implemented | 2026-10-31 |
+| RT-LOSS-05 | a Redis restart is a resync after the relay reconnects, and the websocket stays open | http | same script, SIGKILL + restart of the private redis | resync; epoch back; socket open; "Reconnected to Redis" logged | implemented | 2026-10-31 |
+| RT-RESYNC-01 | the client answers a resync frame by refetching every watch once, as a resync; a second frame while one is pending is absorbed | http | http/realtime_resync_frame_client.sh, two watches, two frames, spread 0 | each watch +1, `meta.resync` true, no live dispatch | implemented | 2026-10-31 |
+| RT-RESYNC-02 | the refetch waits for the spread delay | http | same script, spread 1500 ms | pending first, +1 after | implemented | 2026-10-31 |
+
 ## The page the http harnesses browse
 
 Every `http/realtime_*.sh` harness drives `php artisan rsx:debug /_sys --user=1 --eval=...`.

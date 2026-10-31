@@ -14,9 +14,11 @@ There is no message replay/backlog — a relay-side buffer was designed in full 
 (revisit ONLY if frames ever carry payloads). Messages never carry the changed data (see
 security model point 4), so a (re)subscribe resyncing via a fresh callback call
 is equivalent to — and simpler than — trying to replay whatever was missed.
-Delivery guarantee + the four named residual gaps (unsubscribed-by-design surfaces,
-non-model-layer writes, time-derived values, the relay's redis-SUBSCRIBER blip):
-`rsx:man realtime` DELIVERY GUARANTEE / RESIDUAL GAPS.
+Delivery guarantee + the three named residual gaps (unsubscribed-by-design surfaces,
+non-model-layer writes, time-derived values): `rsx:man realtime` DELIVERY GUARANTEE /
+RESIDUAL GAPS. Redis losing realtime's keys, or the relay losing its redis connection, is
+detected by the relay and answered with a `{type:'resync'}` frame to every connection
+(`rsx:man realtime` REDIS DATA LOSS).
 `Realtime_Controller` has NO auth gate of its own; `can_subscribe()` is the
 only enforcement point, so a connection token is minted for staff, portal, or
 fully anonymous callers alike (see Security Model point 5).
@@ -226,6 +228,15 @@ argument alone would read site 0).
   `{site_id, topic, filter}` (filter keys sorted). Full-state rewrite by Node on every
   subscribe/unsubscribe/close (MULTI DEL+SADD+EXPIRE 90; refresh 60s; DEL on boot). Node
   death → key expires → emitters stop (self-heal).
+- `rsx_rt:epoch` — the relay's random id, written at connect, no TTL. The relay's
+  `check_redis_continuity()` (every tick, `--tick-seconds=<n>` to shorten it, and after every
+  redis reconnect) treats it missing or foreign - or the registry missing while
+  `last_members` is non-empty and no registry write is in flight - as data lost
+  (`redis_data_lost()`, exported for tests): it rewrites both, resets `last_members` so every
+  member is re-notified to PHP (emitter reseed), and `broadcast_resync()`s. A reconnect always
+  resyncs. Client: `case 'resync'` fires `_dispatch(entry, null, true)` for every watch after
+  a random `0.._resync_spread_ms` (8000); a pending one absorbs a second frame and is cleared on
+  link down.
 - `rsx_rt:em:{identity}` — last published emitter value-hash, `identity =
   sha1(class::method|site|topic|canonical_filter)`, TTL 86400s. Written by BOTH the seed
   engine (unconditional put, also refreshes the TTL on resubscribe) and the run loop.

@@ -35,7 +35,7 @@ class _Sys_System_Info
 {
     /**
      * The php-fpm pools the RSpade container runs (resource/docker/php/www.conf and
-     * ajax.conf, sized by resource/docker/php-fpm-workers.sh): page requests and Ajax.
+     * ajax.conf, sized by resource/docker/sizing.sh): page requests and Ajax.
      */
     public const FPM_POOLS = [
         'www' => 'Web pool',

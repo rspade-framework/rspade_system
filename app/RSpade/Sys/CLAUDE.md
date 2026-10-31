@@ -1,8 +1,8 @@
 # app/RSpade/Sys - the framework's own application
 
 This tree is an RSpade APPLICATION that happens to ship inside the framework: the
-control panel served at `/_sys` (ten screens - dashboard, system info, debug flags, tasks, task workers, email
-& SMS, logs, sites, users, portal users; `app/sys/CLAUDE.md` has the per-screen detail), plus the
+control panel served at `/_sys` (eleven screens - dashboard, system info, debug flags, tasks, task workers,
+performance, email & SMS, logs, sites, users, portal users; `app/sys/CLAUDE.md` has the per-screen detail), plus the
 API console beside it. It is built exactly the way `rsx/` is built - a
 module with a bundle, a SPA bootstrap controller, JS actions, a theme directory of
 components - and it is scanned by the manifest like any other application tree
@@ -73,6 +73,7 @@ contract; this is the roster.
 | `_Sys_Section` | a `.card` section: `$title`, `$icon`, `$count`, `$flush`; `<Slot:actions>` + `<Slot:body>`, or a loose body |
 | `_Sys_Stat_Grid` / `_Sys_Stat_Tile` | headline numbers: `$label`, `$value`, `$sub`, `$tone`, `$href` |
 | `_Sys_Status_Badge` | a status pill; `$status` is a tone (ok/warn/fail/info/muted) or a task/mail/SMS queue word or login-identity status word, mapped once in `_Sys_Status_Badge.TONES`; unknown throws |
+| `_Sys_Stacked_Chart` | a stacked area chart over equal time slots, inline SVG with no dependency: `$series` [{key, label, values[]}] stacked in order and coloured `--rsx-series-1..4` by position, `$ceilings` [{label, value}] dashed across it, `$unit`, `$visible` keys (`set_visible(keys)` redraws; the y axis rescales to what is shown), a hover tooltip per slot. The Performance screen's two charts |
 | `_Sys_Time_Until` | a future moment counted down in words ("33 minutes from now"); `$time` is an ISO datetime; rewrites itself every second, reads "any moment now" once the moment has passed, exact time in the title. Used for a live run's ETA in `_Sys_Task_Facts` |
 | `_Sys_Detail_List` / `_Sys_Detail_Item` | key/value facts; an empty `$value` renders a muted em-dash |
 | `_Sys_Empty_State` | an empty region: `$icon`, `$title`, `$body`, `<Slot:cta>` |

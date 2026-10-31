@@ -3,7 +3,7 @@
 ## Overview
 
 Redis backs the **cache**, **realtime** pub/sub + subscriber registry, the **full page
-cache**, and **transient counters**. It does not back locks or the task worker pool - both
+cache**, **transient counters** and **performance metrics**. It does not back locks or the task worker pool - both
 are rsx-lockd connections (see below).
 
 ### The database map
@@ -14,12 +14,18 @@ that opens a connection points its comment there.
 | DB | Holds | Flushed by `RsxCache::clear()` |
 |----|-------|-------------------------------|
 | 0 | Volatile cache (`RsxCache`, including its persistent namespace), the realtime emitter hashes `rsx_rt:em:*` and `AssetHandler`'s `rspade:public_asset:*` entries | YES for `cache:<scope token>:*` - on every database transaction rollback. Nothing else on DB 0 is touched |
-| 1 | Unused - nothing selects it | never |
+| 1 | Performance metrics (`Rsx_Metrics`): each request's and task run's peak memory and duration, the last 100 per kind and per-minute totals for two hours | never |
 | 2 | Reduced-volatility cache: the full page cache (`Rsx_FPC`, `system/bin/fpc-proxy.js`) and `_RVC_`-prefixed cache keys | never |
 | 3 | Transient counters (`Rsx_Counter`) | never |
 
-**Eviction is per INSTANCE, not per database.** The shipped conf sets `allkeys-lru` over the
-whole server, so a counter and a cache entry are equally evictable. See backlog B-105.
+**One instance, LRU over everything, by design.** The shipped conf sets `allkeys-lru` over
+the whole server, so a counter, a metric and a cache entry are equally evictable. Every key is
+derived: a full Redis keeps less warm and stops nothing, and a security counter evicted under
+pressure is one nobody was hitting - an attacker keeps their own keys hot. Realtime, the one
+subsystem whose loss a page could not notice, detects it and resyncs every client
+(`rsx:man realtime`, REDIS DATA LOSS). The cap scales with the machine: 32 MB under 1 GB of
+memory, otherwise the larger of 64 MB and 5% of memory, written by the container at every
+start (`REDIS_MAXMEMORY_MB` overrides it; `rspade-sizing`).
 
 **Redis does NOT back locking.** `RsxLocks` left Redis entirely: web-cluster locks are held
 by a live socket to the `rsx-lockd` daemon (`system/bin/rsx-lockd/`), and system locks are
@@ -45,7 +51,7 @@ High-performance caching with automatic invalidation when code changes.
   cache entry, and `clear()` MATCHes only the calling scope. `Rsx_Counter` keys carry the
   same scope (`counter:<token>:<sha1>`)
 - **Persistent namespace**: `*_persistent()` keys skip the build prefix and survive a rebuild
-- **LRU eviction**: 128MB cache with automatic eviction of least-used items
+- **LRU eviction**: least-used keys are evicted when the instance reaches its cap (scaled to the machine)
 - **Type preservation**: Automatically serializes/deserializes complex types
 - **Remember pattern**: Cache-or-generate helper
 - **Reset on rollback**: `clear()` runs on every database transaction rollback

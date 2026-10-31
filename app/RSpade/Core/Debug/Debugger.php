@@ -6,6 +6,7 @@ use Exception;
 use JsonSerializable;
 use Log;
 use stdClass;
+use App\RSpade\Core\Debug\Browser_Log_Budget;
 use App\RSpade\Core\Debug\Console_Debug_Override;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
@@ -1134,42 +1135,46 @@ class Debugger
             return ['status' => 'no_messages'];
         }
 
-        // Log each message
+        // A public log writer: bounded per address, and what it writes is sanitized
+        // (Browser_Log_Budget). Past the budget a call writes nothing.
+        if (!Browser_Log_Budget::spend(Browser_Log_Budget::SINK_CONSOLE)) {
+            return ['status' => 'logged', 'count' => 0];
+        }
+
+        [$messages, $dropped] = Browser_Log_Budget::entries($messages);
+        $logged = 0;
+
         foreach ($messages as $message) {
-            if (!isset($message['channel']) || !isset($message['values'])) {
+            if (!is_array($message) || !isset($message['channel']) || !isset($message['values']) || !is_array($message['values'])) {
                 continue;
             }
 
-            $channel = $message['channel'];
-            $values = $message['values'];
+            $log_parts = ['[CONSOLE_DEBUG][JS][' . Browser_Log_Budget::line($message['channel'], 100) . ']'];
 
-            // Build log message
-            $log_parts = ["[CONSOLE_DEBUG][JS][{$channel}]"];
-
-            // Add location if provided
             if (!empty($message['location'])) {
-                $log_parts[] = "at {$message['location']}";
+                $log_parts[] = 'at ' . Browser_Log_Budget::line($message['location'], Browser_Log_Budget::MAX_LOCATION);
             }
 
-            // Add values
-            foreach ($values as $value) {
-                if (is_scalar($value) || is_null($value)) {
-                    $log_parts[] = (string)$value;
-                } else {
-                    $log_parts[] = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                }
+            $log_parts[] = Browser_Log_Budget::line(implode(' ', array_map(
+                fn ($value) => (is_scalar($value) || $value === null) ? (string) $value : json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
+                $message['values']
+            )), Browser_Log_Budget::MAX_MESSAGE);
+
+            $log_message = implode(' ', $log_parts);
+
+            if (!empty($message['backtrace']) && is_array($message['backtrace'])) {
+                $log_message .= "\nBacktrace:\n" . Browser_Log_Budget::block(implode("\n", array_map('strval', array_filter($message['backtrace'], 'is_scalar'))), Browser_Log_Budget::MAX_STACK);
             }
 
-            // Add backtrace if provided
-            if (!empty($message['backtrace'])) {
-                $log_parts[] = "\nBacktrace:\n" . implode("\n", $message['backtrace']);
-            }
-
-            // Write to Laravel log
-            Log::info(implode(' ', $log_parts));
+            Log::info($log_message);
+            $logged++;
         }
 
-        return ['status' => 'logged', 'count' => count($messages)];
+        if ($dropped > 0) {
+            Log::info("[CONSOLE_DEBUG][JS] {$dropped} more message(s) in this call were not logged (at most " . Browser_Log_Budget::MAX_ENTRIES_PER_CALL . ' per call)');
+        }
+
+        return ['status' => 'logged', 'count' => $logged];
     }
 
     /**
@@ -1192,51 +1197,62 @@ class Debugger
             return ['status' => 'no_errors'];
         }
 
-        // Log each error
+        // A public log writer (an error happens on a sign-in page too): each entry is
+        // sanitized, then written only when Browser_Log_Budget admits it - its first sighting
+        // from this address in 30 minutes, within the quota browser errors share with CSP
+        // reports. Anything else is dropped silently.
+        [$errors, $dropped] = Browser_Log_Budget::entries($errors);
+        $logged = 0;
+
         foreach ($errors as $error) {
+            if (!is_array($error)) {
+                continue;
+            }
+
             $log_parts = ['[BROWSER_ERROR]'];
 
-            // Add error type
             if (!empty($error['type'])) {
-                $log_parts[] = "[{$error['type']}]";
+                $log_parts[] = '[' . Browser_Log_Budget::line($error['type'], 100) . ']';
             }
 
-            // Add message
             if (!empty($error['message'])) {
-                $log_parts[] = $error['message'];
+                $log_parts[] = Browser_Log_Budget::line($error['message'], Browser_Log_Budget::MAX_MESSAGE);
             }
 
-            // Add location info
             if (!empty($error['filename']) && !empty($error['lineno'])) {
-                $log_parts[] = "at {$error['filename']}:{$error['lineno']}";
+                $location = 'at ' . Browser_Log_Budget::line($error['filename'], Browser_Log_Budget::MAX_LOCATION) . ':' . (int) $error['lineno'];
                 if (!empty($error['colno'])) {
-                    $log_parts[] = ":{$error['colno']}";
+                    $location .= ':' . (int) $error['colno'];
                 }
+                $log_parts[] = $location;
             }
 
-            // Add URL
             if (!empty($error['url'])) {
-                $log_parts[] = "URL: {$error['url']}";
+                $log_parts[] = 'URL: ' . Browser_Log_Budget::line($error['url'], Browser_Log_Budget::MAX_LOCATION);
             }
 
-            // Build error message
             $error_message = implode(' ', $log_parts);
 
-            // Add stack trace if available
             if (!empty($error['stack'])) {
-                $error_message .= "\nStack trace:\n{$error['stack']}";
+                $error_message .= "\nStack trace:\n" . Browser_Log_Budget::block($error['stack'], Browser_Log_Budget::MAX_STACK);
             }
 
-            // Add user agent if available
             if (!empty($error['userAgent'])) {
-                $error_message .= "\nUser Agent: {$error['userAgent']}";
+                $error_message .= "\nUser Agent: " . Browser_Log_Budget::line($error['userAgent'], Browser_Log_Budget::MAX_USER_AGENT);
             }
 
-            // Log as error level
-            Log::error($error_message);
+            if (Browser_Log_Budget::admit(Browser_Log_Budget::SINK_ERRORS, $error_message)) {
+                Log::error($error_message);
+                $logged++;
+            }
         }
 
-        return ['status' => 'logged', 'count' => count($errors)];
+        $dropped_line = "[BROWSER_ERROR] {$dropped} more error(s) in this call were not logged (at most " . Browser_Log_Budget::MAX_ENTRIES_PER_CALL . ' per call)';
+        if ($dropped > 0 && Browser_Log_Budget::admit(Browser_Log_Budget::SINK_ERRORS, $dropped_line)) {
+            Log::error($dropped_line);
+        }
+
+        return ['status' => 'logged', 'count' => $logged];
     }
 
 }

@@ -530,7 +530,8 @@ CONTENT SECURITY POLICY
     Every dispatched HTML page carries a composed per-realm policy, and it
     ALWAYS ENFORCES: the header is Content-Security-Policy and an undeclared
     resource is a blocked resource. Every refusal is POSTed to /_csp-report and
-    appended to storage/logs/csp_violations.log, which is the triage tool.
+    logged to the application log as a [CSP_VIOLATION] line (once per address
+    per 30 minutes, within a quota - rsx:man csp), which is the triage tool.
     enabled false emits no header anywhere - an emergency kill-switch that
     deletes the protection, not a quiet observe mode.
 
@@ -859,9 +860,9 @@ FILE SUBSYSTEM
 TASK SYSTEM
     'tasks' => [
         'pools' => [
-            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 2)],
-            'scheduled' => ['max_workers' => 1],
-            'kill' => ['max_workers' => 10],
+            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS')],  // null = automatic
+            'scheduled' => ['max_workers' => env('RSX_TASK_SCHEDULED_WORKERS')],  // null = automatic
+            'kill' => ['max_workers' => 2],
         ],
         'silent_timeout' => 1800,              # 30 min WITHOUT A REPORT
         'maintenance_hour' => 2,               # the maintenance window opens 2am
@@ -877,7 +878,12 @@ TASK SYSTEM
 
     'pools' caps each worker pool on its own: on_demand runs dispatched work,
     scheduled runs #[Schedule] work (and queued dispatched work first), kill
-    carries out force stops and kills. A cap below 1 throws. silent_timeout is
+    carries out force stops and kills. A cap below 1 throws. The on_demand and
+    scheduled caps are AUTOMATIC when RSX_TASK_MAX_WORKERS / RSX_TASK_SCHEDULED_WORKERS
+    are unset: the counts the RSpade container sized for the machine (task workers
+    about a quarter of php-fpm's, split one scheduled to two on demand; rsx:man
+    server_sizing), else 2 on demand and 1 scheduled.
+    silent_timeout is
     THE SILENCE LIMIT: the seconds a worker-run task may go WITHOUT REPORTING
     (no heartbeat, no status, progress, output or any other report) before the
     cron tick has it force-killed, measured from its last sign of life. It never
@@ -901,6 +907,18 @@ TASK SYSTEM
     output_truncate_after_minutes; the run is purged after purge_after_minutes.
     See: rsx:man tasks (THE WORKER POOLS, THE SILENCE LIMIT, FAILURE AND
     ABANDONMENT, RETENTION)
+
+PERFORMANCE METRICS
+    'metrics' => [
+        'enabled' => true,
+    ]
+
+    Every page request, Ajax request, external API call and worker-run task
+    records its peak memory, how long it ran and what it was, after it ends,
+    into redis database 1 (Rsx_Metrics; kept two hours, the last 100 per kind).
+    The /_sys Performance screen charts it against the machine's budget. false
+    records nothing; a failure to record never fails the request.
+    See: rsx:man sys_panel (the Performance screen)
 
 LOCKS
     'locks' => [
@@ -1100,7 +1118,8 @@ USER CONFIG KEYS (rsx/resource/config/rsx.php)
     js_model_base_class      Custom JS base class for generated model stubs.
     console_debug            outputs, filter_mode, whitelist, blacklist,
                              specific_channel, include_*.
-    log_browser_errors       Send browser JS errors to the Laravel log.
+    log_browser_errors       Send browser JS errors to the Laravel log (bounded per
+                             address and sanitized - rsx:man console_debug).
     response                 default_view, error_views, cors.
     notifications            default_expiry_days.
     auth                     self_signup, require_two_factor,

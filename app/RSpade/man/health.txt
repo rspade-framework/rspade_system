@@ -195,6 +195,8 @@ FRAMEWORK INVENTORY
         Production Seal             debug, prod   there is no seal elsewhere
         Realtime Relay              all
         Redis Connectivity          all
+        Resource Sizing             all           INFO outside the RSpade
+                                                  container
         Schema Contract             all           what the framework code reads
                                                   by name on application-owned
                                                   tables; one row per table
@@ -427,6 +429,22 @@ FRAMEWORK INVENTORY
                                  the only check that reads the framework's assumptions
                                  against a database it did not build - see
                                  rsx:man database_schema_architecture.
+        Resource Sizing          INFO: the budget the RSpade container sized this
+                                 machine for at its last start (/var/lib/rspade/
+                                 sizing.json) - cores, memory and swap; php-fpm
+                                 workers, the web/Ajax split and which ceiling
+                                 decided them (RAM, RAM + swap at the memory limit,
+                                 cores, the 140-process cap, the floor of 2, or
+                                 PHP_FPM_WORKER_COUNT); task workers, scheduled and
+                                 on demand; memory_limit; the Redis cap; what is
+                                 reserved - a figure a switch set is marked "(set)".
+                                 A box the cap held back, with no count set by hand,
+                                 adds a pointer to rsx:man server_sizing.
+                                 WARN in a container that recorded no budget (an
+                                 image that predates resource sizing - pull or
+                                 rebuild it). Outside the container, INFO naming
+                                 the host's own memory_limit.
+                                 system/app/RSpade/resource/docker/README.md
         Security Updates         whether the RSpade container takes its security
                                  updates: reads the status rspade-security-update
                                  writes after every check (at each start, before
@@ -631,6 +649,12 @@ WEB EXPOSURE CHECK
         IDE bridge dir   storage/rsx-ide-bridge/ - writes a random throwaway
                          marker, GETs it via the candidate misconfig URLs, then
                          deletes it
+        php-fpm status   /_fpm_status/web and /ajax - php-fpm's pool status
+                         (the box's concurrency and every in-flight request
+                         URI), which the RSpade container serves on its
+                         loopback-only listener for the /_sys Performance
+                         screen and refuses on the public ones (matched on
+                         "accepted conn")
 
     Row outcomes:
         FAIL  the file's real content is served over HTTP -> misconfigured docroot

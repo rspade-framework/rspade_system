@@ -20,6 +20,7 @@ use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
+use App\RSpade\Core\Health\Rsx_Container_Sizing;
 
 /**
  * Task Process Command
@@ -74,6 +75,9 @@ class Task_Process_Command extends Command
         $this->recover_kill_requests();
         $this->reconcile_schedules((bool) $this->option('force-scheduled'));
         $this->spawn_workers_for_due_work();
+
+        // Once per container start: a box the automatic sizing capped says so in the log.
+        Rsx_Container_Sizing::log_cap_notice();
 
         // Testing aid: drain one task inline instead of relying on a spawned worker.
         if ($this->option('once')) {

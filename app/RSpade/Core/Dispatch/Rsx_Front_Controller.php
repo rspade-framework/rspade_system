@@ -26,6 +26,7 @@ use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Env\Rsx_Env_Hostname_Guard;
 use App\RSpade\Core\Env\Rsx_First_User_Setup;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Revisions\Revision;
 
 /**
@@ -87,6 +88,7 @@ class Rsx_Front_Controller
 
         try {
             $channel = Rsx_Request_Channel::classify($request);
+            Rsx_Metrics::begin_request($channel);
             $response = static::__as_response(static::__dispatch_channel($channel, $request));
         } catch (Throwable $e) {
             $response = static::__render_failure($channel, $request, $e);

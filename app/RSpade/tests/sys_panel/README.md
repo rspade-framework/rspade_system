@@ -28,9 +28,9 @@ resolution is `dispatch`, and the `_`-prefix name rule (NAME-RESERVED-01) is
 `code_quality`. The `is_sysadmin` check itself is declared on `Permission_Abstract`
 and is proved in `auth_gates` (AG-ROOT-*), beside the other built-ins.
 
-All nine screens are functional and their endpoints are covered here (RP-DASH-*,
+All eleven screens are functional and their endpoints are covered here (RP-DASH-*,
 RP-DEBUG-*, RP-TASKS-*, RP-EMAIL-*, RP-SMS-*, RP-LOGS-*, RP-SITES-*, RP-USERS-*,
-RP-PORTAL-USERS-*, RP-IMP-*). The Debug Flags rows also cover the framework-core engine the screen drives -
+RP-PORTAL-USERS-*, RP-IMP-*, RP-PERF-*). The Debug Flags rows also cover the framework-core engine the screen drives -
 the per-browser console_debug override and where it is applied - because the panel is
 its only writer.
 
@@ -43,7 +43,8 @@ its only writer.
 | `Sys/app/sys/_Sys_Controller.php` | `GET /_sys/logout` -> `RsxAuth::logout()` + redirect to `/`; same inherited refusal. |
 | `Sys/app/sys/_Sys_Bundle.php` | the panel's only bundle; names no `rsx/` path and no app class. |
 | `Sys/theme/_Sys_Theme_Bundle.php` | Bootstrap compiled from `system/node_modules/bootstrap` through `theme/vendor/bootstrap.scss`, plus the `--rsx-*` tokens. |
-| `Sys/app/sys/*/_Sys_*_Action.js` | the nine screens and their decorators. |
+| `Sys/app/sys/*/_Sys_*_Action.js` | the eleven screens and their decorators. |
+| `Sys/app/sys/performance/_Sys_Performance_Controller.php` + `Sys/theme/components/_Sys_Stacked_Chart.*` | the Performance screen: the snapshot over `Rsx_Metrics` and the container's sizing record, php-fpm's pool status parsed per pool (RP-PERF-*; a scratch sizing record and the `$fpm_fetcher_for_tests` seam), and the stacked chart. |
 | `Sys/app/sys/_Sys_Layout.js` | the chrome, and the nav filtered through `Permission.can_access()`. |
 | `system/config/rsx.php` | `manifest.scan_directories` (`app/RSpade/Sys`) and `sys_panel.enabled`. |
 | `Core/Naming/Rsx_Identifier.php` | `is_visible_to_developer()` / `is_path_visible_to_developer()` - the one predicate the inventory commands filter on. |
@@ -59,7 +60,7 @@ its only writer.
 | `Sys/app/sys/tasks/_Sys_Tasks_Controller.php` + `_Sys_Tasks_DataGrid.php` | the Tasks and Task Workers screens' endpoints over the task runs (`Task_Run_Model`): the tasks grid (running, then queued, then finished) with its filters, `detail`, `act` (stop / force_stop / force_kill / cancel / rerun through the `Task_Run_Model` lifecycle methods, `task_action` + optional grace and explanation), `schedules`, `run_schedule_now`, `workers` (RP-TASKS-*; fixture `Sys_Tasks_Probe_Service`). `act` is also the real form endpoint RP-MODAL-07 drives in the browser. |
 | `Sys/app/sys/email/_Sys_Email_Controller.php` + `_Sys_Email_DataGrid.php` | the Email screen's endpoints over `_email_queue`, every site: `summary`, the queue grid and its option endpoints, `detail` (preview document through `Rsx_Mail::displayable_html()`, database only), `resend` (`Rsx_Mail::resend()`, the rules shared with `rsx:mail:resend`) (RP-EMAIL-*). |
 | `Sys/app/sys/email/_Sys_Sms_Controller.php` + `_Sys_Sms_DataGrid.php` | the SMS tab's read-only endpoints over `_sms_queue`, every site: `summary` (`Sms_Queue_Model::status_counts()` / `oldest_pending()`, `Rsx_Sms::delivery_mode()`), the grid and its option endpoints, `detail` (RP-SMS-*). Both queues' words and site labels come from `_Sys_Enum_Words`. |
-| `Sys/app/sys/logs/_Sys_Log_Reader.php` + `_Sys_Logs_Controller.php` + `_Sys_Logs_DataGrid.php` | the Logs screen: the listing and the one name-to-path resolution (never a path join), windowed reads by byte offset (tail, backward pages, Follow with rotation detection), the .gz forward read, laravel entry grouping, csp pretty-printing, the server-side filter (RP-LOGS-*; a fixture directory through `_Sys_Log_Reader::$directory_for_tests`, never the install's own logs). |
+| `Sys/app/sys/logs/_Sys_Log_Reader.php` + `_Sys_Logs_Controller.php` + `_Sys_Logs_DataGrid.php` | the Logs screen: the listing and the one name-to-path resolution (never a path join), windowed reads by byte offset (tail, backward pages, Follow with rotation detection), the .gz forward read, laravel entry grouping, the server-side filter (RP-LOGS-*; a fixture directory through `_Sys_Log_Reader::$directory_for_tests`, never the install's own logs). |
 | `Sys/app/sys/sites/_Sys_Sites_Controller.php` + `_Sys_Sites_DataGrid.php` + `_Sys_Site_Members_DataGrid.php` | the Sites screen: the tenant grid (site 0 and soft-deleted sites excluded, `member_counts()` in one grouped query), `detail` and `members_fetch` (not_found for site 0, a deleted or a missing id; `is_active` from `User_Model::active()`), `rename` (required, `Site_Model::field_length()`, slug unique across every site, deleted ones included) and `set_enabled` (the membership goes inactive; refused for the acting session's own site) (RP-SITES-*). |
 | `Sys/app/sys/users/_Sys_Users_Controller.php` + `_Sys_Users_DataGrid.php` + `_Sys_User_Signins_DataGrid.php` | the Users screen: the login-identity grid (soft-deleted excluded, `membership_counts()` in one grouped query, status and developer filters), `detail` (every membership across every site, `User_Model::is_active()`, invite state), `sessions` (`Session::get_sessions_for_user()` - signed in and signed out, API keys in use - plus site, type and impersonator), `session_detail` + `audit_sessions_fetch` (one listed session and its audit sessions, a page of `Audit_Session::list_page_for_user_session()` through the shared `_Sys_Audit_Sessions_DataGrid`), the paged sign-in grid (`Login_History::present_record()`), `security` (`Rsx_Two_Factor` / `Rsx_Sso` metadata, never a secret); not_found for a missing or soft-deleted identity; the actions `set_status`, `set_membership_enabled`, `terminate_session` / `terminate_all_sessions` (`Session::developer_terminate_sessions()`, whose own contract is `session` sess-termfu-18..21), `remove_two_factor`, `unlink_sso`, each with its refusal on the acting developer's identity, current membership or current session (RP-USERS-*). |
 | `Sys/app/sys/users/_Sys_Users_Controller.php` `sign_in_as` + `Sys/app/sys/_Sys_Impersonation_Controller.php` | developer impersonation: `sign_in_as` (refusals, active-membership site, return site stored, `Session::begin_impersonation()`) and `GET /_sys/stop-impersonating` (the one `is_logged_in` panel surface; impersonator must be a developer; restores identity and site) (RP-IMP-*). |
@@ -78,6 +79,10 @@ self-minted dev-auth headers: `node system/app/RSpade/tests/sys_panel/playwright
 It depends on no application code. RP-MODAL-07 plants one queued `_tasks` run due in 2030
 in the site's database (`php artisan db:query`), cancels it through the Tasks screen's
 action dialog (`_Sys_Task_Action_Form`), and deletes it afterwards.
+
+`http/sys_performance_screen.sh` (RP-PERF-04) drives the Performance screen through
+`rsx:debug /_sys/performance --user=1 --eval=...`: the charts, a kind toggle and the refresh
+timer's life.
 
 ## Not automated here
 

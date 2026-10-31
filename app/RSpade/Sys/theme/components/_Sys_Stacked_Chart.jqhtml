@@ -1,0 +1,36 @@
+<%--
+_Sys_Stacked_Chart - a stacked area chart over a row of equal time slots, drawn as
+inline SVG, with dashed ceiling lines across it.
+
+$series - [{key, label, values[]}] (required): one area per series, stacked in the
+          order given; every values list has the same length (one value per slot,
+          oldest first). A series is coloured by its position (--rsx-series-1..4).
+$ceilings - [{label, value}] [optional]: a dashed line at each value, labelled.
+$unit - the unit the values are in, shown on the axis and the tooltip ("MB") [optional]
+$visible - the series keys to draw [optional; every series when absent]
+$slot_minutes=1 - how long one slot is, for the axis ("-50m" ... "now") [optional]
+
+set_visible(keys) redraws with only those series stacked; the y axis rescales to
+the visible stack and the ceilings, so a hidden series never flattens the rest.
+Hovering a slot shows its values and their total.
+
+    <_Sys_Stacked_Chart $sid="memory_chart" $unit="MB" $series=_series $ceilings=_ceilings $visible=_visible />
+--%>
+<Define:_Sys_Stacked_Chart>
+    <div $sid="plot" class="_Sys_Stacked_Chart__plot"></div>
+    <div $sid="tip" class="_Sys_Stacked_Chart__tip" hidden></div>
+    <div class="_Sys_Stacked_Chart__legend">
+        <% for (const [index, s] of (this.args.series || []).entries()) { %>
+            <% if (this.state.visible.includes(s.key)) { %>
+                <span class="_Sys_Stacked_Chart__key">
+                    <span class="<%= '_Sys_Stacked_Chart__swatch _Sys_Stacked_Chart__swatch--' + (index % 4 + 1) %>"></span><%= s.label %>
+                </span>
+            <% } %>
+        <% } %>
+        <% for (const c of (this.args.ceilings || [])) { %>
+            <span class="_Sys_Stacked_Chart__key">
+                <span class="_Sys_Stacked_Chart__swatch _Sys_Stacked_Chart__swatch--ceiling"></span><%= c.label %>
+            </span>
+        <% } %>
+    </div>
+</Define:_Sys_Stacked_Chart>

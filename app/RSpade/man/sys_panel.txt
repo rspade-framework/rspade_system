@@ -48,9 +48,9 @@ DESCRIPTION
     administrators do with tenants, billing or customers. Those are application
     concepts and they stay in the application.
 
-    It has ten screens, in sidebar order: Dashboard, System Info, Debug
-    Flags, Tasks, Task Workers, Email & SMS, Logs, Sites, Users and Portal
-    Users, each
+    It has eleven screens, in sidebar order: Dashboard, System Info, Debug
+    Flags, Tasks, Task Workers, Performance, Email & SMS, Logs, Sites, Users
+    and Portal Users, each
     described below. A screen over
     site-scoped data reads EVERY site, never the developer's own tenant. What
     an application has to coexist with is the panel's SHAPE - the tree, the
@@ -207,6 +207,28 @@ DESCRIPTION
     schedule total. Any run opens the run dialog. It refreshes as runs start
     and finish (Task_List_Changed_Topic).
 
+    Performance (`/_sys/performance`) is what requests and task runs actually
+    use, against what the machine was sized for. Every page request, Ajax
+    request, external API call and worker-run task records its peak memory,
+    how long it ran and what it was, after it ends (Rsx_Metrics, redis
+    database 1, rsx.metrics.enabled - rsx:man caching); the RSpade container
+    records the budget it sized the machine for at every start
+    (/var/lib/rspade/sizing.json, system/app/RSpade/resource/docker/README.md).
+    The screen shows php-fpm now - each pool's active, idle and queued
+    workers and how often it ran out (php-fpm's own status page, read over
+    the container's loopback-only listener; "no answer" when every worker is
+    busy or the box serves none) - then, per kind (page, Ajax, API, task), the
+    average and largest peak memory and the average time of the last 100,
+    beside the budget (the memory limit, the typical size, the php-fpm and
+    task worker counts, the RAM left for PHP). Two charts cover the last hour
+    minute by minute, stacked by kind: the memory held and the processes at
+    work, with the budget's ceilings dashed across them (the RAM for PHP and
+    the planned typical total; php-fpm plus task workers); a switch per kind
+    redraws both without it, kept in the URL hash. Last, the newest ten of
+    each kind - when, what (a page's action, the first Ajax call of a batch
+    and how many followed, an API route pattern, a task's Service::method),
+    peak memory and time. It refreshes every 15 seconds while it is shown.
+
     Email & SMS (`/_sys/email`) is the two outbound queues, install-wide -
     every site's rows - in two tabs, EMAIL (the default) and SMS.
 
@@ -264,7 +286,7 @@ DESCRIPTION
     entries - a level badge, the time, the environment and the message, with
     the lines under the header (a stack trace) folded beneath it; a window
     that opens inside an entry reaches back to its header when that is within
-    another 200 lines. csp_violations.log shows each report pretty-printed.
+    another 200 lines (a CSP violation is one, a [CSP_VIOLATION] line).
     Anything else is shown line by line. A .gz file is readable and never
     followed; it cannot be read backward, so every page decompresses the file
     from its start up to that page - a cost in time proportional to the

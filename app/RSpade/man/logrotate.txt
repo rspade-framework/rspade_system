@@ -21,7 +21,7 @@ DESCRIPTION
 
     Laravel is not the answer either. Its `daily` channel rotates only the dated files
     Monolog itself writes - it never compresses, it never prunes anything it did not
-    create, and it never sees storage/logs/csp_violations.log or ide-formatter.log. What
+    create, and it never sees storage/logs/ide-formatter.log or the other files there. What
     the framework needs is retention over the WHOLE directory, which is what this is.
 
     Three pieces, in one direction:

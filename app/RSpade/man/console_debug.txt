@@ -204,6 +204,23 @@ JavaScript console_debug messages are automatically batched and sent to the serv
 ### Error Logging
 JavaScript errors are automatically captured and logged to the Laravel log when LOG_BROWSER_ERRORS is enabled in the environment.
 
+### Limits on what a browser may log
+The browser-error sink, the CSP violation collector (rsx:man csp) and console_debug's
+laravel_log output are public - an error happens on a sign-in page too - so the framework
+bounds them (Browser_Log_Budget):
+
+- a per-address quota in fixed windows (redis): signed in 60 per 10 minutes, 200 per 2
+  hours, 400 per day; not signed in 30, 60 and 200.
+- browser errors and CSP reports SHARE one quota and spend it per UNIQUE entry: an exact log
+  string is written at most once per address per 30 minutes, and a repeat spends nothing.
+  console_debug output has a quota of its own, spent per call.
+- anything past the quota, a repeat, and any failure of the counter store (redis down) is
+  discarded silently - the sinks fail closed.
+- at most 20 entries per call; one line counts the rest.
+- every field is cut (message 2,000 characters, file and URL 500, user agent 300, stack
+  8,000), control characters are removed from single-line fields, and every stack line is
+  indented - so nothing a browser sends can start a line that reads as a log entry of its own.
+
 ### Synchronous Display
 Messages appear immediately in the browser console, while server logging happens asynchronously in batches.
 

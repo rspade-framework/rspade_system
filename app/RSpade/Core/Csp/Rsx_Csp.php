@@ -35,8 +35,8 @@ use App\RSpade\Core\Rsx;
  * IT ALWAYS ENFORCES. There is one header name, `Content-Security-Policy`, and an undeclared
  * resource fails visibly. The policy still names its realm's collector (`report-uri /_csp-report`,
  * under the portal prefix on a portal page - report_path()), so the violation
- * collector keeps recording every refusal to storage/logs/csp_violations.log - that log is the
- * triage tool for a blocked resource, not an observe-only mode.
+ * collector keeps recording every refusal to the application log as a [CSP_VIOLATION] line - that
+ * log is the triage tool for a blocked resource, not an observe-only mode.
  *
  * `csp.enabled` (default true) is an EMERGENCY KILL-SWITCH, not a quiet mode: compose() returns
  * null and no header is emitted at all.

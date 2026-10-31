@@ -31,6 +31,13 @@
     --rsx-post: #58A6FF;
     --rsx-mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
 
+    // Chart series, in order (_Sys_Stacked_Chart). Separate names again: a series colour
+    // says "which one", never "good" or "bad".
+    --rsx-series-1: #58A6FF;
+    --rsx-series-2: #3FB950;
+    --rsx-series-3: #D29922;
+    --rsx-series-4: #BC8CFF;
+
     // Panel geometry, so the layout and the scaffold agree on one number each.
     --rsx-sidebar-width: 232px;
     --rsx-topbar-height: 52px;

@@ -8,8 +8,10 @@ DISABLED IN THIS RELEASE
     functionality and security posture are validated. #[FPC] is still parsed
     and recorded on the route, but the route dispatches like any other: the
     response is never marked for the proxy, nothing is cached, and each request
-    to it logs a warning to laravel.log. Everything below describes the feature
-    as it will behave when it returns.
+    to it logs a warning to laravel.log. The RSpade container does not run the
+    proxy either: nginx sends every request straight to php-fpm, and rsx:health
+    reports the FPC row as INFO. Everything below describes the feature as it
+    will behave when it returns.
 
 SYNOPSIS
     Controller attribute:

@@ -123,6 +123,7 @@ portal row returns the staff site.
 | PORTAL-IMP-RO-01 | the #[Portal_Impersonation_Readable] mark is baked into the surface index | php | fixture controller, marked `read` + unmarked `write` | `impersonation_readable` true / absent | implemented (`Portal_Impersonation_Read_Only_Test`) | 2026-09-25 |
 | PORTAL-IMP-RO-02 | while impersonating, an unmarked portal Ajax endpoint is refused before it runs; a marked one runs | php | `Ajax::internal` in the portal realm with an impersonator set | AjaxUnauthorizedException "read-only session", write never ran; read ran | implemented (`Portal_Impersonation_Read_Only_Test`) | 2026-09-25 |
 | PORTAL-IMP-RO-03 | without impersonation both run | php | same, no impersonator | both counters 1 | implemented (`Portal_Impersonation_Read_Only_Test`) | 2026-09-25 |
+| PORTAL-IMP-RO-05 | while impersonating, a portal upload is refused before anything runs | php | `Rsx_File_Upload::accept()` with a portal request and an impersonator set | ok false, `read_only_session`, 403, the read-only message, no attachment | implemented (`Portal_Impersonation_Read_Only_Test`) | 2026-10-31 |
 | PORTAL-IMP-RO-04 | the framework's portal-reachable reads a portal page needs carry the mark | php | surface index | Orm fetch / fetch_relationship, Spa_Session get_state, Realtime tokens, File_Preview info marked | implemented (`Portal_Impersonation_Read_Only_Test`) | 2026-09-25 |
 
 Notes:

@@ -541,3 +541,4 @@ stay aligned.
 | SANITIZE-PHP-01 | sanitized output has exactly the file's line count and byte length | php | `//`, `#`, docblock, inline and multi-line block comments, a trailing comment at EOF; with and without a final newline | counts and lengths equal | implemented | 2026-10-28 |
 | SANITIZE-PHP-02 | code keeps its line AND column; comments become whitespace; an attribute and a string holding `//` are untouched | php | the same fixture | per-line assertions | implemented | 2026-10-28 |
 | SANITIZE-PHP-03 | a rule reports the line a call is written on below a run of comments | php | PHP-EXEC-01 over 12 `//` lines + a docblock + the call | one violation at the call's line | implemented | 2026-10-28 |
+| SANITIZE-PHP-04 | PHP-EXEC-01 flags the PHP function only, never a method or static call of that name | php | `$redis->exec()`, `Pipeline::exec()`, `exec(...)`, `\exec(...)` | violations on the last two lines only | implemented | 2026-10-31 |

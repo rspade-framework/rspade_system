@@ -1,0 +1,30 @@
+._Sys_Performance_Action {
+    &__loading {
+        width: 48px;
+        height: 48px;
+        margin: 24px auto;
+    }
+
+    &__toggles {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        font-size: 13px;
+    }
+
+    &__chart-title {
+        margin-bottom: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--rsx-muted);
+    }
+
+    &__budget {
+        margin-top: 12px;
+    }
+
+    &__note {
+        margin: 12px 0 0;
+        color: var(--rsx-dim);
+    }
+}

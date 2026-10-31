@@ -21,6 +21,7 @@ use App\RSpade\Core\Task\Task_Notify;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Run_Model;
 use App\RSpade\Core\Task\Task_Runner;
+use App\RSpade\Core\Metrics\Rsx_Metrics;
 
 /**
  * Task Worker Command
@@ -176,7 +177,11 @@ class Task_Worker_Command extends Command
                 Task_Notify::flush_deferred();
                 Task_Notify::lifecycle($task_id);
 
+                // One process serves many runs: the peak is this run's alone.
+                memory_reset_peak_usage();
+                $run_started_at = microtime(true);
                 [$instance, $outcome] = $this->run_task($task_id);
+                Rsx_Metrics::record_task_run(class_basename($instance->get_class()) . '::' . $instance->get_method(), $run_started_at, microtime(true));
 
                 // Re-take the lock to settle. A connection that died while the task ran has
                 // taken the membership with it; a fresh connection (redialled by some other

@@ -842,6 +842,9 @@ EMITTERS
       member (the PHP side sorts filter keys the same way when deriving an
       emitter's hash identity).
     - Node DELs the key on boot (clearing any set a crashed prior instance left).
+    - A registry that vanishes while subscriptions are held (an eviction, a
+      redis restart) is noticed on the next tick and rewritten, and every client
+      is told to resync (REDIS DATA LOSS below).
     - Self-healing: if the Node relay dies, the key simply EXPIREs and emitters
       stop running - no stale registry keeps recomputing against phantom
       subscribers.
@@ -918,6 +921,33 @@ RESYNC ON (RE)SUBSCRIBE
     unprompted and repeatedly (idempotent refetches, not "apply this delta").
     A callback like () => this.refresh() already satisfies this.
 
+REDIS DATA LOSS
+    Redis holds nothing durable for realtime, and it can lose what it holds
+    without the relay seeing an error: a redis restart or flush empties it, an
+    LRU eviction under memory pressure takes keys one at a time, and while the
+    relay is disconnected from redis every frame PHP publishes is gone. The
+    browsers' websockets stay up through all of it, so nothing would resubscribe
+    by itself - so the relay watches for it:
+
+    - At connect the relay writes rsx_rt:epoch = a random id of its own.
+    - On every stats tick (60s) and after every reconnect of its redis clients
+      it checks: an epoch missing or not its own, or the registry
+      (rsx_rt:subs) missing while it holds subscriptions, means data was lost.
+      A reconnect counts as a loss whatever the keys say - the frames of the gap
+      are gone either way.
+    - On a loss it rewrites the epoch and the registry, re-reports every member
+      to PHP (so emitter baselines are seeded again; NEW-SUBSCRIPTION NOTIFY),
+      logs one line, and sends every authenticated connection {type:'resync'}.
+    - The client answers by firing every watch's callbacks once with
+      meta.resync: true - exactly what a reconnect does - after a random delay
+      of 0 to 8 seconds (Rsx_Realtime._resync_spread_ms), so a whole site's open
+      pages spread their refetches instead of arriving in the same instant. A
+      second resync frame while one is pending is absorbed into it, and a
+      reconnect cancels it (the reconnect resyncs anyway).
+
+    Nothing for an application to do: a callback written as an idempotent
+    refetch (RESYNC ON (RE)SUBSCRIBE) already handles it.
+
 DELIVERY GUARANTEE
     The promise, stated exactly: IF the browser is online and the surface is
     wired for realtime, its values are current with respect to every change made
@@ -933,6 +963,8 @@ DELIVERY GUARANTEE
       not worth publishing."
     - Every (re)subscribe resyncs, so any frame missed while disconnected is
       healed by a refetch rather than a replay.
+    - A redis that lost realtime's keys, or a relay that lost its redis
+      connection, makes every client resync (REDIS DATA LOSS).
 
     NO REPLAY BUFFER - BY DESIGN. A relay-side message buffer (hold every frame,
     replay on connect/reconnect, dedupe, expire) was designed in full and
@@ -983,17 +1015,6 @@ RESIDUAL GAPS
        a timer local to that component). There is deliberately NO framework
        helper that schedules a server-side kick for time-derived values - that
        would be a poll, which the NO TIMER rule exists to prevent.
-
-    4. RELAY REDIS-SUBSCRIBER BLIP. If the relay's redis SUBSCRIBER connection
-       drops and reconnects while the browser websockets stay up, frames
-       published during that gap are gone and NO client resyncs (no browser
-       disconnect occurred, so nothing resubscribes). The window is small
-       (node-redis re-subscribes itself) but the consequence is a client left
-       stale until the value changes again, or until a hash wipe makes the
-       key-missing publish fire. Note that the relay PROCESS dying is NOT this
-       case - that closes every socket, so every client reconnects and resyncs.
-       Not fixed speculatively; the cheap remedy if it is ever observed is a
-       low-frequency safety refetch on long-lived subscriptions.
 
     Deliberate designs that are NOT gaps (audited, recorded here so they are not
     re-litigated): the request-wide $sent_keys dedup (one hint per record per

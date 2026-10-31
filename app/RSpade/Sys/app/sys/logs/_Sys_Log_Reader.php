@@ -38,7 +38,6 @@ use App\RSpade\Core\Time\Rsx_Time;
  *             header owning the lines under it (a stack trace). A backward window is
  *             widened back to its first entry's header when one is within another
  *             page of lines; otherwise it opens on a "continued" entry.
- *   csp     - csp_violations.log[.N]: one JSON document per line, pretty-printed.
  *   plain   - anything else: one entry per line.
  *
  * The text filter is applied HERE, to the window's entries (a laravel entry matches on
@@ -146,7 +145,7 @@ class _Sys_Log_Reader
     }
 
     /**
-     * laravel | csp | plain, from the name (a .gz suffix is ignored).
+     * laravel | plain, from the name (a .gz suffix is ignored).
      */
     public static function format_of(string $name): string
     {
@@ -154,10 +153,6 @@ class _Sys_Log_Reader
 
         if (preg_match('/^laravel.*\.log(\.\d+)?$/', $base)) {
             return 'laravel';
-        }
-
-        if (preg_match('/^csp_violations\.log(\.\d+)?$/', $base)) {
-            return 'csp';
         }
 
         return 'plain';
@@ -331,11 +326,9 @@ class _Sys_Log_Reader
      *
      * laravel: {offset, time, env, level, text, body[]} - a line under no header in the
      *          window opens a {time: null, continued: true} entry
-     * csp:     {offset, text, pretty} - pretty is null when the line is not JSON; blank
-     *          lines are dropped
      * plain:   {offset, text}
      *
-     * @param string $format laravel | csp | plain
+     * @param string $format laravel | plain
      * @param array $lines [[offset, text], ...] ascending
      * @return array
      */
@@ -373,22 +366,7 @@ class _Sys_Log_Reader
         }
 
         foreach ($lines as [$offset, $text]) {
-            if ($format === 'csp') {
-                if (trim($text) === '') {
-                    continue;
-                }
-
-                $decoded = json_decode($text, true);
-                $entries[] = [
-                    'offset' => $offset,
-                    'text' => $text,
-                    'pretty' => is_array($decoded)
-                        ? json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-                        : null,
-                ];
-            } else {
-                $entries[] = ['offset' => $offset, 'text' => $text];
-            }
+            $entries[] = ['offset' => $offset, 'text' => $text];
         }
 
         return $entries;

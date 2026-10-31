@@ -19,6 +19,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -289,6 +290,7 @@ class Api_Dispatcher
         // An authenticated key has reached this route: the route is in use, whatever the
         // call goes on to answer. _api_route_usage is what says whether a version can retire.
         Api_Route_Usage::record($route['pattern']);
+        Rsx_Metrics::name_request($route['pattern']);
 
         // --- Assemble raw input (route > GET > body); reject unparseable JSON ---
         $json_invalid = false;

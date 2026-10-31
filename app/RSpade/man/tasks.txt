@@ -808,12 +808,32 @@ THE WORKER POOLS
     Three pools, each capped on its own in rsx.tasks.pools (every cap at least 1, or boot
     throws):
 
-        on_demand  runs dispatched work                       default 2
+        on_demand  runs dispatched work                       automatic
                                                               (RSX_TASK_MAX_WORKERS)
-        scheduled  runs #[Schedule] work - and claims queued  default 1
-                   on-demand work FIRST
-        kill       the kill workers that carry out force      default 10
+        scheduled  runs #[Schedule] work - and claims queued  automatic
+                   on-demand work FIRST                       (RSX_TASK_SCHEDULED_WORKERS)
+        kill       the kill workers that carry out force      default 2
                    stops and kills (LIFECYCLE CONTROL)
+
+    THE ON-DEMAND AND SCHEDULED CAPS ARE AUTOMATIC when RSX_TASK_MAX_WORKERS /
+    RSX_TASK_SCHEDULED_WORKERS are unset (null or empty): inside the RSpade container they
+    are the counts the container sized for the machine at start - task workers about a
+    quarter of php-fpm's (one more per 25 php-fpm workers past 16), split one scheduled to
+    two on demand, at least one of each - recorded in /var/lib/rspade/sizing.json
+    (rsx:man server_sizing); anywhere else 2 on demand and 1 scheduled
+    (Task_Pool::DEFAULT_ON_DEMAND_WORKERS / DEFAULT_SCHEDULED_WORKERS). A value set in .env
+    or the container's environment wins, and the container counts it into its budget.
+    More than one scheduled worker is safe: a worker takes a due schedule by advancing its
+    next run time in a guarded update, so two never take the same one, and #[Exclusive]
+    still serializes what must not overlap. A kill worker only delivers a signal and
+    exits, so two are plenty on any box.
+
+    A TASK WORKER IS LIMITED LIKE A REQUEST. The CLI's memory_limit is the same as
+    php-fpm's - 320 MB in production, 256 MB in development, set by the container at start
+    (RSPADE_PHP_MEMORY_LIMIT_MB changes both). A run that needs more raises its own limit
+    with ini_set('memory_limit', ...) at its start, saying why beside it; anything else that
+    grows past the limit fails with "Allowed memory size exhausted", which the run records
+    as its error.
 
     The ONE count of workers is kept by the rsx-lockd daemon (Task_Pool; rsx:man locks,
     THE RSX LOCKD DAEMON) - not by counting rows, and not by anything with a clock on it.
@@ -1636,9 +1656,9 @@ CONFIGURATION (config/rsx.php 'tasks')
 
     'tasks' => [
         'pools' => [
-            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS', 2)],
-            'scheduled' => ['max_workers' => 1],
-            'kill'      => ['max_workers' => 10],
+            'on_demand' => ['max_workers' => env('RSX_TASK_MAX_WORKERS')],  // null = automatic
+            'scheduled' => ['max_workers' => env('RSX_TASK_SCHEDULED_WORKERS')],  // null = automatic
+            'kill'      => ['max_workers' => 2],
         ],
         'silent_timeout'              => 1800,  // seconds WITHOUT A REPORT before a worker-run
                                                 // task is killed (0 = none); THE SILENCE LIMIT

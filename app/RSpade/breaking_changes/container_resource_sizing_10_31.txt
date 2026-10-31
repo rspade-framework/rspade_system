@@ -1,0 +1,89 @@
+THE CLI HAS A MEMORY LIMIT; THE CONTAINER SIZES PHP, TASK WORKERS AND REDIS TO THE MACHINE
+Date: 2026-10-31
+
+IF YOU DO NOTHING: a task, command or import of yours that uses more than 320 MB (256 MB in development) now dies with "Allowed memory size of ... bytes exhausted", because inside the RSpade container the CLI had no memory limit and now has the same one php-fpm has.
+
+SUMMARY
+    Category 2: a changed default in /system/ that code you wrote may depend on.
+
+THE CHANGE
+    At every start the RSpade container measures its cores, memory and swap and
+    writes a budget (system/app/RSpade/resource/docker/README.md, "The container
+    is sized to the machine"):
+
+    - memory_limit is ONE number for php-fpm and the CLI - task workers, cron
+      ticks, artisan commands, scripts. 320 MB in production, 256 MB in
+      development. The CLI had none.
+    - php-fpm's pool sizes (production) come from three ceilings - the typical
+      process size in RAM, the memory limit in RAM + swap, four per core - and
+      count the task workers in the same budget.
+    - The on-demand and scheduled task pools are AUTOMATIC when
+      RSX_TASK_MAX_WORKERS / RSX_TASK_SCHEDULED_WORKERS are unset: the container's
+      counts (task workers about a quarter of php-fpm's, split one scheduled to
+      two on demand), 2 on demand and 1 scheduled outside the container. They
+      were 2 and 1.
+    - The automatic sizing plans at most 140 PHP processes, php-fpm and task
+      workers together - what fits under MySQL's default connection limit. Past
+      it, the counts are set by hand and the database sized to match
+      (rsx:man server_sizing).
+    - The kill pool is 2 (it was 10).
+    - The Redis cap scales with memory: 32 MB under 1 GB, otherwise the larger of
+      64 MB and 5%, at most 2 GB. It was a fixed 128 MB.
+
+    New container switches (docker run -e / compose `environment:`), each
+    optional: RSPADE_PHP_MEMORY_LIMIT_MB, RSPADE_PHP_TYPICAL_MB,
+    RSPADE_PHP_WORKERS_PER_CORE, PHP_FPM_WORKER_COUNT (now applies to the budget
+    in both targets), RSX_TASK_MAX_WORKERS, RSX_TASK_SCHEDULED_WORKERS,
+    REDIS_MAXMEMORY_MB,
+    RSPADE_RESERVED_MB, MYSQL_INNODB_BUFFER_MB (development).
+
+THE FIX
+    Arrived in system/ and the container image, nothing to do:
+
+    - The sizing step in the entrypoint (rspade-sizing), the record it writes
+      (/var/lib/rspade/sizing.json) and the rsx:health "Resource Sizing" row.
+    - The automatic on-demand cap (Task_Pool::max_workers()).
+    - The /_sys Performance screen, which shows what your requests and tasks
+      actually use against that budget.
+
+    Pull or rebuild the image for the container side; a container started from an
+    older image keeps the old behaviour and rsx:health WARNs that it recorded no
+    budget.
+
+ACTION REQUIRED
+    1. WORK THAT NEEDS MORE THAN THE LIMIT. A large import, an export, a report
+       that builds a big array, a command that loads a whole table. First make it
+       iterate instead of holding everything (skill rspade:bounded-result-sets: a
+       result set is consumed with ->result_set(), one keyset page at a time).
+       Where the work genuinely needs more, raise the limit for that run only, at
+       its start, saying why:
+
+           #[Task]
+           public static function import_catalogue(Task_Instance $task, array $params = [])
+           {
+               // The supplier's catalogue is one 900 MB XML document; the parser
+               // holds the tree. Measured peak 610 MB.
+               ini_set('memory_limit', '768M');
+               ...
+           }
+
+       Or raise it for the whole container with RSPADE_PHP_MEMORY_LIMIT_MB - which
+       also shrinks the php-fpm pool, since every worker may now grow that far.
+
+    2. A FIXED RSX_TASK_MAX_WORKERS. If your .env (or rsx/resource/config/rsx.php)
+       sets it, that number still wins and the container counts it into the
+       budget. Remove it to get the calculated count.
+
+    3. A CONFIG OVERRIDE OF rsx.tasks.pools. If rsx/resource/config/rsx.php sets
+       'kill' => ['max_workers' => 10], 'scheduled' => ['max_workers' => 1] or an
+       on_demand default of its own, it
+       keeps its value; nothing breaks, but you do not get the new sizing.
+
+VERIFICATION
+    In the container:
+        php -r 'echo ini_get("memory_limit"), PHP_EOL;'
+        - 320M in production, 256M in development
+        php artisan rsx:health
+        - the "Resource Sizing" row names the budget
+    Run your largest import or export once and read its peak on the /_sys
+    Performance screen (the Task tab of "Last 10, per kind").

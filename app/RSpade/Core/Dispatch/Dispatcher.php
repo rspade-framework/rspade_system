@@ -31,6 +31,7 @@ use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Errors\Error_Screens;
 use App\RSpade\Core\Files\Rsx_File_Name;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Metrics\Rsx_Metrics;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -375,6 +376,7 @@ class Dispatcher
         }
 
         ($realm['set_current'])($handler_class, $handler_method, $params, $route_match['type'] ?? $realm['default_route_type']);
+        Rsx_Metrics::name_request($route_match['js_action_class'] ?? (class_basename($handler_class) . '::' . $handler_method));
 
         if (Manifest::php_class_metadata(Manifest::_normalize_class_name($handler_class)) === null) {
             throw new Exception("Handler class not found in manifest: {$handler_class}");
@@ -996,6 +998,8 @@ class Dispatcher
                     'fpc' => $route['fpc'] ?? false,
                     'fpc_ttl_mins' => $route['fpc_ttl_mins'] ?? 0,
                     'auth' => Auth_Gates::surface_gates($route['surface'] ?? ''),
+                    // An SPA route's JS action: the page's name in the performance record.
+                    'js_action_class' => $route['js_action_class'] ?? null,
                 ];
             }
         }

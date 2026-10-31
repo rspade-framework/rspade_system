@@ -139,7 +139,7 @@ class Revision_Migrate_Seam_Test extends Rsx_Test_Abstract
      */
     public static function test_restore_purges_after_cleanup()
     {
-        $source = static::__method_source(Migrate_Restore_Command::class, 'handle');
+        $source = static::__method_source(Migrate_Restore_Command::class, 'restore_locked');
 
         $cleanup = strpos($source, 'cleanup_migration_mode();');
         $purge = strpos($source, '$this->purge_schema_state();');

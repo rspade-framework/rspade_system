@@ -23,7 +23,7 @@
 # WHAT IT DOES
 #   enable : raise the flag file (its CONTENT is the operator reason) -> turn the task
 #            system off and stop running background tasks (rsx:tasks:disable) -> stop
-#            realtime, fpc-proxy, php-fpm, rsx-lockd, and redis LAST.
+#            realtime, fpc-proxy (where one runs), php-fpm, rsx-lockd, and redis LAST.
 #   disable: start redis FIRST (everything else depends on it), then rsx-lockd,
 #            php-fpm, realtime, fpc-proxy -> clear the flag -> turn the task system back
 #            on (rsx:tasks:enable).

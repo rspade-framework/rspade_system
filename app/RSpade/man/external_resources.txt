@@ -407,7 +407,7 @@ TROUBLESHOOTING
         instead.
 
         The policy ALWAYS enforces, so the resource really did not load. The
-        refusal is also recorded in storage/logs/csp_violations.log.
+        refusal is also recorded in the application log as a [CSP_VIOLATION] line.
 
     "Unknown external resource '<id>'"
         Thrown synchronously by load(). Either a typo (the message lists every

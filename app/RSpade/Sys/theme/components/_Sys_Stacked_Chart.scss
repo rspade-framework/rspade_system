@@ -1,0 +1,104 @@
+._Sys_Stacked_Chart {
+    position: relative;
+    display: block;
+
+    &__plot {
+        position: relative;
+    }
+
+    &__svg {
+        display: block;
+        width: 100%;
+        height: auto;
+    }
+
+    &__grid {
+        stroke: var(--rsx-border);
+        stroke-width: 1;
+    }
+
+    &__axis {
+        fill: var(--rsx-dim);
+        font-size: 11px;
+    }
+
+    &__area {
+        stroke-width: 1;
+        fill-opacity: 0.45;
+
+        &--1 { fill: var(--rsx-series-1); stroke: var(--rsx-series-1); }
+        &--2 { fill: var(--rsx-series-2); stroke: var(--rsx-series-2); }
+        &--3 { fill: var(--rsx-series-3); stroke: var(--rsx-series-3); }
+        &--4 { fill: var(--rsx-series-4); stroke: var(--rsx-series-4); }
+    }
+
+    &__ceiling {
+        stroke: var(--rsx-danger);
+        stroke-width: 1.5;
+        stroke-dasharray: 6 4;
+    }
+
+    &__ceiling-label {
+        fill: var(--rsx-danger);
+        font-size: 11px;
+    }
+
+    &__legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 16px;
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--rsx-muted);
+    }
+
+    &__key {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    &__swatch {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        margin-right: 6px;
+        border-radius: 2px;
+
+        &--1 { background: var(--rsx-series-1); }
+        &--2 { background: var(--rsx-series-2); }
+        &--3 { background: var(--rsx-series-3); }
+        &--4 { background: var(--rsx-series-4); }
+
+        &--ceiling {
+            height: 0;
+            border-top: 2px dashed var(--rsx-danger);
+            border-radius: 0;
+        }
+    }
+
+    &__tip {
+        position: absolute;
+        top: 8px;
+        transform: translateX(-50%);
+        min-width: 140px;
+        padding: 6px 10px;
+        background: var(--rsx-raised);
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+        font-size: 12px;
+        color: var(--rsx-text);
+        pointer-events: none;
+        z-index: 2;
+    }
+
+    &__tip-head {
+        margin-bottom: 4px;
+        color: var(--rsx-dim);
+    }
+
+    &__tip-total {
+        margin-top: 4px;
+        font-weight: 600;
+    }
+}

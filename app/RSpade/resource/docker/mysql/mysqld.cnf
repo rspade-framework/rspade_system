@@ -81,4 +81,5 @@ max_binlog_size   = 100M
 # binlog_do_db		= include_database_name
 # binlog_ignore_db	= include_database_name
 
-innodb_buffer_pool_size=64M
+# innodb_buffer_pool_size is written at every container start by rspade-sizing, in
+# 95-rspade-sizing.cnf beside this file (MYSQL_INNODB_BUFFER_MB, default 64).

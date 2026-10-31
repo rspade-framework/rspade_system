@@ -7,7 +7,7 @@ the nightly task that drives it, and the on-demand command.
 
 Nothing in RSpade assumes an OS `logrotate`. Laravel's `daily` channel rotates only the
 dated files Monolog itself writes - it never compresses, never prunes anything it did not
-create, and never sees `csp_violations.log` or `ide-formatter.log`. So the framework
+create, and never sees `ide-formatter.log` or the other files beside it. So the framework
 rotates its own log directory.
 
 `Rsx_Logrotate::rotate($directory, $days_uncompressed, $days_retention)` is pure and

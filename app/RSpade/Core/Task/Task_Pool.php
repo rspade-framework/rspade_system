@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Task;
 
 use RuntimeException;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
+use App\RSpade\Core\Health\Rsx_Container_Sizing;
 use App\RSpade\Core\Locks\Lockd_Connection;
 
 /**
@@ -73,6 +74,12 @@ class Task_Pool
     /** Prefix of every pool name; the pool and the per-environment scope token follow. */
     private const POOL_PREFIX = 'tasks:';
 
+    /** The on_demand cap outside the RSpade container, when RSX_TASK_MAX_WORKERS is unset. */
+    public const DEFAULT_ON_DEMAND_WORKERS = 2;
+
+    /** The scheduled cap outside the RSpade container, when RSX_TASK_SCHEDULED_WORKERS is unset. */
+    public const DEFAULT_SCHEDULED_WORKERS = 1;
+
     private static ?Lockd_Connection $connection = null;
 
     /** The pool whose lock this process holds, per the daemon's last answer. */
@@ -97,12 +104,25 @@ class Task_Pool
     /**
      * A pool's cap: rsx.tasks.pools.<pool>.max_workers. Below one is a configuration error and
      * throws - a pool that can hold no worker would leave its work queued forever.
+     *
+     * The on_demand and scheduled caps are AUTOMATIC when unset (null or empty): the count
+     * the RSpade container sized for this machine (Rsx_Container_Sizing - task workers about
+     * a quarter of php-fpm's, split one scheduled to two on demand), or
+     * DEFAULT_ON_DEMAND_WORKERS / DEFAULT_SCHEDULED_WORKERS outside the container, where
+     * nothing measured the box. The kill pool is never automatic.
      */
     public static function max_workers(string $pool): int
     {
         static::__assert_pool($pool);
 
         $value = config("rsx.tasks.pools.{$pool}.max_workers");
+        if ($value === null || $value === '') {
+            if ($pool === self::ON_DEMAND) {
+                $value = Rsx_Container_Sizing::read()['tasks']['on_demand'] ?? self::DEFAULT_ON_DEMAND_WORKERS;
+            } elseif ($pool === self::SCHEDULED) {
+                $value = Rsx_Container_Sizing::read()['tasks']['scheduled'] ?? self::DEFAULT_SCHEDULED_WORKERS;
+            }
+        }
         if (!is_numeric($value) || (int) $value != $value || (int) $value < 1) {
             throw new RuntimeException("rsx.tasks.pools.{$pool}.max_workers must be an integer of at least 1, got " . var_export($value, true));
         }
