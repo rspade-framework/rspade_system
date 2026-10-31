@@ -37,9 +37,14 @@ class Type_Ref_Orphan_Report_Test extends Rsx_Test_Abstract
     /** A class name no file in the codebase declares. */
     private const VANISHED_CLASS = 'Vanished_Orphan_Test_Model';
 
+    /**
+     * Registered HERE, outside the per-test transaction: a registration commits on a side
+     * connection, which a test's open REPEATABLE READ snapshot cannot see.
+     */
     public static function setup(): void
     {
         static::__acting_as_site(self::SITE_ID);
+        Type_Ref_Registry::class_to_id('Site_Model');
     }
 
     public static function teardown(): void

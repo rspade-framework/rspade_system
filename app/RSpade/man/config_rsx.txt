@@ -167,6 +167,7 @@ ROUTING AND DISPATCH
     asset_dirs           Directories checked for static assets.
     handler_priority     Dispatch handler ordering (lower = first).
 
+    'login_notices' => [],   # code => ['level' => 'notice'|'error', 'text' => '...']
     'login_redirect' => [
         'excluded_prefixes' => ['/login', '/logout'],
         'portal_excluded_prefixes' => [

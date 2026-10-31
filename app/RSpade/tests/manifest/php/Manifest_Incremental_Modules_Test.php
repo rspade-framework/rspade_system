@@ -34,6 +34,24 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
     // The subject is the filesystem and two child processes.
     protected static $use_database_transactions = false;
 
+    private static $memory_limit = null;
+
+    /**
+     * The suite's process stands at about 115 MB before this class runs, each fixture index it
+     * loads to compare costs about 30 MB, and several are held at once. Measured peak 260 MB
+     * (2026-10-31), past the development CLI limit of 256 MB.
+     */
+    public static function setup()
+    {
+        static::$memory_limit = ini_get('memory_limit');
+        ini_set('memory_limit', '512M');
+    }
+
+    public static function teardown()
+    {
+        ini_set('memory_limit', static::$memory_limit);
+    }
+
     /** The fixture tree, relative to base_path(). */
     private static string $tree = '';
 
@@ -161,6 +179,46 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
         }
 
         return $manifest;
+    }
+
+    /**
+     * A changed class finds a trait that did not change. The build loads a changed class and
+     * walks its parents itself, so a trait reaches it only through the autoloader. The fixture
+     * files are lowercase, so Composer's PSR-4 map cannot find them and answer for an
+     * unregistered RSX autoloader, as it does for a framework trait.
+     */
+    public static function test_a_changed_class_finds_its_unchanged_trait()
+    {
+        static::__make_tree();
+
+        $namespace = 'App\\RSpade\\Temp\\' . static::__namespace_segment();
+        $root = base_path(static::$tree);
+
+        file_put_contents($root . '/fixture_inc_greeter.php', "<?php\n\nnamespace {$namespace};\n\ntrait Fixture_Inc_Greeter\n{\n"
+            . "    public static function greet(): string\n    {\n        return 'hello';\n    }\n}\n");
+
+        $consumer = function (string $label) use ($namespace) {
+            return "<?php\n\nnamespace {$namespace};\n\nclass Fixture_Inc_Consumer\n{\n"
+                . "    use Fixture_Inc_Greeter;\n\n    public const LABEL = '{$label}';\n}\n";
+        };
+        file_put_contents($root . '/fixture_inc_consumer.php', $consumer('before'));
+
+        try {
+            static::__build(static::$incremental_build_root);
+
+            // ONLY the consumer changes: the trait stays out of the changed set.
+            file_put_contents($root . '/fixture_inc_consumer.php', $consumer('after'));
+            clearstatcache();
+
+            $incremental = static::__build(static::$incremental_build_root);
+
+            static::__assert_true(
+                isset($incremental['data']['php_classes']['Fixture_Inc_Consumer']),
+                'the incremental build completed and indexed the consumer'
+            );
+        } finally {
+            static::__remove_tree();
+        }
     }
 
     /**

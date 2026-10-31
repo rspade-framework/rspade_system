@@ -2224,6 +2224,13 @@ class Manifest
         // of it and runs before anything asks.
         static::_collate_files_by_classes();
 
+        // The autoloader, before the first load: a build inside init() runs ahead of its usual
+        // registration in post_init(), and what the build does not load itself reaches it only
+        // through the autoloader - the traits of a changed class (the loader below walks
+        // parents alone), and the unchanged models a support module reflects on. The class map
+        // it reads was collated just above; init() is guarded against this re-entry.
+        \App\RSpade\Core\Autoloader::register();
+
         // Only load PHP files that have actually changed
         static::_load_changed_php_files($files_to_process);
 
@@ -2265,18 +2272,6 @@ class Manifest
         // The major thing that happens here is this also scans app/RSpade for additional classes which aren't on manifest,
         // which is a somewhat expensive operation (50 ms).  This is acceptable for a incremental manifest rebuild
         static::$data['data']['autoloader_class_map'] = static::_build_autoloader_class_map();
-
-        // Register the RSX autoloader before running support modules. Support modules
-        // (e.g. Model_ManifestSupport) include_once unchanged model files to reflect on
-        // them, which forces PHP to resolve their parent classes. On an incremental
-        // rebuild where neither the model nor its abstract parent changed, Phase 3 loads
-        // neither, so the parent must resolve via autoload. The RSX autoloader is
-        // otherwise only registered in post_init() (after this method returns), leaving
-        // only Composer's PSR-4 loader active here, which cannot resolve RSX classes.
-        // init() set $_has_init = true at its top, so the re-entrant init() inside
-        // register() returns immediately; the autoloader reads php_classes /
-        // autoloader_class_map, both built by Phase 4 above.
-        \App\RSpade\Core\Autoloader::register();
 
         // Process manifest support modules.
         //

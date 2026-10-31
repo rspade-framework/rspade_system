@@ -445,8 +445,13 @@ class Type_Ref_Registry
             static::$map_id_to_class[(int) $row->id] = $row->class_name;
         }
 
-        // Cache the map
-        RsxCache::set_persistent(static::CACHE_KEY, static::$map_class_to_id, RsxCache::HOUR);
+        // Cache the map - unless a transaction is open. Registrations commit on a side
+        // connection, so a REPEATABLE READ snapshot older than one reads a registry missing
+        // it. That map may serve this process; published, it would make every other process
+        // throw on a valid id until it expired.
+        if (DB::transactionLevel() === 0) {
+            RsxCache::set_persistent(static::CACHE_KEY, static::$map_class_to_id, RsxCache::HOUR);
+        }
     }
 
     /**

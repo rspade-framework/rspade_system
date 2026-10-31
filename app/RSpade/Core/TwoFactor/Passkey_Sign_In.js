@@ -77,7 +77,7 @@ class Passkey_Sign_In extends Component {
         let result;
 
         try {
-            result = await this.alive(controller[this.args.method]({ assertion: assertion }));
+            result = await this.alive(controller[this.args.method]({ assertion: assertion, ...Login_Redirect.params() }));
         } catch (e) {
             // A refused assertion, and the throttle refusal - both user-safe by contract,
             // both belong on screen.

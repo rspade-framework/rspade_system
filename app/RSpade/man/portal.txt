@@ -666,6 +666,7 @@ PORTAL LOGIN FLOW
       Portal_Login_Controller           /login    email + password
       Portal_Logout_Controller          /logout
       Portal_Register_Controller        /register invitation-code signup
+      Portal_Share_Link_Controller      /shared/:token  where a share link leads
       Portal_Password_Reset_Controller  /password/reset  request + token
       Portal_Impersonate_Controller     /impersonate/stop  ends "view as client"
 
@@ -1414,6 +1415,20 @@ ONBOARDING (SIGNUP MODEL)
     an account or an invitation) and must never let an anonymous visitor extend
     an invitation's expiry.
 
+    A SHARE LINK LEADS THERE (sample template app). A document share is how most
+    clients first meet the portal, so the share drives the invitation. The link is
+    /shared/:token (Shared_Item_Model::get_share_url()), public, and opens nothing by
+    itself - Portal_Share_Link_Controller decides where its follower goes:
+        signed in as the recipient     the client's documents; the share is marked read
+        signed in as somebody else     the dashboard, saying so
+        signed out, account exists     sign-in, notice sign_in_to_view
+        no account, live invitation    the accept-invite page
+        no account, none live          sign-in, notice invitation_expired
+        dead or unknown share          sign-in, notice share_expired
+    Each hop carries the link as the threaded redirect (rsx:man login_redirect), so
+    signing in, a second factor, accepting the invitation or resetting a password all
+    land on the document.
+
     INVITATION LIFECYCLE (sample template app)
         The template app tracks each invitation with an explicit status_id on
         Portal_Invitation_Model - status is the authoritative validity signal
@@ -1429,24 +1444,21 @@ ONBOARDING (SIGNUP MODEL)
         Transitions: create -> PENDING; register/accept/decline -> USED; cron ->
         EXPIRED; admin -> REVOKED; resend refreshes expiry AND reactivates to PENDING.
 
-        Following a link never dead-ends on "invalid" unless the code is bogus or
-        REVOKED. Portal_Register_Controller routes by state:
-          - REVOKED                 -> "invitation cancelled" page.
-          - an account already exists -> redirect to login (message=account_exists;
-                                      the login page offers "forgot password"); a
+        A dead invitation never offers an account. Portal_Register_Controller routes
+        by state, carrying the threaded redirect on every leg:
+          - an account already exists -> the sign-in page (notice account_exists; the
+                                      form offers "Forgot your password?"); a
                                       still-live invite is consumed.
           - PENDING (live)          -> registration form; on submit creates the
                                       account + the invited client membership.
-          - EXPIRED (no account)    -> "expired" page whose Create Account button
-                                      re-enters with allow_expired. An EXPIRED invite
-                                      yields an ACCOUNT ONLY (verified, but NO client
-                                      membership - the admin must re-invite for
-                                      access). Only a live PENDING invite grants
-                                      membership; EXPIRED and REVOKED do not.
+          - no code, unknown, another site's, REVOKED, USED or EXPIRED with no
+            account                 -> the sign-in page with the invitation error
+                                      (notice invitation_expired).
         The 14-day window (config rsx.portal.invitation_expiry_days) is reflected in
         the invitation email copy and the members table.
 
-        Post-auth redirect: when an invite is tied to a client, a successful
+        Post-auth redirect: a threaded redirect (a share link the visitor came from)
+        wins. Otherwise, when an invite is tied to a client, a successful
         register (new account, membership granted) or login (returning account that
         has access) lands on that client's workspace (Portal_Workspace_Overview_Action)
         rather than the dashboard; the invited client is carried to the login screen
@@ -1557,18 +1569,24 @@ DOCUMENTS (FIRM -> CLIENT SHARE)
         documents_share({client_id, attachment_id|key, contact_ids[], message?}) -
                                      SET-BASED reconcile: make the document's share list
                                      exactly contact_ids. Contacts newly in the set are
-                                     shared (a Shared_Item is created) and, per recipient:
-                                       * WITH a portal account: emit a 'document_shared'
-                                         portal notification + send the
-                                         Portal_Shared_Content_Email.
-                                       * not-yet-invited: trigger the SAME per-client
-                                         invite path portal_bulk_invite uses (invitation +
-                                         registration email) so they can register (joining
-                                         the client) and view it, plus the shared email.
-                                     Contacts DROPPED from the set have their Shared_Item
-                                     removed; an empty set removes all shares. The staff
-                                     Share dialog pre-checks current shares and confirms
-                                     the add/remove diff before calling this.
+                                     shared (a Shared_Item is created); one with no
+                                     account and no live invitation gets one minted now,
+                                     marked email_owed, so the link works whether or not
+                                     anything is ever sent. NOTHING IS SENT. Contacts
+                                     DROPPED from the set have their Shared_Item removed;
+                                     an empty set removes all shares. Answers the
+                                     recipients with their links and a preview of the
+                                     email. The staff Share dialog pre-checks current
+                                     shares and confirms the add/remove diff before
+                                     calling this, then shows the email and the links
+                                     with a Copy control: Close sends nothing, Send calls
+                                     documents_share_send.
+        documents_share_send({client_id, attachment_id|key, contact_ids[], message?}) -
+                                     per recipient with a live share: the
+                                     Portal_Shared_Content_Email with their own link;
+                                     WITH an account a 'document_shared' notification;
+                                     without one the invitation if email_owed, as a
+                                     separate email, once.
         documents_unshare({shared_item_id}) - delete one share (used by tests).
         document_delete({client_id, attachment_id|key}) - delete all shares of the
                                      attachment then detach it from the client.

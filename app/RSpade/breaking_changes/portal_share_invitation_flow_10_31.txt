@@ -1,0 +1,62 @@
+A SHARE DRIVES THE INVITATION: SHARE LINKS, A SEPARATE SEND STEP, AND LOGIN NOTICES
+Date: 2026-10-31
+
+IF YOU DO NOTHING: your portal keeps its own share emails and sign-in pages and nothing breaks, but Login_Notice has no notices to show, a redirect threaded through your accept-invite or forgot-password pages may still be dropped, and an expired invitation still offers your visitors an account if you kept the template's allow_expired page.
+
+SUMMARY
+    Category 3: a requested feature whose implementation includes a template UI.
+
+    Portal access is by invitation, and a document share is how most clients first
+    meet the portal. The template now lets the share drive the invitation: a share
+    mints it, sending is its own step, and the share link leads each follower to
+    the right place and back to the document.
+
+WHAT YOU ALREADY HAVE
+    Arrived in system/, nothing to do:
+
+    - Login_Notice: params($code) and current(), and the rsx.login_notices config
+      key (empty until your application declares codes).
+    - Passkey_Sign_In sends the threaded redirect with its call.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    Everything below is template code, so it arrives in your /rsx/ only if you port it:
+
+    - /shared/:token: the link a recipient follows, signed out or in.
+    - The staff send step: the email as it will be read, each recipient's link
+      with a Copy control, Close or Send.
+    - Expired, used, revoked and unknown invitations going to the sign-in page with
+      an error, in place of the expired-invitation account page.
+    - The redirect carried through accept-invite, account-exists, forgot password
+      and the second factor, and beating the invited client's workspace.
+
+THE REFERENCE IMPLEMENTATION
+    Under system/app/RSpade/resource/reference_app/:
+
+    resource/config/rsx.php                       login_notices, the five codes
+    portal/auth/Portal_Share_Link_Controller.php  where a share link leads
+    portal/auth/Portal_Register_Controller.php    dead invitations; the threaded redirect
+    portal/auth/Portal_Login_Controller.php       REDIRECT_KEY; destination()
+    portal/auth/Portal_Password_Reset_Controller.php  and its blades: the redirect
+    portal/auth/portal_login_index.blade.php      the notice block
+    app/login/login_index.blade.php               the same, on the staff page
+    app/frontend/clients/clients_controller.php   documents_share, documents_share_send
+    app/frontend/clients/portal/share_document/   the dialog and the send step
+    models/shared_item_model.php                  get_share_url()
+    models/portal_password_reset_model.php        get_reset_url($params)
+
+PORTING IT
+    Declare your notices first: the sign-in pages and every flow that sends a
+    visitor to them read the same codes. Replace any ?message= handling with
+    Login_Notice::params() and the notice block.
+
+    A share link is public and opens nothing by itself; keep the document's own
+    access rules where they are. Mark an invitation minted by a share as still owing
+    its email, so one your staff already sent is not sent twice. Where the screens go
+    is yours: your navigation, permissions and design system decide.
+
+VERIFICATION
+    Share a document with a contact who has no account: one invitation, no email.
+    Send: two emails. Follow the link signed out, accept, set a password: the
+    document's page opens. Expire the invitation and follow the link again: the
+    sign-in page with the invitation error. As an account holder, signed out: the
+    sign-in page with the notice, then, through a second factor, the document.

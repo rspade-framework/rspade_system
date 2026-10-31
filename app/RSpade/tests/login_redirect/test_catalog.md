@@ -104,3 +104,6 @@ while the suite runs.
   re-pointed at a registered route (`/frontend/settings/profile_edit`) with the
   test intent unchanged. New coverage: LR-52..LR-67. Fixture routes were confirmed
   registered via `Dispatcher::resolve_url_to_route` (staff and portal realm).
+| LR-NOTICE-01 | A declared Login_Notice code round-trips through the URL to {code, level, text}, {name} filled in | php | `Login_Notice_Test`, scratch rsx.login_notices | the array | implemented | 2026-10-31 |
+| LR-NOTICE-02 | Nothing but a declared code reaches the page: absent, empty, markup, an array | php | those queries | null | implemented | 2026-10-31 |
+| LR-NOTICE-03 | Naming an undeclared code, or declaring a malformed one, fails loud | php | `params()` | RuntimeException | implemented | 2026-10-31 |

@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Polymorphic\Php;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Database\Rsx_Side_Connection;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -57,6 +58,21 @@ class Type_Ref_Side_Connection_Test extends Rsx_Test_Abstract
         Type_Ref_Registry::_reset_cached_state();
         static::__assert_equals($id, Type_Ref_Registry::class_to_id(self::FIXTURE), 'a fresh load answers the same id, minting nothing');
         static::__assert_equals(self::FIXTURE, Type_Ref_Registry::id_to_class($id), 'and the id resolves back to the class');
+    }
+
+    /**
+     * A map read inside a transaction may predate a registration another connection committed,
+     * so it is never published to the shared cache, where other processes would trust it.
+     */
+    public static function test_a_map_read_inside_a_transaction_is_not_published()
+    {
+        DB::beginTransaction();
+        Type_Ref_Registry::_reset_cached_state();
+        Type_Ref_Registry::get_map();
+        $published = RsxCache::get_persistent('type_refs_map');
+        DB::rollBack();
+
+        static::__assert_null($published, 'the snapshot stayed in this process');
     }
 
     public static function test_the_side_connection_reaches_the_default_database_and_is_closed()

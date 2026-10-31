@@ -447,6 +447,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Login Notices
+    |--------------------------------------------------------------------------
+    |
+    | The sentences a sign-in page may show inline, chosen by a fixed code in the URL
+    | (Login_Notice): code => ['level' => 'notice'|'error', 'text' => '...'], text may carry
+    | {name} for rsx.name. Declared by the APPLICATION: no free text crosses the URL, and an
+    | undeclared code shows nothing. See: php artisan rsx:man login_redirect, LOGIN NOTICES.
+    |
+    */
+    'login_notices' => [],
+
+    /*
+    |--------------------------------------------------------------------------
     | Login Redirect (intended-URL threading)
     |--------------------------------------------------------------------------
     |

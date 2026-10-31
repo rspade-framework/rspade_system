@@ -61,11 +61,11 @@ class Ide_Resolution_Order_Test extends Rsx_Test_Abstract
         static::__load();
 
         $files = [
-            'rsx/app/z/page.blade.php' => ['extension' => 'blade.php', 'id' => 'Page'],
-            'rsx/app/b/page.blade.php' => ['extension' => 'blade.php', 'id' => 'Page', 'marker' => 1],
+            'rsx/app/z/page.blade.php' => ['extension' => 'blade.php', 'id' => 'Probe_Item'],
+            'rsx/app/b/page.blade.php' => ['extension' => 'blade.php', 'id' => 'Probe_Item', 'marker' => 1],
         ];
 
-        $match = ide_best_id_match($files, 'Page');
+        $match = ide_best_id_match($files, 'Probe_Item');
         static::__assert_equals('rsx/app/b/page.blade.php', $match['file']);
         static::__assert_equals(1, $match['marker'] ?? null, 'the matched record is returned with its path');
     }
@@ -75,12 +75,12 @@ class Ide_Resolution_Order_Test extends Rsx_Test_Abstract
         static::__load();
 
         $files = [
-            'rsx/app/a/card.jqhtml' => ['extension' => 'jqhtml', 'id' => 'Card'],
-            'rsx/app/a/card.scss' => ['extension' => 'scss', 'id' => 'Card'],
+            'rsx/app/a/card.jqhtml' => ['extension' => 'jqhtml', 'id' => 'Probe_Panel'],
+            'rsx/app/a/card.scss' => ['extension' => 'scss', 'id' => 'Probe_Panel'],
             'rsx/app/a/odd.php' => ['extension' => 'php', 'id' => 'Odd'],
         ];
 
-        static::__assert_equals('rsx/app/a/card.scss', ide_best_id_match($files, 'Card', ['scss'])['file']);
+        static::__assert_equals('rsx/app/a/card.scss', ide_best_id_match($files, 'Probe_Panel', ['scss'])['file']);
         static::__assert_null(ide_best_id_match($files, 'Odd'), 'an id on a kind the order does not know is not a declaration');
         static::__assert_null(ide_best_id_match($files, 'Missing'));
     }

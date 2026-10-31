@@ -39,6 +39,15 @@ class Type_Ref_Morph_Map_Swap_Test extends Rsx_Test_Abstract
     /** An id far outside any real _type_refs sequence. */
     private const PHANTOM_ID = '987654321';
 
+    /**
+     * Registered HERE, outside the per-test transaction: a registration commits on a side
+     * connection, which a test's open REPEATABLE READ snapshot cannot see.
+     */
+    public static function setup(): void
+    {
+        Type_Ref_Registry::class_to_id('Site_Model');
+    }
+
     public static function teardown(): void
     {
         // Leave the process with a map that matches this database.
@@ -87,11 +96,6 @@ class Type_Ref_Morph_Map_Swap_Test extends Rsx_Test_Abstract
      */
     public static function test_every_integer_alias_matches_the_registry()
     {
-        // Guarantee the registry has at least one ref before the reload. A freshly
-        // provisioned test schema mints them lazily, so an empty _type_refs is the normal
-        // starting state here and would leave nothing to compare.
-        Type_Ref_Registry::class_to_id('Site_Model');
-
         Type_Ref_Registry::_reload_for_database_swap();
 
         $checked = 0;

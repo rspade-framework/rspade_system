@@ -87,6 +87,14 @@ THE WIRING CONTRACT
     include Login_Redirect::hidden_input() in its forms; the rejection point uses
     capture(); the terminal destination decision uses consume() exactly once.
 
+    AN APPLICATION'S OWN HOPS OWE THE SAME. An accept-invite page, an account-already-
+    exists redirect and a forgot-password request are login-flow hops like any other:
+    a visitor bounced from a shared link who has to create an account or reset a
+    password must still land on that link. A hop that answers over Ajax has no URL to
+    carry the value through: park it beside the challenge (the template's
+    Portal_Login_Controller::REDIRECT_KEY) or send Login_Redirect.params() with the call
+    (Passkey_Sign_In does).
+
     A hop that drops the param degrades gracefully - the user lands on the default
     destination (today's behavior), never an error. Dropping the param at a hop is
     a legitimate, deliberate choice when a flow owns its own destination (e.g. an
@@ -247,8 +255,49 @@ PORTAL PARITY
         The portal login form (and the invitation register form) carry
         {!! Login_Redirect::hidden_input() !!} so the value survives the POST hop.
         Portal_Login_Controller and Portal_Register_Controller consume() at their
-        terminal - the flow-owned invited-client workspace still WINS, and
-        consume() supplies the dashboard default.
+        terminal, and a threaded redirect WINS over the invited client's workspace:
+        it is what the person set out to open.
+
+LOGIN NOTICES
+    A flow that ends on a sign-in page often owes the visitor a sentence: "You have
+    been logged out", "This invitation has expired". A session flash is the wrong
+    carrier - it renders as a floating toast and is lost on a second hop - and a
+    free-text ?message= lets a crafted link write on your sign-in page. So the
+    sentence travels as a fixed CODE beside the redirect, and the page renders it
+    inline. Login_Notice is the contract.
+
+    The application declares the codes, in rsx/resource/config/rsx.php:
+
+        'login_notices' => [
+            'logged_out' => ['level' => 'notice', 'text' => 'You have been logged out.'],
+            'invitation_expired' => [
+                'level' => 'error',
+                'text' => 'This invitation has expired. Contact {name} for a new one.',
+            ],
+        ],
+
+    level is notice or error; {name} is config('rsx.name').
+
+    Login_Notice::params(string $code): array
+        The parameter carrying $code, merged into the route to the sign-in page beside
+        Login_Redirect::params(). Throws for a code nobody declared - a developer's
+        mistake.
+
+    Login_Notice::current(): ?array
+        The notice this request carries, {code, level, text}, or null. An undeclared
+        code reads as null, the same silent degradation a hostile ?redirect= gets: no
+        free text crosses the URL, so a crafted link can show nothing but a sentence
+        the application wrote.
+
+        return redirect(Rsx_Portal::Route('Portal_Login_Controller::index',
+            Login_Notice::params('invitation_expired') + Login_Redirect::params()));
+
+        @php $notice = Login_Notice::current(); @endphp
+        @if ($notice)
+            <div class="alert {{ $notice['level'] === 'error' ? 'alert-danger' : 'alert-info' }}">
+                {{ $notice['text'] }}
+            </div>
+        @endif
 
 EXAMPLES
     App main.php rejection point:
