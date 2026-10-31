@@ -152,7 +152,7 @@ function install_helpers() {
     };
 }
 
-const long_lived = (answer) => answer.status === 200 && /max-age=31536000/.test(answer.cache_control) && !/no-store/.test(answer.cache_control);
+const long_lived = (answer) => answer.status === 200 && /max-age=604800/.test(answer.cache_control) && /private/.test(answer.cache_control) && !/no-store/.test(answer.cache_control);
 const uncacheable = (answer) => answer.status === 200 && /no-store/.test(answer.cache_control) && !/max-age/.test(answer.cache_control);
 const version_of = (url) => { const m = (url || '').match(/[?&]v=([0-9]+-[0-9]+)$/); return m ? m[1] : null; };
 

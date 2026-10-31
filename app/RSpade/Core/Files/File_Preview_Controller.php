@@ -264,7 +264,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         return File_Attachment_Controller::apply_content_version_cache_policy(Response::file($path, [
             'Content-Type' => 'text/html; charset=UTF-8',
             'Content-Disposition' => Rsx_File_Name::disposition('inline', static::__sheet_filename($attachment->file_name)),
-            'Cache-Control' => 'public, max-age=31536000, immutable',
+            'Cache-Control' => File_Attachment_Controller::GATED_BYTES_CACHE_CONTROL . ', immutable',
             // Belt and braces around already-purified markup: no script, no plugin, no frame,
             // and no outbound request of any kind. Images are inlined as data: URIs by the
             // generator, so img-src needs nothing else.
@@ -425,7 +425,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         return File_Attachment_Controller::harden_file_response(File_Attachment_Controller::apply_content_version_cache_policy(Response::file($path, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => Rsx_File_Name::disposition('inline', $file_name),
-            'Cache-Control' => 'public, max-age=31536000, immutable',
+            'Cache-Control' => File_Attachment_Controller::GATED_BYTES_CACHE_CONTROL . ', immutable',
         ]), $attachment, $params));
     }
 

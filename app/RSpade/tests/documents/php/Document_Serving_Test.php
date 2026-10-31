@@ -225,9 +225,9 @@ class Document_Serving_Test extends Rsx_Test_Abstract
         static::__assert_equals(200, $response->getStatusCode(), 'the thumbnail serves');
         static::__assert_contains('WEBP', substr($data, 0, 16), 'the response is a WebP raster');
         static::__assert_contains(
-            'max-age=31536000',
+            'max-age=604800, private',
             (string) $response->headers->get('Cache-Control'),
-            'a real render is cacheable for a year'
+            'a real render is cacheable for a week, privately'
         );
         static::__assert_true(file_exists($cache_path), 'the real render IS written to the cache');
 
@@ -302,7 +302,7 @@ class Document_Serving_Test extends Rsx_Test_Abstract
         // The URL built after the render: the real raster, kept for a year.
         $response = static::__request_thumbnail($attachment, 120, $rendered_version);
         static::__assert_equals(200, $response->getStatusCode(), 'the endpoint serves the current version');
-        static::__assert_contains('max-age=31536000', (string) $response->headers->get('Cache-Control'), 'the current URL is cacheable for a year');
+        static::__assert_contains('max-age=604800, private', (string) $response->headers->get('Cache-Control'), 'the current URL is cacheable for a week, privately');
 
         // The URL a page built while the document was queued: the same real raster, never kept -
         // a browser must not pin under the placeholder's URL what that URL no longer describes.

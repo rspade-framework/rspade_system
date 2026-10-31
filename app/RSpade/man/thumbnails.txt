@@ -215,7 +215,8 @@ CACHING BEHAVIOR
 
     ?v= - THE BROWSER'S CACHE KEY
     -----------------------------
-    Real thumbnails are served with max-age=31536000, and the picture behind an
+    Real thumbnails are served private, max-age=604800 (a week, the requester's own
+    browser only - never a shared cache, since the route is gated), and the picture behind an
     attachment's key changes twice in its life: when a document's render lands (the
     placeholder gives way to page 1), and when the attachment is pointed at other
     bytes (relink_storage()). Every thumbnail URL therefore carries the attachment's
@@ -226,7 +227,7 @@ CACHING BEHAVIOR
 
     The route always serves the CURRENT picture, whatever v says. v decides whether
     the browser may keep it: a real raster requested at the current version is
-    cacheable for a year; a request with no v, or with a version since superseded, is
+    cacheable for a week; a request with no v, or with a version since superseded, is
     answered no-store - as a placeholder always is. So the URL a page built while a
     document was queued can never pin the raster under the placeholder's name, and a
     hand-concatenated URL is never pinned at all.

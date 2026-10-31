@@ -516,11 +516,19 @@ FILE ACCESS
         the cache policy, on every attachment-addressed route (/_inline,
         /_download, both thumbnail routes, /_preview/pdf, /_preview/sheet):
 
-            v is the attachment's current version   the route's long-lived
-                                                    Cache-Control
+            v is the attachment's current version   Cache-Control: private,
+                                                    max-age=604800 (/_preview:
+                                                    the same, immutable)
             v absent, or not current                Cache-Control: no-store
 
-        So a builder's URL is cached for a year and is simply never requested
+        PRIVATE, ALWAYS. These routes are gated on every request (the file read
+        gates), so their bytes may be kept by the requester's own browser and
+        never by a shared cache - a proxy or a CDN in front of the application
+        that stored one would hand it to anyone presenting the URL, revoked
+        access included, without the request reaching the gate. A copy already
+        in a browser survives a revocation for that browser, for up to the week.
+
+        So a builder's URL is cached for a week and is simply never requested
         again once the bytes change - the next payload carries another URL -
         while a URL somebody typed, bookmarked or concatenated from the key,
         and a URL a page held from before the change, are answered correctly
@@ -1078,7 +1086,7 @@ DOWNLOAD AND INLINE VIEWING
 
     Serve the bytes for download or in-browser display. Content-Type is the raw
     sniffed mime (a security choice, see FILE TYPE DETECTION). Cache-Control:
-    public, max-age=31536000 for a request whose ?v= is the attachment's
+    private, max-age=604800 for a request whose ?v= is the attachment's
     current content version, no-store for any other (FILE ACCESS, THE CONTENT
     VERSION) - the bytes served are the attachment's current ones either way.
 
@@ -1265,7 +1273,7 @@ THUMBNAILS
         2x for retina (a 300x200 request produces a 600x400 image), never
         upscaling past the source and never past the configured max. Output is
         WebP; results are cached in the filesystem thumbnail cache (there is no
-        database thumbnail model). Cache-Control: public, max-age=31536000 for a
+        database thumbnail model). Cache-Control: private, max-age=604800 for a
         real raster requested at the attachment's current content version;
         no-store for a placeholder, and for a request with no ?v= or a
         superseded one.

@@ -360,9 +360,13 @@ report_sealed_build_failure() {
 report_pending_migrations() {
     # An unsealed box refuses every command but the build, migrate:pending included.
     [ "$SEALED_BUILD_FAILED" = true ] && return 0
-    if artisan migrate:pending 2>/dev/null | grep -qv "No pending migrations"; then
+    # migrate:status_notice is the one wording for it (the framework pull and the build
+    # print the same line): silent when nothing is pending.
+    local notice
+    notice="$(artisan migrate:status_notice 2>/dev/null || true)"
+    if [ -n "$notice" ]; then
         note ""
-        warn "There are pending migrations. Run: php artisan migrate"
+        warn "$notice"
     fi
 }
 

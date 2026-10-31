@@ -41,7 +41,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  */
 class Attachment_Content_Version_Test extends Rsx_Test_Abstract
 {
-    private const LONG_LIVED = 'max-age=31536000';
+    private const LONG_LIVED = 'max-age=604800';
 
     /** @var array<int> ids of attachments created during the class, destroyed in teardown. */
     private static $created_attachment_ids = [];
@@ -188,7 +188,9 @@ class Attachment_Content_Version_Test extends Rsx_Test_Abstract
 
         $response = $call($key + ['v' => $current]);
         static::__assert_equals(200, $response->getStatusCode(), "{$route}: serves for the current version");
-        static::__assert_contains(self::LONG_LIVED, static::__cache_control($response), "{$route}: the current version is cacheable for a year");
+        static::__assert_contains(self::LONG_LIVED, static::__cache_control($response), "{$route}: the current version is cacheable for a week, by the requester's browser only");
+        static::__assert_contains('private', static::__cache_control($response), "{$route}: gated bytes are kept by the requester's browser only");
+        static::__assert_false(str_contains(static::__cache_control($response), 'public'), "{$route}: gated bytes are never shared-cacheable");
         static::__assert_false(str_contains(static::__cache_control($response), 'no-store'), "{$route}: the current version is not no-store");
 
         $response = $call($key + ['v' => $stale_version]);

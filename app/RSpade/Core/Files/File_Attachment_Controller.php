@@ -401,13 +401,27 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     }
 
     /**
+     * The Cache-Control of every response that serves a STORED FILE's bytes - inline, download,
+     * thumbnails, the PDF and spreadsheet renditions. PRIVATE: these routes are gated on every
+     * request (the file.*.authorize gates), and a shared cache in front of the application (a
+     * proxy, a CDN) that stored one would hand the bytes to anyone presenting the URL, revoked
+     * access included, without the request ever reaching the gate. The browser's own copy is
+     * kept for a week; the ?v= content version moves the URL when the bytes change, and a
+     * request not naming the current version is no-store (apply_content_version_cache_policy()).
+     * Framework artwork and libraries (file-type icons, pdf.js) are not stored files and stay
+     * public.
+     */
+    public const GATED_BYTES_CACHE_CONTROL = 'private, max-age=604800';
+
+    /**
      * Decide whether a file response may keep the long-lived cache headers its route gave it.
      *
      * THE RULE, for every attachment-addressed route (/_inline, /_download, both thumbnail
      * routes, /_preview/pdf, /_preview/sheet): the bytes served are always the attachment's
      * CURRENT bytes, and the response is cacheable only when the request's `v` equals the
      * attachment's current content version (File_Attachment_Model::content_version()). A
-     * request with no `v`, or with the `v` of bytes since replaced, is answered `no-store`.
+     * request with no `v`, or with the `v` of bytes since replaced, is answered `no-store`;
+     * a cacheable one is PRIVATE (GATED_BYTES_CACHE_CONTROL - these routes are gated).
      *
      * An attachment's key is stable while its bytes are not, so a response cached under a bare
      * key URL would be shown - and on /_download, handed over - long after the file changed.
@@ -440,6 +454,15 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
 
         if (!$attachment->is_current_content_version($params['v'] ?? null)) {
             $response->headers->set('Cache-Control', 'no-store');
+
+            return $response;
+        }
+
+        // Private whatever built the response: Response::file() constructs a
+        // BinaryFileResponse that marks itself public (GATED_BYTES_CACHE_CONTROL). A
+        // no-store response (a placeholder thumbnail) is already kept by nobody.
+        if (!$response->headers->hasCacheControlDirective('no-store')) {
+            $response->setPrivate();
         }
 
         return $response;
@@ -524,7 +547,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Content-Type from the attachment's RAW SNIFFED mime_type (NOT pipeline_mime()) - serving
         // is a security boundary (stored-XSS via HTML-in-a-.pdf must serve as its sniffed type, not
         // the extension's claim). Omit if genuinely unknown so the browser can sniff.
-        $headers = ['Cache-Control' => 'public, max-age=31536000']; // 1 year
+        $headers = ['Cache-Control' => static::GATED_BYTES_CACHE_CONTROL];
         if (!empty($attachment->mime_type)) {
             $headers['Content-Type'] = $attachment->mime_type;
         }
@@ -601,7 +624,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // is a security boundary; keep the conservative sniffed type. Omit if genuinely unknown so
         // the browser can sniff.
         $headers = [
-            'Cache-Control' => 'public, max-age=31536000', // 1 year
+            'Cache-Control' => static::GATED_BYTES_CACHE_CONTROL,
             'Content-Disposition' => Rsx_File_Name::disposition('inline', $attachment->file_name),
         ];
         if (!empty($attachment->mime_type)) {
@@ -1037,9 +1060,9 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      *
      *   NOT_REQUIRED  Nothing to wait for - an image, a PDF, a zip. Rasterize the resident blob
      *                 through the renderer registry (or substitute the extension icon), cache
-     *                 under the real key, serve with a one-year max-age - which the two routes
-     *                 keep only for a request naming the attachment's current content version
-     *                 (apply_content_version_cache_policy()).
+     *                 under the real key, serve with GATED_BYTES_CACHE_CONTROL (private, a
+     *                 week) - which the two routes keep only for a request naming the
+     *                 attachment's current content version (apply_content_version_cache_policy()).
      *
      *   PENDING /     No real thumbnail exists YET (PENDING) or ever will (FAILED). The extension
      *   FAILED        icon is served as an explicit PLACEHOLDER: Cache-Control: no-store, and
@@ -1048,7 +1071,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      *                 want - so writing an icon under it poisons it permanently: a later cache hit
      *                 is a cache hit, and no success ever replaces it. The cache is not READ here
      *                 either, so a stale entry left by an older install is bypassed rather than
-     *                 served for a year.
+     *                 served for a week.
      *
      *   RENDERED      The pixels come from the PDF rendition the background worker produced, not
      *                 from the blob (the blob is a .docx - unreadable to Imagick). Page 1 of the
@@ -1147,7 +1170,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Return thumbnail (serve from memory, don't re-read from disk)
         return Response::make($thumbnail_data, 200, [
             'Content-Type' => 'image/webp',
-            'Cache-Control' => 'public, max-age=31536000', // 1 year
+            'Cache-Control' => static::GATED_BYTES_CACHE_CONTROL,
         ]);
     }
 
@@ -1156,8 +1179,8 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * exist yet (or never will), so the browser gets something to draw and an explicit instruction
      * not to keep it.
      *
-     * no-store, not max-age=0: the thumbnail routes are otherwise served for a year, and a
-     * placeholder that lingers in any cache - browser, proxy or the framework's own disk cache -
+     * no-store, not max-age=0: the thumbnail routes are otherwise kept by the browser for a
+     * week, and a placeholder that lingers in any cache - browser or the framework's own disk cache -
      * outlives the render it is standing in for. Nothing is written to the thumbnail cache here,
      * ever: those filenames are keyed on the blob hash and belong to the real render.
      *
@@ -1733,7 +1756,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Serve file
         return Response::file($cache_path, [
             'Content-Type' => 'image/webp',
-            'Cache-Control' => 'public, max-age=31536000', // 1 year
+            'Cache-Control' => static::GATED_BYTES_CACHE_CONTROL,
         ]);
     }
 
