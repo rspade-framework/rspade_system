@@ -184,8 +184,10 @@ class Form_Edit_Test extends Rsx_Test_Abstract
         static::__assert_equals('field_conflict', $question['kind']);
         static::__assert_count(1, $question['fields'], 'only the overlapping field');
         static::__assert_equals('level_id', $question['fields'][0]['field']);
-        static::__assert_equals('High', $question['fields'][0]['theirs'], 'an enum reads as its label');
+        static::__assert_equals('enum', $question['fields'][0]['kind']);
+        static::__assert_equals('High', $question['fields'][0]['current'], 'an enum reads as its label');
         static::__assert_equals('Low', $question['fields'][0]['yours']);
+        static::__assert_equals('Low', $question['fields'][0]['loaded'], 'what the form was opened with');
 
         static::__assert_equals('Original', static::__stored($record->id)->name, 'nothing written before the answer');
     }
@@ -295,7 +297,7 @@ class Form_Edit_Test extends Rsx_Test_Abstract
     }
 
     /** FE-14 */
-    public static function test_the_question_names_the_person_who_made_the_other_save()
+    public static function test_the_question_hands_back_editors_as_references()
     {
         $record = static::__record();
         $loaded = static::__version($record);
@@ -307,17 +309,92 @@ class Form_Edit_Test extends Rsx_Test_Abstract
             static::__reset_session();
         }
 
-        $field = static::__submit($record, $loaded, ['name' => 'Mine'])->get_metadata()['question']['fields'][0];
+        $question = static::__submit($record, $loaded, ['name' => 'Mine'])->get_metadata()['question'];
+        $revision = static::__latest_revision($record->id);
+        $reference = ['type' => class_basename($revision->created_by), 'id' => (int) $revision->created_by->getKey()];
 
-        // The actor the revision was stamped with, named as every author display names it.
-        $revision = Revision_Model::where('record_type', 'Form_Edit_Fixture_Model')
-            ->where('record_id', $record->id)
+        static::__assert_equals([$reference], $question['editors'], 'one editor, as a reference');
+        static::__assert_equals($reference, $question['fields'][0]['changes'][0]['by']);
+        static::__assert_equals(Rsx_Time::to_iso($revision->created_at), $question['fields'][0]['changes'][0]['at'], 'the instant, unformatted');
+        static::__assert_equals('Original', $question['fields'][0]['changes'][0]['from']);
+        static::__assert_equals('Theirs', $question['fields'][0]['changes'][0]['to']);
+        static::__assert_equals(['type' => 'Form_Edit_Fixture_Model', 'id' => (int) $record->id], $question['record']);
+    }
+
+    /** FE-15 */
+    public static function test_two_editors_are_both_listed_and_nobody_is_null()
+    {
+        $record = static::__record();
+        $loaded = static::__version($record);
+
+        static::__acting_as_user(1);
+        try {
+            static::__other_save($record->id, 'name', 'First');
+        } finally {
+            static::__reset_session();
+        }
+        static::__other_save($record->id, 'name', 'Second');
+
+        $question = static::__submit($record, $loaded, ['name' => 'Mine'])->get_metadata()['question'];
+
+        static::__assert_count(2, $question['editors'], 'each editor once');
+        static::__assert_equals(null, $question['editors'][1], 'a save nobody signed in made');
+        static::__assert_equals(['First', 'Second'], array_column($question['fields'][0]['changes'], 'to'), 'every change, in order');
+        static::__assert_equals('Second', $question['fields'][0]['current']);
+    }
+
+    /** FE-16 */
+    public static function test_a_field_set_to_the_value_already_saved_is_not_asked_about()
+    {
+        $record = static::__record();
+        $loaded = static::__version($record);
+
+        static::__other_save($record->id, 'name', 'Same');
+        $result = static::__submit($record, $loaded, ['name' => 'Same']);
+
+        static::__assert_true(is_array($result), 'nothing would be overwritten, so no question');
+        static::__assert_equals('Same', static::__stored($record->id)->name);
+    }
+
+    /** FE-17 */
+    public static function test_a_revision_names_the_actor_the_record_stamp_names()
+    {
+        $record = static::__record();
+
+        static::__acting_as_user(1);
+        try {
+            static::__other_save($record->id, 'name', 'Theirs');
+        } finally {
+            static::__reset_session();
+        }
+
+        $stored = DB::table('form_edit_fixtures')->where('id', $record->id)->first(['updated_by_type', 'updated_by_id']);
+        $revision = DB::table('_revisions')->orderBy('id', 'desc')->first(['created_by_type', 'created_by_id']);
+
+        static::__assert_equals((int) $stored->updated_by_type, (int) $revision->created_by_type, 'the same actor model');
+        static::__assert_equals((int) $stored->updated_by_id, (int) $revision->created_by_id, 'the same actor');
+    }
+
+    /** FE-18 */
+    public static function test_the_view_url_the_endpoint_passes_rides_the_question()
+    {
+        $record = static::__record();
+        $loaded = static::__version($record);
+        static::__other_save($record->id, 'name', 'Theirs');
+
+        usleep(3000);
+        $params = ['name' => 'Mine', '_changed' => ['name'], '_loaded_updated_at' => $loaded];
+        $result = Form_Edit::run($record, $params, fn () => [], '/records/' . $record->id);
+
+        static::__assert_equals('/records/' . $record->id, $result->get_metadata()['question']['view_url']);
+    }
+
+    private static function __latest_revision(int $record_id): Revision_Model
+    {
+        return Revision_Model::where('record_type', 'Form_Edit_Fixture_Model')
+            ->where('record_id', $record_id)
             ->orderBy('id', 'desc')
             ->first();
-        $actor = $revision->created_by;
-
-        static::__assert_not_null($actor, 'the other save was stamped with the signed-in person');
-        static::__assert_equals($actor->get_printed_name(), $field['changed_by'], 'the person who saved it, by name');
     }
 
     /** FE-13 */
@@ -329,8 +406,9 @@ class Form_Edit_Test extends Rsx_Test_Abstract
         static::__other_save($record->id, 'secret_token', 'their secret');
         $field = static::__submit($record, $loaded, ['secret_token' => 'my secret'])->get_metadata()['question']['fields'][0];
 
-        static::__assert_true($field['redacted']);
-        static::__assert_equals(null, $field['theirs']);
+        static::__assert_equals('secret', $field['kind']);
+        static::__assert_equals(null, $field['current']);
         static::__assert_equals(null, $field['yours']);
+        static::__assert_equals(null, $field['changes'][0]['to'], 'no value anywhere in the row');
     }
 }

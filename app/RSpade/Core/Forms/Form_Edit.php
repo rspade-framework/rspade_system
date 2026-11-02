@@ -78,6 +78,17 @@ class Form_Edit
     /** @var array<int, string> Fields the user chose to leave as the other person saved them. */
     private array $kept = [];
 
+    /** Where the record's current version can be viewed, for the question's link; null for none. */
+    private ?string $view_url = null;
+
+    /** The kinds of field a question row can be: how its values may be shown. */
+    public const FIELD_VALUE = 'value';
+    public const FIELD_ENUM = 'enum';
+    public const FIELD_REFERENCE = 'reference';
+    public const FIELD_FORMATTED_TEXT = 'formatted_text';
+    public const FIELD_STRUCTURED = 'structured';
+    public const FIELD_SECRET = 'secret';
+
     private function __construct(Rsx_Model_Abstract $record, ?array $changed)
     {
         $this->record = $record;
@@ -94,7 +105,7 @@ class Form_Edit
      * @return mixed The callback's result, with `updated_at` added when it is an array, or
      *     the response asking the question or reporting the record gone
      */
-    public static function run(Rsx_Model_Abstract $record, array $params, callable $write)
+    public static function run(Rsx_Model_Abstract $record, array $params, callable $write, ?string $view_url = null)
     {
         $class = get_class($record);
 
@@ -105,7 +116,7 @@ class Form_Edit
             );
         }
 
-        return DB::transaction(function () use ($class, $record, $params, $write) {
+        return DB::transaction(function () use ($class, $record, $params, $write, $view_url) {
             if (!$record->exists) {
                 return static::__finish($record, $write(new static($record, null)));
             }
@@ -129,6 +140,7 @@ class Form_Edit
             $record->refresh();
 
             $edit = new static($record, array_values(array_filter($changed, 'is_string')));
+            $edit->view_url = $view_url;
             $question = $edit->__resolve_conflicts(Rsx_Time::to_database($loaded), $params);
 
             return $question ?? static::__finish($record, $write($edit));
@@ -196,17 +208,17 @@ class Form_Edit
             ->result_set();
 
         $any_revision = false;
-        $conflicts = [];
+        $changes = [];
         $newest = 0;
 
-        // Oldest first: a field changed twice reports its latest editor.
+        // Oldest first, so each field's changes read in the order they were saved.
         foreach ($revisions as $revision) {
             $any_revision = true;
             $newest = max($newest, (int) $revision->id);
 
             foreach ($revision->diff() as $field => $values) {
                 if (in_array($field, $this->changed, true)) {
-                    $conflicts[$field] = $revision;
+                    $changes[$field][] = ['revision' => $revision, 'from' => $values[0] ?? null, 'to' => $values[1] ?? null];
                 }
             }
         }
@@ -214,6 +226,14 @@ class Form_Edit
         if (!$any_revision) {
             return $this->__resolve_unattributed($current, $params);
         }
+
+        // A field this submission sets to the value the other editor already saved overwrites
+        // nothing, so it is not asked about.
+        $conflicts = array_filter(
+            $changes,
+            fn ($field) => !$this->__same_value($field, $this->record->{$field}, $params[$field] ?? null),
+            ARRAY_FILTER_USE_KEY
+        );
 
         if (empty($conflicts)) {
             return null;
@@ -225,14 +245,7 @@ class Form_Edit
         $answer = Form_Questions::answer($params, $key);
 
         if ($answer === null) {
-            return response_form_question($key, [
-                'kind' => 'field_conflict',
-                'title' => 'This record changed while you were editing',
-                'body' => 'Someone else saved a new value in a field you changed. Your other changes are not affected.',
-                'confirm_label' => 'Use my values',
-                'cancel_label' => 'Keep theirs',
-                'fields' => $this->__describe_conflicts($conflicts, $params),
-            ]);
+            return response_form_question($key, $this->__question($conflicts, $params));
         }
 
         if ($answer === false) {
@@ -271,33 +284,130 @@ class Form_Edit
     }
 
     /**
-     * The rows of the question's table: each field, its stored value and the submitted one,
-     * in words a person can compare, and who saved it. A never-exported column says only
-     * that it changed.
+     * The field_conflict question: what will be overwritten, by whom it was saved, and what
+     * this submission writes instead. Editors are references - {type, id}, null for a write
+     * nobody signed in made - and times are ISO: showing a person and a time is the
+     * application's job, with its own components and formatters. Each field carries its KIND,
+     * so a renderer knows which values can be shown as text (rsx:man form_conventions,
+     * EDITING A RECORD).
      *
-     * @param array<string, Revision_Model> $conflicts
-     * @return array<int, array>
+     * @param array<string, array<int, array{revision: Revision_Model, from: mixed, to: mixed}>> $conflicts
      */
-    private function __describe_conflicts(array $conflicts, array $params): array
+    private function __question(array $conflicts, array $params): array
     {
+        $editors = [];
         $fields = [];
 
-        foreach ($conflicts as $field => $revision) {
-            $diff = $revision->diff();
-            $redacted = Revision_Model::is_redacted($diff[$field][1] ?? null);
-            $author = $revision->get_created_by_author();
+        foreach ($conflicts as $field => $field_changes) {
+            $kind = $this->__kind($field);
+            $rows = [];
+
+            foreach ($field_changes as $change) {
+                $by = $this->__editor($change['revision']);
+                $editors[$by === null ? 'null' : $by['type'] . ':' . $by['id']] = $by;
+
+                $rows[] = [
+                    'by' => $by,
+                    'at' => Rsx_Time::to_iso($change['revision']->created_at),
+                    'from' => $this->__shown($kind, $field, $change['from']),
+                    'to' => $this->__shown($kind, $field, $change['to']),
+                ];
+            }
 
             $fields[] = [
                 'field' => $field,
-                'theirs' => $redacted ? null : $this->__display($field, $this->record->{$field}),
-                'yours' => $redacted ? null : $this->__display($field, $params[$field] ?? null),
-                'redacted' => $redacted,
-                'changed_by' => $author['name'] ?? null,
-                'changed_at' => Rsx_Time::format_timestamp($revision->created_at),
+                'kind' => $kind,
+                'loaded' => $rows[0]['from'],
+                'current' => $this->__shown($kind, $field, $this->record->{$field}),
+                'yours' => $this->__shown($kind, $field, $params[$field] ?? null),
+                'changes' => $rows,
             ];
         }
 
-        return $fields;
+        return [
+            'kind' => 'field_conflict',
+            'title' => 'This record changed while you were editing',
+            'body' => 'Saving will overwrite values another editor saved after you opened this form. Your other changes are not affected.',
+            'confirm_label' => 'Overwrite',
+            'cancel_label' => 'Keep theirs',
+            'record' => ['type' => class_basename($this->record), 'id' => (int) $this->record->getKey()],
+            'view_url' => $this->view_url,
+            'editors' => array_values($editors),
+            'fields' => $fields,
+        ];
+    }
+
+    /** The entity a revision names as its author, as a reference; null when nobody acted. */
+    private function __editor(Revision_Model $revision): ?array
+    {
+        // An empty pair is a write nobody signed in made; asking the morph for it would query
+        // the revision's own table.
+        if (empty($revision->created_by_type) || empty($revision->created_by_id)) {
+            return null;
+        }
+
+        $actor = $revision->created_by()->withTrashed()->first();
+
+        return $actor ? ['type' => class_basename($actor), 'id' => (int) $actor->getKey()] : null;
+    }
+
+    /**
+     * What a field holds, for a renderer: a secret, a structured value (an array or JSON
+     * document), a declared text type, an enum, a reference to another record (a foreign key,
+     * or either half of a polymorphic pair), or a plain value.
+     */
+    private function __kind(string $field): string
+    {
+        $class = get_class($this->record);
+
+        if (in_array($field, $class::never_exported_columns(), true)) {
+            return self::FIELD_SECRET;
+        }
+
+        if (isset($class::$text_types[$field])) {
+            return self::FIELD_FORMATTED_TEXT;
+        }
+
+        if (isset($class::$enums[$field])) {
+            return self::FIELD_ENUM;
+        }
+
+        if (preg_match('/^(.+)_(id|type)$/', $field, $match) && method_exists($this->record, $match[1])) {
+            return self::FIELD_REFERENCE;
+        }
+
+        $value = $this->record->{$field};
+        if (is_array($value) || is_object($value) && !$value instanceof Rsx_Text_Abstract
+            || is_string($value) && $value !== '' && in_array($value[0], ['[', '{'], true) && json_decode($value) !== null) {
+            return self::FIELD_STRUCTURED;
+        }
+
+        return self::FIELD_VALUE;
+    }
+
+    /** A value as the row carries it: text for a kind that has some, null for a secret or a structure. */
+    private function __shown(string $kind, string $field, $value): ?string
+    {
+        if ($kind === self::FIELD_SECRET || $kind === self::FIELD_STRUCTURED || Revision_Model::is_redacted($value)) {
+            return null;
+        }
+
+        return $this->__display($field, $value);
+    }
+
+    /** Does the submission set $field to what is stored now? Compared stored-form and as shown. */
+    private function __same_value(string $field, $stored, $submitted): bool
+    {
+        $plain = fn ($value) => $value instanceof Rsx_Text_Abstract ? $value->to_plain_text() : $value;
+
+        if (is_scalar($plain($stored)) || $stored === null) {
+            if ((string) $plain($stored) === (string) (is_scalar($plain($submitted)) ? $plain($submitted) : json_encode($plain($submitted)))) {
+                return true;
+            }
+        }
+
+        return $this->__kind($field) !== self::FIELD_SECRET
+            && $this->__display($field, $stored) === $this->__display($field, $submitted);
     }
 
     /** One value as a person reads it: an enum's label, a referenced record's name, plain text. */

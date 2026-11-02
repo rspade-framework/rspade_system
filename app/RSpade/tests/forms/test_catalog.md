@@ -156,8 +156,12 @@ Real keyboard input on a runtime-mounted widget on `/_sys`.
 | FE-10 | a submission without its edit state is refused | no `_changed` | throws | implemented |
 | FE-11 | a record deleted meanwhile answers not found | deleted row | `ERROR_NOT_FOUND` | implemented |
 | FE-12 | the record is read under a row lock | query log | one `for update` read | implemented |
-| FE-14 | the question names the person who made the other save | another save as signed-in user 1, then an overlapping submission | `changed_by` is that user's printed name | implemented |
 | FE-13 | a secret column says only that it changed | overlap on a never-exported column | `redacted`, no values | implemented |
+| FE-14 | the question hands back editors as references | another save as signed-in user 1 | `editors` and each change's `by` are `{type, id}`; `at` ISO; `from`/`to`; `record` | implemented |
+| FE-15 | two editors are both listed, nobody is null | a signed-in save, then one with nobody acting | two editors, the second null; both changes in order | implemented |
+| FE-16 | a field set to the value already saved is not asked about | the same value as the other save | no question; written | implemented |
+| FE-17 | a revision names the actor the record's stamp names | a signed-in save | the revision's created_by pair equals the record's updated_by pair | implemented |
+| FE-18 | the view URL the endpoint passes rides the question | `run(..., $view_url)` | `question.view_url` | implemented |
 
 ## form_edit_state.js (playwright) - what a form tells an endpoint about an edit
 

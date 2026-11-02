@@ -114,11 +114,13 @@ public static function save(Request $request, array $params = [])
 
         Flash_Alert::success('Saved');
         return ['redirect' => Rsx::Route('Tasks_View_Action', $task->id)];
-    });
+    }, $task->exists ? Rsx::Route('Tasks_View_Action', $task->id) : null);   // the conflict dialog's view link
 }
 ```
 
 **A form that edits a record saves through `Form_Edit`.** The form sends `_changed` and `_loaded_updated_at` beside all the values; `run()` takes a row lock, refreshes the record and asks a `field_conflict` question ONLY when another save changed a field this submission also changed. `$edit->set()` assigns a field only if it is being written; `$edit->changed($field)` is the test for a pivot, a detail field or a composed value. **Required: the model declares `$revisions = true`, and the `$data` seed carries `updated_at`** (both fail loud). Never inside your own `DB::transaction()`. `rsx:man form_conventions`, EDITING A RECORD.
+
+**The conflict question hands over facts, never presentation**: `editors` and each change's `by` are `{type, id}` references (a staff user, a portal user, an app's own actor class, or `null` for nobody), times are ISO, and each field row says its `kind` (`value`, `enum`, `reference`, `formatted_text`, `structured`, `secret`) with `loaded`/`current`/`yours`. Only fields this save would actually change are listed. The application renders it; the expected dialog lists what will be overwritten, names one editor in the notice or several per row, links `view_url` in a new window, and offers Back and Overwrite. `rsx:man form_conventions`, QUESTIONS.
 
 **A server-side length check reads the column, never a literal**: `Model::field_length('col')`
 is the same number the input's `$max_length` binds, so `strlen()` rules and a private

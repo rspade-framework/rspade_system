@@ -1,0 +1,85 @@
+THE field_conflict QUESTION CARRIES FACTS, NOT DISPLAY TEXT; REVISIONS NAME THE SITE USER
+Date: 2026-11-02
+
+IF YOU DO NOTHING: a field_conflict question handler written to the previous payload reads fields[].theirs and fields[].changed_by, which no longer exist, and shows blanks for the value being overwritten and the person who saved it.
+
+SUMMARY
+    Category 1: the shape of a payload your code reads changed. It also changes who a
+    revision names, which your history screens show.
+
+    Form_Edit's conflict question named the other editor with a string the framework
+    chose (their sign-in address) and formatted the time. An application could not show
+    a person its own way, link them, or tell a staff member from a portal user. The
+    question now hands over references and raw values, and the application presents
+    them. Revisions and their transactions now name the person the record's own audit
+    columns name: on a site, the site user rather than the sign-in identity.
+
+WHAT CHANGED
+
+    1. The field_conflict payload (rsx:man form_conventions, QUESTIONS):
+
+        record      {type, id}: the record being saved
+        view_url    the record's view page, from the endpoint, or null
+        editors     each person who saved a listed field, once: {type, id}, or null
+                    for a write nobody signed in made
+        fields[]    field, kind, loaded, current, yours, changes[{by, at, from, to}]
+
+       Removed: fields[].theirs (now current), fields[].redacted (now kind 'secret'),
+       fields[].changed_by and changed_at (now changes[].by and changes[].at, and
+       editors). Times are ISO 8601. confirm_label is now 'Overwrite'.
+
+    2. Only fields this submission would change are listed. A field the other editor
+       already set to the value being submitted is no conflict, and when every
+       overlapping field is like that, nobody is asked.
+
+    3. Form_Edit::run() takes a fourth argument, $view_url, carried on the question.
+
+    4. A revision's created_by pair, and a transaction's, name the actor the record's
+       own audit stamp names: a site's User_Model for a staff save on that site, a
+       Portal_User_Model for a portal save. They named the Login_User_Model before.
+       Rows written before this release keep the login identity.
+
+REQUIRED
+    In your question handler's field_conflict branch, read the new payload:
+
+    - Name editors from question.editors and each row's changes[].by. Resolve a
+      {type, id} reference with your own components; null is nobody signed in.
+    - Show the value being overwritten from fields[].current and yours from
+      fields[].yours. Use fields[].kind: a 'secret' or 'structured' row carries null
+      values, so say only that it changed.
+    - Format changes[].at yourself.
+
+    The reference implementation is the expected default - a notice naming the one
+    editor (or counting several, then named per row), the overwritten values beside
+    yours, a "View current" link to view_url in a new window, Back and Overwrite:
+
+        system/app/RSpade/resource/reference_app/lib/modal/modal.js
+            the field_conflict branch, Modal._field_conflict_body(), _field_value(),
+            _editor_name()
+
+    It resolves an editor through the model's own fetch_or_null() and prints a name;
+    use your own user and entity components instead where you have them. An answer of
+    false still means "keep theirs for every listed row, write the rest", for a dialog
+    that offers it.
+
+RECOMMENDED
+    - Pass $view_url to each Form_Edit::run() of an existing record, so the dialog can
+      link the current version:
+
+          return Form_Edit::run($client, $params, function (Form_Edit $edit) use (...) {
+              ...
+          }, $client->exists ? Rsx::Route('Clients_View_Action', $client->id) : null);
+
+      The template's client, contact, project, task, party and user endpoints do.
+
+    - History screens: get_created_by_author() on a revision or a transaction now
+      answers the site user for new rows, so a screen built on it shows a colleague's
+      name. If your code mapped a revision's login identity to a site user itself,
+      that mapping is now only needed for rows recorded before this release.
+
+VERIFICATION
+    Open a record's edit form. As a signed-in colleague, save a different value in one
+    of its fields. Change that field and submit: the dialog names the colleague (from
+    your component), shows their value as the one being overwritten, and links the
+    record. Save the same value they saved instead: nobody is asked. Open the record's
+    history: the change is attributed to the colleague's site user.

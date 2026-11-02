@@ -140,6 +140,12 @@ class Revision
             $transaction->site_id = self::_current_site_id();
             $transaction->actor_type = $actor === null ? null : $actor['type'];
             $transaction->actor_id = $actor === null ? null : $actor['id'];
+            // The row's authorship is its actor. Its own stamp could never match a site (a
+            // transaction is not a tenant's row) and would always name the login identity.
+            $transaction->created_by_type = $actor === null ? null : $actor['type'];
+            $transaction->created_by_id = $actor === null ? null : $actor['id'];
+            $transaction->updated_by_type = $actor === null ? null : $actor['type'];
+            $transaction->updated_by_id = $actor === null ? null : $actor['id'];
             $transaction->source_id = self::_current_source_id();
             $transaction->endpoint = self::$endpoint === null ? null : substr(self::$endpoint, 0, 255);
             $transaction->ip = self::_current_ip();
@@ -289,6 +295,13 @@ class Revision
         $revision->operation_id = $operation_id;
         $revision->record_updated_at = $record->getAttributes()['updated_at'] ?? null;
         $revision->sequence = count(self::$revisions) + 1;
+        // The author is the actor the record's own stamp names (a site user for a site's
+        // record), not the revision row's own stamp. Nobody acting leaves the pair NULL.
+        $author = $record->_revision_author();
+        $revision->created_by_type = $author['type'] ?? null;
+        $revision->created_by_id = $author['id'] ?? null;
+        $revision->updated_by_type = $author['type'] ?? null;
+        $revision->updated_by_id = $author['id'] ?? null;
         $revision->changes = Revision_Codec::encode(json_encode($diff, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         $revision->save();
 

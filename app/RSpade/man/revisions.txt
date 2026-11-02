@@ -460,6 +460,15 @@ API REFERENCE
     Revision::REDACTED
         The marker itself, '__RSX_REDACTED__'.
 
+    created_by
+        Who made the write: the actor the RECORD's own audit stamp names for it
+        (a site's User_Model for a site's record, a Portal_User_Model for a
+        portal write), the same answer as the record's updated_by pair, or null
+        when nobody was acting. A transaction's created_by is its actor pair.
+        Rows recorded before 2026-11-02 name the login identity instead, because
+        a revision or transaction row is not a tenant's row and its own stamp
+        could not match a site.
+
     transaction, record, root
         Relations. $revision->transaction->actor is who did it;
         $revision->record is the row that changed (null once hard-deleted).

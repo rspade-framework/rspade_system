@@ -396,11 +396,47 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
             answer: the string
 
         { kind: 'field_conflict', title, body, confirm_label, cancel_label,
-          fields: [{field, theirs, yours, redacted, changed_by, changed_at}] }
-            asked by Form_Edit (EDITING A RECORD). answer: true writes this submission's
-            values, false keeps theirs. theirs and yours are display text; redacted says
-            the column is a secret and only that it changed may be shown.
-            form.label_for(field) names a field as the form does.
+          record, view_url, editors, fields }
+            asked by Form_Edit (EDITING A RECORD, WHEN IT ASKS). answer: true
+            overwrites; false keeps the other editors' values and writes the rest.
+
+            record      {type, id}: the record being saved
+            view_url    where its current version can be seen (the endpoint's
+                        run(..., $view_url)), or null
+            editors     each person who saved a listed field since the form loaded,
+                        once, in the order of their first change: {type, id}, or
+                        null for a write nobody signed in made (a task, a script)
+            fields      one row per field this submission would overwrite:
+                field     the column, named as the input is
+                kind      value | enum | reference | formatted_text | structured |
+                          secret - what the values below can be
+                loaded    the value the form was opened with
+                current   the value saved now, which saving overwrites
+                yours     the value this submission writes
+                changes   [{by, at, from, to}], every save of the field since the
+                          form loaded, oldest first; by as in editors, at ISO 8601
+
+            A reference is {type, id}: type is the actor's class name, whatever the
+            stamp matrix named - a site's User_Model, a Portal_User_Model, a
+            Login_User_Model for a cross-site write, a Companion_Actor_Model, or an
+            application's own actor class. NOTHING in the payload is display text for
+            a person or a time: the application shows editors with its own components
+            and times with its own formatters.
+
+            Values are display text by kind: an enum's label, a referenced record's
+            name, a formatted text's plain text, the value itself; a secret and a
+            structured value (an array, a JSON document) carry null - say only that it
+            changed. form.label_for(field) names a field as the form does.
+
+            THE EXPECTED DIALOG lists the rows saving overwrites, each with the value
+            it overwrites and the one it writes, and confirms. One editor is named in
+            the notice ("Jane Smith changed this record while you were editing");
+            several are counted there and named per row. Buttons: Back (the form stays
+            open, nothing written) and Overwrite; a link opens view_url in a new
+            window. An application may add anything: a per-row choice of mine or
+            theirs (answer false keeps theirs for every listed row), its own person
+            and record widgets. The template's version is Modal._field_conflict_body()
+            in system/app/RSpade/resource/reference_app/lib/modal/modal.js.
 
         { kind: '<application-defined>', ... }
             answer: whatever the application's handler returns
@@ -465,13 +501,15 @@ EDITING A RECORD
             Action_Log::record(Action_Log_Model::TYPE_CLIENT_UPDATED, $client);
 
             return ['id' => $client->id, 'redirect' => Rsx::Route('Clients_View_Action', $client->id)];
-        });
+        }, $client->exists ? Rsx::Route('Clients_View_Action', $client->id) : null);
 
-    Form_Edit::run($record, $params, $write)
+    Form_Edit::run($record, $params, $write, $view_url = null)
         Opens a transaction, takes a row lock, refreshes $record, settles any conflict,
         then calls $write. A throw rolls everything back. It adds updated_at to an array
         result. A new record has no conflict to settle and writes every set().
-        A record deleted meanwhile answers ERROR_NOT_FOUND.
+        A record deleted meanwhile answers ERROR_NOT_FOUND. $view_url is where the
+        record's current version can be seen, carried on the question for its link:
+        pass the view page's Rsx::Route() for an existing record.
 
     $edit->set($field, $value)
         Assigns the value if this submission writes that field. Same explicit, one
@@ -490,12 +528,13 @@ EDITING A RECORD
     NEVER inside your own DB::transaction(): run() holds the transaction, and a snapshot
     taken before its lock is granted would hide the save it waited for.
 
-    WHEN IT ASKS. Only when another save changed a field this submission also changed.
-    A save that touched other fields is no conflict: this submission writes only its
-    own, both stand, and nobody is asked. An overlap asks the 'field_conflict' question
-    below; "Use my values" writes this submission, "Keep theirs" leaves those fields and
-    writes the rest, Back leaves the form open and writes nothing. A further save between
-    rounds is a new question.
+    WHEN IT ASKS. Only when another save changed a field this submission also changed,
+    to a value other than the one this submission writes. A save that touched other
+    fields is no conflict: this submission writes only its own, both stand, and nobody
+    is asked; nor is a field both people set to the same value. An overlap asks the
+    'field_conflict' question (QUESTIONS): true overwrites, false keeps the other
+    editors' values and writes the rest, and Back leaves the form open and writes
+    nothing. A further save between rounds is a new question.
 
     A write that recorded no revision - raw_bulk(), raw SQL, or only excluded columns -
     moves updated_at without saying what changed. That asks a plain 'confirm': "No"

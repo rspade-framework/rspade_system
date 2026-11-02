@@ -152,7 +152,7 @@ FEATURE CONTROLLER
                         'id' => $record->id,
                         'redirect' => Rsx::Route('Clients_View_Action', $record->id),
                     ];
-                });
+                }, $record->exists ? Rsx::Route('Clients_View_Action', $record->id) : null);
             }
 
             // Soft delete

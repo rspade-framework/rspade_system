@@ -2029,6 +2029,20 @@ EXAMPLE;
     }
 
     /**
+     * The actor a revision of this record names: the one this record's own audit stamp names
+     * for the current write, per the stamp matrix. A revision row is not a tenant's row, so
+     * its own stamp could never match a site and would always name the cross-site identity;
+     * Revision::_record() assigns this pair instead, so a record and its history agree on who
+     * wrote it.
+     *
+     * @return array{type: string, id: int}|null
+     */
+    public function _revision_author(): ?array
+    {
+        return $this->__resolve_audit_actor();
+    }
+
+    /**
      * Resolve the actor for something that is NOT a record: a unit of work, a log line - a
      * revision transaction. Returns ['type' => simple class name, 'id' => int] or null when
      * nobody identifiable is acting.
