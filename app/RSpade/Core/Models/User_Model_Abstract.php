@@ -211,6 +211,9 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      */
     protected ?int $_supplementary_permissions_generation = null;
 
+    /** A staff user is edited through Form_Edit, which reads what another editor changed here. */
+    public static $revisions = true;
+
     /**
      * Enum field definitions with ACL permissions and can_admin_roles
      *

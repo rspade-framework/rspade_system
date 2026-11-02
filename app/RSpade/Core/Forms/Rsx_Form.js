@@ -252,6 +252,7 @@ class Rsx_Form extends Component {
 
         this._touched = {}; // {name: value} - fields the user has typed into (parking, keystrokes win)
         this._was_dirty = false; // the last answer the 'dirty' event announced
+        this._saved_updated_at = null; // the version this form's own last save produced
         this._submitting = false;
         this._loading = false;
 
@@ -355,7 +356,10 @@ class Rsx_Form extends Component {
         // form was given. Then restore the values a predecessor instance parked - after
         // the baseline, so they read as the user's changes.
         this.__apply_values(this.state.values, true);
-        this.__each_input((component) => component._rebaseline());
+        this.__each_input((component) => {
+            component._rebaseline();
+            component._snapshot_record();
+        });
         for (const name in this._touched) {
             const component = this.input(name);
             if (component) {
@@ -405,6 +409,65 @@ class Rsx_Form extends Component {
             this._was_dirty = dirty;
             this.trigger('dirty', dirty);
         }
+    }
+
+    /**
+     * What a submission tells the endpoint about the edit, beside the values: `_changed`
+     * names the fields that differ from the record the form was given, and
+     * `_loaded_updated_at` says which version of the record that was. Form_Edit reads both.
+     *
+     * A field a before_submit hook altered counts as changed: the hook is the host writing
+     * a value, and its value is what is submitted.
+     *
+     * See: php artisan rsx:man form_conventions (EDITING A RECORD)
+     *
+     * @param {Object} values The payload after before_submit
+     * @param {Object} serialized The values before it
+     * @returns {{_changed: string[], _loaded_updated_at: (string|undefined)}}
+     */
+    __edit_state(values, serialized) {
+        const changed = [];
+
+        this.__each_input((component, name) => {
+            if (component.is_changed_from_record()) {
+                changed.push(name);
+            }
+        });
+
+        for (const name of Object.keys(values)) {
+            if (!changed.includes(name) && !deep_equal(values[name], serialized[name])) {
+                changed.push(name);
+            }
+        }
+
+        const edit_state = { _changed: changed };
+
+        const loaded = this._saved_updated_at || (this.state.values && this.state.values.updated_at);
+
+        if (loaded) {
+            edit_state._loaded_updated_at = loaded;
+        }
+
+        return edit_state;
+    }
+
+    /**
+     * The label a person knows a field by, for a dialog naming fields: the $label of the
+     * Form_Field around the input, else the field name with its underscores spaced.
+     *
+     * @param {string} name The input's $name
+     * @returns {string}
+     */
+    label_for(name) {
+        const input = this.input(name);
+        const $field = input ? input.$.closest('.Form_Field_Abstract') : $();
+        const label = $field.exists() ? $field.component().args.label : null;
+
+        if (label) {
+            return String(label);
+        }
+
+        return name.replace(/_id$/, '').replace(/_/g, ' ').replace(/^./, (letter) => letter.toUpperCase());
     }
 
     /** Call fn(component, name) for every named input the form owns (shallow - see vals()). */
@@ -548,7 +611,8 @@ class Rsx_Form extends Component {
             return false;
         }
 
-        let values = this.vals();
+        const serialized = this.vals();
+        let values = serialized;
 
         // Host payload hook. A thrown {field: message} object renders as validation;
         // returning FALSE aborts the submit silently - the seam for interaction
@@ -583,6 +647,7 @@ class Rsx_Form extends Component {
         const url = `/_ajax/${this.args.controller}/${this.args.method}`;
         const answers = {};
         let asked = 0;
+        const edit_state = this.__edit_state(values, serialized);
 
         try {
             let result = null;
@@ -590,7 +655,10 @@ class Rsx_Form extends Component {
             // The question loop. One pass per call to the endpoint: normally exactly one,
             // and one more for each question the server asks and the user answers.
             while (true) {
-                const payload = asked > 0 ? Object.assign({}, values, { _answers: Object.assign({}, answers) }) : values;
+                const payload = Object.assign({}, values, edit_state);
+                if (asked > 0) {
+                    payload._answers = Object.assign({}, answers);
+                }
                 let question = null;
 
                 try {
@@ -655,8 +723,16 @@ class Rsx_Form extends Component {
             // the form and its inputs, and the redirect, are skipped.
             if (this.is_stopped()) return result;
 
-            this.__each_input((component) => component._rebaseline());
+            this.__each_input((component) => {
+                component._rebaseline();
+                component._snapshot_record();
+            });
             this.__announce_dirty();
+
+            // The record moved: a form that stays open is now looking at this version.
+            if (result && result.updated_at) {
+                this._saved_updated_at = result.updated_at;
+            }
 
             this.trigger('submitted', result);
 
@@ -788,7 +864,9 @@ class Rsx_Form extends Component {
             const values = await data;
             if (this.is_stopped()) return values;
             this.state.values = values && typeof values === 'object' ? values : {};
+            this._saved_updated_at = null;
             this.vals(this.state.values);
+            this.__each_input((component) => component._snapshot_record());
             this.__announce_dirty();
             return values;
         } finally {

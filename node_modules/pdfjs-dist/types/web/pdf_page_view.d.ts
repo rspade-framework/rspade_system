@@ -236,6 +236,7 @@ export class PDFPageView extends BasePDFPageView {
         isEditing: boolean;
         recordOperations: any;
         recordImages: any;
+        partialFrames: boolean;
     };
     draw(): Promise<void>;
     /**

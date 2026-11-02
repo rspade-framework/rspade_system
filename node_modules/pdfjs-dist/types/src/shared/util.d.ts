@@ -162,6 +162,8 @@ export function bytesToString(bytes: any): string;
  * @returns {URL | null} Either a valid {@link URL}, or `null` otherwise.
  */
 export function createValidAbsoluteUrl(url: URL | string, baseUrl?: URL | string, options?: object): URL | null;
+export const DEFAULT_VERTICAL_ADVANCE: 1000;
+export const DEFAULT_VERTICAL_ORIGIN_Y: 880;
 export namespace DocumentActionEventType {
     let WC: string;
     let WS: string;
@@ -181,6 +183,7 @@ export class FeatureTest {
     static get isLittleEndian(): any;
     static get isOffscreenCanvasSupported(): any;
     static get isImageDecoderSupported(): any;
+    static get isVideoFrameSupported(): any;
     static get isFloat16ArraySupported(): any;
     static get isSanitizerSupported(): any;
     static get platform(): any;
@@ -408,6 +411,7 @@ export function utf8StringToString(str: any): string;
 export class Util {
     static get hexNums(): any;
     static makeHexColor(r: any, g: any, b: any): string;
+    static get identity0to256Map(): any;
     static transform(m1: any, m2: any): any[];
     static multiplyByDOMMatrix(m: any, md: any): any[];
     static applyTransform(p: any, m: any, pos?: number): void;

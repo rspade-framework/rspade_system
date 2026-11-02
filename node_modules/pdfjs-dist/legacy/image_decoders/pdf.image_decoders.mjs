@@ -20,8 +20,8 @@
  */
 
 /**
- * pdfjsVersion = 6.4.299
- * pdfjsBuild = d0991a0d5
+ * pdfjsVersion = 6.5.438
+ * pdfjsBuild = 0a4153349
  */
 /******/ var __webpack_modules__ = ({
 
@@ -388,7 +388,7 @@ module.exports = function (passed, required) {
 /************************************************************************/
 
 // MODULE: ./node_modules/core-js/internals/a-callable.js
-var a_callable_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var a_callable_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var isCallable = (is_callable_namespaceFn());
 var tryToString = (try_to_string_namespaceFn());
@@ -404,7 +404,7 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/a-possible-prototype.js
-var a_possible_prototype_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var a_possible_prototype_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var isPossiblePrototype = (is_possible_prototype_namespaceFn());
 
@@ -419,7 +419,7 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/a-set.js
-var a_set_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var a_set_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var has = (set_helpers_namespaceFn().has);
 
@@ -437,7 +437,7 @@ var a_string_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/add-to-unscopables.js
-var add_to_unscopables_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var add_to_unscopables_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var wellKnownSymbol = (well_known_symbol_namespaceFn());
 var create = (object_create_namespaceFn());
@@ -463,7 +463,7 @@ module.exports = function (key) {
 });
 
 // MODULE: ./node_modules/core-js/internals/an-instance.js
-var an_instance_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var an_instance_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var isPrototypeOf = (object_is_prototype_of_namespaceFn());
 
@@ -477,7 +477,7 @@ module.exports = function (it, Prototype) {
 });
 
 // MODULE: ./node_modules/core-js/internals/an-object-or-undefined.js
-var an_object_or_undefined_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var an_object_or_undefined_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var isObject = (is_object_namespaceFn());
 
@@ -492,7 +492,7 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/an-object.js
-var an_object_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var an_object_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var isObject = (is_object_namespaceFn());
 
@@ -508,7 +508,7 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/an-uint8-array.js
-var an_uint8_array_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var an_uint8_array_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var classof = (classof_namespaceFn());
 
@@ -524,7 +524,7 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/array-buffer-basic-detection.js
-var array_buffer_basic_detection_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var array_buffer_basic_detection_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 // eslint-disable-next-line es/no-typed-arrays -- safe
 module.exports = typeof ArrayBuffer != 'undefined' && typeof DataView != 'undefined';
@@ -532,7 +532,7 @@ module.exports = typeof ArrayBuffer != 'undefined' && typeof DataView != 'undefi
 });
 
 // MODULE: ./node_modules/core-js/internals/array-buffer-byte-length.js
-var array_buffer_byte_length_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var array_buffer_byte_length_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var uncurryThisAccessor = (function_uncurry_this_accessor_namespaceFn());
@@ -552,7 +552,7 @@ module.exports = ArrayBuffer && uncurryThisAccessor(ArrayBuffer.prototype, 'byte
 });
 
 // MODULE: ./node_modules/core-js/internals/array-buffer-is-detached.js
-var array_buffer_is_detached_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var array_buffer_is_detached_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var NATIVE_ARRAY_BUFFER = (array_buffer_basic_detection_namespaceFn());
@@ -574,7 +574,7 @@ module.exports = function (O) {
 });
 
 // MODULE: ./node_modules/core-js/internals/array-buffer-not-detached.js
-var array_buffer_not_detached_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var array_buffer_not_detached_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var isDetached = (array_buffer_is_detached_namespaceFn());
 
@@ -588,7 +588,7 @@ module.exports = function (it) {
 });
 
 // MODULE: ./node_modules/core-js/internals/array-buffer-view-core.js
-var array_buffer_view_core_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var array_buffer_view_core_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var NATIVE_ARRAY_BUFFER = (array_buffer_basic_detection_namespaceFn());
 var DESCRIPTORS = (descriptors_namespaceFn());
@@ -786,7 +786,7 @@ module.exports = {
 });
 
 // MODULE: ./node_modules/core-js/internals/array-includes.js
-var array_includes_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var array_includes_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var toIndexedObject = (to_indexed_object_namespaceFn());
 var toAbsoluteIndex = (to_absolute_index_namespaceFn());
@@ -825,7 +825,7 @@ module.exports = {
 });
 
 // MODULE: ./node_modules/core-js/internals/array-set-length.js
-var array_set_length_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var array_set_length_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var DESCRIPTORS = (descriptors_namespaceFn());
 var isArray = (is_array_namespaceFn());
@@ -862,7 +862,7 @@ var base64_map_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/call-with-safe-iteration-closing.js
-var call_with_safe_iteration_closing_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var call_with_safe_iteration_closing_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var anObject = (an_object_namespaceFn());
 var iteratorClose = (iterator_close_namespaceFn());
@@ -879,7 +879,7 @@ module.exports = function (iterator, fn, value, ENTRIES) {
 });
 
 // MODULE: ./node_modules/core-js/internals/classof-raw.js
-var classof_raw_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var classof_raw_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 
@@ -893,7 +893,7 @@ module.exports = function (it) {
 });
 
 // MODULE: ./node_modules/core-js/internals/classof.js
-var classof_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var classof_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var TO_STRING_TAG_SUPPORT = (to_string_tag_support_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -928,7 +928,7 @@ module.exports = TO_STRING_TAG_SUPPORT ? classofRaw : function (it) {
 });
 
 // MODULE: ./node_modules/core-js/internals/copy-constructor-properties.js
-var copy_constructor_properties_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var copy_constructor_properties_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var hasOwn = (has_own_property_namespaceFn());
 var ownKeys = (own_keys_namespaceFn());
@@ -950,7 +950,7 @@ module.exports = function (target, source, exceptions) {
 });
 
 // MODULE: ./node_modules/core-js/internals/correct-prototype-getter.js
-var correct_prototype_getter_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var correct_prototype_getter_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var fails = (fails_namespaceFn());
 
@@ -969,7 +969,7 @@ var create_iter_result_object_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/create-non-enumerable-property.js
-var create_non_enumerable_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var create_non_enumerable_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var DESCRIPTORS = (descriptors_namespaceFn());
 var definePropertyModule = (object_define_property_namespaceFn());
@@ -985,7 +985,7 @@ module.exports = DESCRIPTORS ? function (object, key, value) {
 });
 
 // MODULE: ./node_modules/core-js/internals/create-property-descriptor.js
-var create_property_descriptor_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var create_property_descriptor_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 module.exports = function (bitmap, value) {
   return {
@@ -999,7 +999,7 @@ module.exports = function (bitmap, value) {
 });
 
 // MODULE: ./node_modules/core-js/internals/create-property.js
-var create_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var create_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var DESCRIPTORS = (descriptors_namespaceFn());
 var definePropertyModule = (object_define_property_namespaceFn());
@@ -1013,7 +1013,7 @@ module.exports = function (object, key, value) {
 });
 
 // MODULE: ./node_modules/core-js/internals/define-built-in-accessor.js
-var define_built_in_accessor_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var define_built_in_accessor_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var makeBuiltIn = (make_built_in_namespaceFn());
 var defineProperty = (object_define_property_namespaceFn());
@@ -1027,7 +1027,7 @@ module.exports = function (target, name, descriptor) {
 });
 
 // MODULE: ./node_modules/core-js/internals/define-built-in.js
-var define_built_in_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var define_built_in_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var isCallable = (is_callable_namespaceFn());
 var definePropertyModule = (object_define_property_namespaceFn());
@@ -1060,7 +1060,7 @@ module.exports = function (O, key, value, options) {
 });
 
 // MODULE: ./node_modules/core-js/internals/define-built-ins.js
-var define_built_ins_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var define_built_ins_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var defineBuiltIn = (define_built_in_namespaceFn());
 
@@ -1072,7 +1072,7 @@ module.exports = function (target, src, options) {
 });
 
 // MODULE: ./node_modules/core-js/internals/define-global-property.js
-var define_global_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var define_global_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 
@@ -1090,7 +1090,7 @@ module.exports = function (key, value) {
 });
 
 // MODULE: ./node_modules/core-js/internals/descriptors.js
-var descriptors_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var descriptors_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var fails = (fails_namespaceFn());
 
@@ -1103,7 +1103,7 @@ module.exports = !fails(function () {
 });
 
 // MODULE: ./node_modules/core-js/internals/document-create-element.js
-var document_create_element_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var document_create_element_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var isObject = (is_object_namespaceFn());
@@ -1124,7 +1124,7 @@ var does_not_exceed_safe_integer_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/enum-bug-keys.js
-var enum_bug_keys_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var enum_bug_keys_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 // IE8- don't enum bug keys
 module.exports = [
@@ -1140,7 +1140,7 @@ module.exports = [
 });
 
 // MODULE: ./node_modules/core-js/internals/environment-user-agent.js
-var environment_user_agent_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var environment_user_agent_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 
@@ -1152,7 +1152,7 @@ module.exports = userAgent ? String(userAgent) : '';
 });
 
 // MODULE: ./node_modules/core-js/internals/environment-v8-version.js
-var environment_v8_version_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var environment_v8_version_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var userAgent = (environment_user_agent_namespaceFn());
@@ -1185,7 +1185,7 @@ module.exports = version;
 });
 
 // MODULE: ./node_modules/core-js/internals/export.js
-var export_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var export_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var getOwnPropertyDescriptor = (object_get_own_property_descriptor_namespaceFn().f);
@@ -1245,7 +1245,7 @@ module.exports = function (options, source) {
 });
 
 // MODULE: ./node_modules/core-js/internals/fails.js
-var fails_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var fails_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 module.exports = function (exec) {
   try {
@@ -1258,7 +1258,7 @@ module.exports = function (exec) {
 });
 
 // MODULE: ./node_modules/core-js/internals/function-bind-context.js
-var function_bind_context_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var function_bind_context_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_clause_namespaceFn());
 var aCallable = (a_callable_namespaceFn());
@@ -1277,7 +1277,7 @@ module.exports = function (fn, that) {
 });
 
 // MODULE: ./node_modules/core-js/internals/function-bind-native.js
-var function_bind_native_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var function_bind_native_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var fails = (fails_namespaceFn());
 
@@ -1291,7 +1291,7 @@ module.exports = !fails(function () {
 });
 
 // MODULE: ./node_modules/core-js/internals/function-call.js
-var function_call_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var function_call_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var NATIVE_BIND = (function_bind_native_namespaceFn());
 
@@ -1304,7 +1304,7 @@ module.exports = NATIVE_BIND ? call.bind(call) : function () {
 });
 
 // MODULE: ./node_modules/core-js/internals/function-name.js
-var function_name_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var function_name_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var DESCRIPTORS = (descriptors_namespaceFn());
 var hasOwn = (has_own_property_namespaceFn());
@@ -1327,7 +1327,7 @@ module.exports = {
 });
 
 // MODULE: ./node_modules/core-js/internals/function-uncurry-this-accessor.js
-var function_uncurry_this_accessor_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var function_uncurry_this_accessor_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 var aCallable = (a_callable_namespaceFn());
@@ -1342,7 +1342,7 @@ module.exports = function (object, key, method) {
 });
 
 // MODULE: ./node_modules/core-js/internals/function-uncurry-this-clause.js
-var function_uncurry_this_clause_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var function_uncurry_this_clause_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var classofRaw = (classof_raw_namespaceFn());
 var uncurryThis = (function_uncurry_this_namespaceFn());
@@ -1357,7 +1357,7 @@ module.exports = function (fn) {
 });
 
 // MODULE: ./node_modules/core-js/internals/function-uncurry-this.js
-var function_uncurry_this_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var function_uncurry_this_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var NATIVE_BIND = (function_bind_native_namespaceFn());
 
@@ -1380,7 +1380,7 @@ var get_alphabet_option_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/get-built-in.js
-var get_built_in_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var get_built_in_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -1401,7 +1401,7 @@ var get_iterator_direct_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/get-iterator-internal.js
-var get_iterator_internal_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var get_iterator_internal_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var call = (function_call_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -1420,7 +1420,7 @@ module.exports = function (argument, usingIterator) {
 });
 
 // MODULE: ./node_modules/core-js/internals/get-iterator-method-internal.js
-var get_iterator_method_internal_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var get_iterator_method_internal_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var classof = (classof_raw_namespaceFn());
 var isNullOrUndefined = (is_null_or_undefined_namespaceFn());
@@ -1439,7 +1439,7 @@ module.exports = function (it) {
 });
 
 // MODULE: ./node_modules/core-js/internals/get-method.js
-var get_method_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var get_method_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var aCallable = (a_callable_namespaceFn());
 var isNullOrUndefined = (is_null_or_undefined_namespaceFn());
@@ -1454,7 +1454,7 @@ module.exports = function (V, P) {
 });
 
 // MODULE: ./node_modules/core-js/internals/get-set-record.js
-var get_set_record_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var get_set_record_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var aCallable = (a_callable_namespaceFn());
 var anObject = (an_object_namespaceFn());
@@ -1499,7 +1499,7 @@ module.exports = function (obj) {
 });
 
 // MODULE: ./node_modules/core-js/internals/global-this.js
-var global_this_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var global_this_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module) {
 
 var check = function (it) {
   return it && it.Math === Math && it;
@@ -1520,7 +1520,7 @@ module.exports =
 });
 
 // MODULE: ./node_modules/core-js/internals/has-own-property.js
-var has_own_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var has_own_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 var toObject = (to_object_namespaceFn());
@@ -1537,14 +1537,14 @@ module.exports = Object.hasOwn || function hasOwn(it, key) {
 });
 
 // MODULE: ./node_modules/core-js/internals/hidden-keys.js
-var hidden_keys_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var hidden_keys_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 module.exports = {};
 
 });
 
 // MODULE: ./node_modules/core-js/internals/html.js
-var html_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var html_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var getBuiltIn = (get_built_in_namespaceFn());
 
@@ -1553,7 +1553,7 @@ module.exports = getBuiltIn('document', 'documentElement');
 });
 
 // MODULE: ./node_modules/core-js/internals/ie8-dom-define.js
-var ie8_dom_define_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var ie8_dom_define_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var DESCRIPTORS = (descriptors_namespaceFn());
 var fails = (fails_namespaceFn());
@@ -1570,7 +1570,7 @@ module.exports = !DESCRIPTORS && !fails(function () {
 });
 
 // MODULE: ./node_modules/core-js/internals/indexed-object.js
-var indexed_object_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var indexed_object_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 var fails = (fails_namespaceFn());
@@ -1591,7 +1591,7 @@ module.exports = fails(function () {
 });
 
 // MODULE: ./node_modules/core-js/internals/inspect-source.js
-var inspect_source_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var inspect_source_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -1611,7 +1611,7 @@ module.exports = store.inspectSource;
 });
 
 // MODULE: ./node_modules/core-js/internals/internal-state.js
-var internal_state_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var internal_state_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var NATIVE_WEAK_MAP = (weak_map_basic_detection_namespaceFn());
 var globalThis = (global_this_namespaceFn());
@@ -1687,7 +1687,7 @@ module.exports = {
 });
 
 // MODULE: ./node_modules/core-js/internals/is-array-iterator-method.js
-var is_array_iterator_method_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var is_array_iterator_method_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var wellKnownSymbol = (well_known_symbol_namespaceFn());
 var Iterators = (iterators_namespaceFn());
@@ -1703,7 +1703,7 @@ module.exports = function (it) {
 });
 
 // MODULE: ./node_modules/core-js/internals/is-array.js
-var is_array_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var is_array_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var classof = (classof_raw_namespaceFn());
 
@@ -1717,7 +1717,7 @@ module.exports = Array.isArray || function isArray(argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/is-big-int-array.js
-var is_big_int_array_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var is_big_int_array_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var classof = (classof_namespaceFn());
 
@@ -1729,7 +1729,7 @@ module.exports = function (it) {
 });
 
 // MODULE: ./node_modules/core-js/internals/is-callable.js
-var is_callable_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var is_callable_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 // https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot
 var documentAll = typeof document == 'object' && document.all;
@@ -1746,7 +1746,7 @@ module.exports = typeof documentAll == 'undefined' && documentAll !== undefined 
 });
 
 // MODULE: ./node_modules/core-js/internals/is-forced.js
-var is_forced_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var is_forced_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var fails = (fails_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -1779,7 +1779,7 @@ var is_null_or_undefined_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/is-object.js
-var is_object_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var is_object_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var isCallable = (is_callable_namespaceFn());
 
@@ -1790,7 +1790,7 @@ module.exports = function (it) {
 });
 
 // MODULE: ./node_modules/core-js/internals/is-possible-prototype.js
-var is_possible_prototype_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var is_possible_prototype_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var isObject = (is_object_namespaceFn());
 
@@ -1801,14 +1801,14 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/is-pure.js
-var is_pure_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var is_pure_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 module.exports = false;
 
 });
 
 // MODULE: ./node_modules/core-js/internals/is-symbol.js
-var is_symbol_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var is_symbol_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var getBuiltIn = (get_built_in_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -1827,7 +1827,7 @@ module.exports = USE_SYMBOL_AS_UID ? function (it) {
 });
 
 // MODULE: ./node_modules/core-js/internals/iterate-simple.js
-var iterate_simple_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var iterate_simple_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var call = (function_call_namespaceFn());
 
@@ -1844,7 +1844,7 @@ module.exports = function (record, fn, ITERATOR_INSTEAD_OF_RECORD) {
 });
 
 // MODULE: ./node_modules/core-js/internals/iterate.js
-var iterate_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var iterate_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var bind = (function_bind_context_namespaceFn());
 var call = (function_call_namespaceFn());
@@ -1928,7 +1928,7 @@ var iterator_cleanup_state_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/iterator-close-all.js
-var iterator_close_all_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var iterator_close_all_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var iteratorClose = (iterator_close_namespaceFn());
 
@@ -1949,7 +1949,7 @@ module.exports = function (iters, kind, value) {
 });
 
 // MODULE: ./node_modules/core-js/internals/iterator-close.js
-var iterator_close_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var iterator_close_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var call = (function_call_namespaceFn());
 var anObject = (an_object_namespaceFn());
@@ -1978,7 +1978,7 @@ module.exports = function (iterator, kind, value) {
 });
 
 // MODULE: ./node_modules/core-js/internals/iterator-create-proxy.js
-var iterator_create_proxy_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var iterator_create_proxy_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var call = (function_call_namespaceFn());
 var create = (object_create_namespaceFn());
@@ -2083,7 +2083,7 @@ var iterator_helper_throws_on_invalid_iterator_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/iterator-helper-without-closing-on-early-error.js
-var iterator_helper_without_closing_on_early_error_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var iterator_helper_without_closing_on_early_error_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 
@@ -2111,7 +2111,7 @@ module.exports = function (METHOD_NAME, ExpectedError) {
 });
 
 // MODULE: ./node_modules/core-js/internals/iterators-core.js
-var iterators_core_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var iterators_core_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var fails = (fails_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -2170,7 +2170,7 @@ var iterators_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/length-of-array-like.js
-var length_of_array_like_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var length_of_array_like_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var toLength = (to_length_namespaceFn());
 
@@ -2183,7 +2183,7 @@ module.exports = function (obj) {
 });
 
 // MODULE: ./node_modules/core-js/internals/make-built-in.js
-var make_built_in_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var make_built_in_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 var fails = (fails_namespaceFn());
@@ -2243,7 +2243,7 @@ Function.prototype.toString = makeBuiltIn(function toString() {
 });
 
 // MODULE: ./node_modules/core-js/internals/map-helpers.js
-var map_helpers_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var map_helpers_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 
@@ -2263,7 +2263,7 @@ module.exports = {
 });
 
 // MODULE: ./node_modules/core-js/internals/object-create.js
-var object_create_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_create_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 /* global ActiveXObject -- old IE, WSH */
 var anObject = (an_object_namespaceFn());
@@ -2353,7 +2353,7 @@ module.exports = Object.create || function create(O, Properties) {
 });
 
 // MODULE: ./node_modules/core-js/internals/object-define-properties.js
-var object_define_properties_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_define_properties_namespaceFn = /*#__PURE__*/__webpack_require__.cw((__unused_webpack_module, exports) => {
 
 var DESCRIPTORS = (descriptors_namespaceFn());
 var V8_PROTOTYPE_DEFINE_BUG = (v8_prototype_define_bug_namespaceFn());
@@ -2379,7 +2379,7 @@ exports.f = DESCRIPTORS && !V8_PROTOTYPE_DEFINE_BUG ? Object.defineProperties : 
 });
 
 // MODULE: ./node_modules/core-js/internals/object-define-property.js
-var object_define_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_define_property_namespaceFn = /*#__PURE__*/__webpack_require__.cw((__unused_webpack_module, exports) => {
 
 var DESCRIPTORS = (descriptors_namespaceFn());
 var IE8_DOM_DEFINE = (ie8_dom_define_namespaceFn());
@@ -2428,7 +2428,7 @@ exports.f = DESCRIPTORS ? V8_PROTOTYPE_DEFINE_BUG ? function defineProperty(O, P
 });
 
 // MODULE: ./node_modules/core-js/internals/object-get-own-property-descriptor.js
-var object_get_own_property_descriptor_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_get_own_property_descriptor_namespaceFn = /*#__PURE__*/__webpack_require__.cw((__unused_webpack_module, exports) => {
 
 var DESCRIPTORS = (descriptors_namespaceFn());
 var call = (function_call_namespaceFn());
@@ -2456,7 +2456,7 @@ exports.f = DESCRIPTORS ? $getOwnPropertyDescriptor : function getOwnPropertyDes
 });
 
 // MODULE: ./node_modules/core-js/internals/object-get-own-property-names.js
-var object_get_own_property_names_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_get_own_property_names_namespaceFn = /*#__PURE__*/__webpack_require__.cw((__unused_webpack_module, exports) => {
 
 var internalObjectKeys = (object_keys_internal_namespaceFn());
 var enumBugKeys = (enum_bug_keys_namespaceFn());
@@ -2478,7 +2478,7 @@ var object_get_own_property_symbols_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/object-get-prototype-of.js
-var object_get_prototype_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_get_prototype_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var hasOwn = (has_own_property_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -2505,7 +2505,7 @@ module.exports = CORRECT_PROTOTYPE_GETTER ? $Object.getPrototypeOf : function (O
 });
 
 // MODULE: ./node_modules/core-js/internals/object-is-prototype-of.js
-var object_is_prototype_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_is_prototype_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 
@@ -2514,7 +2514,7 @@ module.exports = uncurryThis({}.isPrototypeOf);
 });
 
 // MODULE: ./node_modules/core-js/internals/object-keys-internal.js
-var object_keys_internal_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_keys_internal_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 var hasOwn = (has_own_property_namespaceFn());
@@ -2540,7 +2540,7 @@ module.exports = function (object, names) {
 });
 
 // MODULE: ./node_modules/core-js/internals/object-keys.js
-var object_keys_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_keys_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var internalObjectKeys = (object_keys_internal_namespaceFn());
 var enumBugKeys = (enum_bug_keys_namespaceFn());
@@ -2555,7 +2555,7 @@ module.exports = Object.keys || function keys(O) {
 });
 
 // MODULE: ./node_modules/core-js/internals/object-property-is-enumerable.js
-var object_property_is_enumerable_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_property_is_enumerable_namespaceFn = /*#__PURE__*/__webpack_require__.cw((__unused_webpack_module, exports) => {
 
 var $propertyIsEnumerable = {}.propertyIsEnumerable;
 // eslint-disable-next-line es/no-object-getownpropertydescriptor -- safe
@@ -2574,7 +2574,7 @@ exports.f = NASHORN_BUG ? function propertyIsEnumerable(V) {
 });
 
 // MODULE: ./node_modules/core-js/internals/object-set-prototype-of.js
-var object_set_prototype_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var object_set_prototype_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 /* eslint-disable no-proto -- safe */
 var uncurryThisAccessor = (function_uncurry_this_accessor_namespaceFn());
@@ -2608,7 +2608,7 @@ module.exports = Object.setPrototypeOf || ('__proto__' in {} ? function () {
 });
 
 // MODULE: ./node_modules/core-js/internals/ordinary-to-primitive.js
-var ordinary_to_primitive_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var ordinary_to_primitive_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var call = (function_call_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -2629,7 +2629,7 @@ module.exports = function (input, pref) {
 });
 
 // MODULE: ./node_modules/core-js/internals/own-keys.js
-var own_keys_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var own_keys_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var getBuiltIn = (get_built_in_namespaceFn());
 var uncurryThis = (function_uncurry_this_namespaceFn());
@@ -2654,7 +2654,7 @@ var require_object_coercible_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/set-clone.js
-var set_clone_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_clone_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var SetHelpers = (set_helpers_namespaceFn());
 var iterate = (set_iterate_namespaceFn());
@@ -2673,7 +2673,7 @@ module.exports = function (set) {
 });
 
 // MODULE: ./node_modules/core-js/internals/set-difference.js
-var set_difference_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_difference_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var aSet = (a_set_namespaceFn());
 var SetHelpers = (set_helpers_namespaceFn());
@@ -2704,7 +2704,7 @@ module.exports = function difference(other) {
 });
 
 // MODULE: ./node_modules/core-js/internals/set-helpers.js
-var set_helpers_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_helpers_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 
@@ -2723,7 +2723,7 @@ module.exports = {
 });
 
 // MODULE: ./node_modules/core-js/internals/set-intersection.js
-var set_intersection_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_intersection_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var aSet = (a_set_namespaceFn());
 var SetHelpers = (set_helpers_namespaceFn());
@@ -2759,7 +2759,7 @@ module.exports = function intersection(other) {
 });
 
 // MODULE: ./node_modules/core-js/internals/set-is-disjoint-from.js
-var set_is_disjoint_from_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_is_disjoint_from_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var aSet = (a_set_namespaceFn());
 var has = (set_helpers_namespaceFn().has);
@@ -2786,7 +2786,7 @@ module.exports = function isDisjointFrom(other) {
 });
 
 // MODULE: ./node_modules/core-js/internals/set-is-subset-of.js
-var set_is_subset_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_is_subset_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var aSet = (a_set_namespaceFn());
 var size = (set_size_namespaceFn());
@@ -2807,7 +2807,7 @@ module.exports = function isSubsetOf(other) {
 });
 
 // MODULE: ./node_modules/core-js/internals/set-is-superset-of.js
-var set_is_superset_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_is_superset_of_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var aSet = (a_set_namespaceFn());
 var has = (set_helpers_namespaceFn().has);
@@ -2831,7 +2831,7 @@ module.exports = function isSupersetOf(other) {
 });
 
 // MODULE: ./node_modules/core-js/internals/set-iterate.js
-var set_iterate_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_iterate_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 var iterateSimple = (iterate_simple_namespaceFn());
@@ -2850,7 +2850,7 @@ module.exports = function (set, fn, interruptible) {
 });
 
 // MODULE: ./node_modules/core-js/internals/set-method-accept-set-like.js
-var set_method_accept_set_like_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_method_accept_set_like_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var getBuiltIn = (get_built_in_namespaceFn());
 
@@ -2918,7 +2918,7 @@ var set_method_get_keys_before_cloning_detection_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/set-size.js
-var set_size_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_size_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThisAccessor = (function_uncurry_this_accessor_namespaceFn());
 var SetHelpers = (set_helpers_namespaceFn());
@@ -2930,7 +2930,7 @@ module.exports = uncurryThisAccessor(SetHelpers.proto, 'size', 'get') || functio
 });
 
 // MODULE: ./node_modules/core-js/internals/set-symmetric-difference.js
-var set_symmetric_difference_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_symmetric_difference_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var aSet = (a_set_namespaceFn());
 var SetHelpers = (set_helpers_namespaceFn());
@@ -2958,7 +2958,7 @@ module.exports = function symmetricDifference(other) {
 });
 
 // MODULE: ./node_modules/core-js/internals/set-union.js
-var set_union_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var set_union_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var aSet = (a_set_namespaceFn());
 var add = (set_helpers_namespaceFn().add);
@@ -2981,7 +2981,7 @@ module.exports = function union(other) {
 });
 
 // MODULE: ./node_modules/core-js/internals/shared-key.js
-var shared_key_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var shared_key_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var shared = (shared_namespaceFn());
 var uid = (uid_namespaceFn());
@@ -2995,7 +2995,7 @@ module.exports = function (key) {
 });
 
 // MODULE: ./node_modules/core-js/internals/shared-store.js
-var shared_store_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var shared_store_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var IS_PURE = (is_pure_namespaceFn());
 var globalThis = (global_this_namespaceFn());
@@ -3005,17 +3005,17 @@ var SHARED = '__core-js_shared__';
 var store = module.exports = globalThis[SHARED] || defineGlobalProperty(SHARED, {});
 
 (store.versions || (store.versions = [])).push({
-  version: '3.50.0',
+  version: '3.51.0',
   mode: IS_PURE ? 'pure' : 'global',
   copyright: '© 2013–2025 Denis Pushkarev (zloirock.ru), 2025–2026 CoreJS Company (core-js.io). All rights reserved.',
-  license: 'https://github.com/zloirock/core-js/blob/v3.50.0/LICENSE',
+  license: 'https://github.com/zloirock/core-js/blob/v3.51.0/LICENSE',
   source: 'https://github.com/zloirock/core-js'
 });
 
 });
 
 // MODULE: ./node_modules/core-js/internals/shared.js
-var shared_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var shared_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var store = (shared_store_namespaceFn());
 // eslint-disable-next-line es/no-object-create -- safe
@@ -3028,7 +3028,7 @@ module.exports = function (key, value) {
 });
 
 // MODULE: ./node_modules/core-js/internals/symbol-constructor-detection.js
-var symbol_constructor_detection_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var symbol_constructor_detection_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 /* eslint-disable es/no-symbol -- required for testing */
 var V8_VERSION = (environment_v8_version_namespaceFn());
@@ -3052,7 +3052,7 @@ module.exports = !!Object.getOwnPropertySymbols && !fails(function () {
 });
 
 // MODULE: ./node_modules/core-js/internals/to-absolute-index.js
-var to_absolute_index_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var to_absolute_index_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var toIntegerOrInfinity = (to_integer_or_infinity_namespaceFn());
 
@@ -3070,7 +3070,7 @@ module.exports = function (index, length) {
 });
 
 // MODULE: ./node_modules/core-js/internals/to-big-int.js
-var to_big_int_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var to_big_int_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var toPrimitive = (to_primitive_namespaceFn());
 
@@ -3088,7 +3088,7 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/to-indexed-object.js
-var to_indexed_object_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var to_indexed_object_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 // toObject with fallback for non-array-like ES3 strings
 var IndexedObject = (indexed_object_namespaceFn());
@@ -3116,7 +3116,7 @@ var to_object_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/to-primitive.js
-var to_primitive_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var to_primitive_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var call = (function_call_namespaceFn());
 var isObject = (is_object_namespaceFn());
@@ -3147,7 +3147,7 @@ module.exports = function (input, pref) {
 });
 
 // MODULE: ./node_modules/core-js/internals/to-property-key.js
-var to_property_key_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var to_property_key_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var toPrimitive = (to_primitive_namespaceFn());
 var isSymbol = (is_symbol_namespaceFn());
@@ -3162,7 +3162,7 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/to-string-tag-support.js
-var to_string_tag_support_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var to_string_tag_support_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var wellKnownSymbol = (well_known_symbol_namespaceFn());
 
@@ -3176,7 +3176,7 @@ module.exports = String(test) === '[object z]';
 });
 
 // MODULE: ./node_modules/core-js/internals/to-string.js
-var to_string_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var to_string_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var classof = (classof_namespaceFn());
 
@@ -3190,7 +3190,7 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/try-to-string.js
-var try_to_string_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var try_to_string_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var $String = String;
 
@@ -3205,7 +3205,7 @@ module.exports = function (argument) {
 });
 
 // MODULE: ./node_modules/core-js/internals/uid.js
-var uid_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var uid_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var uncurryThis = (function_uncurry_this_namespaceFn());
 
@@ -3220,7 +3220,7 @@ module.exports = function (key) {
 });
 
 // MODULE: ./node_modules/core-js/internals/uint8-from-base64.js
-var uint8_from_base64_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var uint8_from_base64_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var uncurryThis = (function_uncurry_this_namespaceFn());
@@ -3384,7 +3384,7 @@ module.exports = function (string, options, into, maxLength) {
 });
 
 // MODULE: ./node_modules/core-js/internals/uint8-from-hex.js
-var uint8_from_hex_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var uint8_from_hex_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var uncurryThis = (function_uncurry_this_namespaceFn());
@@ -3415,7 +3415,7 @@ module.exports = function (string, into) {
 });
 
 // MODULE: ./node_modules/core-js/internals/url-constructor-detection.js
-var url_constructor_detection_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var url_constructor_detection_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var fails = (fails_namespaceFn());
 var wellKnownSymbol = (well_known_symbol_namespaceFn());
@@ -3462,7 +3462,7 @@ module.exports = !fails(function () {
 });
 
 // MODULE: ./node_modules/core-js/internals/use-symbol-as-uid.js
-var use_symbol_as_uid_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var use_symbol_as_uid_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 /* eslint-disable es/no-symbol -- required for testing */
 var NATIVE_SYMBOL = (symbol_constructor_detection_namespaceFn());
@@ -3474,7 +3474,7 @@ module.exports = NATIVE_SYMBOL &&
 });
 
 // MODULE: ./node_modules/core-js/internals/v8-prototype-define-bug.js
-var v8_prototype_define_bug_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var v8_prototype_define_bug_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var DESCRIPTORS = (descriptors_namespaceFn());
 var fails = (fails_namespaceFn());
@@ -3497,7 +3497,7 @@ var validate_arguments_length_namespaceFn = () => {
 };
 
 // MODULE: ./node_modules/core-js/internals/weak-map-basic-detection.js
-var weak_map_basic_detection_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var weak_map_basic_detection_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var isCallable = (is_callable_namespaceFn());
@@ -3509,7 +3509,7 @@ module.exports = isCallable(WeakMap) && /native code/.test(String(WeakMap));
 });
 
 // MODULE: ./node_modules/core-js/internals/well-known-symbol.js
-var well_known_symbol_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var well_known_symbol_namespaceFn = /*#__PURE__*/__webpack_require__.cw((module) => {
 
 var globalThis = (global_this_namespaceFn());
 var shared = (shared_namespaceFn());
@@ -3533,7 +3533,7 @@ module.exports = function (name) {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.array.includes.js
-var es_array_includes_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_array_includes_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var $includes = (array_includes_namespaceFn().includes);
@@ -3566,7 +3566,7 @@ addToUnscopables('includes');
 });
 
 // MODULE: ./node_modules/core-js/modules/es.array.push.js
-var es_array_push_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_array_push_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var toObject = (to_object_namespaceFn());
@@ -3613,7 +3613,7 @@ $({ target: 'Array', proto: true, arity: 1, forced: FORCED }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.iterator.constructor.js
-var es_iterator_constructor_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_iterator_constructor_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var globalThis = (global_this_namespaceFn());
@@ -3683,7 +3683,7 @@ $({ global: true, constructor: true, forced: FORCED }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.iterator.every.js
-var es_iterator_every_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_iterator_every_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var call = (function_call_namespaceFn());
@@ -3720,7 +3720,7 @@ $({ target: 'Iterator', proto: true, real: true, forced: everyWithoutClosingOnEa
 });
 
 // MODULE: ./node_modules/core-js/modules/es.iterator.filter.js
-var es_iterator_filter_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_iterator_filter_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var call = (function_call_namespaceFn());
@@ -3776,7 +3776,7 @@ $({ target: 'Iterator', proto: true, real: true, forced: FORCED }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.iterator.map.js
-var es_iterator_map_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_iterator_map_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var call = (function_call_namespaceFn());
@@ -3825,7 +3825,7 @@ $({ target: 'Iterator', proto: true, real: true, forced: FORCED }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.map.get-or-insert-computed.js
-var es_map_get_or_insert_computed_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_map_get_or_insert_computed_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var aCallable = (a_callable_namespaceFn());
@@ -3854,7 +3854,7 @@ $({ target: 'Map', proto: true, real: true, forced: IS_PURE }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.map.get-or-insert.js
-var es_map_get_or_insert_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_map_get_or_insert_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var MapHelpers = (map_helpers_namespaceFn());
@@ -3877,7 +3877,7 @@ $({ target: 'Map', proto: true, real: true, forced: IS_PURE }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.set.difference.v2.js
-var es_set_difference_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_set_difference_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var difference = (set_difference_namespaceFn());
@@ -3919,7 +3919,7 @@ $({ target: 'Set', proto: true, real: true, forced: FORCED }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.set.intersection.v2.js
-var es_set_intersection_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_set_intersection_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var fails = (fails_namespaceFn());
@@ -3942,7 +3942,7 @@ $({ target: 'Set', proto: true, real: true, forced: INCORRECT }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.set.is-disjoint-from.v2.js
-var es_set_is_disjoint_from_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_set_is_disjoint_from_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var isDisjointFrom = (set_is_disjoint_from_namespaceFn());
@@ -3961,7 +3961,7 @@ $({ target: 'Set', proto: true, real: true, forced: INCORRECT }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.set.is-subset-of.v2.js
-var es_set_is_subset_of_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_set_is_subset_of_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var isSubsetOf = (set_is_subset_of_namespaceFn());
@@ -3980,7 +3980,7 @@ $({ target: 'Set', proto: true, real: true, forced: INCORRECT }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.set.is-superset-of.v2.js
-var es_set_is_superset_of_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_set_is_superset_of_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var isSupersetOf = (set_is_superset_of_namespaceFn());
@@ -3999,7 +3999,7 @@ $({ target: 'Set', proto: true, real: true, forced: INCORRECT }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.set.symmetric-difference.v2.js
-var es_set_symmetric_difference_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_set_symmetric_difference_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var symmetricDifference = (set_symmetric_difference_namespaceFn());
@@ -4017,7 +4017,7 @@ $({ target: 'Set', proto: true, real: true, forced: FORCED }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.set.union.v2.js
-var es_set_union_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_set_union_v2_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var union = (set_union_namespaceFn());
@@ -4035,7 +4035,7 @@ $({ target: 'Set', proto: true, real: true, forced: FORCED }, {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.typed-array.with.js
-var es_typed_array_with_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_typed_array_with_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var ArrayBufferViewCore = (array_buffer_view_core_namespaceFn());
 var isBigIntArray = (is_big_int_array_namespaceFn());
@@ -4088,7 +4088,7 @@ exportTypedArrayMethod('with', { 'with': function (index, value) {
 });
 
 // MODULE: ./node_modules/core-js/modules/es.uint8-array.set-from-base64.js
-var es_uint8_array_set_from_base64_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_uint8_array_set_from_base64_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var globalThis = (global_this_namespaceFn());
@@ -4130,7 +4130,7 @@ if (Uint8Array) $({ target: 'Uint8Array', proto: true, forced: INCORRECT_BEHAVIO
 });
 
 // MODULE: ./node_modules/core-js/modules/es.uint8-array.set-from-hex.js
-var es_uint8_array_set_from_hex_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_uint8_array_set_from_hex_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var globalThis = (global_this_namespaceFn());
@@ -4167,7 +4167,7 @@ if (globalThis.Uint8Array) $({ target: 'Uint8Array', proto: true, forced: throws
 });
 
 // MODULE: ./node_modules/core-js/modules/es.uint8-array.to-base64.js
-var es_uint8_array_to_base64_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_uint8_array_to_base64_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 /* eslint-disable no-useless-assignment -- false positive for [index++] syntax */
 var $ = (export_namespaceFn());
@@ -4249,7 +4249,7 @@ if (Uint8Array) $({ target: 'Uint8Array', proto: true, forced: INCORRECT_BEHAVIO
 });
 
 // MODULE: ./node_modules/core-js/modules/es.uint8-array.to-hex.js
-var es_uint8_array_to_hex_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var es_uint8_array_to_hex_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var globalThis = (global_this_namespaceFn());
@@ -4290,7 +4290,7 @@ if (Uint8Array) $({ target: 'Uint8Array', proto: true, forced: INCORRECT_BEHAVIO
 });
 
 // MODULE: ./node_modules/core-js/modules/web.url.parse.js
-var web_url_parse_namespaceFn = /*#__PURE__*/__webpack_require__.cw(function(module, exports) {
+var web_url_parse_namespaceFn = /*#__PURE__*/__webpack_require__.cw(() => {
 
 var $ = (export_namespaceFn());
 var getBuiltIn = (get_built_in_namespaceFn());
@@ -4398,6 +4398,8 @@ const isNodeJS = typeof process === "object" && process + "" === "[object proces
 const BBOX_INIT = [Infinity, Infinity, -Infinity, -Infinity];
 const F32_BBOX_INIT = new Float32Array(BBOX_INIT);
 const FONT_IDENTITY_MATRIX = (/* unused pure expression or super */ null && ([0.001, 0, 0, 0.001, 0, 0]));
+const DEFAULT_VERTICAL_ORIGIN_Y = 880;
+const DEFAULT_VERTICAL_ADVANCE = 1000;
 const LINE_FACTOR = 1.35;
 const LINE_DESCENT_FACTOR = 0.35;
 const BASELINE_FACTOR = (/* unused pure expression or super */ null && (LINE_DESCENT_FACTOR / LINE_FACTOR));
@@ -4862,6 +4864,9 @@ class FeatureTest {
   static get isImageDecoderSupported() {
     return util_shadow(this, "isImageDecoderSupported", typeof ImageDecoder !== "undefined");
   }
+  static get isVideoFrameSupported() {
+    return util_shadow(this, "isVideoFrameSupported", typeof VideoFrame !== "undefined");
+  }
   static get isFloat16ArraySupported() {
     return util_shadow(this, "isFloat16ArraySupported", typeof Float16Array !== "undefined");
   }
@@ -4912,6 +4917,11 @@ class Util {
   }
   static makeHexColor(r, g, b) {
     return `#${this.hexNums[r]}${this.hexNums[g]}${this.hexNums[b]}`;
+  }
+  static get identity0to256Map() {
+    return util_shadow(this, "identity0to256Map", Uint8Array.from({
+      length: 256
+    }, (_, i) => i));
   }
   static transform(m1, m2) {
     return [m1[0] * m2[0] + m1[2] * m2[1], m1[1] * m2[0] + m1[3] * m2[1], m1[0] * m2[2] + m1[2] * m2[3], m1[1] * m2[2] + m1[3] * m2[3], m1[0] * m2[4] + m1[2] * m2[5] + m1[4], m1[1] * m2[4] + m1[3] * m2[5] + m1[5]];
@@ -4979,10 +4989,10 @@ class Util {
       b1 += m1r2;
       b2 += m1r2;
     }
-    output[0] = Math.min(output[0], a0, a1, a2, a3);
-    output[1] = Math.min(output[1], b0, b1, b2, b3);
-    output[2] = Math.max(output[2], a0, a1, a2, a3);
-    output[3] = Math.max(output[3], b0, b1, b2, b3);
+    output[0] = Math.min(output[0], a0, a1, Math.min(a2, a3));
+    output[1] = Math.min(output[1], b0, b1, Math.min(b2, b3));
+    output[2] = Math.max(output[2], a0, a1, Math.max(a2, a3));
+    output[3] = Math.max(output[3], b0, b1, Math.max(b2, b3));
   }
   static inverseTransform(m) {
     const d = m[0] * m[3] - m[1] * m[2];
@@ -5740,6 +5750,9 @@ class RefMap {
   putAlias(ref, aliasRef) {
     this.#map.set(ref.toString(), this.get(aliasRef));
   }
+  remove(ref) {
+    this.#map.delete(ref.toString());
+  }
   getOrPutComputed(ref, callback) {
     const map = this.#map,
       refStr = ref.toString();
@@ -6442,9 +6455,8 @@ function getSizeInBytes(x) {
 
 
 
-
 class WasmImage {
-  static #handler = null;
+  static #getHandler = null;
   static #instances = new Set();
   static #useWasm = true;
   static #useWorkerFetch = true;
@@ -6454,7 +6466,7 @@ class WasmImage {
   _filename = null;
   _noWasmFilename = null;
   static setOptions({
-    handler,
+    getHandler,
     useWasm,
     useWorkerFetch,
     wasmUrl
@@ -6463,7 +6475,7 @@ class WasmImage {
     WasmImage.#useWorkerFetch = useWorkerFetch;
     WasmImage.#wasmUrl = wasmUrl;
     if (!useWorkerFetch) {
-      WasmImage.#handler = handler;
+      WasmImage.#getHandler = getHandler;
     }
   }
   static get instance() {
@@ -6479,38 +6491,46 @@ class WasmImage {
       WasmImage.#instances.add(this);
     }
   }
-  async #getJsModule(fallbackCallback) {
-    let instance = null;
-    try {
-      const mod = await import(
-      /*webpackIgnore: true*/
-      /*@vite-ignore*/
-      `${WasmImage.#wasmUrl}${this._noWasmFilename}`);
-      instance = mod.default();
-    } catch (ex) {
-      warn(`#getJsModule: ${ex}`);
-    }
-    fallbackCallback(instance);
+  async #getJsInstance(imports) {
+    const {
+      default: instantiate
+    } = await import(
+    /*webpackIgnore: true*/
+    /*@vite-ignore*/
+    `${WasmImage.#wasmUrl}${this._noWasmFilename}`);
+    return {
+      exports: instantiate(imports)
+    };
   }
-  async #instantiateWasm(fallbackCallback, imports, successCallback) {
-    try {
-      if (!this.#buffer) {
-        if (WasmImage.#useWorkerFetch) {
-          this.#buffer = await fetchBinaryData(`${WasmImage.#wasmUrl}${this._filename}`);
-        } else {
-          this.#buffer = await WasmImage.#handler.sendWithPromise("FetchBinaryData", {
-            kind: "wasmUrl",
-            filename: this._filename
-          });
-        }
+  async #getWasmInstance(imports) {
+    if (!this.#buffer) {
+      if (WasmImage.#useWorkerFetch) {
+        this.#buffer = await fetchBinaryData(`${WasmImage.#wasmUrl}${this._filename}`);
+      } else {
+        this.#buffer = await WasmImage.#getHandler().sendWithPromise("FetchBinaryData", {
+          kind: "wasmUrl",
+          filename: this._filename
+        });
       }
-      const results = await WebAssembly.instantiate(this.#buffer, imports);
-      return successCallback(results.instance);
-    } catch (ex) {
-      warn(`#instantiateWasm: ${ex}`);
-      this.#getJsModule(fallbackCallback);
-      return null;
     }
+    const results = await WebAssembly.instantiate(this.#buffer, imports);
+    return results.instance;
+  }
+  async #instantiateWasm(failureCallback, imports, successCallback) {
+    if (WasmImage.#useWasm) {
+      try {
+        return successCallback(await this.#getWasmInstance(imports));
+      } catch (ex) {
+        warn(`#getWasmInstance: ${ex}`);
+      }
+    }
+    try {
+      return successCallback(await this.#getJsInstance(imports));
+    } catch (ex) {
+      warn(`#getJsInstance: ${ex}`);
+    }
+    failureCallback(null);
+    return null;
   }
   _getModule(ImageDecoder) {
     if (!this.#modulePromise) {
@@ -6518,16 +6538,10 @@ class WasmImage {
         promise,
         resolve
       } = Promise.withResolvers();
-      const promises = [promise];
-      if (!WasmImage.#useWasm) {
-        this.#getJsModule(resolve);
-      } else {
-        promises.push(ImageDecoder({
-          warn: warn,
-          instantiateWasm: this.#instantiateWasm.bind(this, resolve)
-        }));
-      }
-      this.#modulePromise = Promise.race(promises);
+      this.#modulePromise = Promise.race([promise, ImageDecoder({
+        warn: warn,
+        instantiateWasm: this.#instantiateWasm.bind(this, resolve)
+      })]);
     }
     return this.#modulePromise;
   }
@@ -6611,7 +6625,7 @@ function resizeRgbImage(src, dest, w1, h1, w2, h2, alpha01) {
   const yRatio = h1 / h2;
   let newIndex = 0,
     oldIndex;
-  const xScaled = new Uint16Array(w2);
+  const xScaled = new Uint32Array(w2);
   const w1Scanline = w1 * COMPONENTS;
   for (let i = 0; i < w2; i++) {
     xScaled[i] = Math.floor(i * xRatio) * COMPONENTS;
@@ -6631,7 +6645,7 @@ function resizeRgbaImage(src, dest, w1, h1, w2, h2, alpha01) {
   const xRatio = w1 / w2;
   const yRatio = h1 / h2;
   let newIndex = 0;
-  const xScaled = new Uint16Array(w2);
+  const xScaled = new Uint32Array(w2);
   if (alpha01 === 1) {
     for (let i = 0; i < w2; i++) {
       xScaled[i] = Math.floor(i * xRatio);
@@ -6726,6 +6740,16 @@ class ColorSpace {
   isPassthrough(bits) {
     return false;
   }
+  getColorMap(bpc) {
+    const count = 1 << bpc;
+    const allColors = bpc <= 8 ? new Uint8Array(count) : new Uint16Array(count);
+    for (let i = 0; i < count; i++) {
+      allColors[i] = i;
+    }
+    const colorMap = new Uint8ClampedArray(count * 3);
+    this.getRgbBuffer(allColors, 0, count, colorMap, 0, bpc, 0);
+    return colorMap;
+  }
   isDefaultDecode(decode, bpc) {
     return ColorSpace.isDefaultDecode(decode, this.numComps);
   }
@@ -6737,12 +6761,7 @@ class ColorSpace {
     if (this.isPassthrough(bpc)) {
       rgbBuf = comps;
     } else if (this.numComps === 1 && count > numComponentColors && this.name !== "DeviceGray" && this.name !== "DeviceRGB") {
-      const allColors = bpc <= 8 ? new Uint8Array(numComponentColors) : new Uint16Array(numComponentColors);
-      for (let i = 0; i < numComponentColors; i++) {
-        allColors[i] = i;
-      }
-      const colorMap = new Uint8ClampedArray(numComponentColors * 3);
-      this.getRgbBuffer(allColors, 0, numComponentColors, colorMap, 0, bpc, 0);
+      const colorMap = this.getColorMap(bpc);
       if (!needsResizing) {
         let destPos = 0;
         for (let i = 0; i < count; ++i) {
@@ -7920,6 +7939,8 @@ class ColorSpaceUtils {
 ;// ./src/shared/image_utils.js
 /* unused harmony import specifier */ var image_utils_ImageKind;
 /* unused harmony import specifier */ var image_utils_FeatureTest;
+/* unused harmony import specifier */ var image_utils_MathClamp;
+
 
 
 function convertToRGBA(params) {
@@ -7983,8 +8004,9 @@ function convertRGBToRGBA({
 }) {
   let i = 0;
   const len = width * height * 3;
-  const len32 = len >> 2;
-  const src32 = new Uint32Array(src.buffer, srcPos, len32);
+  const byteOffset = src.byteOffset + srcPos;
+  const len32 = byteOffset % 4 === 0 ? Math.floor(image_utils_MathClamp(src.length - srcPos, 0, len) / 4) : 0;
+  const src32 = len32 > 0 ? new Uint32Array(src.buffer, byteOffset, len32) : null;
   const alphaMask = image_utils_FeatureTest.isLittleEndian ? 0xff000000 : 0xff;
   if (image_utils_FeatureTest.isLittleEndian) {
     for (; i < len32 - 2; i += 3, destPos += 4) {
@@ -9161,9 +9183,6 @@ async function OpenJPEG(moduleArg = {}) {
   var ENVIRONMENT_IS_WORKER = false;
   var programArgs = [];
   var thisProgram = "./this.program";
-  var quit_ = (status, toThrow) => {
-    throw toThrow;
-  };
   var _scriptName = import.meta.url;
   var scriptDirectory = "";
   var readAsync, readBinary;
@@ -9185,7 +9204,6 @@ async function OpenJPEG(moduleArg = {}) {
   var err = console.error.bind(console);
   var wasmBinary;
   var ABORT = false;
-  var EXITSTATUS;
   class EmscriptenEH {}
   class EmscriptenSjLj extends EmscriptenEH {}
   var runtimeInitialized = false;
@@ -9210,7 +9228,7 @@ async function OpenJPEG(moduleArg = {}) {
   }
   function initRuntime() {
     runtimeInitialized = true;
-    wasmExports["s"]();
+    wasmExports["j"]();
   }
   function postRun() {
     var postRun = Module["postRun"];
@@ -9219,15 +9237,6 @@ async function OpenJPEG(moduleArg = {}) {
       onPostRuns.push(...postRun);
     }
     callRuntimeCallbacks(onPostRuns);
-  }
-  function abort(what) {
-    Module["onAbort"]?.(what);
-    what = `Aborted(${what})`;
-    err(what);
-    ABORT = true;
-    what += ". Build with -sASSERTIONS for more info.";
-    var e = new WebAssembly.RuntimeError(what);
-    throw e;
   }
   var wasmBinaryFile;
   function getWasmImports() {
@@ -9265,107 +9274,13 @@ async function OpenJPEG(moduleArg = {}) {
   var onPostRuns = [];
   var onPreRuns = [];
   var noExitRuntime = true;
-  var __abort_js = () => abort("");
-  var runtimeKeepaliveCounter = 0;
-  var __emscripten_runtime_keepalive_clear = () => {
-    noExitRuntime = false;
-    runtimeKeepaliveCounter = 0;
-  };
-  var timers = {};
-  var handleException = e => {
-    if (e instanceof ExitStatus || e == "unwind") {
-      return EXITSTATUS;
-    }
-    quit_(1, e);
-  };
-  var keepRuntimeAlive = () => noExitRuntime || runtimeKeepaliveCounter > 0;
-  var _proc_exit = code => {
-    EXITSTATUS = code;
-    if (!keepRuntimeAlive()) {
-      Module["onExit"]?.(code);
-      ABORT = true;
-    }
-    quit_(code, new ExitStatus(code));
-  };
-  var exitJS = (status, implicit) => {
-    EXITSTATUS = status;
-    _proc_exit(status);
-  };
-  var _exit = exitJS;
-  var maybeExit = () => {
-    if (!keepRuntimeAlive()) {
-      try {
-        _exit(EXITSTATUS);
-      } catch (e) {
-        handleException(e);
-      }
-    }
-  };
-  var callUserCallback = func => {
-    if (ABORT) {
-      return;
-    }
-    try {
-      return func();
-    } catch (e) {
-      handleException(e);
-    } finally {
-      maybeExit();
-    }
-  };
-  var _emscripten_get_now = () => performance.now();
-  var __setitimer_js = (which, timeout_ms) => {
-    if (timers[which]) {
-      clearTimeout(timers[which].id);
-      delete timers[which];
-    }
-    if (!timeout_ms) return 0;
-    var id = setTimeout(() => {
-      delete timers[which];
-      callUserCallback(() => __emscripten_timeout(which, _emscripten_get_now()));
-    }, timeout_ms);
-    timers[which] = {
-      id,
-      timeout_ms
-    };
-    return 0;
-  };
   var HEAP32;
-  function _copy_pixels_1(compG_ptr, nb_pixels) {
-    compG_ptr >>= 2;
-    const imageData = Module.imageData = new Uint8ClampedArray(nb_pixels);
-    const compG = HEAP32.subarray(compG_ptr, compG_ptr + nb_pixels);
-    imageData.set(compG);
-  }
-  function _copy_pixels_3(compR_ptr, compG_ptr, compB_ptr, nb_pixels) {
-    compR_ptr >>= 2;
-    compG_ptr >>= 2;
-    compB_ptr >>= 2;
-    const imageData = Module.imageData = new Uint8ClampedArray(nb_pixels * 3);
-    const compR = HEAP32.subarray(compR_ptr, compR_ptr + nb_pixels);
-    const compG = HEAP32.subarray(compG_ptr, compG_ptr + nb_pixels);
-    const compB = HEAP32.subarray(compB_ptr, compB_ptr + nb_pixels);
-    for (let i = 0; i < nb_pixels; i++) {
-      imageData[3 * i] = compR[i];
-      imageData[3 * i + 1] = compG[i];
-      imageData[3 * i + 2] = compB[i];
-    }
-  }
-  function _copy_pixels_4(compR_ptr, compG_ptr, compB_ptr, compA_ptr, nb_pixels) {
-    compR_ptr >>= 2;
-    compG_ptr >>= 2;
-    compB_ptr >>= 2;
-    compA_ptr >>= 2;
-    const imageData = Module.imageData = new Uint8ClampedArray(nb_pixels * 4);
-    const compR = HEAP32.subarray(compR_ptr, compR_ptr + nb_pixels);
-    const compG = HEAP32.subarray(compG_ptr, compG_ptr + nb_pixels);
-    const compB = HEAP32.subarray(compB_ptr, compB_ptr + nb_pixels);
-    const compA = HEAP32.subarray(compA_ptr, compA_ptr + nb_pixels);
-    for (let i = 0; i < nb_pixels; i++) {
-      imageData[4 * i] = compR[i];
-      imageData[4 * i + 1] = compG[i];
-      imageData[4 * i + 2] = compB[i];
-      imageData[4 * i + 3] = compA[i];
+  function _copy_component(comp_ptr, index, nb_comps, nb_pixels) {
+    comp_ptr >>= 2;
+    const imageData = Module.imageData;
+    const comp = HEAP32.subarray(comp_ptr, comp_ptr + nb_pixels);
+    for (let i = 0, j = index; i < nb_pixels; i++, j += nb_comps) {
+      imageData[j] = comp[i];
     }
   }
   var getHeapMax = () => 2147483648;
@@ -9397,101 +9312,6 @@ async function OpenJPEG(moduleArg = {}) {
       }
     }
     return false;
-  };
-  var ENV = {};
-  var getExecutableName = () => thisProgram;
-  var getEnvStrings = () => {
-    if (!getEnvStrings.strings) {
-      var lang = (globalThis.navigator?.language ?? "C").replace("-", "_") + ".UTF-8";
-      var env = {
-        USER: "web_user",
-        LOGNAME: "web_user",
-        PATH: "/",
-        PWD: "/",
-        HOME: "/home/web_user",
-        LANG: lang,
-        _: getExecutableName()
-      };
-      for (var x in ENV) {
-        if (ENV[x] === undefined) delete env[x];else env[x] = ENV[x];
-      }
-      var strings = [];
-      for (var x in env) {
-        strings.push(`${x}=${env[x]}`);
-      }
-      getEnvStrings.strings = strings;
-    }
-    return getEnvStrings.strings;
-  };
-  var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
-    if (!(maxBytesToWrite > 0)) return 0;
-    var startIdx = outIdx;
-    var endIdx = outIdx + maxBytesToWrite - 1;
-    for (var i = 0; i < str.length; ++i) {
-      var u = str.codePointAt(i);
-      if (u <= 127) {
-        if (outIdx >= endIdx) break;
-        heap[outIdx++] = u;
-      } else if (u <= 2047) {
-        if (outIdx + 1 >= endIdx) break;
-        heap[outIdx++] = 192 | u >> 6;
-        heap[outIdx++] = 128 | u & 63;
-      } else if (u <= 65535) {
-        if (outIdx + 2 >= endIdx) break;
-        heap[outIdx++] = 224 | u >> 12;
-        heap[outIdx++] = 128 | u >> 6 & 63;
-        heap[outIdx++] = 128 | u & 63;
-      } else {
-        if (outIdx + 3 >= endIdx) break;
-        heap[outIdx++] = 240 | u >> 18;
-        heap[outIdx++] = 128 | u >> 12 & 63;
-        heap[outIdx++] = 128 | u >> 6 & 63;
-        heap[outIdx++] = 128 | u & 63;
-        i++;
-      }
-    }
-    heap[outIdx] = 0;
-    return outIdx - startIdx;
-  };
-  var stringToUTF8 = (str, outPtr, maxBytesToWrite) => stringToUTF8Array(str, HEAPU8, outPtr, maxBytesToWrite);
-  var HEAPU32;
-  var _environ_get = (__environ, environ_buf) => {
-    var bufSize = 0;
-    var envp = 0;
-    for (var string of getEnvStrings()) {
-      var ptr = environ_buf + bufSize;
-      HEAPU32[__environ + envp >> 2] = ptr;
-      bufSize += stringToUTF8(string, ptr, Infinity) + 1;
-      envp += 4;
-    }
-    return 0;
-  };
-  var lengthBytesUTF8 = str => {
-    var len = 0;
-    for (var i = 0; i < str.length; ++i) {
-      var c = str.charCodeAt(i);
-      if (c <= 127) {
-        len++;
-      } else if (c <= 2047) {
-        len += 2;
-      } else if (c >= 55296 && c <= 57343) {
-        len += 4;
-        ++i;
-      } else {
-        len += 3;
-      }
-    }
-    return len;
-  };
-  var _environ_sizes_get = (penviron_count, penviron_buf_size) => {
-    var strings = getEnvStrings();
-    HEAPU32[penviron_count >> 2] = strings.length;
-    var bufSize = 0;
-    for (var string of strings) {
-      bufSize += lengthBytesUTF8(string) + 1;
-    }
-    HEAPU32[penviron_buf_size >> 2] = bufSize;
-    return 0;
   };
   var INT53_MAX = 9007199254740992;
   var INT53_MIN = -9007199254740992;
@@ -9550,6 +9370,7 @@ async function OpenJPEG(moduleArg = {}) {
     }
   };
   var UTF8ToString = (ptr, maxBytesToRead, ignoreNul) => ptr ? UTF8ArrayToString(HEAPU8, ptr, maxBytesToRead, ignoreNul) : "";
+  var HEAPU32;
   var _fd_write = (fd, iov, iovcnt, pnum) => {
     var num = 0;
     for (var i = 0; i < iovcnt; i++) {
@@ -9564,44 +9385,15 @@ async function OpenJPEG(moduleArg = {}) {
     HEAPU32[pnum >> 2] = num;
     return 0;
   };
-  function _gray_to_rgba(compG_ptr, nb_pixels) {
-    compG_ptr >>= 2;
-    const imageData = Module.imageData = new Uint8ClampedArray(nb_pixels * 4);
-    const compG = HEAP32.subarray(compG_ptr, compG_ptr + nb_pixels);
-    for (let i = 0; i < nb_pixels; i++) {
-      imageData[4 * i] = imageData[4 * i + 1] = imageData[4 * i + 2] = compG[i];
-      imageData[4 * i + 3] = 255;
-    }
-  }
-  function _graya_to_rgba(compG_ptr, compA_ptr, nb_pixels) {
-    compG_ptr >>= 2;
-    compA_ptr >>= 2;
-    const imageData = Module.imageData = new Uint8ClampedArray(nb_pixels * 4);
-    const compG = HEAP32.subarray(compG_ptr, compG_ptr + nb_pixels);
-    const compA = HEAP32.subarray(compA_ptr, compA_ptr + nb_pixels);
-    for (let i = 0; i < nb_pixels; i++) {
-      imageData[4 * i] = imageData[4 * i + 1] = imageData[4 * i + 2] = compG[i];
-      imageData[4 * i + 3] = compA[i];
-    }
+  function _init_pixels(size) {
+    Module.imageData = new Uint8ClampedArray(size);
   }
   function _jsPrintWarning(message_ptr) {
     const message = UTF8ToString(message_ptr);
     (Module.warn || console.warn)(`OpenJPEG: ${message}`);
   }
-  function _rgb_to_rgba(compR_ptr, compG_ptr, compB_ptr, nb_pixels) {
-    compR_ptr >>= 2;
-    compG_ptr >>= 2;
-    compB_ptr >>= 2;
-    const imageData = Module.imageData = new Uint8ClampedArray(nb_pixels * 4);
-    const compR = HEAP32.subarray(compR_ptr, compR_ptr + nb_pixels);
-    const compG = HEAP32.subarray(compG_ptr, compG_ptr + nb_pixels);
-    const compB = HEAP32.subarray(compB_ptr, compB_ptr + nb_pixels);
-    for (let i = 0; i < nb_pixels; i++) {
-      imageData[4 * i] = compR[i];
-      imageData[4 * i + 1] = compG[i];
-      imageData[4 * i + 2] = compB[i];
-      imageData[4 * i + 3] = 255;
-    }
+  function _setImageData(array_ptr, array_size) {
+    Module.imageData = new Uint8ClampedArray(HEAPU8.slice(array_ptr, array_ptr + array_size).buffer);
   }
   function _storeErrorMessage(message_ptr) {
     const message = UTF8ToString(message_ptr);
@@ -9627,32 +9419,22 @@ async function OpenJPEG(moduleArg = {}) {
     }
   }
   Module["writeArrayToMemory"] = writeArrayToMemory;
-  var _malloc, _free, _jp2_decode, __emscripten_timeout, memory, __indirect_function_table, wasmMemory;
+  var _malloc, _free, _jp2_decode, memory, __indirect_function_table, wasmMemory;
   function assignWasmExports(wasmExports) {
-    _malloc = Module["_malloc"] = wasmExports["t"];
-    _free = Module["_free"] = wasmExports["u"];
-    _jp2_decode = Module["_jp2_decode"] = wasmExports["v"];
-    __emscripten_timeout = wasmExports["w"];
-    memory = wasmMemory = wasmExports["r"];
+    _malloc = Module["_malloc"] = wasmExports["k"];
+    _free = Module["_free"] = wasmExports["l"];
+    _jp2_decode = Module["_jp2_decode"] = wasmExports["m"];
+    memory = wasmMemory = wasmExports["i"];
     __indirect_function_table = wasmExports["__indirect_function_table"];
   }
   var wasmImports = {
-    m: __abort_js,
-    l: __emscripten_runtime_keepalive_clear,
-    i: __setitimer_js,
-    f: _copy_pixels_1,
-    e: _copy_pixels_3,
-    d: _copy_pixels_4,
-    j: _emscripten_resize_heap,
-    o: _environ_get,
-    p: _environ_sizes_get,
-    n: _fd_seek,
+    g: _copy_component,
+    c: _emscripten_resize_heap,
+    d: _fd_seek,
     b: _fd_write,
-    q: _gray_to_rgba,
-    h: _graya_to_rgba,
-    c: _jsPrintWarning,
-    k: _proc_exit,
-    g: _rgb_to_rgba,
+    h: _init_pixels,
+    e: _jsPrintWarning,
+    f: _setImageData,
     a: _storeErrorMessage
   };
   async function run() {
@@ -9756,11 +9538,13 @@ class JpxImage extends WasmImage {
     return util_shadow(this, "instance", new JpxImage(true));
   }
   async decode(bytes, {
-    numComponents = 4,
+    numComponents,
     isIndexedColormap = false,
     smaskInData = false,
     reducePower = 0
   } = {}) {
+    const padComponents = numComponents !== undefined;
+    numComponents ??= 4;
     const module = await this._getModule(openjpeg);
     if (!module) {
       throw new JpxError("OpenJPEG failed to initialize");
@@ -9770,7 +9554,7 @@ class JpxImage extends WasmImage {
       const size = bytes.length;
       ptr = module._malloc(size);
       module.writeArrayToMemory(bytes, ptr);
-      const ret = module._jp2_decode(ptr, size, numComponents > 0 ? numComponents : 0, !!isIndexedColormap, !!smaskInData, reducePower);
+      const ret = module._jp2_decode(ptr, size, numComponents > 0 ? numComponents : 0, !!isIndexedColormap, !!smaskInData, reducePower, padComponents);
       if (ret) {
         const {
           errorMessages

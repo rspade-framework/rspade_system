@@ -285,6 +285,7 @@ class Revision
         $revision->root_type = $root['type'];
         $revision->root_id = $root['id'];
         $revision->operation_id = $operation_id;
+        $revision->record_updated_at = $record->getAttributes()['updated_at'] ?? null;
         $revision->sequence = count(self::$revisions) + 1;
         $revision->changes = Revision_Codec::encode(json_encode($diff, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         $revision->save();

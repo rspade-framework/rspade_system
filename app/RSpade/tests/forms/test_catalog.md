@@ -139,3 +139,31 @@ Real keyboard input on a runtime-mounted widget on `/_sys`.
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | forms-ho-01 | `vals()` collects the native hidden inputs the form OWNS through `form.elements` - the shape `<Turnstile_Input $form>` renders outside its form | an Rsx_Form with an id; hidden inputs inside it, outside it naming its id, outside naming nothing, and inside naming another form | the first two collected, the last two not | implemented |
+
+## Form_Edit_Test.php (php) - writing an add/edit submission
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| FE-01 | a model without revisions is refused by name | run() on a plain model | throws naming it | implemented |
+| FE-02 | a new record writes every field | `_changed` empty, no id | fields written, `updated_at` in the result | implemented |
+| FE-03 | only changed fields are written | one field changed | the others untouched | implemented |
+| FE-04 | saves of different fields both stand | another save of another field | no question, both values stored | implemented |
+| FE-05 | a save of the same field asks and writes nothing | overlap on an enum | `field_conflict` naming that field, enum labels, nothing written | implemented |
+| FE-06 | Yes writes mine, No keeps theirs and writes the rest | each answer | stored values | implemented |
+| FE-07 | a further save between rounds asks again | a third save, then the old answer | a new question | implemented |
+| FE-08 | a write with no revision asks a plain confirm | raw SQL | `confirm`; No writes nothing, Yes writes | implemented |
+| FE-09 | a form is not in conflict with its own save | second submit from the result's `updated_at` | no question | implemented |
+| FE-10 | a submission without its edit state is refused | no `_changed` | throws | implemented |
+| FE-11 | a record deleted meanwhile answers not found | deleted row | `ERROR_NOT_FOUND` | implemented |
+| FE-12 | the record is read under a row lock | query log | one `for update` read | implemented |
+| FE-13 | a secret column says only that it changed | overlap on a never-exported column | `redacted`, no values | implemented |
+
+## form_edit_state.js (playwright) - what a form tells an endpoint about an edit
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| FES-01 | an untouched form reports nothing and its version | submit | `_changed` empty, `_loaded_updated_at` the seed's | implemented |
+| FES-02 | a typed value is reported | type, submit | `_changed` names it | implemented |
+| FES-03 | a programmatic val() is reported though the form stays clean | `val()` | reported, `dirty()` false | implemented |
+| FES-04 | a before_submit value is reported | hook adds a key | `_changed` names it | implemented |
+| FES-05 | a successful submit moves the snapshot and version | answer with `updated_at` | next submit reports nothing, new version | implemented |

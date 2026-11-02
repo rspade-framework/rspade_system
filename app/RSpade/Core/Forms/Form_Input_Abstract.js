@@ -126,6 +126,13 @@ class Form_Input_Abstract extends Component {
         this._has_baseline = false;
         this._baseline_pending = false;
 
+        // What the form was given, kept apart from the baseline: a programmatic val() moves
+        // the baseline (it is not the user's edit) but it is still a value the record does
+        // not hold, so the submission must report it. See is_changed_from_record().
+        this._record_snapshot = undefined;
+        this._has_record_snapshot = false;
+        this._record_snapshot_pending = false;
+
         // A USER value the form restores to a successor instance before it is ready
         // (Rsx_Form parking). Applied after the baseline, so it reads as changed.
         this._restore_value = undefined;
@@ -189,6 +196,43 @@ class Form_Input_Abstract extends Component {
         }
 
         return this.__snapshot(this._get_value()) !== this._baseline;
+    }
+
+    /**
+     * Does this input hold a value the record it was loaded from does not, by ANY path - the
+     * user, a programmatic val(), a restored value? This is what `_changed` reports on submit,
+     * and it is wider than is_changed(), which asks only about the user: a value a page
+     * derived with val() is not "unsaved work", but an endpoint must still write it.
+     *
+     * An input that never took a snapshot reports changed: writing a value the record already
+     * holds is harmless, and dropping one is not.
+     *
+     * @returns {boolean}
+     */
+    is_changed_from_record() {
+        if (!this._is_ready) {
+            return this._has_restore || this._has_pending || !this._has_record_snapshot;
+        }
+
+        if (!this._has_record_snapshot) {
+            return true;
+        }
+
+        return this.__snapshot(this._get_value()) !== this._record_snapshot;
+    }
+
+    /**
+     * Take the current value as what the record holds. Rsx_Form calls it for its seed,
+     * populate() and a successful submit, beside _rebaseline().
+     */
+    _snapshot_record() {
+        if (this._is_ready) {
+            this._record_snapshot = this.__snapshot(this._get_value());
+            this._has_record_snapshot = true;
+            this._record_snapshot_pending = false;
+        } else {
+            this._record_snapshot_pending = true;
+        }
     }
 
     /**
@@ -353,6 +397,9 @@ class Form_Input_Abstract extends Component {
         // The value at readiness is the unchanged state, unless a baseline already stands.
         if (this._baseline_pending || !this._has_baseline) {
             this._rebaseline();
+        }
+        if (this._record_snapshot_pending) {
+            this._snapshot_record();
         }
 
         // A user value restored before readiness lands AFTER the baseline: it is a change.

@@ -53,6 +53,7 @@ use App\RSpade\Core\Revisions\Transaction_Model;
  * @property int $operation_id
  * @property int $record_id
  * @property int $record_type
+ * @property string $record_updated_at
  * @property int $root_id
  * @property int $root_type
  * @property int $sequence

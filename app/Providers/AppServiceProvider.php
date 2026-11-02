@@ -134,15 +134,31 @@ class AppServiceProvider extends ServiceProvider
             );
         }
 
-        // Configure MySQL connection to use custom grammar with millisecond precision.
+        // Every MySQL connection uses the custom grammars, which keep millisecond precision.
+        //
+        // A connection is built more than once in a process: rsx:test swaps to its own, a
+        // side connection opens beside the main one, and a purge rebuilds either. So the
+        // grammars are installed where connections are made, plus on the one boot has
+        // already resolved. updated_at is a record's version (Form_Edit), and a connection
+        // writing whole seconds would make two saves look like one.
         //
         // Both grammars take the CONNECTION as a constructor argument: since Laravel 12
         // Illuminate\Database\Grammar requires one, and the setConnection() method that
         // used to supply it afterwards has been removed.
-        $connection = DB::connection();
-        if ($connection->getDriverName() === 'mysql') {
+        $install_grammars = function ($connection) {
             $connection->setQueryGrammar(new \App\RSpade\Core\Database\Query\Grammars\Query_MySqlGrammar($connection));
             $connection->setSchemaGrammar(new \App\RSpade\Core\Database\Schema\Grammars\Schema_MySqlGrammar($connection));
+
+            return $connection;
+        };
+
+        \Illuminate\Database\Connection::resolverFor('mysql', function ($pdo, $database, $prefix, $config) use ($install_grammars) {
+            return $install_grammars(new \Illuminate\Database\MySqlConnection($pdo, $database, $prefix, $config));
+        });
+
+        $connection = DB::connection();
+        if ($connection->getDriverName() === 'mysql') {
+            $install_grammars($connection);
         }
 
         // Set up query listener for migration/normalize debugging

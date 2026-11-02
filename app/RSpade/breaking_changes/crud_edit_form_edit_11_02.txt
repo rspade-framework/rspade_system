@@ -1,0 +1,67 @@
+A FORM THAT EDITS A RECORD SAVES THROUGH Form_Edit
+Date: 2026-11-02
+
+IF YOU DO NOTHING: your edit endpoints keep working as written, and two people editing one record still overwrite each other without warning, because each save writes every field it was sent. Rsx_Form's two new keys (_changed, _loaded_updated_at) arrive in your $params and are ignored, unless an endpoint of yours loops over all of $params, which then needs to skip them.
+
+SUMMARY
+    Category 3: a requested feature whose implementation includes a template UI.
+
+    The standard for an add/edit endpoint changed. It now writes only the fields that
+    changed, under a row lock, and asks the user only when another save changed one of
+    the same fields, showing both values.
+
+WHAT YOU ALREADY HAVE
+    Arrived in system/, nothing to do:
+
+    - Form_Edit (run, set, changed).
+    - Rsx_Form sends _changed and _loaded_updated_at on every submission, and offers
+      form.label_for(field).
+    - _revisions.record_updated_at, added by a migration.
+    - User_Model records revisions, so its edit dialog can use Form_Edit.
+    - Every MySQL connection stores timestamps at millisecond precision. A side
+      connection or a rebuilt one used to write whole seconds.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    - Each edit endpoint moved onto Form_Edit.
+    - Each edit form's seed carrying updated_at.
+    - $revisions = true on each model those forms edit.
+    - The 'field_conflict' question in your question handler. Without it the handler
+      meets a kind it does not know.
+
+THE REFERENCE IMPLEMENTATION
+    Under system/app/RSpade/resource/reference_app/:
+
+    app/frontend/clients/clients_controller.php       save(): one record
+    app/frontend/projects/projects_controller.php     save(): pivots, $edit->changed()
+    app/frontend/party/party_controller.php           save(): detail tables
+    app/frontend/tasks/tasks_controller.php           save(): a server-derived field
+    app/frontend/clients/edit/Clients_Edit_Action.js  the seed's updated_at
+    lib/modal/modal.js                                'field_conflict', _field_conflict_body()
+
+PORTING IT
+    For each endpoint, keep its validation and any question it asks, then:
+
+        return Form_Edit::run($record, $params, function (Form_Edit $edit) use ($record, $params) {
+            $edit->set('name', $params['name']);        // was $record->name = ...
+            $record->save();
+            // the rest of the endpoint, ending in its return
+        });
+
+    Remove a DB::transaction() of your own around that work: run() holds one. Guard
+    pivots and detail-table fields with $edit->changed('field'). A value the server
+    derives is still assigned directly.
+
+    Add updated_at to each hand-built seed, and to an endpoint that returns one.
+    Enabling $revisions starts recording history for that model, so storage grows
+    with its edits (rsx:man revisions, RETENTION).
+
+    Conformance audit crud_edit_endpoints_use_form_edit lists what is left:
+    php artisan rsx:conformance:show crud_edit_endpoints_use_form_edit
+
+    A form over settings one person owns may stay as it is.
+
+VERIFICATION
+    Open one record in two browsers.
+    Change different fields in each and save both: both changes stand, nobody is asked.
+    Change the same field in each and save both: the second is asked, showing both
+    values. Keep theirs keeps theirs and writes that browser's other changes.

@@ -471,6 +471,12 @@ API REFERENCE
     actor           the User_Model / Portal_User_Model / Login_User_Model, or null
     source_id__label, and the SOURCE_* constants
 
+EDIT FORMS
+    Form_Edit reads revision history to tell what another editor changed since a form
+    loaded, so a model edited through it declares $revisions (rsx:man form_conventions,
+    EDITING A RECORD). Each revision stores the record's updated_at as its write left it
+    (record_updated_at), which is what places it before or after a form's version.
+
 BULK WRITES
 
     Model::where(...)->update() / ->delete() on a model that records revisions

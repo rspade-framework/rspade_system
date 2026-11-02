@@ -61,6 +61,7 @@ export class DrawingEditor extends AnnotationEditor {
      * @param {number} _params.rotation - The viewport rotation.
      * @param {AnnotationEditorLayer} _params.parent - The parent layer.
      * @param {boolean} _params.isLTR - Whether the direction is left-to-right.
+     * @param {number} _params.timeStamp - The timestamp of the pointer event.
      */
     static createDrawerInstance(_params: {
         x: number;
@@ -69,6 +70,7 @@ export class DrawingEditor extends AnnotationEditor {
         rotation: number;
         parent: AnnotationEditorLayer;
         isLTR: boolean;
+        timeStamp: number;
     }): void;
     /**
      * @param {AnnotationEditorLayer} _parent

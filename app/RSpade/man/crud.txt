@@ -137,18 +137,22 @@ FEATURE CONTROLLER
                     $record = new Client_Model();
                 }
 
-                // Set fields explicitly (no mass assignment)
-                $record->name = $params['name'];
-                $record->email = $params['email'] ?? null;
-                // ... all fields ...
-                $record->save();
+                // Writes only what changed, under a row lock, and asks when another
+                // save changed the same field (rsx:man form_conventions, EDITING A
+                // RECORD). The model declares $revisions; the $data seed carries updated_at.
+                return Form_Edit::run($record, $params, function (Form_Edit $edit) use ($record, $id, $params) {
+                    $edit->set('name', $params['name']);
+                    $edit->set('email', $params['email'] ?? null);
+                    // ... all fields ...
+                    $record->save();
 
-                Flash_Alert::success($id ? 'Updated successfully' : 'Created successfully');
+                    Flash_Alert::success($id ? 'Updated successfully' : 'Created successfully');
 
-                return [
-                    'id' => $record->id,
-                    'redirect' => Rsx::Route('Clients_View_Action', $record->id),
-                ];
+                    return [
+                        'id' => $record->id,
+                        'redirect' => Rsx::Route('Clients_View_Action', $record->id),
+                    ];
+                });
             }
 
             // Soft delete

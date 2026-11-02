@@ -34,22 +34,15 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
     // The subject is the filesystem and two child processes.
     protected static $use_database_transactions = false;
 
-    private static $memory_limit = null;
-
     /**
      * The suite's process stands at about 115 MB before this class runs, each fixture index it
      * loads to compare costs about 30 MB, and several are held at once. Measured peak 260 MB
-     * (2026-10-31), past the development CLI limit of 256 MB.
+     * (2026-10-31), past the development CLI limit of 256 MB. The limit stays raised for the
+     * rest of the process: PHP refuses to lower it below what is already in use.
      */
     public static function setup()
     {
-        static::$memory_limit = ini_get('memory_limit');
         ini_set('memory_limit', '512M');
-    }
-
-    public static function teardown()
-    {
-        ini_set('memory_limit', static::$memory_limit);
     }
 
     /** The fixture tree, relative to base_path(). */

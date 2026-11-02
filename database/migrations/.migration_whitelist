@@ -801,6 +801,11 @@
             "created_at": "2026-10-31T12:32:22+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_recipient_history_indexes_to_email_queue"
+        },
+        "2026_11_02_045401_add_record_updated_at_to_revisions.php": {
+            "created_at": "2026-11-02T04:54:01+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_record_updated_at_to_revisions"
         }
     }
 }

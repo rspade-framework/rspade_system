@@ -107,13 +107,18 @@ public static function save(Request $request, array $params = [])
     }
 
     $task = !empty($params['id']) ? Task_Model::find($params['id']) : new Task_Model();
-    $task->title = $params['title'];
-    $task->save();
 
-    Flash_Alert::success('Saved');
-    return ['redirect' => Rsx::Route('Tasks_View_Action', $task->id)];
+    return Form_Edit::run($task, $params, function (Form_Edit $edit) use ($task, $params) {
+        $edit->set('title', $params['title']);
+        $task->save();
+
+        Flash_Alert::success('Saved');
+        return ['redirect' => Rsx::Route('Tasks_View_Action', $task->id)];
+    });
 }
 ```
+
+**A form that edits a record saves through `Form_Edit`.** The form sends `_changed` and `_loaded_updated_at` beside all the values; `run()` takes a row lock, refreshes the record and asks a `field_conflict` question ONLY when another save changed a field this submission also changed. `$edit->set()` assigns a field only if it is being written; `$edit->changed($field)` is the test for a pivot, a detail field or a composed value. **Required: the model declares `$revisions = true`, and the `$data` seed carries `updated_at`** (both fail loud). Never inside your own `DB::transaction()`. `rsx:man form_conventions`, EDITING A RECORD.
 
 **A server-side length check reads the column, never a literal**: `Model::field_length('col')`
 is the same number the input's `$max_length` binds, so `strlen()` rules and a private
