@@ -219,14 +219,22 @@ class Task_Schedule_Reconcile_Test extends Rsx_Test_Abstract
 
     public static function test_force_scheduled_makes_every_schedule_due_now()
     {
+        // The starting state is written, not inherited: a plain tick never moves a schedule
+        // that already exists, and nothing advances a due one under the suite, so a row an
+        // earlier test registered for the next minute is due once that minute passes. Every
+        // row is put a year out, so the forced tick alone can make it due.
         Artisan::call('rsx:task:process');
+        DB::table('_task_schedules')->update(['next_run_at' => date('Y-m-d H:i:s', time() + 86400 * 365)]);
+        static::__assert_true(DB::table('_task_schedules')->count() > 0, 'fixture: schedules are registered');
         static::__assert_equals(0, DB::table('_task_schedules')->where('next_run_at', '<=', now())->count(), 'fixture: nothing is due');
 
         $before = time();
         Artisan::call('rsx:task:process', ['--force-scheduled' => true]);
 
+        $earliest = DB::table('_task_schedules')->min('next_run_at');
         $latest = DB::table('_task_schedules')->max('next_run_at');
-        static::__assert_true(strtotime($latest) <= time() && strtotime($latest) >= $before - 1, 'every schedule is due now');
+        static::__assert_true(strtotime($earliest) >= $before - 1, 'every schedule was moved by the forced tick');
+        static::__assert_true(strtotime($latest) <= time(), 'every schedule is due now');
 
         // Put the cadences back for whatever runs next.
         DB::table('_task_schedules')->delete();

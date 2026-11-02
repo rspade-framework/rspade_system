@@ -292,7 +292,7 @@ class Form_Edit
                 'theirs' => $redacted ? null : $this->__display($field, $this->record->{$field}),
                 'yours' => $redacted ? null : $this->__display($field, $params[$field] ?? null),
                 'redacted' => $redacted,
-                'changed_by' => $author ? $author->get_printed_name() : null,
+                'changed_by' => $author['name'] ?? null,
                 'changed_at' => Rsx_Time::format_timestamp($revision->created_at),
             ];
         }

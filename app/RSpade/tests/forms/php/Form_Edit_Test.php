@@ -12,6 +12,7 @@ use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Forms\Form_Edit;
 use App\RSpade\Core\Response\Error_Response;
+use App\RSpade\Core\Revisions\Revision_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Tests\Forms\Php\Form_Edit_Fixture_Model;
@@ -291,6 +292,32 @@ class Form_Edit_Test extends Rsx_Test_Abstract
         $locked = array_filter($queries, fn ($query) => stripos($query, 'for update') !== false);
 
         static::__assert_true(count($locked) === 1, 'one locking read');
+    }
+
+    /** FE-14 */
+    public static function test_the_question_names_the_person_who_made_the_other_save()
+    {
+        $record = static::__record();
+        $loaded = static::__version($record);
+
+        static::__acting_as_user(1);
+        try {
+            static::__other_save($record->id, 'name', 'Theirs');
+        } finally {
+            static::__reset_session();
+        }
+
+        $field = static::__submit($record, $loaded, ['name' => 'Mine'])->get_metadata()['question']['fields'][0];
+
+        // The actor the revision was stamped with, named as every author display names it.
+        $revision = Revision_Model::where('record_type', 'Form_Edit_Fixture_Model')
+            ->where('record_id', $record->id)
+            ->orderBy('id', 'desc')
+            ->first();
+        $actor = $revision->created_by;
+
+        static::__assert_not_null($actor, 'the other save was stamped with the signed-in person');
+        static::__assert_equals($actor->get_printed_name(), $field['changed_by'], 'the person who saved it, by name');
     }
 
     /** FE-13 */

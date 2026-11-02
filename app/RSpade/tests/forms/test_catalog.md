@@ -156,6 +156,7 @@ Real keyboard input on a runtime-mounted widget on `/_sys`.
 | FE-10 | a submission without its edit state is refused | no `_changed` | throws | implemented |
 | FE-11 | a record deleted meanwhile answers not found | deleted row | `ERROR_NOT_FOUND` | implemented |
 | FE-12 | the record is read under a row lock | query log | one `for update` read | implemented |
+| FE-14 | the question names the person who made the other save | another save as signed-in user 1, then an overlapping submission | `changed_by` is that user's printed name | implemented |
 | FE-13 | a secret column says only that it changed | overlap on a never-exported column | `redacted`, no values | implemented |
 
 ## form_edit_state.js (playwright) - what a form tells an endpoint about an edit

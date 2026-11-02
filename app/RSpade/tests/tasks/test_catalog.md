@@ -156,7 +156,7 @@ Type: php / cli (given per section). Last updated: 2026-10-11.
 | task-recon-02 | a changed expression is re-registered in place, statistics kept | corrupted expression + streak | same id, manifest expression, recomputed next_run_at, streak kept | implemented |
 | task-recon-03 | a matching schedule is untouched | two ticks | same id and next_run_at | implemented |
 | task-recon-04 | an undeclared schedule is removed; its runs are kept | ghost schedule + run | schedule gone; run kept, schedule_id null | implemented |
-| task-recon-05 | --force-scheduled makes every schedule due now | tick with the flag | every next_run_at <= now | implemented |
+| task-recon-05 | --force-scheduled makes every schedule due now | every row written a year out, then a tick with the flag | every next_run_at moved by that tick and <= now | implemented |
 | task-recon-06 | a changed server timezone is re-registered in place | config zone switched; tick | same id, timezone recorded, next_run_at on the new wall clock | implemented |
 | task-recon-07 | a moved maintenance hour is re-registered in place | rsx.tasks.maintenance_hour switched; tick | same id, cron_resolved '0 H * * *', next run at H:00 | implemented |
 | task-recon-08 | a row with no resolution recorded has it recorded, next run kept | cron_resolved nulled; tick | cron_resolved filled, next_run_at unchanged | implemented |
