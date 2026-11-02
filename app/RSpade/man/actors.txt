@@ -28,11 +28,14 @@ makes "who wrote this?" answerable on any record in the system. The actor layer 
 other half of the deal: it guarantees that whatever the pair points at can always answer
 "what is your name?" and "where can this viewer see you?".
 
-The framework ships three actors:
+The framework ships four actors:
 
-    User_Model          a staff membership in one site       (site-scoped)
-    Portal_User_Model   a client-portal account, per site    (site-scoped)
-    Login_User_Model    the cross-site login identity        (NOT site-scoped)
+    User_Model              a staff membership in one site       (site-scoped)
+    Portal_User_Model       a client-portal account, per site    (site-scoped)
+    Login_User_Model        the cross-site login identity        (NOT site-scoped)
+    Companion_Actor_Model   a companion application, the writer of its endpoint
+                            calls; printed "Companion:<name>"    (NOT site-scoped;
+                            rsx:man companion_apps)
 
 They stay separate identities on purpose - a staff person and a portal client are not
 the same kind of thing, and consolidating them would flatten a real distinction.

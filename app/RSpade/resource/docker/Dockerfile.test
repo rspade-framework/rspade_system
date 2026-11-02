@@ -120,6 +120,11 @@ RUN bash -c 'set -e; \
     # No scheduled security updates either (see the ENV above). \
     rm -f /etc/supervisor/conf.d/security-updates.conf; \
     \
+    # No companion daemon. A test that needs one starts its own against a scratch \
+    # tree; an ambient daemon would only race those tests, and one that failed \
+    # to reach RUNNING would abort the worker. \
+    rm -f /etc/supervisor/conf.d/rsx-companiond.conf; \
+    \
     bash /usr/local/bin/rspade-entrypoint bash -c "set -e; \
         if [ -f /opt/rspade/schema_cache.sql.gz ]; then \
             echo \"[build] restoring the shipped schema cache into rspade\"; \

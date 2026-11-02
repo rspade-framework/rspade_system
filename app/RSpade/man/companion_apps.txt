@@ -1,0 +1,788 @@
+COMPANION_APPS(1)                  RSpade Manual                  COMPANION_APPS(1)
+
+NAME
+    companion_apps - long-running processes that are part of the application's code
+    tree, run by rsx-companiond and calling the application through signed endpoints
+
+TAGS
+    tasks, security, deploy
+
+SYNOPSIS
+    rsx/companions/hello/hello_companion_service.php:
+
+        class Hello_Companion_Service extends Companion_Service_Abstract
+        {
+            public static function name(): string { return 'hello'; }
+            public static function description(): string { return 'Says hello every 30 seconds'; }
+            public static function command(): array { return ['node', 'resource/main.js']; }
+
+            #[Companion_Endpoint('hello')]
+            public static function hello(Request $request, array $params = [])
+            {
+                return ['greeting' => 'hello', 'site_id' => Session::get_site_id()];
+            }
+        }
+
+    rsx/companions/hello/resource/main.js:
+
+        const companion = require('rsx-companion-sdk');
+
+        await companion.ready();
+        companion.status('Started');
+        const answer = await companion.client.hello({calls: 1});
+
+    Running it:
+
+        php artisan rsx:companion_apps:start hello
+        php artisan rsx:companion_apps:list
+
+DESCRIPTION
+    RSpade has three kinds of server endpoint:
+
+        Kind                    Caller                         Authenticated by
+        ---------------------   ----------------------------   ----------------------
+        #[Ajax_Endpoint]        a signed-in user's browser     the session
+        #[Api_Endpoint]         an end user's integration      a user-owned API key
+        #[Companion_Endpoint]   a process from this code tree  a per-lifetime secret
+
+    A COMPANION APPLICATION is the third caller: a watcher, a socket listener, a
+    queue consumer or a protocol bridge that should not be a PHP task looping
+    forever. It ships in the same commit as the application, runs beside it, and
+    calls it as a peer. It has no user, no session and no API key, and it never
+    appears in the API inventory, the API docs or any key screen.
+
+    The framework supplies all of the running of it. rsx-companiond, one framework
+    daemon under the container's supervisor, starts each companion that should run,
+    captures its output, restarts it on a crash with backoff, stops it gracefully,
+    and records its lifetimes. There is no supervisor config to write and no
+    per-companion wrapper. No PHP process is ever held running: PHP takes part per
+    request and in short CLI commands.
+
+    Laravel has no equivalent. A Laravel application runs a long-lived process with
+    `php artisan queue:work` under a hand-written supervisor program, and a process
+    of another language calls it through a route with whatever authentication the
+    developer builds. Here the declaration is a class the manifest discovers, the
+    process manager is the framework's, and the authentication, the allow-list and
+    the stale-code refusal are mechanical.
+
+    Supervisord is a REQUIREMENT for companions, and only for them: it is what keeps
+    rsx-companiond itself alive. The RSpade container has it; a host without it runs
+    RSpade but not companions, and the rsx:companion_apps commands say so.
+
+THE THREE TRAPS
+    1. DECLARE THE SITE. A companion is per install and a request carries its site.
+       On a multi tenant install a request naming no site is refused (422
+       site_required), and a task the endpoint dispatches runs on NO site like every
+       plain task - pass site_id in its params and declare it in the task.
+
+    2. ENDPOINTS ARE IDEMPOTENT AND ENQUEUE. A companion killed mid-call repeats
+       the call when it comes back, and the SDK retries every temporary failure, so
+       the same call arriving twice must do no harm. A write endpoint validates,
+       records and dispatches a task, and answers fast; the companion advances its
+       own checkpoint only after the application has accepted the work.
+
+    3. THERE IS NO VERSIONING. No through:, no deprecated input, no compatibility
+       shim. A companion ships with the endpoints it calls; when they change under a
+       running one it is refused (409 contract_mismatch), exits, and is started again
+       on the current code.
+
+DECLARING A COMPANION
+    One directory per companion, named after it:
+
+        rsx/companions/<name>/<name>_companion_service.php
+                                    class X_Companion_Service
+                                        extends Companion_Service_Abstract
+        rsx/companions/<name>/resource/main.js
+                                    the process
+
+    The process's source lives under resource/ because the manifest does not scan
+    that directory: a module.exports anywhere else under rsx/ is read as browser
+    JavaScript and fails the build. Companion_Service_Abstract extends
+    Rsx_Service_Abstract, so #[Task] and #[Schedule] methods on the class are
+    ordinary tasks, for the companion's periodic upkeep.
+
+    THE DECLARATION IS READ AT BUILD, by loading the class, and must be a pure
+    function of the code: these methods touch no database and read no environment.
+    The build writes what they answer to build/companions/<name>/descriptor.json,
+    which is all the daemon reads, so a companion starts with no PHP running.
+
+        name()                              abstract. [a-z][a-z0-9_]*: the URL
+                                            segment, the log name, the actor's name
+        description()                       abstract. One line, shown in /_sys and list
+        command()                           abstract. The argv, never a shell:
+                                            ['node', 'resource/main.js']
+        working_directory()                 '.' - relative to the companion's
+                                            directory, and inside it
+        environment()                       [] - extra variables. BUILD OUTPUT: never
+                                            a secret
+        shutdown_grace_seconds()            30 - SIGTERM to SIGKILL; 1 to 300
+        restart_policy()                    RESTART_ALWAYS | RESTART_ON_FAILURE |
+                                            RESTART_NEVER
+        restart_backoff_initial_seconds()   1 - doubled per consecutive crash
+        restart_backoff_ceiling_seconds()   300 - the doubling stops here
+        single_instance()                   true - one copy per install, elected
+                                            (MULTI-HOST AND SINGLE_INSTANCE)
+        on_code_change()                    CODE_CHANGE_RESTART_IF_AFFECTED; also
+                                            _IGNORE, _PAUSE, _RESTART (DEVELOPMENT)
+        ready_to_run(): ?string             null - WHETHER A COMPANION RUNS
+        endpoints()                         final: what the manifest collected
+
+    Every method but the three abstract ones and endpoints() is #[Replaceable]:
+    override only what differs.
+
+    A secret a companion needs is fetched through one of its endpoints, never put in
+    environment(): the descriptor is a build artifact.
+
+    Every rule is a manifest-build FATAL ("Invalid companion application: ...")
+    naming the class, method and file: a name outside the pattern or declared twice;
+    an empty description or command; a working directory leaving the companion's
+    own; a non-string environment value; an unknown policy; a grace outside 1-300;
+    backoff seconds below 1 or a ceiling below the initial delay; a write call in
+    ready_to_run()'s own body.
+
+ENDPOINTS
+    An endpoint is a public static method with the ordinary signature, marked with
+    the companion's name. Its own method name is the endpoint name:
+
+        #[Companion_Endpoint('feed_watch')]
+        public static function apply_change(Request $request, array $params = [])
+
+    It may live on the companion class or on any class with no class-level #[Auth].
+    It carries NO #[Auth]: the request's signature is the gate, the endpoint lives in
+    a gate realm of its own, and #[Auth] there would read as a gate that never runs.
+    Endpoints are not listed by hand anywhere; the manifest collects them into each
+    companion's allow-list, and a companion reaches its own endpoints and no others.
+
+    Manifest-build FATALs: #[Companion_Endpoint] naming no declared companion, or no
+    name; on a class or an instance method; a method name outside [a-z][a-z0-9_]*;
+    two methods claiming one name on one companion; beside #[Route], #[SPA],
+    #[Portal_Route], #[Ajax_Endpoint], #[Ajax_Endpoint_Model_Fetch], #[Api_Endpoint],
+    #[FPC] or #[Auth]; a class-level #[Auth] over it; an endpoint named
+    rsx_sdk_contract_probe (reserved, below); a #[Route], #[Portal_Route] or @route
+    under /_companion.
+
+    THE REQUEST:
+
+        - POST /_companion/<name>/<endpoint>, routed to the Ajax php-fpm pool.
+        - $params is the JSON body (an object or array; empty is []).
+        - HEADLESS: no user, no session, no cookie honoured or set, no CSRF, no
+          Main::pre_dispatch(). Session::get_session_id() is null and
+          Session::is_logged_in() false, exactly as in a task.
+        - THE WRITER IS THE COMPANION. Audit pairs stamp Companion_Actor_Model (one
+          row per companion name in _companion_actors, created on first write,
+          printed "Companion:<name>", never hard-deleted). Revision history files the
+          request as ONE unit of work, source companion, endpoint
+          "Companion:<name>/<endpoint>".
+        - THE SITE is declared for the request (Session::set_temporary_site_id()),
+          so site-scoped reads and writes work without hand-scoping.
+        - A task the endpoint dispatches runs as nobody on no site, as every plain
+          task does. A #[Run_As_Dispatcher] task is refused: a companion is not a
+          person a dispatcher run can stand in for.
+        - rsx.post_dispatch fires after the method, with raw_input beside params.
+
+    THE ANSWER, as an external API endpoint answers: an array, a model or a
+    collection is 200 JSON; null is 204; an Rsx_Api helper (Rsx_Api::error(),
+    validation_error(), not_found()) answers its own status; abort(404) and the
+    Ajax*Exception family map to not_found / forbidden / unauthenticated. An
+    unexpected throw is 500 internal_error with an error_id, logged. Never answer 503
+    for a failure the companion must see: the SDK retries every 503.
+
+THE SITE
+    The site is PER REQUEST, carried in the signed X-Rsx-Companion-Site header:
+
+        Install          Header absent          Header present
+        --------------   --------------------   ------------------------------------
+        single tenant    site 1                 must be 1, else 403 site_not_allowed
+        multi tenant     422 site_required      any live site
+
+    Site 0, a disabled site and a deleted site are 403 site_not_allowed before the
+    method runs. From Node:
+
+        await companion.call('apply_change', params, {site_id: 3});
+
+    The generated client takes the same options: companion.client.apply_change(params,
+    {site_id: 3}).
+
+    ready_to_run() and companion.error handlers have no request site: a single
+    tenant install declares site 1 for them, and on a multi tenant install a
+    site-scoped read there throws, so they read with without_site_scope().
+
+AUTHENTICATION AND THE WIRE CONTRACT
+    This section is the one statement of what the PHP side (Companion_Verifier,
+    Companion_Store, Companion_Dispatcher, Companion_Descriptor_ManifestSupport) and
+    the Node side (rsx-companiond, the SDK) share. Companion_Wire_Contract_Test and
+    Companion_Sdk_Wire_Test pin it in both languages.
+
+  Keys
+    APP_KEY is the RAW .env string, never base64-decoded. Every HMAC is HMAC-SHA256
+    with lowercase hex output, and a derived key is used as its 64-character hex
+    STRING.
+
+        instance secret   HMAC(APP_KEY, "companion|<name>|<instance_id>|<started_at>")
+        daemon key        HMAC(APP_KEY, "companiond")
+
+    Nothing is stored and nothing is revoked. The daemon derives an instance's
+    secret when it starts it and passes it by environment only (never argv, never a
+    file); the SDK deletes it from its own environment once read. PHP recomputes it
+    from the signed headers and checks the instance is live in the daemon's Redis
+    record, so a new lifetime has a new secret and an ended instance's stops
+    verifying. Signing rather than sending the secret as a bearer is what lets a
+    companion run on another machine later without a redesign.
+
+  Field alphabets (checked before the canonical string is built)
+
+        name, endpoint   [a-z][a-z0-9_]*
+        instance_id      [A-Za-z0-9_-]{1,64}
+        started_at       [0-9]{1,20}  Unix MILLISECONDS, byte-identical in the
+                                      record, the secret and the header
+        contract key     [a-f0-9]{1,128}  the descriptor's endpoints_hash
+        site id          [0-9]{1,20}, or the header absent
+        timestamp        [0-9]{1,20}  Unix SECONDS
+        nonce            [A-Za-z0-9_-]{16,128}, single use
+        signature        [a-f0-9]{64}
+
+  An instance call
+    POST only. No query string and nothing percent-encoded: the raw URI must equal
+    the path (400 invalid_uri). The body is decoded from its raw bytes; Content-Type
+    is not read.
+
+        X-Rsx-Companion              the name; must equal the URL's
+        X-Rsx-Companion-Instance     instance id
+        X-Rsx-Companion-Started-At   started_at
+        X-Rsx-Companion-Contract     contract key
+        X-Rsx-Companion-Site         site id; omitted when the call names none
+        X-Rsx-Companion-Timestamp    seconds
+        X-Rsx-Companion-Nonce        nonce
+        X-Rsx-Companion-Signature    HMAC(instance secret, canonical)
+
+    Canonical string, joined by "|", no trailing separator ("-" for an absent site;
+    an empty body hashes as sha256 of zero bytes):
+
+        <METHOD>|<raw uri>|<name>|<instance_id>|<started_at>|<contract key>|<site or ->|<timestamp>|<nonce>|<sha256 hex of the body>
+
+    Every field that decides what the request does is signed - the site included,
+    so a request cannot be moved to another tenant.
+
+    Window: abs(now - timestamp) <= 60 seconds (rsx-lockd's window; skew is an NTP
+    problem). Nonces are kept 180 seconds per instance in the counter store (Redis
+    DB 3), longer than the window so a future-dated request cannot be replayed; a
+    nonce store that cannot be reached refuses (fail closed).
+
+    Order of checks: well formed -> window -> instance live -> signature ->
+    contract -> nonce -> endpoint exists -> JSON -> site. The endpoint is looked up
+    AFTER authentication, so an unsigned caller cannot probe which exist.
+
+  Errors
+    {"error":{"code","message"}} with a real HTTP status. A 5xx from nginx, or the
+    pre-boot 503 of a maintenance or migrate window (HTML, Retry-After), is never
+    JSON: treat any non-JSON answer or any 503 as retry-later.
+
+        Status  Code                SDK
+        ------  ------------------  ----------------------------------------------
+        400     invalid_uri         rejects (a bug)
+        400     invalid_json        rejects (a bug)
+        401     invalid_signature   rejects (a bug or a wrong key); no exit
+        401     stale_timestamp     retries, freshly signed
+        401     replayed_nonce      retries, freshly signed
+        401     instance_not_live   RETRIES: Redis lost the record and the daemon
+                                    republishes it
+        403     site_not_allowed    rejects
+        404     not_found           rejects
+        405     method_not_allowed  rejects
+        409     contract_mismatch   EXITS 75 - the only code that exits; the daemon
+                                    restarts it on current code
+        422     site_required       rejects
+        500     internal_error      rejects (the endpoint threw; error_id in the log)
+        503     unavailable         retries (Redis unreachable: fail closed)
+
+  Daemon calls
+    rsx-companiond calls two framework paths with the daemon key: the same
+    timestamp, nonce and signature headers, no instance and no contract, nonces
+    scoped to the daemon. A companion name cannot begin with "_", so these cannot
+    collide with one.
+
+        <METHOD>|<raw uri>|companiond|-|-|-|-|<timestamp>|<nonce>|<sha256 hex of the body>
+
+    POST /_companion/_daemon/ready/<name>   read-only, empty body; answers 200
+        {"ready": true,  "scope": "companion", "reason": null}
+        {"ready": false, "scope": "install",   "reason": "2 migrations are pending"}
+        {"ready": false, "scope": "companion", "reason": "<ready_to_run() text>"}
+        A throwing ready_to_run() is ready:false. Any non-200 or no answer is
+        "not ready": WAITING, nothing counted.
+
+    POST /_companion/_daemon/event   body {name, instance_id, code, message,
+        severity, context}; fires companion.error; 204. No name: 400 invalid_event.
+
+  Child environment
+    RSX_COMPANION_SECRET, RSX_COMPANION_NAME, RSX_COMPANION_INSTANCE,
+    RSX_COMPANION_STARTED_AT, RSX_COMPANION_BASE_URL, RSX_COMPANION_CONTRACT_KEY,
+    RSX_COMPANION_CLIENT (the generated client's absolute path) and NODE_PATH (the
+    SDK's directory). Nothing else is inherited but PATH, LANG, LC_ALL, LC_CTYPE,
+    TZ, HOME, USER and the declaration's environment(): a companion never sees
+    APP_KEY or a database password.
+
+    RSX_COMPANION_BASE_URL is the daemon's .env key, default http://127.0.0.1:
+    loopback is exempt from the hostname guard, and a call lands on the host whose
+    Redis holds the record.
+
+  File descriptors
+    fd 0 is /dev/null. fd 1 and 2 are captured line by line (OUTPUT AND LOGS) and
+    never paused. fd 3 is daemon-to-child control, fd 4 child-to-daemon reports, both
+    newline-delimited JSON:
+
+        fd 3   {"type":"pause"}  {"type":"resume"}  {"type":"stop"}
+               end of file = the daemon died: the SDK exits 0
+        fd 4   {"type":"ready"}       the SDK is attached; pause/resume reach it
+               {"type":"heartbeat"}   every 10 s
+               {"type":"status","text"}
+               {"type":"state","value"}           replaced whole
+               {"type":"progress","current","total"}
+               {"type":"error","code","message","severity","context"}
+
+  Reserved endpoint name
+    The SDK's ready() posts once to rsx_sdk_contract_probe, which is never
+    declared: the verifier checks signature, liveness and contract before it asks
+    whether an endpoint exists, so the 404 not_found it answers proves all three.
+    The build refuses an endpoint by that name, and the request log counts the
+    probe's 404 as a success.
+
+  Descriptor and client
+    build/companions/<name>/descriptor.json (schema 1) carries the declaration,
+    endpoints_hash, source_hash, the endpoint list and the rsx.companions settings,
+    read at build. Deterministic and sealed. build/companions/<name>/client.js is
+    the generated CommonJS client the SDK binds: a name that is not an endpoint is
+    no method at all. A companion no longer declared has its directory removed.
+
+THE CONTRACT KEY AND THE SOURCE HASH
+    Two hashes, two jobs:
+
+        endpoints_hash  sha256 over a generator version, each endpoint's name and its
+                        handler body with comments and whitespace dropped. THE
+                        CONTRACT KEY: PHP refuses a request carrying another
+                        (409 contract_mismatch).
+        source_hash     sha256 over every file under the companion's directory
+                        (sorted relative paths and content; node_modules and dot
+                        entries skipped). The DAEMON alone compares it, and restarts
+                        the companion when it moves.
+
+    So PHP refuses a stale endpoint contract and the daemon replaces stale code. The
+    build key is not used: it moves on every rebuild, and every PHP edit anywhere
+    would bounce every companion. Every endpoint shares one PHP signature, which is
+    why the key hashes BODIES; it is a guardrail, not a proof - a helper a handler
+    calls is not followed.
+
+WHETHER A COMPANION RUNS
+    Three switches, checked in this order, decide whether a companion STARTS:
+
+    1. DESIRED STATE - a flag file per companion,
+       storage/state/companions/<name>.running. ABSENT IS STOPPED: nothing runs
+       until an administrator runs rsx:companion_apps:start. Only the commands write
+       it, and it is PER BOX (storage/state is this machine's): on several web hosts,
+       set it on each. A file, so it is readable with the database down and the tree
+       broken.
+
+    2. MAINTENANCE - nothing starts and everything running is stopped while either
+       stands, desired state untouched:
+           storage/state/.maintenance.mode.framework.update   the framework's window
+           storage/state/companions/.maintenance              rsx:companion_apps:maintenance_on
+
+    3. READINESS - then, in order: a build present; Redis reachable; the election
+       won (single_instance); the INSTALL ready; the companion's own ready_to_run().
+
+    RSX_INSTALL_STATE is the install half, a framework fact any feature may ask:
+    Rsx_Install_State::is_ready() / not_ready_reason() - a build is present, the
+    database answers with no migration pending, and a site exists. It keeps every
+    companion quiet on a fresh box until provisioning is done, and pending
+    migrations hold new starts in production too.
+
+    ready_to_run() is application readiness ("no feed connection is
+    configured"): null to run, a reason not to. The daemon asks through one
+    daemon-signed call before each start and every 15 seconds while it waits. It
+    runs with revision recording suppressed and must be READ-ONLY (the build checks
+    its own body). It has no request site (THE SITE).
+
+    A companion that is not ready is WAITING, with its reason, and waiting NEVER
+    counts: restart_count moves only when a restart actually spawns. Readiness gates
+    a START, never a running process: a companion already running rides out an
+    application outage on the SDK's retries. It is stopped only for a desire, a
+    maintenance window, an operator's stop or a lost election.
+
+INSTANCES AND STATUSES
+    One process lifetime is an INSTANCE, the same idea as a task run. Instance
+    records live in Redis (DB 4), owned by the daemon: written when something in them
+    changed and otherwise every 30 seconds, never a MySQL row per heartbeat or line.
+
+        Status     Meaning
+        --------   ---------------------------------------------------------------
+        stopped    not desired, held by an operator, or held by maintenance
+        waiting    desired and not ready; waiting_reason says why
+        starting   spawned, not yet attached
+        running    running
+        paused     an SDK companion told to pause (the process keeps running)
+        stopping   in its graceful stop
+        crashed    in restart backoff after a failure
+        exited     ended cleanly: in backoff before an RESTART_ALWAYS restart, or ended
+                   by its restart policy
+        killed     ended by SIGKILL
+        unknown    (facade only) no live daemon reports it, or Redis cannot be read
+
+    An ended instance records how_ended: exited, stopped, killed, crashed,
+    contract_mismatch, daemon_lost (a daemon starting moves its own host's
+    leftover records to history with this), never_started; plus exit_code,
+    exit_signal and ended_at. The newest rsx.companions.history_keep ended instances
+    per companion are kept (evictable; the log file is the authority).
+
+    RESTART POLICY. RESTART_ALWAYS restarts after any end; RESTART_ON_FAILURE after
+    a non-zero exit or a signal; RESTART_NEVER never. A restart waits
+    restart_backoff_initial_seconds, doubled per consecutive restart up to the
+    ceiling; a run of 60 seconds or more ends a streak. A clean exit is delayed the
+    same way, so nothing spins, but only a failure counts as a crash. Three crashes
+    in a row is CRASH-LOOPING (health FAIL). Every crash fires companion.error, code "crashed".
+    An exit 75 (contract mismatch) whose descriptor key has since moved restarts at
+    once, uncounted; with the same key it is a crash.
+
+SHUTDOWN, PAUSE AND THE CONTROL CHANNEL
+    Two layers, because "stop the process" and "stop doing things for a moment" are
+    different questions.
+
+    A STOP is: {"type":"stop"} on fd 3, SIGTERM to the companion's PROCESS GROUP,
+    shutdown_grace_seconds(), SIGKILL to the group. Every end of any kind finishes
+    with SIGKILL to the group, so nothing a companion started survives it.
+
+    THE COMPANION'S CONTRACT ON STOP: finish the current unit of work, persist its
+    checkpoint, exit 0. The real kill safety comes from IDEMPOTENCY, not the grace:
+    a companion advances its checkpoint only after the application has accepted the
+    work, so a hard kill repeats work and never loses it.
+
+    PAUSE and RESUME reach only a companion using the SDK (one that sent "ready");
+    pausing anything else is refused. The process keeps running; what pausing means
+    is the companion's own 'pause' handler. A companion that does not use the SDK
+    never reads fd 3 and is governed by signals alone.
+
+    The daemon stopping (SIGTERM from supervisor or a maintenance window) stops
+    every child in parallel, each on its own grace, then exits. The daemon dying
+    outright leaves no orphans: an SDK child exits on fd 3's end of file, and the
+    next daemon kills any other recorded process group it finds still alive.
+
+DEVELOPMENT
+    on_code_change() governs a RUNNING companion when development code changes:
+
+        Policy                 On a manifest rebuild
+        --------------------   ----------------------------------------------------
+        ignore                 nothing
+        pause                  pause when a build starts, resume when it finishes
+        restart_if_affected    restart when the contract key moved, or when its own
+          (default)            directory's files changed (fingerprinted every 3 s)
+        restart                restart on every build, and on its own files changing
+
+    THE LIMITS. The SDK's retries already ride out a rebuild for every policy, so
+    pause matters only for a companion that must never act on half-built state - and
+    it is BEST-EFFORT: the signal is a marker file written when a build starts, which
+    the daemon reads once a second, and a companion's own call can be what triggers
+    the rebuild. Under ignore and pause a contract change still reaches the
+    companion, as contract_mismatch on its next call, and it restarts.
+
+    PRODUCTION ignores the policies: a changed descriptor (contract key or source
+    hash) after rsx:build --force restarts that companion, and nothing else does.
+
+    rsx-companiond reads RSX_MODE when it starts. After rsx:mode:set it keeps the
+    previous mode's behaviour until it restarts (supervisorctl restart
+    rsx-companiond).
+
+MULTI-HOST AND SINGLE_INSTANCE
+    single_instance() true (the default) is one running copy per INSTALL, elected
+    through an rsx-lockd lock held on a connection for the instance's life. Every
+    host's daemon may try; the ones that lose show "waiting: another host holds the
+    instance" and try again. rsx-lockd unreachable is WAITING with that reason (fail
+    closed), and a daemon that loses its lock connection stops its instance, because
+    another host may now hold it - so restarting rsx-lockd restarts every
+    single-instance companion. false runs one copy per host.
+
+    Several hosts need a SHARED Redis (the record a call is verified against lives
+    there) and a shared rsx-lockd, and the desired-state flag set on each host.
+    RSX_COMPANION_BASE_URL stays loopback, so a host's companions call that host.
+
+OUTPUT, LOGS AND RETENTION
+    The daemon is every child's parent and reads stdout and stderr itself. Each line,
+    plus the daemon's own lines about the companion (an instance starting or ending),
+    goes to two places:
+
+    storage/logs/companions/<name>/<name>.log - THE RECORD. One line per output line,
+        "[<ISO time>] [<stream>] <line>". Rotated by the daemon by size and daily,
+        named as rsx:logrotate names generations (<name>.log.N, .N.gz) but never
+        touched by it; a generation's age decides compression and deletion. Written
+        while PHP and the database are down. A disk that cannot keep up drops lines
+        and writes one marker saying how many: a child is never blocked on a pipe.
+    A capped Redis stream per companion (DB 4) - for live viewers: an opaque cursor,
+        realtime notification, "trimmed" when lines a reader never saw were dropped.
+        Evictable.
+
+    Also written:
+        storage/logs/rsx-companiond.log     the daemon's own (rotated by rsx:logrotate;
+                                            the daemon reopens it)
+        storage/logs/companion_requests.log one JSON line per request, refused ones
+                                            included, never a body (rsx:logrotate)
+        Redis DB 4 counters                 per companion, endpoint and UTC minute:
+                                            calls, errors, total ms; authenticated
+                                            calls only
+
+    NOTHING IS PRUNED THAT CONFIGURATION DID NOT ASK FOR (rsx.companions, read at
+    build into each descriptor):
+
+        logging.max_bytes             50 MB   rotate at this size; 0 = daily only
+        logging.days_uncompressed     2       generations kept plain, then gzipped
+        logging.days_retention        30      generations deleted after; 0 = forever
+        history_keep                  50      ended instances kept per companion
+        output_stream_max_lines       5000    the live Redis stream's cap
+        request_stats_retention_hours 48      the per-minute counters
+
+THE NODE SDK
+    require('rsx-companion-sdk') - zero dependencies, on NODE_PATH when the daemon
+    starts the process. A companion run by hand throws: it runs under the daemon.
+
+        await companion.ready()       attach to the daemon, load the generated
+                                      client, prove the contract with the
+                                      application. Resolves however long that takes.
+        companion.client.<endpoint>(params, {site_id})
+                                      the generated client (after ready()); options
+                                      as call()
+        companion.call(endpoint, params, {site_id})
+                                      a signed call. Resolves the answer (null for
+                                      204); rejects a Companion_Call_Error {status,
+                                      code}; rejects at once for a name that is not
+                                      an endpoint
+        companion.status(text)        the status line
+        companion.state(value)        a state document, REPLACED WHOLE; keep its
+                                      shape fixed, a screen reads it
+        companion.progress(current, total)
+        companion.error(code, message, {severity, context})
+                                      immediate; fires companion.error
+        companion.on('pause' | 'resume' | 'stop', fn)
+
+    status, state and progress are batched to one write per second (the last of
+    each counts); a heartbeat goes every 10 seconds by itself. With no 'stop'
+    listener the SDK exits 0 on a stop; with one, the companion exits itself.
+
+    RETRIES. A call retries through every outage the wire contract calls temporary -
+    no answer, a non-JSON answer, any 503, stale_timestamp, replayed_nonce,
+    instance_not_live - for as long as it lasts, at 250 ms doubling to 30 s (and at
+    least Retry-After), saying so on stderr. That is what carries a companion through
+    a rebuild, a migration snapshot, a php-fpm restart or a maintenance window.
+    contract_mismatch exits 75 (EXIT_CONTRACT_MISMATCH). A process not using the SDK
+    must implement the wire contract above itself.
+
+    rsx/companions/hello/resource/main.js is the shape to copy: ready(), a loop of
+    idempotent units, a stop handler that lets the current unit finish.
+
+WATCHING AND CONTROLLING FROM THE APPLICATION
+  Rsx_Companion (PHP facade)
+        names() / all() / status($name)            status of each the viewer may see
+        instances($name, $count = 20)              {live, history}
+        output_after($name, $cursor, $streams)     {lines, last_id, more, trimmed,
+                                                   is_live}; streams stdout, stderr,
+                                                   daemon; pass last_id back
+        request_stats($name, $minutes = 60)        endpoint => {calls, errors, avg_ms}
+        pause / resume / stop / start / restart($name)
+        maintenance_reason()                       why every companion is held, or null
+
+    A status carries: name, description, single_instance, contract_key, desired
+    (THIS box's flag), maintenance, status, unknown_reason, held, waiting_reason,
+    host, instance_id, pid, started_at, uptime_seconds, restart_count, crash_streak,
+    crash_looping, next_restart_at, last_heartbeat, heartbeat_age_seconds,
+    heartbeat_stale (over 90 s), status_line, state, progress, last_error, last_exit,
+    is_live, hosts (every live daemon's view) and can (the verbs this viewer may
+    perform).
+
+    READS COME FROM REDIS, so they answer while the daemon is down, from what it
+    last wrote; a host whose daemon has not written for 90 seconds stops counting
+    and the companion reads unknown. VERBS GO THROUGH THIS BOX'S DAEMON and are
+    asynchronous (the outcome arrives on Companion_Changed_Topic); with no daemon
+    listening, or a refusal, they throw Companion_Control_Exception with a message
+    fit for the operator. Each verb is written to the application log with who asked.
+    stop HOLDS a companion stopped, desired state untouched, until start or restart.
+    Desired state itself is the command line's alone.
+
+  Rsx_Companion (JS) - all(), get(name), instances(name, count), output_after(name,
+    after_id, streams), stats(name), pause/resume/stop/start/restart(name), through
+    Rsx_Companion_Controller. LIVE_UPDATE_DELAY is the debounce for a realtime
+    refetch.
+
+  Companion_Gates - DENY BY DEFAULT, the task gates' mechanism:
+
+        companion.view.authorize     (gate)  {companion: name, user}
+        companion.control.authorize  (gate)  {companion: name, user, action}
+
+    action is pause, resume, stop, start or restart; user is Session::get_user(),
+    null with nobody signed in. With no handler NOBODY may; a developer
+    (Session::is_developer()) passes both with no handler asked. A companion the
+    viewer may not see answers exactly like an undeclared one (anti-enumeration). A
+    portal request is refused by every gate: a companion is the operator's, never a
+    client's. There is no scope hook - a list is each declared name the view gate
+    allows. Grant least privilege, as for tasks.
+
+  Realtime topics - notification only, published by the daemon at most once a second
+    per companion; refetch on each, and write each callback as an idempotent
+    refetch:
+
+        Companion_Changed_Topic {name} or {}   a status, line, state, progress,
+                                               instance or hold moved. {} needs
+                                               every declared companion viewable
+        Companion_Output_Topic  {name}         lines were written
+
+    Frames need REALTIME_ENABLED when the daemon starts.
+
+  <Companion_Output $companion="hello" [$streams="both|stdout|stderr"] [$filter=false] />
+    The <Task_Output> twin: the same terminal and toolbar over the companion's live
+    stream. stdout white, stderr amber, the daemon's lines dim cyan ("stderr" shows
+    them too). Where the stream dropped lines this console never showed, a marker
+    line says so. Needs the view gate.
+
+  /_sys/companions - the developer's screen: every companion against its desired
+    state, and a dialog with the console, the state document, recent instances and
+    endpoint traffic, with confirmed stop, restart, pause and resume
+    (rsx:man sys_panel).
+
+  companion.error (action) - fired once per companion.error() call and per crash:
+
+        {name, instance_id, code, message, severity, context}
+
+    severity defaults to "error", context to {}. Handlers run in the daemon's event
+    call, as the companion's actor, with site 1 declared on a single tenant install.
+    The framework decides nothing about where errors go; route them in a handler.
+    While the application is unreachable the daemon holds up to 100 events and
+    drops the oldest past that.
+
+HEALTH
+    rsx:health gains:
+
+        Companion Daemon       OK running (pid, host); INFO when maintenance stopped
+                               it, or no companion is declared; WARN not running
+                               with none desired; FAIL not running with any desired
+        Companion: <name>      one row per declared companion, against this box's
+                               desired state:
+                               INFO  maintenance holds it down on purpose
+                               OK    desired matches actual
+                               WARN  waiting, a stale heartbeat, a crash in backoff,
+                                     or held by an operator while desired running
+                               FAIL  crash-looping, or desired running and ended, or
+                                     no live daemon reports it
+
+    With nothing declared the per-companion check is one INFO row.
+
+COMMANDS
+    php artisan rsx:companion_apps:<verb> [name] - one companion, or all. Each writes
+    the flag FIRST and then tells the daemon over its socket, so it is correct with
+    the daemon down (which reads the flags when it comes back), needs no database,
+    and says plainly when the daemon is not running or supervisord is absent.
+
+        start [name]        desired = running; also clears an operator's hold and a
+                            restart policy that ended it. Each starts once ready
+        stop [name]         desired = stopped, then a graceful stop; returns when
+                            stopped
+        restart [name]      graceful stop and immediate start, no backoff; desired
+                            unchanged (a stopped one stays stopped)
+        list [--json]       desired, status, waiting reason, instance, uptime,
+                            restarts, status line
+        maintenance_on      hold every companion stopped, desired untouched; returns
+                            when they have stopped
+        maintenance_off     lift it: those desired running start again
+
+    Starting or stopping companions for good is CLI-only, as the task system's
+    switch is; the panel and the facade pause, resume, hold and restart.
+
+LIFECYCLE
+        Moment                          What happens
+        -----------------------------   ----------------------------------------------
+        Fresh install                   the daemon is up and idle; nothing is desired.
+                                        A companion started before provisioning
+                                        finishes waits: "install not ready: ..."
+        Container start                 supervisor starts the daemon; it clears its
+                                        host's stale records and starts what is
+                                        desired, once ready
+        rsx:maintenance:enable, a       the window stops the rsx-companiond
+        framework pull, rsx:git's       supervisor unit FIRST (every companion on
+        tree-rewriting ops,             its grace), before the task system and the
+        rsx:database_and_storage_reset, services. Disable starts it LAST, after
+        rsx:db:rebuild_provision_       rsx:tasks:enable; it starts what is desired.
+        cache_snapshot, migrate         The daemon also refuses to start anything
+        --dump-rollback                 while the framework flag stands
+        migrate (development snapshot,  no window: running companions keep running
+        or a bare run)                  and the SDK retries through the outage;
+                                        pending migrations hold new STARTS
+        rsx:mode:set, rsx:build --force no window: an outage the SDK absorbs. A
+                                        changed descriptor restarts that companion
+                                        (production); the daemon keeps its mode
+                                        until it restarts
+        Manifest rebuild (development)  the companion's on_code_change() policy
+        rsx:clean                       leaves running companions alone; the daemon
+                                        keeps the last good descriptors in memory,
+                                        new starts wait for a build, and an SDK
+                                        starting meanwhile waits for its client
+        Crash                           backoff with a ceiling, companion.error,
+                                        health FAIL when looping
+        Daemon crash                    supervisor restarts it; SDK children exit
+                                        with it, others are swept by process group
+        Container stop                  every companion stopped on its grace
+
+    The container's supervisor program waits stopwaitsecs=360 for the daemon: the
+    largest grace (300) plus a minute for the logs. Raise the two together.
+
+DEPLOYMENT FACTS
+    - Supervisord is required. The RSpade image ships the rsx-companiond program
+      (system/app/RSpade/resource/docker/README.md); the test worker images do not.
+    - A daemon running as root runs children as the owner of the storage tree, else
+      of the project tree; otherwise as itself.
+    - rspade-sizing does NOT count companions. Memory a companion needs is given
+      back to the box with RSPADE_RESERVED_MB (rsx:man server_sizing).
+    - Redis DB 4 holds the records, stream, history and counters, keys
+      rsx_companion:<scope token>:*; the instance records are the one thing there
+      that is not derived, and the daemon republishes them when Redis loses them.
+    - nginx routes /_companion/ to the Ajax pool, uncompressed (the signature covers
+      the body's bytes).
+
+TROUBLESHOOTING
+    "Invalid companion application: ..." at manifest build
+        - The message names the class, method and rule (DECLARING A COMPANION,
+          ENDPOINTS).
+
+    A companion stays stopped
+        - Desired state is absent until rsx:companion_apps:start; it is per box.
+        - list shows "stopped (held)": an operator stopped it; start releases it.
+        - Companion maintenance is on: rsx:companion_apps:maintenance_off.
+
+    waiting: install not ready: N migrations are pending / no site is provisioned
+        - Run migrate, or finish provisioning. Rsx_Install_State says which.
+
+    waiting: rsx-lockd is unreachable / another host holds the instance
+        - single_instance election (MULTI-HOST AND SINGLE_INSTANCE).
+
+    409 contract_mismatch in its output, then a restart
+        - Expected after the endpoints changed: the old process was replaced.
+
+    422 site_required
+        - A multi tenant install: pass {site_id} to companion.call().
+
+    "rsx-companiond is not running on this box, so <name> cannot be told to ..."
+        - Companion_Control_Exception: supervisorctl status rsx-companiond, and
+          storage/logs/rsx-companiond.log.
+
+    The panel or a page shows no companion
+        - The view gate denies by default: register companion.view.authorize.
+
+    "RSX_COMPANION_SECRET is not set: a companion runs under rsx-companiond, never by hand"
+        - The process was started by hand. Start it with rsx:companion_apps:start.
+
+SEE ALSO
+    rsx:man tasks - background work; a write endpoint dispatches one
+    rsx:man external_api - the user-facing endpoint kind a companion is not
+    rsx:man maintenance_mode - the window that stops rsx-companiond
+    rsx:man sys_panel - the Companions screen
+    rsx:man health - the Companion and Companion Daemon rows
+    rsx:man realtime - topics and refetch-on-frame
+    rsx:man event_hooks - companion.error and the two companion gates
+    rsx:man revisions - the companion source
+    rsx:man locks - rsx-lockd, which elects single-instance companions
+    rsx:man caching - the Redis database map
+    rsx:man server_sizing - RSPADE_RESERVED_MB
+    rsx:man config_rsx - rsx.companions
+    skill rspade:companion-apps - writing a companion and its endpoints

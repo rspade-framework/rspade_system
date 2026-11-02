@@ -39,14 +39,32 @@ class Rsx_Timestamp_Format_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * tf-01: the browser's table is what PHP's tz database answers today.
+     * tf-01: the committed table is the shape both formatters read. Whether it is CURRENT is
+     * not asked here: bin/publish regenerates it from the development box's tz database, the
+     * source of truth, and the test image's tz data may differ from that box's.
      */
-    public static function test_the_committed_table_is_current()
+    public static function test_the_committed_table_is_well_formed()
     {
-        static::__assert_true(
-            file_get_contents(Rsx_Timestamp_Format::abbreviation_table_js_path()) === Rsx_Timestamp_Format::abbreviation_table_js(),
-            'Core/Time/vendor/rsx_timezone_abbreviations.js is stale: run php artisan rsx:time:abbreviations'
-        );
+        $content = (string) file_get_contents(Rsx_Timestamp_Format::abbreviation_table_js_path());
+
+        static::__assert_true(str_contains($content, "window.Rsx_Timezone_Abbreviations = {\n"), 'the browser global');
+
+        $start = strpos($content, '= {');
+        $table = json_decode(substr($content, $start + 2, strrpos($content, '};') - $start - 1), true, 512, JSON_THROW_ON_ERROR);
+
+        static::__assert_true(count($table) > 300, 'every zone of the tz database');
+        static::__assert_true(isset($table['America/Chicago'], $table['Europe/London'], $table['Asia/Kolkata']), 'the common zones');
+
+        foreach ($table as $zone => $map) {
+            static::__assert_true(is_string($zone) && $zone !== '' && is_array($map) && $map !== [], "{$zone} has offsets");
+            foreach ($map as $offset => $name) {
+                static::__assert_true(preg_match('/^-?\d+$/', (string) $offset) === 1, "{$zone}: an offset in seconds");
+                static::__assert_true(is_string($name) && $name !== '', "{$zone} {$offset}: a name");
+            }
+        }
+
+        static::__assert_equals('CST', Rsx_Timestamp_Format::abbreviation_for_offset('America/Chicago', -21600), 'PHP reads this file');
+        static::__assert_equals('UTC+5:30', Rsx_Timestamp_Format::abbreviation_for_offset('Not/A_Zone', 19800), 'an unknown zone prints the offset');
     }
 
     /**

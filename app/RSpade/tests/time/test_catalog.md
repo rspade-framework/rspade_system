@@ -88,7 +88,7 @@ Type: php. Last updated: 2026-09-01.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| tf-01 | the committed zone-name table is what this box's tz database generates | the file vs abbreviation_table_js() | identical (else: run rsx:time:abbreviations) | implemented |
+| tf-01 | the committed zone-name table is the shape both formatters read (currency is bin/publish's job, from the development box's tz database) | the file | parses; every zone maps offsets to names; PHP reads it; an unknown zone prints the offset | implemented |
 | tf-02 | the long and short forms and the suffix rule | Chicago, Kolkata, Winnipeg, Sao Paulo, Los Angeles for Phoenix; short this/another year; the year boundary in the printed zone | the stated strings | implemented |
 | tf-03 | ranges | same day shared/mixed meridiem, across midnight, null end, long and short, another zone | the stated strings; the suffix once | implemented |
 | tf-04 | configured patterns are honoured; a letter outside the set is refused at read; an escaped letter is literal | 'D, j F Y' / 'H:i'; 'M jS, Y'; '\\D\\a\\y j' | the strings; RuntimeException naming 'S'; 'Day 9' | implemented |

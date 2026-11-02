@@ -1,0 +1,20 @@
+<%--
+_Sys_Companion_Actions - the operator verbs that apply to a companion now: pause and resume (a
+running or paused companion), graceful stop (anything not already held), start (a companion
+held by a stop), restart (a companion desired running). Each is confirmed first
+(_Sys_Modal.confirm) and recorded in the application log by Rsx_Companion with who asked.
+
+$companion - the companion's status, as Rsx_Companion presents it (required)
+$size      - 'sm' (default) for a list row, 'md' for the detail
+
+Only the verbs status.can allows are drawn. The desired state (rsx:companion_apps:start / stop)
+is never offered: it is the command line's. A verb runs through _Sys_Companion_Actions.perform(),
+which outlives the button: a realtime repaint of the row while the confirmation is open loses
+nothing. Fires 'acted' {action} once the daemon took a verb, if this component still exists;
+the outcome arrives on Companion_Changed_Topic.
+--%>
+<Define:_Sys_Companion_Actions tag="span">
+    <% for (const _action of _Sys_Companion_Actions.applicable(this.args.companion)) { %>
+        <button type="button" class="btn <%= this.args.size === 'md' ? '' : 'btn-sm' %> btn-<%= _Sys_Companion_Actions.VERBS[_action].tone %>" data-companion-action="<%= _action %>"><%= _Sys_Companion_Actions.VERBS[_action].label %></button>
+    <% } %>
+</Define:_Sys_Companion_Actions>

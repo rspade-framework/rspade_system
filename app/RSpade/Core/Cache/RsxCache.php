@@ -24,7 +24,7 @@ require_once __DIR__ . '/../../helpers.php';
  * and the task worker pool already namespace their state under - so a process pointed at
  * another database can neither read nor overwrite this one's entries. See _scope_prefix().
  *
- * THE REDIS DATABASE MAP (one instance, four databases). This class is the authority; every
+ * THE REDIS DATABASE MAP (one instance, five databases). This class is the authority; every
  * other subsystem that opens a redis connection points its comment here.
  *
  *   DB 0  VOLATILE CACHE. This class (including its persistent namespace) and the realtime
@@ -40,6 +40,10 @@ require_once __DIR__ . '/../../helpers.php';
  *         beginning with _RVC_ here. NEVER flushed by clear().
  *   DB 3  TRANSIENT COUNTERS (Rsx_Counter) - login throttling and friends, plus short-lived
  *         opaque values beside them (an identity's issued sign-in code).
+ *   DB 4  COMPANION APPLICATIONS (Companion_Store and system/bin/rsx-companiond) - live
+ *         instance records, request counters, ended-instance history, output streams. Keys
+ *         'rsx_companion:<token>:'. NEVER flushed by clear(). Instance records are the one
+ *         thing here that is not derived: rsx-companiond republishes them when they are lost.
  *
  * EVICTION IS PER INSTANCE, NOT PER DATABASE, AND THAT IS THE DESIGN. The shipped conf
  * (system/app/RSpade/resource/docker/redis/redis.conf) sets allkeys-lru over the whole

@@ -97,6 +97,7 @@ budget, the two charts of the last hour with the kind toggles, the last 10 per k
                     <Slot:ajax><_Sys_Performance_Recent $rows=_s.kinds.ajax.recent /></Slot:ajax>
                     <Slot:api><_Sys_Performance_Recent $rows=_s.kinds.api.recent /></Slot:api>
                     <Slot:task><_Sys_Performance_Recent $rows=_s.kinds.task.recent /></Slot:task>
+                    <Slot:companion><_Sys_Performance_Recent $rows=_s.kinds.companion.recent /></Slot:companion>
                 </_Sys_Tabs>
             </_Sys_Section>
         <% } %>

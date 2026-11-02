@@ -1979,6 +1979,16 @@ class BundleCompiler
             }
         }
 
+        // The companion widgets (Core/Companion/ui) read through Rsx_Companion_Controller, for
+        // the same reason.
+        $companion_controller_source = 'app/RSpade/Core/Companion/Rsx_Companion_Controller.php';
+        if (isset($manifest_files[$companion_controller_source]['js_stub'])) {
+            $companion_stub = rsx_project_file_path($manifest_files[$companion_controller_source]['js_stub']);
+            if (file_exists($companion_stub)) {
+                $stubs[] = $companion_stub;
+            }
+        }
+
         // And once more, for the same structural reason as the second-factor controller: the
         // SSO components live in Core_Bundle (so they reach every bundle), and <Sso_Buttons>
         // renders on the LOGIN page - a bundle that contains no application controller at

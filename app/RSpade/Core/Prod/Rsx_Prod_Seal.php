@@ -236,8 +236,7 @@ class Rsx_Prod_Seal
 
     /**
      * Collect the build assets (the two manifest index files, build_key, the class override
-     * map, bundles/*, and each
-     * bundle's model list under bundle_models/*) with a sha256 each, recorded relative to the
+     * map, bundles/*, each bundle's model list under bundle_models/*, and companions/*) with a sha256 each, recorded relative to the
      * build root and sorted by path.
      */
     protected static function _collect_assets(): array
@@ -273,8 +272,9 @@ class Rsx_Prod_Seal
 
         // The compiled bundles, the model list written beside each (a page serves its
         // field-length script from that list) and each bundle type's output record: all part
-        // of the build as much as the bundle they describe.
-        foreach ([Rsx_Project_Paths::bundles_dir(), Rsx_Project_Paths::bundle_models_dir(), Rsx_Project_Paths::bundle_outputs_dir()] as $asset_dir) {
+        // of the build as much as the bundle they describe. The companion descriptors and
+        // clients are what rsx-companiond starts processes from, so they are sealed too.
+        foreach ([Rsx_Project_Paths::bundles_dir(), Rsx_Project_Paths::bundle_models_dir(), Rsx_Project_Paths::bundle_outputs_dir(), Rsx_Project_Paths::companions_build_dir()] as $asset_dir) {
             if (!is_dir($asset_dir)) {
                 continue;
             }

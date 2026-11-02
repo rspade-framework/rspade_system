@@ -28,6 +28,16 @@ class _Sys_Status_Badge extends Component {
         suppressed: 'muted',
         test: 'info',
 
+        // Companion applications (Rsx_Companion status words; running and killed are above).
+        stopped: 'muted',
+        waiting: 'warn',
+        starting: 'info',
+        paused: 'warn',
+        stopping: 'info',
+        crashed: 'fail',
+        exited: 'muted',
+        unknown: 'muted',
+
         // Login identities (login_users.status_id, as the lowercased enum label).
         active: 'ok',
         inactive: 'muted',

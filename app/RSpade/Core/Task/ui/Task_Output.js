@@ -11,6 +11,11 @@
  * Every read goes through ONE debounce(read, Rsx_Task.LIVE_UPDATE_DELAY), like every task
  * view: the first frame reads at once, frames during a read or the delay after it coalesce
  * into one follow-up read, and reads never overlap.
+ *
+ * THE SOURCE IS FIVE HOOKS, so another output feed reuses the terminal whole (Companion_Output):
+ * _check_args(), _stream_list(), _read_page(), _subscribe_output() and _write_notices(), plus
+ * the STREAM_STYLE map. The cursor is opaque to this class: whatever last_id the source
+ * answered is handed back to it.
  */
 class Task_Output extends Component {
     /** stdout: plain white. stderr and operator lines: bold amber. */
@@ -52,13 +57,11 @@ class Task_Output extends Component {
     }
 
     on_create() {
-        if (!this.args.task_id) {
-            throw new Error('Task_Output requires $task_id');
-        }
+        this._check_args();
 
         const streams = this.args.streams || 'both';
         if (!['both', 'stdout', 'stderr'].includes(streams)) {
-            throw new Error('Task_Output: $streams must be both, stdout or stderr, got "' + streams + '"');
+            throw new Error('Output console: $streams must be both, stdout or stderr, got "' + streams + '"');
         }
 
         this.state = {
@@ -107,7 +110,55 @@ class Task_Output extends Component {
         });
 
         this.read();
-        this.subscribe('Task_Output_Topic', { id: int(this.args.task_id) }, () => that.read());
+        this._subscribe_output(() => that.read());
+    }
+
+    // ------------------------------------------------------------------------------------
+    // THE SOURCE: a subclass reading another feed overrides these.
+    // ------------------------------------------------------------------------------------
+
+    /** Throw when the component was invoked without what it reads. */
+    _check_args() {
+        if (!this.args.task_id) {
+            throw new Error('Task_Output requires $task_id');
+        }
+    }
+
+    /**
+     * The source's stream names for the selector's choice.
+     *
+     * @param {string} streams both | stdout | stderr
+     * @returns {string[]}
+     */
+    _stream_list(streams) {
+        return streams === 'both' ? ['stdout', 'stderr', 'operator'] : (streams === 'stderr' ? ['stderr', 'operator'] : ['stdout']);
+    }
+
+    /**
+     * One page after the cursor: {lines: [{stream, line, at}], last_id, more, is_live}.
+     *
+     * @param {*} cursor null, or a last_id this answered
+     * @param {string[]} streams
+     */
+    _read_page(cursor, streams) {
+        return Rsx_Task.output_after(this.args.task_id, cursor, streams);
+    }
+
+    /** Call `callback` whenever the source has new output. */
+    _subscribe_output(callback) {
+        this.subscribe('Task_Output_Topic', { id: int(this.args.task_id) }, callback);
+    }
+
+    /**
+     * Write anything the source says about a page before its lines (each through
+     * _write_line()). A run's output has nothing to say.
+     */
+    _write_notices(response) {}
+
+    /** Write one line in a stream's style, and remember when it was written (null: unknown). */
+    _write_line(stream, line, at) {
+        this._terminal.writeln(this.constructor.STREAM_STYLE[stream] + line + '\x1b[0m');
+        this._line_times.push(at);
     }
 
     /**
@@ -211,8 +262,7 @@ class Task_Output extends Component {
         let more = true;
         while (more) {
             const asked_streams = this.state.streams;
-            const streams = asked_streams === 'both' ? ['stdout', 'stderr', 'operator'] : (asked_streams === 'stderr' ? ['stderr', 'operator'] : ['stdout']);
-            const response = await this.alive(Rsx_Task.output_after(this.args.task_id, this.state.last_id, streams));
+            const response = await this.alive(this._read_page(this.state.last_id, this._stream_list(asked_streams)));
             if (asked_streams !== this.state.streams) {
                 return;
             }
@@ -223,14 +273,15 @@ class Task_Output extends Component {
 
     __write(response) {
         // Scrollback is sized to the output, so all of it stays reachable however long it is.
-        const needed = this.state.lines + response.lines.length + this._terminal.rows;
+        const needed = this._line_times.length + response.lines.length + 1 + this._terminal.rows;
         if (this._terminal.options.scrollback < needed) {
             this._terminal.options.scrollback = needed;
         }
 
+        this._write_notices(response);
+
         for (const entry of response.lines) {
-            this._terminal.writeln(Task_Output.STREAM_STYLE[entry.stream] + entry.line + '\x1b[0m');
-            this._line_times.push(entry.at);
+            this._write_line(entry.stream, entry.line, entry.at);
         }
 
         this.state.lines += response.lines.length;

@@ -135,10 +135,11 @@ All under supervisor; `supervisorctl status` lists them.
 |---|---|
 | `nginx` | web server; `:80` plain, `:8000` asserting https behind a terminator |
 | `php-fpm` | two pools — `www`, and `ajax` which exists to prevent an SSR deadlock |
-| `redis` | one instance for everything: cache, realtime delivery, the full-page cache, short-lived counters, performance metrics; LRU over all of it, capped to the machine (below) |
+| `redis` | one instance for everything: cache, realtime delivery, the full-page cache, short-lived counters, performance metrics, companion application records; LRU over all of it, capped to the machine (below) |
 | `mysql` | dev target only |
 | `realtime` | WebSocket relay behind `/ws` |
 | `rsx-lockd` | cluster lock daemon — load-bearing, see its config |
+| `rsx-companiond` | runs the application's companion applications (`rsx:man companion_apps`); always up and idle until one is started. Not wrapped in the retry runner, so `stopwaitsecs=360` (the largest companion grace, 300, plus a minute) is honoured. Absent from the test worker images, whose tests start their own |
 | `tasks` | **the cron replacement**: ticks `rsx:task:process` once a minute |
 | `dockerd` | dev target only — the container's own Docker Engine, for the test runner |
 | `security-updates` | installs security updates and PHP patch releases every 4 hours (below) |
@@ -229,7 +230,7 @@ does). Get it wrong and the realtime socket dials the wrong port.
 | `RSX_TASK_MAX_WORKERS` | on-demand task workers; also read from the project `.env`; two thirds of the calculated task workers when unset |
 | `RSX_TASK_SCHEDULED_WORKERS` | scheduled task workers; also read from the project `.env`; a third of the calculated task workers (at least 1) when unset |
 | `REDIS_MAXMEMORY_MB` | the Redis cap; scaled to the machine when unset |
-| `RSPADE_RESERVED_MB` | memory to leave alone beside the container's own reservation (a co-tenant, heavy PDF rendering); `0` when unset |
+| `RSPADE_RESERVED_MB` | memory to leave alone beside the container's own reservation (a co-tenant, heavy PDF rendering, companion applications - which the sizing does not count); `0` when unset |
 | `MYSQL_INNODB_BUFFER_MB` | dev only: the MySQL buffer pool; `64` when unset |
 | `RSX_AUTO_SECURITY_UPDATES` | `0` (or `false`/`no`/`off`) turns the automatic security updates off; on when unset (below) |
 | `RSPADE_SECURITY_UPDATE_HOURS` | hours between the scheduled security update checks; `4` when unset |

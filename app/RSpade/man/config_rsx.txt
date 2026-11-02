@@ -921,6 +921,34 @@ PERFORMANCE METRICS
     records nothing; a failure to record never fails the request.
     See: rsx:man sys_panel (the Performance screen)
 
+COMPANION APPLICATIONS
+    'companions' => [
+        'logging' => [
+            'max_bytes' => 50 * 1024 * 1024,
+            'days_uncompressed' => 2,
+            'days_retention' => 30,
+        ],
+        'history_keep' => 50,
+        'output_stream_max_lines' => 5000,
+        'request_stats_retention_hours' => 48,
+    ]
+
+    Read AT BUILD into each companion's descriptor (rsx-companiond reads no
+    PHP), so a change takes effect at the next build and the companion's next
+    start. Nothing is pruned that these did not ask for. logging governs the
+    per-companion log files under storage/logs/companions/<name>/, which the
+    daemon rotates itself: max_bytes rotates at that size (0 = daily only),
+    days_uncompressed keeps generations plain before gzipping them,
+    days_retention deletes generations older than that (0 = keep forever).
+    history_keep is the ended instances kept per companion and
+    output_stream_max_lines the live output stream's cap, both in Redis and
+    evictable - the log file is the record. request_stats_retention_hours is
+    how long the per-minute endpoint counters live.
+
+    Read from .env by rsx-companiond only: RSX_COMPANION_BASE_URL (default
+    http://127.0.0.1), where its companions call the application.
+    See: rsx:man companion_apps
+
 LOCKS
     'locks' => [
         'server_host' => env('LOCK_SERVER_HOST', '127.0.0.1'),
@@ -1173,6 +1201,7 @@ SEE ALSO
     rsx:man portal_tenancy
     rsx:man document_search
     rsx:man tasks
+    rsx:man companion_apps
     rsx:man realtime
     rsx:man fpc
     rsx:man email

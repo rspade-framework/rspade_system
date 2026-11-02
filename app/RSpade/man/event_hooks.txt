@@ -391,8 +391,8 @@ NAMING CONVENTIONS
 
 FRAMEWORK EVENT CATALOG
 
-    The framework fires these events automatically. This is the COMPLETE catalog
-    (16 events across seven families). Each entry lists: the event kind
+    The framework fires these events automatically. This is the COMPLETE catalog.
+    Each entry lists: the event kind
     (gate/filter/action/resolve), where it fires, its exact payload keys, the
     return contract (for gate/filter/resolve; actions ignore returns), and what
     to use it for.
@@ -511,6 +511,44 @@ FRAMEWORK EVENT CATALOG
             Data: {task, user, action} - action one of stop, force_stop,
                   force_kill, cancel, rerun.
             Return: true to allow.
+
+    Companion Events (rsx:man companion_apps)
+
+        Who may watch a companion application and act on one, and where its
+        errors go. The two gates are asked through Companion_Gates by
+        Rsx_Companion, Rsx_Companion_Controller and the two companion realtime
+        topics. DENY BY DEFAULT, like the task gates: with no handler nobody but a
+        staff developer (Session::is_developer(), who passes both with no handler
+        asked) sees or controls any companion. A portal request is refused by
+        both. There is no scope filter: a list is each declared name the view
+        gate allows.
+
+        companion.view.authorize (gate)
+            Fired from: Companion_Gates::can_view(), before any read of one
+                        companion and for each name in a list.
+            Data: {companion: string (the name), user: User_Model|null}
+            Return: true to allow.
+
+        companion.control.authorize (gate)
+            Fired from: Companion_Gates::can_control(), after the view gate,
+                        before an operator verb.
+            Data: {companion, user, action} - action one of pause, resume,
+                  stop, start, restart.
+            Return: true to allow.
+
+        companion.error (action)
+            Fired from: Companion_Dispatcher, when rsx-companiond reports a
+                        companion's error: each companion.error() call in the
+                        SDK, and every crash (code 'crashed', context
+                        {exit_code, signal}).
+            Data: {name, instance_id, code, message, severity, context}
+                  severity defaults to 'error', context to {}.
+            Return: ignored (it is an action).
+            Use for: routing a companion's errors - a notice to an operator, an
+                     email, a log of your own. The framework sends them nowhere.
+            Handlers run headless, as the companion's actor, with site 1
+            declared on a single tenant install and no site on a multi tenant
+            one.
 
     Document Pipeline Events (resolve; rsx:man document_search)
 
@@ -679,7 +717,8 @@ FRAMEWORK EVENT CATALOG
                         handler returns and BEFORE any response shaping - every
                         Ajax call (Ajax::execute(): direct, each batched call, and
                         every Ajax::internal() call), the external API
-                        (Api_Dispatcher), and page dispatch in both realms
+                        (Api_Dispatcher), a companion endpoint
+                        (Companion_Dispatcher), and page dispatch in both realms
                         (Dispatcher: #[Route] and #[Portal_Route]). SUCCESS PATH
                         ONLY: a handler that threw never reaches it.
             Data: {request: Request, params: array|null, result: mixed}
@@ -687,8 +726,9 @@ FRAMEWORK EVENT CATALOG
                   differ: the Ajax seam passes the ajax params (which DO carry the
                   submitted body); the page seam passes GET + route params, into which the POST body is NEVER merged, so a handler
                   reading a submitted field must read it off the Request there.
-                  The API seam adds a fifth key, raw_input - what arrived before
-                  #[Api_Param] validation, params being the VALIDATED set.
+                  The API and companion seams add a fifth key, raw_input - what arrived before
+                  #[Api_Param] validation, params being the VALIDATED set (a companion
+                  endpoint validates nothing first, so the two are the same).
                   result is the handler's return value, pre-shaping.
             Return: ignored (it is an action).
             Use for: cross-cutting checks that can only be answered AFTER the
@@ -1163,6 +1203,7 @@ SEE ALSO
     rsx:man file_upload
     rsx:man document_search
     rsx:man turnstile
+    rsx:man companion_apps - the companion gates and companion.error
     rsx:man manifest_api
     rsx:man coding_standards
     rsx:man prod - the build tree, and who may write it

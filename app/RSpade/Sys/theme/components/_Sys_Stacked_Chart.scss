@@ -30,6 +30,7 @@
         &--2 { fill: var(--rsx-series-2); stroke: var(--rsx-series-2); }
         &--3 { fill: var(--rsx-series-3); stroke: var(--rsx-series-3); }
         &--4 { fill: var(--rsx-series-4); stroke: var(--rsx-series-4); }
+        &--5 { fill: var(--rsx-series-5); stroke: var(--rsx-series-5); }
     }
 
     &__ceiling {
@@ -69,6 +70,7 @@
         &--2 { background: var(--rsx-series-2); }
         &--3 { background: var(--rsx-series-3); }
         &--4 { background: var(--rsx-series-4); }
+        &--5 { background: var(--rsx-series-5); }
 
         &--ceiling {
             height: 0;

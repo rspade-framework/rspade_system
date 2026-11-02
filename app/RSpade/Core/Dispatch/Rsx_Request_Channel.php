@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Dispatch;
 
 use Illuminate\Http\Request;
 use App\RSpade\Core\Api\Api_Dispatcher;
+use App\RSpade\Core\Companion\Companion_Dispatcher;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Portal\Portal_Site_Resolver;
 use App\RSpade\Core\Portal\Rsx_Portal_Url;
@@ -31,6 +32,9 @@ use App\RSpade\Core\Portal\Rsx_Portal_Url;
  *          pipeline answers every path under it with its own 404 (is_portal_host()).
  *          When the portal lives under a prefix on the application host, /api/... on
  *          that host is the API as usual.
+ *   COMPANION  /_companion and everything under it - a companion application calling its
+ *          own application (Companion_Dispatcher). A staff channel realm with no browser;
+ *          on the portal's own host the pipeline answers every path with its own 404.
  *   AJAX   /_ajax/... POST, in its realm (staff, or the portal: the same path under the
  *          portal's prefix).
  *   PAGE   everything else, in its realm: public files, /error/* previews, routes, SPA
@@ -65,6 +69,7 @@ class Rsx_Request_Channel
 {
     public const ASSET = 'asset';
     public const API = 'api';
+    public const COMPANION = 'companion';
     public const AJAX = 'ajax';
     public const PAGE = 'page';
 
@@ -324,6 +329,12 @@ class Rsx_Request_Channel
 
         if (!$prefixed_portal_path && Api_Dispatcher::is_api_request($path)) {
             return static::__state_of(self::API, self::REALM_STAFF, $portal_host, $path);
+        }
+
+        // The companion realm is a process calling its own application: no browser, no
+        // portal. Like the API it stays a staff channel realm, and a portal host refuses it.
+        if (!$prefixed_portal_path && Companion_Dispatcher::is_companion_request($path)) {
+            return static::__state_of(self::COMPANION, self::REALM_STAFF, $portal_host, $path);
         }
 
         $portal = $match === null ? null : Portal_Site_Resolver::settle($match, (string) $request->server->get('QUERY_STRING', ''));

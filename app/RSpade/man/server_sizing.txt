@@ -130,7 +130,10 @@ SETTING THE COUNTS BY HAND
         RSPADE_PHP_TYPICAL_MB         the typical size the RAM ceiling uses
         RSPADE_PHP_WORKERS_PER_CORE   the CPU ceiling (4)
         REDIS_MAXMEMORY_MB            the Redis cap
-        RSPADE_RESERVED_MB            memory to leave alone beside ours
+        RSPADE_RESERVED_MB            memory to leave alone beside ours;
+                                      companion applications are not
+                                      counted, so their memory goes here
+                                      (rsx:man companion_apps)
         MYSQL_INNODB_BUFFER_MB        development MySQL buffer pool
 
     Choosing them on a large machine: start from what the /_sys Performance

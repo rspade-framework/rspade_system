@@ -1679,6 +1679,7 @@ EXAMPLE;
         'staff_site' => 'User_Model',
         'portal' => 'Portal_User_Model',
         'cross_site' => 'Login_User_Model',
+        'companion' => 'Companion_Actor_Model',
     ];
 
     /**
@@ -1706,6 +1707,7 @@ EXAMPLE;
      *   | portal user (portal request)           | no          | NOTHING (see below)      |
      *   | staff (web, CLI, API, impersonating)   | yes         | User_Model               |
      *   | staff                                  | no          | Login_User_Model         |
+     *   | a companion request                    | -           | Companion_Actor_Model    |
      *   | nobody signed in                       | -           | NOTHING                  |
      *
      * The portal "no" cell is deliberately empty rather than a Login_User_Model stamp: a
@@ -1985,6 +1987,12 @@ EXAMPLE;
      */
     private function __resolve_audit_actor(): ?array
     {
+        // A companion request has no signed-in identity: the companion itself is the writer.
+        $companion_actor_id = \App\RSpade\Core\Companion\Companion_Dispatcher::current_actor_id();
+        if ($companion_actor_id !== null) {
+            return ['type' => self::AUDIT_ACTOR_MODELS['companion'], 'id' => $companion_actor_id];
+        }
+
         // Portal realm. A portal request is a wholly separate identity space - never fall
         // through to the staff facade, which would attribute a client's write to whatever
         // staff cookie happens to be in the same browser.
@@ -2039,6 +2047,11 @@ EXAMPLE;
      */
     public static function _resolve_context_actor(): ?array
     {
+        $companion_actor_id = \App\RSpade\Core\Companion\Companion_Dispatcher::current_actor_id();
+        if ($companion_actor_id !== null) {
+            return ['type' => self::AUDIT_ACTOR_MODELS['companion'], 'id' => $companion_actor_id];
+        }
+
         if (\App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()) {
             if (!\App\RSpade\Core\Portal\Portal_Session::is_logged_in()) {
                 return null;

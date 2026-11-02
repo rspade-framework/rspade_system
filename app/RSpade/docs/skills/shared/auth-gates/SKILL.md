@@ -76,6 +76,8 @@ class Users_Index_Action extends Spa_Action { }
 | `#[Api_Endpoint]` | API dispatch | 401/403 JSON error |
 | `@route` action | Spa gate | `Error_Screens.unauthorized()` rendered into the layout - no navigation, no round trip |
 
+`#[Companion_Endpoint]` is the one surface with NO `#[Auth]`: a companion application's signed request is its gate, in a realm of its own, and an `#[Auth]` on it or its class fails the build (`rspade:companion-apps`).
+
 `pre_dispatch()` performs NO authorization anywhere. It is for tenant setup, interstitials and redirects.
 
 ---

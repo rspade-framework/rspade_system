@@ -4,7 +4,7 @@ inline SVG, with dashed ceiling lines across it.
 
 $series - [{key, label, values[]}] (required): one area per series, stacked in the
           order given; every values list has the same length (one value per slot,
-          oldest first). A series is coloured by its position (--rsx-series-1..4).
+          oldest first). A series is coloured by its position (--rsx-series-1..5).
 $ceilings - [{label, value}] [optional]: a dashed line at each value, labelled.
 $unit - the unit the values are in, shown on the axis and the tooltip ("MB") [optional]
 $visible - the series keys to draw [optional; every series when absent]
@@ -23,7 +23,7 @@ Hovering a slot shows its values and their total.
         <% for (const [index, s] of (this.args.series || []).entries()) { %>
             <% if (this.state.visible.includes(s.key)) { %>
                 <span class="_Sys_Stacked_Chart__key">
-                    <span class="<%= '_Sys_Stacked_Chart__swatch _Sys_Stacked_Chart__swatch--' + (index % 4 + 1) %>"></span><%= s.label %>
+                    <span class="<%= '_Sys_Stacked_Chart__swatch _Sys_Stacked_Chart__swatch--' + (index % 5 + 1) %>"></span><%= s.label %>
                 </span>
             <% } %>
         <% } %>

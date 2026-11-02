@@ -21,12 +21,13 @@
 #          conflict guard in do_disable() is what holds it there.
 #
 # WHAT IT DOES
-#   enable : raise the flag file (its CONTENT is the operator reason) -> turn the task
-#            system off and stop running background tasks (rsx:tasks:disable) -> stop
-#            realtime, fpc-proxy (where one runs), php-fpm, rsx-lockd, and redis LAST.
+#   enable : raise the flag file (its CONTENT is the operator reason) -> stop
+#            rsx-companiond (every companion application, each on its own grace) -> turn
+#            the task system off and stop running background tasks (rsx:tasks:disable) ->
+#            stop realtime, fpc-proxy (where one runs), php-fpm, rsx-lockd, and redis LAST.
 #   disable: start redis FIRST (everything else depends on it), then rsx-lockd,
 #            php-fpm, realtime, fpc-proxy -> clear the flag -> turn the task system back
-#            on (rsx:tasks:enable).
+#            on (rsx:tasks:enable) -> start rsx-companiond.
 #
 # ORDERING IS LOAD-BEARING. The flag goes up BEFORE the lock daemon and redis stop:
 # a process booting in that window must already see maintenance mode, otherwise it
@@ -46,7 +47,7 @@
 # allow-most-deny-some (rsx:task:process / rsx:task:worker blocked, rsx:task:run
 # blocked unless --force, everything else allowed). See rsx:man maintenance_mode.
 #
-# STATELESS. disable starts whichever of the five units exists - there is no record
+# STATELESS. disable starts whichever of the six units exists - there is no record
 # of what enable stopped. An operator-stopped unit being started by disable is
 # accepted and documented; determinism beats a state file that can go stale.
 #
@@ -257,6 +258,13 @@ do_enable() {
     say "  Web requests return 503; automated task runners are refused."
 
     [ "$SERVICES" = true ] || return 0
+
+    # The companion applications first: they are CALLERS, so they stop before the task system
+    # refuses their enqueues and before php-fpm, rsx-lockd and redis go. The supervisor unit is
+    # the switch: SIGTERM is the daemon's "stop every child on its own grace, then exit", the
+    # stop is synchronous through supervisorctl, it works on a broken tree, and the daemon comes
+    # back on the new code after a pull. Desired state is a flag file nothing here touches.
+    stop_unit '^rsx-companiond'
 
     # Turn the task system off and stop what is running, so nothing keeps writing:
     # rsx:tasks:disable throws the database switch (no new task starts on ANY host sharing
@@ -507,6 +515,13 @@ do_disable() {
             err "Turn it on by hand:  php artisan rsx:tasks:enable"
             err "(rsx:health reports the Task System row as FAIL until it is on.)"
         }
+    fi
+
+    # The companion applications LAST, with the flag gone and the task system on, so the first
+    # thing a companion does lands on a whole application. The daemon starts those whose
+    # desired state is running, and holds them down by itself while any maintenance flag stands.
+    if [ "$SERVICES" = true ]; then
+        start_unit '^rsx-companiond'
     fi
 
     ok "Maintenance mode OFF."

@@ -42,6 +42,7 @@ class Core_Bundle extends Rsx_Bundle_Abstract
                 'app/RSpade/Core/Confirmation',  // "Confirm it's you" before a sensitive action: <Password_Confirmation_Form> + Rsx_Password_Confirmation.js + its controller
                 'app/RSpade/Core/Task/ui',  // Task widgets (Task_Status_Badge, Task_Output, Task_Report, Task_Report_Browser) + Rsx_Task.js
                 'app/RSpade/Core/Task/ui/vendor/xterm.scss',  // xterm.js's stylesheet for Task_Output; vendor/ is never scanned by a directory include
+                'app/RSpade/Core/Companion/ui',  // Companion_Output (the Task_Output twin over a companion's stream) + Rsx_Companion.js
                 'app/RSpade/Core/Time/vendor/rsx_timezone_abbreviations.js',  // generated zone-name table (rsx:time:abbreviations) - the vendor bundle, by path like every vendor/ file
                 'app/RSpade/Core/Time/vendor/rsx_timestamp_format.js',  // Rsx_Time's formatting engine, the JS twin of Rsx_Timestamp_Format.php
                 'app/RSpade/Breadcrumbs',  // Progressive breadcrumb resolution

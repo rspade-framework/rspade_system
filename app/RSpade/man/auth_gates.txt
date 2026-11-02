@@ -74,6 +74,12 @@ DESCRIPTION
         #[Api_Endpoint] methods                     (external REST API)
         @route JS action classes                    (SPA client routes)
 
+    #[Companion_Endpoint] methods - the calls a companion application makes
+    (rsx:man companion_apps) - are a surface kind of their own, in a realm of
+    their own, and the one kind that carries NO #[Auth]: the signed request is
+    the gate, and #[Auth] on the method or its class is a manifest-build FATAL.
+    No staff or portal check resolves in that realm.
+
     There is no attribute-free spelling of "open". A public page declares the
     built-in 'public' check, which always passes:
 
@@ -490,6 +496,11 @@ ENFORCEMENT
                          marks #[Ajax_Endpoint_Model_Fetch], without marking
                          the redeclaration - the override is the body that
                          runs, so it states its attribute and #[Auth] itself
+        COMPANION CONFLICT
+                         a member carries #[Companion_Endpoint] beside
+                         another surface attribute (it would put the
+                         companion realm's signature gate on a browser
+                         surface)
 
     Separately fatal at scan time, before that pass: an #[Auth_Check] that is
     parameterized, not ': bool', or on an instance method; a duplicate or

@@ -17,6 +17,7 @@ Which of the three identities gets stamped depends on the actor and on whether t
 | portal user (portal request) | no | nothing (NULL - a portal account has no cross-site identity; **never lie in an audit column**) |
 | staff (web/CLI/API/impersonating) | yes | `User_Model` |
 | staff | no | `Login_User_Model` |
+| a companion request (`#[Companion_Endpoint]`) | - | `Companion_Actor_Model` (`Companion:<name>`; `rsx:man companion_apps`) |
 | nobody signed in | - | nothing (NULL) |
 
 **Impersonation is invisible here by design** - the stamp records the EFFECTIVE actor, not the person behind them.

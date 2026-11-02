@@ -93,7 +93,10 @@ class Task_Runner
         $as_dispatcher = Task_Dispatcher_Context::is_declared($class, $method);
 
         if ($as_dispatcher && $user_session_id === null) {
-            static::__refuse_unbound_dispatcher_run($class, $method, $origin_id === Task_Run_Model::ORIGIN_INLINE, $actor !== null);
+            // A companion is an actor, but not a person a dispatcher run can stand in for.
+            $acts_for_somebody = $actor !== null && $actor['type'] !== Rsx_Model_Abstract::AUDIT_ACTOR_MODELS['companion'];
+
+            static::__refuse_unbound_dispatcher_run($class, $method, $origin_id === Task_Run_Model::ORIGIN_INLINE, $acts_for_somebody);
         }
 
         $priority = match (true) {

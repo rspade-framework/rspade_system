@@ -1,0 +1,23 @@
+<%--
+_Sys_Companion_Detail - one companion, in three columns: its facts, verbs and state document;
+its live console (<Companion_Output>, stdout / stderr / both); its recent instances and
+endpoint traffic. The body of the companion dialog (_Sys_Companion_Detail.open(name)).
+
+$name - the companion (required)
+
+The shell never re-renders - the console keeps its scrollback - and each column follows the
+companion on its own: _Sys_Companion_Facts and _Sys_Companion_Activity on
+Companion_Changed_Topic, Companion_Output on Companion_Output_Topic.
+--%>
+<Define:_Sys_Companion_Detail tag="div">
+    <div class="_Sys_Companion_Detail__facts">
+        <_Sys_Companion_Facts $sid="facts" $name=this.args.name />
+    </div>
+    <div class="_Sys_Companion_Detail__output">
+        <div class="_Sys_Companion_Detail__heading">Console</div>
+        <Companion_Output class="_Sys_Companion_Detail__console" $companion=this.args.name />
+    </div>
+    <div class="_Sys_Companion_Detail__activity">
+        <_Sys_Companion_Activity $name=this.args.name />
+    </div>
+</Define:_Sys_Companion_Detail>

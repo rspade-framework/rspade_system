@@ -85,6 +85,7 @@ abstract class Transaction_Model_Abstract extends Rsx_Model_Abstract
     const SOURCE_TASK = 4;
     const SOURCE_CLI = 5;
     const SOURCE_TEST = 6;
+    const SOURCE_COMPANION = 7;
     /**
      * _AUTO_GENERATED_ Enum constants
      */
@@ -144,6 +145,11 @@ abstract class Transaction_Model_Abstract extends Rsx_Model_Abstract
                 'constant' => 'SOURCE_TEST',
                 'label' => 'Test',
                 'order' => 6,
+            ],
+            7 => [
+                'constant' => 'SOURCE_COMPANION',
+                'label' => 'Companion',
+                'order' => 7,
             ],
         ],
     ];

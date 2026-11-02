@@ -12,6 +12,8 @@
 
 **A CLI script grants ITSELF API access through `rsx:api:*`** — `key:create` / `key:temp` (short-lived, self-expiring) / `key:list` / `key:delete`, plus `rsx:api:openapi` for the spec, all taking `--user=<id|email>` (**required, no default**) and `--json`. The script then calls `/api/vN` over ordinary bearer HTTP: **there is no privileged CLI channel into the API.** Flags, envelope and exit codes: `rsx:man external_api`.
 
+**A third kind, `#[Companion_Endpoint]`, is called only by the application's own companion processes** (`/_companion/<name>/<endpoint>`, signed, no `#[Auth]`, never in the API inventory) - skill `rspade:companion-apps`.
+
 **GOTCHA (LLM landmine): NEVER put a class constant in an attribute argument** (`#[Api_Param('x', default: Model::FOO)]`) — reflection resolves it before the autoloader is ready and the scan dies. Literals only.
 
 Skills: `rspade:ajax-error-handling` (envelope, per-field validation, `Form_Utils`), `rspade:external-api` (response contract, param validation, versioning, key minting). Details: `rsx:man external_api`.

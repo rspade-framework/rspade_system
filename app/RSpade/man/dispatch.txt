@@ -82,6 +82,12 @@ THE FRONT CONTROLLER
          API     /api/vN/... - the external API (rsx:man external_api), a staff
                  identity on any host except the portal's DEDICATED domain,
                  where every /api/ path answers the API's own 404 not_found.
+         COMPANION
+                 /_companion and everything under it - a companion
+                 application's signed call (rsx:man companion_apps). Headless:
+                 no session, no CSRF, no Main hooks, no first-run screen, and a
+                 revision unit of work of its own; on the portal's own host every
+                 such path is the 404 not_found.
          AJAX    a POST under /_ajax/, in its realm.
          PAGE    everything else, in its realm: public files, /error/*
                  previews, routes, SPA bootstraps, the file routes.
@@ -106,8 +112,9 @@ THE FRONT CONTROLLER
        PAGE only - the development first-run setup screen (offered to, and
        accepted from, a loopback caller only).
 
-    4. The channel's pipeline: AssetHandler (ASSET), Api_Dispatcher (API), or
-       this dispatcher (AJAX and PAGE, in either realm, below).
+    4. The channel's pipeline: AssetHandler (ASSET), Api_Dispatcher (API),
+       Companion_Dispatcher (COMPANION), or this dispatcher (AJAX and PAGE, in
+       either realm, below).
 
     5. The error policy, per channel. A thrown HttpResponseException's own
        response is sent verbatim on every channel. ASSET answers one line of
@@ -115,7 +122,8 @@ THE FRONT CONTROLLER
        Every other channel is rendered by the exception handler chain
        (config('rsx.exception_handlers'), rsx:man error_handling), whose
        handlers choose by the classified channel: the Ajax envelope, the API's
-       JSON error, an Error_Screens page. Nothing in any of them dispatches. A
+       JSON error (the COMPANION channel answers the same shape), an
+       Error_Screens page. Nothing in any of them dispatches. A
        HEAD request's failure keeps its status and headers and loses its body.
 
     BEFORE THE FRONT CONTROLLER, public/index.php answers a few requests
@@ -182,8 +190,8 @@ THE DISPATCH PIPELINE
        and dispatch returns. No such file: dispatch continues to the route table,
        so a route may serve a generated document at a natural filename.
 
-       Build artifacts (/_compiled/, /_vendor/) and the external API are
-       channels of their own and never reach this pipeline.
+       Build artifacts (/_compiled/, /_vendor/), the external API and the
+       companion realm are channels of their own and never reach this pipeline.
 
     6. HEAD rewrite. A HEAD request is treated as GET for route matching and
        handler execution (the request method is set to GET so handlers see GET);
@@ -582,6 +590,7 @@ SEE ALSO
     rsx:man auth_gates          (the #[Auth] gate system)
     rsx:man spa                 (client-side SPA routing / actions)
     rsx:man external_api        (/api/vN external REST dispatch)
+    rsx:man companion_apps      (/_companion signed calls from companion applications)
     rsx:man portal              (the portal realm: routes, session, hooks)
     rsx:man fpc                 (full-page cache proxy)
     rsx:man auth                (Session and permission checks)

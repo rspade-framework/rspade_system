@@ -44,6 +44,7 @@ class Auth_Gates
     public const REALM_STAFF = Auth_ManifestSupport::REALM_STAFF;
     public const REALM_PORTAL = Auth_ManifestSupport::REALM_PORTAL;
     public const REALM_ANY = Auth_ManifestSupport::REALM_ANY;
+    public const REALM_COMPANION = Auth_ManifestSupport::REALM_COMPANION;
 
     /** @var array|null Test seam: replaces the manifest check registry when set. */
     protected static ?array $_checks_for_testing = null;

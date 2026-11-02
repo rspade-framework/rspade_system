@@ -75,12 +75,13 @@ class Portal_Session
     private static $_cli_impersonator_user_id = null;
 
     /**
-     * Check if running in CLI mode
+     * Check if this process has no browser: CLI, or a headless web request (Session owns the
+     * answer, _begin_headless_request()).
      * @return bool
      */
     private static function __is_cli(): bool
     {
-        return php_sapi_name() === 'cli';
+        return Session::_is_virtual();
     }
 
     /**

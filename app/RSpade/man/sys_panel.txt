@@ -48,9 +48,9 @@ DESCRIPTION
     administrators do with tenants, billing or customers. Those are application
     concepts and they stay in the application.
 
-    It has eleven screens, in sidebar order: Dashboard, System Info, Debug
-    Flags, Tasks, Task Workers, Performance, Email & SMS, Logs, Sites, Users
-    and Portal Users, each
+    It has twelve screens, in sidebar order: Dashboard, System Info, Debug
+    Flags, Tasks, Task Workers, Companions, Performance, Email & SMS, Logs,
+    Sites, Users and Portal Users, each
     described below. A screen over
     site-scoped data reads EVERY site, never the developer's own tenant. What
     an application has to coexist with is the panel's SHAPE - the tree, the
@@ -206,6 +206,24 @@ DESCRIPTION
     runs, each with what it is waiting for, and the queued total; and the next ten SCHEDULES due with the
     schedule total. Any run opens the run dialog. It refreshes as runs start
     and finish (Task_List_Changed_Topic).
+
+    Companions (`/_sys/companions`) is the companion applications rsx-companiond
+    runs (rsx:man companion_apps). The developer passes every companion gate. An
+    alert leads while maintenance holds every companion down, and another while
+    no daemon answers on this box; tiles give the daemon, the declared count,
+    how many are desired running and how many run. One row per companion: name
+    and description, desired state (THIS box's flag), status (plus "held" and the
+    waiting or unknown reason), uptime, restarts, heartbeat age (stale in the
+    warning colour), status line and the contract key's first 12 characters,
+    with the verbs that apply. A row opens a dialog in three columns: the facts
+    (status, verbs, status line and progress, last error, the state document as
+    JSON), the live console (<Companion_Output>), and the activity (recent
+    instances with how each ended and its exit code or signal; each endpoint's
+    calls, errors and average milliseconds over the last hour). Pause, resume,
+    graceful stop (a hold, released by start), start and restart are each
+    confirmed and written to the application log with who asked. Desired state
+    is never offered: rsx:companion_apps:start / stop is the command line's, as
+    the task system's switch is. It moves live on Companion_Changed_Topic.
 
     Performance (`/_sys/performance`) is what requests and task runs actually
     use, against what the machine was sized for. Every page request, Ajax
@@ -740,6 +758,7 @@ FILES
     rsx/resource/config/rsx.php                where an app overrides it
 
 SEE ALSO
+    rsx:man companion_apps - the companion applications the Companions screen shows
     rsx:man external_api - the API console's engine, keys, and mount contract
     rsx:man auth_gates - #[Auth], the check vocabulary, can_access()
     rsx:man session - IMPERSONATION: the mechanism the Users screen drives

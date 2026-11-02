@@ -71,6 +71,7 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
         'Ajax_Endpoint',
         'Ajax_Endpoint_Model_Fetch',
         'Api_Endpoint',
+        'Companion_Endpoint',
         'Task',
         'Schedule',
         'Exclusive',

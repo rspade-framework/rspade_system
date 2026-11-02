@@ -1,0 +1,73 @@
+<%--
+_Sys_Companion_Activity - a companion's recent instances and its endpoint traffic: the live
+instance(s), then the ended ones newest first with how each ended and its exit code or
+signal; then each endpoint's calls, errors and average latency over the last hour, from the
+request-log counters (daemon verbs appear as _daemon/ready and _daemon/event).
+
+$name - the companion (required)
+
+Repaints on every Companion_Changed_Topic {name} frame. Instances come from Redis and are
+evictable (the companion's log file is the record); the counters are kept
+rsx.companions.request_stats_retention_hours.
+--%>
+<Define:_Sys_Companion_Activity tag="div">
+<% if (this.data.error_data) { %>
+    <_Sys_Error $error_data=this.data.error_data />
+<% } else if (!this.data.detail) { %>
+    <Spinner class="_Sys_Companion_Activity__loading" />
+<% } else { %>
+    <% const _i = this.data.detail.instances; %>
+    <% const _rows = _i.live.concat(_i.history); %>
+    <div class="_Sys_Companion_Activity__heading">Recent instances</div>
+    <% if (!_rows.length) { %>
+        <div class="_Sys_Companion_Activity__none">No instance recorded.</div>
+    <% } else { %>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Instance</th><th>Ended</th><th>Exit</th><th>Started</th><th>Ran</th></tr></thead>
+                <tbody>
+                    <% for (const _r of _rows) { %>
+                        <tr>
+                            <td class="_Sys_Companion_Activity__mono" title="<%= _r.host || '' %>"><%= _r.instance_id %></td>
+                            <td>
+                                <% if (_r.ended_at) { %>
+                                    <_Sys_Status_Badge $status=(_r.status || 'muted') $label=(_r.how_ended || _r.status) />
+                                <% } else { %>
+                                    <_Sys_Status_Badge $status=(_r.status || 'muted') />
+                                <% } %>
+                            </td>
+                            <td class="_Sys_Companion_Activity__mono"><%= _r.exit_signal ? _r.exit_signal : (_r.exit_code !== null && _r.exit_code !== undefined ? _r.exit_code : '') %></td>
+                            <td><%= _r.started_at ? Rsx_Time.format_timestamp_short(_r.started_at) : '' %></td>
+                            <td><%= _Sys_Companion_Activity.ran(_r) %></td>
+                        </tr>
+                    <% } %>
+                </tbody>
+            </table>
+        </div>
+    <% } %>
+
+    <% const _s = this.data.detail.stats; %>
+    <% const _endpoints = Object.keys(_s.endpoints); %>
+    <div class="_Sys_Companion_Activity__heading">Endpoint calls, last <%= _s.minutes %> minutes</div>
+    <% if (!_endpoints.length) { %>
+        <div class="_Sys_Companion_Activity__none">No call recorded.</div>
+    <% } else { %>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Endpoint</th><th class="text-end">Calls</th><th class="text-end">Errors</th><th class="text-end">Avg ms</th></tr></thead>
+                <tbody>
+                    <% for (const _e of _endpoints) { %>
+                        <% const _v = _s.endpoints[_e]; %>
+                        <tr>
+                            <td class="_Sys_Companion_Activity__mono"><%= _e %></td>
+                            <td class="text-end"><%= _v.calls %></td>
+                            <td class="text-end<%= _v.errors ? ' _Sys_Companion_Activity__errors' : '' %>"><%= _v.errors %></td>
+                            <td class="text-end"><%= _v.avg_ms %></td>
+                        </tr>
+                    <% } %>
+                </tbody>
+            </table>
+        </div>
+    <% } %>
+<% } %>
+</Define:_Sys_Companion_Activity>

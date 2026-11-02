@@ -33,7 +33,8 @@ use App\RSpade\Core\Session\Session;
  * the rest of their lifetime would be filed under the first unit's transaction. Hence
  * _reset_request_state(), called at each of those boundaries:
  *
- *   - Rsx_Front_Controller::handle() and Api_Dispatcher     (one web / API request)
+ *   - Rsx_Front_Controller::handle(), Api_Dispatcher and
+ *     Companion_Dispatcher                                   (one web / API / companion request)
  *   - Ajax::execute()                                        (one Ajax endpoint call)
  *   - Task_Worker_Command and Task::internal()               (one task)
  *   - Rsx_Test_Abstract                                      (one test)
@@ -81,6 +82,7 @@ class Revision
         'task' => Transaction_Model::SOURCE_TASK,
         'cli' => Transaction_Model::SOURCE_CLI,
         'test' => Transaction_Model::SOURCE_TEST,
+        'companion' => Transaction_Model::SOURCE_COMPANION,
     ];
 
     /** The current transaction row, or null when nothing has been recorded yet. */
@@ -390,7 +392,7 @@ class Revision
     /**
      * Begin a new unit of work: the next revisioned write mints a fresh transaction.
      *
-     * @param string $source One of the SOURCES keys ('web', 'ajax', 'api', 'task', 'cli', 'test')
+     * @param string $source One of the SOURCES keys ('web', 'ajax', 'api', 'task', 'cli', 'test', 'companion')
      * @param string|null $endpoint What this unit is serving, e.g. 'GET /clients' or 'Clients_Controller::save'
      */
     public static function _reset_request_state(string $source, ?string $endpoint = null): void

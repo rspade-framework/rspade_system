@@ -94,6 +94,17 @@ function tmp_root()     { return resolve_root('RSX_TMP_PATH', 'tmp'); }
 function storage_root() { return resolve_root('RSX_STORAGE_PATH', 'storage'); }
 function state_root()   { return path.join(storage_root(), 'state'); }
 
+// Companion applications. Mirrors Rsx_Project_Paths; each lives under storage/, which rsx:clean
+// leaves alone, because a running daemon must keep its socket and its desired state.
+function companion_state_dir()             { return path.join(state_root(), 'companions'); }
+function companion_desired_flag_file(name) { return path.join(companion_state_dir(), name + '.running'); }
+function companion_maintenance_flag_file() { return path.join(companion_state_dir(), '.maintenance'); }
+function companiond_socket_file()          { return path.join(state_root(), 'companiond.sock'); }
+function companiond_children_file()        { return path.join(state_root(), 'companiond.children.json'); }
+function companiond_log_file()             { return path.join(storage_root(), 'logs', 'rsx-companiond.log'); }
+function companion_logs_dir(name)          { return path.join(storage_root(), 'logs', 'companions', name); }
+function manifest_build_marker_file()      { return path.join(state_root(), '.manifest_build_in_progress'); }
+
 module.exports = {
     load_env_file,
     project_root,
@@ -102,4 +113,12 @@ module.exports = {
     tmp_root,
     storage_root,
     state_root,
+    companion_state_dir,
+    companion_desired_flag_file,
+    companion_maintenance_flag_file,
+    companiond_socket_file,
+    companiond_children_file,
+    companiond_log_file,
+    companion_logs_dir,
+    manifest_build_marker_file,
 };

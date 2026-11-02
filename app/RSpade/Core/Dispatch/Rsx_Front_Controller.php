@@ -18,6 +18,7 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Throwable;
 use App\RSpade\Core\Api\Api_Dispatcher;
+use App\RSpade\Core\Companion\Companion_Dispatcher;
 use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\AssetHandler;
@@ -43,7 +44,7 @@ use App\RSpade\Core\Revisions\Revision;
  *      the first is in flight is shouldnt_happen(). Nothing calls a dispatcher from inside
  *      another, so this is unreachable by construction and exists to make any future
  *      violation loud.
- *   2. Rsx_Request_Channel::classify() - ASSET, API, AJAX or PAGE, plus the realm and, for
+ *   2. Rsx_Request_Channel::classify() - ASSET, API, COMPANION, AJAX or PAGE, plus the realm and, for
  *      a portal request, the site its URL resolves to (Portal_Site_Resolver). Decided
  *      once, read by everything after it.
  *   3. The fixed preamble: the revision unit of work, Manifest::init(), the development
@@ -51,8 +52,9 @@ use App\RSpade\Core\Revisions\Revision;
  *      developer's per-browser console_debug override (Debugger::apply_session_override()).
  *   4. A portal address with no servable portal: the 301 to a site's custom domain
  *      (PORTAL_CUSTOM_DOMAINS=override), or the portal's 404 (plain text for an Ajax call).
- *   5. The channel's pipeline: AssetHandler (ASSET), Api_Dispatcher (API), Dispatcher
- *      (AJAX and PAGE, in the realm the request was classified in).
+ *   5. The channel's pipeline: AssetHandler (ASSET), Api_Dispatcher (API),
+ *      Companion_Dispatcher (COMPANION), Dispatcher (AJAX and PAGE, in the realm the request
+ *      was classified in).
  *   6. Any Throwable becomes a response through the channel's error policy, inside the
  *      same try - never by dispatching again. HttpResponseException carries its response
  *      verbatim; ASSET answers plain text; every other channel is rendered by the
@@ -99,6 +101,10 @@ class Rsx_Front_Controller
             if ($channel === Rsx_Request_Channel::API) {
                 Api_Dispatcher::end_request();
             }
+
+            if ($channel === Rsx_Request_Channel::COMPANION) {
+                Companion_Dispatcher::end_request();
+            }
         }
 
         return $response;
@@ -126,8 +132,9 @@ class Rsx_Front_Controller
         $url = Rsx_Request_Channel::dispatch_path($request);
         $method = $request->method();
 
-        // One request is one unit of work for revision history. The API declares its own.
-        if ($channel !== Rsx_Request_Channel::API) {
+        // One request is one unit of work for revision history. The API and the companion
+        // channel declare their own.
+        if ($channel !== Rsx_Request_Channel::API && $channel !== Rsx_Request_Channel::COMPANION) {
             Revision::_reset_request_state('web', $method . ' ' . $url);
         }
 
@@ -143,6 +150,10 @@ class Rsx_Front_Controller
 
         if ($channel === Rsx_Request_Channel::API) {
             return Api_Dispatcher::dispatch($url, $method, [], $request);
+        }
+
+        if ($channel === Rsx_Request_Channel::COMPANION) {
+            return Companion_Dispatcher::dispatch($request);
         }
 
         // A portal address the resolver settled without serving it: a template address of a

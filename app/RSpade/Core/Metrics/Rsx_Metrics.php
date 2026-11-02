@@ -17,9 +17,10 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * Rsx_Metrics - how much memory and time each request and task run takes (Redis database 1).
  *
- * Every page request, Ajax request, external API call and worker-run task records ONE entry
- * when it ends: its peak memory, how long it ran, and what it was (a controller action, the
- * first Ajax call of a batch, an API route pattern, a task's Service::method). The /_sys
+ * Every page request, Ajax request, external API call, companion call and worker-run task
+ * records ONE entry when it ends: its peak memory, how long it ran, and what it was (a
+ * controller action, the first Ajax call of a batch, an API route pattern, a companion
+ * endpoint, a task's Service::method). The /_sys
  * Performance screen reads it back (rsx:man sys_panel).
  *
  * WHAT IS KEPT, per kind (KINDS):
@@ -58,9 +59,10 @@ class Rsx_Metrics
     public const KIND_AJAX = 'ajax';
     public const KIND_API = 'api';
     public const KIND_TASK = 'task';
+    public const KIND_COMPANION = 'companion';
 
     /** Every kind, in the order the screen lists them. */
-    public const KINDS = [self::KIND_PAGE, self::KIND_AJAX, self::KIND_API, self::KIND_TASK];
+    public const KINDS = [self::KIND_PAGE, self::KIND_AJAX, self::KIND_API, self::KIND_TASK, self::KIND_COMPANION];
 
     /** Entries kept per kind in the recent list. */
     public const RECENT_KEEP = 100;
@@ -116,6 +118,7 @@ class Rsx_Metrics
             Rsx_Request_Channel::PAGE => self::KIND_PAGE,
             Rsx_Request_Channel::AJAX => self::KIND_AJAX,
             Rsx_Request_Channel::API => self::KIND_API,
+            Rsx_Request_Channel::COMPANION => self::KIND_COMPANION,
         ][$channel] ?? null;
 
         if ($kind === null || PHP_SAPI === 'cli' || self::$__request !== null || !static::enabled()) {

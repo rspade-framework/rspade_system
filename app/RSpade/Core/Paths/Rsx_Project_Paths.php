@@ -167,6 +167,24 @@ class Rsx_Project_Paths
         return self::build_path('build_key');
     }
 
+    /** What the build wrote for the companion applications: one directory per companion. */
+    public static function companions_build_dir(): string
+    {
+        return self::build_path('companions');
+    }
+
+    /** A companion's generated descriptor - what rsx-companiond starts it from. */
+    public static function companion_descriptor_file(string $name): string
+    {
+        return self::build_path('companions/' . $name . '/descriptor.json');
+    }
+
+    /** A companion's generated Node client, naming exactly its endpoints. */
+    public static function companion_client_file(string $name): string
+    {
+        return self::build_path('companions/' . $name . '/client.js');
+    }
+
     /** Marker written by a build that failed, so the next process does not retry blindly. */
     public static function manifest_bad_flag_file(): string
     {
@@ -465,6 +483,12 @@ class Rsx_Project_Paths
         return self::storage_path('logs');
     }
 
+    /** The companion endpoint realm's request log: one JSON line per call, bodies never. */
+    public static function companion_request_log_file(): string
+    {
+        return self::storage_path('logs/companion_requests.log');
+    }
+
     /** The IDE bridge's local-file grant tokens. */
     public static function ide_bridge_dir(): string
     {
@@ -485,6 +509,61 @@ class Rsx_Project_Paths
     public static function maintenance_flag_file(): string
     {
         return self::state_path('.maintenance.mode.framework.update');
+    }
+
+    /**
+     * Companion applications' desired state: one flag file per companion that should run, plus
+     * the maintenance overlay. Under storage/state, so rsx:clean leaves it, and readable with no
+     * database. Mirrored in bin/lib/rsx_paths.js for rsx-companiond.
+     */
+    public static function companion_state_dir(): string
+    {
+        return self::state_path('companions');
+    }
+
+    /** Present = this companion should run. Absent = stopped. */
+    public static function companion_desired_flag_file(string $name): string
+    {
+        return self::state_path('companions/' . $name . '.running');
+    }
+
+    /** Present = every companion is held down for a window; desired state is untouched. */
+    public static function companion_maintenance_flag_file(): string
+    {
+        return self::state_path('companions/.maintenance');
+    }
+
+    /** rsx-companiond's control socket. */
+    public static function companiond_socket_file(): string
+    {
+        return self::state_path('companiond.sock');
+    }
+
+    /** The process groups rsx-companiond started, so a new daemon can sweep a dead one's orphans. */
+    public static function companiond_children_file(): string
+    {
+        return self::state_path('companiond.children.json');
+    }
+
+    /** rsx-companiond's own log. */
+    public static function companiond_log_file(): string
+    {
+        return self::storage_path('logs/rsx-companiond.log');
+    }
+
+    /** One companion's output logs, rotated by rsx-companiond and never by Rsx_Logrotate. */
+    public static function companion_logs_dir(string $name): string
+    {
+        return self::storage_path('logs/companions/' . $name);
+    }
+
+    /**
+     * Present while a manifest build runs, holding the builder's pid: rsx-companiond's signal to
+     * pause a companion whose policy asks for it.
+     */
+    public static function manifest_build_marker_file(): string
+    {
+        return self::state_path('.manifest_build_in_progress');
     }
 
     /**

@@ -42,6 +42,8 @@ TOP-LEVEL DIRECTORY STRUCTURE
             variables.scss  Global SCSS variables and mixins.
             components/      Reusable jqhtml components.
         services/           Background tasks / integrations (Rsx_Service_Abstract).
+        companions/         Companion applications: long-running processes
+                            (rsx:man companion_apps).
         handlers/           Event and exception handlers.
         commands/           Custom artisan commands.
         resource/           Config overrides, migrations, man pages, archives.

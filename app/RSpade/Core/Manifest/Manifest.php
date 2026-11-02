@@ -269,6 +269,7 @@ class Manifest
         'jqhtml',
         'external_resources',
         'task_commands',
+        'companions',
         'emails',
         'bundle_aliases',
         'auth',
@@ -405,6 +406,47 @@ class Manifest
         static::init();
 
         return static::$data['data']['task_commands'] ?? [];
+    }
+
+    /**
+     * Write or remove the build-in-progress marker. Development only: a sealed build never
+     * rebuilds at run time, and rsx:build runs inside a window nothing acts on. A marker that
+     * cannot be written is reported and the build goes on: it serves a best-effort pause.
+     */
+    private static function __mark_build_in_progress(bool $building): void
+    {
+        if (!Rsx::is_development()) {
+            return;
+        }
+
+        $marker = Rsx_Project_Paths::manifest_build_marker_file();
+
+        if (!$building) {
+            if (is_file($marker)) {
+                unlink($marker);
+            }
+
+            return;
+        }
+
+        ensure_directory(dirname($marker));
+
+        if (file_put_contents($marker, (string) getmypid()) === false) {
+            console_debug('MANIFEST', 'Could not write the build marker', $marker);
+        }
+    }
+
+    /**
+    * Every declared companion application, by name, with its endpoint allow-list and its
+    * contract key. Hot: Companion_Dispatcher reads it on every call.
+    *
+    * @return array<string, array>
+    */
+    public static function get_companions(): array
+    {
+        static::init();
+
+        return static::$data['data']['companions'] ?? [];
     }
 
     /**
@@ -1473,6 +1515,11 @@ class Manifest
             // to record that this process rebuilt (drives the rsx.rebuilt* events).
             static::$_rebuild_occurred = true;
 
+            // The build-in-progress marker: a companion whose code-change policy is `pause` is
+            // paused while it stands. Removed in the finally below, and holding this pid, so a
+            // builder killed outright is recognised as gone.
+            static::__mark_build_in_progress(true);
+
             // THE BUILD LOCK IS RELEASED ON EVERY EXIT, including a throw. A code-quality
             // violation, an unparseable file or a bounded restart loop all leave this
             // function by exception, and until this finally existed each of them left the
@@ -1518,6 +1565,8 @@ class Manifest
                 // The build read a great many files through ONE cache; nothing about them
                 // outlives the build.
                 static::build()->release_source_cache();
+
+                static::__mark_build_in_progress(false);
 
                 RsxLocks::release_lock(self::$_manifest_compile_lock);
                 console_debug('MANIFEST', 'Released manifest build lock');

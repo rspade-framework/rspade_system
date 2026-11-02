@@ -1,9 +1,9 @@
 /**
  * _Sys_Performance_Action - the control panel's Performance screen.
  *
- * What requests and task runs have actually used, against what the machine was sized
- * for: php-fpm's live pool status, a summary per kind of the last 100 (page, Ajax, API,
- * task), two charts of the last hour - memory held and processes at work, stacked by
+ * What requests, task runs and companion calls have actually used, against what the machine
+ * was sized for: php-fpm's live pool status, a summary per kind of the last 100 (page, Ajax,
+ * API, task, companion), two charts of the last hour - memory held and processes at work, stacked by
  * kind, with the budget's ceilings across them - and the last 10 of each kind.
  *
  * Loads _Sys_Performance_Controller.get_snapshot and .get_fpm_status together, then
@@ -26,6 +26,7 @@ class _Sys_Performance_Action extends Spa_Action {
         { key: 'ajax', label: 'Ajax' },
         { key: 'api', label: 'API' },
         { key: 'task', label: 'Task' },
+        { key: 'companion', label: 'Companion' },
     ];
 
     static _instance_count = 0;

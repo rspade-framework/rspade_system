@@ -77,7 +77,7 @@ if (!Event_Registry::has_handlers('file.upload.authorize')) {
 }
 ```
 
-That is exactly what the three FILE gates do (`Rsx_File_Gates::require_handler()`) - an unhandled upload gate would be an anonymous upload endpoint and an unhandled read gate a public file server, so each throws instead. **Every app ships a `file.upload.authorize`, a `file.thumbnail.authorize` and a `file.download.authorize` handler** (minimum: require login); see `rspade:file-attachments`. The TASK gates (`task.view.authorize`, `task.view.scope`, `task.control.authorize`, portal `portal.task.*`) fail closed the same way, by denying rather than throwing: with no handler nobody but a developer sees or controls a background task run (`Task_Gates`; `rspade:background-tasks`).
+That is exactly what the three FILE gates do (`Rsx_File_Gates::require_handler()`) - an unhandled upload gate would be an anonymous upload endpoint and an unhandled read gate a public file server, so each throws instead. **Every app ships a `file.upload.authorize`, a `file.thumbnail.authorize` and a `file.download.authorize` handler** (minimum: require login); see `rspade:file-attachments`. The TASK gates (`task.view.authorize`, `task.view.scope`, `task.control.authorize`, portal `portal.task.*`) fail closed the same way, by denying rather than throwing: with no handler nobody but a developer sees or controls a background task run (`Task_Gates`; `rspade:background-tasks`). The COMPANION gates (`companion.view.authorize`, `companion.control.authorize`) deny the same way (`Companion_Gates`; `rspade:companion-apps`), and `companion.error` is the action a companion's reported errors and crashes arrive on.
 
 ### Resolve - intercept a framework default
 

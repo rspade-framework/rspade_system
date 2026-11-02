@@ -1,0 +1,41 @@
+._Sys_Companion_Activity {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    &__loading {
+        display: block;
+        width: 40px;
+        height: 40px;
+        margin: 20px auto;
+    }
+
+    &__heading {
+        margin-top: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--rsx-dim);
+    }
+
+    &__none {
+        color: var(--rsx-dim);
+    }
+
+    &__mono {
+        font-family: var(--rsx-mono);
+        font-size: 12px;
+    }
+
+    &__errors {
+        color: var(--bs-danger);
+        font-weight: 600;
+    }
+
+    td,
+    th {
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+}

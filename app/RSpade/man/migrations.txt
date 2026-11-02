@@ -766,8 +766,9 @@ THE SCHEMA CACHE
        this developer's own - so it backs them up first:
 
            [1/7]  Enter maintenance mode (reason "schema cache build"). The real
-                  mechanism: task workers are killed, then realtime, fpc-proxy,
-                  php-fpm, rsx-lockd and redis stop. MySQL deliberately does not.
+                  mechanism: rsx-companiond stops, task workers are killed, then
+                  realtime, fpc-proxy, php-fpm, rsx-lockd and redis stop. MySQL
+                  deliberately does not.
            [2/7]  Dump the live database to
                   tmp/db_cache/live_db.sql.gz, and MOVE the blob store
                   to its sibling <blob_root>_tmp, leaving an empty store behind.

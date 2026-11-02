@@ -28,8 +28,8 @@ resolution is `dispatch`, and the `_`-prefix name rule (NAME-RESERVED-01) is
 `code_quality`. The `is_sysadmin` check itself is declared on `Permission_Abstract`
 and is proved in `auth_gates` (AG-ROOT-*), beside the other built-ins.
 
-All eleven screens are functional and their endpoints are covered here (RP-DASH-*,
-RP-DEBUG-*, RP-TASKS-*, RP-EMAIL-*, RP-SMS-*, RP-LOGS-*, RP-SITES-*, RP-USERS-*,
+All twelve screens are functional and their endpoints are covered here (RP-DASH-*,
+RP-DEBUG-*, RP-TASKS-*, RP-COMP-*, RP-EMAIL-*, RP-SMS-*, RP-LOGS-*, RP-SITES-*, RP-USERS-*,
 RP-PORTAL-USERS-*, RP-IMP-*, RP-PERF-*). The Debug Flags rows also cover the framework-core engine the screen drives -
 the per-browser console_debug override and where it is applied - because the panel is
 its only writer.
@@ -43,7 +43,8 @@ its only writer.
 | `Sys/app/sys/_Sys_Controller.php` | `GET /_sys/logout` -> `RsxAuth::logout()` + redirect to `/`; same inherited refusal. |
 | `Sys/app/sys/_Sys_Bundle.php` | the panel's only bundle; names no `rsx/` path and no app class. |
 | `Sys/theme/_Sys_Theme_Bundle.php` | Bootstrap compiled from `system/node_modules/bootstrap` through `theme/vendor/bootstrap.scss`, plus the `--rsx-*` tokens. |
-| `Sys/app/sys/*/_Sys_*_Action.js` | the eleven screens and their decorators. |
+| `Sys/app/sys/*/_Sys_*_Action.js` | the twelve screens and their decorators. |
+| `Sys/app/sys/companions/_Sys_Companions_Controller.php` | the Companions screen: `overview`, `detail`, `act` over the Core `Rsx_Companion` facade (RP-COMP-*). |
 | `Sys/app/sys/performance/_Sys_Performance_Controller.php` + `Sys/theme/components/_Sys_Stacked_Chart.*` | the Performance screen: the snapshot over `Rsx_Metrics` and the container's sizing record, php-fpm's pool status parsed per pool (RP-PERF-*; a scratch sizing record and the `$fpm_fetcher_for_tests` seam), and the stacked chart. |
 | `Sys/app/sys/_Sys_Layout.js` | the chrome, and the nav filtered through `Permission.can_access()`. |
 | `system/config/rsx.php` | `manifest.scan_directories` (`app/RSpade/Sys`) and `sys_panel.enabled`. |

@@ -287,7 +287,7 @@ REQUEST-SCOPED CACHE:
 THE REDIS DATABASE MAP
 ======================
 
-One redis instance, four databases. The RsxCache class header
+One redis instance, five databases. The RsxCache class header
 (system/app/RSpade/Core/Cache/RsxCache.php) is the authority; every subsystem
 that opens a connection points its comment there.
 
@@ -306,12 +306,18 @@ that opens a connection points its comment there.
           NEVER emptied by clear(). Emptied ONLY by
           RsxCache::clear_reduced_volatility(), whose one caller is rsx:clean
           (discarding build state orphans every key here at once).
-    DB 3  TRANSIENT COUNTERS (Rsx_Counter) - login throttling and friends.
+    DB 3  TRANSIENT COUNTERS (Rsx_Counter) - login throttling and friends,
+          and the companion realm's request nonces.
+    DB 4  COMPANION APPLICATIONS (Companion_Store and rsx-companiond) - live
+          instance records, ended-instance history, output streams and
+          per-minute request counters, under rsx_companion:<scope token>:*.
+          Never emptied by clear() (rsx:man companion_apps).
 
 ONE INSTANCE, LRU OVER EVERYTHING. The shipped redis.conf sets
 allkeys-lru over the whole server, so a counter, a metric and a cache entry
-are equally evictable - by design. Every key is derived: a full redis keeps
-less warm and stops nothing, and a security counter evicted under pressure
+are equally evictable - by design. Every key is derived but a companion's
+instance record, which rsx-companiond detects losing and republishes: a full
+redis keeps less warm and stops nothing, and a security counter evicted under pressure
 is one nobody was hitting (an attacker keeps their own keys hot). Realtime,
 whose loss a page could not notice by itself, detects it and resyncs every
 client (rsx:man realtime, REDIS DATA LOSS).

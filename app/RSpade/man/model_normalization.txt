@@ -255,6 +255,7 @@ actor's session site AND that site is not 0 (0 is "no site selected", not a site
   | portal user (portal request)         | no          | nothing (NULL)    |
   | staff (web, CLI, API, impersonating) | yes         | User_Model        |
   | staff                                | no          | Login_User_Model  |
+  | a companion request                  | -           | Companion_Actor_Model |
   | nobody signed in                     | -           | nothing (NULL)    |
 
 The portal "no" cell is deliberately empty. A portal account has no cross-site identity, so

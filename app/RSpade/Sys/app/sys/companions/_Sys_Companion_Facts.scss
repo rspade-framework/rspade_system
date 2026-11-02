@@ -1,0 +1,62 @@
+._Sys_Companion_Facts {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+
+    &__loading {
+        display: block;
+        width: 40px;
+        height: 40px;
+        margin: 20px auto;
+    }
+
+    &__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    &__name {
+        font-family: var(--rsx-mono);
+        font-size: 15px;
+        font-weight: 600;
+        word-break: break-all;
+    }
+
+    &__description {
+        color: var(--rsx-dim);
+    }
+
+    &__live {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    &__status_line {
+        white-space: pre-wrap;
+    }
+
+    &__bar {
+        position: relative;
+        height: 22px;
+        background: var(--rsx-border);
+        border-radius: 3px;
+        overflow: hidden;
+    }
+
+    &__bar_fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        background: rgba(13, 110, 253, 0.45);
+    }
+
+    &__bar_text {
+        position: relative;
+        text-align: center;
+        font-size: 12px;
+        line-height: 22px;
+        font-variant-numeric: tabular-nums;
+    }
+}

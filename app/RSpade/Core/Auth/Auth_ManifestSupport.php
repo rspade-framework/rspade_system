@@ -119,6 +119,19 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
     public const REALM_PORTAL = 'portal';
     public const REALM_ANY = 'any';
 
+    /**
+     * A companion endpoint's realm, in this index only: the request channel keeps its two
+     * realms. No staff or portal check resolves here and nothing here resolves there.
+     */
+    public const REALM_COMPANION = 'companion';
+
+    /**
+     * The gate every companion surface carries: the request's signature, which
+     * Companion_Dispatcher verified. Not a check, so it is never evaluated - the rule that
+     * every surface has a gate holds, and require_surface() still protects the seam.
+     */
+    public const COMPANION_GATE = 'companion_signature';
+
     // Roots of the two check registries.
     private const STAFF_PERMISSION_BASE = 'App\\RSpade\\Core\\Permission\\Permission_Abstract';
     private const PORTAL_PERMISSION_BASE = 'App\\RSpade\\Core\\Portal\\Portal_Permission_Abstract';
@@ -172,7 +185,7 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
      * than the first request that matches it.
      *
      * Rows checked: `routes` and `portal_routes` (their 'surface', plus the JS action
-     * 'target' of an SPA row), `api_endpoints`, and every #[Ajax_Endpoint] /
+     * 'target' of an SPA row), `api_endpoints`, `companions`, and every #[Ajax_Endpoint] /
      * #[Ajax_Endpoint_Model_Fetch] member in the attribute index.
      *
      * Public so the rule can be driven with synthetic manifest data.
@@ -230,6 +243,18 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
                 self::REALM_STAFF,
                 "The api_endpoints row for '{$pattern}'"
             );
+        }
+
+        foreach (($data['companions'] ?? []) as $name => $companion) {
+            foreach ($companion['endpoints'] as $endpoint => $row) {
+                $add(
+                    $row['class'] . '::' . $row['method'],
+                    $row['file'],
+                    'companion',
+                    self::REALM_COMPANION,
+                    "The companions row for '{$name}/{$endpoint}'"
+                );
+            }
         }
 
         foreach (['Ajax_Endpoint' => 'ajax', 'Ajax_Endpoint_Model_Fetch' => 'model_fetch'] as $attribute => $kind) {
@@ -336,6 +361,23 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
             $realm = $surface['realm'];
             $is_js_action = static::_is_js_action_surface($surface);
 
+            // Widening is what a member with two surface kinds gets, and here it would put a
+            // sentinel gate on a browser surface. Companion_ManifestSupport refuses the
+            // combination first; this holds the rule for whatever it did not see.
+            if (in_array('companion', $surface['kinds'], true) && count($surface['kinds']) > 1) {
+                $violations[] = [
+                    'type' => 'COMPANION CONFLICT',
+                    'target' => $target,
+                    'file' => $surface['file'],
+                    'kinds' => $surface['kinds'],
+                    'realm' => $realm,
+                    'is_js_action' => false,
+                    'detail' => 'carries #[Companion_Endpoint] beside another surface attribute',
+                ];
+
+                continue;
+            }
+
             if (empty($surface['auth'])) {
                 $violations[] = [
                     'type' => 'MISSING GATE',
@@ -386,6 +428,12 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
     {
         if ($realm === self::REALM_ANY) {
             return isset($checks[self::REALM_STAFF][$name]) || isset($checks[self::REALM_PORTAL][$name]);
+        }
+
+        // The sentinel names nothing executable and resolves in this realm alone: naming it
+        // on a staff or portal surface stays UNKNOWN CHECK.
+        if ($realm === self::REALM_COMPANION) {
+            return $name === self::COMPANION_GATE;
         }
 
         return isset($checks[$realm][$name]);
@@ -821,6 +869,7 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
             'Portal_Route' => ['portal_route', self::REALM_PORTAL],
             'Api_Endpoint' => ['api', self::REALM_STAFF],
             'Ajax_Endpoint' => ['ajax', null],
+            'Companion_Endpoint' => ['companion', self::REALM_COMPANION],
         ];
     }
 
@@ -954,12 +1003,16 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
 
                     $is_surface = true;
 
+                    // A companion endpoint's gate is the request's signature, so the
+                    // surface carries the sentinel instead of a declared list.
                     static::_record_surface(
                         $surfaces,
                         $target,
                         $spec[0],
                         $spec[1] ?? $ajax_realm,
-                        static::merge_gate_lists($class_attributes, $method_attributes, $location),
+                        $spec[1] === self::REALM_COMPANION
+                            ? [self::COMPANION_GATE]
+                            : static::merge_gate_lists($class_attributes, $method_attributes, $location),
                         $file,
                         $target
                     );

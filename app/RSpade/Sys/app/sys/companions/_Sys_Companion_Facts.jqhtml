@@ -1,0 +1,74 @@
+<%--
+_Sys_Companion_Facts - a companion's identity and what it is doing: the name with its status
+badge and the verbs that apply now, the status line and progress, the facts (desired and
+actual, the host and instance, uptime, restarts, heartbeat, the contract key, why it waits,
+how its last instance ended), its last error and its state document.
+
+$name - the companion (required)
+
+Repaints on every Companion_Changed_Topic {name} frame (refresh(): only when what it shows
+changed). Fires 'acted' after a verb.
+--%>
+<Define:_Sys_Companion_Facts tag="div">
+<% if (this.data.error_data) { %>
+    <_Sys_Error $error_data=this.data.error_data />
+<% } else if (!this.data.status) { %>
+    <Spinner class="_Sys_Companion_Facts__loading" />
+<% } else { %>
+    <% const _c = this.data.status; %>
+    <div class="_Sys_Companion_Facts__title">
+        <span class="_Sys_Companion_Facts__name"><%= _c.name %></span>
+        <_Sys_Status_Badge $status=_c.status />
+        <% if (_c.held) { %><_Sys_Status_Badge $status="warn" $label="held" /><% } %>
+    </div>
+    <div class="_Sys_Companion_Facts__description"><%= _c.description %></div>
+    <div class="_Sys_Companion_Facts__actions">
+        <_Sys_Companion_Actions $sid="actions" $companion=_c $size="md" />
+    </div>
+    <% if (_c.maintenance) { %>
+        <div class="alert alert-info mb-0">Held stopped by <%= _c.maintenance %>.</div>
+    <% } %>
+    <% if (_c.status_line || _c.progress) { %>
+        <div class="_Sys_Companion_Facts__live">
+            <% if (_c.status_line) { %>
+                <div class="_Sys_Companion_Facts__status_line"><%= _c.status_line %></div>
+            <% } %>
+            <% if (_c.progress) { %>
+                <% const _pct = _c.progress.total > 0 ? Math.min(100, Math.round(100 * _c.progress.current / _c.progress.total)) : 0; %>
+                <div class="_Sys_Companion_Facts__bar">
+                    <div class="_Sys_Companion_Facts__bar_fill" style="width: <%= _pct %>%"></div>
+                    <div class="_Sys_Companion_Facts__bar_text"><%= _c.progress.current %> of <%= _c.progress.total %></div>
+                </div>
+            <% } %>
+        </div>
+    <% } %>
+    <_Sys_Detail_List>
+        <_Sys_Detail_Item $label="Desired" $value=_c.desired />
+        <_Sys_Detail_Item $label="Status" $value=(_c.status + (_c.unknown_reason ? ' - ' + _c.unknown_reason : '')) />
+        <% if (_c.waiting_reason) { %>
+            <_Sys_Detail_Item $label="Waiting for" $value=_c.waiting_reason />
+        <% } %>
+        <_Sys_Detail_Item $label="Host" $value=_c.host $mono=true />
+        <_Sys_Detail_Item $label="Instance" $value=(_c.instance_id ? _c.instance_id + (_c.pid ? ' (pid ' + _c.pid + ')' : '') : null) $mono=true />
+        <_Sys_Detail_Item $label="Started" $value=(_c.started_at && _c.is_live ? Rsx_Time.format_timestamp(_c.started_at) : null) />
+        <_Sys_Detail_Item $label="Uptime" $value=(_c.uptime_seconds !== null ? Rsx_Time.duration_to_human(_c.uptime_seconds) : null) />
+        <_Sys_Detail_Item $label="Restarts" $value=(_c.restart_count === null ? null : str(_c.restart_count) + (_c.crash_streak ? ' (' + _c.crash_streak + ' crashes in a row)' : '')) />
+        <% if (_c.next_restart_at) { %>
+            <_Sys_Detail_Item $label="Next restart"><_Sys_Time_Until $time=_c.next_restart_at /></_Sys_Detail_Item>
+        <% } %>
+        <_Sys_Detail_Item $label="Heartbeat" $value=(_c.last_heartbeat ? Rsx_Time.relative(_c.last_heartbeat) + (_c.heartbeat_stale ? ' (stale)' : '') : null) />
+        <_Sys_Detail_Item $label="Contract key" $value=_c.contract_key $mono=true />
+        <_Sys_Detail_Item $label="Single instance" $value=(_c.single_instance ? 'yes' : 'no, one per host') />
+        <% if (_c.last_exit) { %>
+            <_Sys_Detail_Item $label="Last exit" $value=(_c.last_exit.how_ended + (_c.last_exit.code !== null && _c.last_exit.code !== '' ? ', code ' + _c.last_exit.code : '') + (_c.last_exit.signal ? ', ' + _c.last_exit.signal : '') + (_c.last_exit.at ? ', ' + Rsx_Time.relative(_c.last_exit.at) : '')) />
+        <% } %>
+        <% if (_c.hosts.length > 1) { %>
+            <_Sys_Detail_Item $label="Hosts" $value=(_c.hosts.map((h) => h.host + ': ' + (h.held ? 'held' : h.status)).join(', ')) />
+        <% } %>
+    </_Sys_Detail_List>
+    <% if (_c.last_error) { %>
+        <_Sys_Code_Pane $label="Last error" $text=_c.last_error $max_height=160 />
+    <% } %>
+    <_Sys_Code_Pane $label="State" $json=_c.state $max_height=320 />
+<% } %>
+</Define:_Sys_Companion_Facts>

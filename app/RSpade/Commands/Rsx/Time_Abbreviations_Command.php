@@ -12,8 +12,9 @@ use App\RSpade\Core\Time\Rsx_Timestamp_Format;
  * Writes Core/Time/vendor/rsx_timezone_abbreviations.js (Rsx_Timestamp_Format::
  * abbreviation_table_js()). Framework authoring only: the file is part of system/, which a
  * downstream install never edits, so the command refuses anywhere but a framework-development
- * tree. Run it when PHP's tz database moves (a PHP upgrade) - the framework test
- * Rsx_Timestamp_Format_Test fails until it is.
+ * tree. bin/publish runs it before every release and commits the file when it moved: the
+ * development box's tz database is the source of truth, and the table also moves on its own
+ * when a zone's rule change takes effect.
  */
 class Time_Abbreviations_Command extends Command
 {

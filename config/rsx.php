@@ -261,6 +261,9 @@ return [
         \App\RSpade\Core\Portal\Portal_Url_ManifestSupport::class,
         \App\RSpade\Core\Externals\Externals_ManifestSupport::class,
         \App\RSpade\Core\Task\Task_Command_ManifestSupport::class,
+        // After the producers of `routes` (it judges the reserved /_companion path) and before
+        // Auth, which reads the section for its NO SURFACE check.
+        \App\RSpade\Core\Companion\Companion_ManifestSupport::class,
         \App\RSpade\Core\Mail\Email_ManifestSupport::class,
         \App\RSpade\Core\Bundle\Bundle_Alias_ManifestSupport::class,
         // Auth gates run LAST of the INDEX modules: the consolidated #[Auth] index covers
@@ -274,6 +277,7 @@ return [
         \App\RSpade\Core\Controller\Controller_Stub_ManifestSupport::class,
         \App\RSpade\Core\Database\Model_Stub_ManifestSupport::class,
         \App\RSpade\Core\Auth\Auth_Stub_ManifestSupport::class,
+        \App\RSpade\Core\Companion\Companion_Descriptor_ManifestSupport::class,
     ],
 
     /*
@@ -1018,6 +1022,7 @@ return [
         \App\RSpade\Core\Exceptions\Cli_Exception_Handler::class,              // Priority 10
         \App\RSpade\Core\Exceptions\Ajax_Exception_Handler::class,             // Priority 20
         \App\RSpade\Core\Exceptions\Api_Exception_Handler::class,        // Priority 25
+        \App\RSpade\Core\Exceptions\Companion_Exception_Handler::class,  // Priority 26
         \App\RSpade\Core\Debug\Playwright_Exception_Handler::class,            // Priority 30
         \App\RSpade\Core\Exceptions\Web_Exception_Handler::class,              // Priority 1100
     ],
@@ -1660,6 +1665,38 @@ return [
     */
     'metrics' => [
         'enabled' => true,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Companion Applications
+    |--------------------------------------------------------------------------
+    |
+    | Long-running processes from the application's own code tree, run by rsx-companiond and
+    | calling the application through #[Companion_Endpoint] methods (rsx:man companion_apps).
+    | These are read at build into each companion's descriptor, the daemon reading no PHP.
+    |
+    | Retention is whatever these say and nothing is pruned that they did not ask for.
+    |
+    | - logging.max_bytes: rotate a companion's log at this size (it also rotates daily).
+    |   0 = daily only.
+    | - logging.days_uncompressed: generations kept as plain text before they are compressed.
+    | - logging.days_retention: generations older than this are deleted. 0 = keep forever.
+    | - history_keep: ended instances kept per companion in Redis (evictable; the log file is
+    |   the authority on a finished instance).
+    | - output_stream_max_lines: the capped live output stream per companion in Redis.
+    | - request_stats_retention_hours: how long the per-minute request counters are kept.
+    |
+    */
+    'companions' => [
+        'logging' => [
+            'max_bytes' => 50 * 1024 * 1024,
+            'days_uncompressed' => 2,
+            'days_retention' => 30,
+        ],
+        'history_keep' => 50,
+        'output_stream_max_lines' => 5000,
+        'request_stats_retention_hours' => 48,
     ],
 
     /*

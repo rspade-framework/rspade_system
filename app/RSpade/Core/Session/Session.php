@@ -758,13 +758,14 @@ class Session extends Rsx_System_Model_Abstract
 
     /**
      * Whether this process runs a VIRTUAL session: it has no browser. Every CLI process
-     * does - a command, a task worker, the test runner - from boot to exit.
+     * does - a command, a task worker, the test runner - from boot to exit, and so does a
+     * web request the companion channel has declared headless (_begin_headless_request()).
      *
      * @return bool
      */
     private static function __is_virtual(): bool
     {
-        return php_sapi_name() === 'cli';
+        return self::$_headless_request || php_sapi_name() === 'cli';
     }
 
     /**
@@ -776,6 +777,47 @@ class Session extends Rsx_System_Model_Abstract
     public static function _is_virtual(): bool
     {
         return self::__is_virtual();
+    }
+
+    /**
+     * Make this web request a VIRTUAL session: it has no browser, whatever cookie it sent.
+     *
+     * A companion request is a process calling its application, so it gets exactly what a
+     * task gets: get_session_id() null, no _sessions row and no cookie, nobody signed in and
+     * session values refused. Anything a boot hook resolved from a sent cookie before the
+     * request was classified is dropped here, so no identity crosses into it.
+     *
+     * FRAMEWORK INTERNAL - Companion_Dispatcher.
+     *
+     * @return void
+     */
+    public static function _begin_headless_request(): void
+    {
+        self::$_headless_request = true;
+
+        self::$_has_init = true;
+        self::$_has_set_cookie = true;
+        self::$_session = null;
+        self::$_login_user = null;
+        self::$_user = null;
+        self::$_site = null;
+
+        \App\RSpade\Core\Portal\Portal_Session::_clear_cli_identity();
+        Rsx_Time::_clear_user_timezone_cache();
+    }
+
+    /**
+     * End a headless request, and the site it declared. FRAMEWORK INTERNAL -
+     * Companion_Dispatcher, after the response exists, so a failure is rendered under the
+     * request's own context.
+     *
+     * @return void
+     */
+    public static function _end_headless_request(): void
+    {
+        self::$_temporary_site_id = null;
+        self::$_site = null;
+        self::$_headless_request = false;
     }
 
     /**
@@ -1717,6 +1759,9 @@ class Session extends Rsx_System_Model_Abstract
 
         return (int) (self::__user_session(self::REALM_STAFF)?->site_id ?? 0) > 0;
     }
+
+    /** True while this web request is a virtual session; see _begin_headless_request(). */
+    private static bool $_headless_request = false;
 
     /** Site ids this process has confirmed exist (a site row is soft-deleted, never removed). */
     private static array $_existing_site_ids = [];

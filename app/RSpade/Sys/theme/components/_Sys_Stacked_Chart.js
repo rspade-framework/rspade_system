@@ -115,7 +115,7 @@ class _Sys_Stacked_Chart extends Component {
             const points = [];
             for (let i = 0; i < g.slots; i++) points.push(`${g.x(i)},${g.y(band.upper[i])}`);
             for (let i = g.slots - 1; i >= 0; i--) points.push(`${g.x(i)},${g.y(band.lower[i])}`);
-            svg.appendChild(node('polygon', { class: `_Sys_Stacked_Chart__area _Sys_Stacked_Chart__area--${band.series.index % 4 + 1}`, points: points.join(' ') }));
+            svg.appendChild(node('polygon', { class: `_Sys_Stacked_Chart__area _Sys_Stacked_Chart__area--${band.series.index % 5 + 1}`, points: points.join(' ') }));
         }
 
         // The ceilings, dashed, labelled at the right.
@@ -144,7 +144,7 @@ class _Sys_Stacked_Chart extends Component {
         $('<div class="_Sys_Stacked_Chart__tip-head"></div>').text(ago === 0 ? 'this minute' : ago + ' min ago').appendTo($tip);
         for (const band of g.bands.slice().reverse()) {
             const $row = $('<div></div>').appendTo($tip);
-            $('<span></span>').addClass('_Sys_Stacked_Chart__swatch _Sys_Stacked_Chart__swatch--' + (band.series.index % 4 + 1)).appendTo($row);
+            $('<span></span>').addClass('_Sys_Stacked_Chart__swatch _Sys_Stacked_Chart__swatch--' + (band.series.index % 5 + 1)).appendTo($row);
             $('<span></span>').text(band.series.label + ': ' + _Sys_Stacked_Chart._format(band.upper[i] - band.lower[i]) + unit).appendTo($row);
         }
         $('<div class="_Sys_Stacked_Chart__tip-total"></div>').text('Total: ' + _Sys_Stacked_Chart._format(g.totals[i]) + unit).appendTo($tip);

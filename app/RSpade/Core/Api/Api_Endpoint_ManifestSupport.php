@@ -35,7 +35,8 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  * - type 'file' is POST-only, may never be a :route token, and may never carry a default -
  *   there is no multipart body on a GET, a URL segment is not a file, and there is no such
  *   thing as a default upload.
- * - The method MUST NOT also carry #[FPC], #[Route], #[SPA], or #[Ajax_Endpoint].
+ * - The method MUST NOT also carry #[FPC], #[Route], #[SPA], #[Ajax_Endpoint] or
+ *   #[Companion_Endpoint].
  * - An endpoint is GET or POST, never both: GET is for reads and POST for writes, and a
  *   handler reachable by both is a write a read-only key can reach.
  * - API-GET-PURE-01: a GET handler's body MUST NOT contain a write call (the
@@ -84,7 +85,7 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
     private const ALLOWED_PARAM_TYPES = ['string', 'int', 'float', 'bool', 'file'];
 
     // Attributes forbidden on the same method as #[Api_Endpoint].
-    private const CONFLICTING_ATTRIBUTES = ['FPC', 'Route', 'SPA', 'Ajax_Endpoint'];
+    private const CONFLICTING_ATTRIBUTES = ['FPC', 'Route', 'SPA', 'Ajax_Endpoint', 'Companion_Endpoint'];
 
     /**
      * API-GET-PURE-01: call shapes that write, searched for in a GET handler's body with
@@ -801,13 +802,9 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
             );
         }
 
-        $lower_body = strtolower($body);
+        $token = static::find_write_call($body);
 
-        foreach (self::GET_MUTATION_TOKENS as $token) {
-            if (!str_contains($lower_body, strtolower($token))) {
-                continue;
-            }
-
+        if ($token !== null) {
             throw new \RuntimeException(
                 "Invalid #[Api_Endpoint] GET handler: {$location}\n" .
                 "  API-GET-PURE-01: a GET endpoint must be side-effect free, and this one " .
@@ -817,6 +814,23 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
                 "  '" . self::GET_PURE_EXCEPTION_TAG . " <rationale>' in the method docblock."
             );
         }
+    }
+
+    /**
+     * The first write call in a method body, or null. $body is _read_method_body()'s compacted
+     * text. Shared with the companion build, whose ready_to_run() must be read-only too.
+     */
+    public static function find_write_call(string $body): ?string
+    {
+        $lower_body = strtolower($body);
+
+        foreach (self::GET_MUTATION_TOKENS as $token) {
+            if (str_contains($lower_body, strtolower($token))) {
+                return $token;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -853,7 +867,7 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
      * Returns null when the file, the method or its body cannot be found - the caller
      * refuses that, because an unchecked handler is not a checked one.
      */
-    private static function _read_method_body(string $file_path, string $method_name): ?string
+    public static function _read_method_body(string $file_path, string $method_name): ?string
     {
         if (!file_exists($file_path)) {
             return null;

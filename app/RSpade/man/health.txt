@@ -56,8 +56,9 @@ COMMAND BEHAVIOR
     Under a raised maintenance flag (read off disk) the table is preceded by
     "[WARNING] Maintenance mode is up (<reason>)" and the JSON carries the reason
     as "maintenance" (null otherwise). The services the window stops on purpose -
-    Lock Server, Realtime Relay, Redis Connectivity - report INFO, not FAIL, so a
-    report run inside the window exits 0 when nothing else is wrong.
+    Lock Server, Realtime Relay, Redis Connectivity, Companion Daemon and every
+    Companion row - report INFO, not FAIL, so a report run inside the window exits 0
+    when nothing else is wrong.
 
     Exit code: 1 if and only if at least one FAIL row exists. WARN and INFO NEVER flip
     the exit code - they are advisory - so a deploy pipeline or container healthcheck
@@ -157,6 +158,9 @@ FRAMEWORK INVENTORY
                                                   authoring this source
         Class Override Drift        all           arrives with a framework
                                                   pull, which happens on both
+        Companion                   all           one row per declared
+                                                  companion application
+        Companion Daemon            all
         Console Debug               debug, prod   names which sealed variant
                                                   this is
         Document Render Backlog     all
@@ -258,6 +262,21 @@ FRAMEWORK INVENTORY
                                  ONE probe for one worker and one queue; it
                                  replaced "Search Index Backlog" on 2026-08-22.
                                  Remediation points at rsx:documents:status.
+        Companion: <name>        one row per declared companion application,
+                                 against THIS box's desired state (rsx:man
+                                 companion_apps, HEALTH): INFO while maintenance
+                                 holds it down; OK when desired matches actual;
+                                 WARN waiting with a reason, a stale heartbeat,
+                                 a crash in backoff, or held by an operator
+                                 while desired running; FAIL crash-looping, or
+                                 desired running and ended or unreported. One
+                                 INFO row when nothing is declared.
+        Companion Daemon         rsx-companiond on this box answers its control
+                                 socket: OK with its pid. INFO under maintenance
+                                 or with no companion declared; WARN not running
+                                 while no companion is desired; FAIL not running
+                                 while one is (remediation: supervisorctl status
+                                 rsx-companiond).
         Console Debug            INFO naming the sealed variant: strict
                                  production strips every console_debug() call
                                  site from the bundle and returns early in the
@@ -681,5 +700,6 @@ SEE ALSO
                               worker pools the Task Worker Pools row reads
     rsx:man file_disposal     the declarations the Blob References row checks
     rsx:man locks             the lock daemon behind the Lock Server check
+    rsx:man companion_apps    the Companion and Companion Daemon rows
 
 HEALTH(1)                         RSpade Manual                         HEALTH(1)

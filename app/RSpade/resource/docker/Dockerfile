@@ -222,6 +222,7 @@ COPY supervisor/conf.d/redis.conf      /etc/supervisor/conf.d/redis.conf
 # (Rsx_FPC::ENABLED, backlog B-132) and nginx sends requests straight to php-fpm.
 COPY supervisor/conf.d/realtime.conf   /etc/supervisor/conf.d/realtime.conf
 COPY supervisor/conf.d/rsx-lockd.conf  /etc/supervisor/conf.d/rsx-lockd.conf
+COPY supervisor/conf.d/rsx-companiond.conf /etc/supervisor/conf.d/rsx-companiond.conf
 COPY supervisor/conf.d/tasks.conf      /etc/supervisor/conf.d/tasks.conf
 COPY supervisor/conf.d/security-updates.conf /etc/supervisor/conf.d/security-updates.conf
 # AUTOMATIC SECURITY UPDATES. What unattended-upgrades may install: the Ubuntu security

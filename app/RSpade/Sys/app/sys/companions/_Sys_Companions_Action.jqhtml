@@ -1,0 +1,81 @@
+<%--
+_Sys_Companions_Action - the companion applications rsx-companiond runs: rsx-companiond's own
+state on this box, then one row per declared companion - desired (this box's flag) against
+what it is doing, its uptime, restarts, heartbeat age, status line, contract key and what it
+is waiting for - with the per-companion verbs (_Sys_Companion_Actions). A row opens the
+companion dialog (_Sys_Companion_Detail): the live console, the state document, recent
+instances and endpoint traffic.
+
+The global desired state (start or stop for good) is the command line's: the screen shows it
+and names the command. Live: refreshes on Companion_Changed_Topic.
+--%>
+<Define:_Sys_Companions_Action>
+<_Sys_Page_Scaffold class="_Sys_Page_Scaffold--wide">
+    <Slot:main>
+        <_Sys_Page_Header $title="Companions" $icon="bi-motherboard" $subtitle="Long-running processes of the application, run by rsx-companiond">
+            <Slot:actions>
+                <button type="button" class="btn btn-sm btn-secondary" data-action="refresh"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+            </Slot:actions>
+        </_Sys_Page_Header>
+        <% if (this.data.error_data) { %>
+            <_Sys_Error $error_data=this.data.error_data />
+        <% } else if (!this.data.overview) { %>
+            <Spinner class="_Sys_Companions_Action__loading" />
+        <% } else { %>
+            <% const _o = this.data.overview; %>
+            <% if (_o.maintenance) { %>
+                <div class="alert alert-info">Every companion is held stopped by <%= _o.maintenance %>.</div>
+            <% } %>
+            <% if (!_o.daemon) { %>
+                <div class="alert alert-warning">rsx-companiond is not running on this box. Companions show what it last reported, and the verbs below cannot reach it until it is back (<span class="_Sys_Companions_Action__mono">supervisorctl status rsx-companiond</span>).</div>
+            <% } %>
+            <_Sys_Stat_Grid>
+                <_Sys_Stat_Tile $label="rsx-companiond" $icon="bi-cpu" $value=(_o.daemon ? 'running' : 'not running') $sub=(_o.daemon ? 'pid ' + _o.daemon.pid + ' on ' + _o.daemon.host : 'on this box') $tone=(_o.daemon ? 'ok' : 'fail') />
+                <_Sys_Stat_Tile $label="Declared" $icon="bi-collection" $value=_o.companions.length $sub="companion applications" />
+                <_Sys_Stat_Tile $label="Desired running" $icon="bi-play-circle" $value=(_o.companions.filter((c) => c.desired === 'running').length) $sub="php artisan rsx:companion_apps:start / stop" />
+                <_Sys_Stat_Tile $label="Running" $icon="bi-activity" $value=(_o.companions.filter((c) => c.is_live).length) $sub="an instance alive now" />
+            </_Sys_Stat_Grid>
+
+            <_Sys_Section $title="Companions" $icon="bi-motherboard" $count=_o.companions.length $flush=true>
+                <Slot:body>
+                    <% if (!_o.companions.length) { %>
+                        <_Sys_Empty_State $icon="bi-moon" $title="No companion applications" $body="An application declares one under rsx/companions/." />
+                    <% } else { %>
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead><tr><th>Companion</th><th>Desired</th><th>Status</th><th>Uptime</th><th>Restarts</th><th>Heartbeat</th><th>Status line</th><th>Contract</th><th></th></tr></thead>
+                                <tbody>
+                                    <% for (const _c of _o.companions) { %>
+                                        <tr class="_Sys_Companions_Action__row" data-companion="<%= _c.name %>">
+                                            <td>
+                                                <span class="_Sys_Companions_Action__mono"><%= _c.name %></span>
+                                                <div class="_Sys_Companions_Action__dim"><%= _c.description %></div>
+                                            </td>
+                                            <td><%= _c.desired %></td>
+                                            <td>
+                                                <_Sys_Status_Badge $status=_c.status />
+                                                <% if (_c.held) { %><_Sys_Status_Badge $status="warn" $label="held" /><% } %>
+                                                <% if (_c.waiting_reason) { %>
+                                                    <div class="_Sys_Companions_Action__dim _Sys_Companions_Action__wrap"><%= _c.waiting_reason %></div>
+                                                <% } else if (_c.unknown_reason) { %>
+                                                    <div class="_Sys_Companions_Action__dim _Sys_Companions_Action__wrap"><%= _c.unknown_reason %></div>
+                                                <% } %>
+                                            </td>
+                                            <td><%= _c.uptime_seconds !== null ? Rsx_Time.duration_to_human(_c.uptime_seconds, true) : '' %></td>
+                                            <td><%= _c.restart_count === null ? '' : _c.restart_count %></td>
+                                            <td class="<%= _c.heartbeat_stale ? '_Sys_Companions_Action__stale' : '' %>"><%= _c.heartbeat_age_seconds !== null ? Rsx_Time.duration_to_human(_c.heartbeat_age_seconds, true) + ' ago' : '' %></td>
+                                            <td class="_Sys_Companions_Action__wrap"><%= _c.status_line || '' %></td>
+                                            <td class="_Sys_Companions_Action__mono" title="<%= _c.contract_key %>"><%= str(_c.contract_key).substring(0, 12) %></td>
+                                            <td class="text-end"><_Sys_Companion_Actions $companion=_c /></td>
+                                        </tr>
+                                    <% } %>
+                                </tbody>
+                            </table>
+                        </div>
+                    <% } %>
+                </Slot:body>
+            </_Sys_Section>
+        <% } %>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Companions_Action>

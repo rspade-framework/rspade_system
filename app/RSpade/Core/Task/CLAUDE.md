@@ -123,7 +123,8 @@ says what is in this DIRECTORY and what must stay true when editing it.
   the gates decide; reads `#[Portal_Impersonation_Readable]`) and the `/_task/xterm.mjs` +
   `/_task/xterm-fit.mjs` module routes. `BundleCompiler` adds its JS stub to every bundle.
 - `ui/` — `Rsx_Task.js` and the widgets `Task_Status_Badge`, `Task_Output` (xterm.js,
-  imperative and append-only), `Task_Report`, `Task_Report_Browser`; in `Core_Bundle` with
+  imperative and append-only; its source is five overridable hooks, which is how
+  `Core/Companion/ui/Companion_Output` reuses the whole terminal), `Task_Report`, `Task_Report_Browser`; in `Core_Bundle` with
   `ui/vendor/xterm.scss`.
 - `Task_Retention_Service.php` — the 30-minute sweep: truncate output + unlink attachments,
   purge, orphaned temp directories.

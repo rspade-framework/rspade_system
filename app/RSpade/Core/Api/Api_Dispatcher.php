@@ -638,8 +638,9 @@ class Api_Dispatcher
      *
      * $extra merges additional keys INTO the error object - insufficient_scope carries
      * "required": "/api/v1/x/:id", the route pattern the caller would need a scope for.
+     * Public because the companion channel answers in the same shape.
      */
-    private static function _error(
+    public static function _error(
         string $code,
         string $message,
         int $status,

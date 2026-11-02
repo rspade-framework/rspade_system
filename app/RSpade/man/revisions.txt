@@ -200,7 +200,7 @@ THE TABLES
                             the unit had none of its own (a portal write)
         actor_type/actor_id the polymorphic actor pair, resolved by the same
                             stamp matrix the audit columns use
-        source_id           web / ajax / api / task / cli / test
+        source_id           web / ajax / api / task / cli / test / companion
         endpoint            what the unit was serving
         ip                  the caller's IP, null off a real request - read
                             as $transaction->ip; the row stores
@@ -331,6 +331,7 @@ THE UNIT OF WORK
         Task_Worker_Command, Task::internal task      'Service::method'
         Rsx_Test_Abstract                   test      'Test_Class::test_method'
         system/script.php (one script run)  cli       'import_contacts.php'
+        Companion_Dispatcher (one call)     companion 'Companion:feed_watch/item_changed'
 
     So a PLAIN AJAX CALL is source `ajax` with endpoint `Controller::action` -
     the unit of work is the endpoint, not the transport URL the dispatcher saw.

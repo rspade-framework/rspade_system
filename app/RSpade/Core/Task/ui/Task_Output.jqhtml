@@ -16,9 +16,11 @@ needs the run's view gate (Task_Gates) like every task widget.
 
 The terminal library loads on first use from /_task/xterm.mjs - pages without a console never
 download it.
+
+Companion_Output (Core/Companion/ui) is this console over a companion's output stream: it
+draws this template and overrides the source hooks in Task_Output.js.
 --%>
 <Define:Task_Output tag="div">
-    <% if (!this.args.task_id) { throw new Error('Task_Output requires $task_id'); } %>
     <% if (this.args.filter !== false) { %>
         <div class="Task_Output__toolbar">
             <div class="Task_Output__filter" role="group" aria-label="Streams">

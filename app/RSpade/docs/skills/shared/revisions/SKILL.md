@@ -80,7 +80,7 @@ foreach ($client->revisions() as $revision) {              // this record only
     $revision->diff();                                     // ['name' => ['Acme', 'Acme Ltd']]
     Revision_Model::is_redacted($after);                   // a $neverExport column: show "changed", never the marker
     $revision->transaction->actor;                         // who
-    $revision->transaction->source_id__label;              // Web/Ajax/API/Task/CLI/Test
+    $revision->transaction->source_id__label;              // Web/Ajax/API/Task/CLI/Test/Companion
     $revision->transaction->endpoint;                      // 'Clients_Controller::save'
     $revision->transaction->audit_session_id;              // the acting context (_audit_sessions) - who, from where
 }

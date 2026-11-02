@@ -33,6 +33,13 @@ WHAT ENABLE DOES (in order - the order is load-bearing)
        booting into the window must already SEE maintenance mode, or it would select the live
        backends (cluster locks over rsx-lockd, the Redis cache) and hard-fatal on the refused
        connect.
+    1a. supervisorctl stop rsx-companiond - every companion application (rsx:man
+       companion_apps) is stopped on its own grace, in parallel, and the stop returns
+       when the daemon has exited. FIRST among the services: companions are CALLERS,
+       so they go before the task system refuses their enqueues and before php-fpm,
+       rsx-lockd and redis. The supervisor unit is the switch because it works on a
+       broken tree and the daemon comes back on the new code; desired state (a flag
+       file per companion) is untouched.
     2. rsx:tasks:disable --reason="maintenance mode: <reason>" - turn the task system OFF
        (a switch in the database: no task starts on ANY host sharing it) and stop this
        host's running task runs, synchronously in its own process: each is asked to stop,
@@ -52,11 +59,13 @@ WHAT ENABLE DOES (in order - the order is load-bearing)
        LAST. The lock daemon stops AFTER its PHP consumers, so no live request loses a lock
        out from under itself.
 
-    Steps 2-4 are the SERVICES half: --no-services performs step 1 only.
+    Steps 1a-4 are the SERVICES half: --no-services performs step 1 only. The companion
+    daemon, if left running, still starts nothing while the flag stands.
 
-    Every supervisor call is best-effort and matched by NAME PREFIX (realtime*, fpc*,
-    php-fpm*, rsx-lockd*, redis*). A host without supervisorctl, or without one of those
-    programs, simply skips that unit - maintenance mode still works, it just controls nothing.
+    Every supervisor call is best-effort and matched by NAME PREFIX (rsx-companiond*,
+    realtime*, fpc*, php-fpm*, rsx-lockd*, redis*). A host without supervisorctl, or without
+    one of those programs, simply skips that unit - maintenance mode still works, it just
+    controls nothing.
 
 WHAT DISABLE DOES
     0. REFUSE if a schema-cache build left live backups on disk, or a migrate
@@ -83,10 +92,13 @@ WHAT DISABLE DOES
        queued during the window. Best-effort and LOUD: a failure prints an [ERROR] naming
        `php artisan rsx:tasks:enable` and never fails the transition - the services are
        back either way, and rsx:health FAILs its Task System row until the switch is on.
+    4. supervisorctl start rsx-companiond - LAST, with the flag gone and the task system
+       on, so a companion's first call lands on a whole application. The daemon starts
+       the companions whose desired state is running.
 
-    Steps 1, 1a and 3 are the SERVICES half: --no-services removes the flag only.
+    Steps 1, 1a, 3 and 4 are the SERVICES half: --no-services removes the flag only.
 
-    Disable is STATELESS: it starts whichever of the five units exist, with no record of what
+    Disable is STATELESS: it starts whichever of the six units exist, with no record of what
     enable stopped, and it turns the task system on whether or not this window turned it
     off. A unit an operator had deliberately stopped beforehand will therefore be started,
     and a task system an operator had deliberately disabled beforehand (rsx:tasks:disable)
@@ -287,7 +299,7 @@ RECOVERY
         php artisan rsx:maintenance:disable
 
     It is immune to its own gate and idempotent. As an absolute last resort (no working PHP),
-    remove the flag file by hand and start the five services yourself:
+    remove the flag file by hand and start the six services yourself:
 
         rm storage/state/.maintenance.mode.framework.update
 
@@ -344,5 +356,6 @@ SEE ALSO
     rsx:man locks
     rsx:man caching
     rsx:man realtime
+    rsx:man companion_apps
 
 MAINTENANCE_MODE(1)                 RSpade Manual                 MAINTENANCE_MODE(1)

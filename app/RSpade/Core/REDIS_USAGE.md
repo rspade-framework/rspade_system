@@ -3,12 +3,12 @@
 ## Overview
 
 Redis backs the **cache**, **realtime** pub/sub + subscriber registry, the **full page
-cache**, **transient counters** and **performance metrics**. It does not back locks or the task worker pool - both
+cache**, **transient counters**, **performance metrics** and **companion applications**. It does not back locks or the task worker pool - both
 are rsx-lockd connections (see below).
 
 ### The database map
 
-One instance, four databases. The `RsxCache` class header is the authority; every subsystem
+One instance, five databases. The `RsxCache` class header is the authority; every subsystem
 that opens a connection points its comment there.
 
 | DB | Holds | Flushed by `RsxCache::clear()` |
@@ -16,11 +16,13 @@ that opens a connection points its comment there.
 | 0 | Volatile cache (`RsxCache`, including its persistent namespace), the realtime emitter hashes `rsx_rt:em:*` and `AssetHandler`'s `rspade:public_asset:*` entries | YES for `cache:<scope token>:*` - on every database transaction rollback. Nothing else on DB 0 is touched |
 | 1 | Performance metrics (`Rsx_Metrics`): each request's and task run's peak memory and duration, the last 100 per kind and per-minute totals for two hours | never |
 | 2 | Reduced-volatility cache: the full page cache (`Rsx_FPC`, `system/bin/fpc-proxy.js`) and `_RVC_`-prefixed cache keys | never |
-| 3 | Transient counters (`Rsx_Counter`) | never |
+| 3 | Transient counters (`Rsx_Counter`), the companion realm's request nonces among them | never |
+| 4 | Companion applications (`Companion_Store`, `system/bin/rsx-companiond`): live instance records, request counters, ended-instance history and output streams, under `rsx_companion:<scope token>:*` | never |
 
 **One instance, LRU over everything, by design.** The shipped conf sets `allkeys-lru` over
-the whole server, so a counter, a metric and a cache entry are equally evictable. Every key is
-derived: a full Redis keeps less warm and stops nothing, and a security counter evicted under
+the whole server, so a counter, a metric and a cache entry are equally evictable. Every key but
+a companion's instance record is derived (rsx-companiond detects that loss and republishes
+them): a full Redis keeps less warm and stops nothing, and a security counter evicted under
 pressure is one nobody was hitting - an attacker keeps their own keys hot. Realtime, the one
 subsystem whose loss a page could not notice, detects it and resyncs every client
 (`rsx:man realtime`, REDIS DATA LOSS). The cap scales with the machine: 32 MB under 1 GB of
@@ -200,6 +202,10 @@ RsxCache::WEEK = 604800;
   (`Core/Realtime/`). See `php artisan rsx:man realtime`.
 - **Full Page Cache** - the Node FPC proxy stores rendered pages in Redis and reads `FPC_*` /
   `REDIS_*` straight from `.env`.
+- **Companion applications** - `rsx-companiond` writes database 4 with its own minimal RESP
+  client, recomputing the scope token in Node, and publishes `Companion_Changed_Topic` /
+  `Companion_Output_Topic` frames into the realtime relay's keys on database 0. PHP reads
+  database 4 through `Companion_Store`. See `php artisan rsx:man companion_apps`.
 
 ## Integration Examples
 
@@ -261,5 +267,5 @@ Ensure Redis is running and accessible via environment variables:
 
 ## Redis Database Assignment
 
-See "The database map" at the top of this file. Databases 4-15 are free for application
+See "The database map" at the top of this file. Databases 5-15 are free for application
 use; nothing in the framework selects them.

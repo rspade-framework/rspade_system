@@ -109,6 +109,9 @@ BUILD TREE (<project>/build)
         bundle_outputs/      per bundle and type, the files its last compile
                              wrote: a recorded file gone from disk recompiles
                              (development) or fails loud (sealed)
+        companions/<name>/   each companion application's descriptor.json
+                             and generated client.js, all rsx-companiond
+                             reads (rsx:man companion_apps). Sealed.
         laravel/             Laravel's own caches: events, services,
                              packages, config (there is no route cache).
                              Reached through the four cache
@@ -333,7 +336,10 @@ STORAGE TREE (<project>/storage)
         uploads/          the content-addressed file-attachment BLOB STORE
                           (Rsx_File_Paths::blob_root()). Real user data; NOT
                           regenerable; never copied into a deployment.
-        logs/             laravel.log*, ide-formatter.log, ssr-fpc-errors.log.
+        logs/             laravel.log*, ide-formatter.log, ssr-fpc-errors.log,
+                          rsx-companiond.log, companion_requests.log; and
+                          companions/<name>/, each companion's output log,
+                          rotated by rsx-companiond itself.
                           Every top-level *.log here is rotated, compressed and
                           pruned by the framework's own nightly sweep - no OS
                           logrotate is assumed. rsx:man logrotate. Reached
@@ -364,6 +370,15 @@ STATE TREE (<project>/storage/state)
                           present only while maintenance mode is up; its
                           CONTENT is the operator reason. rsx:man
                           maintenance_mode.
+        companions/       one <name>.running flag per companion desired
+                          running on this box, plus .maintenance while
+                          companion maintenance is on. rsx:man companion_apps.
+        companiond.sock, companiond.children.json
+                          rsx-companiond's control socket and the process
+                          groups it started.
+        .manifest_build_in_progress
+                          present while a development manifest build runs;
+                          the signal behind a companion's pause policy.
         environment_updates_fingerprint
                           what the environment-update runner has already
                           applied on this box.
