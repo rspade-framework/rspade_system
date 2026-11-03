@@ -104,11 +104,17 @@ class Error_Screens
      * (the page dispatcher does); everyone else omits it and the active realm is
      * detected from the request context.
      *
+     * $message is the reason the refusing endpoint gave, shown on the 403 page as
+     * $error->message - so it must be something the caller may read. Empty keeps the
+     * framework's sentence. An unidentified caller sees no page: the dispatcher flashes the
+     * reason to the login page instead.
+     *
      * @param Request $request The request being denied
      * @param string|null $realm Auth_Gates::REALM_STAFF / REALM_PORTAL, or null to detect
+     * @param string $message The endpoint's reason, or '' for the framework's sentence
      * @return Response 302 to the realm's login route, or a 403 page
      */
-    public static function unauthorized(Request $request, ?string $realm = null): Response
+    public static function unauthorized(Request $request, ?string $realm = null, string $message = ''): Response
     {
         $is_portal = $realm === null
             ? Rsx_Portal::is_portal_request()
@@ -137,7 +143,7 @@ class Error_Screens
 
         return static::render(
             $request,
-            static::__context(403, $request, $is_portal ? Auth_Gates::REALM_PORTAL : Auth_Gates::REALM_STAFF)
+            static::__context(403, $request, $is_portal ? Auth_Gates::REALM_PORTAL : Auth_Gates::REALM_STAFF, $message)
         );
     }
 

@@ -1343,7 +1343,12 @@ class Dispatcher
                 Flash_Alert::error($reason);
             }
 
-            return Error_Screens::unauthorized($request, $realm['realm']);
+            // An identified caller's 403 page carries the reason the endpoint gave
+            // (response_unauthorized('...')). A denial that gave none - a gate refusal -
+            // carries only the code's default, and the page keeps its own sentence.
+            $explicit_reason = $reason !== Ajax::get_default_message($type) ? (string) $reason : '';
+
+            return Error_Screens::unauthorized($request, $realm['realm'], $explicit_reason);
         }
 
         // Validation and not found. A POST is a form submission: the reason is flashed and

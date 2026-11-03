@@ -10,7 +10,7 @@ namespace App\RSpade\Core\Ajax\Exceptions;
 #[Instantiatable]
 class AjaxUnauthorizedException extends \Exception
 {
-    public function __construct($message = "Unauthorized", $code = 403, \Throwable $previous = null)
+    public function __construct($message = "", $code = 403, \Throwable $previous = null)
     {
         parent::__construct($message, $code, $previous);
     }

@@ -243,10 +243,11 @@ abstract class Permission_Abstract
      * (403) when the check fails; returns void when it passes.
      *
      * @param int $permission Permission constant (User_Model::PERM_*)
-     * @param string $message Optional message for the thrown exception
+     * @param string $message The reason, shown to the caller (an Ajax error, a 403 page);
+     *                        empty for the framework's own sentence
      * @throws \App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException
      */
-    public static function require_permission(int $permission, string $message = 'Unauthorized'): void
+    public static function require_permission(int $permission, string $message = ''): void
     {
         if (!static::has_permission($permission)) {
             throw new \App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException($message);
@@ -260,10 +261,11 @@ abstract class Permission_Abstract
      * (403) when the check fails; returns void when it passes.
      *
      * @param int $role_id Role constant (User_Model::ROLE_*)
-     * @param string $message Optional message for the thrown exception
+     * @param string $message The reason, shown to the caller (an Ajax error, a 403 page);
+     *                        empty for the framework's own sentence
      * @throws \App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException
      */
-    public static function require_role(int $role_id, string $message = 'Unauthorized'): void
+    public static function require_role(int $role_id, string $message = ''): void
     {
         if (!static::has_role($role_id)) {
             throw new \App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException($message);

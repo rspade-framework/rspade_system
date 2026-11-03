@@ -123,8 +123,8 @@ Permission::has_role(int $role_id): bool     // "at least this role"
 Permission::can_admin_role(int $role_id): bool
 Permission::can_access(string $target): bool // every gate on the TARGET surface passes
 
-Permission::require_permission(int $permission, string $message = 'Unauthorized'): void
-Permission::require_role(int $role_id, string $message = 'Unauthorized'): void
+Permission::require_permission(int $permission, string $message = ''): void
+Permission::require_role(int $role_id, string $message = ''): void
 ```
 
 The two calling styles, both legitimate inside a function body:

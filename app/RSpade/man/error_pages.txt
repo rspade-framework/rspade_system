@@ -139,6 +139,13 @@ WHAT A PAGE RECEIVES
     is not already in the context belongs on a page: no record lookup, no session
     chrome, no "you were trying to reach X" beyond the path the context holds.
 
+    The 400 and 403 messages are the REASON THE ENDPOINT GAVE: whatever it passed
+    to response_form_error() or response_unauthorized(), or threw
+    AjaxUnauthorizedException / Permission::require_permission() with. An endpoint
+    puts there only what the caller may read. A denial that gave none - a gate
+    refusal, require_permission() without a message - keeps the framework's
+    sentence.
+
 WHICH FAILURES RENDER A PAGE
     status  raised by
     ------  ---------------------------------------------------------------
@@ -149,7 +156,8 @@ WHICH FAILURES RENDER A PAGE
             response_unauthorized() / response_auth_required() for an
             identified caller; a thrown AjaxUnauthorizedException (what
             Permission::require_permission() throws) or
-            AjaxAuthRequiredException for an identified caller
+            AjaxAuthRequiredException for an identified caller, carrying
+            the reason the endpoint gave as the message
     419     a CSRF failure on a native form POST (Rsx_Csrf::__reject)
     400     response_form_error() returned from a web GET route, or a thrown
             AjaxFormErrorException on a GET, carrying the reason as the message

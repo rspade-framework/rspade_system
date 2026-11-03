@@ -259,11 +259,14 @@ PERMISSION CLASS API
                 // ...
             }
 
-        Permission::require_permission(int $permission, string $message = 'Unauthorized'): void
+        Permission::require_permission(int $permission, string $message = ''): void
             Fail-loud variant of has_permission(). Throws
             AjaxUnauthorizedException (HTTP 403) when the current user lacks the
             permission; returns normally when the check passes. Use inside an
-            Ajax endpoint to abort instead of branching on a boolean.
+            Ajax endpoint to abort instead of branching on a boolean. $message is
+            the reason the caller sees - the Ajax error, or the 403 page's message
+            on a page route - so put there only what they may read; empty keeps
+            the framework's sentence.
 
             #[Ajax_Endpoint]
             public static function delete_user(Request $request, array $params = [])
@@ -272,7 +275,7 @@ PERMISSION CLASS API
                 // ... reached only when authorized
             }
 
-        Permission::require_role(int $role_id, string $message = 'Unauthorized'): void
+        Permission::require_role(int $role_id, string $message = ''): void
             Fail-loud variant of has_role(). Throws AjaxUnauthorizedException
             (HTTP 403) when the current user is below the given role level.
 

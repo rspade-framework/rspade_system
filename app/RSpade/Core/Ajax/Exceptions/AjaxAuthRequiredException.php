@@ -10,7 +10,7 @@ namespace App\RSpade\Core\Ajax\Exceptions;
 #[Instantiatable]
 class AjaxAuthRequiredException extends \Exception
 {
-    public function __construct($message = "Authentication Required", $code = 401, \Throwable $previous = null)
+    public function __construct($message = "", $code = 401, \Throwable $previous = null)
     {
         parent::__construct($message, $code, $previous);
     }

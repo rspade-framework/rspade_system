@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Errors\Error_Screens;
@@ -91,6 +92,43 @@ class Error_Screens_Test extends Rsx_Test_Abstract
         static::__assert_contains('ERROR 403', $response->getContent());
 
         static::__reset_session();
+    }
+
+    /**
+     * The reason a refusing endpoint gave reaches an identified caller's 403 page as its
+     * message; a denial that gave none keeps the framework's sentence.
+     */
+    public static function test_a_403_page_carries_the_reason_the_endpoint_gave()
+    {
+        $user_id = static::__first_user_id();
+        if ($user_id === null) {
+            static::__skip('no User_Model record in the test database');
+
+            return;
+        }
+
+        static::__acting_as_user($user_id);
+        $request = Request::create(Error_Screens_Route_Fixture_Controller::DEEP_URL, 'GET');
+        app()->instance('request', $request);
+
+        try {
+            $given = Dispatcher::page_failure_response(
+                new AjaxUnauthorizedException('This engagement is restricted for you.'),
+                $request
+            );
+            static::__assert_equals(403, $given->getStatusCode());
+            static::__assert_contains('This engagement is restricted for you.', $given->getContent(), 'the endpoint\'s reason');
+
+            $plain = Dispatcher::page_failure_response(new AjaxUnauthorizedException(), $request);
+            static::__assert_equals(403, $plain->getStatusCode());
+            static::__assert_contains('You do not have permission to view this page.', $plain->getContent(), 'no reason: the framework sentence');
+            static::__assert_false(str_contains($plain->getContent(), 'perform this action'), 'never the code\'s default text');
+
+            $direct = Error_Screens::unauthorized($request, null, 'Restricted by policy.');
+            static::__assert_contains('Restricted by policy.', $direct->getContent(), 'Error_Screens::unauthorized() takes the message');
+        } finally {
+            static::__reset_session();
+        }
     }
 
     /**
