@@ -577,8 +577,14 @@ abstract class Rsx_Bundle_Abstract
         //
         // 0 means "no framework ceiling"; the client must treat that as unlimited rather than
         // as "reject everything", which is what a naive `size > max` would do.
+        //
+        // uploads_enabled is whether the application registered a file.upload.authorize
+        // handler at all: without one every upload is refused, so a widget offering to upload
+        // (the rich-text editor's file button) leaves the control out instead of offering one
+        // that always fails. Whether THIS user may upload is still the gate's answer, per upload.
         $rsxapp_data['files'] = [
             'max_file_size' => (int) config('rsx.files.max_file_size', 0),
+            'uploads_enabled' => \App\RSpade\Core\Files\Rsx_File_Gates::has_handler(\App\RSpade\Core\Files\Rsx_File_Gates::UPLOAD),
         ];
 
         // ORM batch limits, ALWAYS present for the same reason the file block is: the JS

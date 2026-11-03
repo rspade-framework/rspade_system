@@ -292,6 +292,54 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     }
 
     /**
+     * The type's side effects on its record: called by the framework after a model save()
+     * that changed a column declared with this type, once per changed column.
+     *
+     * A type whose encoding REFERENCES other rows (an embedded file, a mention) keeps those
+     * references true here, and nowhere else. A side effect left to each endpoint or each
+     * model's own hook is one some model forgets, silently; declared on the type, it runs
+     * for every model that declares the column.
+     *
+     * When it runs:
+     *   - after every successful save() that inserted the record (every non-null text column
+     *     counts as changed, $old null) or changed the column's stored form;
+     *   - after the revision for the write is recorded and before its realtime frame and
+     *     after_create()/after_update() hooks, inside whatever transaction the save is in;
+     *   - for a query-builder update() too: a model whose text types define this hook takes
+     *     the per-record bulk path, so each record runs through its own save();
+     *   - NOT for raw_bulk(), DB::table() or raw SQL, which bypass the model layer.
+     *
+     * The hook runs whatever the caller has suppressed (notifications, revisions): it is the
+     * type's integrity, not a message. A type that does something optional under suppression
+     * decides that itself.
+     *
+     * The default does nothing.
+     *
+     * @param \App\RSpade\Core\Database\Models\Rsx_Model_Abstract $model The saved record (post-write state).
+     * @param string $column The changed column.
+     * @param static|null $old The column's value before the write; null on insert or when it was NULL.
+     * @return void
+     */
+    #[Replaceable]
+    public static function after_model_saved($model, string $column, ?Rsx_Text_Abstract $old): void
+    {
+    }
+
+    /**
+     * Whether this type overrides after_model_saved(). Read by the save path and the bulk
+     * update path, which skip the per-column dispatch for a type with nothing to do.
+     *
+     * @return bool
+     */
+    final public static function has_after_model_saved_hook(): bool
+    {
+        static $memo = [];
+
+        return $memo[static::class] ??= (new \ReflectionMethod(static::class, 'after_model_saved'))
+            ->getDeclaringClass()->getName() !== self::class;
+    }
+
+    /**
      * Turn every {__TEXT, raw} envelope in a decoded request body into a typeless
      * Rsx_Text_Request_Value, recursively, leaving everything else untouched.
      *

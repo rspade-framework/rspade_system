@@ -899,7 +899,8 @@ class RestrictedEloquentBuilder extends Builder
      * fire: a realtime surface ($realtime, a #[Realtime_Touch] relationship, or an overridden
      * realtime_touch()), a lifecycle surface (an overridden after_create/update/delete hook),
      * or revision recording ($revisions - a bulk update records one revision per affected
-     * record, and only the per-record path can produce a per-record diff).
+     * record, and only the per-record path can produce a per-record diff), or a declared text
+     * type with an after_model_saved() hook (Rsx_Text_Abstract).
      * A model with none of them takes the raw single-statement fast path (today's behavior,
      * no regression).
      */
@@ -914,7 +915,8 @@ class RestrictedEloquentBuilder extends Builder
 
         return Realtime_Touch_Registry::has_realtime_surface($fqcn)
             || Model_Lifecycle_Registry::has_lifecycle_surface($fqcn)
-            || Revision_Parent_Registry::records_revisions($fqcn);
+            || Revision_Parent_Registry::records_revisions($fqcn)
+            || $fqcn::text_columns_with_save_hooks() !== [];
     }
 
     /**

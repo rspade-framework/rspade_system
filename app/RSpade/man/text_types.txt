@@ -175,6 +175,11 @@ WRITING A TYPE
             // throws. Rarely needed - a page renders through the PRINTER.
             public function to_html(): string { ... }
 
+            // CONVENTION. The type's side effects on its record - see
+            // SIDE EFFECTS ON SAVE below. Default: nothing.
+            public static function after_model_saved($model, string $column,
+                ?Rsx_Text_Abstract $old): void { ... }
+
             // DEDICATED FUNCTIONS: whatever the application must READ from
             // the encoding, written here and nowhere else.
         }
@@ -196,6 +201,35 @@ WRITING A TYPE
     language and approximate in the other it does not answer: toString()
     throws. A different rendition on a page is an argument to the PRINTER
     component. String coercion throws on the server too.
+
+SIDE EFFECTS ON SAVE
+    A type whose encoding REFERENCES other rows - an embedded file, a mention -
+    keeps those references true in after_model_saved(), never in an endpoint or
+    a model's own hook. Declared on the type, it runs for every model that
+    declares the column; left to each model, some model forgets, silently.
+
+    Rsx_Model_Abstract::save() calls Type::after_model_saved($model, $column,
+    $old) once per declared column the write changed:
+
+        - on an insert, for every non-null text column ($old null);
+        - on an update, for each text column whose stored form changed ($old
+          the value before the write, null when it was NULL);
+        - after the write's revision is recorded, before its realtime frame and
+          after_create()/after_update(), inside whatever transaction the save
+          is in;
+        - for a query-builder update() too: a model whose text types define the
+          hook takes the per-record bulk path (rsx:man model, bulk writes), so
+          every record runs through its own save();
+        - NOT for raw_bulk(), DB::table() or raw SQL, which bypass the model.
+
+    It runs whatever the caller suppressed (Revision::without(), an
+    application's own notification switch): it is the type's integrity, not a
+    message. A type doing something optional under suppression decides that
+    itself.
+
+    The template application's Rich_Text is the worked example: it claims the
+    files its text embeds and syncs the embed references (rsx:man file_upload,
+    FILES EMBEDDED IN TEXT).
 
 TWO TYPES, WORKED
     The shipped Rich_Text, and a type this page describes but the framework

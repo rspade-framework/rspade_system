@@ -8,6 +8,7 @@ use Throwable;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Blob_Locks;
 use App\RSpade\Core\Files\File_Blob_References;
+use App\RSpade\Core\Files\File_Embed_References;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Rsx;
@@ -514,7 +515,8 @@ class File_Disposal_Service extends Rsx_Service_Abstract
      * someone still wanted is recoverable for the full retention period.
      *
      * Never touched: handler-backed (external) attachments, anything already attached,
-     * anything already soft-deleted. 0/null window disables the sweep.
+     * anything already soft-deleted, anything a record's text embeds (File_Embed_References;
+     * counted in the run's output). 0/null window disables the sweep.
      *
      * The monthly deep sweep has its own, much older (disk_orphan_min_age_days) unassigned
      * pass; this one is the tight, frequent bound and the monthly pass remains the backstop
@@ -544,6 +546,18 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 ->whereNull('handler_class')          // plain local uploads only (never WP-A external)
                 ->where('created_at', '<', $cutoff);
 
+            // A file some record's text embeds is never swept, even unclaimed: the embed's
+            // claim (claim_for_embed) is the mechanism, this is the defence behind it.
+            $embedded_count = $unclaimed_query()
+                ->whereIn('id', File_Embed_References::_referenced_ids_query())
+                ->count();
+            if ($embedded_count > 0) {
+                $task->stdout("Skipped {$embedded_count} unattached upload(s) that a record's text embeds.");
+            }
+            $base_query = $unclaimed_query;
+            $unclaimed_query = fn () => $base_query()
+                ->whereNotIn('id', File_Embed_References::_referenced_ids_query());
+
             $total = $unclaimed_query()->count();
             $swept = 0;
             $printed = 0;
@@ -552,7 +566,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 if ($task->is_stop_requested()) {
                     $task->stdout("Stop requested - stopped after sweeping {$swept} of {$total} unattached upload(s).");
 
-                    return ['swept' => $swept, 'window_hours' => $window_hours, 'stopped' => true];
+                    return ['swept' => $swept, 'skipped_embedded' => $embedded_count, 'window_hours' => $window_hours, 'stopped' => true];
                 }
                 $task->heartbeat();
 
@@ -566,7 +580,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 ? "Done: swept {$swept} unattached upload(s) past the {$window_hours}h claim window."
                 : "No unattached upload is past the {$window_hours}h claim window; nothing swept.");
 
-            return ['swept' => $swept, 'window_hours' => $window_hours, 'stopped' => false];
+            return ['swept' => $swept, 'skipped_embedded' => $embedded_count, 'window_hours' => $window_hours, 'stopped' => false];
         });
 
         $task->state($result);

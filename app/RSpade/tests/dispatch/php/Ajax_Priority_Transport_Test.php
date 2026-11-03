@@ -134,10 +134,18 @@ class Ajax_Priority_Transport_Test extends Rsx_Test_Abstract
 
     public static function test_the_generated_stub_marks_only_the_priority_method()
     {
-        $stub = Rsx_Project_Paths::stubs_dir(Rsx_Project_Paths::STUBS_CONTROLLER) . '/' . self::FIXTURE . '.js';
-        static::__assert_true(file_exists($stub), "the stub exists: {$stub}");
+        // Both halves are checked directly rather than through the stub file on disk: a test
+        // fixture's stub is removed by any manifest rebuild without the test trees (an
+        // ordinary request in the same worker does one), so reading the file is order-dependent.
+        $surfaces = Auth_Gates::get_surfaces();
+        static::__assert_equals('priority', $surfaces[self::FIXTURE . '::urgent']['throttle'] ?? null, 'the surface index marks the priority endpoint');
+        static::__assert_true(($surfaces[self::FIXTURE . '::ordinary']['throttle'] ?? null) === null, 'the ordinary endpoint carries no mark');
 
-        $content = file_get_contents($stub);
+        $generate = new \ReflectionMethod(\App\RSpade\Core\Controller\Controller_Stub_ManifestSupport::class, '_generate_stub_content');
+        $content = $generate->invoke(null, self::FIXTURE, [
+            'urgent' => ['name' => 'urgent', 'priority' => true],
+            'ordinary' => ['name' => 'ordinary', 'priority' => false],
+        ]);
 
         static::__assert_contains(self::FIXTURE . ".urgent.priority = true;", $content);
         static::__assert_false(str_contains($content, self::FIXTURE . '.ordinary.priority'), 'the ordinary method is not marked');

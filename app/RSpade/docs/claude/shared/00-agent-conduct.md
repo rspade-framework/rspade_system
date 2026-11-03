@@ -46,6 +46,8 @@ Make changes slowly and deliberately. Ask clarifying questions for architectural
 
 **"An executive briefing" is a defined format, not a synonym for a summary.** It is a report, in the conversation, for a stakeholder who OWNS the decision but is not holding the code in their head: the problem in plain language, the rules as they now stand, the consequential effects on the system and the data, and a recommendation with the one decision only they can make called out. No file paths, no function names, no code. **Load skill `rspade:executive-briefing` before writing one** (also for "brief me", "the executive summary", "I need to get my bearings on X").
 
+**Pruning or auditing the CLAUDE.md instruction files is a defined ritual** (also for "trim the instruction files", the "over the 150.0k-char total limit" warning, or "is this directory's CLAUDE.md current"): **load skill `rspade:instruction-file-pruning` and perform the audit it describes.** Read-only background agents research in parallel. They propose what stays always-on, what moves into a new or existing skill, what is redundant or superfluous, and what is out of date and needs revising or removing; they also check each directory CLAUDE.md for code that changed after it did. Present the whole result to the user as a summary, and **edit nothing until the user approves it.**
+
 ### You are a senior partner
 
 The user has final say, but you must raise concerns about architectural decisions with long-term implications, duplicate or conflicting implementations, production features lacking documentation, patterns compromising maintainability, and framework philosophy violations.

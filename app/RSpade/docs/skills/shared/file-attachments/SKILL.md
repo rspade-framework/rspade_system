@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: "Uploading files in RSX and attaching them to records - the three mandatory file gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize - each throws 'File uploads are disabled' / 'File reads are disabled' when no handler is registered), Ajax.upload(form_data) as the browser transport (POST /api/v1/files for an external integration), the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), a currentColor file-type mark with <File_Type_Icon $file_name> (never a hand-rolled extension map), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, attaching a file uploaded through the external API, showing a thumbnail, avatar or file-type icon, reacting to a thumbnail having loaded (its preview_loaded event - never a load handler on its <img>), showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks."
+description: "Uploading files in RSX and attaching them to records - files embedded in rich text (claim_for_embed, File_Embed_References, the inline_embed category, excludingEmbeds), the three mandatory file gates (file.upload.authorize, file.thumbnail.authorize, file.download.authorize - each throws 'File uploads are disabled' / 'File reads are disabled' when no handler is registered), Ajax.upload(form_data) as the browser transport (POST /api/v1/files for an external integration), the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), a currentColor file-type mark with <File_Type_Icon $file_name> (never a hand-rolled extension map), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, attaching a file uploaded through the external API, showing a thumbnail, avatar or file-type icon, reacting to a thumbnail having loaded (its preview_loaded event - never a load handler on its <img>), showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks."
 ---
 
 # File attachments
@@ -145,6 +145,25 @@ if (!$doc) { return response_not_found('Not found'); }
 ```
 
 `File_Attachment_Model::find()` and `find_by_key()` are tenant-scoped and nothing more — within one site they will hand back an attachment hanging off a *different* record, so removing/renaming/sharing by a caller-supplied id without this is a real hole. A miss and a mismatch are the same null. On a site-scoped record every reader here is additionally pinned to the current session's site, so they stay correct even inside `without_site_scope()`.
+
+### Files embedded in rich text
+
+A file dropped into a rich-text field is uploaded before its record exists and is named in the text by attachment id (`{{#file:<id>}}` in the template's `Rich_Text`). The record OWNS it once saved, through the text type's `after_model_saved()` hook — never through an endpoint:
+
+```php
+// inside a text type's after_model_saved($model, $column, $old)
+foreach ($attachments_the_text_names as $attachment) {
+    $attachment->claim_for_embed($model);          // category 'inline_embed'
+}
+File_Embed_References::sync($model, $column, $ids);  // the sweep never takes a referenced file
+```
+
+- **`claim_for_embed()` is UPLOADER-BOUND** (the created_by pair against the actor acting now): an id is typeable, so nobody else's save can take a pending upload. Already owned by another record → `false`, ownership never moves; swept already → restored, then claimed. `can_user_assign_this_file()` stays structural — the key-based claim path is unchanged.
+- **Removing a token keeps the file and its owner**; only the reference row goes (a restored revision must still show it).
+- **`File_Attachment_Model::CATEGORY_INLINE_EMBED` is reserved.** `forModel()` leaves it out; every list of a record's attachments must too (`->excludingEmbeds()`, or a category of its own). An embed shown as a loose file beside its record is the bug.
+- **Showing a pending embed** to anyone but its uploader is a leak: ask `$attachment->was_uploaded_by_current_actor()`. A claimed one follows its OWNER's visibility (file gates + `can_view()`).
+- `window.rsxapp.files.uploads_enabled` — offer an attach control only when it is true.
+- Content stored before the claim existed needs a heal (undelete + `add_to()` + `sync()`), not a re-save: `rsx:man file_upload`, FILES EMBEDDED IN TEXT. Template implementation: `system/app/RSpade/resource/reference_app/lib/inline_file/`.
 
 ---
 

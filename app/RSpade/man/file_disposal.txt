@@ -216,8 +216,10 @@ SCHEDULED TASKS (File_Disposal_Service)
         config('rsx.attachments.unattached_claim_window_hours') (default 24) is
         SOFT-deleted - it enters the ordinary retention window (recoverable via
         undelete(), blob still pinned), never destroyed outright. Never touches:
-        attached rows, handler-backed (WP-A) rows, rows already soft-deleted. A
-        window of 0 (or null) disables the sweep.
+        attached rows, handler-backed (WP-A) rows, rows already soft-deleted, rows
+        some record's text embeds (File_Embed_References - counted in the run's
+        output; rsx:man file_upload, FILES EMBEDDED IN TEXT). A window of 0 (or
+        null) disables the sweep.
 
         This is the successor to the bound the retired _file_attachments.session_id
         stamp implied. Claimability is now a property of the attachment (unclaimed +

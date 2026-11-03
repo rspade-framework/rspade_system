@@ -1,0 +1,93 @@
+FILES EMBEDDED IN RICH TEXT
+Date: 2026-11-03
+
+IF YOU DO NOTHING: your users cannot put a file into a rich-text field - the ownership
+    engine is installed and nothing of yours calls it. If your application already embeds files in its own text notation and claims them by
+    hand (or does not claim them at all), every such file is still an UNCLAIMED upload
+    that the six-hourly sweep soft-deletes a day after it was dropped in - and on any
+    retention setting but 0 it is later destroyed.
+
+SUMMARY
+    A user can drop, paste or attach a file into a rich-text field. It is uploaded at
+    once, drawn in the text as a non-editable card (a thumbnail for an image, the type
+    mark and name otherwise), stored in the text as the token {{#file:<attachment id>}},
+    and OWNED by the record that saves the text - so it is never swept as an abandoned
+    upload. Displaying the text draws every card in one request, each following the
+    visibility of the record that owns the file.
+
+    The framework provides the ownership half; the template application provides the
+    token, the editor and the display.
+
+WHAT YOU ALREADY HAVE
+    - Rsx_Text_Abstract::after_model_saved($model, $column, $old): a hook on every
+      declared text type, called after each save() that changed a column of that type
+      (a query-builder update() on such a model runs per record so it fires too).
+      rsx:man text_types, SIDE EFFECTS ON SAVE.
+    - $attachment->claim_for_embed($owner, $category = 'inline_embed'): the
+      uploader-bound claim, restoring a file the sweep already soft-deleted.
+    - $attachment->was_uploaded_by_current_actor().
+    - File_Attachment_Model::CATEGORY_INLINE_EMBED, the excludingEmbeds() scope, and
+      forModel() leaving embeds out.
+    - File_Embed_References (sync / is_referenced / owners_of) over the new system table
+      _file_embed_references; the unclaimed-upload sweep never takes a referenced file
+      and counts the ones it skipped.
+    - window.rsxapp.files.uploads_enabled.
+    rsx:man file_upload, FILES EMBEDDED IN TEXT.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    Your Rich_Text type, its editor and its display are application code, so none of it
+    reached you: your users have no way to put a file in a rich-text field, and nothing
+    of yours calls the hook.
+
+THE REFERENCE IMPLEMENTATION
+    Under system/app/RSpade/resource/reference_app/:
+
+    lib/text_types/rich_text/rich_text.php
+        FILE_TOKEN_PATTERN / FILE_EMBED_PATTERN, file_ids(), and after_model_saved():
+        claim_for_embed() for each id the text names (read on the owner's site), then
+        File_Embed_References::sync(). to_plain_text() drops tokens; is_empty() counts
+        an embed as content.
+    lib/inline_file/inline_file_controller.php
+        resolve_attachment({key}) - the card of a file the caller just uploaded;
+        resolve_files({ids}) - a document's cards in one call, leaving out any file the
+        viewer may not see (a pending upload is its uploader's only; a claimed one needs
+        the file gates and its owner's can_view()).
+    lib/inline_file/inline_file_tokens.js
+        The token to and from the editor's embed element, on text nodes only.
+    lib/inline_file/inline_file_renderer.js
+        expand() tokens into loading cards, fill() them from one resolve_files call.
+    theme/components/inputs/wysiwyg/wysiwyg_file_blot.js
+        The Quill embed blot; its html() serializes to the bare element.
+    theme/components/inputs/wysiwyg/wysiwyg_input.js
+        The attach toolbar button, Quill's uploader redirected to upload every dropped or
+        pasted file, the loading placeholder, the token round trip in _get_value() /
+        _set_value().
+    theme/components/view/inline_file_card/
+        Inline_File_Card: thumbnail or type mark + name, "File not found", click to
+        preview (Attachment_Preview_Modal).
+    theme/components/view/rich_text_display/rich_text_display.js
+        Expands tokens in on_render(), draws cards in on_ready().
+    tests/Inline_File_Embed_Test.php
+        The lifecycle, the sweep exemption and the uploader binding, end to end.
+
+PORTING IT
+    1. Copy lib/inline_file/ and theme/components/view/inline_file_card/ (it opens the
+       template's Attachment_Preview_Modal on click - point it at your own preview, or
+       drop the click).
+    2. Merge the Rich_Text changes into your own rich-text type. If your type already
+       has a token notation of its own, keep it: what matters is that after_model_saved()
+       claims every file the text names and syncs the references.
+    3. Merge the editor changes into your WYSIWYG input and the display change into your
+       rich-text printer.
+    4. Every list of a record's attachments you draw must leave embeds out
+       (->excludingEmbeds(), or a category of its own) - an embed belongs to the text.
+    5. If you already stored embed tokens before this, run the heal in rsx:man
+       file_upload (HEALING CONTENT SAVED BEFORE THE CLAIM EXISTED) once per site. A
+       re-save is not the heal: the claim refuses a file the saving process did not upload.
+
+VERIFICATION
+    Drop a file into a rich-text field on a create form and save. The file's row has
+    fileable_* naming the new record and fileable_category 'inline_embed', and
+    File_Embed_References::is_referenced(<id>) is true. The record's view page draws the
+    card; a second user typing the same token into another record of theirs sees
+    "File not found" unless they may see the owning record.

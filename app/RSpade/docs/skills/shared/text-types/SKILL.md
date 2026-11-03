@@ -1,6 +1,6 @@
 ---
 name: text-types
-description: "Declaring what kind of string a TEXT column holds and writing a type for it - public static $text_types on a model, Rsx_Text_Abstract with its two required methods sanitize_encoded() and encode_plain_text(), what assigning a bare string does (plain text, escaped into the encoding) versus Type::from_untrusted_encoded() for encoded content, writing a declared column through the external API (plain string or a JSON-encoded {__TEXT, raw} envelope in a string param), the optional to_plain_text()/to_html() conventions and when NOT to define them, is_empty() and the wrapping-encoding override, the PRINTER and EDITOR registrations on the JavaScript class of the same name and the generated Model.editor_component_for(col) / Model.text_type_or_null(col) lookups, ACCEPTS on an input component, what an Ajax endpoint receives (a typeless Rsx_Text_Request_Value that answers only is_empty()), and Type::from_request() for reading the content before storing it. Use when a TEXT column should hold rich text or a custom notation such as {{Client_Model:42}}, when adding or adapting a type under rsx/lib/text_types/, when an endpoint must read a submitted value (tagged entities in a comment), when wiring an editor or printer, when migrating a column from plain text, when an importer or API client writes a declared column, or on hitting \"cannot be used as a string\", \"does not define to_plain_text()\", \"does not define to_html()\", \"A submitted text value cannot be used as a string\", \"Text types do not convert into one another\", \"was handed a value the client submitted as\", \"edits Rich_Text values, but was given string\", or a column comparison against '' that is unexpectedly false, when composing markup for a declared column (a helper returning `\"<p>...\"`), when stored text shows literal &lt;p&gt; tags, or on a TEXT-TYPE-01 build failure."
+description: "Declaring what kind of string a TEXT column holds and writing a type for it - the after_model_saved() side-effect hook, public static $text_types on a model, Rsx_Text_Abstract with its two required methods sanitize_encoded() and encode_plain_text(), what assigning a bare string does (plain text, escaped into the encoding) versus Type::from_untrusted_encoded() for encoded content, writing a declared column through the external API (plain string or a JSON-encoded {__TEXT, raw} envelope in a string param), the optional to_plain_text()/to_html() conventions and when NOT to define them, is_empty() and the wrapping-encoding override, the PRINTER and EDITOR registrations on the JavaScript class of the same name and the generated Model.editor_component_for(col) / Model.text_type_or_null(col) lookups, ACCEPTS on an input component, what an Ajax endpoint receives (a typeless Rsx_Text_Request_Value that answers only is_empty()), and Type::from_request() for reading the content before storing it. Use when a TEXT column should hold rich text or a custom notation such as {{Client_Model:42}}, when adding or adapting a type under rsx/lib/text_types/, when an endpoint must read a submitted value (tagged entities in a comment), when wiring an editor or printer, when migrating a column from plain text, when an importer or API client writes a declared column, or on hitting \"cannot be used as a string\", \"does not define to_plain_text()\", \"does not define to_html()\", \"A submitted text value cannot be used as a string\", \"Text types do not convert into one another\", \"was handed a value the client submitted as\", \"edits Rich_Text values, but was given string\", or a column comparison against '' that is unexpectedly false, when composing markup for a declared column (a helper returning `\"<p>...\"`), when stored text shows literal &lt;p&gt; tags, or on a TEXT-TYPE-01 build failure."
 ---
 
 # Declared TEXT column types
@@ -336,6 +336,24 @@ surface, not a security control), an already-typed value of the same type, a bar
 **Equivalent when the record is at hand:** `$comment->body` after assignment *is* an
 `Entity_Tag_Text`, so `$comment->body->tagged_entities()` works with no explicit
 resolution. `from_request()` is for when you need the typed value without a record.
+
+## Side effects belong to the type — `after_model_saved()`
+
+A type whose encoding references other rows (an embedded file, a mention) keeps those references true in **one** place: a static hook on the type, which the framework calls after every `save()` that changed a column declared with it.
+
+```php
+public static function after_model_saved($model, string $column, ?Rsx_Text_Abstract $old): void
+{
+    $ids = $model->$column?->file_ids() ?? [];
+    // claim what the text names, sync references ...
+}
+```
+
+- Once per changed column; on insert every non-null text column, `$old` null.
+- After the revision is recorded, before the realtime frame and `after_create()`/`after_update()`, inside the save's transaction.
+- A query-builder `update()` on such a model goes per-record, so the hook still runs; `raw_bulk()` / `DB::table()` never do.
+- It runs under every suppression (`Revision::without()`, an app's notification switch) — it is integrity, not a message.
+- **Never** do the type's side effect from an endpoint or a model's own `saved()`: the model that forgets it loses data silently. Worked example: the template `Rich_Text` (claims embedded files — skill `rspade:file-attachments`, "Files embedded in rich text"). `rsx:man text_types`, SIDE EFFECTS ON SAVE.
 
 ## Gotchas, in the order they bite
 

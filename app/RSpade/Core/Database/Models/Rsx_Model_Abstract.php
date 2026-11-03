@@ -1622,6 +1622,11 @@ EXAMPLE;
         // which is one static read on the hot path.
         $revision_original = $this->_revision_original_snapshot();
 
+        // Same reason, for the declared text types that react to their own writes: the
+        // before value of each changed text column, keyed by column (see
+        // Rsx_Text_Abstract::after_model_saved()). Empty for a model with none.
+        $text_hook_before = $this->__text_hook_before_snapshot($was_existing);
+
         // Guard the DB write: any RestrictedEloquentBuilder::update() reached from inside
         // parent::save() (Eloquent's performUpdate) is THIS record's own single-row write and
         // must run raw — never re-enter the user-bulk fetch-then-iterate path (that would
@@ -1634,7 +1639,7 @@ EXAMPLE;
         }
 
         if ($result) {
-            $this->_dispatch_write_effects_on_save($was_existing, $revision_original);
+            $this->_dispatch_write_effects_on_save($was_existing, $revision_original, $text_hook_before);
         }
 
         return $result;
@@ -2326,13 +2331,84 @@ EXAMPLE;
      * the app after_create/after_update hooks. Both are individually gated and no-op for a
      * model that opts into neither.
      */
-    private function _dispatch_write_effects_on_save(bool $was_existing, ?array $revision_original = null): void
+    private function _dispatch_write_effects_on_save(bool $was_existing, ?array $revision_original = null, array $text_hook_before = []): void
     {
         // Revision first: it describes THIS write, and an after_* hook that writes another
         // revisioned model must land after it in the transaction's sequence.
         $this->_record_revision_on_save($was_existing, $revision_original);
+        $this->__dispatch_text_type_hooks($text_hook_before);
         $this->_realtime_emit_on_write();
         $this->_lifecycle_dispatch_on_save($was_existing);
+    }
+
+    /**
+     * The declared text columns whose type defines after_model_saved(), memoized per class.
+     * Public because the bulk update path asks it too: a model listed here takes the
+     * per-record path so every record runs its types' hooks.
+     *
+     * @return array<string, class-string<\App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract>>
+     */
+    public static function text_columns_with_save_hooks(): array
+    {
+        static $memo = [];
+
+        if (!isset($memo[static::class])) {
+            $columns = [];
+            foreach (array_keys((array) static::$text_types) as $column) {
+                $type = static::text_type_for($column);
+                if ($type::has_after_model_saved_hook()) {
+                    $columns[$column] = $type;
+                }
+            }
+            $memo[static::class] = $columns;
+        }
+
+        return $memo[static::class];
+    }
+
+    /**
+     * The stored form of each hooked text column this write changes, as it stood BEFORE the
+     * write: null on an insert or for a column that was NULL. A column the write leaves
+     * alone is absent, so it is not dispatched.
+     *
+     * @param bool $was_existing
+     * @return array<string, string|null>
+     */
+    private function __text_hook_before_snapshot(bool $was_existing): array
+    {
+        $columns = static::text_columns_with_save_hooks();
+        if (!$columns) {
+            return [];
+        }
+
+        $before = [];
+        foreach (array_keys($columns) as $column) {
+            if (!$was_existing) {
+                if ($this->getAttributes()[$column] ?? null) {
+                    $before[$column] = null;
+                }
+            } elseif ($this->isDirty($column)) {
+                $before[$column] = $this->getRawOriginal($column);
+            }
+        }
+
+        return $before;
+    }
+
+    /**
+     * Call each changed column's type hook (Rsx_Text_Abstract::after_model_saved()).
+     *
+     * @param array<string, string|null> $text_hook_before
+     * @return void
+     */
+    private function __dispatch_text_type_hooks(array $text_hook_before): void
+    {
+        $columns = static::text_columns_with_save_hooks();
+
+        foreach ($text_hook_before as $column => $old_raw) {
+            $type = $columns[$column];
+            $type::after_model_saved($this, $column, $type::from_storage($old_raw));
+        }
     }
 
     /**

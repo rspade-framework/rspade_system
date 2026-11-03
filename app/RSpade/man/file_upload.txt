@@ -307,6 +307,81 @@ THE CLAIM WINDOW
     your workflow genuinely needs longer; do not work around it by attaching at
     upload time.
 
+    An unattached upload that some record's text EMBEDS is never swept (FILES
+    EMBEDDED IN TEXT below); the run's output counts the ones it skipped.
+
+FILES EMBEDDED IN TEXT
+    A file a user drops into a rich-text field is uploaded before the record it
+    lives in exists, and is named in the stored text by its attachment id (the
+    template application's Rich_Text writes {{#file:<id>}}). The framework
+    provides the ownership half of that feature; the token, the editor and the
+    renderer are the application's (system/app/RSpade/resource/reference_app/
+    lib/inline_file/, lib/text_types/rich_text/).
+
+    THE LIFECYCLE
+
+        1. Upload: the file is unclaimed - its record may not exist yet.
+        2. Save of the owning record: the text type's after_model_saved() hook
+           (rsx:man text_types, SIDE EFFECTS ON SAVE) calls claim_for_embed()
+           for each id the text names and File_Embed_References::sync() for the
+           column.
+        3. Re-save: references are re-synced. A file whose token was removed
+           keeps its owner and its bytes - a restored revision of the old text
+           must still show it. Only the reference goes.
+        4. The same token in a second record (prose copied): a reference is
+           added; ownership never moves.
+        5. Display and download follow the OWNING record's visibility, like any
+           attachment's: the file gates, and the owner's can_view().
+        6. The unclaimed sweep never touches a file a reference names, even one
+           left unclaimed - defence in depth behind the claim.
+
+    $attachment->claim_for_embed(Rsx_Model_Abstract $owner,
+                                 string $category = 'inline_embed'): bool
+        The claim. Unclaimed, on the owner's site, and uploaded by the actor
+        acting NOW (the created_by pair, compared through the audit stamp
+        matrix): claimed into $category. A file the sweep already soft-deleted
+        is restored first (never one destroyed). Already owned by $owner: true,
+        nothing written. Owned by another record, uploaded by someone else, on
+        another site, handler-backed: false, nothing written.
+
+        UPLOADER-BOUND, unlike can_user_assign_this_file(). A text token names
+        a file by its sequential id, which anyone can type, so only the
+        uploader may claim by id. A file uploaded by nobody identifiable (a
+        command, a seed) is never claimed here: trusted code calls add_to().
+
+    $attachment->was_uploaded_by_current_actor(): bool
+        The uploader test claim_for_embed() uses: the question an application
+        asks before showing a pending (unclaimed) embed to anybody.
+
+    File_Attachment_Model::CATEGORY_INLINE_EMBED   'inline_embed'
+        The reserved category. forModel() leaves it out, and so must every list
+        of a record's attachments an application draws: excludingEmbeds() on a
+        query, or a category of the list's own (get_attachments('documents')
+        never meets an embed). An embed belongs to the text it is drawn inside.
+
+    File_Embed_References (the _file_embed_references system table)
+        sync($owner, $column, array $ids)   make the column's references exactly
+                                            these ids (unknown ids skipped)
+        is_referenced(int $id): bool        does any record's text embed it
+        owners_of(int $id): array           [{owner_type, owner_id, column_name}]
+
+    window.rsxapp.files.uploads_enabled is true when a file.upload.authorize
+    handler is registered; an editor offers its attach control only then.
+
+    HEALING CONTENT SAVED BEFORE THE CLAIM EXISTED
+        An application that stored embed tokens with nothing claiming them runs
+        a one-off (a #[Task] with a #[Command], per site under
+        Session::set_temporary_site_id()):
+
+        1. walk every text-typed column of every model for tokens;
+        2. for each named attachment that is unclaimed: undelete() it when the
+           sweep soft-deleted it (never one with destroyed_at), then add_to()
+           the record, category inline_embed - trusted code, so add_to(), not
+           the uploader-bound claim_for_embed();
+        3. File_Embed_References::sync() each column.
+        Re-saving each record is NOT the heal: claim_for_embed() refuses any
+        file the acting process did not upload.
+
     AUDIT METADATA
 
     $attachment->created_by_ip_address (PHP) is the client IP at creation -

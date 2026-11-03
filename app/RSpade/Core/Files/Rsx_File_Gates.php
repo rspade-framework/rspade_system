@@ -40,6 +40,17 @@ class Rsx_File_Gates
     const DOWNLOAD = 'file.download.authorize';
 
     /**
+     * Whether the application registered a handler for this gate.
+     *
+     * @param string $event One of the three gate constants.
+     * @return bool
+     */
+    public static function has_handler(string $event): bool
+    {
+        return Event_Registry::has_handlers($event);
+    }
+
+    /**
      * Throw unless the application registered a handler for this gate.
      *
      * Called by authorize(), and directly by an upload transport FIRST, before the request is

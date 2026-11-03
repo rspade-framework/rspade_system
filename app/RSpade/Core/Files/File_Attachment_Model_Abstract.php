@@ -132,6 +132,15 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     const FILE_TYPE_OTHER = 7;
 
     /**
+     * The reserved fileable_category of a file embedded in a record's text (a rich-text
+     * token naming the attachment). claim_for_embed() files embeds here, and forModel() -
+     * the framework's listing of a record's attachments - leaves them out, so an embed never
+     * appears as a loose file beside the record it is drawn inside. An application's own
+     * attachment lists exclude it the same way (excludingEmbeds()).
+     */
+    const CATEGORY_INLINE_EMBED = 'inline_embed';
+
+    /**
      * Retention lifecycle. An attachment is SOFT-DELETED (deleted_at, recoverable) and only
      * becomes a permanent tombstone (destroyed_at) after the retention window elapses
      * (never, when rsx.files.deleted_retention_days is 0 - keep forever). Blob
@@ -2707,7 +2716,23 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     public function scopeForModel($query, $type, $id)
     {
         return $query->where('fileable_type', $type)
-                    ->where('fileable_id', $id);
+                    ->where('fileable_id', $id)
+                    ->excludingEmbeds();
+    }
+
+    /**
+     * Leave out the files embedded in a record's text (CATEGORY_INLINE_EMBED). Every list of
+     * a record's attachments applies it: an embed belongs to the text it is drawn inside.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    public function scopeExcludingEmbeds($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('fileable_category')
+                ->orWhere('fileable_category', '!=', self::CATEGORY_INLINE_EMBED);
+        });
     }
 
     /**
@@ -2793,6 +2818,88 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         if ($this->site_id !== $current_site_id) {
             return false;
         }
+
+        return true;
+    }
+
+    /**
+     * Whether the actor acting now is the one this attachment's created_by pair names,
+     * resolved through the same stamp matrix that wrote the pair. False when nobody
+     * identifiable is acting or the upload was made by nobody identifiable.
+     *
+     * The question an embed asks of an unclaimed file: only its uploader may claim it
+     * (claim_for_embed()) or see it before its record is saved.
+     *
+     * @return bool
+     */
+    public function was_uploaded_by_current_actor(): bool
+    {
+        $actor = $this->_revision_author();
+
+        return $actor !== null
+            && $this->created_by_type === $actor['type']
+            && (int) $this->created_by_id === (int) $actor['id'];
+    }
+
+    /**
+     * Claim this file as an EMBED of $owner: the ownership step for a file a user dropped into
+     * a record's text, called from a text type's after_model_saved() hook for each attachment
+     * id the saved value names. Returns true when $owner owns the file afterwards.
+     *
+     *   - Unclaimed, on the owner's site, and uploaded by the actor saving now: claimed
+     *     (fileable = $owner, $category). A file the unclaimed sweep already soft-deleted is
+     *     restored first, provided it was never destroyed.
+     *   - Already owned by $owner: true, nothing written.
+     *   - Owned by another record (prose copied between records), uploaded by someone else, on
+     *     another site, handler-backed, or destroyed: false, nothing written. Ownership never
+     *     moves.
+     *
+     * UPLOADER-BOUND, unlike can_user_assign_this_file(). A text token names an attachment by
+     * its sequential id, which anyone can type, so the claim is only granted to the actor
+     * the upload's created_by pair names - compared through the same stamp matrix that wrote
+     * it. A file uploaded by nobody identifiable (a command, a seed) is never claimed here;
+     * trusted server code that owns such a file calls add_to() itself.
+     *
+     * @param \App\RSpade\Core\Database\Models\Rsx_Model_Abstract $owner A saved record.
+     * @param string $category
+     * @return bool
+     */
+    public function claim_for_embed($owner, string $category = self::CATEGORY_INLINE_EMBED): bool
+    {
+        if (!$owner->exists) {
+            shouldnt_happen('claim_for_embed() needs a saved owner record.');
+        }
+
+        $owner_type = class_basename($owner);
+
+        if ($this->fileable_type || $this->fileable_id) {
+            return $this->fileable_type === $owner_type && (int) $this->fileable_id === (int) $owner->getKey();
+        }
+
+        if ($this->handler_class !== null || $this->destroyed_at !== null) {
+            return false;
+        }
+
+        $owner_site_id = $owner->site_id ?? null;
+        if ($owner_site_id !== null && (int) $this->site_id !== (int) $owner_site_id) {
+            return false;
+        }
+
+        if (!$this->was_uploaded_by_current_actor()) {
+            return false;
+        }
+
+        if ($this->trashed()) {
+            if (!$this->has_blob()) {
+                return false;
+            }
+            $this->undelete();
+        }
+
+        $this->fileable_type = $owner_type;
+        $this->fileable_id = $owner->getKey();
+        $this->fileable_category = $category;
+        $this->save();
 
         return true;
     }
