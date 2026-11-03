@@ -125,6 +125,11 @@ RUN bash -c 'set -e; \
     # to reach RUNNING would abort the worker. \
     rm -f /etc/supervisor/conf.d/rsx-companiond.conf; \
     \
+    # Proxority STAYS (supervisor/conf.d/proxority.conf, from the development \
+    # image): this nginx sends every PHP-bound request through it, so without it \
+    # every page answers 502, and Proxority_Live_Stack_Test runs against the \
+    # container's real nginx, proxy and php-fpm. The worker CMD requires it. \
+    \
     bash /usr/local/bin/rspade-entrypoint bash -c "set -e; \
         if [ -f /opt/rspade/schema_cache.sql.gz ]; then \
             echo \"[build] restoring the shipped schema cache into rspade\"; \

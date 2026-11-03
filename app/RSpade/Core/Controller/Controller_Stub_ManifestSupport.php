@@ -8,7 +8,9 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * Emit one JavaScript stub per controller that declares #[Ajax_Endpoint] methods, so
- * `My_Controller.save({...})` exists in the browser with no wiring.
+ * `My_Controller.save({...})` exists in the browser with no wiring. Each stub method carries
+ * its endpoint as `.path`, and a #[Priority] endpoint also carries `.priority = true`, which
+ * Ajax.js reads to send that call alone to /_ajax/_priority.
  *
  * AN ORDINARY SUPPORT MODULE. Stub generation used to be dispatched separately, by a
  * method_exists() sweep over the integration registry after every module had run; it is now
@@ -80,8 +82,14 @@ class Controller_Stub_ManifestSupport extends ManifestSupport_Abstract
                 }
 
                 if ($has_api_internal && isset($method_info['static']) && $method_info['static']) {
+                    // #[Priority] (Proxority_Directives), read from the surface index Auth
+                    // built earlier in this same list: the stub marks the endpoint, and
+                    // Ajax.js sends a marked call alone to /_ajax/_priority.
+                    $surface = $manifest_data['data']['auth']['surfaces'][$class_name . '::' . $method_name] ?? [];
+
                     $api_methods[$method_name] = [
                         'name' => $method_name,
+                        'priority' => ($surface['throttle'] ?? null) === 'priority',
                     ];
                 }
             }
@@ -224,7 +232,9 @@ class Controller_Stub_ManifestSupport extends ManifestSupport_Abstract
             $content .= "     * @returns {Promise<*>}\n";
             $content .= "     */\n";
             $content .= "    static {$method_name}(params = {}) {\n";
-            $content .= "        return Ajax.call('/_ajax/{$controller_name}/{$method_name}', params);\n";
+            // The method itself is handed to Ajax.call(): its .path names the endpoint and its
+            // .priority (set below for a #[Priority] endpoint) picks the transport.
+            $content .= "        return Ajax.call({$controller_name}.{$method_name}, params);\n";
             $content .= "    }\n\n";
         }
 
@@ -234,6 +244,10 @@ class Controller_Stub_ManifestSupport extends ManifestSupport_Abstract
         $content .= "// Path properties for type-safe routing\n";
         foreach ($api_methods as $method_name => $method_info) {
             $content .= "{$controller_name}.{$method_name}.path = '/_ajax/{$controller_name}/{$method_name}';\n";
+
+            if ($method_info['priority']) {
+                $content .= "{$controller_name}.{$method_name}.priority = true;\n";
+            }
         }
 
         return $content;

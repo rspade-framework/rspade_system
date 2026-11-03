@@ -114,6 +114,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      */
     #[Route('/_preview/pdf/:key', methods: ['GET'])]
     #[Portal_Route('/_preview/pdf/:key', methods: ['GET'])]
+    #[Media]
     public static function pdf_rendition(Request $request, array $params = [])
     {
         $key = $params['key'] ?? null;
@@ -206,6 +207,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      */
     #[Route('/_preview/sheet/:key', methods: ['GET'])]
     #[Portal_Route('/_preview/sheet/:key', methods: ['GET'])]
+    #[Media]
     public static function sheet_rendition(Request $request, array $params = [])
     {
         $key = $params['key'] ?? null;
@@ -458,6 +460,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * @param array $params
      * @return \Symfony\Component\HttpFoundation\Response
      */
+    #[Unthrottled]
     #[Route('/_preview/pdfjs.mjs', methods: ['GET'])]
     #[Portal_Route('/_preview/pdfjs.mjs', methods: ['GET'])]
     public static function pdfjs(Request $request, array $params = [])
@@ -474,6 +477,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * @param array $params
      * @return \Symfony\Component\HttpFoundation\Response
      */
+    #[Unthrottled]
     #[Route('/_preview/pdf_worker.mjs', methods: ['GET'])]
     #[Portal_Route('/_preview/pdf_worker.mjs', methods: ['GET'])]
     public static function pdf_worker(Request $request, array $params = [])

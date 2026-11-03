@@ -578,7 +578,8 @@ PORTAL
 
     TWO INTERNAL-ENDPOINT CHANNELS. The framework internal endpoints - the Ajax
     transport (/_ajax/<Controller>/<action>), the batch transport
-    (/_ajax/_batch) and the upload transport (/_upload) - are served on BOTH
+    (/_ajax/_batch, and /_ajax/_priority for one #[Priority] call) and the
+    upload transport (/_upload) - are served on BOTH
     channels by the same handlers: the one Dispatcher answers the bare path in
     the staff realm, and the same path under the portal's own base in the
     portal realm (/_portal/_ajax/... by default; /_ajax/... when the portal is

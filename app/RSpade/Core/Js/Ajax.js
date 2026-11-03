@@ -10,6 +10,13 @@
  * defaults it off, so every call is its own request (its own network-panel entry). Nothing
  * else differs: the same endpoint answers the same way in every mode, batched or not.
  *
+ * PRIORITY CALLS. A call to a #[Priority] endpoint - its generated stub method carries
+ * `.priority = true` beside `.path` - is never batched: it is sent ALONE, in the same batch
+ * envelope, to /_ajax/_priority, a path the Proxority proxy in front of PHP schedules ahead
+ * of the queue. Only the stub method (or an object carrying the same .path and .priority)
+ * marks a call; a call made with a URL string goes through /_ajax/_batch, where a
+ * #[Priority] endpoint still runs normally.
+ *
  * NO MERGING. Two identical calls are two calls: every Ajax call is a POST, and the
  * transport cannot know an endpoint is a read - merging two identical "add note" calls
  * would run it once and tell both callers it succeeded. Reads that are safe to share are
@@ -86,7 +93,7 @@ class Ajax {
     /**
      * Make an AJAX call to an RSX controller action
      *
-     * @param {string|object|function} url - The Ajax URL (e.g., '/_ajax/Controller_Name/action_name') or an object/function with a .path property
+     * @param {string|object|function} url - The Ajax URL (e.g., '/_ajax/Controller_Name/action_name') or an object/function with a .path property (a generated stub method; its .priority marks a #[Priority] endpoint)
      * @param {object} params - Parameters to send to the action
      * @returns {Promise} - Resolves with the return value, rejects with error
      */
@@ -133,6 +140,7 @@ class Ajax {
                 action: action,
                 params: params,
                 hydrate: hydrate,
+                priority: url !== null && (typeof url === 'object' || typeof url === 'function') && url.priority === true,
                 resolve: resolve,
                 reject: reject,
             });
@@ -160,7 +168,8 @@ class Ajax {
     }
 
     /**
-     * Send everything queued: chunks of MAX_BATCH_SIZE calls, or one call per request when
+     * Send everything queued: each priority call alone to /_ajax/_priority, the rest in
+     * chunks of MAX_BATCH_SIZE calls to /_ajax/_batch, or one call per request when
      * config('rsx.ajax.batching') is off.
      * @private
      */
@@ -172,21 +181,33 @@ class Ajax {
         const queued = Ajax._queue;
         Ajax._queue = [];
 
+        const batched = [];
+        for (const call of queued) {
+            if (call.priority) {
+                Ajax._send([call], '/_ajax/_priority');
+            } else {
+                batched.push(call);
+            }
+        }
+
         const chunk_size = window.rsxapp.ajax_batching ? Ajax.MAX_BATCH_SIZE : 1;
 
-        for (let offset = 0; offset < queued.length; offset += chunk_size) {
-            Ajax._send(queued.slice(offset, offset + chunk_size));
+        for (let offset = 0; offset < batched.length; offset += chunk_size) {
+            Ajax._send(batched.slice(offset, offset + chunk_size), '/_ajax/_batch');
         }
     }
 
     /**
-     * One request to /_ajax/_batch, then each call settled from its own key.
+     * One request carrying the batch envelope - to /_ajax/_batch, or /_ajax/_priority for a
+     * lone priority call - then each call settled from its own key.
+     * @param {Array} calls
+     * @param {string} path '/_ajax/_batch' or '/_ajax/_priority'
      * @private
      */
-    static async _send(calls) {
+    static async _send(calls, path) {
         // Rsx_Portal.internal_url() rebases the path onto the channel this page is served
         // under, so a portal page's calls are dispatched as portal requests.
-        const url = Rsx_Portal.internal_url('/_ajax/_batch');
+        const url = Rsx_Portal.internal_url(path);
 
         let response;
 

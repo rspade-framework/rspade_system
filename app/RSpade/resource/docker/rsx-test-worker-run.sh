@@ -61,11 +61,13 @@ SUPERVISOR_CONF=/etc/supervisor/supervisord.conf
 PROJECT_ROOT=/var/www/html
 
 # The roster is read from supervisor itself, so a program added to conf.d/ is
-# waited for with no edit here. These four are named explicitly as the MINIMUM
-# that must exist: if one of them is missing from the status output, the image is
-# not the image this script was written for and testing against it would produce
-# failures that look like framework bugs.
-REQUIRED_PROGRAMS="mysql redis rsx-lockd mail-catcher"
+# waited for with no edit here. These are named explicitly as the MINIMUM that
+# must exist: if one of them is missing from the status output, the image is not
+# the image this script was written for and testing against it would produce
+# failures that look like framework bugs. proxority is among them because the
+# container's nginx sends every PHP-bound request through it (502 without it),
+# and Proxority_Live_Stack_Test runs against it here.
+REQUIRED_PROGRAMS="mysql redis rsx-lockd mail-catcher proxority"
 
 say() {
     printf '[test-worker %s] %s\n' "$WORKER_ID" "$1" >&2

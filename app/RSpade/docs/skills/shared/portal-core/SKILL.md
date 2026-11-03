@@ -238,6 +238,7 @@ The framework transports and file routes are served in BOTH realms by the same h
 ```
 /_ajax/<Controller>/<action>  AJAX channel -> Ajax::handle_browser_request
 /_ajax/_batch                 AJAX channel -> Ajax::handle_batch_request
+/_ajax/_priority              AJAX channel -> Ajax::handle_priority_request
 /_upload, /_download, /_inline, /_download_zip, /_thumbnail/*, /_icon_by_extension
                               File_Attachment_Controller (#[Route] + #[Portal_Route])
 /_preview/*                   File_Preview_Controller (both tables)

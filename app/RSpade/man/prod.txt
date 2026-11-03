@@ -383,8 +383,11 @@ THE RECOMMENDED DEPLOYMENT
 
     Unlisted, every request appears to come from the device: the login and
     second-factor throttles count every visitor as one address, and login history,
-    session rows and revision records all name the device. Never list a range
-    a client can reach nginx from directly - a trusted peer's X-Forwarded-For is
+    session rows and revision records all name the device, and in the RSpade
+    container Proxority schedules every visitor as ONE client, so the whole
+    site shares one client's share of the php-fpm workers (rsx:man
+    proxority). Never list a range a client can reach nginx from directly -
+    a trusted peer's X-Forwarded-For is
     believed. Only X-Forwarded-For is trusted: the host the site answers on is
     the Host header nginx received, which debug and production validate
     against APP_URL / PORTAL_URL (rsx:man config_rsx, HTTP). rsx:man

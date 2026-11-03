@@ -9,7 +9,8 @@ DISABLED IN THIS RELEASE
     and recorded on the route, but the route dispatches like any other: the
     response is never marked for the proxy, nothing is cached, and each request
     to it logs a warning to laravel.log. The RSpade container does not run the
-    proxy either: nginx sends every request straight to php-fpm, and rsx:health
+    proxy either: nginx sends every PHP-bound request through Proxority, the
+    fair-queueing proxy (rsx:man proxority), to php-fpm, and rsx:health
     reports the FPC row as INFO. Everything below describes the feature as it
     will behave when it returns.
 

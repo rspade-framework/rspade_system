@@ -126,6 +126,7 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      * }
      */
     #[Api_Endpoint('/api/v1/files', methods: ['POST'])]
+    #[Media]
     #[Api_Param('file', type: 'file', required: true, description: 'The file to upload, as a multipart/form-data part.')]
     #[Api_Param('filename_override', type: 'string', description: 'Store the file under this name instead of the uploaded part\'s own filename.')]
     public static function upload(Request $request, array $params = [])

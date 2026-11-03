@@ -183,6 +183,15 @@ function rsx_paths_tmp_root(): string
 }
 
 /**
+ * The live-stack test probe's markers (bootstrap/rsx_test_probe.php). Pre-boot because the
+ * probe answers before the autoloader; Rsx_Project_Paths::test_probe_dir() is this answer.
+ */
+function rsx_paths_test_probe_dir(): string
+{
+    return rsx_paths_tmp_root() . '/test-probes';
+}
+
+/**
  * USER data.
  */
 function rsx_paths_storage_root(): string

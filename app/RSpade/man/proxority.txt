@@ -1,0 +1,269 @@
+PROXORITY(1)                       RSpade Manual                       PROXORITY(1)
+
+NAME
+    proxority - the fair-queueing proxy in front of php-fpm, and the three
+    route directives (#[Unthrottled], #[Priority], #[Media]) that steer it
+
+TAGS
+    deploy, security
+
+SYNOPSIS
+    A download route, held to its last byte and sharing half the pool:
+
+        #[Route('/reports/:id/export', methods: ['GET'])]
+        #[Auth('is_logged_in')]
+        #[Media]
+        public static function export(Request $request, array $params = [])
+
+    A route that is never queued:
+
+        #[Route('/healthz', methods: ['GET'])]
+        #[Auth('public')]
+        #[Unthrottled]
+        public static function healthz(Request $request, array $params = [])
+
+    An Ajax endpoint that jumps the queue (an auction bid):
+
+        #[Ajax_Endpoint]
+        #[Auth('is_logged_in')]
+        #[Priority]
+        public static function place_bid(Request $request, array $params = [])
+
+        await Auction_Controller.place_bid({lot_id: 7, amount: '120.00'});
+
+    Watching it (inside the RSpade container, as root):
+
+        node /var/www/html/system/bin/proxority/proxority.js status
+        node /var/www/html/system/bin/proxority/proxority.js log --follow
+
+DESCRIPTION
+    php-fpm has a fixed number of workers and serves whoever asks first. One
+    client opening many connections, a crawler walking the site, or a run of
+    large downloads can occupy every worker while everybody else waits.
+
+    In the RSpade container every request bound for PHP passes through
+    Proxority, a proxy between the public nginx and php-fpm. It keeps one
+    ledger per php-fpm pool and decides which pending request runs next:
+
+        - one client address takes at most N-1 of a pool's N workers;
+        - downloads and uploads (media) share at most half of a pool, and hold
+          their worker until the response ends;
+        - crawlers share at most a fifth;
+        - priority requests jump the queue (never past the per-address limit);
+        - everyone else takes turns, one request per address per turn.
+
+    An application needs no configuration for any of this. Its only part is
+    the three directives below, for the routes whose scheduling should differ
+    from the default, and the address of any reverse proxy in front of the
+    container (BEHIND A REVERSE PROXY).
+
+    Outside the RSpade container nothing changes: no proxy is in the path,
+    the directives are inert metadata, and /_ajax/_priority answers exactly as
+    /_ajax/_batch does. Code written with the directives runs unmodified on any
+    host.
+
+    Laravel has nothing equivalent; its throttle middleware counts requests
+    after PHP has already been given a worker. Proxority decides BEFORE a
+    worker is spent.
+
+THE RULES
+    For a pool of N workers (pm.max_children of the pool file):
+
+        per client address    max(1, N - 1)
+        media                 max(1, floor(N / 2))
+        robots                max(1, floor(N / 5))
+
+    A request counts against every cap that applies to it. A request whose cap
+    is full is skipped and the next one that fits runs instead. When a worker
+    frees, the oldest priority request that fits runs first, then the round
+    robin across addresses.
+
+    Priority requests: a #[Priority] route or Ajax endpoint (PRIORITY AJAX),
+    and every REVALIDATION - a GET or HEAD carrying If-None-Match or
+    If-Modified-Since. A revalidation is usually answered 304 with no body,
+    so serving it first costs little and makes a returning page fast. Other
+    methods and the other conditional headers (If-Match, If-Unmodified-Since,
+    If-Range) are not priority. A priority request keeps its other classes:
+    revalidating a #[Media] download is still media.
+
+    Pools: a path under /_ajax/ or /_companion/ is the ajax pool; every other
+    PHP-bound path is the web pool.
+
+    Media is a #[Media] route or ANY request sent as multipart/form-data. A
+    robot is a request whose User-Agent matches the proxy's built-in list
+    (Googlebot, Bingbot, ... and anything naming itself a bot, crawler or
+    spider).
+
+    A worker is released at the response's FIRST BYTE for an ordinary request
+    (PHP's work is done; the body is only being relayed) and at the response's
+    LAST BYTE for media.
+
+    A request from the box itself (loopback, no X-Forwarded-For: rsx:debug,
+    server-side rendering, a companion application calling 127.0.0.1) is never
+    queued and not counted.
+
+    Headers pass through untouched in both directions - cookies, ETags,
+    Range and Content-Range, Content-Encoding, Location, every Set-Cookie on
+    its own line - except the hop-by-hop ones (Connection and the headers it
+    names, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade on a request;
+    Connection, Keep-Alive, Transfer-Encoding on a response). Connections to
+    the upstream are kept alive and reused.
+
+    The proxy answers 504 when the upstream does not connect within 60 seconds
+    or does not produce a response head within 360 seconds of connecting. Time
+    spent waiting in the queue never counts, and a response body streams for as
+    long as the client reads.
+
+THE DIRECTIVES
+    Three PHP attributes, metadata only (no class to import), read at manifest
+    build. A method declares at most one of them.
+
+    #[Unthrottled]
+        Never queued. The request is still counted against the pool, so a
+        flood of unthrottled requests holds queued ones back - use it for
+        cheap, fast routes whose delay would itself be the failure (a health
+        probe, a script tag the page waits on). Honoured on #[Route], #[SPA],
+        #[Portal_Route] and #[Api_Endpoint]. On #[SPA] it covers every action
+        the bootstrap serves.
+
+    #[Priority]
+        Jumps the queue, ahead of every non-priority request, but never past
+        the per-address cap. Honoured on #[Route], #[SPA], #[Portal_Route],
+        #[Api_Endpoint] and #[Ajax_Endpoint].
+
+    #[Media]
+        Counted against the media half of the pool, and the worker is held
+        until the response ends. For a route that streams a large body or
+        accepts an upload. Honoured on #[Route], #[Portal_Route] and
+        #[Api_Endpoint]. The framework's own file routes (download, ZIP
+        download, inline, preview, thumbnail, upload, POST /api/v1/files) are
+        already #[Media].
+
+    Always unthrottled, with no directive: /_compiled/* and /_vendor/* (build
+    artifacts; nginx serves an existing one itself, without the proxy) and
+    every file in an application public/ directory.
+
+    PROXORITY-01 (manifest-build FATAL) refuses a directive the build would
+    otherwise ignore: two on one method, one on a method that is no surface, on
+    a surface kind that does not honour it (#[Media] on an #[Ajax_Endpoint],
+    any of them on a #[Companion_Endpoint] or a model fetch), on a class, or on
+    an instance method. The message names the method and what to do.
+
+    As with every attribute argument, the directives take no class constants.
+
+PRIORITY AJAX: /_ajax/_priority
+    Ajax calls normally share POST /_ajax/_batch (rsx:man ajax_error_handling,
+    TRANSPORT). The proxy never reads a request body, so it cannot see which
+    endpoint a batch calls. A #[Priority] Ajax endpoint therefore has a
+    channel of its own:
+
+        POST /_ajax/_priority      the _batch envelope, exactly ONE call
+
+    Nothing changes in calling code: the generated controller stub carries a
+    priority flag, and Ajax.js sends a call to a #[Priority] endpoint alone to
+    /_ajax/_priority, never batched with others. The answer is the batch
+    answer, {"C_<call_id>": envelope}, settled like any other call.
+
+    The server keeps the channel honest:
+        - a body with zero or several calls is refused whole (HTTP 400,
+          {"error": ...}); the client never sends one;
+        - a call to an endpoint without #[Priority] is answered the not_found
+          envelope, worded for a caller without diagnostics exactly as a name
+          that is no endpoint at all.
+
+    A #[Priority] endpoint called through /_ajax/_batch (a hand-written
+    request) still runs normally, without priority.
+
+    On a portal served under a path prefix the call goes to
+    <portal-prefix>/_ajax/_priority. The proxy treats any path ending in
+    /_ajax/_priority as the channel, so it is prioritised the same way; the
+    server, not the proxy, decides which calls the channel accepts.
+
+THE ROUTES COMMAND
+    The proxy learns the directives from the application every 60 seconds by
+    running
+
+        php artisan rsx:proxority:routes --json
+
+    which prints {"unthrottled": [...], "priority": [...], "media": [...]}:
+    URL path patterns (exact paths, whole-segment :param, a final optional
+    :param?, a final *). Without --json it prints the same lists for a reader.
+    It is hidden from `php artisan list`: its caller is the proxy. While
+    maintenance mode is up it prints {"maintenance":true} and exits 3, and the
+    proxy keeps the list it had.
+
+    A directive therefore takes effect up to a minute after the change is
+    live. Any failure of the command keeps the previous list; at proxy start
+    the list is empty and everything is throttled until the first answer.
+
+    Portal routes appear under the PORTAL_URL path prefix, its tenant
+    placeholder kept as a :param segment, and bare where a portal is served at
+    a host's root. The proxy matches paths, not hosts.
+
+BEHIND A REVERSE PROXY
+    Proxority schedules by the client address the public nginx resolved
+    (X-Real-IP). nginx believes X-Forwarded-For only from trusted proxies:
+    loopback plus .env TRUSTED_PROXIES, else the container's
+    RSPADE_TRUSTED_PROXIES (rsx:man prod, BEHIND A LOAD BALANCER). A container
+    behind Caddy, a load balancer or a CDN that does not declare it schedules
+    EVERY visitor as one client: the whole site shares one N-1 allowance.
+
+OPERATING IT
+    Supervisor program `proxority`, listening on 127.0.0.1:3300 and forwarding
+    to the loopback nginx listeners 127.0.0.1:3301 (requests that arrived on
+    :80) and 127.0.0.1:3302 (requests that arrived on :8000). None of them is
+    ever published. While the proxy is down nginx answers 502 for every
+    PHP-bound request; static files, bundles and the realtime socket still
+    work.
+
+    node system/bin/proxority/proxority.js status
+        Per pool: capacity and caps, busy by class, queued (and by which
+        addresses), and the whitelist's last refresh.
+
+    node system/bin/proxority/proxority.js log [--follow]
+        The last 1000 internal events (queued, dispatched, released, timeout,
+        upstream errors, client aborts, refreshes, capacity changes), held in
+        memory only; --follow streams new ones.
+
+    supervisorctl signal HUP proxority
+        Re-read pm.max_children after changing a pool file (reload php-fpm
+        first). Requests already running are never stopped.
+
+    The public nginx keeps the only access log, one line per request under the
+    real client. How the proxy works in full - the request path, every rule,
+    the timeouts and their reasoning, signals and flags - is
+    system/bin/proxority/README.md.
+
+TROUBLESHOOTING
+    "Invalid scheduling directive: ... PROXORITY-01: ..."
+        A directive where nothing would read it. Move it onto the surface
+        method of a kind that honours it (THE DIRECTIVES), or remove it.
+
+    Every visitor waits behind everybody else; status shows one address queued
+        The container is behind a reverse proxy that is not declared trusted
+        (BEHIND A REVERSE PROXY).
+
+    A new directive has no effect
+        Up to a minute passes before the next refresh; `status` shows the last
+        accepted refresh and its counts. `php artisan rsx:proxority:routes`
+        shows what the application currently answers.
+
+    502 for every page, bundles still load
+        The proxy is not running: `supervisorctl status proxority`.
+
+    504 "Gateway Timeout: the application server did not answer in time."
+        PHP produced no response head within 360 seconds. The request itself
+        is the problem; move long work to a task (rsx:man tasks).
+
+SEE ALSO
+    rsx:man dispatch - the pipeline a request enters after the proxy
+    rsx:man ajax_error_handling - the Ajax transport, /_ajax/_batch and /_ajax/_priority
+    rsx:man auth_gates - #[Auth], which every directive's surface still declares
+    rsx:man external_api - #[Api_Endpoint], which takes all three directives
+    rsx:man file_upload - the framework file routes, already #[Media]
+    rsx:man prod - BEHIND A LOAD BALANCER: declaring trusted proxies
+    rsx:man server_sizing - how the php-fpm pools are sized
+    rsx:man maintenance_mode - the window during which the whitelist is frozen
+    system/bin/proxority/README.md - how the proxy works, in full
+
+PROXORITY(1)                       RSpade Manual                       PROXORITY(1)

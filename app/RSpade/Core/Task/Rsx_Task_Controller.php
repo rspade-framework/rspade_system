@@ -276,6 +276,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
      * The xterm.js ES module the Task_Output widget imports on first use (never bundled: most
      * pages show no console). Clients append ?v=code_key (window.rsxapp.code_key).
      */
+    #[Unthrottled]
     #[Route('/_task/xterm.mjs', methods: ['GET'])]
     #[Portal_Route('/_task/xterm.mjs', methods: ['GET'])]
     public static function xterm_module(Request $request, array $params = [])
@@ -284,6 +285,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     }
 
     /** The xterm.js fit addon module, for the same widget. */
+    #[Unthrottled]
     #[Route('/_task/xterm-fit.mjs', methods: ['GET'])]
     #[Portal_Route('/_task/xterm-fit.mjs', methods: ['GET'])]
     public static function xterm_fit_module(Request $request, array $params = [])

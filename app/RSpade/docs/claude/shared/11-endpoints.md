@@ -14,6 +14,8 @@
 
 **A third kind, `#[Companion_Endpoint]`, is called only by the application's own companion processes** (`/_companion/<name>/<endpoint>`, signed, no `#[Auth]`, never in the API inventory) - skill `rspade:companion-apps`.
 
+**In the RSpade container every PHP-bound request is scheduled by Proxority**, a fair-queueing proxy in front of php-fpm (per-address, media and robot caps per pool). A surface steers it with at most ONE of `#[Unthrottled]` (never queued), `#[Priority]` (jumps the queue; on an Ajax endpoint the call goes alone to `/_ajax/_priority`) or `#[Media]` (a streamed download or upload, held to its last byte) - misplaced is `PROXORITY-01`, a manifest-build FATAL; inert outside the container. `rsx:man proxority`.
+
 **GOTCHA (LLM landmine): NEVER put a class constant in an attribute argument** (`#[Api_Param('x', default: Model::FOO)]`) — reflection resolves it before the autoloader is ready and the scan dies. Literals only.
 
 Skills: `rspade:ajax-error-handling` (envelope, per-field validation, `Form_Utils`), `rspade:external-api` (response contract, param validation, versioning, key minting). Details: `rsx:man external_api`.

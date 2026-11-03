@@ -281,6 +281,7 @@ INTERNAL ENDPOINTS (AJAX, BATCH, UPLOAD, FILES)
 
         /_ajax/<Controller>/<action>  the AJAX channel -> Ajax::handle_browser_request
         /_ajax/_batch                 the AJAX channel -> Ajax::handle_batch_request
+        /_ajax/_priority              the AJAX channel -> Ajax::handle_priority_request
         /_upload                      File_Attachment_Controller::upload
         /_download/:key, /_inline/:key, /_download_zip/:key,
         /_thumbnail/preset/..., /_thumbnail/dynamic/...,

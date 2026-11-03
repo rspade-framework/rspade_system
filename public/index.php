@@ -281,6 +281,20 @@ if (file_exists($__rsx_migrating_flag)) {
 
 /*
 |--------------------------------------------------------------------------
+| Live-Stack Test Probe
+|--------------------------------------------------------------------------
+|
+| /_rsx_test_probe/<token>/<label> echoes what php-fpm was handed, for the
+| framework's live request-path tests. Closed unless a running test opened
+| it (development mode, a token marker owned by a live test process); every
+| other request costs one string comparison. See bootstrap/rsx_test_probe.php.
+|
+*/
+
+require __DIR__ . '/../bootstrap/rsx_test_probe.php';
+
+/*
+|--------------------------------------------------------------------------
 | Register The Auto Loader
 |--------------------------------------------------------------------------
 |

@@ -627,6 +627,7 @@ SUBSYSTEM PRIMERS
             development signed-identity header for the realm (after CSRF,
               before gates, so a harness identity is visible to #[Auth])
             AJAX channel -> Ajax::handle_batch_request() for /_ajax/_batch,
+              Ajax::handle_priority_request() for /_ajax/_priority,
               Ajax::handle_browser_request() for /_ajax/<Controller>/<action>,
               the not_found envelope for any other /_ajax/ path
             public-file handler - and a MISS FALLS THROUGH to the route
@@ -1008,6 +1009,7 @@ SUBSYSTEM PRIMERS
     THE URLS, all POST:
 
         /_ajax/_batch                  the browser transport (every call)
+        /_ajax/_priority               one call to a #[Priority] endpoint
         /_ajax/<Controller>/<action>   one endpoint, for a hand-made request
         /_ajax/Orm_Controller/fetch    model fetch
         /_ajax/Orm_Controller/fetch_relationship
@@ -1015,7 +1017,8 @@ SUBSYSTEM PRIMERS
         /_csp-report                   CSP violation reports
 
     The /_ajax/ paths are the AJAX channel and have no route row: the
-    Dispatcher hands /_ajax/_batch to Ajax::handle_batch_request() and
+    Dispatcher hands /_ajax/_batch to Ajax::handle_batch_request(),
+    /_ajax/_priority to Ajax::handle_priority_request() and
     /_ajax/<Controller>/<action> to Ajax::handle_browser_request(), in the
     request's realm, and answers any other /_ajax/ path with the not_found
     envelope. /_upload and /_csp-report are routes, the upload with a portal
@@ -1069,7 +1072,8 @@ SUBSYSTEM PRIMERS
     THE CLIENT is Core/Js/Ajax.js. Ajax.call() accepts either a string path
     or the stub function itself and queues the call; one flush per turn
     sends the queue to /_ajax/_batch - up to 20 calls per request, or one
-    per request when rsxapp.ajax_batching is false - and never merges two
+    per request when rsxapp.ajax_batching is false; a call to a #[Priority]
+    endpoint goes alone to /_ajax/_priority - and never merges two
     calls. Each call is settled from its own C_<call_id> key: on the way
     back it drains console_debug output, syncs the server time and user
     timezone, processes flash alerts, re-instantiates models inside the

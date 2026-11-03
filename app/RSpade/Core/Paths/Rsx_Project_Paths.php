@@ -395,6 +395,17 @@ class Rsx_Project_Paths
         return self::tmp_path('test-detached-processes');
     }
 
+    /**
+     * Markers that open the pre-boot live-stack test probe (bootstrap/rsx_test_probe.php),
+     * one file per test, named by its token. The pre-boot resolver owns the answer.
+     */
+    public static function test_probe_dir(): string
+    {
+        self::__require_resolver();
+
+        return rsx_paths_test_probe_dir();
+    }
+
     /** Cached test results, keyed by build. */
     public static function test_results_dir(): string
     {

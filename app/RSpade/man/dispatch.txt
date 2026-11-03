@@ -131,7 +131,11 @@ THE FRONT CONTROLLER
     maintenance window (503, rsx:man maintenance_mode), and the migration
     window - while `migrate` runs against a snapshot it raises
     storage/state/.migrating, and every web request answers 503 until the run
-    clears it (rsx:man migrations).
+    clears it (rsx:man migrations). /_rsx_test_probe/<token>/<label> is the
+    framework suite's live request-path probe: it answers only in development
+    and only while a running test owns a marker for that token
+    (bootstrap/rsx_test_probe.php); otherwise the path is the application's,
+    which answers 404.
 
     LARAVEL'S ROUTE TABLE IS EMPTY. The framework provider clears it once every
     provider has booted, so a route a package registers (Ignition's
@@ -180,9 +184,10 @@ THE DISPATCH PIPELINE
        (development only) before any gate runs, and after CSRF, so a harness
        POST keeps its session-less CSRF treatment.
 
-    4. AJAX channel: /_ajax/_batch and /_ajax/<Controller>/<action> go to the
-       one Ajax core (rsx:man ajax_error_handling); any other path under
-       /_ajax/ is the not_found envelope. There is no route row for either.
+    4. AJAX channel: /_ajax/_batch, /_ajax/_priority (one call to a
+       #[Priority] endpoint - rsx:man proxority) and /_ajax/<Controller>/<action>
+       go to the one Ajax core (rsx:man ajax_error_handling); any other path
+       under /_ajax/ is the not_found envelope. There is no route row for any.
        Everything below is the PAGE channel.
 
     5. Public file. If AssetHandler::is_asset_request($url) (an allowed
@@ -593,6 +598,7 @@ SEE ALSO
     rsx:man companion_apps      (/_companion signed calls from companion applications)
     rsx:man portal              (the portal realm: routes, session, hooks)
     rsx:man fpc                 (full-page cache proxy)
+    rsx:man proxority           (the fair-queueing proxy every PHP-bound request passes)
     rsx:man auth                (Session and permission checks)
     rsx:man login_redirect      (post-login return-URL threading)
     rsx:man ajax_error_handling (JSON error channel for endpoints)

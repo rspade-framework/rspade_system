@@ -52,7 +52,12 @@ use App\RSpade\Lib\Flash\Flash_Alert;
  *
  *   /_ajax/_batch                 handle_batch_request(): N calls, N envelopes, one
  *                                 response - THE browser transport (Ajax.js sends every
- *                                 call here, a lone call as a batch of one)
+ *                                 call here but a #[Priority] one, a lone call as a batch
+ *                                 of one)
+ *   /_ajax/_priority              handle_priority_request(): exactly one call to a
+ *                                 #[Priority] endpoint, in the _batch envelope - the path
+ *                                 Proxority schedules ahead of the queue (Ajax.js sends a
+ *                                 priority call alone, here)
  *   /_ajax/<Controller>/<action>  handle_browser_request(): one call answered with its bare
  *                                 envelope, for a hand-made request (curl, a test). It is a
  *                                 batch of one through the same handle_calls().
@@ -653,7 +658,8 @@ class Ajax
 
     /**
      * /_ajax/_batch - THE browser transport: one or more calls in one request, answered as
-     * {"C_<call_id>": envelope}. Ajax.js sends every call here, a lone call as a batch of one.
+     * {"C_<call_id>": envelope}. Ajax.js sends every call here, a lone call as a batch of one -
+     * except a call to a #[Priority] endpoint, which goes alone to handle_priority_request().
      *
      * Reached from Dispatcher on the AJAX channel, after the realm preamble (CSRF, dev-auth,
      * the portal's init). A batch is refused WHOLE (400, {"error": ...}) when it is malformed
@@ -672,6 +678,61 @@ class Ajax
 
         if ($problem !== null) {
             return response()->json(['error' => $problem], 400);
+        }
+
+        return response()->json(static::handle_calls($request, $batch_calls));
+    }
+
+    /**
+     * /_ajax/_priority - ONE call to a #[Priority] endpoint, in the _batch envelope.
+     *
+     * The path is the whole point: Proxority (the fair-queueing proxy in front of php-fpm)
+     * schedules a request to /_ajax/_priority ahead of the queue without reading its body,
+     * which is why Ajax.js sends a priority call alone, here, and every other call through
+     * /_ajax/_batch. The server keeps the channel honest:
+     *
+     *   - the body is a batch exactly as handle_batch_request() reads it, and must carry
+     *     exactly ONE call - anything else is refused whole (400, {"error": ...}), the batch
+     *     refusal shape, because the client never sends it;
+     *   - the call's endpoint must declare #[Priority] (its surface's 'throttle'). One that
+     *     does not is answered the not_found envelope, worded exactly as a name that is no
+     *     endpoint at all (_not_an_endpoint()) for a caller without diagnostics, so the
+     *     channel tells an anonymous caller nothing about which endpoints exist - and it
+     *     settles the call like any other failure instead of failing the request.
+     *
+     * An accepted call runs through handle_calls(), exactly as it would in a batch. A
+     * #[Priority] endpoint sent through /_ajax/_batch still runs there normally (unscheduled).
+     *
+     * @param Request $request
+     * @return Response
+     */
+    public static function handle_priority_request(Request $request): Response
+    {
+        $batch_calls = $request->input('batch_calls');
+        $problem = static::__batch_problem($batch_calls);
+
+        if ($problem === null && count($batch_calls) !== 1) {
+            $problem = 'A priority request carries exactly one call; this one carries ' . count($batch_calls);
+        }
+
+        if ($problem !== null) {
+            return response()->json(['error' => $problem], 400);
+        }
+
+        $call = $batch_calls[0];
+        $surface = Auth_Gates::get_surfaces()[$call['controller'] . '::' . $call['action']] ?? [];
+
+        if (!in_array('ajax', $surface['kinds'] ?? [], true) || ($surface['throttle'] ?? null) !== 'priority') {
+            Debugger::disable_console_html_output();
+
+            $reason = Rsx_Diagnostics::caller_sees_detail()
+                ? "{$call['controller']}::{$call['action']} is not a #[Priority] Ajax endpoint; only a #[Priority] "
+                    . 'endpoint is called through /_ajax/_priority (every other call goes through /_ajax/_batch)'
+                : "{$call['controller']}::{$call['action']} is not an Ajax endpoint";
+
+            return response()->json([
+                'C_' . $call['call_id'] => static::error_envelope(new AjaxNotFoundException($reason)),
+            ]);
         }
 
         return response()->json(static::handle_calls($request, $batch_calls));
@@ -759,7 +820,8 @@ class Ajax
      * The response that refuses a whole Ajax REQUEST - a CSRF failure, a fault outside any
      * call (Ajax_Exception_Handler) - shaped so every call the client sent is answered.
      *
-     * A batch is answered {"C_<call_id>": $envelope} for every call_id its body names; the
+     * A batch (/_ajax/_batch or /_ajax/_priority) is answered {"C_<call_id>": $envelope} for
+     * every call_id its body names; the
      * client settles each call from its own key and would otherwise wait forever. A direct
      * call, and a batch whose body names no call, get the bare envelope. The side channels
      * (server clock, user's zone) are added here, so a refusal carries them like any envelope.
@@ -773,7 +835,8 @@ class Ajax
         $envelope = static::__side_channels($envelope + ['metadata' => []], 0, false);
 
         $call_ids = [];
-        if (str_ends_with('/' . ltrim($request->getPathInfo(), '/'), '/_ajax/_batch')) {
+        $path = '/' . ltrim($request->getPathInfo(), '/');
+        if (str_ends_with($path, '/_ajax/_batch') || str_ends_with($path, '/_ajax/_priority')) {
             $batch_calls = json_decode((string) $request->getContent(), true)['batch_calls'] ?? null;
 
             foreach (is_array($batch_calls) ? $batch_calls : [] as $call) {

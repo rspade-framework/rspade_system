@@ -89,7 +89,7 @@ place.
 | `python3` | `bin/mysqlpv`, the progress viewer on a database dump or restore. Base and not dev, because the schema-cache restore runs on `migrate` in every target |
 | PHP 8.5 and its extensions | the list mirrors `Rsx_Php_Requirements::REQUIRED_EXTENSIONS`, which every request enforces at boot. `sodium` and OPcache are compiled into the binary and have no package |
 | Composer | application-layer packages (`rsx:composer`) |
-| Node 23, npm 11 | the framework's own helpers are node: the realtime relay, the full-page cache proxy, rsx-lockd, the JS compilers, Playwright. npm is pinned to 11 because 12 refuses this node |
+| Node 23, npm 11 | the framework's own helpers are node: the realtime relay, Proxority, the full-page cache proxy, rsx-lockd, the JS compilers, Playwright. npm is pinned to 11 because 12 refuses this node |
 
 **Development only (the `dev` stage)**
 
@@ -133,7 +133,8 @@ All under supervisor; `supervisorctl status` lists them.
 
 | Service | What it does |
 |---|---|
-| `nginx` | web server; `:80` plain, `:8000` asserting https behind a terminator |
+| `nginx` | web server; `:80` plain, `:8000` asserting https behind a terminator, plus the loopback-only listeners of the request path (below) |
+| `proxority` | the fair-queueing proxy every PHP-bound request passes through (The request path, below). Starts after nginx and stops before it; while it is down nginx answers 502 for every page. Kept in the test worker images, which require it and run `Proxority_Live_Stack_Test` against it. `stopwaitsecs=420` is supervisor's SIGKILL deadline on its drain at a stop (60 s connect + 360 s response head) - **a proposed value, pending the owner's approval** (the program's own comment says what it bounds) |
 | `php-fpm` | two pools — `www`, and `ajax` which exists to prevent an SSR deadlock |
 | `redis` | one instance for everything: cache, realtime delivery, the full-page cache, short-lived counters, performance metrics, companion application records; LRU over all of it, capped to the machine (below) |
 | `mysql` | dev target only |
@@ -144,9 +145,31 @@ All under supervisor; `supervisorctl status` lists them.
 | `dockerd` | dev target only — the container's own Docker Engine, for the test runner |
 | `security-updates` | installs security updates and PHP patch releases every 4 hours (below) |
 
-That last one matters. The framework's documented driver for all background and
+The `tasks` program matters. The framework's documented driver for all background and
 scheduled work is a single crontab line, and a container has no crontab. Without
 it, `Task::dispatch()` succeeds and nothing ever runs it — silently.
+
+## The request path
+
+```
+client -> nginx :80 / :8000            the only access log; resolves the real client (realip)
+            system/public files, /ws, /_build, existing /_compiled and /_vendor files -> served here
+            everything else bound for PHP                                          -> 127.0.0.1:3300
+       -> proxority 127.0.0.1:3300     decides, per php-fpm pool, which pending request runs next
+       -> nginx 127.0.0.1:3301 (requests that came in on :80)
+          or    127.0.0.1:3302 (requests that came in on :8000: HTTPS=on)
+       -> php-fpm, web pool or ajax pool (/_ajax/, /_companion/)
+```
+
+Proxority (`system/bin/proxority/`, its `README.md` is the full account) holds each request
+until its pool has a worker for it: one client address takes at most N-1 of a pool's N
+workers, downloads and uploads at most half, crawlers a fifth, priority requests go first,
+and the rest take turns. Its status: `node /var/www/html/system/bin/proxority/proxority.js
+status` (or `log --follow`). The application's side is `rsx:man proxority`.
+
+**Behind a reverse proxy, declare it** (`RSPADE_TRUSTED_PROXIES`, below). Undeclared, every
+visitor arrives from the proxy's one address, and Proxority schedules the whole site as one
+client.
 
 ## Docker-in-docker (dev target)
 
@@ -213,6 +236,10 @@ re-applying it — that is gone. Production has no bind mount and so runs as
 | `80` | plain http — the development default |
 | `8000` | a reverse proxy terminates TLS ahead of the container |
 
+Never publish the loopback-only ports: `3300` (Proxority), `3301` / `3302` (the nginx
+listeners that talk to php-fpm) and `3201` (php-fpm's status pages for the `/_sys`
+Performance screen). They bind 127.0.0.1 and trust what arrives on them.
+
 `APP_URL` must name the port your browser actually uses. A container cannot
 discover its host-side mapping, so pass `RSPADE_APP_URL` (the compose file
 does). Get it wrong and the realtime socket dials the wrong port.
@@ -222,7 +249,7 @@ does). Get it wrong and the realtime socket dials the wrong port.
 | Variable | Effect |
 |---|---|
 | `RSPADE_APP_URL` | written into `.env` as `APP_URL` at start |
-| `RSPADE_TRUSTED_PROXIES` | the proxies in front of the container, addresses or CIDRs, comma-separated. Used when `.env` `TRUSTED_PROXIES` is blank; written into nginx's realip configuration at start and handed to php-fpm, so the access log and the application name the real client. A non-address or a `/0` range stops the start (`rsx:man prod`, BEHIND A LOAD BALANCER) |
+| `RSPADE_TRUSTED_PROXIES` | the proxies in front of the container, addresses or CIDRs, comma-separated. Used when `.env` `TRUSTED_PROXIES` is blank; written into nginx's realip configuration at start and handed to php-fpm, so the access log, Proxority's scheduling and the application name the real client. A non-address or a `/0` range stops the start (`rsx:man prod`, BEHIND A LOAD BALANCER) |
 | `RSPADE_CONTAINER_TARGET` | `dev` or `prod`; set by the image, not by you |
 | `PHP_FPM_WORKER_COUNT` | the total php-fpm worker count (2 or more), instead of the one calculated from the machine (below; the pools are sized in prod only) |
 | `RSPADE_PHP_MEMORY_LIMIT_MB` | `memory_limit` for php-fpm AND the CLI; `320` prod, `256` dev when unset |

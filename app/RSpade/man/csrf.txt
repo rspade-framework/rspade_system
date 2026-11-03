@@ -73,12 +73,13 @@ ENFORCEMENT POINT
     A single POST-gated check in the Dispatcher
     (App\RSpade\Core\Session\Rsx_Csrf::enforce($request)), run for both realms
     (the external API is a channel of its own and never reaches it). This one
-    seam covers /_ajax/<Controller>/<action>, /_ajax/_batch, /_upload, and native
-    #[Route(POST)] controllers. Both realms share one call because both serve the
-    same browser session and the same token - Rsx_Csrf takes no realm argument. A
-    failure returns a clean auth-style error with no stack trace: the AJAX
-    envelope (unauthorized, "CSRF token mismatch") for /_ajax and /_upload -
-    for /_ajax/_batch under EVERY call_id the batch named, so each call
+    seam covers /_ajax/<Controller>/<action>, /_ajax/_batch, /_ajax/_priority,
+    /_upload, and native #[Route(POST)] controllers. Both realms share one call
+    because both serve the same browser session and the same token - Rsx_Csrf
+    takes no realm argument. A failure returns a clean auth-style error with
+    no stack trace: the AJAX envelope (unauthorized, "CSRF token mismatch")
+    for /_ajax and /_upload - for /_ajax/_batch under EVERY call_id the batch
+    named, so each call
     rejects with it - and for a native form POST the 419 error
     page - the application's own /error/419 when it declares one, the
     framework's page otherwise (rsx:man error_pages). The portal channel

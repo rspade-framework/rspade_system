@@ -219,7 +219,10 @@ COPY supervisor/conf.d/nginx.conf      /etc/supervisor/conf.d/nginx.conf
 COPY supervisor/conf.d/php-fpm.conf    /etc/supervisor/conf.d/php-fpm.conf
 COPY supervisor/conf.d/redis.conf      /etc/supervisor/conf.d/redis.conf
 # supervisor/conf.d/fpc-proxy.conf is NOT installed: full page caching is disabled
-# (Rsx_FPC::ENABLED, backlog B-132) and nginx sends requests straight to php-fpm.
+# (Rsx_FPC::ENABLED, backlog B-132) and the full-page cache proxy is in no request path.
+# Proxority is: every PHP-bound request nginx receives goes through it (nginx/site.conf),
+# so without this program nginx answers 502 for every page.
+COPY supervisor/conf.d/proxority.conf  /etc/supervisor/conf.d/proxority.conf
 COPY supervisor/conf.d/realtime.conf   /etc/supervisor/conf.d/realtime.conf
 COPY supervisor/conf.d/rsx-lockd.conf  /etc/supervisor/conf.d/rsx-lockd.conf
 COPY supervisor/conf.d/rsx-companiond.conf /etc/supervisor/conf.d/rsx-companiond.conf

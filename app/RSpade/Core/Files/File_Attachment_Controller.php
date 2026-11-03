@@ -239,6 +239,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      */
     #[Route('/_upload', methods: ['POST'])]
     #[Portal_Route('/_upload', methods: ['POST'])]
+    #[Media]
     public static function upload(Request $request, array $params = [])
     {
         // The mandatory authorize-gate precondition (Rsx_File_Gates) and the whole ingest
@@ -493,6 +494,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      */
     #[Route('/_download/:key', methods: ['GET'])]
     #[Portal_Route('/_download/:key', methods: ['GET'])]
+    #[Media]
     public static function download_file(Request $request, array $params = [])
     {
         $key = $params['key'] ?? null;
@@ -570,6 +572,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      */
     #[Route('/_inline/:key', methods: ['GET'])]
     #[Portal_Route('/_inline/:key', methods: ['GET'])]
+    #[Media]
     public static function inline(Request $request, array $params = [])
     {
         $key = $params['key'] ?? null;
@@ -682,6 +685,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      */
     #[Route('/_download_zip/:key', methods: ['GET'])]
     #[Portal_Route('/_download_zip/:key', methods: ['GET'])]
+    #[Media]
     public static function download_multiple_zip(Request $request, array $params = [])
     {
         // -----------------------------------------------------------------------------
@@ -1215,6 +1219,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      */
     #[Route('/_thumbnail/preset/:key/:preset_name', methods: ['GET'])]
     #[Portal_Route('/_thumbnail/preset/:key/:preset_name', methods: ['GET'])]
+    #[Media]
     public static function thumbnail_preset(Request $request, array $params = [])
     {
         $key = $params['key'] ?? null;
@@ -1286,6 +1291,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      */
     #[Route('/_thumbnail/dynamic/:key/:type/:width/:height?', methods: ['GET'])]
     #[Portal_Route('/_thumbnail/dynamic/:key/:type/:width/:height?', methods: ['GET'])]
+    #[Media]
     public static function thumbnail(Request $request, array $params = [])
     {
         $key = $params['key'] ?? null;

@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Auth;
 use App\RSpade\Core\Database\Model_Fetch_Lineage;
 use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Proxority\Proxority_Directives;
 
 /**
  * Support module that builds the declarative authorization index (#[Auth] gates).
@@ -36,6 +37,9 @@ use App\RSpade\Core\Manifest\Manifest;
  *          'member' => 'Simple_Class::method' or the JS action class name,
  *          'impersonation_readable' => true,  // present only when the member carries
  *                                             // #[Portal_Impersonation_Readable]
+ *          'throttle' => 'unthrottled'|'priority'|'media',  // present only when the member
+ *                                             // carries #[Unthrottled] / #[Priority] /
+ *                                             // #[Media] (Proxority_Directives, PROXORITY-01)
  *       ],
  *     ],
  *   ]
@@ -77,6 +81,9 @@ use App\RSpade\Core\Manifest\Manifest;
  *   - an unmarked override shadowing a marked ancestor check (it would silently
  *     never run - the registry resolves the most derived declaration)
  *   - a non-string #[Auth] argument
+ *   - PROXORITY-01: #[Unthrottled] / #[Priority] / #[Media] on a member whose surface
+ *     kinds do not honour it, on a non-surface, a class or an instance method, or more
+ *     than one of them on one member (Proxority_Directives)
  *
  * CLOSED BY DEFAULT (the validation pass, validate()). After the index is built,
  * every surface is validated and ALL findings are raised as ONE RuntimeException -
@@ -979,6 +986,8 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
 
             $class_attributes = $metadata['attributes'] ?? null;
 
+            Proxority_Directives::assert_none($class_attributes, 'a class', "{$class} in {$file}");
+
             // Resolved once per class: every #[Ajax_Endpoint] it declares serves the
             // same realm (the declaration is class-level).
             $ajax_realm = static::_resolve_ajax_realm($class_attributes, $file, "{$class} in {$file}");
@@ -1049,6 +1058,18 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
                     $surfaces[$target]['impersonation_readable'] = true;
                 }
 
+                // #[Unthrottled] / #[Priority] / #[Media]: Proxority's scheduling directive,
+                // validated against the kinds just recorded (PROXORITY-01, a FATAL).
+                $throttle = Proxority_Directives::resolve(
+                    $method_attributes,
+                    $is_surface ? $surfaces[$target]['kinds'] : [],
+                    $location
+                );
+
+                if ($throttle !== null) {
+                    $surfaces[$target]['throttle'] = $throttle;
+                }
+
                 if ($is_surface) {
                     static::_record_public_contradiction(
                         $violations,
@@ -1063,6 +1084,12 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
             // Fetchable relationships are public INSTANCE methods. They are reached
             // through fetch() or portal_fetch(), so their realm is the request's.
             foreach (($metadata['public_instance_methods'] ?? []) as $method_name => $method_data) {
+                Proxority_Directives::assert_none(
+                    $method_data['attributes'] ?? null,
+                    'an instance method',
+                    "{$class}::{$method_name} in {$file}"
+                );
+
                 // Every OTHER surface attribute on an instance method is the NOT STATIC
                 // finding: surfaces are indexed off the public static map, so the member
                 // would carry a dispatch attribute and no gate.

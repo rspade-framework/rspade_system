@@ -60,7 +60,7 @@ use App\RSpade\Lib\Flash\Flash_Alert;
  *    and declared for the request (Portal_Session::_declare_resolved_site()), then the
  *    application's Portal_Main::init() (once per process), CSRF on a POST, and the
  *    rsx:debug dev-auth identity.
- * 2. AJAX channel: /_ajax/_batch and /_ajax/<Controller>/<action>, to the Ajax core.
+ * 2. AJAX channel: /_ajax/_batch, /_ajax/_priority and /_ajax/<Controller>/<action>, to the Ajax core.
  * 3. PAGE channel: a public file when one exists at the path; the /error/* preview
  *    namespace; route matching (and the staff default route); an API key on a
  *    file-serving route (Rsx_Api_Bearer::authenticate_file_route()); site membership (staff);
@@ -202,8 +202,11 @@ class Dispatcher
     }
 
     /**
-     * The AJAX channel: /_ajax/_batch, or /_ajax/<Controller>/<action>. Any other path
-     * under /_ajax/ is not found, which the AJAX policy answers with the not_found envelope.
+     * The AJAX channel: /_ajax/_batch, /_ajax/_priority (one #[Priority] call, which
+     * Proxority schedules ahead of the queue by its path), or /_ajax/<Controller>/<action>.
+     * The two named transports are matched BEFORE the direct-URL pattern, which would also
+     * match them. Any other path under /_ajax/ is not found, which the AJAX policy answers
+     * with the not_found envelope.
      *
      * @param Request $request
      * @param string $path The path inside the realm
@@ -213,6 +216,10 @@ class Dispatcher
     {
         if ($path === '/_ajax/_batch') {
             return Ajax::handle_batch_request($request);
+        }
+
+        if ($path === '/_ajax/_priority') {
+            return Ajax::handle_priority_request($request);
         }
 
         if (preg_match('#^/_ajax/([A-Za-z_][A-Za-z0-9_]*)/([A-Za-z_][A-Za-z0-9_]*)$#', $path, $matches)) {

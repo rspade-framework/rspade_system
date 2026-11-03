@@ -35,6 +35,7 @@ class Field_Length_Controller extends Rsx_Controller_Abstract
      *
      * @param array $params script, v
      */
+    #[Unthrottled]
     #[Route('/_field_lengths/:script', methods: ['GET'])]
     #[Portal_Route('/_field_lengths/:script', methods: ['GET'])]
     public static function script(Request $request, array $params = [])

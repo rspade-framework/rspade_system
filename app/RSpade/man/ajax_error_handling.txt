@@ -488,6 +488,18 @@ TRANSPORT
     every call_id the batch named (side channels included), so each caller
     receives it.
 
+    Priority Calls
+    --------------
+    A call to an endpoint declared #[Priority] is the one exception to the
+    shared batch: Ajax.js sends it ALONE to POST /_ajax/_priority, the same
+    envelope carrying exactly one call, answered the same way. That path is
+    what the Proxority proxy in front of php-fpm schedules ahead of its queue
+    (it never reads a body). The server refuses a body with more than one call
+    (HTTP 400) and answers a call to an endpoint without #[Priority] with the
+    not_found envelope; a #[Priority] endpoint reached through /_ajax/_batch
+    still runs, unprioritised. Outside the RSpade container nothing schedules
+    the path and it behaves exactly as /_ajax/_batch. rsx:man proxority.
+
     The Direct URL
     --------------
     POST /_ajax/<Controller>/<action> is answered with the bare envelope,
@@ -664,3 +676,4 @@ SEE ALSO
     rsx:man error_handling - General error handling
     rsx:man model_fetch    - ORM fetch, where overlapping reads coalesce
     rsx:man config_rsx     - rsx.ajax.batching, rsx.ajax.batch_max_calls
+    rsx:man proxority      - #[Priority] endpoints and /_ajax/_priority
