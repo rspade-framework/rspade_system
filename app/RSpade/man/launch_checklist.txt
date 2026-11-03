@@ -79,11 +79,13 @@ CHECKS
 
     - Client address behind a proxy. Anything in front of nginx (load
       balancer, TLS terminator, CDN) appends X-Forwarded-For and is listed in
-      TRUSTED_PROXIES (addresses or CIDRs, comma-separated). Unlisted, every
-      visitor shares one login-throttle bucket. Never list a range clients
-      reach nginx from directly. Verify with one deliberate failed login and
-      read the address recorded.
+      TRUSTED_PROXIES (addresses or CIDRs, comma-separated), or in the
+      RSpade container's RSPADE_TRUSTED_PROXIES. Unlisted, every visitor shares
+      one login-throttle bucket and nginx logs only the proxy. Never list a
+      range clients reach nginx from directly. Verify with one deliberate
+      failed login and read the address recorded, and read the access log.
           TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10      # .env
+          RSPADE_TRUSTED_PROXIES: 172.18.0.3         # or the compose file
           grep "Login failure" <storage>/logs/laravel.log
 
     - Mail delivery is live. MAIL_DELIVERY=live, explicitly - "suppressed"

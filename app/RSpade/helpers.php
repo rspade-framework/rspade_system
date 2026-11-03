@@ -1381,6 +1381,26 @@ function response_form_question(string $key, array $question)
 }
 
 /**
+ * The proxies in front of this box, as the effective list config('rsx.http.trusted_proxies')
+ * holds: .env TRUSTED_PROXIES when it names any, else the container's RSPADE_TRUSTED_PROXIES,
+ * else none (loopback is always trusted, by the TrustProxies middleware). Comma-separated
+ * addresses or CIDR ranges, trimmed, blanks dropped.
+ *
+ * The container variable has its own name because a real environment variable overrides
+ * .env: named TRUSTED_PROXIES, it would win wherever it was visible and reverse this
+ * precedence. The docker entrypoint applies the same rule to nginx (rspade-trusted-proxies),
+ * so the web server and the application always agree.
+ *
+ * @return array<int, string>
+ */
+function rsx_trusted_proxy_list(?string $from_env, ?string $from_container): array
+{
+    $split = fn (?string $value) => array_values(array_filter(array_map('trim', explode(',', (string) $value)), 'strlen'));
+
+    return $split($from_env) ?: $split($from_container);
+}
+
+/**
  * Create an authentication required error response
  *
  * Use this when the user is not logged in and needs to authenticate.

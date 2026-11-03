@@ -112,7 +112,8 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     const INVITATION_EXPIRED = 'expired';
 
     // Permission constants - must match integer values used in $enums['role_id']['permissions']
-    const PERM_MANAGE_SITES_ROOT = 1;
+    // 1 is retired: it was an installation-wide permission, which no role may hold - authority
+    // over every site is a developer's. Never reuse it.
     const PERM_MANAGE_SITE_BILLING = 2;
     const PERM_MANAGE_SITE_SETTINGS = 3;
     const PERM_MANAGE_SITE_USERS = 4;
@@ -138,11 +139,6 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      * @var array<int, array{constant: string, label: string, description: string}>
      */
     public static $permission_definitions = [
-        1 => [
-            'constant' => 'PERM_MANAGE_SITES_ROOT',
-            'label' => 'Manage All Sites',
-            'description' => 'Administer every site on the installation.',
-        ],
         2 => [
             'constant' => 'PERM_MANAGE_SITE_BILLING',
             'label' => 'Manage Site Billing',
@@ -228,7 +224,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
             200 => [
                 'constant' => 'ROLE_ROOT_ADMIN',
                 'label' => 'Root Admin',
-                'permissions' => [1, 2, 3, 4, 5, 6, 7], // All core PERM_* (1-7)
+                'permissions' => [2, 3, 4, 5, 6, 7], // All core PERM_* (2-7)
                 'can_admin_roles' => [200, 300, 400, 500, 600, 700], // Itself and every role below
                 'selectable' => false, // Root admin assigned by system only
             ],

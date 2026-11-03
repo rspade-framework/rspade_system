@@ -59,13 +59,14 @@ Core permissions, granted by role:
 
 | ID | Constant | Default holders |
 |---|---|---|
-| 1 | `PERM_MANAGE_SITES_ROOT` | Developer, Root Admin |
 | 2 | `PERM_MANAGE_SITE_BILLING` | Site Owner+ |
 | 3 | `PERM_MANAGE_SITE_SETTINGS` | Site Admin+ |
 | 4 | `PERM_MANAGE_SITE_USERS` | Site Admin+ |
 | 5 | `PERM_VIEW_USER_ACTIVITY` | Manager+ |
 | 6 | `PERM_EDIT_DATA` | User+ |
 | 7 | `PERM_VIEW_DATA` | Viewer+ |
+
+**Permissions are per site; none is installation-wide.** Authority over every site is a developer's (`Session::is_developer()`, the `/_sys` panel), never a role's - gate an installation-wide screen on `is_developer` / `is_sysadmin`, never on a permission a tenant's founder holds. Permission 1 is retired and not reused.
 
 Supplementary permissions, granted by no role by default: `PERM_API_ACCESS` (8), `PERM_DATA_EXPORT` (9).
 

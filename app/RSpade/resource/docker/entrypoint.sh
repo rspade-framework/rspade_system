@@ -494,6 +494,26 @@ fi
 rspade-sizing apply "$TARGET" || die "could not size the container (see the line above)"
 
 # -----------------------------------------------------------------------------
+# 6b2. The proxies in front of the container
+# -----------------------------------------------------------------------------
+# AFTER sizing, which rewrites the production pool files, and BEFORE supervisor starts
+# nginx and php-fpm, which read their configuration once. .env TRUSTED_PROXIES, else the
+# container's RSPADE_TRUSTED_PROXIES (set in the compose file), becomes nginx's realip
+# configuration - so the access log and REMOTE_ADDR name the real client - and the
+# container value is handed to php-fpm, whose workers never see the container's
+# environment. The script holds the rule and the reasoning (rspade-trusted-proxies).
+#
+# A value that is not a list of addresses or CIDR ranges stops the start: it is written
+# into nginx's configuration, and a /0 range would let any client name its own address.
+#
+# Skipped when the script is absent: an older image under a newer entrypoint.
+if [ -f /usr/local/bin/rspade-trusted-proxies ]; then
+    trusted_proxies_said="$(bash /usr/local/bin/rspade-trusted-proxies apply --env-file="$APP_DIR/.env" 2>&1)" \
+        || die "the trusted proxies are not valid: ${trusted_proxies_said}"
+    say "$trusted_proxies_said"
+fi
+
+# -----------------------------------------------------------------------------
 # 6c. Security updates, BEFORE anything serves
 # -----------------------------------------------------------------------------
 # A PHP security release can grant a remote shell on any unpatched PHP, and an image is

@@ -19,7 +19,7 @@
 #
 #   RSPADE_PHP_MEMORY_LIMIT_MB   L: memory_limit for php-fpm AND the CLI    320 prod, 256 dev
 #   RSPADE_PHP_TYPICAL_MB        A: what one PHP process typically holds    128
-#   RSPADE_PHP_WORKERS_PER_CORE  the CPU ceiling's factor                   4
+#   RSPADE_PHP_WORKERS_PER_CORE  the CPU ceiling's factor                   3
 #   PHP_FPM_WORKER_COUNT         the php-fpm total, instead of calculated   (2 or more)
 #   RSX_TASK_MAX_WORKERS         on-demand task workers; also read from the project .env
 #   RSX_TASK_SCHEDULED_WORKERS   scheduled task workers; also read from the project .env
@@ -363,7 +363,7 @@ default_limit=320
 
 take_switch limit_mb RSPADE_PHP_MEMORY_LIMIT_MB "$default_limit" 1
 take_switch typical_mb RSPADE_PHP_TYPICAL_MB 128 1
-take_switch per_core RSPADE_PHP_WORKERS_PER_CORE 4 1
+take_switch per_core RSPADE_PHP_WORKERS_PER_CORE 3 1
 take_switch extra_mb RSPADE_RESERVED_MB 0 0
 take_switch innodb_mb MYSQL_INNODB_BUFFER_MB 64 1
 take_switch redis_mb REDIS_MAXMEMORY_MB "$(redis_cap "$memory_mb")" 1

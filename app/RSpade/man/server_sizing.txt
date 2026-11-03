@@ -69,7 +69,7 @@ THE BUDGET
         processes  = min( (memory - reserved) / A,           typical, in RAM
                           (memory + swap - reserved) / L,    worst case, RAM + swap
                           140 )                              THE PROCESS CAP
-        php-fpm    = the most, at most 4 per core, for which
+        php-fpm    = the most, at most 3 per core, for which
                      php-fpm + tasks(php-fpm) fits in processes; at least 2
         tasks(n)   = max(2, round(n / 4))                    up to 16 (n = 64)
                    = 16 + floor((n - 64) / 25)               past it
@@ -92,12 +92,13 @@ THE BUDGET
 
         Machine                     php-fpm   tasks (sched + on demand)   Redis
         2 GB, 1 core, no swap         2         2 (1 + 1)                  102 MB
-        2 GB, 1 core, 2 GB swap       4         2 (1 + 1)                  102 MB
-        4 GB, 2 cores, no swap        7         2 (1 + 1)                  204 MB
-        8 GB, 4 cores, no swap       16         4 (1 + 3)                  409 MB
-        16 GB, 8 cores, no swap      32         8 (3 + 5)                  819 MB
-        32 GB, 16 cores, no swap     64        16 (5 + 11)                1638 MB
-        64 GB, 32 cores and more    122        18 (6 + 12)                2048 MB
+        2 GB, 1 core, 2 GB swap       3         2 (1 + 1)                  102 MB
+        4 GB, 2 cores, no swap        6         2 (1 + 1)                  204 MB
+        8 GB, 4 cores, no swap       12         3 (1 + 2)                  409 MB
+        16 GB, 8 cores, no swap      24         6 (2 + 4)                  819 MB
+        32 GB, 16 cores, no swap     48        12 (4 + 8)                 1638 MB
+        64 GB, 32 cores, no swap     96        17 (6 + 11)                2048 MB
+        44 cores and more           122        18 (6 + 12)                2048 MB
 
 THE PROCESS CAP
     The calculation never plans more than 140 PHP processes, however large
@@ -106,7 +107,7 @@ THE PROCESS CAP
     that is not a worker: the cron tick, commands and migrations, the two kill
     workers, an operator's shell, rsx:debug.
 
-    A machine large enough to reach the cap - from about 32 cores - is past
+    A machine large enough to reach the cap - from about 44 cores - is past
     the point where defaults should decide. Its container says so three ways
     when nobody has set the counts: a NOTICE line in the container output at
     start, one warning in the Laravel log per container start (written by the
@@ -128,7 +129,7 @@ SETTING THE COUNTS BY HAND
                                       the project .env
         RSPADE_PHP_MEMORY_LIMIT_MB    memory_limit, php-fpm and the CLI
         RSPADE_PHP_TYPICAL_MB         the typical size the RAM ceiling uses
-        RSPADE_PHP_WORKERS_PER_CORE   the CPU ceiling (4)
+        RSPADE_PHP_WORKERS_PER_CORE   the CPU ceiling (3)
         REDIS_MAXMEMORY_MB            the Redis cap
         RSPADE_RESERVED_MB            memory to leave alone beside ours;
                                       companion applications are not

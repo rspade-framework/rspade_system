@@ -222,11 +222,12 @@ does). Get it wrong and the realtime socket dials the wrong port.
 | Variable | Effect |
 |---|---|
 | `RSPADE_APP_URL` | written into `.env` as `APP_URL` at start |
+| `RSPADE_TRUSTED_PROXIES` | the proxies in front of the container, addresses or CIDRs, comma-separated. Used when `.env` `TRUSTED_PROXIES` is blank; written into nginx's realip configuration at start and handed to php-fpm, so the access log and the application name the real client. A non-address or a `/0` range stops the start (`rsx:man prod`, BEHIND A LOAD BALANCER) |
 | `RSPADE_CONTAINER_TARGET` | `dev` or `prod`; set by the image, not by you |
 | `PHP_FPM_WORKER_COUNT` | the total php-fpm worker count (2 or more), instead of the one calculated from the machine (below; the pools are sized in prod only) |
 | `RSPADE_PHP_MEMORY_LIMIT_MB` | `memory_limit` for php-fpm AND the CLI; `320` prod, `256` dev when unset |
 | `RSPADE_PHP_TYPICAL_MB` | what one PHP process typically holds, for the RAM ceiling; `128` when unset |
-| `RSPADE_PHP_WORKERS_PER_CORE` | the CPU ceiling; `4` when unset |
+| `RSPADE_PHP_WORKERS_PER_CORE` | the CPU ceiling; `3` when unset |
 | `RSX_TASK_MAX_WORKERS` | on-demand task workers; also read from the project `.env`; two thirds of the calculated task workers when unset |
 | `RSX_TASK_SCHEDULED_WORKERS` | scheduled task workers; also read from the project `.env`; a third of the calculated task workers (at least 1) when unset |
 | `REDIS_MAXMEMORY_MB` | the Redis cap; scaled to the machine when unset |
@@ -288,7 +289,7 @@ that script):
 redis      = 32 MB under 1 GB, else min(2 GB, max(64 MB, 5% of memory))
 reserved   = 600 fixed + min(2 GB, max(200 MB, 5%)) scratch + redis x 1.25 (+ dev MySQL)
 processes  = min(RAM / 128, (RAM + swap) / 320, 140)   # every PHP process; 140 is the cap
-php-fpm    = at most 4 per core, the rest of processes after the task workers
+php-fpm    = at most 3 per core, the rest of processes after the task workers
 tasks      = about php-fpm / 4 (at least 2), one more per 25 php-fpm past 16
              split 1 scheduled : 2 on demand, at least one of each
 ```
@@ -301,13 +302,13 @@ cluster - is `php artisan rsx:man server_sizing`.
 | Machine | php-fpm | Web | Ajax | Task workers (sched + on demand) | Redis |
 |---|---|---|---|---|---|
 | 2 GB, 1 core, no swap | 2 (floor) | 1 | 1 | 2 (1 + 1) | 102 MB |
-| 2 GB, 1 core, 2 GB swap | 4 | 2 | 2 | 2 (1 + 1) | 102 MB |
-| 4 GB, 2 cores, no swap | 7 | 2 | 5 | 2 (1 + 1) | 204 MB |
-| 4 GB, 2 cores, 4 GB swap | 8 | 2 | 6 | 2 (1 + 1) | 204 MB |
-| 8 GB, 4 cores, no swap | 16 | 4 | 12 | 4 (1 + 3) | 409 MB |
-| 16 GB, 8 cores, no swap | 32 | 8 | 24 | 8 (3 + 5) | 819 MB |
-| 32 GB, 16 cores, no swap | 64 | 16 | 48 | 16 (5 + 11) | 1638 MB |
-| 64 GB, 32 cores and more | 122 | 30 | 92 | 18 (6 + 12) - the cap | 2048 MB |
+| 2 GB, 1 core, 2 GB swap | 3 | 1 | 2 | 2 (1 + 1) | 102 MB |
+| 4 GB, 2 cores, no swap | 6 | 2 | 4 | 2 (1 + 1) | 204 MB |
+| 8 GB, 4 cores, no swap | 12 | 3 | 9 | 3 (1 + 2) | 409 MB |
+| 16 GB, 8 cores, no swap | 24 | 6 | 18 | 6 (2 + 4) | 819 MB |
+| 32 GB, 16 cores, no swap | 48 | 12 | 36 | 12 (4 + 8) | 1638 MB |
+| 64 GB, 32 cores, no swap | 96 | 24 | 72 | 17 (6 + 11) | 2048 MB |
+| 44 cores and more | 122 | 30 | 92 | 18 (6 + 12) - the cap | 2048 MB |
 
 A machine that reaches the cap says so at start, in the Laravel log once per start, and
 in `rsx:health`, unless the counts are already set by hand.

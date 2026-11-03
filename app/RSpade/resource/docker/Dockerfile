@@ -255,6 +255,7 @@ COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run
 COPY task-run.sh       /usr/local/bin/rspade-task-run
 COPY retry-run.sh      /usr/local/bin/rspade-retry-run
 COPY sizing.sh         /usr/local/bin/rspade-sizing
+COPY trusted-proxies.sh /usr/local/bin/rspade-trusted-proxies
 COPY security-update.sh /usr/local/bin/rspade-security-update
 COPY security-updates-run.sh /usr/local/bin/rspade-security-updates-run
 COPY claude-run.sh     /usr/local/bin/claude
@@ -286,6 +287,7 @@ RUN chmod 755 /usr/local/bin/rspade-entrypoint \
               /usr/local/bin/rspade-task-run \
               /usr/local/bin/rspade-retry-run \
               /usr/local/bin/rspade-sizing \
+              /usr/local/bin/rspade-trusted-proxies \
               /usr/local/bin/rspade-security-update \
               /usr/local/bin/rspade-security-updates-run \
               /usr/local/bin/claude \

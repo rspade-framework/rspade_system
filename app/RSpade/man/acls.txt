@@ -110,13 +110,17 @@ PERMISSIONS
 
         ID  Constant                    Granted By Default To
         --  --------                    ---------------------
-        1   PERM_MANAGE_SITES_ROOT      Root Admin only
         2   PERM_MANAGE_SITE_BILLING    Site Owner+
         3   PERM_MANAGE_SITE_SETTINGS   Site Admin+
         4   PERM_MANAGE_SITE_USERS      Site Admin+
         5   PERM_VIEW_USER_ACTIVITY     Manager+
         6   PERM_EDIT_DATA              User+
         7   PERM_VIEW_DATA              Viewer+
+
+    Permissions are PER SITE: a role or a grant says what a user may do on the
+    site they belong to. There is no installation-wide permission. Authority
+    over every site is a developer's (Session::is_developer(), the /_sys panel),
+    never a role's. Permission 1 is retired and not reused.
 
     Supplementary Permissions (not granted by any role by default)
 
@@ -168,7 +172,6 @@ MODEL IMPLEMENTATION
             const ROLE_VIEWER = 700;
 
             // Permission constants
-            const PERM_MANAGE_SITES_ROOT = 1;
             const PERM_MANAGE_SITE_BILLING = 2;
             const PERM_MANAGE_SITE_SETTINGS = 3;
             const PERM_MANAGE_SITE_USERS = 4;

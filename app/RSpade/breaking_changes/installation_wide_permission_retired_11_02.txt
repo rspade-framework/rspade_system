@@ -1,0 +1,33 @@
+PERM_MANAGE_SITES_ROOT IS RETIRED: NO PERMISSION SPANS EVERY SITE
+Date: 2026-11-02
+
+IF YOU DO NOTHING: any code of yours that names User_Model::PERM_MANAGE_SITES_ROOT fails with "Undefined constant", and a gate of yours on permission 1 now refuses everybody.
+
+SUMMARY
+    Category 2: a public constant removed.
+
+THE CHANGE
+    Permission 1, "Manage All Sites", was granted to every site's founder role
+    (ROLE_ROOT_ADMIN). Nothing in the framework read it, but its name invited an
+    installation-wide screen to be gated on it - and on a multi-tenant install every
+    tenant's founder would then pass that gate. Permissions are per site; authority over
+    every site is a developer's (Session::is_developer(), the /_sys panel).
+
+THE FIX
+    The constant and its catalogue entry are gone, no role grants it, and a migration
+    removes any _user_permissions grant or deny row for permission 1. The id is not
+    reused.
+
+ACTION REQUIRED
+    Search your code for PERM_MANAGE_SITES_ROOT and for a literal permission 1:
+
+        grep -rn "PERM_MANAGE_SITES_ROOT\|has_permission(1)\|permission_id.*= *1\b" rsx
+
+    - A gate on it meant "may act across every site": gate on a developer instead
+      (#[Auth('is_sysadmin')], or Session::is_developer() in an #[Auth_Check]).
+    - A gate on it meant "the top of this site": use the site's own top permission or
+      role (PERM_MANAGE_SITE_SETTINGS, ROLE_ROOT_ADMIN).
+
+VERIFICATION
+    php artisan rsx:check passes, and the screen you converted admits the people it
+    should, as a developer and as a site's founder.

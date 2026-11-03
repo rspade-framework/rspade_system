@@ -347,12 +347,32 @@ THE RECOMMENDED DEPLOYMENT
 
   BEHIND A LOAD BALANCER, TLS TERMINATOR OR CDN
     The client's address is $request->ip(), and X-Forwarded-For is believed
-    only from a TRUSTED PROXY: loopback (the framework's own nginx -> FPC
-    proxy -> nginx hops) plus config('rsx.http.trusted_proxies'), which ships
-    EMPTY. A box with anything in front of nginx MUST list that device's
-    addresses or CIDRs, separated by commas, in its .env:
+    only from a TRUSTED PROXY: loopback (hops inside the box) plus
+    config('rsx.http.trusted_proxies'), which ships EMPTY. A box with anything
+    in front of nginx MUST list that device's addresses or CIDRs, separated by
+    commas, in its .env:
 
         TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10
+
+    or, in the RSpade container, once in the container's environment - the
+    compose file - so .env need not repeat it:
+
+        environment:
+          RSPADE_TRUSTED_PROXIES: ${PROXY_IP:-172.18.0.3}
+
+    .env wins when it names any; blank, the container value applies; both
+    blank, loopback only. At every start the container's entrypoint writes the
+    effective list into nginx's realip configuration
+    (/etc/nginx/conf.d/rspade-realip.conf), so the access log and REMOTE_ADDR
+    name the client, and hands the container value to php-fpm, whose workers
+    never see the container's environment. A value that is not addresses or
+    CIDR ranges, or a /0 range, stops the container from starting: trusting
+    every address lets any client name its own, 127.0.0.1 included.
+
+    Use ONE value for the proxy's pinned address and the trusted entry (the
+    PROXY_IP above, also the proxy's ipv4_address), so they cannot drift. Do not
+    trust the whole container network: its gateway is what host-side callers of
+    a published port arrive as.
 
     The entry is the address nginx sees the connection arrive FROM - for a
     reverse proxy in a container beside the application, that container's

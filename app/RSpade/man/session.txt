@@ -1937,10 +1937,11 @@ LOGIN THROTTLE (BRUTE FORCE)
         client wrote itself is never the answer. X-Real-IP is not read, and
         X-Forwarded-Host/-Port/-Prefix are never trusted.
 
-        Trusted: loopback (127.0.0.1, ::1 - the framework's own nginx -> FPC
-        proxy -> nginx hops) plus config('rsx.http.trusted_proxies'), empty by
-        default. A box behind a load balancer, TLS terminator or CDN MUST list
-        that device's addresses or CIDRs in TRUSTED_PROXIES in .env; until it does, every request
+        Trusted: loopback (127.0.0.1, ::1 - hops inside the box) plus
+        config('rsx.http.trusted_proxies'), empty by default. A box behind a
+        load balancer, TLS terminator or CDN MUST list that device's addresses
+        or CIDRs in TRUSTED_PROXIES in .env, or in the RSpade container's
+        RSPADE_TRUSTED_PROXIES (rsx:man config_rsx); until it does, every request
         appears to come from the device and the address bucket counts every
         visitor as one (rsx:man prod, rsx:man launch_checklist).
 

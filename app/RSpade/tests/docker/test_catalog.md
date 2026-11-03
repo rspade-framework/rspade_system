@@ -4,7 +4,7 @@
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
-| DOCKER-FPM-01 | the RAM and RAM + swap ceilings bound every PHP process, php-fpm is held to 4 a core, and the task workers are about a quarter of php-fpm (at least 2); php-fpm never below 2 | cli | `plan` for 2 GB/1 core with and without 2 GB swap, 4 GB/2 cores with and without 4 GB swap, 8 GB/4, 16 GB/8 | php-fpm 2, 4, 7, 8, 16, 32; tasks 2, 2, 2, 2, 4, 8 | implemented | 2026-10-31 |
+| DOCKER-FPM-01 | the RAM and RAM + swap ceilings bound every PHP process, php-fpm is held to 3 a core, and the task workers are about a quarter of php-fpm (at least 2); php-fpm never below 2 | cli | `plan` for 2 GB/1 core with and without 2 GB swap, 4 GB/2 cores with and without 4 GB swap, 8 GB/4, 16 GB/8 | php-fpm 2, 4, 7, 8, 16, 32; tasks 2, 2, 2, 2, 4, 8 | implemented | 2026-10-31 |
 | DOCKER-FPM-02 | the Redis cap is 32 MB under 1 GB, otherwise max(64, 5%), at most 2 GB; the scratch reservation is at most 2 GB too | cli | 512 MB, 1 GB, 1.2 GB, 32 GB, 64 GB; 128 GB | 32, 64, 64, 1638, 2048; scratch 2048 | implemented | 2026-10-31 |
 | DOCKER-FPM-13 | past 64 php-fpm workers the task workers grow by one per 25; the calculation plans at most 140 PHP processes and says so, a count set by hand is never capped and brings no notice; the task workers split one scheduled to two on demand | cli | 16 cores/32 GB, 32/64 GB, 128/512 GB; `PHP_FPM_WORKER_COUNT=300`; `RSX_TASK_SCHEDULED_WORKERS=3` | 64 + 16 (5/11); 122 + 18 (6/12) and the notice; 300 + 25, no notice; 3 scheduled | implemented | 2026-10-31 |
 | DOCKER-FPM-03 | the reservation (fixed, scratch, Redis, MySQL on dev, extra) and the three ceilings are reported | cli | `plan 2 4096 4096`, `plan 2 4096 0 dev` | the printed reservation and ceilings | implemented | 2026-10-31 |
@@ -41,3 +41,14 @@
 | DOCKER-SEC-05 | the health row follows the status: OK current or installed-and-reloaded; WARN absent, off, failed, restart pending | php | a scratch status file | the statuses | implemented | 2026-10-29 |
 | DOCKER-SEC-06 | in the built dev image: the allow-list is the security pocket + the PHP PPA with MySQL held back; the start-up check runs before "Starting services" and reports; the program is RUNNING; USR2 reloads php-fpm on the same master and pages keep serving | manual | `docker run` of the image, `apt-config dump`, `supervisorctl status`, a probe page before and after USR2 | as stated; status `current` with PHP 8.5.12 | verified by hand 2026-10-29 | 2026-10-29 |
 | DOCKER-SEC-07 | an available PHP patch release is installed | manual | `unattended-upgrade --dry-run` on a container holding PHP 8.5.11 | php8.5-* -> 8.5.12 selected, nothing else | verified by hand 2026-10-29 (dry run) | 2026-10-29 |
+
+## Trusted_Proxies_Test (php) - the proxies in front of the container
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| TP-01 | the application list prefers .env, then the container value | php | rsx_trusted_proxy_list() over each combination | .env's; else the container's; else empty | implemented | 2026-11-03 |
+| TP-02 | the container value reaches nginx and both pools | php | `apply` with RSPADE_TRUSTED_PROXIES, blank .env | realip lists loopback + each token; both pools carry the literal | implemented | 2026-11-03 |
+| TP-03 | .env wins for nginx; the pools still carry the container value | php | both set | realip has .env's only; pools the container's | implemented | 2026-11-03 |
+| TP-04 | nothing declared leaves loopback and clears an earlier start | php | a start with a value, then one without | two set_real_ip_from lines; no pool env line | implemented | 2026-11-03 |
+| TP-05 | anything but addresses stops the start | php | `1.2.3.4;`, `0.0.0.0/0`, `::/0`, `foo`, an out-of-range octet, a newline, `/33` | non-zero exit, ERROR, nothing written | implemented | 2026-11-03 |
+| TP-06 | nginx accepts the generated file | php | `nginx -t` over a config including it | exit 0 | implemented | 2026-11-03 |

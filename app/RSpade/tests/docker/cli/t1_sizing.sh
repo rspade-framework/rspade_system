@@ -31,17 +31,17 @@ plan_is() {
 }
 
 # ---- 1. The worked table: the memory ceilings bound every PHP process, php-fpm is held
-# to 4 a core, and the task workers are about a quarter of php-fpm, never below 2. -------
+# to 3 a core, and the task workers are about a quarter of php-fpm, never below 2. -------
 # 2 GB / 1 core / no swap: RAM + swap at 320 MB allows 3 processes - the floors win.
 plan_is "total=2 web=1 web_standby=1 ajax=1 ajax_standby=1 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=320"   1 2048 0
-# The same box with 2 GB of swap: php-fpm at the CPU ceiling (4 a core), tasks at the floor.
-plan_is "total=4 web=2 web_standby=1 ajax=2 ajax_standby=1 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=320"   1 2048 2048
-# 4 GB / 2 cores / no swap: 9 processes - 7 php-fpm and the floor of 2 tasks.
-plan_is "total=7 web=2 web_standby=1 ajax=5 ajax_standby=2 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=320"   2 4096 0
-# With 4 GB of swap php-fpm reaches the CPU ceiling, 8, and 8:2 is the 4:1 split.
-plan_is "total=8 web=2 web_standby=1 ajax=6 ajax_standby=3 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=320"   2 4096 4096
-plan_is "total=16 web=4 web_standby=2 ajax=12 ajax_standby=4 tasks=4 scheduled=1 on_demand=3 redis_mb=409 limit_mb=320" 4 8192 0
-plan_is "total=32 web=8 web_standby=4 ajax=24 ajax_standby=4 tasks=8 scheduled=3 on_demand=5 redis_mb=819 limit_mb=320" 8 16384 0
+# The same box with 2 GB of swap: php-fpm at the CPU ceiling (3 a core), tasks at the floor.
+plan_is "total=3 web=1 web_standby=1 ajax=2 ajax_standby=1 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=320"   1 2048 2048
+# 4 GB / 2 cores / no swap: php-fpm at the CPU ceiling, 6, and the floor of 2 tasks.
+plan_is "total=6 web=2 web_standby=1 ajax=4 ajax_standby=2 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=320"   2 4096 0
+# Swap adds nothing once the CPU ceiling is what binds.
+plan_is "total=6 web=2 web_standby=1 ajax=4 ajax_standby=2 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=320"   2 4096 4096
+plan_is "total=12 web=3 web_standby=1 ajax=9 ajax_standby=4 tasks=3 scheduled=1 on_demand=2 redis_mb=409 limit_mb=320" 4 8192 0
+plan_is "total=24 web=6 web_standby=3 ajax=18 ajax_standby=4 tasks=6 scheduled=2 on_demand=4 redis_mb=819 limit_mb=320" 8 16384 0
 
 # ---- 2. The Redis cap: 32 under 1 GB, otherwise max(64, 5%). ---------------------------
 plan_line 1 512 0 | grep -q "redis_mb=32 "    || fail "a box under 1 GB gets 32 MB of Redis"
@@ -52,8 +52,8 @@ plan_line 8 65536 0 | grep -q "redis_mb=2048 " || fail "64 GB is capped at 2 GB"
 bash "$SCRIPT" plan 8 131072 0 | grep -q "+ 2048 scratch" || fail "scratch is capped at 2 GB"
 
 # ---- 2b. Past 64 php-fpm, one more task worker per 25; and the 140-process cap. -------
-plan_is "total=64 web=16 web_standby=4 ajax=48 ajax_standby=4 tasks=16 scheduled=5 on_demand=11 redis_mb=1638 limit_mb=320" 16 32768 0
-plan_is "total=122 web=30 web_standby=4 ajax=92 ajax_standby=4 tasks=18 scheduled=6 on_demand=12 redis_mb=2048 limit_mb=320" 32 65536 0
+plan_is "total=48 web=12 web_standby=4 ajax=36 ajax_standby=4 tasks=12 scheduled=4 on_demand=8 redis_mb=1638 limit_mb=320" 16 32768 0
+plan_is "total=96 web=24 web_standby=4 ajax=72 ajax_standby=4 tasks=17 scheduled=6 on_demand=11 redis_mb=2048 limit_mb=320" 32 65536 0
 plan_is "total=122 web=30 web_standby=4 ajax=92 ajax_standby=4 tasks=18 scheduled=6 on_demand=12 redis_mb=2048 limit_mb=320" 128 524288 0
 bash "$SCRIPT" plan 128 524288 0 | grep -q "^notice    capped at 140 PHP processes" || fail "a capped box says so"
 bash "$SCRIPT" plan 16 32768 0 | grep -q "^notice" && fail "a box under the cap has no notice"
@@ -63,20 +63,20 @@ PHP_FPM_WORKER_COUNT=300 bash "$SCRIPT" plan 128 524288 0 | grep -q "^notice" &&
 # ---- 3. The reservation and the ceilings are reported. --------------------------------
 OUT="$(bash "$SCRIPT" plan 2 4096 4096)"
 echo "$OUT" | grep -q "reserved  1059 MB = 600 fixed + 204 scratch + 255 redis + 0 mysql + 0 extra" || fail "the reservation: $OUT"
-echo "$OUT" | grep -q "ceilings  processes: ram 23, ram+swap 22; php-fpm: cpu 8 -> cpu" || fail "the ceilings: $OUT"
+echo "$OUT" | grep -q "ceilings  processes: ram 23, ram+swap 22; php-fpm: cpu 6 -> cpu" || fail "the ceilings: $OUT"
 echo "$OUT" | grep -q "tasks     2: 1 scheduled (calculated) + 1 on demand (calculated)" || fail "the task split: $OUT"
 
 # ---- 4. The development target: 256 MB, and MySQL reserved. ---------------------------
 OUT="$(bash "$SCRIPT" plan 2 4096 0 dev)"
 echo "$OUT" | grep -q "reserved  1315 MB = 600 fixed + 204 scratch + 255 redis + 256 mysql + 0 extra" || fail "dev reservation: $OUT"
-echo "$OUT" | tail -n1 | grep -q "total=8 .* tasks=2 .* limit_mb=256$" || fail "dev budget: $OUT"
+echo "$OUT" | tail -n1 | grep -q "total=6 .* tasks=2 .* limit_mb=256$" || fail "dev budget: $OUT"
 
 # ---- 5. Each switch replaces its part of the calculation. -----------------------------
 [ "$(PHP_FPM_WORKER_COUNT=10 plan_line 1 1 0 | cut -d' ' -f1-5)" = "total=10 web=2 web_standby=1 ajax=8 ajax_standby=4" ] || fail "PHP_FPM_WORKER_COUNT"
 [ "$(PHP_FPM_WORKER_COUNT=2 plan_line 64 65536 0 | cut -d' ' -f1-3)" = "total=2 web=1 web_standby=1" ] || fail "PHP_FPM_WORKER_COUNT=2 splits 1 + 1"
 REDIS_MAXMEMORY_MB=500 plan_line 2 4096 0 | grep -q "redis_mb=500 "        || fail "REDIS_MAXMEMORY_MB"
-RSX_TASK_MAX_WORKERS=6 plan_line 2 4096 4096 | grep -q "^total=8 .* tasks=7 scheduled=1 on_demand=6 " || fail "RSX_TASK_MAX_WORKERS"
-RSX_TASK_SCHEDULED_WORKERS=3 plan_line 2 4096 4096 | grep -q "^total=8 .* tasks=4 scheduled=3 on_demand=1 " || fail "RSX_TASK_SCHEDULED_WORKERS"
+RSX_TASK_MAX_WORKERS=6 plan_line 2 4096 4096 | grep -q "^total=6 .* tasks=7 scheduled=1 on_demand=6 " || fail "RSX_TASK_MAX_WORKERS"
+RSX_TASK_SCHEDULED_WORKERS=3 plan_line 2 4096 4096 | grep -q "^total=6 .* tasks=4 scheduled=3 on_demand=1 " || fail "RSX_TASK_SCHEDULED_WORKERS"
 PHP_FPM_WORKER_COUNT=20 plan_line 2 4096 0 | grep -q "^total=20 .* tasks=5 scheduled=2 on_demand=3 " || fail "PHP_FPM_WORKER_COUNT keeps the quarter"
 RSPADE_PHP_MEMORY_LIMIT_MB=512 plan_line 2 4096 0 | grep -q "^total=3 .* tasks=2 .* limit_mb=512$" || fail "RSPADE_PHP_MEMORY_LIMIT_MB"
 RSPADE_PHP_WORKERS_PER_CORE=2 plan_line 2 4096 4096 | grep -q "^total=4 .* tasks=2 " || fail "RSPADE_PHP_WORKERS_PER_CORE"

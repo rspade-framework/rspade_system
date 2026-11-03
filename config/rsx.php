@@ -1988,11 +1988,15 @@ return [
     |
     */
     'http' => [
-        // TRUSTED_PROXIES in .env: addresses or CIDRs separated by commas, e.g.
-        // TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10. It is an environment key because the
-        // device in front of a box is a fact about that box, never about the application.
-        // Empty: loopback only.
-        'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) env('TRUSTED_PROXIES', ''))), 'strlen')),
+        // The proxies in front of this box: addresses or CIDRs separated by commas, e.g.
+        // TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10. An environment key because the device in
+        // front of a box is a fact about that box, never about the application. .env
+        // TRUSTED_PROXIES wins; blank, the container's RSPADE_TRUSTED_PROXIES applies (the
+        // compose file, passed to php-fpm by the entrypoint); both blank, loopback only. The
+        // container variable has its own name because a real environment variable overrides
+        // .env. nginx applies the same rule, so its log and REMOTE_ADDR name the same client
+        // (rsx:man config_rsx). Read when the configuration is, like every env() here.
+        'trusted_proxies' => rsx_trusted_proxy_list(env('TRUSTED_PROXIES'), env('RSPADE_TRUSTED_PROXIES')),
     ],
 
     /*

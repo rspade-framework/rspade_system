@@ -250,17 +250,24 @@ HTTP MIDDLEWARE
 
 HTTP
     'http' => [
-        'trusted_proxies' => [],     // .env TRUSTED_PROXIES, comma-separated
+        'trusted_proxies' => [],     // .env TRUSTED_PROXIES, else RSPADE_TRUSTED_PROXIES
     ]
 
     trusted_proxies      Addresses or CIDRs of anything in FRONT of nginx
                          that appends X-Forwarded-For - a load balancer, a
                          TLS terminator, a CDN's published ranges. Loopback
                          (127.0.0.1, ::1) is ALWAYS trusted on top of this
-                         list (the framework's own nginx -> FPC proxy ->
-                         nginx hops). Empty by default. Set per box
-                         with TRUSTED_PROXIES in .env, addresses or CIDRs
-                         separated by commas (rsx:man prod).
+                         list (hops inside the box). Empty by default. Set
+                         per box with TRUSTED_PROXIES in .env, addresses or
+                         CIDRs separated by commas, or - in the RSpade
+                         container - once in the container's environment as
+                         RSPADE_TRUSTED_PROXIES. .env wins when it names any;
+                         blank, the container value applies; both blank,
+                         loopback only. The container variable has its own
+                         name because a real environment variable overrides
+                         .env. nginx applies the same rule, so its access log
+                         and REMOTE_ADDR name the same client (rsx:man prod).
+                         Read when the configuration is, like every env().
 
     App\Http\Middleware\TrustProxies is the ONE client-address resolver:
     X-Forwarded-For is honoured only when the immediate peer (REMOTE_ADDR) is
