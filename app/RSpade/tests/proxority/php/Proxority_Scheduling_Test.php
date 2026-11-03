@@ -76,7 +76,7 @@ class Proxority_Scheduling_Test extends Proxority_Test_Abstract
     public static function test_priority_jumps_the_queue_but_never_the_per_ip_cap()
     {
         static::__in_scratch(function (array $s) {
-            $s = static::__start_proxy($s, [], 4, 3);
+            $s = static::__start_proxy($s, [], 3);
 
             static::__send_from($s, '198.51.100.9', '/_ajax/fill?hold=z1');
             static::__send_from($s, '198.51.100.9', '/_ajax/fill?hold=z2');
@@ -84,14 +84,13 @@ class Proxority_Scheduling_Test extends Proxority_Test_Abstract
             static::__wait_arrived($s, 3);
 
             static::__send_from($s, '192.0.2.1', '/_ajax/Some_Controller/method?hold=a1');
-            static::__wait_queued($s, 1, 'ajax');
+            static::__wait_queued($s, 1);
             static::__send_from($s, '198.51.100.9', '/_ajax/_priority?hold=zp');
-            static::__wait_queued($s, 2, 'ajax');
+            static::__wait_queued($s, 2);
             static::__send_from($s, '192.0.2.3', '/_ajax/_priority?hold=cp');
-            static::__wait_queued($s, 3, 'ajax');
+            static::__wait_queued($s, 3);
 
-            static::__assert_equals(2, static::__pool($s, 'ajax')['queued_priority']);
-            static::__assert_equals(0, static::__pool($s, 'web')['queued_total'], '/_ajax/ is the ajax pool');
+            static::__assert_equals(2, static::__pool($s)['queued_priority']);
 
             static::__release($s, 'x1');
             static::__assert_equals('cp', static::__wait_arrived($s, 4)[3], 'z is at its cap of 2, so the other priority request runs first');
@@ -145,7 +144,7 @@ class Proxority_Scheduling_Test extends Proxority_Test_Abstract
         static::__in_scratch(function (array $s) {
             $s = static::__start_proxy($s, [], 2);
 
-            // 2 workers, per-IP cap 1; prefixed portal Ajax is the web pool, as nginx routes it.
+            // 2 workers, per-IP cap 1; a portal's prefixed Ajax shares the one pool like every request.
             static::__send_from($s, '198.51.100.9', '/page?hold=z1');
             static::__send_from($s, '198.51.100.8', '/page?hold=x1');
             static::__wait_arrived($s, 2);

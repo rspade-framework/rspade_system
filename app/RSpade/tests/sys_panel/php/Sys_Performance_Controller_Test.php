@@ -79,14 +79,14 @@ class Sys_Performance_Controller_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * RP-PERF-02 - The budget from the container's record: the RAM ceilings, the pools, the
+     * RP-PERF-02 - The budget from the container's record: the RAM ceilings, the pool, the
      * planned typical total (php-fpm + task workers at the typical size) and the worker ceiling.
      */
     public static function test_the_budget_follows_the_container_record()
     {
         file_put_contents(static::$file, json_encode([
             'php' => ['memory_limit_mb' => 320, 'typical_mb' => 128, 'ram_mb' => 3037, 'ram_and_swap_mb' => 7133],
-            'php_fpm' => ['total' => 8, 'web' => 2, 'ajax' => 6, 'pools_sized' => true],
+            'php_fpm' => ['total' => 8, 'source' => 'calculated', 'standby' => 4, 'pool_sized' => true],
             'tasks' => ['total' => 3, 'scheduled' => 1, 'on_demand' => 2],
             'ceilings' => ['winner' => 'cpu'],
         ]));
@@ -97,6 +97,7 @@ class Sys_Performance_Controller_Test extends Rsx_Test_Abstract
         static::__assert_equals(3037, $budget['php_ram_mb']);
         static::__assert_equals(7133, $budget['php_ram_and_swap_mb']);
         static::__assert_equals(8, $budget['php_fpm_total']);
+        static::__assert_true($budget['pool_sized']);
         static::__assert_equals(11, $budget['worker_ceiling']);
         static::__assert_equals(11 * 128, $budget['planned_typical_mb']);
         static::__assert_equals(320, $budget['memory_limit_mb']);
@@ -104,31 +105,24 @@ class Sys_Performance_Controller_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * RP-PERF-03 - The pool status: php-fpm's fields per pool; a pool that gave no answer,
-     * or something that is not a status page, is null.
+     * RP-PERF-03 - The pool status: php-fpm's fields for its one pool; no answer, or something
+     * that is not a status page, is null.
      */
-    public static function test_the_pool_status_is_parsed_per_pool()
+    public static function test_the_pool_status_is_parsed()
     {
-        _Sys_Performance_Controller::$fpm_fetcher_for_tests = function (string $pool): ?string {
-            if ($pool === 'ajax') {
-                return null;
-            }
+        _Sys_Performance_Controller::$fpm_fetcher_for_tests = fn (): ?string => json_encode([
+            'pool' => 'www', 'process manager' => 'dynamic', 'start since' => 600, 'accepted conn' => 1234,
+            'listen queue' => 2, 'max listen queue' => 5, 'idle processes' => 1, 'active processes' => 3,
+            'total processes' => 4, 'max active processes' => 4, 'max children reached' => 7,
+        ]);
 
-            return json_encode([
-                'pool' => 'www', 'process manager' => 'dynamic', 'start since' => 600, 'accepted conn' => 1234,
-                'listen queue' => 2, 'max listen queue' => 5, 'idle processes' => 1, 'active processes' => 3,
-                'total processes' => 4, 'max active processes' => 4, 'max children reached' => 7,
-            ]);
-        };
-
-        $pools = _Sys_Performance_Controller::get_fpm_status(static::__ajax_request())['pools'];
-
-        static::__assert_equals(['web', 'ajax'], array_keys($pools));
         static::__assert_equals(
             ['active' => 3, 'idle' => 1, 'total' => 4, 'queue' => 2, 'max_queue' => 5, 'max_children_reached' => 7, 'accepted' => 1234, 'since_seconds' => 600],
-            $pools['web']
+            _Sys_Performance_Controller::get_fpm_status(static::__ajax_request())['pool']
         );
-        static::__assert_null($pools['ajax'], 'no answer');
+
+        _Sys_Performance_Controller::$fpm_fetcher_for_tests = fn (): ?string => null;
+        static::__assert_null(_Sys_Performance_Controller::get_fpm_status(static::__ajax_request())['pool'], 'no answer');
         static::__assert_null(_Sys_Performance_Controller::parse_fpm_status('<html>not a status page</html>'));
     }
 }

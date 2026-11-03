@@ -2,7 +2,7 @@
 
 ## FORMS AND MODALS
 
-**One engine, in framework core.** `<Rsx_Form $controller $method [$data]>` owns value state, dirty tracking, submission and error rendering; `Form_Field` is presentation around one input; `Form_Input_Abstract` subclasses own one named value. **An application never carries a copy of any of the three.**
+**One engine, in framework core.** `<Rsx_Form $controller $method [$data]>` owns value state, dirty tracking, submission and error rendering; `<Form_Errors />` renders the failures; `Form_Input_Abstract` subclasses own one named value. **An application never carries a copy of any of the three.** `Form_Field` - the label, asterisk and help around one input - is the APPLICATION's field chrome.
 
 **The tag is the ONLY place an endpoint is named** — `$controller` + `$method` on `<Rsx_Form>`; modals do not repeat it, buttons do not repeat it, JS does not repeat it. **`form.submit()` is the only submission path** (a `type="submit"` button inside the form is auto-wired, and so is the form's own submit event, so Enter in a text input submits instead of navigating), resolving with the server result or `false` on any failure. `$data` present = edit form, absent = create; values bind by matching `$name`.
 

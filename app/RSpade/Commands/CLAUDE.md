@@ -38,8 +38,9 @@ They are simply not machine-enforced here.
 
 ## Pre-boot interception, and why stubs exist
 
-Four commands never reach Laravel. `system/artisan` matches `$argv[1]` before Composer's
-autoloader is required and shells straight to bash:
+Four commands never reach Laravel. `rsx_preboot()` (`bootstrap/rsx_preboot.php`, the first
+thing `system/artisan` runs) matches `$argv[1]` before Composer's autoloader is required and
+shells straight to bash:
 
 | Command | Script |
 |---|---|
@@ -53,7 +54,7 @@ maintenance pair can never be refusable by the gate it is itself raising and low
 
 **They still need a class in this directory.** `php artisan list` is built by Symfony from
 *registered command objects* - a command that exists only as a string comparison in
-`system/artisan` appears in no listing and has no `help` output. So each keeps a STUB whose
+`rsx_preboot()` appears in no listing and has no `help` output. So each keeps a STUB whose
 only jobs are registration, `$signature` (so its flags render in `help`), `$description`,
 and a `handle()` that is a loud error, because reaching it means the interception failed.
 
@@ -74,7 +75,7 @@ the directive for AI agents.
 ## Framework-internal flags (`--_`)
 
 A flag whose only caller is the framework itself is spelled `--_<name-with-hyphens>` and is
-**never declared as an `InputOption`**. `system/artisan` lifts every `--_` token into
+**never declared as an `InputOption`**. The pre-boot step (`bootstrap/rsx_preboot.php`) lifts every `--_` token into
 `$GLOBALS['__rsx_internal_flags']` and strips it from argv before Symfony parses, so it
 renders in no help output and can never raise an unknown-option error. Read it with
 `Rsx_Internal_Flags::has()` / `::get()`, never `$this->option()`.

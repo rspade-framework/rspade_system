@@ -2,7 +2,7 @@
 
 ## ENDPOINTS
 
-**Ajax endpoints are browser-only.** A `#[Ajax_Endpoint]` static method on a controller (with its MANDATORY `#[Auth]`) becomes callable from JavaScript under the controller's own name — no route, no URL, no wiring: `await My_Controller.save({name: 'Test'})`. **`$.ajax()` is overridden to THROW** — always call `Controller.method()` instead.
+**Ajax endpoints are browser-only.** A `#[Ajax_Endpoint]` static method on a controller (with its MANDATORY `#[Auth]`) becomes callable from JavaScript under the controller's own name — no route, no URL, no wiring: `await My_Controller.save({name: 'Test'})`. **`$.ajax()` to a local URL THROWS** — always call `Controller.method()` instead.
 
 **Every Ajax response is HTTP 200**, success and failure alike; the `{_success, _ajax_return_value}` envelope carries the outcome and the JS side resolves or rejects on it. Errors are `response_error(Ajax::ERROR_*, $message)` (`ERROR_VALIDATION`, `ERROR_NOT_FOUND`, `ERROR_UNAUTHORIZED`, `ERROR_AUTH_REQUIRED`, `ERROR_FATAL`, `ERROR_GENERIC`). **Unhandled errors already log and surface to the user**, so catch only what you handle specifically. CLI: `php artisan rsx:ajax Controller action --args='{"k":"v"}' [--user=] [--site=]`.
 

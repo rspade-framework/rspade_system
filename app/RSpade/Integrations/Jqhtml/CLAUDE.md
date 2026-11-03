@@ -8,6 +8,7 @@ mtime cache; it owns NO lifecycle.
 
 ## Components
 - `JqhtmlWebpackCompiler.php` - PHP client (marshaling + cache)
+- `Rsx_Shaken_Component.js` - the placeholder a sealed build mounts in place of a component the shake dropped, naming the bundle's `'keep'` list as the fix (`rsx:man bundle_api`). Diagnostics such as `data-sid` follow the application mode, so a production page carries none.
 - `resource/jqhtml-service.js` - the `jqhtml` subsystem module, loaded by the service on
   first use. It is an ES MODULE, because `@jqhtml/parser` is one; the service loads every
   subsystem through dynamic `import()`, so CJS and ESM modules are both fine, and an ESM

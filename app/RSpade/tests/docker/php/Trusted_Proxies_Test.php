@@ -42,14 +42,13 @@ class Trusted_Proxies_Test extends Rsx_Test_Abstract
         }
     }
 
-    /** A fresh scratch tree: two pool files and a .env carrying $env_line. */
+    /** A fresh scratch tree: the pool file and a .env carrying $env_line. */
     private static function __tree(string $env_line): void
     {
         static::__clear();
         $pools = static::$root . '/etc/php/8.5/fpm/pool.d';
         mkdir($pools, 0755, true);
         file_put_contents($pools . '/www.conf', "[www]\nuser = app\n");
-        file_put_contents($pools . '/ajax.conf', "[ajax]\nuser = app\n");
         file_put_contents(static::$root . '/env', $env_line . "\n");
     }
 
@@ -88,7 +87,7 @@ class Trusted_Proxies_Test extends Rsx_Test_Abstract
     }
 
     /** TP-02 */
-    public static function test_the_container_value_reaches_nginx_and_both_pools()
+    public static function test_the_container_value_reaches_nginx_and_the_pool()
     {
         static::__tree('TRUSTED_PROXIES=');
         [$code, $output] = static::__apply('172.18.0.3, 10.0.0.0/8');
@@ -99,13 +98,11 @@ class Trusted_Proxies_Test extends Rsx_Test_Abstract
             static::__assert_contains("set_real_ip_from {$address};", static::__realip(), "{$address} is trusted");
         }
         static::__assert_contains('real_ip_recursive on;', static::__realip());
-        foreach (['www', 'ajax'] as $pool) {
-            static::__assert_contains('env[RSPADE_TRUSTED_PROXIES] = "172.18.0.3,10.0.0.0/8"', static::__pool($pool), "{$pool} gets the literal");
-        }
+        static::__assert_contains('env[RSPADE_TRUSTED_PROXIES] = "172.18.0.3,10.0.0.0/8"', static::__pool('www'), 'the pool gets the literal');
     }
 
     /** TP-03 */
-    public static function test_env_wins_for_nginx_and_the_pools_still_carry_the_container_value()
+    public static function test_env_wins_for_nginx_and_the_pool_still_carries_the_container_value()
     {
         static::__tree('TRUSTED_PROXIES=192.0.2.1');
         [$code, $output] = static::__apply('172.18.0.3');
@@ -128,7 +125,7 @@ class Trusted_Proxies_Test extends Rsx_Test_Abstract
         static::__assert_contains('loopback only', $output);
         static::__assert_equals(2, substr_count(static::__realip(), 'set_real_ip_from'), 'loopback alone, the earlier proxy gone');
         static::__assert_false(str_contains(static::__pool('www'), 'env['), 'the pool line from the earlier start is removed');
-        static::__assert_equals(1, substr_count(static::__pool('ajax'), '[ajax]'), 'the pool is otherwise untouched');
+        static::__assert_equals(1, substr_count(static::__pool('www'), '[www]'), 'the pool is otherwise untouched');
     }
 
     /** TP-05 */

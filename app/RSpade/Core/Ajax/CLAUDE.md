@@ -32,12 +32,14 @@ It returns the raw result (a value or an `Rsx_Response_Abstract`) or throws.
 | Caller | Transport | Answer |
 |---|---|---|
 | `handle_batch_request($request)` | POST `/_ajax/_batch` - THE browser transport, every mode | `{"C_<call_id>": envelope, ...}` |
+| `handle_priority_request($request)` | POST `/_ajax/_priority` - ONE call to a `#[Priority]` endpoint, which Proxority lets jump its queue | the `_batch` envelope, one key |
 | `handle_browser_request($request, $c, $a)` | POST `/_ajax/<Controller>/<action>` - a hand-made request (curl, a shell test) | one bare envelope |
 | `internal($c, $a, $params)` | server-side PHP, `rsx:ajax`, tests | the value as plain data, or the coded exception |
 
 `Ajax.js` sends every call to `/_ajax/_batch`, a lone call as a batch of one, and settles
-each call from its own `C_<call_id>` key. `config('rsx.ajax.batching')` (default true,
-exposed as `window.rsxapp.ajax_batching` in every mode) decides only how many calls share a
+each call from its own `C_<call_id>` key - except a call to a `#[Priority]` endpoint, which
+goes alone to `/_ajax/_priority`. `config('rsx.ajax.batching')` (on except in development,
+exposed as `window.rsxapp.ajax_batching`) decides only how many calls share a
 request: true = the calls of one synchronous turn, up to `Ajax.MAX_BATCH_SIZE` (20) each;
 false = one call per request. The transport NEVER merges calls - two identical calls are
 two calls (every call is a POST; it cannot know an endpoint is a read). Read coalescing

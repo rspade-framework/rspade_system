@@ -285,13 +285,6 @@ NGINX SETUP
             listen 127.0.0.1:3201;
             root /var/www/html/system/public;
 
-            location /_ajax/ {
-                include fastcgi_params;
-                fastcgi_param SCRIPT_FILENAME $document_root/index.php;
-                fastcgi_param SCRIPT_NAME /index.php;
-                fastcgi_pass unix:/run/php/php-fpm-ajax.sock;
-            }
-
             location / {
                 try_files $uri $uri/ /index.php?$args;
             }

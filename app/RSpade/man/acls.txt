@@ -145,7 +145,6 @@ PERMISSIONS
 
         Permission              Root Owner Admin Mgr  User View Dis
         ----------              ---- ----- ----- ---  ---- ---- ---
-        MANAGE_SITES_ROOT        X
         MANAGE_SITE_BILLING      X    X
         MANAGE_SITE_SETTINGS     X    X     X
         MANAGE_SITE_USERS        X    X     X

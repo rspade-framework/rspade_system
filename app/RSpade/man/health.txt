@@ -668,7 +668,7 @@ WEB EXPOSURE CHECK
         IDE bridge dir   storage/rsx-ide-bridge/ - writes a random throwaway
                          marker, GETs it via the candidate misconfig URLs, then
                          deletes it
-        php-fpm status   /_fpm_status/web and /ajax - php-fpm's pool status
+        php-fpm status   /_fpm_status - php-fpm's pool status
                          (the box's concurrency and every in-flight request
                          URI), which the RSpade container serves on its
                          loopback-only listener for the /_sys Performance

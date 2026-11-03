@@ -344,15 +344,6 @@ do_enable() {
 }
 
 # -----------------------------------------------------------------------------
-# Conflict guard - refuse to bring services back over an unresolved merge.
-#
-# rsx:git halts on an APP-file conflict and deliberately LEAVES maintenance on, so
-# the merge can be resolved with no traffic hitting a half-merged tree. This guard is
-# what keeps that halt from being lifted early: one mechanism serving both the manual
-# operator and the proxy, rather than two that can disagree. --force overrides.
-# --no-services is unaffected (it never starts anything).
-# -----------------------------------------------------------------------------
-# -----------------------------------------------------------------------------
 # Schema-cache guard - refuse to bring services back up while a live backup exists.
 #
 # `php artisan rsx:db:rebuild_provision_cache_snapshot` backs the live database and blob store up, wipes

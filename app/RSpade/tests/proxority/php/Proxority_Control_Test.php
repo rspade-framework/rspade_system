@@ -21,7 +21,7 @@ class Proxority_Control_Test extends Proxority_Test_Abstract
     {
         static::__in_scratch(function (array $s) {
             // Boot with a failing command: nothing is whitelisted, the fixed priority rule stands.
-            $s = static::__start_proxy($s, ['refresh-interval' => '0.5'], 4, 4, 'fail');
+            $s = static::__start_proxy($s, ['refresh-interval' => '0.5'], 4, 'fail');
             static::__assert_contains('the fake command failed on purpose', static::__wait_event($s, 'refresh_failed', 'exited 1')['text']);
             static::__assert_null(static::__status($s)['whitelist']['accepted_at']);
 
@@ -68,7 +68,7 @@ class Proxority_Control_Test extends Proxority_Test_Abstract
     public static function test_status_and_log_over_the_socket_and_the_cli()
     {
         static::__in_scratch(function (array $s) {
-            $s = static::__start_proxy($s, [], 4, 2);
+            $s = static::__start_proxy($s, [], 4);
 
             static::__send_from($s, '192.0.2.1', '/page?hold=a1');
             static::__send_from($s, '192.0.2.1', '/page?hold=a2');
@@ -82,13 +82,12 @@ class Proxority_Control_Test extends Proxority_Test_Abstract
             static::__assert_contains('busy 3/4: normal 3, priority 0, media 0, robot 0, unthrottled 0', $status);
             static::__assert_contains('queued 1 (priority 0)', $status);
             static::__assert_contains('192.0.2.1  1', $status);
-            static::__assert_contains('Pool ajax: capacity 2 (caps: per IP 1, media 1, robot 1)', $status);
             static::__assert_contains('Whitelist: 1 unthrottled, 1 priority, 1 media pattern(s)', $status);
             static::__assert_true((bool) preg_match('/^[\x09\x0a\x0d\x20-\x7e]*$/', $status), 'the status output is plain ASCII');
 
             $log = static::__cli($s, ['log']);
             static::__assert_contains('[start] listening on 127.0.0.1:' . $s['port'], $log);
-            static::__assert_contains('[queued] #4 192.0.2.1 web GET /page', $log);
+            static::__assert_contains('[queued] #4 192.0.2.1 GET /page', $log);
 
             $follow = static::__spawn(['node', static::__proxority_js(), 'log', '--follow', '--socket=' . $s['socket']]);
             static::__poll_until(fn () => str_contains($follow->getOutput(), '[start]'), 'log --follow prints the ring first');

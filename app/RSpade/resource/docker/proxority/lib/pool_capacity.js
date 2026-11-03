@@ -1,8 +1,5 @@
 /**
- * The size of each php-fpm pool: `pm.max_children` from its pool file.
- *
- *     www.conf   -> the web pool
- *     ajax.conf  -> the ajax pool
+ * The size of php-fpm's one pool: `pm.max_children` from www.conf.
  *
  * Read at start and again on SIGHUP. Proxority schedules against exactly the number of
  * workers php-fpm will run, so a file that is missing, unreadable or names no
@@ -12,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const POOL_FILES = { web: 'www.conf', ajax: 'ajax.conf' };
+const POOL_FILE = 'www.conf';
 
 /** `pm.max_children = N` from one pool file's text. Throws naming the file when absent. */
 function parse_max_children(text, file) {
@@ -38,22 +35,16 @@ function parse_max_children(text, file) {
     return found;
 }
 
-/** `{web: N, ajax: N}`. Throws when either pool cannot be read. */
-function read_capacities(pool_dir) {
-    const capacities = {};
-
-    for (const [pool, name] of Object.entries(POOL_FILES)) {
-        const file = path.join(pool_dir, name);
-        let text;
-        try {
-            text = fs.readFileSync(file, 'utf8');
-        } catch (error) {
-            throw new Error('Cannot read the ' + pool + ' pool file ' + file + ': ' + error.message);
-        }
-        capacities[pool] = parse_max_children(text, file);
+/** The pool's worker count. Throws when the pool file cannot be read. */
+function read_capacity(pool_dir) {
+    const file = path.join(pool_dir, POOL_FILE);
+    let text;
+    try {
+        text = fs.readFileSync(file, 'utf8');
+    } catch (error) {
+        throw new Error('Cannot read the pool file ' + file + ': ' + error.message);
     }
-
-    return capacities;
+    return parse_max_children(text, file);
 }
 
-module.exports = { read_capacities, parse_max_children, POOL_FILES };
+module.exports = { read_capacity, parse_max_children, POOL_FILE };

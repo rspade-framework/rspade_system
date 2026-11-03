@@ -5,7 +5,7 @@ start real proxies, fake upstreams and live-stack floods, and take minutes. Ever
 declares `$explicit_group_only`, so a bare suite run passes over them and says so in one line.
 
 **Run them only when a change meaningfully alters the proxy's behaviour**: the scheduler (caps,
-priority, round robin, slot release), request classification (pools, media, robots, revalidation,
+priority, round robin, slot release), request classification (media, robots, revalidation,
 loopback, whitelist patterns), streaming and buffering, header forwarding, the timeouts, the
 whitelist refresh, or the status socket and its CLI. Then run them once, on purpose, and read the
 output:

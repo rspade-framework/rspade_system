@@ -166,7 +166,7 @@ SERVER LIFECYCLE
     Nothing restarts it:
     the next render_component() starts a fresh one, which is the point.
 
-NGINX AND PHP-FPM DEADLOCK PREVENTION
+THE CALLBACK DEADLOCK (open while SSR is disabled)
     SSR components that call Ajax endpoints create a callback loop:
 
         Browser -> nginx -> PHP-FPM (page request)
@@ -177,41 +177,15 @@ NGINX AND PHP-FPM DEADLOCK PREVENTION
                               v (Ajax callback)
                          nginx -> PHP-FPM (ajax request)
 
-    If both the page request and the Ajax callback compete for the same
-    PHP-FPM worker pool, a deadlock occurs when all workers are busy
-    handling SSR page requests, leaving no workers for Ajax callbacks.
+    The page's worker waits for the render while the render waits for a
+    worker. The RSpade container runs ONE php-fpm pool for every request
+    (rsx:man proxority), so a burst of SSR pages can hold every worker while
+    their callbacks queue behind them: nothing errors, the site stops
+    answering. Proxority never queues a loopback request, but php-fpm still
+    needs a free worker to run one.
 
-    Solution: Route Ajax requests to a separate PHP-FPM pool.
-
-    PHP-FPM Configuration:
-
-        /etc/php/8.5/fpm/pool.d/www.conf (page requests):
-            [www]
-            listen = /run/php/php-fpm.sock
-            pm = ondemand
-            pm.max_children = 4
-
-        /etc/php/8.5/fpm/pool.d/ajax.conf (Ajax requests):
-            [ajax]
-            listen = /run/php/php-fpm-ajax.sock
-            pm = ondemand
-            pm.max_children = 4
-
-    Nginx Configuration (add to each server block):
-
-        # Ajax requests use separate FPM pool (prevents SSR deadlock)
-        location /_ajax/ {
-            include fastcgi_params;
-            fastcgi_param SCRIPT_FILENAME $document_root/index.php;
-            fastcgi_param SCRIPT_NAME /index.php;
-            fastcgi_pass unix:/run/php/php-fpm-ajax.sock;
-        }
-
-    For HTTPS server blocks, also add:
-        fastcgi_param HTTPS 'on';
-
-    This ensures SSR Ajax callbacks always have available workers,
-    regardless of how many page requests are in-flight.
+    Re-enabling SSR (Rsx_SSR::ENABLED) requires solving this first - the
+    callback must never need a worker its own page may be holding.
 
 PERFORMANCE
     First request after server start: ~800-1000ms (server startup + render)

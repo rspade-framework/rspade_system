@@ -157,9 +157,9 @@ new tab.
                 </div>
 
                 <% if (_c.is_rspade_container) { %>
-                    <% for (const _pool of _c.fpm_pools) { %>
+                    <% const _pool = _c.fpm_pool; %>
                         <div class="col-xl-3 col-md-6">
-                            <_Sys_Section class="h-100" $title=('PHP-FPM ' + _pool.label.toLowerCase() + ' (' + _pool.pool + ')') $icon="bi-diagram-2">
+                            <_Sys_Section class="h-100" $title=('PHP-FPM pool (' + _pool.pool + ')') $icon="bi-diagram-2">
                                 <% const _ps = _pool.settings || {}; %>
                                 <_Sys_Detail_List>
                                     <_Sys_Detail_Item $label="Process manager" $value=(_ps['pm']) $mono=true />
@@ -175,7 +175,6 @@ new tab.
                                 <div class="_Sys_System_Info_Action__help"><%= _pool.settings ? 'From ' + _pool.path : 'Not readable at ' + _pool.path %></div>
                             </_Sys_Section>
                         </div>
-                    <% } %>
                 <% } %>
             </div>
 

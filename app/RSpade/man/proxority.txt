@@ -86,8 +86,10 @@ THE RULES
     If-Range) are not priority. A priority request keeps its other classes:
     revalidating a #[Media] download is still media.
 
-    Pools: a path under /_ajax/ or /_companion/ is the ajax pool; every other
-    PHP-bound path is the web pool.
+    The pool: php-fpm runs ONE pool for every PHP-bound request - pages,
+    Ajax, companion calls, the external API - and Proxority's caps and round
+    robin are what keep one client from taking it. Its capacity is
+    pm.max_children in www.conf.
 
     Media is a #[Media] route or ANY request sent as multipart/form-data. A
     robot is a request whose User-Agent matches the proxy's built-in list
@@ -99,8 +101,11 @@ THE RULES
     LAST BYTE for media.
 
     A request from the box itself (loopback, no X-Forwarded-For: rsx:debug,
-    server-side rendering, a companion application calling 127.0.0.1) is never
-    queued and not counted.
+    server-side rendering) is never queued and not counted. A companion
+    application's call (/_companion/) is the exception: it is a client like any
+    other - queued, counted and round robined on its address (127.0.0.1) under
+    the ordinary per-IP cap, so a chatty companion waits its turn beside the
+    site's visitors.
 
     Headers pass through untouched in both directions - cookies, ETags,
     Range and Content-Range, Content-Encoding, Location, every Set-Cookie on
@@ -270,7 +275,7 @@ SEE ALSO
     rsx:man external_api - #[Api_Endpoint], which takes all three directives
     rsx:man file_upload - the framework file routes, already #[Media]
     rsx:man prod - BEHIND A LOAD BALANCER: declaring trusted proxies
-    rsx:man server_sizing - how the php-fpm pools are sized
+    rsx:man server_sizing - how the php-fpm pool is sized
     rsx:man maintenance_mode - the window during which the whitelist is frozen
     system/app/RSpade/resource/docker/proxority/README.md - how the proxy works, in full
 

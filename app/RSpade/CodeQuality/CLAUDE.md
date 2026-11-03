@@ -52,7 +52,7 @@ A rule receives a path, the contents and the manifest metadata, and says what is
    - The rule loop itself is the driver's, and the rule OBJECTS are the driver's - there is no
      second discovery
 
-5. **Violation** (`Violation.php`)
+5. **Violation** (`CodeQuality_Violation.php`)
    - Data class representing a code violation
    - Contains: rule_id, file_path, line_number, message, severity, code_snippet, suggestion
    - Provides `to_array()` for serialization

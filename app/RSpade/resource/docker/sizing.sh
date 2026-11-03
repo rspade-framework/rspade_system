@@ -3,7 +3,7 @@
 # rspade-sizing - size the container's PHP, Redis and (development) MySQL to the machine.
 #
 #   rspade-sizing apply <dev|prod> [--root=<dir>]
-#       Work out the budget for THIS container and write it: the php-fpm pool sizes
+#       Work out the budget for THIS container and write it: the php-fpm pool size
 #       (production), the php-fpm AND CLI memory_limit, the Redis cap, the development
 #       MySQL buffer pool, and /var/lib/rspade/sizing.json, the record of every number and
 #       where it came from. The entrypoint runs it before supervisor starts anything.
@@ -169,8 +169,8 @@ reserved_mb() {
 # on-demand pool runs dispatched work only; the scheduled pool runs #[Schedule] work and
 # takes queued dispatched work first, so both pools serve dispatched work.
 #
-# The floor is two php-fpm workers - one web, one Ajax, the least that serves a page and
-# its data - beside the two task workers. A machine below that floor runs out of memory
+# The floor is two php-fpm workers - the least that serves a page while another request
+# runs - beside the two task workers. A machine below that floor runs out of memory
 # under load, and that is the operator's choice to make with a bigger box or the switches
 # above. The kill pool is not counted: a kill worker only delivers a signal and exits.
 #
@@ -245,18 +245,16 @@ budget() {
 }
 
 # -----------------------------------------------------------------------------
-# 5. The split between the two pools, and each pool's standby.
+# 5. The pool's standby.
 # -----------------------------------------------------------------------------
 #
-# The web pool serves page requests and the Ajax pool everything a page asks for after
-# it loads, which is most requests: web is a quarter, at least 1 and 2 once the total is
-# 4 (so one slow page cannot make the site unreachable); Ajax is the rest.
+# php-fpm runs ONE pool - pages, Ajax, companion calls and the external API alike - and
+# every php-fpm worker is in it. Proxority, in front of it, keeps one client from
+# occupying them all (rsx:man proxority).
 #
-# STANDBY is how many idle workers a pool keeps waiting: min(4, floor(pool / 2)), and
+# STANDBY is how many idle workers the pool keeps waiting: min(4, floor(pool / 2)), and
 # never fewer than 1 - php-fpm's dynamic mode requires a spare worker, and a pool with
 # nobody waiting makes the first visitor pay for a process start.
-web_workers()  { local n=$(( $1 / 4 )); [ "$n" -lt 1 ] && n=1; [ "$1" -ge 4 ] && [ "$n" -lt 2 ] && n=2; echo "$n"; }
-ajax_workers() { local n=$(( $1 - $2 )); [ "$n" -lt 1 ] && n=1; echo "$n"; }
 standby_for()  { local n=$(( $1 / 2 )); [ "$n" -gt 4 ] && n=4; [ "$n" -lt 1 ] && n=1; echo "$n"; }
 
 # -----------------------------------------------------------------------------
@@ -389,10 +387,7 @@ if [ "$capped" = true ] && [ "$total_source" = calculated ] && [ "$scheduled_sou
     cap_notice=true
 fi
 
-web="$(web_workers "$total")"
-ajax="$(ajax_workers "$total" "$web")"
-web_standby="$(standby_for "$web")"
-ajax_standby="$(standby_for "$ajax")"
+standby="$(standby_for "$total")"
 
 php_ram_mb=$(( memory_mb - reserved ))
 [ "$php_ram_mb" -lt 0 ] && php_ram_mb=0
@@ -405,10 +400,10 @@ if [ "$mode" = "plan" ]; then
     echo "reserved  ${reserved} MB = ${FIXED_RESERVED_MB} fixed + ${scratch_mb} scratch + ${redis_reserved_mb} redis + ${mysql_mb} mysql + ${extra_mb} extra"
     echo "php       memory_limit ${limit_mb} MB, typical ${typical_mb} MB, ${per_core} per core"
     echo "ceilings  processes: ram ${by_ram}, ram+swap ${by_worst}; php-fpm: cpu ${by_cpu} -> ${ceiling}"
-    echo "php-fpm   ${total} (${total_source}): web ${web} (${web_standby} standby), ajax ${ajax} (${ajax_standby} standby)"
+    echo "php-fpm   ${total} (${total_source}), ${standby} standby"
     echo "tasks     ${tasks}: ${scheduled} scheduled (${scheduled_source}) + ${on_demand} on demand (${on_demand_source})"
     [ "$cap_notice" = true ] && echo "notice    capped at ${PROCESS_CAP} PHP processes - past this, set the counts and size the database (rsx:man server_sizing)"
-    echo "total=${total} web=${web} web_standby=${web_standby} ajax=${ajax} ajax_standby=${ajax_standby} tasks=${tasks} scheduled=${scheduled} on_demand=${on_demand} redis_mb=${redis_mb} limit_mb=${limit_mb}"
+    echo "total=${total} standby=${standby} tasks=${tasks} scheduled=${scheduled} on_demand=${on_demand} redis_mb=${redis_mb} limit_mb=${limit_mb}"
     exit 0
 fi
 
@@ -418,15 +413,12 @@ fi
 php_version="${PHP_VERSION:-$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')}"
 php_dir="${ROOT}/etc/php/${php_version}"
 
-# The pools: production only. The development pools keep their small on-demand sizes -
-# a developer's box is not sized for traffic - but the budget is still recorded.
+# The pool: production only. The development pool keeps its small on-demand size - a
+# developer's box is not sized for traffic - but the budget is still recorded.
 if [ "$target" = "prod" ]; then
-    pool_dir="${php_dir}/fpm/pool.d"
-    for pool in www ajax; do
-        [ -f "${pool_dir}/${pool}.conf" ] || die "${pool_dir}/${pool}.conf does not exist; php-fpm pools were not sized."
-    done
-    write_pool "${pool_dir}/www.conf" "$web" "$web_standby"
-    write_pool "${pool_dir}/ajax.conf" "$ajax" "$ajax_standby"
+    pool_file="${php_dir}/fpm/pool.d/www.conf"
+    [ -f "$pool_file" ] || die "${pool_file} does not exist; the php-fpm pool was not sized."
+    write_pool "$pool_file" "$total" "$standby"
 fi
 
 # The memory limit, one number for php-fpm and the CLI: a task worker, a cron run and a
@@ -456,13 +448,13 @@ write_file "${ROOT}/var/lib/rspade/sizing.json" "{
         \"ram_mb\": ${php_ram_mb}, \"ram_and_swap_mb\": ${php_worst_mb}
     },
     \"ceilings\": {\"ram\": ${by_ram}, \"ram_and_swap\": ${by_worst}, \"cpu\": ${by_cpu}, \"processes\": ${processes}, \"process_cap\": ${PROCESS_CAP}, \"capped\": ${capped}, \"cap_notice\": ${cap_notice}, \"winner\": \"${ceiling}\"},
-    \"php_fpm\": {\"total\": ${total}, \"source\": \"${total_source}\", \"web\": ${web}, \"web_standby\": ${web_standby}, \"ajax\": ${ajax}, \"ajax_standby\": ${ajax_standby}, \"pools_sized\": $([ "$target" = "prod" ] && echo true || echo false)},
+    \"php_fpm\": {\"total\": ${total}, \"source\": \"${total_source}\", \"standby\": ${standby}, \"pool_sized\": $([ "$target" = "prod" ] && echo true || echo false)},
     \"tasks\": {\"total\": ${tasks}, \"scheduled\": ${scheduled}, \"scheduled_source\": \"${scheduled_source}\", \"on_demand\": ${on_demand}, \"on_demand_source\": \"${on_demand_source}\"},
     \"redis\": {\"maxmemory_mb\": ${redis_mb}, \"source\": \"${redis_mb_source}\"},
     \"mysql\": {\"innodb_buffer_pool_mb\": $([ "$target" = "dev" ] && echo "${innodb_mb}" || echo null)}
 }"
 
-echo "[rspade] sized for ${cores} cores, ${memory_mb} MB memory, ${swap_mb} MB swap: php-fpm ${total} (web ${web}, ajax ${ajax}$([ "$target" = "dev" ] && echo ', development pools unchanged')), ${tasks} task workers (${scheduled} scheduled, ${on_demand} on demand), memory_limit ${limit_mb}M, redis ${redis_mb} MB."
+echo "[rspade] sized for ${cores} cores, ${memory_mb} MB memory, ${swap_mb} MB swap: php-fpm ${total}$([ "$target" = "dev" ] && echo ' (development pool unchanged)'), ${tasks} task workers (${scheduled} scheduled, ${on_demand} on demand), memory_limit ${limit_mb}M, redis ${redis_mb} MB."
 if [ "$cap_notice" = true ]; then
     echo "[rspade] NOTICE: this machine could run more than ${PROCESS_CAP} PHP processes, the most the automatic sizing plans. Past it, set PHP_FPM_WORKER_COUNT, RSX_TASK_SCHEDULED_WORKERS and RSX_TASK_MAX_WORKERS yourself and configure the database server to accept that many connections: php artisan rsx:man server_sizing."
 fi

@@ -41,7 +41,7 @@ Two corollaries follow:
 
 ### No defensive coding for core classes
 
-Core framework classes ALWAYS exist (`Rsx_Manifest`, `Rsx_Storage`, `Rsx`, everything in `Core/Js/`) — never check existence (no `if (typeof Rsx !== 'undefined')`, no `class_exists()`). The build system guarantees it.
+Core framework classes ALWAYS exist (`Manifest`, `Rsx_Storage`, `Rsx`, everything in `Core/Js/`) — never check existence (no `if (typeof Rsx !== 'undefined')`, no `class_exists()`). The build system guarantees it.
 
 ### Always bash — never sh, never an implicit shell
 

@@ -53,9 +53,9 @@ The safety-check override prohibition (shared conduct fragment) applies to this 
 
 ### Box facts
 
-**NEVER restart PHP/Nginx** - OPcache is disabled on this box.
+**NEVER restart PHP/Nginx** - OPcache revalidates every file on every request, so a restart is never needed to pick up a change.
 
-**The cache services may be restarted whenever useful, without asking** (owner authorization, 2026-10-01): the full-page-cache proxy (`fpc-proxy`) and Redis, via `supervisorctl -s unix:///var/run/supervisor.sock restart <program>` (the conf's own serverurl points at a missing socket). rsx-lockd is NOT a cache service - restarting it drops every held lock and still needs the owner's approval.
+**Redis, the cache service, may be restarted whenever useful, without asking** (owner authorization, 2026-10-01): `supervisorctl restart redis`. rsx-lockd is NOT a cache service - restarting it drops every held lock and still needs the owner's approval.
 
 ### Framework-only references
 

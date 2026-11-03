@@ -25,17 +25,14 @@ use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 #[Auth('is_sysadmin')]
 class _Sys_Performance_Controller extends _Sys_Endpoint_Controller_Abstract
 {
-    /** php-fpm's status page per pool, on the container's loopback-only nginx listener. */
-    public const FPM_STATUS_URL = 'http://127.0.0.1:3201/_fpm_status/';
-
-    /** The pools, as the status URL names them. */
-    public const FPM_POOLS = ['web', 'ajax'];
+    /** php-fpm's status page for its one pool, on the container's loopback-only nginx listener. */
+    public const FPM_STATUS_URL = 'http://127.0.0.1:3201/_fpm_status';
 
     /**
      * SANCTIONED WAIT (owner-approved 2026-10-31): how long the pool status may take to
      * answer, connect and read. php-fpm serves its status page from a worker of the pool
-     * being described, so a pool with every worker busy cannot answer until one frees up -
-     * and that pool is the one the screen most needs to show. The screen asks again every 15
+     * it describes, so a pool with every worker busy cannot answer until one frees up -
+     * and that is the moment the screen most needs to show. The screen asks again every 15
      * seconds, so waiting longer than a fraction of that only stacks requests on a saturated
      * pool; past the wait the tile reads "no answer - every worker may be busy", which is
      * itself the answer. It bounds a WAIT on another process and truncates no work.
@@ -43,7 +40,7 @@ class _Sys_Performance_Controller extends _Sys_Endpoint_Controller_Abstract
     public const FPM_STATUS_WAIT_SECONDS = 2;
 
     /**
-     * Test seam: called as fn(string $pool): ?string instead of the HTTP fetch, answering the
+     * Test seam: called as fn(): ?string instead of the HTTP fetch, answering the
      * status page's JSON body or null. Nothing outside a test run may set it.
      *
      * @var callable|null
@@ -76,24 +73,18 @@ class _Sys_Performance_Controller extends _Sys_Endpoint_Controller_Abstract
     }
 
     /**
-     * php-fpm's own view of each pool: {pools: {web|ajax: {active, idle, total, queue,
-     * max_queue, max_children_reached, accepted, since_seconds} | null}}. A pool that did not
-     * answer is null.
+     * php-fpm's own view of its pool: {pool: {active, idle, total, queue, max_queue,
+     * max_children_reached, accepted, since_seconds} | null}. Null when it did not answer.
      */
     #[Ajax_Endpoint]
     public static function get_fpm_status(Request $request, array $params = [])
     {
-        $pools = [];
-        foreach (self::FPM_POOLS as $pool) {
-            $pools[$pool] = static::parse_fpm_status(static::__fetch_fpm_status($pool));
-        }
-
-        return ['pools' => $pools];
+        return ['pool' => static::parse_fpm_status(static::__fetch_fpm_status())];
     }
 
     /**
      * The budget as the screen draws it, or null when nothing sized this box:
-     * {php_ram_mb, php_ram_and_swap_mb, php_fpm_total, web, ajax, pools_sized, tasks, scheduled, on_demand,
+     * {php_ram_mb, php_ram_and_swap_mb, php_fpm_total, pool_sized, tasks, scheduled, on_demand,
      * memory_limit_mb, typical_mb, planned_typical_mb, worker_ceiling, ceiling}.
      */
     public static function budget(): ?array
@@ -111,9 +102,7 @@ class _Sys_Performance_Controller extends _Sys_Endpoint_Controller_Abstract
             'php_ram_mb' => (int) $sizing['php']['ram_mb'],
             'php_ram_and_swap_mb' => (int) $sizing['php']['ram_and_swap_mb'],
             'php_fpm_total' => $php_fpm,
-            'web' => (int) $sizing['php_fpm']['web'],
-            'ajax' => (int) $sizing['php_fpm']['ajax'],
-            'pools_sized' => (bool) $sizing['php_fpm']['pools_sized'],
+            'pool_sized' => (bool) $sizing['php_fpm']['pool_sized'],
             'tasks' => $tasks,
             'scheduled' => (int) $sizing['tasks']['scheduled'],
             'on_demand' => (int) $sizing['tasks']['on_demand'],
@@ -148,10 +137,10 @@ class _Sys_Performance_Controller extends _Sys_Endpoint_Controller_Abstract
         ];
     }
 
-    private static function __fetch_fpm_status(string $pool): ?string
+    private static function __fetch_fpm_status(): ?string
     {
         if (static::$fpm_fetcher_for_tests !== null) {
-            return (static::$fpm_fetcher_for_tests)($pool);
+            return (static::$fpm_fetcher_for_tests)();
         }
 
         // An outbound call to another process, which may not be listening at all (a box
@@ -159,7 +148,7 @@ class _Sys_Performance_Controller extends _Sys_Endpoint_Controller_Abstract
         try {
             $response = Http::connectTimeout(self::FPM_STATUS_WAIT_SECONDS)
                 ->timeout(self::FPM_STATUS_WAIT_SECONDS)
-                ->get(self::FPM_STATUS_URL . $pool . '?json');
+                ->get(self::FPM_STATUS_URL . '?json');
         } catch (Throwable $e) {
             return null;
         }

@@ -114,10 +114,9 @@ abstract class Proxority_Test_Abstract extends Rsx_Test_Abstract
         return $process;
     }
 
-    protected static function __write_pools(array $s, int $web, int $ajax): void
+    protected static function __write_pool(array $s, int $workers): void
     {
-        file_put_contents($s['root'] . '/pool/www.conf', "[www]\npm = dynamic\npm.max_children = {$web}\n");
-        file_put_contents($s['root'] . '/pool/ajax.conf', "[ajax]\npm = dynamic\npm.max_children = {$ajax}\n");
+        file_put_contents($s['root'] . '/pool/www.conf', "[www]\npm = dynamic\npm.max_children = {$workers}\n");
     }
 
     /** Set what the scripted whitelist command answers on its next run. */
@@ -158,9 +157,9 @@ abstract class Proxority_Test_Abstract extends Rsx_Test_Abstract
      *
      * @return array $s with 'port' and 'process' added
      */
-    protected static function __start_proxy(array $s, array $flags = [], int $web = 4, int $ajax = 4, ?string $mode = 'ok'): array
+    protected static function __start_proxy(array $s, array $flags = [], int $workers = 4, ?string $mode = 'ok'): array
     {
-        static::__write_pools($s, $web, $ajax);
+        static::__write_pool($s, $workers);
         if ($mode !== null) {
             static::__refresh_mode($s, $mode, $mode === 'ok' ? static::STANDARD_ANSWER : null);
         }
@@ -214,9 +213,9 @@ abstract class Proxority_Test_Abstract extends Rsx_Test_Abstract
         return $status;
     }
 
-    protected static function __pool(array $s, string $pool = 'web'): array
+    protected static function __pool(array $s): array
     {
-        return static::__status($s)['pools'][$pool];
+        return static::__status($s)['pool'];
     }
 
     protected static function __events(array $s): array
@@ -342,14 +341,14 @@ abstract class Proxority_Test_Abstract extends Rsx_Test_Abstract
         return $arrived;
     }
 
-    protected static function __wait_queued(array $s, int $count, string $pool = 'web'): void
+    protected static function __wait_queued(array $s, int $count): void
     {
-        static::__poll_until(fn () => static::__pool($s, $pool)['queued_total'] === $count, "{$count} request(s) queued in the {$pool} pool");
+        static::__poll_until(fn () => static::__pool($s)['queued_total'] === $count, "{$count} request(s) queued");
     }
 
-    protected static function __wait_busy(array $s, int $count, string $pool = 'web'): void
+    protected static function __wait_busy(array $s, int $count): void
     {
-        static::__poll_until(fn () => static::__pool($s, $pool)['busy_total'] === $count, "{$count} worker(s) busy in the {$pool} pool");
+        static::__poll_until(fn () => static::__pool($s)['busy_total'] === $count, "{$count} worker(s) busy");
     }
 
     // ------------------------------------------------------------------------------------

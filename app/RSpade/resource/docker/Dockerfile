@@ -212,7 +212,6 @@ COPY nginx/nginx.conf              /etc/nginx/nginx.conf
 COPY nginx/site.conf               /etc/nginx/sites-enabled/default
 COPY php/php.ini                   /etc/php/${PHP_VERSION}/fpm/php.ini
 COPY php/www.conf                  /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
-COPY php/ajax.conf                 /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
 COPY redis/redis.conf              /etc/redis/redis.conf
 COPY supervisor/supervisord.conf   /etc/supervisor/supervisord.conf
 COPY supervisor/conf.d/nginx.conf      /etc/supervisor/conf.d/nginx.conf
@@ -253,7 +252,6 @@ RUN chmod 644 /etc/nginx/nginx.conf \
               /etc/nginx/sites-enabled/default \
               /etc/php/${PHP_VERSION}/fpm/php.ini \
               /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf \
-              /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf \
               /etc/redis/redis.conf \
               /etc/supervisor/supervisord.conf \
               /etc/supervisor/conf.d/*.conf \
@@ -572,15 +570,13 @@ RUN sed -i "s/^target=.*/target=prod/" /.rspade_container
 # becomes visible within that window without a restart.
 COPY php/opcache-prod.ini /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 
-# Production pools: www-data rather than root, and a dynamic worker pool rather
-# than ondemand. These REPLACE the development pools of the same names. The worker
-# counts in them are placeholders: the entrypoint sizes both pools to the machine at
-# every start (rspade-sizing), before supervisor starts php-fpm.
+# The production pool: www-data rather than root, and a dynamic worker pool rather
+# than ondemand. It REPLACES the development pool of the same name. The worker counts in
+# it are placeholders: the entrypoint sizes the pool to the machine at every start
+# (rspade-sizing), before supervisor starts php-fpm.
 COPY php/www-prod.conf  /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
-COPY php/ajax-prod.conf /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
 RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini \
-              /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf \
-              /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
+              /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
 
 # Production PHP: 320 MB a process, php-fpm and the CLI alike (rspade-sizing rewrites it at
 # every start, from RSPADE_PHP_MEMORY_LIMIT_MB when set).

@@ -29,7 +29,7 @@
 #     real_ip_recursive walks X-Forwarded-For right to left past trusted hops - the rule
 #     the application's TrustProxies middleware uses.
 #
-#   - env[RSPADE_TRUSTED_PROXIES] in both php-fpm pools, the CONTAINER value, written as a
+#   - env[RSPADE_TRUSTED_PROXIES] in the php-fpm pool, the CONTAINER value, written as a
 #     literal. A pool has clear_env on by default, so php-fpm workers never see the
 #     container's environment otherwise; the application applies the .env precedence
 #     itself (config('rsx.http.trusted_proxies')), so the .env key stays authoritative in
@@ -132,13 +132,13 @@ apply() {
 
     local literal pool
     literal="$(printf '%s' "$container_tokens" | paste -sd, -)"
-    for pool in "${ROOT%/}/etc/php/${PHP_VERSION}/fpm/pool.d/www.conf" "${ROOT%/}/etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf"; do
-        [ -f "$pool" ] || continue
+    pool="${ROOT%/}/etc/php/${PHP_VERSION}/fpm/pool.d/www.conf"
+    if [ -f "$pool" ]; then
         sed -i '/^env\[RSPADE_TRUSTED_PROXIES\]/d' "$pool" || die "could not edit $pool"
         if [ -n "$literal" ]; then
             printf 'env[RSPADE_TRUSTED_PROXIES] = "%s"\n' "$literal" >> "$pool" || die "could not edit $pool"
         fi
-    done
+    fi
 
     if [ "$source" = "none" ]; then
         echo "Trusted proxies: loopback only (none declared)"

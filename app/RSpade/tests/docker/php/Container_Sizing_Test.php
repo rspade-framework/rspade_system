@@ -66,7 +66,7 @@ class Container_Sizing_Test extends Rsx_Test_Abstract
                 'ram_mb' => 3037, 'ram_and_swap_mb' => 7133,
             ],
             'ceilings' => ['ram' => 23, 'ram_and_swap' => 22, 'cpu' => 8, 'processes' => 22, 'process_cap' => 140, 'capped' => false, 'cap_notice' => false, 'winner' => 'cpu'],
-            'php_fpm' => ['total' => 8, 'source' => 'calculated', 'web' => 2, 'web_standby' => 1, 'ajax' => 6, 'ajax_standby' => 3, 'pools_sized' => true],
+            'php_fpm' => ['total' => 8, 'source' => 'calculated', 'standby' => 4, 'pool_sized' => true],
             'tasks' => ['total' => 4, 'scheduled' => 1, 'scheduled_source' => 'calculated', 'on_demand' => 3, 'on_demand_source' => 'calculated'],
             'redis' => ['maxmemory_mb' => 204, 'source' => 'calculated'],
             'mysql' => ['innodb_buffer_pool_mb' => null],
@@ -153,20 +153,20 @@ class Container_Sizing_Test extends Rsx_Test_Abstract
         static::__record();
         $row = Resource_Sizing_Health_Checks::resource_sizing();
         static::__assert_equals('INFO', $row['status']);
-        static::__assert_contains('php-fpm 8: web 2, ajax 6, limited by cores', $row['detail']);
+        static::__assert_contains('php-fpm 8, limited by cores', $row['detail']);
         static::__assert_contains('4 task workers (1 scheduled + 3 on demand)', $row['detail']);
         static::__assert_false(str_contains($row['detail'], 'server_sizing'), 'no cap notice when not capped');
         static::__assert_contains('memory_limit 320M;', $row['detail']);
         static::__assert_false(str_contains($row['detail'], '(set)'), 'nothing is marked when nothing was set');
 
         static::__record([
-            'php_fpm' => ['total' => 24, 'source' => 'override', 'pools_sized' => false],
+            'php_fpm' => ['total' => 24, 'source' => 'override', 'pool_sized' => false],
             'ceilings' => ['winner' => 'override'],
             'redis' => ['maxmemory_mb' => 500, 'source' => 'override'],
         ]);
         $row = Resource_Sizing_Health_Checks::resource_sizing();
         static::__assert_contains('php-fpm 24 (set)', $row['detail']);
-        static::__assert_contains('(development pools unchanged), limited by PHP_FPM_WORKER_COUNT', $row['detail']);
+        static::__assert_contains('(development pool unchanged), limited by PHP_FPM_WORKER_COUNT', $row['detail']);
         static::__assert_contains('redis 500 MB (set)', $row['detail']);
     }
 }

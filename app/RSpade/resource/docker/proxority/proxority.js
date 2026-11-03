@@ -10,8 +10,9 @@
  * /usr/local/bin/proxority (`proxority status`, `proxority log --follow`).
  *
  * It sits between the public nginx and a second, loopback-only nginx that talks to php-fpm,
- * and decides, per php-fpm pool, which pending request runs next - so one client, a crawler
- * or a run of large downloads cannot occupy every worker. The policy itself is
+ * and decides which pending request runs next on php-fpm's ONE pool - so one client, a
+ * crawler or a run of large downloads cannot occupy every worker. Pages, Ajax and companion
+ * calls all share that pool; fairness between clients is this proxy's job. The policy itself is
  * lib/scheduler.js (pure); this file is the network around it. Zero npm dependencies: node
  * core only.
  *
@@ -21,7 +22,7 @@
  *     --upstream-http=127.0.0.1:3301     the loopback nginx for X-Rsx-Scheme: http (or none)
  *     --upstream-https=127.0.0.1:3302    the loopback nginx for X-Rsx-Scheme: https
  *     --socket=/run/proxority/proxority.sock   the status socket (also read by status/log)
- *     --pool-dir=/etc/php/8.5/fpm/pool.d       www.conf (web pool), ajax.conf (ajax pool)
+ *     --pool-dir=/etc/php/8.5/fpm/pool.d       www.conf, the one php-fpm pool
  *     --refresh-command=...              the whitelist command; a JSON array of argv, or
  *                                        words split on whitespace. Spawned with no shell.
  *                                        Default: php /var/www/html/system/artisan rsx:proxority:routes --json
@@ -29,7 +30,7 @@
  *
  * Test-only flags (never set in production): --_connect-timeout-ms, --_response-timeout-ms.
  *
- * Signals: SIGHUP re-reads the pool sizes. SIGTERM / SIGINT stop accepting, let what is
+ * Signals: SIGHUP re-reads the pool size. SIGTERM / SIGINT stop accepting, let what is
  * already in flight finish, then exit; a second one exits at once.
  */
 
@@ -41,7 +42,7 @@ const path = require('path');
 const { Pool_Ledger } = require('./lib/scheduler.js');
 const { classify } = require('./lib/classify.js');
 const { Event_Log, format_event } = require('./lib/event_log.js');
-const { read_capacities } = require('./lib/pool_capacity.js');
+const { read_capacity } = require('./lib/pool_capacity.js');
 const { Whitelist } = require('./lib/whitelist.js');
 
 /**
@@ -241,18 +242,15 @@ class Proxority {
             https: new http.Agent({ keepAlive: true }),
         };
 
-        this.ledgers = null;
+        this.ledger = null;
         this.server = null;
         this.status_server = null;
     }
 
     async start() {
         // Fails loud: a pool file that cannot be read means a proxy that cannot schedule.
-        const capacities = read_capacities(this.options.pool_dir);
-        this.ledgers = {
-            web: new Pool_Ledger('web', capacities.web),
-            ajax: new Pool_Ledger('ajax', capacities.ajax),
-        };
+        const capacity = read_capacity(this.options.pool_dir);
+        this.ledger = new Pool_Ledger('web', capacity);
 
         await this._listen_status_socket();
 
@@ -275,32 +273,30 @@ class Proxority {
         this.options.listen.port = this.server.address().port;
 
         this.event_log.log('start', 'listening on ' + this._address(this.options.listen)
-            + '; web pool ' + capacities.web + ', ajax pool ' + capacities.ajax
+            + '; pool ' + capacity
             + '; upstreams http ' + this._address(this.options.upstreams.http)
             + ', https ' + this._address(this.options.upstreams.https));
 
         this.whitelist.start();
 
-        process.on('SIGHUP', () => this.reload_capacities());
+        process.on('SIGHUP', () => this.reload_capacity());
         process.on('SIGTERM', () => this.shutdown('SIGTERM'));
         process.on('SIGINT', () => this.shutdown('SIGINT'));
     }
 
-    reload_capacities() {
-        let capacities;
+    reload_capacity() {
+        let capacity;
         try {
-            capacities = read_capacities(this.options.pool_dir);
+            capacity = read_capacity(this.options.pool_dir);
         } catch (error) {
-            this.event_log.log('capacity', 'SIGHUP: ' + error.message + '; the current sizes are kept');
+            this.event_log.log('capacity', 'SIGHUP: ' + error.message + '; the current size is kept');
             return;
         }
 
-        for (const [pool, ledger] of Object.entries(this.ledgers)) {
-            const before = ledger.capacity;
-            const started = ledger.set_capacity(capacities[pool]);
-            this.event_log.log('capacity', 'SIGHUP: ' + pool + ' pool ' + before + ' -> ' + capacities[pool]);
-            for (const job of started) this._dispatch(job);
-        }
+        const before = this.ledger.capacity;
+        const started = this.ledger.set_capacity(capacity);
+        this.event_log.log('capacity', 'SIGHUP: pool ' + before + ' -> ' + capacity);
+        for (const job of started) this._dispatch(job);
     }
 
     shutdown(signal) {
@@ -339,7 +335,7 @@ class Proxority {
             id: ++this.next_id,
             req,
             res,
-            ledger: this.ledgers[info.pool],
+            ledger: this.ledger,
             arrived_at: Date.now(),
             upstream_req: null,
             timer: null,
@@ -352,7 +348,7 @@ class Proxority {
 
         const started = job.ledger.submit(job);
         if (job._state === 'queued') {
-            this.event_log.log('queued', this._describe(job) + ' (' + job.ledger.queued_total + ' queued in ' + job.pool + ')');
+            this.event_log.log('queued', this._describe(job) + ' (' + job.ledger.queued_total + ' queued)');
         }
         for (const ready of started) this._dispatch(ready);
     }
@@ -511,7 +507,7 @@ class Proxority {
         if (job.robot) kind.push('robot');
 
         const shown = job.path.length > EVENT_PATH_CHARS ? job.path.substring(0, EVENT_PATH_CHARS) + '...' : job.path;
-        return '#' + job.id + ' ' + job.ip + ' ' + job.pool + ' ' + job.req.method + ' ' + shown
+        return '#' + job.id + ' ' + job.ip + ' ' + job.req.method + ' ' + shown
             + (kind.length ? ' [' + kind.join(',') + ']' : '');
     }
 
@@ -533,10 +529,7 @@ class Proxority {
                 http: this._address(this.options.upstreams.http),
                 https: this._address(this.options.upstreams.https),
             },
-            pools: {
-                web: this.ledgers.web.snapshot(),
-                ajax: this.ledgers.ajax.snapshot(),
-            },
+            pool: this.ledger.snapshot(),
             whitelist: this.whitelist.snapshot(),
         };
     }
@@ -662,7 +655,7 @@ function format_duration(seconds) {
     return parts.join(' ');
 }
 
-/** How many addresses the status display lists per pool queue. */
+/** How many addresses the status display lists from the queue. */
 const STATUS_TOP_ADDRESSES = 10;
 
 function format_status(status) {
@@ -670,22 +663,21 @@ function format_status(status) {
     lines.push('Proxority - pid ' + status.pid + ', up ' + format_duration(status.uptime_seconds) + ' (since ' + status.started_at + ')');
     lines.push('Listening on ' + status.listen + ' -> http ' + status.upstreams.http + ', https ' + status.upstreams.https);
 
-    for (const pool of Object.values(status.pools)) {
-        const busy = pool.busy_by_class;
-        lines.push('');
-        lines.push('Pool ' + pool.name + ': capacity ' + pool.capacity
-            + ' (caps: per IP ' + pool.caps.per_ip + ', media ' + pool.caps.media + ', robot ' + pool.caps.robot + ')');
-        lines.push('  busy ' + pool.busy_total + '/' + pool.capacity
-            + ': normal ' + busy.normal + ', priority ' + busy.priority + ', media ' + busy.media
-            + ', robot ' + busy.robot + ', unthrottled ' + busy.unthrottled);
-        lines.push('  loopback in flight (not counted): ' + pool.loopback_running);
-        lines.push('  queued ' + pool.queued_total + ' (priority ' + pool.queued_priority + ')');
-        for (const entry of pool.queued_by_ip.slice(0, STATUS_TOP_ADDRESSES)) {
-            lines.push('    ' + entry.ip + '  ' + entry.count);
-        }
-        if (pool.queued_by_ip.length > STATUS_TOP_ADDRESSES) {
-            lines.push('    ... and ' + (pool.queued_by_ip.length - STATUS_TOP_ADDRESSES) + ' more address(es)');
-        }
+    const pool = status.pool;
+    const busy = pool.busy_by_class;
+    lines.push('');
+    lines.push('Pool ' + pool.name + ': capacity ' + pool.capacity
+        + ' (caps: per IP ' + pool.caps.per_ip + ', media ' + pool.caps.media + ', robot ' + pool.caps.robot + ')');
+    lines.push('  busy ' + pool.busy_total + '/' + pool.capacity
+        + ': normal ' + busy.normal + ', priority ' + busy.priority + ', media ' + busy.media
+        + ', robot ' + busy.robot + ', unthrottled ' + busy.unthrottled);
+    lines.push('  loopback in flight (not counted): ' + pool.loopback_running);
+    lines.push('  queued ' + pool.queued_total + ' (priority ' + pool.queued_priority + ')');
+    for (const entry of pool.queued_by_ip.slice(0, STATUS_TOP_ADDRESSES)) {
+        lines.push('    ' + entry.ip + '  ' + entry.count);
+    }
+    if (pool.queued_by_ip.length > STATUS_TOP_ADDRESSES) {
+        lines.push('    ... and ' + (pool.queued_by_ip.length - STATUS_TOP_ADDRESSES) + ' more address(es)');
     }
 
     const whitelist = status.whitelist;

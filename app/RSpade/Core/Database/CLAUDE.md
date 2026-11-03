@@ -57,7 +57,7 @@ today is the type registry (`TypeRefs/CLAUDE.md`, "Registration commits on its o
 
 ## Naming Conventions
 
-- **Primary keys**: All tables must have `id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY` (exception: sessions table uses Laravel's VARCHAR id)
+- **Primary keys**: All tables must have `id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY` (the `_sessions` table included)
 - **Foreign keys**: Always suffix with `_id` (e.g., `user_id`, `site_id`)
 - **Boolean columns**: Always prefix with `is_` (e.g., `is_active`, `is_published`)
 - **Timestamp columns**: Always suffix with `_at` (e.g., `created_at`, `updated_at`, `deleted_at`)

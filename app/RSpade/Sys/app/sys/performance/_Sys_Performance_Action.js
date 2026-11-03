@@ -2,7 +2,7 @@
  * _Sys_Performance_Action - the control panel's Performance screen.
  *
  * What requests, task runs and companion calls have actually used, against what the machine
- * was sized for: php-fpm's live pool status, a summary per kind of the last 100 (page, Ajax,
+ * was sized for: php-fpm's live pool status (its one pool), a summary per kind of the last 100 (page, Ajax,
  * API, task, companion), two charts of the last hour - memory held and processes at work, stacked by
  * kind, with the budget's ceilings across them - and the last 10 of each kind.
  *

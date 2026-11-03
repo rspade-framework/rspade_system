@@ -88,7 +88,7 @@ If a crash leaves maintenance up, **just run `php artisan rsx:maintenance:disabl
 
 This reverses an earlier rule, and takes `rsx:git`'s app-conflict halt with it: that halt WAS this refusal, so a proxied pull/merge no longer leaves the window up. Resolve a conflicted merge the ordinary way, with the site up (`# resolve the files`, then `php artisan rsx:git commit`).
 
-The ONE remaining refusal is an in-progress or interrupted schema-cache build, which is not about broken code - the database currently holds cache-build scratch data instead of yours. `--force` overrides it. `--no-services` starts nothing but still clears the flag.
+Two refusals remain, neither about broken code: an in-progress or interrupted schema-cache build (the database holds cache-build scratch data instead of yours), and an unsettled `migrate --dump-rollback` run (the next migrate would restore over anything written meanwhile - settle it with `php artisan migrate --dump-rollback`). `--force` overrides either. `--no-services` starts nothing but still clears the flag.
 
 Laravel's own `down`/`up` REFUSE - hidden stubs that name the `rsx:maintenance:*` equivalent and exit 1. The mechanism behind them (`storage/framework/maintenance.php`, the `PreventRequestsDuringMaintenance` middleware, the pre-render check in `public/index.php`) is gone - **RSpade has one maintenance mode**.
 

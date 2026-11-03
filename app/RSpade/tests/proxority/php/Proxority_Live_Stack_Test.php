@@ -13,7 +13,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Proxority in the LIVE request path: the box's real nginx (public :80 / :8000, loopback
- * :3301 / :3302), the supervised proxy on 127.0.0.1:3300 and the real php-fpm pools.
+ * :3301 / :3302), the supervised proxy on 127.0.0.1:3300 and the real php-fpm pool.
  *
  * It applies only where the stack is wired that way - an RSpade container whose nginx sends
  * PHP-bound requests to the supervised proxy, the docker test workers included (their image
@@ -26,7 +26,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * REMOTE_ADDR, the forwarded headers, HTTPS, the URI. It is reached through the same @php
  * location as every page, because nginx refuses every .php URL.
  *
- * NO TEST HOLDS A WORKER UNTIL THE TEST RELEASES IT. The pools may be `pm = ondemand`, where
+ * NO TEST HOLDS A WORKER UNTIL THE TEST RELEASES IT. The pool may be `pm = ondemand`, where
  * php-fpm can have fewer children started than pm.max_children at the instant the proxy
  * dispatches a burst; a dispatched request then waits in php-fpm's own backlog for a child to
  * free. A worker held until the test released it would never free, so that request would wait
@@ -210,12 +210,12 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
         return ($frame['ok'] ?? false) ? $frame['status'] : null;
     }
 
-    private static function __pool(string $pool = 'web'): array
+    private static function __pool(): array
     {
         $status = static::__status_or_null();
         static::__assert_not_null($status, 'the live proxy answers its status socket');
 
-        return $status['pools'][$pool];
+        return $status['pool'];
     }
 
     /** Events logged at or after $since (ISO), oldest first. */
@@ -336,7 +336,7 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
             static::__assert_equals('https', $secure['x_forwarded_proto'], ':8000 pins X-Forwarded-Proto to https');
 
             $plain_event = static::__dispatched_event($base . 'plain');
-            static::__assert_contains(' ' . $remote . ' web GET ', $plain_event['text'], 'scheduled under the client address');
+            static::__assert_contains(' ' . $remote . ' GET ', $plain_event['text'], 'scheduled under the client address');
             static::__assert_contains('to http ', $plain_event['text'], ':80 -> the http flavour');
             static::__assert_contains('to https ', static::__dispatched_event($base . 'secure')['text'], ':8000 -> the https flavour');
         });
@@ -355,7 +355,7 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
 
             static::__assert_equals($remote, $view['remote_addr'], 'REMOTE_ADDR is the real peer, not the forged entry');
             static::__assert_equals($remote, $view['x_real_ip'], 'the client\'s own X-Real-IP is replaced');
-            static::__assert_contains(' ' . $remote . ' web ', static::__dispatched_event($base . 'forged')['text'], 'the proxy schedules the real peer');
+            static::__assert_contains(' ' . $remote . ' ', static::__dispatched_event($base . 'forged')['text'], 'the proxy schedules the real peer');
         });
     }
 
@@ -371,7 +371,7 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
             static::__assert_equals(self::FORWARDED_CLIENT, $view['x_real_ip']);
 
             $event = static::__dispatched_event($base . 'trusted');
-            static::__assert_contains(' ' . self::FORWARDED_CLIENT . ' web ', $event['text'], 'scheduled under the forwarded client, not as loopback');
+            static::__assert_contains(' ' . self::FORWARDED_CLIENT . ' ', $event['text'], 'scheduled under the forwarded client, not as loopback');
             static::__assert_false(str_contains($event['text'], '[loopback'), 'a forwarded client is not loopback');
         });
     }
@@ -480,14 +480,14 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
     }
 
     // ------------------------------------------------------------------------------------
-    // Scheduling on the real pools
+    // Scheduling on the real pool
     // ------------------------------------------------------------------------------------
 
     /**
      * A flood from one address stops at the per-IP cap and queues; a second address is
      * dispatched on arrival, ahead of the flood's queued requests; every request completes.
      *
-     * N is the web pool's capacity as `proxority.js status` reports it. The first address
+     * N is the pool's capacity as `proxority.js status` reports it. The first address
      * sends N+2 requests at once, each answering by itself after the probe's two-second hold:
      * N-1 (its cap) are dispatched on arrival and the other three queue. Once all three are
      * queued, a second address sends one. Every assertion about WHEN reads the order of the
@@ -500,16 +500,16 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
             $remote = static::__remote_address();
             $capacity = static::__capacity_from_cli('web');
             if ($capacity < 2) {
-                static::__skip('The web pool has ' . $capacity . ' worker; a per-IP cap of N-1 needs at least 2.');
+                static::__skip('The pool has ' . $capacity . ' worker; a per-IP cap of N-1 needs at least 2.');
             }
             $cap = $capacity - 1;
-            static::__assert_equals($cap, (int) static::__pool('web')['caps']['per_ip'], 'the per-IP cap is N-1');
+            static::__assert_equals($cap, (int) static::__pool()['caps']['per_ip'], 'the per-IP cap is N-1');
 
             static::__poll_until(function () {
-                $pool = static::__pool('web');
+                $pool = static::__pool();
 
                 return $pool['busy_total'] === 0 && $pool['queued_total'] === 0;
-            }, 'the web pool is idle before the flood (other traffic on the box would make the counts ambiguous)');
+            }, 'the pool is idle before the flood (other traffic on the box would make the counts ambiguous)');
 
             $requests = [];
             for ($i = 0; $i < $capacity + 2; $i++) {
@@ -604,7 +604,6 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
             $status->run();
             static::__assert_equals(0, $status->getExitCode(), $status->getErrorOutput());
             static::__assert_contains('Pool web: capacity', $status->getOutput());
-            static::__assert_contains('Pool ajax: capacity', $status->getOutput());
 
             $whitelist = static::__status_or_null()['whitelist'];
             static::__assert_not_null($whitelist['accepted_at'], 'the live whitelist has been accepted: ' . json_encode($whitelist));

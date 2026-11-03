@@ -60,10 +60,11 @@ class Search_Index_Service extends Rsx_Service_Abstract
      *                                    worker has just produced (or found) one. Word-processing
      *                                    documents are then extracted from the PDF with pdftotext
      *                                    instead of paying for a SECOND soffice run - the rendition
-     *                                    is the same document and it is already on disk. Sheets and
-     *                                    decks are NOT: their text lives in a grid or on slides
-     *                                    that a PDF flattens badly, so they keep their dedicated
-     *                                    fods/fodp conversion (spreadsheet_extraction_fix_07_21).
+     *                                    is the same document and it is already on disk. Decks are
+     *                                    NOT: their text lives on slides that a PDF flattens badly,
+     *                                    so they keep their dedicated fodp conversion. Workbooks
+     *                                    never come here - Spreadsheet_Text_Extractor reads them
+     *                                    in-process.
      * @return Search_Index_Model The written index row.
      */
     public static function extract_storage(File_Storage_Model $storage, ?string $rendition_path = null): Search_Index_Model

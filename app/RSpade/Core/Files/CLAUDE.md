@@ -37,6 +37,12 @@ charged, re-checked on a doubling backoff. `attend_view()` (from `get_preview_in
 or pulls a due retry forward when the preview is opened. `render_storage()` is the unit of work
 the child runs - command line only. All of it: `rsx:man documents`.
 
+`Rsx_File_Name` is the ONE rule for a file name a user can see, store or download - every
+upload path and every download response goes through it. The byte-serving routes on
+`File_Attachment_Controller` (download, inline, thumbnails, preview renditions) are
+`#[Media]`, so Proxority counts each one against the media cap and holds its worker to the
+response's last byte (`rsx:man proxority`).
+
 Both models here are a BASE PLUS A SHELL. `File_Attachment_Model_Abstract` and
 `File_Storage_Model_Abstract` carry every member - `$table`, the enum constants, the
 relationships, `fetch()`, the hooks - and `File_Attachment_Model.php` /
@@ -47,7 +53,3 @@ place, never loaded), the app's class becomes the model for the whole tree, and 
 everything the framework adds to the base. Edit the ABSTRACT when changing framework
 behaviour - the shell is never where a member goes, and the override pass refuses an app
 class that copies the base instead of extending it. See `rsx:man class_override`.
-
-Historical note with no man home (WP-A external byte residency), preserved verbatim:
-
-> Rolled-in mime fix: serving reads `$attachment->mime_type` (the old `$storage->mime_type` never existed). `file_size` is authoritative and works without a resident blob (`get_size()` reads the column).

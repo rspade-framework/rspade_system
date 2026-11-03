@@ -17,7 +17,7 @@ importer) and the app's own .claude/skills/ - never here.
 
 **This file is framework-owned and replaced by `php artisan rsx:framework:pull` — never edit it.** Your knowledge lives in `rsx/resource/CLAUDE.md` (this file's importer) and your own `.claude/skills/`.
 
-When you write there, match this tone: **terse, not verbose** (no filler words or redundant explanations), **complete, not partial** (include all critical information), **patterns over prose** (code examples beat paragraphs). The assembled view targets **≤50KB**; every line must justify its existence.
+When you write there, match this tone: **terse, not verbose** (no filler words or redundant explanations), **complete, not partial** (include all critical information), **patterns over prose** (code examples beat paragraphs). The assembled view targets **≤80KB**; every line must justify its existence.
 
 ## Imports
 

@@ -76,9 +76,9 @@ class Sys_System_Info_Test extends Rsx_Test_Abstract
         $container = $report['container'];
         static::__assert_equals(Rsx::is_rspade_container(), $container['is_rspade_container']);
         if ($container['is_rspade_container']) {
-            static::__assert_equals(array_keys(_Sys_System_Info::FPM_POOLS), array_column($container['fpm_pools'], 'pool'));
+            static::__assert_equals(_Sys_System_Info::FPM_POOL, $container['fpm_pool']['pool']);
         } else {
-            static::__assert_null($container['fpm_pools']);
+            static::__assert_null($container['fpm_pool']);
             static::__assert_null($container['services']);
         }
     }

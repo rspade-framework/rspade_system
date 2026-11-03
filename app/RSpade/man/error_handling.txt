@@ -62,15 +62,15 @@ CORE PHILOSOPHY
             $clean = Sanitizer::sanitize($input);
 
     No Defensive Coding for Core Classes
-        Core framework classes (Rsx, Rsx_Manifest, Rsx_Storage, everything
+        Core framework classes (Rsx, Manifest, Rsx_Storage, everything
         under app/RSpade/Core/Js/) are ALWAYS present - the build system
         guarantees it. Never guard their existence.
 
             // WRONG
-            if (typeof Rsx_Manifest !== 'undefined') { Rsx_Manifest.define(); }
+            if (typeof Rsx_Storage !== 'undefined') { Rsx_Storage.session_get('key'); }
 
             // RIGHT
-            Rsx_Manifest.define();
+            Rsx_Storage.session_get('key');
 
     When try/catch IS appropriate
         Catch only EXPECTED failures: file uploads, external API/network

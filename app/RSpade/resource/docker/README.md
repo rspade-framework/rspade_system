@@ -55,7 +55,7 @@ runs it as root before the application serves traffic.
 | Migrations at start | automatic | **never** — run them deliberately |
 | `migrate` snapshot/rollback | yes, against a local DB | **no** — nothing to snapshot |
 | OPcache | revalidate every request | revalidate every 10s |
-| PHP-FPM | root, `ondemand`, 8 workers a pool | `www-data`, `dynamic`, pools **sized to the machine at start** (below) |
+| PHP-FPM | one pool, root, `ondemand`, 16 workers | one pool, `www-data`, `dynamic`, **sized to the machine at start** (below) |
 | PHP memory limit | 256 MB | 320 MB |
 | Headless-browser libraries (Playwright / Chromium) | yes | yes — an application prints PDFs with it; see below |
 | Blank credentials | generated + printed once | **refuses to start** |
@@ -135,7 +135,7 @@ All under supervisor; `supervisorctl status` lists them.
 |---|---|
 | `nginx` | web server; `:80` plain, `:8000` asserting https behind a terminator, plus the loopback-only listeners of the request path (below) |
 | `proxority` | the fair-queueing proxy every PHP-bound request passes through (The request path, below). Starts after nginx and stops before it; while it is down nginx answers 502 for every page. Kept in the test worker images, which require it and run `Proxority_Live_Stack_Test` against it. `stopwaitsecs=420` is supervisor's SIGKILL deadline on its drain at a stop (60 s connect + 360 s response head) - **a proposed value, pending the owner's approval** (the program's own comment says what it bounds) |
-| `php-fpm` | two pools — `www`, and `ajax` which exists to prevent an SSR deadlock |
+| `php-fpm` | one pool, `www`, for every request; Proxority keeps one client from taking it |
 | `redis` | one instance for everything: cache, realtime delivery, the full-page cache, short-lived counters, performance metrics, companion application records; LRU over all of it, capped to the machine (below) |
 | `mysql` | dev target only |
 | `realtime` | WebSocket relay behind `/ws` |
@@ -158,7 +158,7 @@ client -> nginx :80 / :8000            the only access log; resolves the real cl
        -> proxority 127.0.0.1:3300     decides, per php-fpm pool, which pending request runs next
        -> nginx 127.0.0.1:3301 (requests that came in on :80)
           or    127.0.0.1:3302 (requests that came in on :8000: HTTPS=on)
-       -> php-fpm, web pool or ajax pool (/_ajax/, /_companion/)
+       -> php-fpm, its one pool
 ```
 
 Proxority holds each request until its pool has a worker for it: one client address takes
@@ -268,7 +268,7 @@ does). Get it wrong and the realtime socket dials the wrong port.
 | `RSPADE_APP_URL` | written into `.env` as `APP_URL` at start |
 | `RSPADE_TRUSTED_PROXIES` | the proxies in front of the container, addresses or CIDRs, comma-separated. Used when `.env` `TRUSTED_PROXIES` is blank; written into nginx's realip configuration at start and handed to php-fpm, so the access log, Proxority's scheduling and the application name the real client. A non-address or a `/0` range stops the start (`rsx:man prod`, BEHIND A LOAD BALANCER) |
 | `RSPADE_CONTAINER_TARGET` | `dev` or `prod`; set by the image, not by you |
-| `PHP_FPM_WORKER_COUNT` | the total php-fpm worker count (2 or more), instead of the one calculated from the machine (below; the pools are sized in prod only) |
+| `PHP_FPM_WORKER_COUNT` | the php-fpm worker count (2 or more), instead of the one calculated from the machine (below; the pool is sized in prod only) |
 | `RSPADE_PHP_MEMORY_LIMIT_MB` | `memory_limit` for php-fpm AND the CLI; `320` prod, `256` dev when unset |
 | `RSPADE_PHP_TYPICAL_MB` | what one PHP process typically holds, for the RAM ceiling; `128` when unset |
 | `RSPADE_PHP_WORKERS_PER_CORE` | the CPU ceiling; `3` when unset |
@@ -343,16 +343,16 @@ operator's view - the process cap of 140 (MySQL's default connection limit, with
 headroom), setting the counts by hand past it, sizing the database, and when to
 cluster - is `php artisan rsx:man server_sizing`.
 
-| Machine | php-fpm | Web | Ajax | Task workers (sched + on demand) | Redis |
-|---|---|---|---|---|---|
-| 2 GB, 1 core, no swap | 2 (floor) | 1 | 1 | 2 (1 + 1) | 102 MB |
-| 2 GB, 1 core, 2 GB swap | 3 | 1 | 2 | 2 (1 + 1) | 102 MB |
-| 4 GB, 2 cores, no swap | 6 | 2 | 4 | 2 (1 + 1) | 204 MB |
-| 8 GB, 4 cores, no swap | 12 | 3 | 9 | 3 (1 + 2) | 409 MB |
-| 16 GB, 8 cores, no swap | 24 | 6 | 18 | 6 (2 + 4) | 819 MB |
-| 32 GB, 16 cores, no swap | 48 | 12 | 36 | 12 (4 + 8) | 1638 MB |
-| 64 GB, 32 cores, no swap | 96 | 24 | 72 | 17 (6 + 11) | 2048 MB |
-| 44 cores and more | 122 | 30 | 92 | 18 (6 + 12) - the cap | 2048 MB |
+| Machine | php-fpm (one pool) | Task workers (sched + on demand) | Redis |
+|---|---|---|---|
+| 2 GB, 1 core, no swap | 2 (floor) | 2 (1 + 1) | 102 MB |
+| 2 GB, 1 core, 2 GB swap | 3 | 2 (1 + 1) | 102 MB |
+| 4 GB, 2 cores, no swap | 6 | 2 (1 + 1) | 204 MB |
+| 8 GB, 4 cores, no swap | 12 | 3 (1 + 2) | 409 MB |
+| 16 GB, 8 cores, no swap | 24 | 6 (2 + 4) | 819 MB |
+| 32 GB, 16 cores, no swap | 48 | 12 (4 + 8) | 1638 MB |
+| 64 GB, 32 cores, no swap | 96 | 17 (6 + 11) | 2048 MB |
+| 44 cores and more | 122 | 18 (6 + 12) - the cap | 2048 MB |
 
 A machine that reaches the cap says so at start, in the Laravel log once per start, and
 in `rsx:health`, unless the counts are already set by hand.
@@ -361,8 +361,8 @@ Every number can be set instead (Environment, above); a value that is not a whol
 in range stops the start, naming the switch. `rspade-sizing plan <cores> <memory_mb>
 <swap_mb> [dev|prod]` prints the budget for any machine without changing anything.
 
-What the start writes: the two pool files (production; the development image keeps its
-8 on-demand workers a pool), the `memory_limit` php-fpm and the CLI share
+What the start writes: the pool file (production; the development image keeps its 16
+on-demand workers), the `memory_limit` php-fpm and the CLI share
 (`conf.d/95-rspade-memory.ini` in each), the Redis cap (`/etc/redis/rspade-memory.conf`),
 the development MySQL buffer pool, and `/var/lib/rspade/sizing.json`, the record of every
 number and where it came from. The framework reads that record: the on-demand task pool
@@ -371,7 +371,7 @@ and the `/_sys` Performance screen charts what requests actually use against it.
 line says what was chosen:
 
 ```
-[rspade] sized for 4 cores, 7950 MB memory, 0 MB swap: php-fpm 16 (web 4, ajax 12), 4 task workers (1 scheduled, 3 on demand), memory_limit 320M, redis 397 MB.
+[rspade] sized for 4 cores, 7950 MB memory, 0 MB swap: php-fpm 16, 4 task workers (1 scheduled, 3 on demand), memory_limit 320M, redis 397 MB.
 ```
 
 ### Minimum machine

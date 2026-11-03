@@ -241,12 +241,23 @@ test('the snapshot lists queued addresses, busiest first', () => {
 // Classifier
 // -----------------------------------------------------------------------------------------
 
-test('the pool is chosen by raw path prefix', () => {
-    assert.strictEqual(classify.pool_for_path('/_ajax/_batch'), 'ajax');
-    assert.strictEqual(classify.pool_for_path('/_companion/x/y'), 'ajax');
-    assert.strictEqual(classify.pool_for_path('/_ajaxy'), 'web');
-    assert.strictEqual(classify.pool_for_path('/portal/_ajax/x'), 'web');
-    assert.strictEqual(classify.pool_for_path('/'), 'web');
+test('a companion call from loopback is an ordinary client, keyed on its address', () => {
+    const of = (url) => classify.classify({ method: 'POST', url, headers: { 'x-real-ip': '127.0.0.1' }, remote_address: '127.0.0.1' }, classify.empty_whitelist());
+
+    const companion = of('/_companion/watcher/report?x=1');
+    assert.ok(!companion.loopback, 'scheduled, not exempt');
+    assert.strictEqual(companion.ip, '127.0.0.1', 'round robined on its own address');
+    assert.ok(of('/_ajax/_batch').loopback, 'any other loopback request keeps the exemption');
+    assert.ok(of('/_companionx/y').loopback, 'the prefix is the whole /_companion/ segment');
+});
+
+test('companion calls queue and round robin with every other address under the per-IP cap', () => {
+    const ledger = new Pool_Ledger('web', 2);
+    const companion = [1, 2, 3].map(() => request('127.0.0.1'));
+    for (const r of companion) ledger.submit(r);
+    assert.strictEqual(ledger.snapshot().busy_total, 1, 'per-IP cap max(1, N - 1) = 1');
+    const visitor = request('203.0.113.7');
+    assert.strictEqual(ledger.submit(visitor).length, 1, 'the visitor runs beside it, never behind it');
 });
 
 test('the client is X-Real-IP, else the socket address', () => {
@@ -316,7 +327,7 @@ test('classify a request', () => {
 
     const asset = of('/_compiled/app.js?v=1', { 'x-real-ip': '203.0.113.1' });
     assert.strictEqual(asset.path, '/_compiled/app.js');
-    assert.ok(asset.unthrottled && !asset.loopback && asset.pool === 'web');
+    assert.ok(asset.unthrottled && !asset.loopback);
     assert.ok(of('/urgent/5').priority);
     assert.ok(of('/_ajax/_priority').priority);
     assert.ok(!of('/_ajax/_batch').priority);
@@ -332,10 +343,7 @@ test('classify a request', () => {
 test('the priority Ajax channel is matched as a path suffix', () => {
     const of = (url) => classify.classify({ method: 'POST', url, headers: {}, remote_address: '203.0.113.1' }, classify.empty_whitelist());
     assert.ok(of('/_ajax/_priority').priority);
-    assert.strictEqual(of('/_ajax/_priority').pool, 'ajax');
-    const portal = of('/_portal/_ajax/_priority');
-    assert.ok(portal.priority, 'a portal under a path prefix');
-    assert.strictEqual(portal.pool, 'web', 'the pool still follows nginx\'s prefix routing');
+    assert.ok(of('/_portal/_ajax/_priority').priority, 'a portal under a path prefix');
     assert.ok(of('/_portal/acme/_ajax/_priority?x=1').priority, 'a tenant placeholder in the prefix; the query is not the path');
     assert.ok(!of('/_ajax/_priority/x').priority);
     assert.ok(!of('/_portal/_ajax/_priority_not').priority);

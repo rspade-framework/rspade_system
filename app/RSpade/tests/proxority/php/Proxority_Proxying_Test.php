@@ -118,19 +118,18 @@ class Proxority_Proxying_Test extends Proxority_Test_Abstract
     public static function test_sighup_rereads_the_pool_sizes()
     {
         static::__in_scratch(function (array $s) {
-            $s = static::__start_proxy($s, [], 1, 2);
+            $s = static::__start_proxy($s, [], 1);
 
             static::__send_from($s, '192.0.2.1', '/page?hold=a1');
             static::__send_from($s, '192.0.2.2', '/page?hold=b1');
             static::__wait_queued($s, 1);
 
-            static::__write_pools($s, 6, 3);
+            static::__write_pool($s, 6);
             posix_kill($s['process']->getPid(), SIGHUP);
 
-            static::__poll_until(fn () => static::__pool($s)['capacity'] === 6, 'the web pool is 6 after SIGHUP');
-            static::__assert_equals(3, static::__pool($s, 'ajax')['capacity']);
+            static::__poll_until(fn () => static::__pool($s)['capacity'] === 6, 'the pool is 6 after SIGHUP');
             static::__assert_equals(5, static::__pool($s)['caps']['per_ip']);
-            static::__wait_event($s, 'capacity', 'web pool 1 -> 6');
+            static::__wait_event($s, 'capacity', 'pool 1 -> 6');
             static::__assert_equals('b1', static::__wait_arrived($s, 2)[1], 'the larger pool starts what was waiting');
         });
     }
@@ -158,15 +157,15 @@ class Proxority_Proxying_Test extends Proxority_Test_Abstract
     public static function test_a_missing_pool_file_fails_the_start()
     {
         static::__in_scratch(function (array $s) {
-            static::__write_pools($s, 4, 4);
-            unlink($s['root'] . '/pool/ajax.conf');
+            static::__write_pool($s, 4);
+            unlink($s['root'] . '/pool/www.conf');
 
             $process = new Process(static::__proxy_command($s));
             $process->setTimeout(null);
             $process->run();
 
             static::__assert_equals(1, $process->getExitCode());
-            static::__assert_contains('[ERROR] Cannot read the ajax pool file', $process->getErrorOutput());
+            static::__assert_contains('[ERROR] Cannot read the pool file', $process->getErrorOutput());
         });
     }
 

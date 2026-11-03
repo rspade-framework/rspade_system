@@ -12,7 +12,7 @@ children, with two connections in the backlog (`ss -xl` on `/run/php/php-fpm.soc
 **What it means for Proxority**: its capacity model counts N = `pm.max_children` workers. A request
 it has dispatched may briefly wait in php-fpm's backlog instead of running. With ordinary requests
 the wait ends as soon as any child frees (milliseconds); it lasts as long as the requests ahead of
-it take. The pools stay `pm = ondemand` (owner ruling, 2026-11-03): an idle ondemand pool frees its
+it take. The pool stays `pm = ondemand` (owner ruling, 2026-11-03): an idle ondemand pool frees its
 memory.
 
 **What it means for the tests**: `Proxority_Live_Stack_Test` never holds a php-fpm worker until the

@@ -53,7 +53,8 @@ MINIMUM MACHINE
         development     2 vCPU, 4 GB RAM, 2 GB swap      4 vCPU, 8 GB RAM
 
     Below the minimum the floor still applies - two php-fpm workers (one
-    page, one Ajax), one scheduled and one on-demand task worker - and a box
+    request runs while another waits on it), one scheduled and one on-demand
+    task worker - and a box
     that cannot hold them runs out of memory under load.
 
 THE BUDGET
@@ -75,7 +76,12 @@ THE BUDGET
                    = 16 + floor((n - 64) / 25)               past it
         scheduled  = max(1, round(tasks / 3))
         on demand  = max(1, tasks - scheduled)
-        web        = a quarter of php-fpm (at least 1, 2 from 4), Ajax the rest
+        standby    = min(4, max(1, floor(php-fpm / 2)))     idle workers kept
+                                                     waiting (production)
+
+    php-fpm runs ONE pool - pages, Ajax, companion calls and the external API
+    alike - and Proxority keeps one client from taking every worker in it
+    (rsx:man proxority).
 
     Fixed 600 MB is the operating system and every service that is not a PHP
     worker (about 160 MB measured, plus OPcache's shared memory and the
@@ -121,8 +127,8 @@ SETTING THE COUNTS BY HAND
     the switch. A count that is set is never capped; whatever is not set is
     still calculated around it.
 
-        PHP_FPM_WORKER_COUNT          php-fpm workers, 2 or more (split web /
-                                      Ajax as above; pools sized in production)
+        PHP_FPM_WORKER_COUNT          php-fpm workers, 2 or more (the one
+                                      pool; sized in production)
         RSX_TASK_SCHEDULED_WORKERS    scheduled task workers; also read from
                                       the project .env
         RSX_TASK_MAX_WORKERS          on-demand task workers; also read from

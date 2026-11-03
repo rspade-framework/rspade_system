@@ -737,8 +737,8 @@ DEPLOYMENT FACTS
     - Redis DB 4 holds the records, stream, history and counters, keys
       rsx_companion:<scope token>:*; the instance records are the one thing there
       that is not derived, and the daemon republishes them when Redis loses them.
-    - nginx routes /_companion/ to the Ajax pool, uncompressed (the signature covers
-      the body's bytes).
+    - nginx serves /_companion/ uncompressed (the signature covers the body's bytes),
+      on php-fpm's one pool like every request.
 
 TROUBLESHOOTING
     "Invalid companion application: ..." at manifest build

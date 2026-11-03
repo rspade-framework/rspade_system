@@ -34,13 +34,10 @@ use App\RSpade\Core\Rsx;
 class _Sys_System_Info
 {
     /**
-     * The php-fpm pools the RSpade container runs (resource/docker/php/www.conf and
-     * ajax.conf, sized by resource/docker/sizing.sh): page requests and Ajax.
+     * The php-fpm pool the RSpade container runs (resource/docker/php/www.conf, sized by
+     * resource/docker/sizing.sh): every request bound for PHP.
      */
-    public const FPM_POOLS = [
-        'www' => 'Web pool',
-        'ajax' => 'Ajax pool',
-    ];
+    public const FPM_POOL = 'www';
 
     /** The pool settings shown, in display order. */
     public const FPM_KEYS = [
@@ -67,7 +64,7 @@ class _Sys_System_Info
      * The whole report.
      *
      * @return array {server, cpu_memory, disks, file_storage, php, opcache, extensions,
-     *                container: {is_rspade_container, fpm_pools, services}}
+     *                container: {is_rspade_container, fpm_pool, services}}
      */
     public static function report(): array
     {
@@ -83,7 +80,7 @@ class _Sys_System_Info
             'extensions' => static::extensions(),
             'container' => [
                 'is_rspade_container' => $is_container,
-                'fpm_pools' => $is_container ? static::fpm_pools() : null,
+                'fpm_pool' => $is_container ? static::fpm_pool() : null,
                 'services' => $is_container ? static::services() : null,
             ],
         ];
@@ -521,35 +518,28 @@ class _Sys_System_Info
     // -----------------------------------------------------------------------
 
     /**
-     * The settings of each php-fpm pool the container runs, read from the pool files
-     * of THIS PHP version (/etc/php/<major.minor>/fpm/pool.d/<pool>.conf, where the
-     * Dockerfile installs them). A pool whose file is missing or unreadable answers
-     * `settings` null; a setting the file does not declare answers null.
+     * The settings of the php-fpm pool the container runs, read from its pool file for
+     * THIS PHP version (/etc/php/<major.minor>/fpm/pool.d/www.conf, where the Dockerfile
+     * installs it). A file that is missing or unreadable answers `settings` null; a
+     * setting the file does not declare answers null.
      *
-     * @return array [{pool, label, path, settings: null|{key => value|null}}]
+     * @return array {pool, path, settings: null|{key => value|null}}
      */
-    public static function fpm_pools(): array
+    public static function fpm_pool(): array
     {
-        $dir = '/etc/php/' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '/fpm/pool.d';
+        $path = '/etc/php/' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '/fpm/pool.d/' . self::FPM_POOL . '.conf';
+        $text = static::__read($path);
 
-        $out = [];
-        foreach (self::FPM_POOLS as $pool => $label) {
-            $path = $dir . '/' . $pool . '.conf';
-            $text = static::__read($path);
-
-            $settings = null;
-            if ($text !== null) {
-                $parsed = static::parse_pool_config($text);
-                $settings = [];
-                foreach (self::FPM_KEYS as $key) {
-                    $settings[$key] = $parsed[$key] ?? null;
-                }
+        $settings = null;
+        if ($text !== null) {
+            $parsed = static::parse_pool_config($text);
+            $settings = [];
+            foreach (self::FPM_KEYS as $key) {
+                $settings[$key] = $parsed[$key] ?? null;
             }
-
-            $out[] = ['pool' => $pool, 'label' => $label, 'path' => $path, 'settings' => $settings];
         }
 
-        return $out;
+        return ['pool' => self::FPM_POOL, 'path' => $path, 'settings' => $settings];
     }
 
     /**

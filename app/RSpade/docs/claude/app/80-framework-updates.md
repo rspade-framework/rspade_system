@@ -36,4 +36,4 @@ Older projects carry `system/` as ordinary tracked files. The pull converts them
 - **Environment updates self-apply, silently** — a successful pull runs `system/bin/post-update.sh`, executing self-detecting idempotent scripts (the Claude Code status line and git guard, the knowledge-tree wiring, the storage relocation). Never able to fail your build.
 - **Pending mandatory breaking changes are surfaced automatically**: `rsx:framework:breaking_changes` (list) / `:show {name}` / `:mark {name} --fulfilled`.
 
-Skill: `rspade:framework-updates`. Details: `php artisan rsx:man rsx_upstream`, `rsx:ma breaking_changes`.
+Skill: `rspade:framework-updates`. Details: `php artisan rsx:man rsx_upstream`, `rsx:man breaking_changes`.

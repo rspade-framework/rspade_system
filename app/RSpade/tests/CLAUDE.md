@@ -266,6 +266,8 @@ php artisan rsx:test --framework --fresh      # force a full test-DB rebuild fir
 # Playwright tests are run by the Playwright tooling (see man custom_playwright_tests_spa).
 ```
 
+**A class declaring `$explicit_group_only` runs only when its group is named** (`prod_mode`, `proxority`): a bare `rsx:test --framework` passes it over and says so in one line.
+
 **EVERY invocation runs in sibling docker containers when the gate passes** - either suite,
 any selector, one class included (one class is one container: the point is one execution
 path, not speed). Output and exit code are identical to a single-process run. **The gate

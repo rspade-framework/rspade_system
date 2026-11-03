@@ -1,7 +1,7 @@
 <%--
 _Sys_Performance_Action - the Performance screen; see _Sys_Performance_Action.js.
 
-Four sections: php-fpm now (each pool's live status), the last 100 per kind plus the
+Four sections: php-fpm now (the pool's live status), the last 100 per kind plus the
 budget, the two charts of the last hour with the kind toggles, the last 10 per kind.
 --%>
 <Define:_Sys_Performance_Action>
@@ -17,7 +17,7 @@ budget, the two charts of the last hour with the kind toggles, the last 10 per k
             <%
                 const _s = this.data.snapshot;
                 const _b = _s.budget;
-                const _pools = this.data.fpm ? this.data.fpm.pools : {web: null, ajax: null};
+                const _p = this.data.fpm ? this.data.fpm.pool : null;
                 const _kinds = _Sys_Performance_Action.KINDS;
                 const _charts = this.chart_inputs();
             %>
@@ -28,17 +28,13 @@ budget, the two charts of the last hour with the kind toggles, the last 10 per k
 
             <_Sys_Section $title="php-fpm now" $icon="bi-hdd-network">
                 <_Sys_Stat_Grid>
-                    <% for (const _pool of ['web', 'ajax']) { %>
-                        <% const _p = _pools[_pool]; %>
-                        <% const _name = _pool === 'web' ? 'Web pool' : 'Ajax pool'; %>
-                        <% if (_p) { %>
-                            <_Sys_Stat_Tile $label=(_name + ' active') $icon="bi-activity" $value=(_p.active + ' of ' + _p.total)
-                                $sub=(_p.idle + ' idle, ' + _p.queue + ' queued (most ' + _p.max_queue + '), max children reached ' + _p.max_children_reached + 'x')
-                                $tone=(_p.queue > 0 || _p.max_children_reached > 0 ? 'warn' : 'ok') />
-                        <% } else { %>
-                            <_Sys_Stat_Tile $label=_name $icon="bi-activity" $value="no answer"
-                                $sub="every worker may be busy, or this box serves no status page (the RSpade container does)" $tone="muted" />
-                        <% } %>
+                    <% if (_p) { %>
+                        <_Sys_Stat_Tile $label="Workers active" $icon="bi-activity" $value=(_p.active + ' of ' + _p.total)
+                            $sub=(_p.idle + ' idle, ' + _p.queue + ' queued (most ' + _p.max_queue + '), max children reached ' + _p.max_children_reached + 'x')
+                            $tone=(_p.queue > 0 || _p.max_children_reached > 0 ? 'warn' : 'ok') />
+                    <% } else { %>
+                        <_Sys_Stat_Tile $label="Workers" $icon="bi-activity" $value="no answer"
+                            $sub="every worker may be busy, or this box serves no status page (the RSpade container does)" $tone="muted" />
                     <% } %>
                 </_Sys_Stat_Grid>
             </_Sys_Section>
@@ -57,7 +53,7 @@ budget, the two charts of the last hour with the kind toggles, the last 10 per k
                         <_Sys_Stat_Tile $label="Memory limit" $icon="bi-speedometer" $value=(_b.memory_limit_mb + ' MB') $sub="per PHP process, php-fpm and the CLI" />
                         <_Sys_Stat_Tile $label="Typical size" $icon="bi-rulers" $value=(_b.typical_mb + ' MB') $sub="what one process is sized at" />
                         <_Sys_Stat_Tile $label="php-fpm workers" $icon="bi-cpu" $value=_b.php_fpm_total
-                            $sub=('web ' + _b.web + ', ajax ' + _b.ajax + (_b.pools_sized ? '' : ' (development pools unchanged)') + ', limited by ' + _b.ceiling) />
+                            $sub=('one pool' + (_b.pool_sized ? '' : ' (development pool unchanged)') + ', limited by ' + _b.ceiling) />
                         <_Sys_Stat_Tile $label="Task workers" $icon="bi-list-check" $value=_b.tasks $sub=(_b.scheduled + ' scheduled + ' + _b.on_demand + ' on demand') />
                         <_Sys_Stat_Tile $label="RAM for PHP" $icon="bi-hdd" $value=(_b.php_ram_mb + ' MB') $sub=(_b.php_ram_and_swap_mb + ' MB with swap') />
                     </_Sys_Stat_Grid>

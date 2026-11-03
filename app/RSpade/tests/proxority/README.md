@@ -45,7 +45,7 @@ Applies wherever the proxy is deployed (the RSpade container); outside it nothin
   maintenance, hang). Shared harness: `php/Proxority_Test_Abstract`. Needs node only; no database,
   no Redis, and the supervised proxy is never touched.
 - `php/Proxority_Live_Stack_Test`: the LIVE request path - the box's real nginx (public :80/:8000,
-  loopback :3301/:3302), the supervised proxy on 127.0.0.1:3300 and the real php-fpm pools. PHP's
+  loopback :3301/:3302), the supervised proxy on 127.0.0.1:3300 and the real php-fpm pool. PHP's
   view of a request comes from the framework's pre-boot probe (`bootstrap/rsx_test_probe.php`,
   `/_rsx_test_probe/<token>/<label>`), which answers only in development and only while this test
   process owns a marker for the token in `tmp/test-probes`; it is reached through the same `@php`
@@ -55,7 +55,7 @@ Applies wherever the proxy is deployed (the RSpade container); outside it nothin
   proxy). Runs wherever nginx sends PHP-bound requests to the supervised proxy - an RSpade
   container, and the docker test workers, whose image is the development image with the proxy in
   it (`/opt/rspade/proxority`, the image's copy of `resource/docker/proxority/`) - and SKIPS wherever the proxy's status socket (`/run/proxority/proxority.sock`) does not
-  answer. The flood test waits for the web pool to be idle before it starts.
+  answer. The flood test waits for the pool to be idle before it starts.
 - **No live test holds a php-fpm worker until the test releases it.** The pools are
   `pm = ondemand`, which can have fewer children started than `pm.max_children` when a burst is
   dispatched; a request waiting in php-fpm's backlog behind a worker the test never frees would

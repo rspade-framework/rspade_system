@@ -11,8 +11,8 @@ logic the entrypoint delegates to standalone scripts, driven directly:
 
 - `sizing.sh` (`rspade-sizing` in the image) - the container sizes itself to the machine
   before any service starts: the Redis cap, the reservation for everything that is not
-  PHP, the task workers, the php-fpm total (the lowest of three ceilings, floor 2) and its
-  split, the memory_limit php-fpm and the CLI share, the development MySQL buffer pool, and
+  PHP, the task workers, the php-fpm total (the lowest of three ceilings, floor 2) for its
+  one pool, the memory_limit php-fpm and the CLI share, the development MySQL buffer pool, and
   the record `/var/lib/rspade/sizing.json`. `plan` prints the budget for a machine it is
   told about; `apply --root=` writes under a scratch root holding copies of the pool files.
   The framework's readers - the automatic on-demand task pool and the `rsx:health`

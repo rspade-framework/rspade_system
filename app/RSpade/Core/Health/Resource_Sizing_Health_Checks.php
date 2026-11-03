@@ -59,8 +59,8 @@ class Resource_Sizing_Health_Checks
 
         $parts = [
             "{$machine['cores']} cores, {$machine['memory_mb']} MB memory, {$machine['swap_mb']} MB swap",
-            "php-fpm {$fpm['total']}{$mark($fpm['source'])}: web {$fpm['web']}, ajax {$fpm['ajax']}"
-                . ($fpm['pools_sized'] ? '' : ' (development pools unchanged)')
+            "php-fpm {$fpm['total']}{$mark($fpm['source'])}"
+                . ($fpm['pool_sized'] ? '' : ' (development pool unchanged)')
                 . ', limited by ' . (self::CEILINGS[$budget['ceilings']['winner']] ?? $budget['ceilings']['winner']),
             "{$tasks['total']} task workers ({$tasks['scheduled']}{$mark($tasks['scheduled_source'] ?? 'calculated')} scheduled + {$tasks['on_demand']}{$mark($tasks['on_demand_source'])} on demand)",
             "memory_limit {$php['memory_limit_mb']}M{$mark($php['memory_limit_source'])}",

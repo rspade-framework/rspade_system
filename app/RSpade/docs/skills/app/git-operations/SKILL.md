@@ -142,7 +142,7 @@ A pull through the proxy ends with the same pending-migration notice the framewo
 - **"your local changes would be overwritten by merge"** on a bare `git` - stop using bare git; re-run through `rsx:git`. **NEVER resolve it with `git stash`** or by committing `system/` into an app commit.
 - **`system/` is conflicted after a merge** - both sides chose a framework revision. Pick one with `git checkout --ours|--theirs -- system`, `git add system`, commit the merge, and let the next `php artisan rsx:git pull` check `system/` out at it. `rsx:framework:pull` advances to the LATEST release instead, which is a different decision.
 - **`migrate` says every migration is unauthorized** - read the line above it. A `.migration_whitelist` that does not parse is now reported as such, naming the path; repair it as the key-union of both sides' `migrations` maps.
-- **Maintenance stuck on after a halt** - resolve and commit the merge first; `rsx:maintenance:disable` refuses while unmerged (`--force` overrides, and leaves you serving a half-merged tree).
+- **Maintenance stuck on after a halt** - `rsx:maintenance:disable` reports the unmerged files and starts the services anyway (a site with broken code reports its own error); resolve and commit the merge with `php artisan rsx:git commit`.
 - **Framework files missing after a merge** - `php artisan rsx:framework:pull` restores them, no flag.
 - **In the RSpade monorepo `rsx:git` is exactly git** - no exclusion, no cycle, nothing announced; there `system/` is authored source.
 

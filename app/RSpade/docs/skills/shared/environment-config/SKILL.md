@@ -167,7 +167,7 @@ With BOTH present, `.env` wins and the heal proceeds normally. Nothing keeps `.e
 | Want | Use | Not |
 |---|---|---|
 | Anything under the volatile trees | `Rsx_Project_Paths::tmp_path('x')` / `::storage_path('x')` / `::build_path('x')` (the OWNER's methods - the global `storage_path()` is Laravel's and means the tmp tree) | a path literal, or `base_path('storage/...')` - lands inside the framework tree. `PATH-OWNER-01` flags both |
-| A project-logical path (manifest keys keep this spelling) | `rsx_project_file_path('storage/...')` | string concatenation |
+| A project-logical path under storage/ | `Rsx_Project_Paths::storage_path(...)` | string concatenation, `rsx_project_file_path()` with a literal (`PATH-OWNER-01`) |
 | A genuinely framework-internal file | `base_path('bin/script.js')` | - |
 | Resolve a path without following symlinks | `rsxrealpath($path)` | `realpath()` |
 

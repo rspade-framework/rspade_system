@@ -345,16 +345,14 @@ if [ -n "${PUID:-}" ]; then
             || warn "could not create user $PUID"
     fi
 
-    # Point both FPM pools at that identity.
-    for pool in /etc/php/8.5/fpm/pool.d/www.conf /etc/php/8.5/fpm/pool.d/ajax.conf; do
-        [ -f "$pool" ] || continue
-        sed -i \
-            -e "s/^user = .*/user = ${APP_USER}/" \
-            -e "s/^group = .*/group = ${APP_GROUP}/" \
-            -e "s/^listen.owner = .*/listen.owner = ${APP_USER}/" \
-            -e "s/^listen.group = .*/listen.group = ${APP_GROUP}/" \
-            "$pool" || warn "could not repoint $(basename "$pool")"
-    done
+    # Point the FPM pool at that identity.
+    pool=/etc/php/8.5/fpm/pool.d/www.conf
+    sed -i \
+        -e "s/^user = .*/user = ${APP_USER}/" \
+        -e "s/^group = .*/group = ${APP_GROUP}/" \
+        -e "s/^listen.owner = .*/listen.owner = ${APP_USER}/" \
+        -e "s/^listen.group = .*/listen.group = ${APP_GROUP}/" \
+        "$pool" || warn "could not repoint $(basename "$pool")"
 
     # And the database, for the same reason and with more force behind it.
     #
@@ -506,7 +504,7 @@ fi
 # 6b. Size PHP, Redis and MySQL to this machine
 # -----------------------------------------------------------------------------
 # BEFORE supervisor, because every service it starts reads its configuration once: the
-# php-fpm pool sizes (production; the development target keeps its small on-demand pools,
+# php-fpm pool size (production; the development target keeps its small on-demand pool,
 # a developer's box is not sized for traffic), the memory_limit php-fpm and the CLI share,
 # the Redis cap, and the development MySQL buffer pool. The numbers come from this
 # container's cores, memory and swap, or from the switches the container was started with

@@ -1,10 +1,10 @@
 # Proxority
 
 Proxority is a fair-queueing HTTP proxy that sits between the public nginx and the php-fpm
-pools inside the RSpade container. It exists because php-fpm has a fixed number of workers
+pool inside the RSpade container. It exists because php-fpm has a fixed number of workers
 and serves whoever asks first: one client opening many connections, a crawler walking the
 site, or a run of large downloads could otherwise occupy every worker while everybody else
-waits. Proxority keeps one ledger per php-fpm pool and decides which pending request runs
+waits. Proxority keeps one ledger for that pool and decides which pending request runs
 next, so no single client address can take every worker, downloads and uploads share at most
 half of a pool, crawlers a fifth, priority requests jump the queue, and everyone else takes
 turns.
@@ -48,8 +48,8 @@ client -> (reverse proxy / TLS terminator, if any)
        -> Proxority 127.0.0.1:3300                              decides WHEN the request runs
        -> nginx 127.0.0.1:3301 (the :80 flavour)
           or     127.0.0.1:3302 (the :8000 flavour: HTTPS=on, X-Forwarded-Proto https)
-            access_log off; fastcgi to the web pool or the ajax pool
-            (/_ajax/, /_companion/ or @php - each pins X-Forwarded-Proto to the flavour)
+            access_log off; fastcgi to php-fpm's one pool
+            (through @php, which pins X-Forwarded-Proto to the flavour)
        -> php-fpm
 ```
 
@@ -120,30 +120,30 @@ whole site shares the per-IP cap.
 
 **Loopback.** A request whose client address is loopback (`127.0.0.0/8`, `::1`) - something on
 the box itself calling its own nginx with no `X-Forwarded-For`: `rsx:debug`, server-side
-rendering, a companion application on `http://127.0.0.1`, a test harness - is never queued and
-is NOT counted busy. See "Future issues".
+rendering, a test harness - is never queued and is NOT counted busy. See "Future issues".
+
+**Companion calls are the exception: a client like any other.** A companion application calls
+`http://127.0.0.1`, so its address is loopback, but a request under `/_companion/` is queued,
+counted and round robined on that address with the ordinary per-IP cap - a chatty companion
+waits its turn beside the site's visitors instead of taking the pool.
 
 
-## Pools and capacity
+## The pool and its capacity
 
-Each request lands in the ledger of the php-fpm pool nginx will hand it to, decided on the
-raw path (no query string, no decoding):
+php-fpm runs ONE pool, `www` (`/etc/php/8.5/fpm/pool.d/www.conf`), and every PHP-bound
+request - pages, Ajax, companion calls, the external API - lands in its one ledger. Fairness
+between clients is the ledger's job: the caps and the round robin below.
 
-| Path prefix | Pool | Pool file |
-|---|---|---|
-| `/_ajax/`, `/_companion/` | ajax | `/etc/php/8.5/fpm/pool.d/ajax.conf` |
-| everything else | web | `/etc/php/8.5/fpm/pool.d/www.conf` |
-
-A pool's capacity N is its `pm.max_children`, read from the pool file at start. A missing or
+The capacity N is its `pm.max_children`, read from the pool file at start. A missing or
 unreadable file, or one with no whole-number `pm.max_children` of at least 1, fails the start
 loudly: Proxority schedules against exactly the number of workers php-fpm runs, never a guess.
 
-In the production image the container entrypoint sizes the pools (`rspade-sizing`) before
-supervisor starts anything, so Proxority reads the sized values. To change a pool at run
-time: edit the pool file, reload php-fpm, then send Proxority SIGHUP
-(`supervisorctl signal HUP proxority`). SIGHUP re-reads both files; a growth starts whatever
+In the production image the container entrypoint sizes the pool (`rspade-sizing`) before
+supervisor starts anything, so Proxority reads the sized value. To change it at run time:
+edit the pool file, reload php-fpm, then send Proxority SIGHUP
+(`supervisorctl signal HUP proxority`). SIGHUP re-reads the file; a growth starts whatever
 now fits at once, a shrink stops nothing (running requests finish and the pool drains down to
-the new N). A file that fails to read on SIGHUP keeps the current sizes and logs why.
+the new N). A file that fails to read on SIGHUP keeps the current size and logs why.
 
 
 ## The rules
@@ -316,7 +316,7 @@ proxority log
 proxority log --follow
 ```
 
-- `status` - pid and uptime; listen and upstream addresses; per pool the capacity, the three
+- `status` - pid and uptime; listen and upstream addresses; the pool's capacity, the three
   caps, busy by class (normal, priority, media, robot, unthrottled), loopback in flight,
   queued (and how many are priority), the ten addresses with the most queued; the whitelist
   counts, when it was last accepted, and the last refresh outcome (and a refresh still running).
@@ -385,8 +385,8 @@ after nginx and stops before it, so a draining proxy still has an upstream.
 ## Future issues
 
 - **Loopback-origin requests skip the queue and are not counted busy** (owner's choice,
-  2026-11-03). A request from the box itself - `rsx:debug`, server-side rendering, a companion
-  application, a test harness - is dispatched at once and never appears in the busy count, so
+  2026-11-03). A request from the box itself - `rsx:debug`, server-side rendering, a test
+  harness; never a companion call, which is scheduled - is dispatched at once and never appears in the busy count, so
   loopback traffic on top of a full pool can OVER-COMMIT php-fpm: Proxority believes workers
   are free that are in fact serving loopback requests, and dispatches more than the pool has.
   The excess waits in php-fpm's own listen backlog, unscheduled. To be addressed later.
@@ -397,7 +397,7 @@ after nginx and stops before it, so a draining proxy still has an upstream.
   frees or another connection arrives. Short requests hide it; behind long ones (a run of media
   downloads) a request Proxority counts as running waits as long as they take. A pool with N
   workers always running (`pm = static`, or `dynamic` with `pm.start_servers = pm.max_children`)
-  makes the model exact; the image's pools stay ondemand, which frees an idle pool's memory. The
+  makes the model exact; the image's pool stays ondemand, which frees an idle pool's memory. The
   live-stack tests therefore never hold a worker until the test releases it. Details:
   `system/app/RSpade/tests/proxority/issues_encountered.md`.
 - **Unthrottled requests count against the caps, and busy may exceed N.** They are never held,

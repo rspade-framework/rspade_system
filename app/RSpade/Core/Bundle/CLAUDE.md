@@ -7,7 +7,7 @@
 - Can scan directories via `include` paths
 - Auto-discovers Asset Bundles in scanned directories
 - Cannot include other Module Bundles (fatal error)
-- Built via `rsx:bundle:build`
+- Compiled on request in development, and by `rsx:build` for a sealed build
 
 **Asset Bundles** (`Rsx_Asset_Bundle_Abstract`)
 - Dependency declaration bundles co-located with components
@@ -110,15 +110,19 @@
 5. Final bundle contains JS and CSS files only
 
 ## Creating a Processor
-```php
-class MyProcessor extends AbstractBundleProcessor {
-    public static function get_name(): string { return 'myprocessor'; }
-    public static function get_extensions(): array { return ['myext']; }
-    public static function process(string $file_path, array $options = []): ?array {
-        // Transform file and return result or null to exclude
-    }
-}
-```
+A processor extends `BundleProcessor_Abstract` and implements
+`process_batch(array &$bundle_files): void`, appending the files it compiles to the list; the
+class docblock carries the worked example (`Jqhtml_BundleProcessor`).
+
+## Build-time transforms
+- **The component shake** (sealed builds): a bundle drops the jqhtml components nothing it
+  serves names; a component reached only by a name assembled at run time goes in the bundle's
+  `'keep'` list (`rsx:man bundle_api`).
+- **CDN mirroring** (every mode): `cdn_assets`, `mirror: true` externals and remote URLs in
+  compiled CSS are downloaded into `rsx/resource/.cdn-cache/` and served same-origin from
+  `/_vendor/`.
+- **String obfuscation** (strict production): app-bundle strings become `_$$` calls into a
+  per-bundle `_$$SC` dictionary; `_$$`, `_$$SC` and `_$$R` are reserved (`rsx:man app_mode`).
 
 ## Registering Processors
 Add to `config/rsx.php`:

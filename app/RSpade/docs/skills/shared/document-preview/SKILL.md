@@ -369,7 +369,7 @@ Two facts, kept apart: `_file_storage.is_indexed` says whether text is **owed**,
 
 **Two master switches, governed separately.** `config('rsx.search.enabled')` governs extraction and is also the worker's kick switch. `config('rsx.libreoffice.enabled')` governs rendering through soffice; with it off, PENDING rows stay queued, **deferred** (offered again every retry interval, nothing charged — the first pass after soffice arrives renders them) while PDFs and plain text keep extracting normally.
 
-**Word-processing documents no longer run soffice for text**: `pdftotext` reads the rendition the same pass just produced. Spreadsheets and presentations keep their own `fods`/`fodp` conversion, because flat XML is the only route that reads every sheet and slide. Net: one soffice run for a Writer document, two for a sheet or deck — it used to be three for all of them.
+**Word-processing documents no longer run soffice for text**: `pdftotext` reads the rendition the same pass just produced. Presentations keep their own `fodp` conversion, because flat XML is the only route that reads every slide; spreadsheets never run soffice for text at all - `Spreadsheet_Text_Extractor` reads the workbook in-process. Net: one soffice run for a Writer document, two for a deck, none for a workbook's text.
 
 A row is the outcome of the last attempt, one of three:
 

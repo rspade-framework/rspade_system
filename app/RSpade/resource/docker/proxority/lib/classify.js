@@ -1,10 +1,11 @@
 /**
- * What a request IS, as far as scheduling cares: which pool it lands in, whose it is, and
- * which caps and privileges apply. Pure: headers and a path in, plain data out.
+ * What a request IS, as far as scheduling cares: whose it is, and which caps and privileges
+ * apply. Pure: headers and a path in, plain data out. Every request lands in php-fpm's one
+ * pool, so a request's kind (page, Ajax, companion call) decides no pool - only its
+ * privileges.
  *
  * Every decision is made on the RAW path (no query string, no decoding, no portal prefix
- * stripped): the pool split mirrors nginx's own routing of `/_ajax/` and `/_companion/` to
- * the ajax pool, and the whitelist patterns come from the application's route table.
+ * stripped): the whitelist patterns come from the application's route table.
  */
 
 /**
@@ -20,8 +21,14 @@ const PRIORITY_AJAX_SUFFIX = '/_ajax/_priority';
  */
 const REVALIDATION_HEADERS = ['if-none-match', 'if-modified-since'];
 
-/** Paths nginx hands to the ajax pool; everything else bound for PHP is the web pool. */
-const AJAX_POOL_PREFIXES = ['/_ajax/', '/_companion/'];
+/**
+ * Companion applications' calls (rsx:man companion_apps). A companion calls the box's own
+ * nginx, so its address is loopback - but it is a CLIENT, scheduled like any other: queued,
+ * counted, and round robined on its address, so a chatty companion cannot take the pool from
+ * the site's visitors. Only the other loopback callers (rsx:debug, server-side rendering, a
+ * test harness) keep the loopback exemption.
+ */
+const COMPANION_PATH_PREFIX = '/_companion/';
 
 /**
  * Crawlers, by user agent. Hard-coded on purpose: a robot is a robot whatever the
@@ -50,13 +57,6 @@ const ROBOT_PATTERNS = [
 function path_of(url) {
     const query = url.indexOf('?');
     return query === -1 ? url : url.substring(0, query);
-}
-
-function pool_for_path(path) {
-    for (const prefix of AJAX_POOL_PREFIXES) {
-        if (path.startsWith(prefix)) return 'ajax';
-    }
-    return 'web';
 }
 
 /** An IPv4-mapped IPv6 address is the IPv4 address: one client, one ledger key. */
@@ -224,8 +224,7 @@ function classify(request, whitelist) {
     return {
         path,
         ip,
-        pool: pool_for_path(path),
-        loopback: is_loopback(ip),
+        loopback: is_loopback(ip) && !path.startsWith(COMPANION_PATH_PREFIX),
         robot: is_robot(request.headers['user-agent']),
         media: is_multipart(request.headers) || whitelist.media.matches(path),
         priority: is_priority_ajax_path(path)
@@ -237,10 +236,10 @@ function classify(request, whitelist) {
 
 module.exports = {
     PRIORITY_AJAX_SUFFIX,
+    COMPANION_PATH_PREFIX,
     REVALIDATION_HEADERS,
     ROBOT_PATTERNS,
     path_of,
-    pool_for_path,
     normalize_ip,
     is_loopback,
     client_ip,

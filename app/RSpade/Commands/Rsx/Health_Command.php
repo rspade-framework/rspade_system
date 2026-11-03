@@ -16,8 +16,7 @@ use Illuminate\Console\Command;
  * Health_Check_Runner - so the inventory can never drift from the features it covers.
  *
  * House style mirrors rsx:prod:verify: a plain Check/Status/Detail/Remediation table,
- * a [OK]/[FAIL] bracket summary, ASCII only (no emoji - a deliberate divergence from
- * rsx:debug's emoji). Exit 1 iff at least one FAIL row; WARN and INFO NEVER flip the
+ * a [OK]/[FAIL] bracket summary, ASCII only (no emoji). Exit 1 iff at least one FAIL row; WARN and INFO NEVER flip the
  * exit code, so a deploy pipeline / container healthcheck can gate on this command
  * while tolerating advisory warnings. `--json` emits a machine-readable payload only.
  *

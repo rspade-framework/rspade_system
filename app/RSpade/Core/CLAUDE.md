@@ -25,19 +25,19 @@ The framework provides application-wide middleware hooks via `Main_Abstract`:
 ## Core JavaScript Classes
 
 These classes are ALWAYS available - never check for their existence:
-- `Rsx_Manifest` - Manifest management
+- `Manifest` - Manifest reflection
 - `Rsx_Storage` - Browser storage (session/local) with scoping
 - `Rsx` - Core framework utilities
 - All classes in `/app/RSpade/Core/Js/`
 
 Use them directly without defensive coding:
 ```javascript
-// ✅ GOOD
-Rsx_Manifest.define(...)
+// GOOD
+Rsx_Storage.session_get('key')
 
-// ❌ BAD  
-if (typeof Rsx_Manifest !== 'undefined') {
-    Rsx_Manifest.define(...)
+// BAD
+if (typeof Rsx_Storage !== 'undefined') {
+    Rsx_Storage.session_get('key')
 }
 ```
 

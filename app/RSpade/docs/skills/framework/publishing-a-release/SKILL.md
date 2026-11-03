@@ -60,7 +60,7 @@ Both take the same commit message. Each has a separate git dir symlinked in, so 
 ## What leaves the tree on the way out
 
 - **Dev-only files**: `bin/publish` itself, `bin/CLAUDE.md`, `CLAUDE.md`, `docs/`, `.claude/`, `storage/*`, supervisord config, archives, caches, scratch dirs, `.rspade_last_commit_for_publish`.
-- **Framework-developer man pages**: `ast_sourcecode_parsers`, `code_quality`, `manifest_api`, `manifest_build`, `storage_directories`, `vs_code_extension`. **Never point a shipped fragment or skill at one of these** - it would resolve to nothing downstream.
+- **Framework-developer man pages**: `ast_sourcecode_parsers`, `code_quality`, `manifest_api`, `manifest_build`, `vs_code_extension`. **Never point a shipped fragment or skill at one of these** - it would resolve to nothing downstream.
 - **`.env.dist`**: the TRACKED project-root `.env.dist` is copied **verbatim** to `system/.env.dist` and to the starter project - it is an authored file, not a scrub of anybody's live `.env`, so whether a key ships is an editorial decision made in that file (and a secret in it is a secret every install shares). A missing root `.env.dist` FAILS the publish. The shipped `system/.env` is re-created as the symlink to `../.env`.
 - **`.dist` renames**: every `bin/*.dist` is renamed to its real name in the release - this is how `framework-pull-upstream.sh.dist` becomes the downstream updater. `rspade.code-workspace` goes the other way (renamed TO `.dist`).
 

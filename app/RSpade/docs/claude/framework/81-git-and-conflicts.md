@@ -9,5 +9,3 @@
 - Git submodules, when this tree has any, live in `/internal-libs/` (none present today). `system/` is NOT one here - downstream it is, but here it is the authored source.
 - npm: `php artisan rsx:dev:update_npm`.
 - **`php artisan rsx:git` is inert passthrough here** — exactly git, no submodule sync, no maintenance cycle, nothing announced (detected from `IS_FRAMEWORK_DEVELOPER=true`).
-
-**In THIS monorepo the `system/`-conflict exception does not apply** - here `system/` IS the authored framework source, so its conflicts get the same per-hunk treatment as any other code.
