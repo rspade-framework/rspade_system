@@ -3864,11 +3864,18 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
 
     /**
     * Create JavaScript runner for automatic class initialization
+    *
+    * The boot waits for DOMContentLoaded when the bundle arrived by its deferred tag. Every
+    * deferred script runs before that event, so the scripts Bundle::render() emits after the
+    * bundle (the field-length script) have run when the boot starts. jQuery's ready() is not
+    * that guarantee: a deferred script runs with the document already "interactive", where
+    * jQuery schedules ready on a timer, and that timer can fire between two deferred scripts.
     */
     protected function _create_javascript_runner(): string
     {
         $js_code = <<<'JS'
-$(document).ready(async function() {
+(function() {
+const rsx_start = async function() {
 try {
 console_debug('RSX_INIT', 'Document ready, starting Rsx._rsx_core_boot');
 await Rsx._rsx_core_boot();
@@ -3878,7 +3885,14 @@ console.error('[RSX_INIT] Initialization failed:', error);
 console.error('[RSX_INIT] Stack:', error.stack);
 throw error;
 }
-});
+};
+const bundle_script = document.currentScript;
+if (bundle_script && bundle_script.defer && document.readyState !== 'complete') {
+document.addEventListener('DOMContentLoaded', rsx_start, { once: true });
+} else {
+$(document).ready(rsx_start);
+}
+})();
 JS;
 
         // Write to temporary file

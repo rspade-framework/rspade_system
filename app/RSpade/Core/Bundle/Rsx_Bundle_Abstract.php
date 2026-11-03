@@ -839,7 +839,8 @@ abstract class Rsx_Bundle_Abstract
         // The bundle's field-length script: the column max lengths of the models this bundle
         // carries (Field_Length_Script), read by Rsx_Js_Model.field_length(). AFTER the app
         // script and deferred like it - deferred scripts run in document order, so Rsx is
-        // defined when this one assigns to it, and both have run before anything renders.
+        // defined when this one assigns to it, and both have run before anything renders
+        // (the boot waits for DOMContentLoaded, which follows every deferred script).
         // A bundle with no model (a login page) has no such script and emits no tag.
         if (!empty($compiled['field_length_script'])) {
             $html[] = '<script src="' . htmlspecialchars(Field_Length_Script::url($compiled['field_length_script'])) . '" defer></script>';

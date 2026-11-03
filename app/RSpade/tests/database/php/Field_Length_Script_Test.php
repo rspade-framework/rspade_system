@@ -39,7 +39,8 @@ use App\RSpade\Tests\Database\Php\Schema_Absent_Table_Fixture_Model;
  *   - only the name a compiled bundle's own app script carries is a script; every other
  *     name is a 404;
  *   - it is served immutable for the current state key's ?v= and uncacheable otherwise;
- *   - the page's tag follows the app script, and a bundle with no model emits none.
+ *   - the page's tag follows the app script, and a bundle with no model emits none;
+ *   - the boot waits for DOMContentLoaded, so the script has run before anything renders.
  *
  * A compiled bundle is STAGED - a scratch build root holding one app script and its model
  * list - so nothing here depends on which bundles an application declares. The named
@@ -373,5 +374,21 @@ class Field_Length_Script_Test extends Rsx_Test_Abstract
             str_contains($generate->invoke(null, $compiled, []), Field_Length_Script::URL_PREFIX),
             'a bundle with no model emits no tag at all'
         );
+    }
+
+    public static function test_the_boot_waits_for_every_deferred_script()
+    {
+        // jQuery's ready() runs from a timer when a deferred bundle finds the document already
+        // interactive, and that timer can fire before the field-length tag after it has run:
+        // every field_length() call on the first render then throws. DOMContentLoaded follows
+        // every deferred script.
+        $compiler = new BundleCompiler();
+        (new ReflectionProperty(BundleCompiler::class, 'bundle_name'))->setValue($compiler, self::BUNDLE);
+        $path = (new ReflectionMethod(BundleCompiler::class, '_create_javascript_runner'))->invoke($compiler);
+        $runner = file_get_contents($path);
+
+        static::__assert_contains("document.addEventListener('DOMContentLoaded', rsx_start", $runner, 'a deferred bundle boots on DOMContentLoaded');
+        static::__assert_contains('bundle_script.defer', $runner, 'only when it arrived by its deferred tag');
+        static::__assert_false(str_contains($runner, '$(document).ready(async'), 'never on a bare jQuery ready');
     }
 }

@@ -246,7 +246,7 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
             500 => [
                 'constant' => 'ROLE_MANAGER',
                 'label' => 'Manager',
-                'permissions' => [5, 6, 7], // ACTIVITY(5), EDIT(6), VIEW(7)
+                'permissions' => [6, 7], // EDIT(6), VIEW(7) - the action log is Site Admin and up
                 'can_admin_roles' => [500, 600, 700], // Manager and below
             ],
             // ROLE_USER = 600

@@ -243,6 +243,7 @@ compiled bundle is staged in a scratch build root (one app script and its model 
 | db-fs-09 | any other name is a 404 carrying no data | wrong hash, unknown bundle, `x.js`, empty | 404 | implemented | 2026-10-12 |
 | db-fs-10 | the compiler names a script only for a bundle with models | a list with one model; an empty list; no app script | the name; null; null | implemented | 2026-10-12 |
 | db-fs-11 | the tag follows the app script, and a model-less bundle emits none | `__generate_html()` with and without `field_length_script` | one deferred tag after the app script carrying the state key; no tag | implemented | 2026-10-12 |
+| db-fs-12 | the boot waits for every deferred script | `_create_javascript_runner()` | a deferred bundle boots on DOMContentLoaded, never a bare jQuery ready | implemented | 2026-11-03 |
 
 ## Rsx_Schema_Test - the purge (php)
 

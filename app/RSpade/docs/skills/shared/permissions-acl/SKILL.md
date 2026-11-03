@@ -62,7 +62,7 @@ Core permissions, granted by role:
 | 2 | `PERM_MANAGE_SITE_BILLING` | Site Owner+ |
 | 3 | `PERM_MANAGE_SITE_SETTINGS` | Site Admin+ |
 | 4 | `PERM_MANAGE_SITE_USERS` | Site Admin+ |
-| 5 | `PERM_VIEW_USER_ACTIVITY` | Manager+ |
+| 5 | `PERM_VIEW_USER_ACTIVITY` | Site Admin+ |
 | 6 | `PERM_EDIT_DATA` | User+ |
 | 7 | `PERM_VIEW_DATA` | Viewer+ |
 
