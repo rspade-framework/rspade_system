@@ -17,6 +17,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  */
 class Proxority_Unit_Test extends Rsx_Test_Abstract
 {
+    /** Run only on purpose: see the CLAUDE.md beside the proxy source (resource/docker/proxority/CLAUDE.md). */
+    protected static $explicit_group_only = true;
+
     protected static $use_database_transactions = false;
 
     public static function test_the_pure_modules_pass_their_node_unit_tests()

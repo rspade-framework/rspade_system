@@ -14,7 +14,8 @@ use Illuminate\Console\Command;
 /**
  * rsx:proxority:routes - the application's scheduling whitelist for the Proxority proxy.
  *
- * Hidden: its caller is Proxority (system/bin/proxority/lib/whitelist.js), which runs
+ * Hidden: its caller is Proxority (resource/docker/proxority/lib/whitelist.js, installed in
+ * the container image at /opt/rspade/proxority), which runs
  * `php artisan rsx:proxority:routes --json` on an interval, spawned without a shell, and
  * accepts an answer only from a run that exits 0 with well-formed JSON.
  *

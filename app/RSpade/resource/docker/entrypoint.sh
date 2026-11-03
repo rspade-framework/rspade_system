@@ -37,6 +37,23 @@ die()  { echo "[rspade] ERROR: $*" >&2; exit 1; }
 #
 # So: detect, say something useful, and carry on. Everything framework-shaped
 # below is conditional on HAS_FRAMEWORK; everything service-shaped is not.
+#
+# The one piece of service configuration that DOES follow the answer is nginx's
+# .php URL policy (nginx/site.conf's header, THE .PHP URL POLICY). Every listener's
+# `location ~ \.php$` includes /etc/nginx/rspade/php-urls.conf, written here at
+# every start - before supervisor starts nginx - from one of the two variants the
+# image ships beside it:
+#
+#   HAS_FRAMEWORK=1  php-urls-checkout.conf     .php URLs answer 404. RSpade has none,
+#                                               and none is executed or served as source.
+#   HAS_FRAMEWORK=0  php-urls-no-checkout.conf  a .php file in the docroot runs, through
+#                                               Proxority and the loopback listener like any
+#                                               PHP-bound request (scheme pinned), so a bare
+#                                               PHP file is served as promised above.
+#
+# Copied rather than linked so that a container restarted after a checkout appears (or
+# goes away) picks the right one; skipped when the variants are absent (an older image
+# under a newer entrypoint - its site.conf includes no snippet).
 HAS_FRAMEWORK=0
 if [ -f "$APP_DIR/system/artisan" ]; then
     HAS_FRAMEWORK=1
@@ -65,6 +82,15 @@ else
   Starting from scratch:
 
       git clone --recurse-submodules https://github.com/rspade-framework/rspade"
+fi
+
+if [ -f /etc/nginx/rspade/php-urls-checkout.conf ] && [ -f /etc/nginx/rspade/php-urls-no-checkout.conf ]; then
+    if [ "$HAS_FRAMEWORK" = "1" ]; then
+        cp -f /etc/nginx/rspade/php-urls-checkout.conf /etc/nginx/rspade/php-urls.conf
+    else
+        cp -f /etc/nginx/rspade/php-urls-no-checkout.conf /etc/nginx/rspade/php-urls.conf
+        say ".php files in the docroot will run (no RSpade checkout)."
+    fi
 fi
 
 cd "$APP_DIR" || die "Cannot enter $APP_DIR"

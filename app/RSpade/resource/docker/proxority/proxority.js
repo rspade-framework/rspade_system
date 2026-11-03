@@ -6,6 +6,9 @@
  *     node proxority.js status             the ledgers, the queues, the whitelist
  *     node proxority.js log [--follow]     the event ring; --follow streams new events
  *
+ * The image installs this directory at /opt/rspade/proxority and the operator's wrapper
+ * /usr/local/bin/proxority (`proxority status`, `proxority log --follow`).
+ *
  * It sits between the public nginx and a second, loopback-only nginx that talks to php-fpm,
  * and decides, per php-fpm pool, which pending request runs next - so one client, a crawler
  * or a run of large downloads cannot occupy every worker. The policy itself is
@@ -21,7 +24,7 @@
  *     --pool-dir=/etc/php/8.5/fpm/pool.d       www.conf (web pool), ajax.conf (ajax pool)
  *     --refresh-command=...              the whitelist command; a JSON array of argv, or
  *                                        words split on whitespace. Spawned with no shell.
- *                                        Default: php <system>/artisan rsx:proxority:routes --json
+ *                                        Default: php /var/www/html/system/artisan rsx:proxority:routes --json
  *     --refresh-interval=60              seconds between whitelist refreshes
  *
  * Test-only flags (never set in production): --_connect-timeout-ms, --_response-timeout-ms.
@@ -88,7 +91,13 @@ const FRAMING_REQUEST_HEADERS = new Set(['content-length', 'transfer-encoding', 
 /** How much of a path an event line shows. */
 const EVENT_PATH_CHARS = 200;
 
-const SYSTEM_ROOT = path.resolve(__dirname, '..', '..');
+/**
+ * The RSpade project the proxy serves, at the container's fixed docroot. The proxy itself is
+ * part of the IMAGE (/opt/rspade/proxority), not of the checkout, so this is a fixed path rather
+ * than one derived from __dirname. The whitelist refresh is the only thing that reads it, and a
+ * container with no checkout there simply fails each refresh and keeps the empty list.
+ */
+const PROJECT_ROOT = '/var/www/html';
 
 const DEFAULTS = {
     'listen': '127.0.0.1:3300',
@@ -145,7 +154,7 @@ function parse_positive_number(value, flag) {
 
 function parse_command(value) {
     if (value === null) {
-        return ['php', path.join(SYSTEM_ROOT, 'artisan'), 'rsx:proxority:routes', '--json'];
+        return ['php', path.join(PROJECT_ROOT, 'system', 'artisan'), 'rsx:proxority:routes', '--json'];
     }
 
     const text = String(value).trim();
@@ -173,7 +182,7 @@ function serve_options(flags) {
         socket: String(value('socket')),
         pool_dir: String(value('pool-dir')),
         refresh_command: parse_command(value('refresh-command')),
-        refresh_cwd: path.dirname(SYSTEM_ROOT),
+        refresh_cwd: PROJECT_ROOT,
         refresh_interval_ms: parse_positive_number(value('refresh-interval'), 'refresh-interval') * 1000,
         connect_timeout_ms: parse_positive_number(value('_connect-timeout-ms'), '_connect-timeout-ms'),
         response_timeout_ms: parse_positive_number(value('_response-timeout-ms'), '_response-timeout-ms'),

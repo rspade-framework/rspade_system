@@ -33,8 +33,8 @@ SYNOPSIS
 
     Watching it (inside the RSpade container, as root):
 
-        node /var/www/html/system/bin/proxority/proxority.js status
-        node /var/www/html/system/bin/proxority/proxority.js log --follow
+        proxority status
+        proxority log --follow
 
 DESCRIPTION
     php-fpm has a fixed number of workers and serves whoever asks first. One
@@ -216,11 +216,19 @@ OPERATING IT
     PHP-bound request; static files, bundles and the realtime socket still
     work.
 
-    node system/bin/proxority/proxority.js status
+    The proxy is part of the container IMAGE, not of the project: it is
+    installed at /opt/rspade/proxority and runs whether or not a checkout is
+    mounted. The one thing it reads from the project is the whitelist refresh
+    (php /var/www/html/system/artisan rsx:proxority:routes --json); with no
+    checkout that refresh fails, the list stays empty, and every request is
+    throttled. `proxority` (/usr/local/bin) is the operator's command, the
+    same as `node /opt/rspade/proxority/proxority.js`.
+
+    proxority status
         Per pool: capacity and caps, busy by class, queued (and by which
         addresses), and the whitelist's last refresh.
 
-    node system/bin/proxority/proxority.js log [--follow]
+    proxority log [--follow]
         The last 1000 internal events (queued, dispatched, released, timeout,
         upstream errors, client aborts, refreshes, capacity changes), held in
         memory only; --follow streams new ones.
@@ -232,7 +240,7 @@ OPERATING IT
     The public nginx keeps the only access log, one line per request under the
     real client. How the proxy works in full - the request path, every rule,
     the timeouts and their reasoning, signals and flags - is
-    system/bin/proxority/README.md.
+    system/app/RSpade/resource/docker/proxority/README.md.
 
 TROUBLESHOOTING
     "Invalid scheduling directive: ... PROXORITY-01: ..."
@@ -264,6 +272,6 @@ SEE ALSO
     rsx:man prod - BEHIND A LOAD BALANCER: declaring trusted proxies
     rsx:man server_sizing - how the php-fpm pools are sized
     rsx:man maintenance_mode - the window during which the whitelist is frozen
-    system/bin/proxority/README.md - how the proxy works, in full
+    system/app/RSpade/resource/docker/proxority/README.md - how the proxy works, in full
 
 PROXORITY(1)                       RSpade Manual                       PROXORITY(1)

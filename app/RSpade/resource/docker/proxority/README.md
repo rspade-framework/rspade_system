@@ -22,6 +22,14 @@ It is node core only - no npm dependencies:
 | `proxority-run.sh` | the supervisor entry point (`exec`s node, so supervisor's pid is the proxy) |
 
 Tests: `system/app/RSpade/tests/proxority/` (`rsx:test --framework --group=proxority`).
+
+**It is part of the container image, not of the project.** This directory is its only copy of
+source; the image's Dockerfile installs it at `/opt/rspade/proxority/` (root-owned, readable),
+supervisor runs it from there, and `/usr/local/bin/proxority` is the operator's command
+(`node /opt/rspade/proxority/proxority.js "$@"`). It therefore runs whether or not an RSpade
+checkout is mounted at `/var/www/html`. The one thing it reads from the project is the answer
+of its whitelist refresh (below); with no checkout every refresh fails, the list stays empty,
+and every request is throttled. A change here reaches a container by rebuilding the image.
 The application-facing contract is `rsx:man proxority`.
 
 Outside the RSpade container nothing here runs and nothing changes: the application's
@@ -303,9 +311,9 @@ Proxority answers on a unix socket, `/run/proxority/proxority.sock` (it creates 
 itself; root only). The CLI reads it:
 
 ```
-node /var/www/html/system/bin/proxority/proxority.js status
-node /var/www/html/system/bin/proxority/proxority.js log
-node /var/www/html/system/bin/proxority/proxority.js log --follow
+proxority status
+proxority log
+proxority log --follow
 ```
 
 - `status` - pid and uptime; listen and upstream addresses; per pool the capacity, the three
@@ -352,7 +360,7 @@ Every serve flag defaults to the production value, so supervisor runs it with no
 | `--upstream-https=` | `127.0.0.1:3302` |
 | `--socket=` | `/run/proxority/proxority.sock` |
 | `--pool-dir=` | `/etc/php/8.5/fpm/pool.d` |
-| `--refresh-command=` | `php <system>/artisan rsx:proxority:routes --json` (a JSON argv array, or words split on whitespace; never a shell) |
+| `--refresh-command=` | `php /var/www/html/system/artisan rsx:proxority:routes --json`, run in `/var/www/html` (a JSON argv array, or words split on whitespace; never a shell) |
 | `--refresh-interval=` | `60` (seconds) |
 
 An unknown flag refuses to start. `--listen=127.0.0.1:0` binds a free port (status shows the
@@ -369,9 +377,8 @@ until the test releases it, and a fake refresh command with ok / fail / bad-JSON
 
 Supervisor program `proxority`
 (`system/app/RSpade/resource/docker/supervisor/conf.d/proxority.conf`):
-`command=bash /var/www/html/system/bin/proxority/proxority-run.sh`. The run script finds node,
-waits for `proxority.js` to exist (the framework tree is delivered separately from the image),
-then `exec`s it, so the supervised pid is the proxy and signals reach it directly. It starts
+`command=bash /opt/rspade/proxority/proxority-run.sh`. The run script finds node, then
+`exec`s it, so the supervised pid is the proxy and signals reach it directly. It starts
 after nginx and stops before it, so a draining proxy still has an upstream.
 
 
@@ -397,7 +404,8 @@ after nginx and stops before it, so a draining proxy still has an upstream.
   so a burst of them pushes busy past the pool size, and the per-IP, media and robot counts
   they add hold back queued requests of the same address or class until they finish.
 - **The open-source release is later.** Today Proxority is bespoke to the RSpade container and
-  lives in the framework tree; packaging it as a project of its own is deferred.
+  lives in the framework tree (as part of the container image's sources); packaging it as a
+  project of its own is deferred.
 - **Constants that may become configuration**: the 10 MB response buffer and the robot
   user-agent list are hard-coded.
 - **The connect timeout has no automated test**: there is no portable way to make a loopback

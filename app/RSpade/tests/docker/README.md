@@ -23,8 +23,16 @@ logic the entrypoint delegates to standalone scripts, driven directly:
   (switched off, an unknown mode), writing into a scratch status directory. The
   `rsx:health` "Security Updates" row is driven against a scratch status file
   (`Security_Update_Health_Test`).
+- `nginx/site.conf` with `nginx/php-urls-checkout.conf` / `php-urls-no-checkout.conf` - the
+  `.php` URL policy the entrypoint activates by whether a checkout is mounted, and the image's
+  own copy of Proxority (`proxority/`, installed at `/opt/rspade/proxority`): every `.php`
+  location includes the policy, both variants pass `nginx -t` on a scratch tree, and the
+  Dockerfile, supervisor program and entrypoint wire them (`Nginx_Php_Url_Policy_Test`).
 
 ## Not covered
+
+What a built container does with the policy - a bare docroot's `.php` files served through
+Proxority with no checkout - was checked by hand in the development image (DOCKER-PROX-04/05).
 
 That the image carries the step and that php-fpm accepts the files it writes need a
 built image; both were checked by hand when the step was added. Reading a container's

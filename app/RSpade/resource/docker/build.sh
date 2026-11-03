@@ -28,7 +28,8 @@ set -u
 # Work in the script's own directory.
 #
 # This is also the BUILD CONTEXT, and its scope is deliberate: this directory
-# holds only the Dockerfile and a handful of small config files. Building from
+# holds only the Dockerfile, small config files and the small programs the image
+# installs (Proxority among them). Building from
 # the project root instead would hand the Docker daemon system/vendor and
 # system/node_modules - hundreds of megabytes - on every single build.
 # -----------------------------------------------------------------------------

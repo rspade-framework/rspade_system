@@ -20,8 +20,8 @@ use App\RSpade\Core\Portal\Rsx_Portal_Url;
  *     {"unthrottled": [patterns], "priority": [patterns], "media": [patterns]}
  *
  * printed by rsx:proxority:routes --json. Every pattern is a URL PATH as the proxy sees it
- * on the wire (no host, no query string), in the proxy's syntax (system/bin/proxority/lib/
- * classify.js): an exact path, a whole-segment ':param', a final optional ':param?', and a
+ * on the wire (no host, no query string), in the proxy's syntax (system/app/RSpade/resource/
+ * docker/proxority/lib/classify.js): an exact path, a whole-segment ':param', a final optional ':param?', and a
  * final '*' meaning "this prefix and anything after it".
  *
  * WHAT IS LISTED

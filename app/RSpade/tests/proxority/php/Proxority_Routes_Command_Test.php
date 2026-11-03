@@ -26,7 +26,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * routes as media; --json prints exactly the three lists and exits 0; and with maintenance
  * mode on disk it prints {"maintenance":true} and exits 3.
  *
- * The answer's consumer is system/bin/proxority/lib/classify.js (compile_whitelist()).
+ * The answer's consumer is system/app/RSpade/resource/docker/proxority/lib/classify.js (compile_whitelist()).
  */
 class Proxority_Routes_Command_Test extends Rsx_Test_Abstract
 {
@@ -143,7 +143,7 @@ class Proxority_Routes_Command_Test extends Rsx_Test_Abstract
      */
     public static function test_the_proxy_parser_accepts_the_live_answer()
     {
-        $script = 'const c = require(' . json_encode(base_path('bin/proxority/lib/classify.js')) . ');'
+        $script = 'const c = require(' . json_encode(base_path('app/RSpade/resource/docker/proxority/lib/classify.js')) . ');'
             . 'let input = ""; process.stdin.on("data", (d) => input += d);'
             . 'process.stdin.on("end", () => { c.compile_whitelist(JSON.parse(input)); console.log("[OK]"); });';
 

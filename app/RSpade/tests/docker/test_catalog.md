@@ -52,3 +52,16 @@
 | TP-04 | nothing declared leaves loopback and clears an earlier start | php | a start with a value, then one without | two set_real_ip_from lines; no pool env line | implemented | 2026-11-03 |
 | TP-05 | anything but addresses stops the start | php | `1.2.3.4;`, `0.0.0.0/0`, `::/0`, `foo`, an out-of-range octet, a newline, `/33` | non-zero exit, ERROR, nothing written | implemented | 2026-11-03 |
 | TP-06 | nginx accepts the generated file | php | `nginx -t` over a config including it | exit 0 | implemented | 2026-11-03 |
+
+## Nginx_Php_Url_Policy_Test (php) - the `.php` URL policy and the image's Proxority
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DOCKER-PROX-01 | every listener's `location ~ \.php$` opens with the policy include, so the policy runs before its handler | php | `nginx/site.conf` | four locations (:80, :8000, :3301, :3302), each starting `include /etc/nginx/rspade/php-urls.conf;` | implemented | 2026-11-03 |
+| DOCKER-PROX-02 | the checkout variant refuses, the no-checkout variant serves a file that exists | php | the two variant files, comments dropped | `return 404;` / `try_files $uri =404;` and nothing else | implemented | 2026-11-03 |
+| DOCKER-PROX-03 | nginx accepts site.conf with either variant in place | php | `nginx -t` on a scratch tree (skips without nginx or its brotli module) | exit 0 for both | implemented | 2026-11-03 |
+| DOCKER-PROX-06 | the base stage installs both variants (the checkout one active) and Proxority at /opt/rspade/proxority with the `proxority` wrapper; supervisor runs that copy; the entrypoint picks the variant by HAS_FRAMEWORK | php | Dockerfile, `supervisor/conf.d/proxority.conf`, `entrypoint.sh` | the COPY lines before `FROM base AS dev`; `command=bash /opt/rspade/proxority/proxority-run.sh`; the HAS_FRAMEWORK branch | implemented | 2026-11-03 |
+| DOCKER-PROX-04 | a container with NO checkout (a docroot holding only `system/public/index.php` and `test.php`) runs Proxority under supervisor from /opt, `proxority status` answers, the whitelist refresh fails gracefully (empty list kept), and `/`, `/test.php`, `/index.php` answer the bare files through the proxy (event log `dispatched` lines) with X-Forwarded-Proto pinned per listener (http on :80 even when the client claims https; https + HTTPS=on on :8000); a missing `.php` is nginx's 404 | manual | dev image, `docker create` + `docker cp` of the docroot + `docker start` | as stated | verified by hand 2026-11-03 (dev) | 2026-11-03 |
+| DOCKER-PROX-05 | in the built image `nginx -t` passes with each variant active, and with the checkout variant a `.php` URL answers 404 on all four listeners while `/` still reaches index.php | manual | the DOCKER-PROX-04 container, variant swapped + `nginx -s reload` | as stated | verified by hand 2026-11-03 (dev) | 2026-11-03 |
+
+With a checkout mounted, the live request path through the image's Proxority (the `.php` refusal included) is `tests/proxority`'s `Proxority_Live_Stack_Test`, which runs in the docker test workers built from the development image.

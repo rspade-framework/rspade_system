@@ -1,5 +1,11 @@
 # Concern: proxority
 
+**Run on purpose only.** The proxy's own classes (`Proxority_Unit_Test`, `_Scheduling_`,
+`_Proxying_`, `_Control_`, `_Live_Stack_`) declare `$explicit_group_only` and are skipped by a bare
+suite run; run them with `rsx:test --framework --group=proxority` only when a change meaningfully
+alters the proxy's behaviour. The rule and its scope: `resource/docker/proxority/CLAUDE.md`.
+`Proxority_Directives_Rule_Test` and `Proxority_Routes_Command_Test` stay in the default run.
+
 ## Domain overview & applicability
 
 Proxority is the fair-queueing proxy between the public nginx and php-fpm in the RSpade
@@ -14,15 +20,15 @@ Applies wherever the proxy is deployed (the RSpade container); outside it nothin
 
 ## Source files
 
-- `bin/proxority/proxority.js` - the server (request path, hop-by-hop header filtering, the two timeouts, backpressure,
+- `app/RSpade/resource/docker/proxority/proxority.js` - the server (request path, hop-by-hop header filtering, the two timeouts, backpressure,
   status socket) and the CLI client (`status`, `log`, `log --follow`)
-- `bin/proxority/lib/scheduler.js` - the pure ledger: caps, queue, round robin, priority
-- `bin/proxority/lib/classify.js` - pool, client address, loopback, robot, media, priority (the
+- `app/RSpade/resource/docker/proxority/lib/scheduler.js` - the pure ledger: caps, queue, round robin, priority
+- `app/RSpade/resource/docker/proxority/lib/classify.js` - pool, client address, loopback, robot, media, priority (the
   `/_ajax/_priority` suffix, revalidations), pattern syntax
-- `bin/proxority/lib/whitelist.js` - the refresh command and its outcomes
-- `bin/proxority/lib/event_log.js` - the 1000-event ring and its followers
-- `bin/proxority/lib/pool_capacity.js` - `pm.max_children` from the pool files
-- `bin/proxority/proxority-run.sh` - the supervisor entry
+- `app/RSpade/resource/docker/proxority/lib/whitelist.js` - the refresh command and its outcomes
+- `app/RSpade/resource/docker/proxority/lib/event_log.js` - the 1000-event ring and its followers
+- `app/RSpade/resource/docker/proxority/lib/pool_capacity.js` - `pm.max_children` from the pool files
+- `app/RSpade/resource/docker/proxority/proxority-run.sh` - the supervisor entry
 
 ## Testable surface
 
@@ -43,11 +49,12 @@ Applies wherever the proxy is deployed (the RSpade container); outside it nothin
   view of a request comes from the framework's pre-boot probe (`bootstrap/rsx_test_probe.php`,
   `/_rsx_test_probe/<token>/<label>`), which answers only in development and only while this test
   process owns a marker for the token in `tmp/test-probes`; it is reached through the same `@php`
-  location as every page, since nginx refuses every `.php` URL. Curl clients leave from the box's
+  location as every page, since nginx refuses every `.php` URL wherever a checkout is mounted
+  (`tests/docker`'s `Nginx_Php_Url_Policy_Test` covers the policy itself). Curl clients leave from the box's
   own non-loopback address (`--interface`) or from loopback with an X-Forwarded-For (a trusted
   proxy). Runs wherever nginx sends PHP-bound requests to the supervised proxy - an RSpade
   container, and the docker test workers, whose image is the development image with the proxy in
-  it - and SKIPS wherever the proxy's status socket (`/run/proxority/proxority.sock`) does not
+  it (`/opt/rspade/proxority`, the image's copy of `resource/docker/proxority/`) - and SKIPS wherever the proxy's status socket (`/run/proxority/proxority.sock`) does not
   answer. The flood test waits for the web pool to be idle before it starts.
 - **No live test holds a php-fpm worker until the test releases it.** The pools are
   `pm = ondemand`, which can have fewer children started than `pm.max_children` when a burst is

@@ -41,6 +41,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  */
 class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
 {
+    /** Run only on purpose: see the CLAUDE.md beside the proxy source (resource/docker/proxority/CLAUDE.md). */
+    protected static $explicit_group_only = true;
+
     protected static $use_database_transactions = false;
 
     private const STATUS_SOCKET = '/run/proxority/proxority.sock';
@@ -258,7 +261,7 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
     /** A pool's capacity N as `proxority.js status` reports it. */
     private static function __capacity_from_cli(string $pool): int
     {
-        $status = new Process(['node', base_path('bin/proxority/proxority.js'), 'status']);
+        $status = new Process(['node', base_path('app/RSpade/resource/docker/proxority/proxority.js'), 'status']);
         $status->setTimeout(null);
         $status->run();
         static::__assert_equals(0, $status->getExitCode(), 'proxority.js status: ' . $status->getErrorOutput());
@@ -596,7 +599,7 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
     public static function test_status_and_follow_against_the_live_socket()
     {
         static::__with_probe(function (string $base) {
-            $status = new Process(['node', base_path('bin/proxority/proxority.js'), 'status']);
+            $status = new Process(['node', base_path('app/RSpade/resource/docker/proxority/proxority.js'), 'status']);
             $status->setTimeout(null);
             $status->run();
             static::__assert_equals(0, $status->getExitCode(), $status->getErrorOutput());
@@ -609,7 +612,7 @@ class Proxority_Live_Stack_Test extends Rsx_Test_Abstract
             static::__assert_greater_than(0, $whitelist['counts']['media']);
             static::__assert_equals('ok', substr((string) $whitelist['last_outcome'], 0, 2), 'the last refresh succeeded: ' . $whitelist['last_outcome']);
 
-            $follow = new Process(['node', base_path('bin/proxority/proxority.js'), 'log', '--follow']);
+            $follow = new Process(['node', base_path('app/RSpade/resource/docker/proxority/proxority.js'), 'log', '--follow']);
             $follow->setTimeout(null);
             $follow->start();
             static::$__processes[] = $follow;

@@ -236,6 +236,13 @@ COPY apt/52rspade-security-updates /etc/apt/apt.conf.d/52rspade-security-updates
 # ImageMagick reads raster coders only: its SVG/MVG/MSL/TEXT/LABEL coders turn an uploaded
 # file into a local-file read. rsx:health "ImageMagick Coder Policy" FAILs without this.
 COPY imagemagick/policy.xml        /etc/ImageMagick-6/policy.xml
+# THE .PHP URL POLICY (nginx/site.conf's header): every `location ~ \.php$` includes
+# /etc/nginx/rspade/php-urls.conf, which the entrypoint (step 0) overwrites at every start
+# with the checkout or the no-checkout variant. The checkout variant (refuse) is also baked
+# in as the active one, so nginx's configuration is complete before any entrypoint runs.
+COPY nginx/php-urls-checkout.conf    /etc/nginx/rspade/php-urls-checkout.conf
+COPY nginx/php-urls-no-checkout.conf /etc/nginx/rspade/php-urls-no-checkout.conf
+COPY nginx/php-urls-checkout.conf    /etc/nginx/rspade/php-urls.conf
 
 # Normalise permissions on everything copied above. The source tree these files
 # come from is world-writable (a legacy of the chmod-777 arrangement this image
@@ -251,7 +258,25 @@ RUN chmod 644 /etc/nginx/nginx.conf \
               /etc/supervisor/supervisord.conf \
               /etc/supervisor/conf.d/*.conf \
               /etc/apt/apt.conf.d/52rspade-security-updates \
-              /etc/ImageMagick-6/policy.xml
+              /etc/ImageMagick-6/policy.xml \
+              /etc/nginx/rspade/*.conf
+
+# PROXORITY, the fair-queueing proxy in front of php-fpm, is part of the IMAGE: its one copy
+# of source is resource/docker/proxority/ (the build context), installed here at
+# /opt/rspade/proxority/ and run by supervisor as `bash /opt/rspade/proxority/proxority-run.sh`.
+# So it runs whether or not an RSpade checkout is mounted - nginx sends PHP-bound requests
+# through it either way. It reads nothing from a checkout but its whitelist refresh
+# (`php /var/www/html/system/artisan rsx:proxority:routes --json`), which without one fails
+# each interval and keeps the empty list. Node core only - no npm packages, nothing installed
+# at build or at start; it runs on the node installed above. Root-owned and world-readable;
+# the run script is invoked through bash, so nothing here needs an exec bit.
+# /usr/local/bin/proxority is the operator's command: `proxority status`, `proxority log`.
+COPY proxority/ /opt/rspade/proxority/
+COPY proxority-cli.sh /usr/local/bin/proxority
+RUN chown -R root:root /opt/rspade/proxority \
+    && find /opt/rspade/proxority -type d -exec chmod 755 {} + \
+    && find /opt/rspade/proxority -type f -exec chmod 644 {} + \
+    && chmod 755 /usr/local/bin/proxority
 
 COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run

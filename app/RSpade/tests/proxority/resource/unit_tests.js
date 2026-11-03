@@ -11,7 +11,7 @@
 const assert = require('assert');
 const path = require('path');
 
-const lib = path.resolve(__dirname, '../../../../../bin/proxority/lib');
+const lib = path.resolve(__dirname, '../../../resource/docker/proxority/lib');
 const { Pool_Ledger, caps_for } = require(path.join(lib, 'scheduler.js'));
 const classify = require(path.join(lib, 'classify.js'));
 const { Event_Log, EVENT_LIMIT } = require(path.join(lib, 'event_log.js'));

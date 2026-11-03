@@ -161,11 +161,28 @@ client -> nginx :80 / :8000            the only access log; resolves the real cl
        -> php-fpm, web pool or ajax pool (/_ajax/, /_companion/)
 ```
 
-Proxority (`system/bin/proxority/`, its `README.md` is the full account) holds each request
-until its pool has a worker for it: one client address takes at most N-1 of a pool's N
-workers, downloads and uploads at most half, crawlers a fifth, priority requests go first,
-and the rest take turns. Its status: `node /var/www/html/system/bin/proxority/proxority.js
-status` (or `log --follow`). The application's side is `rsx:man proxority`.
+Proxority holds each request until its pool has a worker for it: one client address takes
+at most N-1 of a pool's N workers, downloads and uploads at most half, crawlers a fifth,
+priority requests go first, and the rest take turns. Its status: `proxority status` (or
+`proxority log --follow`). The application's side is `rsx:man proxority`.
+
+**Proxority is part of the image.** Its one copy of source is `proxority/` in this directory
+(its `README.md` is the full account); the Dockerfile installs it at `/opt/rspade/proxority/`,
+supervisor runs `bash /opt/rspade/proxority/proxority-run.sh`, and `/usr/local/bin/proxority`
+is `node /opt/rspade/proxority/proxority.js "$@"`. So it runs with or without a checkout
+mounted. From the project it reads only its whitelist refresh,
+`php /var/www/html/system/artisan rsx:proxority:routes --json`, every 60 s; with no checkout
+that fails, the list stays empty, and every request is throttled. Node core only - nothing is
+installed for it. A change to it ships by rebuilding the image (`bash build.sh dev`).
+
+**`.php` URLs depend on whether a checkout is mounted** (`nginx/site.conf`'s header, THE .PHP
+URL POLICY). Every listener's `location ~ \.php$` includes `/etc/nginx/rspade/php-urls.conf`,
+which the entrypoint copies at every start from one of two variants shipped beside it: with an
+RSpade checkout (`system/artisan` present) `php-urls-checkout.conf` refuses every `.php` URL
+with 404 - RSpade has none, and the front controller is reached only through locations that
+pin the scheme; with none, `php-urls-no-checkout.conf` lets a `.php` file in the docroot
+(`/var/www/html/system/public`) run, through Proxority and the loopback listener like any
+PHP-bound request. In both cases `/` runs the docroot's `index.php`.
 
 **Behind a reverse proxy, declare it** (`RSPADE_TRUSTED_PROXIES`, below). Undeclared, every
 visitor arrives from the proxy's one address, and Proxority schedules the whole site as one

@@ -23,6 +23,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  */
 abstract class Proxority_Test_Abstract extends Rsx_Test_Abstract
 {
+    /** Run only on purpose: see the CLAUDE.md beside the proxy source (resource/docker/proxority/CLAUDE.md). */
+    protected static $explicit_group_only = true;
+
     protected static $use_database_transactions = false;
 
     /** The whitelist answer the 'ok' mode gives unless a test writes another. */
@@ -98,7 +101,7 @@ abstract class Proxority_Test_Abstract extends Rsx_Test_Abstract
 
     protected static function __proxority_js(): string
     {
-        return base_path('bin/proxority/proxority.js');
+        return base_path('app/RSpade/resource/docker/proxority/proxority.js');
     }
 
     protected static function __spawn(array $command): Process

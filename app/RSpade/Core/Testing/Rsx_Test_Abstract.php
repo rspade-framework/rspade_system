@@ -80,6 +80,10 @@ abstract class Rsx_Test_Abstract
      *
      * It is NOT a way to park a slow or a flaky test. A test nobody ever names is a test
      * nobody runs.
+     *
+     * The one other sanctioned use (owner ruling, 2026-11-03): a self-contained subsystem
+     * whose own tests are long, deterministic, and guard only that subsystem's code - the
+     * Proxority proxy's classes. Its CLAUDE.md names the changes that require running them.
      * @var bool
      */
     protected static $explicit_group_only = false;
