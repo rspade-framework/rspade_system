@@ -107,6 +107,7 @@ function parse_argv(argv) {
 
     for (const required of [
         'run-dir', 'workers', 'image', 'dev-image', 'project-root', 'framework-developer', 'suite',
+        'php-memory-limit-mb',
     ]) {
         if (!options[required]) {
             throw new Fatal('missing required argument --' + required + '=');
@@ -127,6 +128,9 @@ function parse_argv(argv) {
         // names the suite it is running; nothing about the WORK depends on it, because a
         // worker runs whatever class the queue hands it.
         suite: options.suite,
+        // PHP's memory_limit inside every container, passed as the RSPADE_PHP_MEMORY_LIMIT_MB
+        // environment switch rspade-sizing reads at container start (php-fpm and the CLI).
+        php_memory_limit_mb: parseInt(options['php-memory-limit-mb'], 10),
         // Optional. `true` when the parent (Rsx_Test_Command) holds our stdin open for its
         // whole life: end-of-file on it means the parent is gone - by any signal, SIGKILL
         // included - and this run tears down. Off for a hand invocation, whose stdin may be a
@@ -374,6 +378,7 @@ async function run_workers(options, queue, run_id) {
             '--label', RUN_LABEL + '=' + run_id,
             '--tmpfs', '/var/lib/mysql:size=' + DATADIR_TMPFS_SIZE,
             '-v', path.join(options.run_dir, 'ipc') + ':/rsx-test-ipc',
+            '-e', 'RSPADE_PHP_MEMORY_LIMIT_MB=' + options.php_memory_limit_mb,
         ];
 
         if (fs.existsSync(PLAYWRIGHT_BROWSERS_DIR)) {

@@ -427,41 +427,26 @@ INVITATION WORKFLOW
     own invite/onboarding system (separate models and sessions). See
     rsx:man portal.
 
-SELF-SIGNUP
-    Template-app policy, not a framework guarantee: two hardcoded booleans in
-    rsx/resource/config/rsx.php, both OFF as shipped, honoured by the
-    template's own controllers (rsx/app/login/), which carry the whole
-    feature.
+NO SELF-SIGNUP
+    Template-app policy, not a framework guarantee. The template has no
+    self-signup, staff or portal: a staff account comes into being only by
+    accepting an administrator's invitation (above), a portal account only by
+    registering from a portal invitation (rsx:man portal), and the first
+    account on an empty database is the initial user (rsx:man initial_user).
+    Federated sign-in never creates an account (rsx:man sso, THE FOUR POLICY
+    MODES). An application that adds a signup flow of its own verifies the
+    address itself - an emailed challenge does it with nothing extra (rsx:man
+    two_factor_codes).
 
-        rsx.auth.self_signup         false - accounts come only from an
-                                     administrator's invitation; /signup and
-                                     its submit endpoint answer 404 and the
-                                     login page offers no Sign up link.
-                                     true - /signup creates a NEW SITE with the
-                                     signer as its owner (the initial user's
-                                     role), then verifies the address.
+    One sign-in posture switch is coded in, a hardcoded boolean in
+    rsx/resource/config/rsx.php, OFF as shipped and honoured by the
+    template's own controllers (rsx/app/login/):
+
         rsx.auth.require_two_factor  false - a second factor is the user's
                                      choice. true - a staff member signing in
                                      with no factor is held on Password &
                                      Security until they enroll one (rsx:man
                                      two_factor, REQUIRING A SECOND FACTOR).
-
-    SELF-SIGNUP ALWAYS VERIFIES THE ADDRESS. The submission creates the
-    identity (is_verified = 0), the site and the owner membership in one
-    transaction, signs nobody in, and begins the framework's emailed
-    challenge (begin_challenge($identity, [ANSWER_ISSUED_CODE])). The verify
-    screen emails a six-digit code and a sign-in link together; either one
-    completes it, and the framework marks the address verified (rsx:man
-    two_factor_codes). So mail must leave: with rsx.mail.delivery anything but
-    'live' the signup page and endpoint THROW naming the mode. A password
-    sign-in of an identity whose address was never verified owes the same
-    emailed verification whenever mail can reach that address
-    (Rsx_Mail::deliverable_to()), so the password is no way around it.
-
-    The submit endpoint answers an address that already has an account
-    exactly like a new one and writes nothing. Federated sign-in never creates
-    an account (rsx:man sso, THE FOUR POLICY MODES); the client portal has no
-    self-signup - portal accounts come from invitations only.
 
     Invitation expiry: config('rsx.auth.invite_expiration_days') (default 7,
     env RSX_INVITE_EXPIRATION_DAYS).
@@ -517,7 +502,6 @@ REQUIRED ROUTES (template - rsx/app/login/)
     /login/select-site            (GET)        site picker (multi-site)
     /login/site/:id               (GET)        set chosen site
     /login/site-unauthorized      (GET)        no-access landing
-    /signup                       (GET)        signup form (+ Ajax submit)
     /accept-invite                (GET)        invitation landing
     /accept-invite/create-account (GET)        new-account form (+ Ajax submit)
     /accept-invite/success        (GET)        post-accept (+ Ajax accept)
@@ -577,7 +561,7 @@ PITFALLS
       assign an explicit User_Model::ROLE_* constant when creating one, never a
       bare integer.
 
-    - Config keys are under rsx.auth.* (self_signup, require_two_factor,
+    - Config keys are under rsx.auth.* (require_two_factor,
       invite_expiration_days) - not top-level rsx.*.
 
     - The session cookie is named "__Host-rsx" (plain "rsx" only on a

@@ -47,6 +47,22 @@ THE TEMPLATE'S EXPORT
         Every grid's export endpoint calls this; none of them formats a CSV field
         itself.
 
+        It also NEUTRALISES FORMULAS. A spreadsheet opening a CSV executes a cell
+        that begins with = + - @ (or a tab or carriage return) as a formula - CSV
+        injection - so a name typed as =HYPERLINK(...) would run on the machine
+        of whoever opens the export. build_csv() adds League\Csv\EscapeFormula as
+        a Writer formatter, which prefixes every such STRING cell with a single
+        quote (the OWASP recommendation); the spreadsheet shows the text instead
+        of evaluating it. Integers and floats pass untouched; a string that merely
+        starts with one of those characters ("-5", "+15551234567") is prefixed
+        too. Any CSV an application writes for a person to open adds the same
+        formatter:
+
+            $writer->addFormatter((new EscapeFormula())->escapeRecord(...));
+
+        A CSV written for another PROGRAM to read back may leave it off, since
+        the prefix becomes part of the value.
+
     system/app/RSpade/resource/reference_app/app/frontend/clients/clients_controller.php
         Frontend_Clients_Controller::export_csv - the endpoint. It resolves the
         grid selection (apply_selection), walks the WHOLE of it one keyset page at

@@ -239,7 +239,6 @@ BUNDLE PLACEMENT
         /rsx/app/login/login_index.blade.php
         /rsx/app/login/login_index.js
         /rsx/app/login/accept_invite/...
-        /rsx/app/login/signup/...
         ... and all files in subdirectories
 
     COVERAGE IS VALIDATED AT RENDER TIME, twice: the bundle must cover the

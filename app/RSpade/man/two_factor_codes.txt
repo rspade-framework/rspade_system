@@ -297,9 +297,9 @@ A PASSED EMAILED ANSWER VERIFIES THE ADDRESS
 
         an emailed code doubles as address verification, so a signup flow
         can verify by challenge (begin_challenge($identity,
-        [ANSWER_ISSUED_CODE])) with nothing of its own - the reference
-        application's self-signup does exactly that, switched off as shipped
-        (system/app/RSpade/resource/reference_app/app/login/signup/)
+        [ANSWER_ISSUED_CODE])) with nothing of its own (the reference
+        application has no self-signup; its accounts come from invitations,
+        which verify the address on acceptance)
 
         a portal user with is_verified = 0 is admitted by can_login() on the
         strength of the very answer that verified them - provided the

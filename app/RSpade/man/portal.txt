@@ -666,7 +666,7 @@ PORTAL LOGIN FLOW
 
       Portal_Login_Controller           /login    email + password
       Portal_Logout_Controller          /logout
-      Portal_Register_Controller        /register invitation-code signup
+      Portal_Register_Controller        /register registration from an invitation
       Portal_Share_Link_Controller      /shared/:token  where a share link leads
       Portal_Password_Reset_Controller  /password/reset  request + token
       Portal_Impersonate_Controller     /impersonate/stop  ends "view as client"
@@ -1448,8 +1448,9 @@ ONBOARDING (SIGNUP MODEL)
         A dead invitation never offers an account. Portal_Register_Controller routes
         by state, carrying the threaded redirect on every leg:
           - an account already exists -> the sign-in page (notice account_exists; the
-                                      form offers "Forgot your password?"); a
-                                      still-live invite is consumed.
+                                      form offers "Forgot your password?"); the
+                                      invitation is left PENDING, and the signed-in
+                                      account accepts it from the dashboard.
           - PENDING (live)          -> registration form; on submit creates the
                                       account + the invited client membership.
           - no code, unknown, another site's, REVOKED, USED or EXPIRED with no

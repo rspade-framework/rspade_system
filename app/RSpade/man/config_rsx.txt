@@ -1158,8 +1158,8 @@ USER CONFIG KEYS (rsx/resource/config/rsx.php)
                              address and sanitized - rsx:man console_debug).
     response                 default_view, error_views, cors.
     notifications            default_expiry_days.
-    auth                     self_signup, require_two_factor,
-                             invite_expiration_days (template-app).
+    auth                     require_two_factor, invite_expiration_days
+                             (template-app).
 
 CONFIG VS ENVIRONMENT
     Config files (version-controlled)   Application behavior: worker counts,

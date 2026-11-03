@@ -84,6 +84,16 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     const TEST_IMAGE = 'rspade-test:latest';
 
     /**
+     * PHP's memory_limit for a test run, in MB: every PHP process of the run - this command run
+     * in-process, and every php-fpm worker and CLI process inside a test container (the
+     * orchestrator starts each container with RSPADE_PHP_MEMORY_LIMIT_MB, which rspade-sizing
+     * writes into both). Above the development container's 256 MB, because a test run holds a
+     * suite's fixtures and a whole manifest in one process; a ceiling all the same, so a test
+     * that leaks fails loud instead of taking the box's memory.
+     */
+    const PHP_MEMORY_LIMIT_MB = 500;
+
+    /**
      * The shipped development image the test image is FROM. The orchestrator refuses (naming
      * build.sh) when it is absent; it never builds it itself.
      */
@@ -228,6 +238,8 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $filters = array_filter((array) $this->option('filter'));
         $groups = array_filter((array) $this->option('group'));
         $framework_only = (bool) $this->option('framework');
+
+        ini_set('memory_limit', self::PHP_MEMORY_LIMIT_MB . 'M');
 
         $this->info('RSX Test Runner');
         $this->info('================');
@@ -1705,6 +1717,8 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             // it is running the framework suite while it runs the application one is a log
             // that lies.
             '--suite=' . $suite,
+            // Each container's PHP memory_limit (see PHP_MEMORY_LIMIT_MB).
+            '--php-memory-limit-mb=' . self::PHP_MEMORY_LIMIT_MB,
             // Node tears the run down when this pipe closes - see $parent_pipe below.
             '--watch-parent-stdin=true',
         ]);

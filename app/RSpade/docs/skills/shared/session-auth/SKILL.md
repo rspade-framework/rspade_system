@@ -103,7 +103,7 @@ A passkey or SSO sign-in is NOT refused - it never presents the password. Uncaug
 
 The second factor itself is `Rsx_Two_Factor` (TOTP, passkeys, recovery codes): `verify_credentials($credentials, record: false)` is the password stage, `begin_challenge()` parks the identity (nobody is signed in), and `verify_challenge()` is what logs in and records - it is throttle-first and writes `STATUS_FAILED_2FA` itself. Skill `rspade:two-factor`; `rsx:man two_factor`.
 
-**A step a signed-in user still owes is the application's.** Enrolling a factor, accepting terms, an onboarding wizard: the login function works out what is outstanding once, at sign-in, and parks it with `Session::put_value()`; `Main::pre_dispatch()` redirects page requests to the step's screen while the value is set (leaving login, the step's own routes and logout alone). The user is signed in throughout - an outstanding step is not an access level, and the gates decide what they may do as on any request.
+**A step a signed-in user still owes is the application's.** Enrolling a factor, accepting terms, an onboarding wizard: the login function works out what is outstanding once, at sign-in, and parks it with `Session::put_value()`; `Main::pre_dispatch()` redirects page requests to the step's screen while the value is set (leaving login, the step's own routes and logout alone), refuses every Ajax call outside an allow-list of what that screen and the session machinery call, and the page turns SPA navigation off (`Spa.disable()`) so each link is a page load the hold answers. The user is signed in throughout - an outstanding step is not an access level, and the gates decide what they may do as on any request.
 
 ### Preference variables - a small fact about a person
 

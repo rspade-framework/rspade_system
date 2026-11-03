@@ -122,7 +122,7 @@ CONFIGURATION PHILOSOPHY
         convenience switches for rapid development. They let developers
         quickly test different behaviors without modifying code.
 
-        Example: rsx.auth.self_signup = false vs true
+        Example: rsx.auth.require_two_factor = false vs true
 
         However, the framework's philosophy is that developers should
         ultimately find the code controlling these features and customize
@@ -193,9 +193,11 @@ AUTHENTICATION SYSTEM
         - Email verified via invitation click
         - One login identity, multiple site memberships
 
-    Configuration Switches (template app, both off as shipped):
-        rsx.auth.self_signup         Anyone may create a new site, after
-                                     verifying their email address
+    No Self-Signup (template app):
+        - Accounts come only from accepting an invitation, plus the
+          initial user on an empty database
+
+    Configuration Switch (template app, off as shipped):
         rsx.auth.require_two_factor  Staff must enroll a second factor
 
     Flexible Architecture:

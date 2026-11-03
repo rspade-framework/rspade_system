@@ -451,6 +451,13 @@ DOCKER-ACCELERATED TESTING
     The output and the exit code are identical to a single-process run,
     because both print through the same printer.
 
+    PHP'S MEMORY LIMIT IN A TEST RUN IS 500 MB (Rsx_Test_Command::PHP_MEMORY_LIMIT_MB):
+    the runner sets it on its own process, and starts every container with the
+    RSPADE_PHP_MEMORY_LIMIT_MB=500 switch, which rspade-sizing writes into php-fpm and
+    the CLI at container start (rsx:man server_sizing). Above the development
+    container's 256 MB, because a test process holds a suite's fixtures and a whole
+    manifest; a ceiling all the same, so a test that leaks fails loud.
+
     A RUN'S CONTAINERS DIE WITH THE RUN. SIGTERM, SIGINT or SIGHUP to rsx:test
     is forwarded to the orchestrator, which kills and removes that run's
     containers before rsx:test exits 1 ("test run interrupted"). A SIGKILL

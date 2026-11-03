@@ -1121,9 +1121,11 @@ IMPLEMENTING 2FA IN AN APPLICATION
         enroll. The reference application ships the rule written out and
         switched OFF (rsx.auth.require_two_factor in its own config):
         Login_Controller::complete_sign_in() parks the step,
-        Login_Controller::outstanding_enrollment_redirect() is what its
-        Main::pre_dispatch() asks, and the step is forgotten on the next
-        page request once Rsx_Two_Factor::is_enabled() answers true
+        Login_Controller::outstanding_enrollment_redirect() (page requests)
+        and outstanding_enrollment_refusal() (Ajax calls) are what its
+        Main::pre_dispatch() asks, Frontend_Spa_Layout turns SPA navigation
+        off while the step is owed, and the step is forgotten on the next
+        request once Rsx_Two_Factor::is_enabled() answers true
         (system/app/RSpade/resource/reference_app/app/login/login_controller.php).
 
         An application that wants the rule writes it as its own sign-in
@@ -1139,10 +1141,16 @@ IMPLEMENTING 2FA IN AN APPLICATION
             - Main::pre_dispatch() redirects a page request to your
               enrollment screen while that value is set, leaving the
               login, enrollment and logout routes alone. The hook also
-              runs once per Ajax call, so it leaves the enrollment
-              screen's calls alone too (return null on the AJAX channel,
-              Rsx_Request_Channel::current(), or for those
-              $params['controller'] / $params['action']).
+              runs once per Ajax call (Rsx_Request_Channel::current() is
+              AJAX, the call named by $params['controller'] /
+              $params['action']): refuse every call except those the
+              enrollment screen, its layout and the session machinery
+              make (an allow-list), or the hold is only a page redirect
+              that a direct call walks around.
+            - Turn SPA navigation off in the browser while the step is
+              owed (Spa.disable(), from a flag the bundle's
+              load_rsxapp_data() publishes), so every link is a page load
+              the hold answers rather than a client-side navigation.
             - The screen hosts <Totp_Enrollment /> and/or
               <Passkey_Register /> and clears the value on their
               enrolled / registered event.

@@ -561,11 +561,12 @@ HIDDEN FIELDS OUTSIDE THE FORM
     placed outside the form - below a sign-in card, say - and still posting
     with it (rsx:man turnstile, OUTSIDE ITS FORM):
 
-        <Rsx_Form id="signup-form" $controller="Signup_Controller" $method="submit">
+        <Rsx_Form id="create-account-form" $controller="Accept_Invite_Controller"
+                  $method="create_account_submit">
             ...
         </Rsx_Form>
 
-        <Turnstile_Input $form="signup-form" />
+        <Turnstile_Input $form="create-account-form" />
 
     Only a native hidden input is reached this way. An input COMPONENT
     (anything extending Form_Input_Abstract) belongs to the form it renders
