@@ -3,7 +3,8 @@
 **Writing a task? Do not read this file.** How to author, dispatch, schedule, report from,
 stop and show a `#[Task]` is `rsx:man tasks` plus the `rspade:background-tasks` skill (the
 reporting API, the return contract, `#[Exclusive]`/`#[Debounce]`, the `#[Schedule]` phrases
-and the block-comment caution, the gates and widgets, the abandonment rules). This file only
+and the block-comment caution, the widgets, the abandonment rules) and `rspade:task-access` (who
+the browser shows a run to). This file only
 says what is in this DIRECTORY and what must stay true when editing it.
 
 ## What is here
@@ -109,9 +110,19 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `rsx:task:killer` loop under the kill pool), `carry_out()` (poll until due or moot,
   SIGKILL - a pool run's pid only while `Task::is_worker_process()` - settle KILLED),
   `claim_for_this_process()` (`rsx:tasks:disable`).
-- `Task_Gates.php` — the view gate, view scope and control gate per realm (deny by default,
-  a staff developer passes); `can_subscribe_to_task()` / `can_subscribe_to_list()` for the
+- `Task_Gates.php` — the browser task API's one access seam, decided PER TASK TYPE by
+  `#[Task_Access]`: `decide($run, $action)` (ALLOWED / DENIED / UNDECLARED / WRONG_REALM; a
+  staff developer passes without a check being asked; a caller not signed in in the realm
+  is DENIED; a run stamped with another site is DENIED before the check), `can_view()`,
+  `can_control()`, `declaration()`, `refusal_metadata()` (the marked `unauthorized` payload
+  Rsx_Task.js recognises), `list_refusal()`, `visible_page()` (declared types only;
+  `dispatcher` types narrowed in SQL, custom checks asked per row while walking by id until
+  the page fills) and `can_subscribe_to_task()` / `can_subscribe_to_list($filter)` for the
   topics.
+- `Task_Access_ManifestSupport.php` — bakes the `#[Task_Access]` table
+  (`data['task_access']`, read by `Manifest::get_task_access()`) and enforces its build-time
+  FATALs (no `#[Task]`, on a class, repeated, no check, unknown argument or realm, a check
+  method missing / not static / not three-parameter).
 - `Task_Notify.php` + `Task_Changed_Topic.php`, `Task_Output_Topic.php`,
   `Task_List_Changed_Topic.php` (data `{class, method}`, so a filter can name one task) —
   the realtime frames: published once per site that holds a subscription the frame matches
@@ -120,7 +131,7 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `Task_Changed_Topic` for every PENDING run on the moved run's run lock
   (`pending_ids_on_run_lock()`).
 - `Rsx_Task_Controller.php` — the browser's endpoints (both realms, `#[Auth('public')]`,
-  the gates decide; reads `#[Portal_Impersonation_Readable]`) and the `/_task/xterm.mjs` +
+  `Task_Gates` decides; it can read and control runs, never start one; reads `#[Portal_Impersonation_Readable]`) and the `/_task/xterm.mjs` +
   `/_task/xterm-fit.mjs` module routes. `BundleCompiler` adds its JS stub to every bundle.
 - `ui/` — `Rsx_Task.js` and the widgets `Task_Status_Badge`, `Task_Output` (xterm.js,
   imperative and append-only; its source is five overridable hooks, which is how
@@ -239,8 +250,11 @@ says what is in this DIRECTORY and what must stay true when editing it.
   settle; `is_stop_requested()` READS the row on every call (a stop is seen at once) but
   writes only at the rate, so a per-item stop check is not a per-item write.
   `FLUSH_INTERVAL` is a write rate and must never become a timeout.
-- **The gates fail closed.** With no handler for a realm's event, `Task_Gates` denies (the
-  scope answers `0 = 1`); only a staff developer bypasses. Every new task surface asks it.
+- **Task access fails closed.** A task with no `#[Task_Access]` for the caller's realm is
+  refused (a named error to a signed-in non-developer, not-found to anyone else); only a
+  staff developer bypasses. Every new task surface asks `Task_Gates`, and a list never
+  truncates silently - it walks until the page is full. There is no generic way to START a
+  task from the browser or the external API, and none may be added.
 - **A task is limited in SILENCE, never in run time.** The reaper measures a worker-run task
   from its last sign of life - the latest of `started_at`, `last_heartbeat_at`,
   `last_report_at` - against `rsx.tasks.silent_timeout`; a run that keeps reporting is never
@@ -272,8 +286,8 @@ says what is in this DIRECTORY and what must stay true when editing it.
   `--force-scheduled`, and the worker write that advances it (the tick, whether it creates a
   RUNNING run or enqueues a pending one) is guarded on the `next_run_at` the worker read. A new write to
   that column must be guarded the same way.
-- Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]` classes.
+- Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]`/`#[Task_Access]` classes.
 
 ## See also
 
-`rsx:man tasks` · `rsx:man task_commands` · `rsx:man locks` · skills `rspade:background-tasks`, `rspade:locks-and-subprocesses`
+`rsx:man tasks` · `rsx:man task_commands` · `rsx:man locks` · skills `rspade:background-tasks`, `rspade:task-access`, `rspade:locks-and-subprocesses`

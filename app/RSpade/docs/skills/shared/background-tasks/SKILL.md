@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: "Writing, running and watching RSpade background tasks - #[Task] service methods, the Task_Instance reporting API (status(), progress(), progress_count(), eta(), state(), queue_push()/queue_pop()/queue_remove()/queue_clear()/queue_depth(), message(), stdout()/stderr(), attach_file()/attach_bytes(), summary(), heartbeat(), flush(), run_again_in()), the return contract (null/true/0 = success, an integer = return code), Task::dispatch / Task::internal and the Task_Run_Model run row, #[Schedule] recurrence and Task::set_next_run(), maintenance tasks (#[Schedule('maintenance')] + #[Exclusive('maintenance')] in the rsx.tasks.maintenance_hour window), the silence limit (rsx.tasks.silent_timeout - a task that stops reporting is killed after 30 minutes), what a pending run is waiting for (Task_Waiting, Rsx_Task.waiting_text), #[Exclusive]/#[Debounce] identities, the on_demand/scheduled/kill worker pools, lifecycle control (request_stop, force_stop, force_kill, cancel, rerun, rsx:tasks:stop), the deny-by-default task gates (Task_Gates, task.view.authorize, task.view.scope, task.control.authorize), Rsx_Task in JS, and the widgets Task_Status_Badge, Task_Report, Task_Report_Browser and Task_Output. #[Run_As_Dispatcher] (a task that is the asynchronous stand-in for a user's Ajax endpoint runs bound and frozen as the dispatching sign-in; "this task runs as the user who dispatched it"; run by hand or in a test as a stated user with rsx:task:run --user=<id|email> --site=<id> or __acting_as_user() + __run_task_method(); "nobody is acting here", "From the command line, say who it acts as"), the claim order (dispatcher runs, then on-demand, then scheduled). Use when adding a scheduled job, a nightly or weekly cleanup / retention / maintenance task, a queued background job, a cleanup/import/report task, making a long task stoppable (is_stop_requested), reporting progress, showing a user the progress or output of a task they started, letting users stop or rerun their runs, or debugging a task that 'returned an array' and failed, a widget that says Unavailable, a run stuck Pending, or a long task killed with 'no report for Ns'."
+description: "Writing, running and watching RSpade background tasks - #[Task] service methods, the Task_Instance reporting API (status(), progress(), progress_count(), eta(), state(), queue_push()/queue_pop()/queue_remove()/queue_clear()/queue_depth(), message(), stdout()/stderr(), attach_file()/attach_bytes(), summary(), heartbeat(), flush(), run_again_in()), the return contract (null/true/0 = success, an integer = return code), Task::dispatch / Task::internal and the Task_Run_Model run row, #[Schedule] recurrence and Task::set_next_run(), maintenance tasks (#[Schedule('maintenance')] + #[Exclusive('maintenance')] in the rsx.tasks.maintenance_hour window), the silence limit (rsx.tasks.silent_timeout - a task that stops reporting is killed after 30 minutes), what a pending run is waiting for (Task_Waiting, Rsx_Task.waiting_text), #[Exclusive]/#[Debounce] identities, the on_demand/scheduled/kill worker pools, lifecycle control (request_stop, force_stop, force_kill, cancel, rerun, rsx:tasks:stop), who the browser may show a run to (#[Task_Access], deny by default - details in rspade:task-access), Rsx_Task in JS, and the widgets Task_Status_Badge, Task_Report, Task_Report_Browser and Task_Output. #[Run_As_Dispatcher] (a task that is the asynchronous stand-in for a user's Ajax endpoint runs bound and frozen as the dispatching sign-in; "this task runs as the user who dispatched it"; run by hand or in a test as a stated user with rsx:task:run --user=<id|email> --site=<id> or __acting_as_user() + __run_task_method(); "nobody is acting here", "From the command line, say who it acts as"), the claim order (dispatcher runs, then on-demand, then scheduled). Use when adding a scheduled job, a nightly or weekly cleanup / retention / maintenance task, a queued background job, a cleanup/import/report task, making a long task stoppable (is_stop_requested), reporting progress, showing a user the progress or output of a task they started, letting users stop or rerun their runs, or debugging a task that 'returned an array' and failed, a widget that says Unavailable, a run stuck Pending, or a long task killed with 'no report for Ns'."
 ---
 
 # Background Tasks
@@ -98,7 +98,7 @@ $task->get_id(); $task->get_class(); $task->get_method(); $task->get_params();
 
 ## Designing a task's reporting
 
-**Write every task for its watchers.** A run is shown live in `/_sys/tasks` and, through the app's gates, to the user who started it - its reports are all anyone sees of it. Use every report that describes the task's work, and none that does not:
+**Write every task for its watchers.** A run is shown live in `/_sys/tasks` and, through its task's `#[Task_Access]`, to the user who started it - its reports are all anyone sees of it. Use every report that describes the task's work, and none that does not:
 
 - `status()` - what it is doing now; nearly every multi-step task has one (each change is also a stderr line, so the output reads as a narrative).
 - `stdout()` / `stderr()` - the narrative: what was done, and what went wrong without stopping the run (a skipped record, a retried call). **Say what the run did, and say so when it did nothing**: name each thing as the run acts on it, with the outcome on the same line (`Sent #4812 to dana@example.com "Your invoice" (<id>)`), end with the totals, and print a line when idle (`No mail was due.`), skipped (with the reason) or stopped (with how far it got) - a scheduled run with no output is indistinguishable from one that never looked. Do not flood: one count line for bulk housekeeping, and a task that could list thousands of items lists the first couple of hundred and counts the rest.
@@ -121,7 +121,7 @@ For a list too large to push, slide a window: `queue_push_many(array_slice($labe
 
 **A task that loops - over a queue, records or steps - calls `is_stop_requested()` and `heartbeat()` on every item** (see the example above). Without the stop check a graceful stop is never answered and only a kill ends the run; check between items, where stopping leaves the data coherent, and return `null` so the run settles STOPPED. The heartbeat lets a watcher tell a slow item from a stuck one **and is what keeps a long run alive** (the silence limit). Both are cheap (reports are written at a rate). A single long step with no loop needs neither, beyond a `flush()` before it goes quiet - but a step that can outlast 30 minutes is not one step: break it up so the task can report between the pieces.
 
-**Attachments are for ONE shape of task:** a one-time run started by a user action that produces a FILE the initiator is waiting for - they poll or watch the run and take the file when it completes (the CSV export above). The attachment spares that run a storage table, a download endpoint and a cleanup of its own. A run may also attach an advanced DEBUG artifact of itself. **Never use one to deliver results that belong to the application** - converted documents, imported records, a report everyone reads: write those into the app's own tables and files, where they are kept and authorized. An attachment is a TEMP FILE (`Rsx_Temp_Files`, under `uploads/_temp`, never a shared blob): deleted with the run's output (`rsx.tasks.retention`), readable only through the task gates, belonging to no record. Output a page waits for that is NOT a task's is a temp file too - `Rsx_Temp_Files::store_bytes()`, served by the feature's own gated endpoint.
+**Attachments are for ONE shape of task:** a one-time run started by a user action that produces a FILE the initiator is waiting for - they poll or watch the run and take the file when it completes (the CSV export above). The attachment spares that run a storage table, a download endpoint and a cleanup of its own. A run may also attach an advanced DEBUG artifact of itself. **Never use one to deliver results that belong to the application** - converted documents, imported records, a report everyone reads: write those into the app's own tables and files, where they are kept and authorized. An attachment is a TEMP FILE (`Rsx_Temp_Files`, under `uploads/_temp`, never a shared blob): deleted with the run's output (`rsx.tasks.retention`), readable only through its task's `#[Task_Access]`, belonging to no record. Output a page waits for that is NOT a task's is a temp file too - `Rsx_Temp_Files::store_bytes()`, served by the feature's own gated endpoint.
 
 ---
 
@@ -145,7 +145,7 @@ php artisan rsx:tasks:list                                    # the switch, pool
 - **`Task::internal()`** runs in this process and returns the settled row. A throw settles FAILED and is rethrown; a failure return comes back as the row (read `status_id`, `return_code`).
 - **A task worth invoking by hand gets its own artisan command**: `#[Command('myapp:report', 'Generate the monthly report')]` beside the `#[Task]`. Skill `rspade:task-commands`.
 
-The row records `dispatched_by` (the signed-in identity, a type-ref pair), `site_id` - what a view gate keys on - `user_session_id` (the sign-in it was started from), `audit_session_id` (the acting context) and `priority` (its claim tier).
+The row records `dispatched_by` (the signed-in identity, a type-ref pair), `site_id` - what `#[Task_Access('dispatcher')]` and the tenancy check key on - `user_session_id` (the sign-in it was started from), `audit_session_id` (the acting context) and `priority` (its claim tier).
 
 **Every run a worker executes starts BLANK and ends BLANK** - a fresh virtual session before, `Session::_end_virtual()` after (identity, site, realm, impersonation, audit context, timezone all reset), so nothing one run was reaches the next on the same worker. A plain run acts as NOBODY: no identity, no site, `get_session_id()` and `get_audit_session_id()` null, session values throw - right for system work. `Task::internal()` runs in its caller's context and restores it afterwards.
 
@@ -268,7 +268,7 @@ Task_Run_Model::find_page($filter, $cursor);    // ['tasks' => [...], 'next_curs
 
 Only the holder's run id is exposed to a viewer. The widgets show the line where a pending run has no status of its own; in JS it is `Rsx_Task.waiting_text(status)` (which formats the `scheduled` time in the viewer's timezone). When a run starts or settles, every pending run on the same run lock gets a `Task_Changed_Topic` frame, so a single-run view updates live.
 
-Statuses: Pending, Running, Completed, Failed, Stopped, Killed, Cancelled (`Task_Run_Model::STATUS_*`). Search keys and every reader: `rsx:man tasks` (READING A RUN). These are ungated model reads - an endpoint showing runs to a user goes through the gates.
+Statuses: Pending, Running, Completed, Failed, Stopped, Killed, Cancelled (`Task_Run_Model::STATUS_*`). Search keys and every reader: `rsx:man tasks` (READING A RUN). These are ungated model reads - an endpoint showing runs to a user goes through `Task_Gates` (`can_view()`, `visible_page()`).
 
 ---
 
@@ -296,28 +296,33 @@ php artisan rsx:tasks:cancel 327
 
 ---
 
-## Showing a run to users - gates, `Rsx_Task`, widgets
+## Showing a run to users - `#[Task_Access]`, `Rsx_Task`, widgets
 
-**The task gates DENY BY DEFAULT.** With no handler, nobody but a developer (`Session::is_developer()`, which passes every gate) may see a run or act on one. The application decides, in `/rsx/handlers/`:
+**A run reaches the browser only through its task's `#[Task_Access]` - load skill `rspade:task-access` before showing one.** Deny by default: a task that declares none is visible to developers only (`/_sys` shows every run), and `Rsx_Task` prints the refusal to the console naming the task. The two shapes:
 
-| Event (staff / portal `portal.`-prefixed) | Kind | Data |
-|---|---|---|
-| `task.view.authorize` | gate (return `true`) | `{task, user}` |
-| `task.view.scope` | filter (return the narrowed builder) | the `Task_Run_Model` query |
-| `task.control.authorize` | gate | `{task, user, action}` - stop, force_stop, force_kill, cancel, rerun |
+```php
+#[Task('Import a contact file')]
+#[Task_Access('dispatcher')]          // the user who started it may view, stop and cancel
+public static function import(Task_Instance $task, array $params = []) { ... }
 
-Keep the gate and the scope the same rule.
+#[Task('Sync the file share')]
+#[Task_Access('sync_access')]         // a check on the same service, asked per run and action
+public static function sync(Task_Instance $task, array $params = []) { ... }
 
-**Least privilege - write the handlers like an AWS `policy.json`: grant only what your screens were built to do.** Each grant names WHO (the user type - realm, `User_Model` / `Portal_User_Model`, a role or ACL if only some users - and normally ownership: the run's `dispatched_by` is the viewer), WHAT (the specific tasks, `'Service::method'`, a screen shows them - never every task, never a pattern) and ACTIONS (per task, only what that screen offers: a progress panel needs view only; `force_kill` is a developer's, in `/_sys`). A task not granted stays invisible to users, even one they started. **Every new task, and every task whose behaviour changes, is checked against the handlers in the same change** - a grant added, re-checked, or deliberately absent.
+public static function sync_access(Task_Run_Model $run, $user, string $action): bool
+{
+    return $action === 'view' && Permission::can_manage_site_settings();
+}
+```
 
-The shape: a `USER_TASKS` map of `'Service::method' => [actions]`, granted to staff users on the runs THEY started, the scope narrowing to the same owner and the same tasks (`rsx:man tasks`, GATES AND THE BROWSER API, has the handler). PHP asks `Task_Gates::can_view()`, `scope_viewable()`, `can_control()`.
+Starting a run is never generic: an endpoint of your own validates, checks access and calls `Task::dispatch()`. PHP asks `Task_Gates::can_view()`, `can_control()`, `visible_page()`.
 
-The browser reads through `Rsx_Task_Controller` (public surface; the gates decide; a run the viewer may not see is "not found"):
+The browser reads through `Rsx_Task_Controller` (public surface; `#[Task_Access]` decides; a run the viewer may not see is "not found"):
 
 ```javascript
 const status = await Rsx_Task.get(id);          // to_status_array() + can: {stop, cancel, ...}
 const {lines, last_id} = await Rsx_Task.output_after(id, null);
-const {tasks, next_cursor} = await Rsx_Task.page({live: true}, null, 50);   // gated by the scope
+const {tasks, next_cursor} = await Rsx_Task.page({live: true}, null, 50);   // only task types declaring #[Task_Access]
 await Rsx_Task.stop(id);  await Rsx_Task.force_stop(id, 30);  await Rsx_Task.rerun(id);
 this.subscribe('Task_Changed_Topic', {id}, () => this.refresh());   // lifecycle + reports
 this.subscribe('Task_List_Changed_Topic', {}, () => this.refresh()); // runs start/finish
@@ -497,7 +502,7 @@ One switch, **stored in the database** (one fact for every host sharing it). **W
 
 - **The run FAILED with "The task returned array".** A task returns a return code, not data. Move the data to `summary()`/`state()` and return `null`.
 - **Dispatched, stays Pending.** The run says why - its `waiting` line names the task system being off (`php artisan rsx:tasks:enable`), a time, a lock and the run holding it, or the busy workers. Pools full (`rsx:health` "Task Worker Pools", `/_sys/workers`), a future `scheduled_for`, a retry backoff (`status_reason` says), a busy `#[Exclusive]` identity or exclusive group, `Task::spawn_workers(false)`, or inside a test. The cron tick picks it up.
-- **A widget says "Unavailable" / `Rsx_Task.get()` answers not found.** The viewer fails `task.view.authorize` - with no handler nobody but a developer passes.
+- **A widget says "Unavailable" / `Rsx_Task.get()` answers not found.** The run's task does not admit the viewer. When the console says "declares no #[Task_Access], so the browser task API refuses it", the task needs a declaration (skill `rspade:task-access`); otherwise its check refused.
 - **A long task was Killed: "no report for Ns (cap 1800s)".** It went 30 minutes without reporting. Call `$task->heartbeat()` and report progress on every item; a task that reports is never killed for how long it runs.
 - **A stop did nothing.** The task never calls `is_stop_requested()`; force-stop it. A run inside a web request is never killed.
 - **`Cannot reach rsx-lockd ...`.** The daemon is down (`rsx:health` "Lock Server"); a dispatch's row IS written before the throw.

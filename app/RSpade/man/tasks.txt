@@ -3,7 +3,7 @@ RSX TASK SYSTEM
 
 NAME
     Tasks - background and scheduled work: one recorded run per execution, structured
-    reports, gated lifecycle control and the widgets that show a run live
+    reports, lifecycle control under #[Task_Access] and the widgets that show a run live
 
 SYNOPSIS
     Define a task (a public static Service method with #[Task]):
@@ -116,8 +116,8 @@ RUNS
                           Task_Runner::PRIORITY_RUN_AS_DISPATCHER (0), PRIORITY_ON_DEMAND
                           (1), PRIORITY_SCHEDULED (2)
 
-    dispatched_by and site_id are what an application's view gate keys on (GATES AND THE
-    BROWSER API); user_session_id is what a task declared #[Run_As_Dispatcher] runs bound to
+    dispatched_by and site_id are what the browser task API keys on (#[Task_Access] - TASK
+    ACCESS AND THE BROWSER API); user_session_id is what a task declared #[Run_As_Dispatcher] runs bound to
     (RUNNING AS THE DISPATCHER).
 
 REPORTING (Task_Instance)
@@ -276,7 +276,7 @@ REPORTING (Task_Instance)
 DESIGNING A TASK'S REPORTING
 
     Every task is written with its watchers in mind. A run is shown live in the
-    developer console (/_sys/tasks) and, through the application's gates, to the users
+    developer console (/_sys/tasks) and, through the task's #[Task_Access], to the users
     who started it; what the task reports is all anyone can see of it. When writing a
     task, decide which reports describe ITS work and use those - every one that applies,
     and none that does not:
@@ -386,8 +386,8 @@ ATTACHMENTS: A FILE FOR THE RUN'S INITIATOR
     (Rsx_Temp_Files; rsx:man temp_files) - its own bytes under uploads/_temp, never a
     shared blob - deleted with the run's output after
     rsx.tasks.retention.output_truncate_after_minutes (RETENTION), with the temp file's
-    own expiry a day later as the backstop. It is readable only through the task gates
-    and belongs to a run, not to any record. (The
+    own expiry a day later as the backstop. It is readable only through the task's
+    #[Task_Access] and belongs to a run, not to any record. (The
     framework's own document conversion is the example of the other shape: it writes
     its renditions to the blob it converted, and has no attachment.)
 
@@ -801,7 +801,7 @@ RUNNING AS THE DISPATCHER
 
     A rerun ($run->rerun()) is a new dispatch, so it runs bound to whoever asked for the
     rerun (refused where nobody is signed in). Running as the dispatcher grants nothing
-    about who may watch or stop the run: the view and control gates are unchanged.
+    about who may watch or stop the run: that is the task's #[Task_Access], unchanged.
 
 THE WORKER POOLS
 
@@ -1045,7 +1045,7 @@ LIFECYCLE CONTROL
     naming who did it (the signed-in identity's printed name, else "the command line" or
     "an anonymous request") and the explanation when one is given; operator lines show as
     stderr. None is gated in PHP: an endpoint acting for a user asks
-    Task_Gates::can_control() first. Each answers false when it no longer applies.
+    Task_Gates::can_control() (the task's #[Task_Access]) first. Each answers false when it no longer applies.
 
         request_stop(?string $explanation = null): bool
             GRACEFUL STOP. Sets stop_requested_at and does nothing else - nothing is ever
@@ -1153,8 +1153,8 @@ READING A RUN (Task_Run_Model)
     The output and message readers are cursor reads: pass the last id seen for the next
     page. A task attachment is a temp file (rsx:man temp_files) named under the run - it
     is not a File_Attachment_Model: no owner, no file gates and no deletion window; the
-    task's view gate is who may read it, and an application serves one through its own
-    gated endpoint with download_response().
+    task's #[Task_Access] is who may read it, and an application serves one through its own
+    endpoint, asking Task_Gates::can_view($run) before download_response().
 
     WHAT A PENDING RUN IS WAITING FOR. A PENDING run says why it has not started. The
     answer is DERIVED EVERY TIME THE RUN IS READ - from its own row, the lock daemon and
@@ -1217,70 +1217,109 @@ READING A RUN (Task_Run_Model)
                                           keyset on id, newest first
 
     These are ungated server-side reads like any model read. An endpoint showing runs to a
-    user narrows the query with Task_Gates::scope_viewable() first.
+    user reads them through Task_Gates::visible_page($filter, $cursor, $page_size) instead
+    (TASK ACCESS AND THE BROWSER API), which answers the same shape for the viewer.
 
-GATES AND THE BROWSER API
+TASK ACCESS AND THE BROWSER API
 
-    A run's params, reports, output and files are operator data, and stopping or rerunning
-    one is an operator act, so the APPLICATION decides who may do either - through event
-    handlers in /rsx/handlers/. WITH NO HANDLER, NOBODY MAY (deny by default, in both
-    realms). Task_Gates is the single seam every task endpoint, topic and widget asks:
+    A run's params, reports, output and files are operator data, and stopping one is an
+    operator act. The browser task API (Rsx_Task_Controller, Rsx_Task, the widgets, the
+    three task topics, task attachments) therefore shows a run only when its TASK TYPE
+    declares who may see it, on the #[Task] method itself:
 
-        staff realm                        portal realm
-        task.view.authorize    (gate)      portal.task.view.authorize    (gate)
-        task.view.scope        (filter)    portal.task.view.scope        (filter)
-        task.control.authorize (gate)      portal.task.control.authorize (gate)
+        #[Task('Import a contact file')]
+        #[Task_Access('dispatcher')]
+        public static function import(Task_Instance $task, array $params = []) { ... }
 
-      - the view GATE answers for one run: data {task, user}; return true to allow;
-      - the view SCOPE narrows a list query to the runs the viewer may see: each handler
-        receives the Task_Run_Model builder and returns it narrowed. Keep the gate and the
-        scope the same rule;
-      - the control GATE answers for one action on one run: data {task, user, action},
-        action one of stop, force_stop, force_kill, cancel, rerun.
+        #[Task('Sync the file store')]
+        #[Task_Access('sync_access', realm: 'staff')]
+        public static function sync(Task_Instance $task, array $params = []) { ... }
 
-    `user` is the realm's identity (Session::get_user() on staff, the portal user on a
-    portal request). A DEVELOPER (Session::is_developer(), staff realm) passes every gate
-    with no handler asked - the /_sys console shows and controls every run.
-    PHP: Task_Gates::can_view($run), scope_viewable($query), can_control($run, $action).
-
-        // Only these tasks, only these actions, only on the viewer's own runs.
-        const USER_TASKS = ['Contact_Export_Service::export' => ['stop', 'cancel']];
-
-        #[OnEvent('task.view.authorize', priority: 10)]
-        public static function view_own_runs($data)
+        public static function sync_access(Task_Run_Model $run, $user, string $action): bool
         {
-            $task = $data['task'];
-
-            return $task->dispatched_by_type === 'User_Model'
-                && (int) $task->dispatched_by_id === Session::get_user_id()
-                && isset(self::USER_TASKS[class_basename($task->class) . '::' . $task->method]);
+            return $action === 'view' && Permission::can_manage_site_settings();
         }
 
-    LEAST PRIVILEGE - THE POLICY.JSON POSTURE. Write the handlers the way an AWS IAM
-    policy is written: grant only what the application's own screens were built to do, and
-    nothing because it might be useful. Each grant names three things:
+    THE ATTRIBUTE. #[Task_Access(<check>, realm: <realm>)] - literal arguments only.
 
-        WHO      the user type (the realm, and within it User_Model / Portal_User_Model,
-                 a role or ACL check if only some users may), and normally OWNERSHIP - the
-                 run's dispatched_by is the viewer;
-        WHAT     the specific tasks - 'Service::method' - that a screen shows those users;
-                 never "every task", never a pattern;
-        ACTIONS  per task, only the actions that screen offers (a progress panel needs
-                 view and nothing else; a Stop button needs stop). force_kill belongs to
-                 developers in /_sys and is almost never granted.
+        <check>   'dispatcher' - built-in: the identity in the run's dispatched_by pair
+                  may 'view', 'stop' and 'cancel' it; nobody else, nothing else.
+                  Filtered in SQL when listing.
+                  Any other name - a public static method of the SAME service class
+                  (declared there or inherited) taking exactly three parameters:
+                      (Task_Run_Model $run, $user, string $action): bool
+                  It must return a bool (anything else throws).
+        realm     'staff' (default) | 'portal' | 'any' - which realm may ask at all.
 
-    A task not granted stays invisible to users - even one they started - and is seen by
-    developers in /_sys. EVERY NEW TASK, and every task whose behaviour changes, is checked
-    against the handlers in the same change: a task users should see gets its own grant, a
-    task that changed gets its grant re-checked, and a task users need not see gets none.
-    The view gate and the view scope must express the same grant (one run vs a list).
+    $action is 'view' (status, reports, output, messages, attachments, appearing in a
+    list) or one of Task_Gates::ACTIONS: stop, force_stop, force_kill, cancel, rerun.
+    $user is the realm's signed-in identity (User_Model on staff, Portal_User_Model on
+    the portal) and is never null: a caller not signed in in the request's realm is
+    refused before any check is asked.
 
-    The shape in full is a USER_TASKS map of 'Service::method' => [actions], granted to
-    staff users on the runs they started; the scope narrows to the same owner AND the same
-    listed tasks.
+    Manifest-build FATALs (Task_Access_ManifestSupport): #[Task_Access] on a method with
+    no #[Task] or on a class; declared more than once on one task; no check name; an
+    argument other than the check and realm; a realm outside the three; a check method
+    that is missing, not public, not static, or not three-parameter.
 
-    ENDPOINTS. Rsx_Task_Controller (#[Auth('public')], #[Auth_Realm('any')] - the gates
-    decide): get, report, output, messages, find, page, stop, force_stop, force_kill, cancel,
+    DENY BY DEFAULT. A task with no #[Task_Access] is visible and controllable by
+    developers only. The verdicts, for one run:
+
+        caller                                   answer
+        developer (Session::is_developer(),      everything; no check is asked - the
+          staff realm)                           /_sys console shows every run
+        not signed in in the realm               "not found" (never the task's name)
+        signed in; task undeclared, or declared  ERROR, code unauthorized, metadata
+          for the other realm                    {task_access: 'undeclared' |
+                                                 'wrong_realm', task: 'Service::method',
+                                                 skill: 'rspade:task-access'} and a
+                                                 message naming the task and the remedy
+        signed in; check answers false           a read: "not found"; an action:
+                                                 unauthorized
+        run does not exist                       "not found"
+
+    The undeclared message reads:
+
+        Task Contact_Import_Service::import declares no #[Task_Access], so the browser
+        task API refuses it to everyone but developers. Add
+        #[Task_Access('dispatcher')] (only the user who started a run may watch, stop
+        and cancel it) or #[Task_Access('<check method>')] to the task. See skill
+        rspade:task-access.
+
+    Rsx_Task recognises that error (Rsx_Task.is_access_undeclared(error)) on every call
+    and prints its message with console.error, then rejects as the call did - so a
+    widget shows "Unavailable" and the console names the task to declare.
+
+    TENANCY. A run stamped with a site (site_id > 0) is shown only to a caller on that
+    site, before the check is asked. A run with no site (a schedule, system work) is the
+    check's to decide.
+
+    LISTING. find(), page() and live_runs() list only task types declaring #[Task_Access]
+    for the caller's realm (a developer: every run). 'dispatcher' types are narrowed in
+    SQL to the caller's own runs; for custom checks the framework walks the matching runs
+    newest first by id and asks the check ('view') about each, until the page is full or
+    the runs run out - a page is never cut short by rows the caller may not see, and
+    next_cursor is the id of the last row returned. A filter naming a task type (class,
+    and method) of which nothing is declared for the caller's realm is refused with the
+    same unauthorized error; an unnamed filter simply leaves such runs out.
+
+    DEVELOPERS. Session::is_developer(), staff realm only, passes every question without a
+    check being asked: /_sys shows and controls every run, declared or not. A portal
+    request is never a developer's.
+
+    PHP: Task_Gates::can_view($run), can_control($run, $action), decide($run, $action)
+    (ALLOWED | DENIED | UNDECLARED | WRONG_REALM), visible_page($filter, $cursor,
+    $page_size), declaration($class, $method).
+
+    STARTING A RUN IS NEVER GENERIC. The browser task API reads and controls runs that
+    exist; it has no way to start one, and the public external API has no task interface
+    at all. A user-facing operation gets an endpoint of its own that validates the
+    request, checks ACLs and records, and calls Task::dispatch(); an integration that
+    needs a run's status gets an #[Api_Endpoint] of its own answering for the run it
+    dispatched.
+
+    ENDPOINTS. Rsx_Task_Controller (#[Auth('public')], #[Auth_Realm('any')] - #[Task_Access]
+    decides): get, report, output, messages, find, page, stop, force_stop, force_kill, cancel,
     rerun. A run the viewer may not see answers "not found", exactly like a missing one.
     The read endpoints are #[Portal_Impersonation_Readable]; the lifecycle ones are not, so
     View as Client can watch a run and never stop one. get() answers to_status_array() plus
@@ -1318,9 +1357,9 @@ GATES AND THE BROWSER API
             show_import_busy(runs.length > 0);
         });
 
-    The frame says only "a run of this task changed"; live_runs() is the gated search
-    (find({class, method, live: true})), so a viewer sees only runs their view scope
-    admits. class_name is the service's simple name (Import_Service), as in every filter.
+    The frame says only "a run of this task changed"; live_runs() is the access-checked
+    search (find({class, method, live: true})), so a viewer sees only runs the task's
+    #[Task_Access] admits. class_name is the service's simple name (Import_Service), as in every filter.
 
     TOPICS. Frames are notification-only; refetch on each (rsx:man realtime):
 
@@ -1335,16 +1374,17 @@ GATES AND THE BROWSER API
                                       run, {class} every run of one service, {class,
                                       method} every run of one task
 
-    can_subscribe() is Task_Gates: the run's view gate for the two {id} topics; for the
-    list topic, a developer or a signed-in viewer in a realm whose view scope has a
-    handler. A frame is published only to the sites holding a matching subscription, and
+    can_subscribe() is Task_Gates: the run's 'view' check for the two {id} topics; for
+    the list topic, a developer, or a signed-in caller when a task type the filter names
+    declares #[Task_Access] for the caller's realm. A frame is published only to the sites holding a matching subscription, and
     not at all when nobody watches. Inside a component prefer
     this.subscribe('Task_Changed_Topic', {id}, () => this.refresh()).
 
 WIDGETS
 
     Core components in every bundle (Core/Task/ui), each reading through Rsx_Task - so each
-    needs the run's view gate, and shows "Unavailable" otherwise - and each following the
+    needs the run's task to admit the viewer (#[Task_Access]), and shows "Unavailable"
+    otherwise (the console names a task that declares none) - and each following the
     run over realtime with refresh().
 
         <Task_Status_Badge $task_id=... />      the status, toned; or $task=<a status
@@ -1760,8 +1800,9 @@ TROUBLESHOOTING
           requests; that host's next rsx:task:process tick spawns its kill workers.
 
     A run reports "Unavailable" / "Task not found" in a widget
-        - The viewer fails the view gate. With no task.view.authorize handler, nobody but
-          a developer sees any run (GATES AND THE BROWSER API).
+        - The run's task does not admit the viewer. If the console says "declares no
+          #[Task_Access]", the task needs a declaration; otherwise its check refused
+          (TASK ACCESS AND THE BROWSER API).
 
     Two tasks corrupt shared data
         - Tasks are unguarded and concurrent. Guard the critical section with a named or
@@ -1791,8 +1832,8 @@ SEE ALSO
     rsx:man sys_panel - the Tasks and Task Workers screens of the developer console
     rsx:man locks - cluster/system locks, wait-forever timeouts, the pool daemon
     rsx:man realtime - topics, subscriptions, refresh() vs reload()
-    rsx:man event_hooks - the gate and filter trigger kinds Task_Gates uses
     rsx:man file_disposal - declared blob references; task attachments are one
     rsx:man health - the Task Worker Pools, scheduler and schedule-failure rows
     rsx:man scripting - spawning off in a long-running script
     skill rspade:background-tasks - writing, reporting, dispatching and watching a task
+    skill rspade:task-access - #[Task_Access] worked examples

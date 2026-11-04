@@ -38,7 +38,7 @@ use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
  * registry (the Redis set rsx_rt:subs, seeded here the way the relay writes it) and not at all
  * when nobody watches; while this process holds a task pool lock frames are held back until
  * flush_deferred(). Publishes are observed through Realtime's capture seam, with realtime
- * switched on for the class. Subscribing is the view gate's (Task_Gates_Test).
+ * switched on for the class. Subscribing is the run's #[Task_Access] check's (Task_Gates_Test).
  */
 class Task_Notify_Test extends Rsx_Test_Abstract
 {

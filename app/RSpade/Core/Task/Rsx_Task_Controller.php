@@ -18,9 +18,16 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * Rsx_Task_Controller - the browser's way to read a task run and act on one, in both realms.
  *
  * Every endpoint asks Task_Gates and nothing else decides: the surface is public
- * (#[Auth('public')]) because WHO may see or act on a run is the application's view and
- * control gates - deny by default, a developer passes. A run the viewer may not see answers
- * exactly like a run that does not exist (anti-enumeration).
+ * (#[Auth('public')]) because WHO may see or act on a run is the run's TASK TYPE's
+ * #[Task_Access] check - deny by default, a developer passes. A run the caller may not see
+ * answers exactly like a run that does not exist (anti-enumeration), with one exception: a
+ * signed-in non-developer asking about a run whose task declares no #[Task_Access] for their
+ * realm gets an `unauthorized` error carrying `task_access` (the verdict) and `task`
+ * (Service::method) in its metadata, naming the remedy - Rsx_Task.js prints it to the
+ * console. A list filter naming only such tasks is refused the same way.
+ *
+ * There is no generic way to START a task here, and the public API has no task interface at
+ * all: an application endpoint validates, checks access and calls Task::dispatch().
  *
  * JS twin: Rsx_Task (Rsx_Task.get(), .output_after(), .watch(), ...), which the task widgets
  * (Task_Status_Badge, Task_Output, Task_Report, Task_Report_Browser) are built on.
@@ -46,8 +53,8 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     public static function get(Request $request, array $params = [])
     {
         $task = static::__viewable($params);
-        if ($task === null) {
-            return response_error(Ajax::ERROR_NOT_FOUND, 'Task not found');
+        if (!$task instanceof Task_Run_Model) {
+            return $task;
         }
 
         return static::__present($task);
@@ -70,8 +77,8 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     public static function report(Request $request, array $params = [])
     {
         $task = static::__viewable($params);
-        if ($task === null) {
-            return response_error(Ajax::ERROR_NOT_FOUND, 'Task not found');
+        if (!$task instanceof Task_Run_Model) {
+            return $task;
         }
 
         $kind = (string) ($params['kind'] ?? '');
@@ -117,8 +124,8 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     public static function output(Request $request, array $params = [])
     {
         $task = static::__viewable($params);
-        if ($task === null) {
-            return response_error(Ajax::ERROR_NOT_FOUND, 'Task not found');
+        if (!$task instanceof Task_Run_Model) {
+            return $task;
         }
 
         $after_id = isset($params['after_id']) && $params['after_id'] !== '' ? (int) $params['after_id'] : null;
@@ -144,8 +151,8 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     public static function messages(Request $request, array $params = [])
     {
         $task = static::__viewable($params);
-        if ($task === null) {
-            return response_error(Ajax::ERROR_NOT_FOUND, 'Task not found');
+        if (!$task instanceof Task_Run_Model) {
+            return $task;
         }
 
         $after_id = isset($params['after_id']) && $params['after_id'] !== '' ? (int) $params['after_id'] : null;
@@ -160,7 +167,7 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
 
     /**
      * The newest runs matching a filter (Task_Run_Model::search_query() keys) that the viewer
-     * may see, at most 1000: {tasks: [status, ...]}.
+     * may see, at most 1000 - the first page of Task_Gates::visible_page(): {tasks: [status, ...]}.
      *
      * @param array $params filter (object)
      */
@@ -168,14 +175,18 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     #[Portal_Impersonation_Readable]
     public static function find(Request $request, array $params = [])
     {
-        $query = static::__search($params);
-        if (!$query instanceof \Illuminate\Database\Eloquent\Builder) {
-            return $query;
+        $filter = static::__filter($params);
+        if (!is_array($filter)) {
+            return $filter;
         }
 
-        $rows = $query->orderByDesc('id')->limit(Task_Run_Model::SEARCH_PAGE_SIZE)->get();
+        try {
+            $page = Task_Gates::visible_page($filter);
+        } catch (\InvalidArgumentException $e) {
+            return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+        }
 
-        return ['tasks' => Task_Run_Model::to_status_arrays($rows)];
+        return ['tasks' => Task_Run_Model::to_status_arrays($page['tasks'])];
     }
 
     /**
@@ -188,9 +199,9 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     #[Portal_Impersonation_Readable]
     public static function page(Request $request, array $params = [])
     {
-        $query = static::__search($params);
-        if (!$query instanceof \Illuminate\Database\Eloquent\Builder) {
-            return $query;
+        $filter = static::__filter($params);
+        if (!is_array($filter)) {
+            return $filter;
         }
 
         $page_size = isset($params['page_size']) ? (int) $params['page_size'] : Task_Run_Model::SEARCH_PAGE_SIZE;
@@ -199,20 +210,19 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
         }
 
         $cursor = isset($params['cursor']) && $params['cursor'] !== null ? (string) $params['cursor'] : '';
-        if ($cursor !== '') {
-            if (!ctype_digit($cursor)) {
-                return response_error(Ajax::ERROR_VALIDATION, 'Invalid cursor');
-            }
-            $query->where('id', '<', (int) $cursor);
+        if ($cursor !== '' && !ctype_digit($cursor)) {
+            return response_error(Ajax::ERROR_VALIDATION, 'Invalid cursor');
         }
 
-        $rows = $query->orderByDesc('id')->limit($page_size + 1)->get()->all();
-        $more = count($rows) > $page_size;
-        $rows = array_slice($rows, 0, $page_size);
+        try {
+            $page = Task_Gates::visible_page($filter, $cursor === '' ? null : $cursor, $page_size);
+        } catch (\InvalidArgumentException $e) {
+            return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+        }
 
         return [
-            'tasks' => Task_Run_Model::to_status_arrays($rows),
-            'next_cursor' => $more ? (string) end($rows)->id : null,
+            'tasks' => Task_Run_Model::to_status_arrays($page['tasks']),
+            'next_cursor' => $page['next_cursor'],
         ];
     }
 
@@ -259,8 +269,8 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     public static function rerun(Request $request, array $params = [])
     {
         $task = static::__viewable($params);
-        if ($task === null) {
-            return response_error(Ajax::ERROR_NOT_FOUND, 'Task not found');
+        if (!$task instanceof Task_Run_Model) {
+            return $task;
         }
         if (!Task_Gates::can_control($task, 'rerun')) {
             return response_error(Ajax::ERROR_UNAUTHORIZED, 'You may not run this task again');
@@ -295,13 +305,30 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
 
     // ------------------------------------------------------------------------------------
 
-    /** The run named by $params['task_id'], if the viewer may see it; else null. */
-    private static function __viewable(array $params): ?Task_Run_Model
+    /**
+     * The run named by $params['task_id'] when the caller may see it; otherwise the error to
+     * answer with - not found (missing, or refused), or the marked `unauthorized` naming a
+     * task that declares no #[Task_Access] for the caller's realm.
+     *
+     * @return Task_Run_Model|\App\RSpade\Core\Response\Error_Response
+     */
+    private static function __viewable(array $params)
     {
         $task_id = (int) ($params['task_id'] ?? 0);
         $task = $task_id > 0 ? Task_Run_Model::find($task_id) : null;
+        if ($task === null) {
+            return response_error(Ajax::ERROR_NOT_FOUND, 'Task not found');
+        }
 
-        return $task !== null && Task_Gates::can_view($task) ? $task : null;
+        $verdict = Task_Gates::decide($task, Task_Gates::VIEW);
+        if ($verdict === Task_Gates::ALLOWED) {
+            return $task;
+        }
+        if ($verdict === Task_Gates::UNDECLARED || $verdict === Task_Gates::WRONG_REALM) {
+            return response_error(Ajax::ERROR_UNAUTHORIZED, Task_Gates::refusal_metadata($task->task_name(), $verdict));
+        }
+
+        return response_error(Ajax::ERROR_NOT_FOUND, 'Task not found');
     }
 
     private static function __present(Task_Run_Model $task): array
@@ -316,31 +343,32 @@ class Rsx_Task_Controller extends Rsx_Controller_Abstract
     }
 
     /**
-     * The viewer's search query, or an error response for a bad filter.
+     * The caller's search filter, or the error to answer with: a filter that is not an
+     * object, or one naming only tasks that declare no #[Task_Access] for the caller's realm
+     * (Task_Gates::list_refusal()).
      *
-     * @return \Illuminate\Database\Eloquent\Builder|mixed
+     * @return array|\App\RSpade\Core\Response\Error_Response
      */
-    private static function __search(array $params)
+    private static function __filter(array $params)
     {
         $filter = $params['filter'] ?? [];
         if (!is_array($filter)) {
             return response_error(Ajax::ERROR_VALIDATION, 'filter is an object');
         }
 
-        try {
-            $query = Task_Run_Model::search_query($filter);
-        } catch (\InvalidArgumentException $e) {
-            return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+        $refusal = Task_Gates::list_refusal($filter);
+        if ($refusal !== null) {
+            return response_error(Ajax::ERROR_UNAUTHORIZED, Task_Gates::refusal_metadata($refusal[1], $refusal[0]));
         }
 
-        return Task_Gates::scope_viewable($query);
+        return $filter;
     }
 
     private static function __act(array $params, string $action, callable $operation)
     {
         $task = static::__viewable($params);
-        if ($task === null) {
-            return response_error(Ajax::ERROR_NOT_FOUND, 'Task not found');
+        if (!$task instanceof Task_Run_Model) {
+            return $task;
         }
         if (!Task_Gates::can_control($task, $action)) {
             return response_error(Ajax::ERROR_UNAUTHORIZED, 'You may not do that to this task');

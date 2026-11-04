@@ -359,17 +359,38 @@ A held lock is another process (Task_Lock_Holder); the run holding it is a RUNNI
 | task-retain-07 | the sweep refuses an invalid configuration | keep_lines -1; minutes as a string | throws naming the key | implemented |
 | task-retain-08 | a stop requested before the sweep ends it before any run is touched | run past both windows; sweep row with stop_requested_at | "Stopped after truncating 0 run(s), ..." summary; old run not truncated | implemented |
 
-## Task_Gates_Test (php, default isolation) - who may see and act on a run
+## Task_Gates_Test (php, default isolation) - who may see and act on a run (#[Task_Access])
+
+Fixture: `Task_Access_Fixture_Service` (undeclared, `dispatcher`, portal `dispatcher`, a custom check, the same check realm `any`).
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| task-gate-01 | no handler denies view, control, scope and subscriptions (staff) | no handlers, signed out | all false; scope empty | implemented |
-| task-gate-02 | the same in the portal realm | set_portal_request(true) | all false | implemented |
-| task-gate-03 | a developer passes every staff gate without a handler; the topics ask the gate | user 1 | all true; missing run refused | implemented |
-| task-gate-04 | the developer bypass is staff only | user 1 on a portal request | denied | implemented |
-| task-gate-05 | view and control handlers decide, seeing run, user and action | test handlers | true/true/false; arguments recorded; unknown action throws | implemented |
-| task-gate-06 | the portal realm asks the portal handlers | staff handler only, then portal handler | false, then true | implemented |
-| task-gate-07 | the view scope handler narrows the list | scope to one run | that run only | implemented |
+| task-gate-01 | an undeclared task is a developer's; no check is asked; the topics ask the same seam | user 1; undeclared run | view + every action true; endpoint answers; topics subscribe; missing run refused | implemented |
+| task-gate-02 | an undeclared task refuses a signed-in non-developer BY NAME | non-developer staff user; get, output, stop, find naming the task | unauthorized + metadata task_access=undeclared, task=Service::method, message names remedy and skill; no subscriptions; unnamed list leaves it out | implemented |
+| task-gate-03 | a caller not signed in gets plain not-found (anti-enumeration) | signed out, staff and portal; a missing run | not_found, no task named; no list subscription | implemented |
+| task-gate-04 | the dispatcher may view, stop and cancel, nothing else | the dispatching user | view/stop/cancel true; force_stop/force_kill/rerun false; get's `can` matches | implemented |
+| task-gate-05 | the dispatcher check refuses everybody else | another user; a run nobody dispatched | not_found; left out of the list | implemented |
+| task-gate-06 | a custom check decides, handed run, realm user and action | check admits view + stop | true/true/false; the questions recorded; refused read is not_found; unknown action throws | implemented |
+| task-gate-07 | a run stamped with another site is refused before the check | site_id of another site | false; check never asked | implemented |
+| task-gate-08 | the realm argument decides who may ask | portal user: portal dispatcher run, staff-realm run, realm any; then staff | portal own run visible; staff task -> wrong_realm marked error; any admits both; portal task refuses staff | implemented |
+| task-gate-09 | the developer bypass is staff only | user 1 on a portal request | denied | implemented |
+| task-gate-10 | a list page fills past invisible rows; the cursor is the last row returned | 6 custom-check runs (2 visible), own + another's dispatcher run, an undeclared run; page_size 2 | [own, visible] then [visible] with null cursor; dispatcher and undeclared rows never asked; find()/page() agree | implemented |
+
+## Task_Access_Definition_Test (php, no transactions) - the #[Task_Access] table and its FATALs
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-access-01 | dispatcher and a custom check are baked with their realm | synthetic manifest | table rows with class, service, method, check, realm | implemented |
+| task-access-02 | an inherited check method is accepted | check declared on the parent | baked | implemented |
+| task-access-03 | the suite manifest bakes the fixture service | Manifest::get_task_access() | four rows; none for the undeclared task | implemented |
+| task-access-04 | FATAL: no #[Task] | synthetic | "may only annotate a #[Task] method" | implemented |
+| task-access-05 | FATAL: on a class | member null | "annotates a #[Task] METHOD" | implemented |
+| task-access-06 | FATAL: repeated | two instances | "Duplicate #[Task_Access]" | implemented |
+| task-access-07 | FATAL: no check name | [] and [''] | "The first argument is required" | implemented |
+| task-access-08 | FATAL: unknown argument or realm | actions:, realm 'admin' | named in the message | implemented |
+| task-access-09 | FATAL: check missing, not static, wrong arity | synthetic methods | each named | implemented |
+| task-access-11 | no framework API controller reads, controls or starts task runs (the public API has no task interface) | every framework Rsx_Api_Controller_Abstract subclass | none names Task_Run_Model, Task_Gates, Task::dispatch/internal, Rsx_Task_Controller | implemented |
+| task-access-10 | Rsx_Task prints the undeclared refusal to the console | browser, non-developer, undeclared run | console.error naming the task | planned (needs a non-developer browser session against a fixture task, which the playwright tier cannot see) |
 
 ## Task_Notify_Test (php, no transactions, live Redis registry) - the frames watchers follow
 

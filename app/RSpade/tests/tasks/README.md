@@ -30,7 +30,8 @@ framework.
 - `Task_Kill_Worker.php` + `Task_Kill_Request_Model(_Abstract).php` - force stops and kills
 - `Task_Schedule_Model(_Abstract).php`, `Task_Attachment_Model(_Abstract).php`, `Cron_Parser.php`
 - `Task_Notify.php` + the three topics (`Task_Changed_Topic`, `Task_Output_Topic`,
-  `Task_List_Changed_Topic`); `Task_Gates.php` (deny-by-default view/control gates)
+  `Task_List_Changed_Topic`); `Task_Gates.php` (per-task `#[Task_Access]`, deny by default) +
+  `Task_Access_ManifestSupport.php` (the `#[Task_Access]` table and its build-time FATALs)
 - `Task_Retention_Service.php`, `Task_Health_Checks.php`
 - Commands: `rsx:task:worker`, `rsx:task:process`, `rsx:task:run` (its `--user`/`--site`
   resolved by `Core/Console/Rsx_Cli_Actor.php`, shared with rsx:ajax), `rsx:task:killer`,
@@ -112,7 +113,8 @@ They exist only while the suite runs (the test trees enter the manifest only the
   attachments and their blob references (`Task_Attachments_Test`).
 - Lifecycle operations and their commands (`Task_Lifecycle_Test`); kill requests carried out
   against a real process (`Task_Kill_Worker_Test`).
-- Gates (`Task_Gates_Test`), realtime frames - a run's own, the lists', and the frames to the
+- Task access (`Task_Gates_Test`; the declaration FATALs in `Task_Access_Definition_Test`,
+  fixture `Task_Access_Fixture_Service`), realtime frames - a run's own, the lists', and the frames to the
   pending runs waiting on a moved run's lock (`Task_Notify_Test`), retention
   (`Task_Retention_Test`).
 - The `#[Command]` declaration and registration (`Task_Command_Definition_Test`) and the alias

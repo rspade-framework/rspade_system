@@ -1,10 +1,17 @@
 /**
  * Rsx_Task - read a background task run and act on one, from the browser.
  *
- * Every call goes through Rsx_Task_Controller, which asks the application's task gates
- * (Task_Gates: deny by default; a developer passes) - so a run the viewer may not see is
- * "not found", and an action they may not take is refused. The task widgets are built on this
- * class; an application building its own task UI uses it the same way.
+ * Every call goes through Rsx_Task_Controller, which asks the run's TASK TYPE: its
+ * #[Task_Access] check decides (Task_Gates: deny by default; a developer passes) - so a run
+ * the viewer may not see is "not found", and an action they may not take is refused. The task
+ * widgets are built on this class; an application building its own task UI uses it the same way.
+ *
+ * A TASK WITH NO #[Task_Access]. Asked about a run whose task declares none for the viewer's
+ * realm (or a list naming only such tasks), the server refuses a signed-in non-developer with
+ * an `unauthorized` error whose metadata carries `task_access` and `task` (Service::method).
+ * Every call here prints that error's remediation with console.error and still rejects, so
+ * the caller fails loud and the console says which task to declare. See rsx:man tasks, TASK
+ * ACCESS, and skill rspade:task-access.
  *
  *     const status = await Rsx_Task.get(327);            // {status, progress_percent, can, ...}
  *     const {lines, last_id} = await Rsx_Task.output_after(327, null);
@@ -62,9 +69,33 @@ class Rsx_Task {
         return_code: 'Return code',
     };
 
+    /**
+     * Whether an Ajax error is the server's refusal of a task that declares no #[Task_Access]
+     * for the viewer's realm (metadata.task_access names the verdict, metadata.task the task).
+     */
+    static is_access_undeclared(error) {
+        return !!(error && error.code === Ajax.ERROR_UNAUTHORIZED && error.metadata && error.metadata.task_access);
+    }
+
+    /**
+     * Await one controller call; when it fails because the task declares no #[Task_Access],
+     * print the remediation to the console, then reject as the call did.
+     * @private
+     */
+    static async _call(promise) {
+        try {
+            return await promise;
+        } catch (e) {
+            if (Rsx_Task.is_access_undeclared(e)) {
+                console.error('[Task access] ' + e.message);
+            }
+            throw e;
+        }
+    }
+
     /** One run's status (with `can`: the lifecycle actions the viewer may take). */
     static async get(task_id) {
-        return Rsx_Task_Controller.get({ task_id: int(task_id) });
+        return Rsx_Task._call(Rsx_Task_Controller.get({ task_id: int(task_id) }));
     }
 
     /**
@@ -77,7 +108,7 @@ class Rsx_Task {
             params.limit = int(limit);
         }
 
-        return Rsx_Task_Controller.report(params);
+        return Rsx_Task._call(Rsx_Task_Controller.report(params));
     }
 
     /**
@@ -93,17 +124,17 @@ class Rsx_Task {
             params.streams = streams;
         }
 
-        return Rsx_Task_Controller.output(params);
+        return Rsx_Task._call(Rsx_Task_Controller.output(params));
     }
 
     /** Messages after a cursor: {messages: [{id, body, at}], last_id, more}. */
     static async messages_after(task_id, after_id) {
-        return Rsx_Task_Controller.messages({ task_id: int(task_id), after_id: after_id });
+        return Rsx_Task._call(Rsx_Task_Controller.messages({ task_id: int(task_id), after_id: after_id }));
     }
 
     /** The newest visible runs matching a filter (at most 1000): {tasks: [...]}. */
     static async find(filter = {}) {
-        return Rsx_Task_Controller.find({ filter: filter });
+        return Rsx_Task._call(Rsx_Task_Controller.find({ filter: filter }));
     }
 
     /** One page of visible runs matching a filter, newest first: {tasks, next_cursor}. */
@@ -113,32 +144,32 @@ class Rsx_Task {
             params.page_size = page_size;
         }
 
-        return Rsx_Task_Controller.page(params);
+        return Rsx_Task._call(Rsx_Task_Controller.page(params));
     }
 
     /** Graceful stop: the task stops at its next check; never killed. */
     static async stop(task_id, explanation = null) {
-        return Rsx_Task_Controller.stop({ task_id: int(task_id), explanation: explanation });
+        return Rsx_Task._call(Rsx_Task_Controller.stop({ task_id: int(task_id), explanation: explanation }));
     }
 
     /** Force stop: ask, then kill after grace_seconds (null: the configured default). */
     static async force_stop(task_id, grace_seconds = null, explanation = null) {
-        return Rsx_Task_Controller.force_stop({ task_id: int(task_id), grace_seconds: grace_seconds, explanation: explanation });
+        return Rsx_Task._call(Rsx_Task_Controller.force_stop({ task_id: int(task_id), grace_seconds: grace_seconds, explanation: explanation }));
     }
 
     /** Force kill: kill the run's worker now. */
     static async force_kill(task_id, explanation = null) {
-        return Rsx_Task_Controller.force_kill({ task_id: int(task_id), explanation: explanation });
+        return Rsx_Task._call(Rsx_Task_Controller.force_kill({ task_id: int(task_id), explanation: explanation }));
     }
 
     /** Cancel a pending run. */
     static async cancel(task_id, explanation = null) {
-        return Rsx_Task_Controller.cancel({ task_id: int(task_id), explanation: explanation });
+        return Rsx_Task._call(Rsx_Task_Controller.cancel({ task_id: int(task_id), explanation: explanation }));
     }
 
     /** Run a finished run again; resolves {task_id} of the new run. */
     static async rerun(task_id) {
-        return Rsx_Task_Controller.rerun({ task_id: int(task_id) });
+        return Rsx_Task._call(Rsx_Task_Controller.rerun({ task_id: int(task_id) }));
     }
 
     /** Watch one run's lifecycle and reports. Resolves {stop(), established}. */
@@ -175,7 +206,7 @@ class Rsx_Task {
 
     /**
      * The visible LIVE runs (pending or running) of one task, newest first - "is it running?".
-     * Read through the view scope like find().
+     * Read through the task access checks like find().
      *
      * @param {string} class_name the service's simple name
      * @param {string|null} method null: every task of the service

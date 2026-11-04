@@ -1,0 +1,117 @@
+WHO SEES A TASK RUN IS DECLARED ON THE TASK: #[Task_Access] REPLACES THE task.view / task.control EVENTS
+Date: 2026-11-03
+
+IF YOU DO NOTHING: every #[OnEvent] handler of yours on task.view.authorize, task.view.scope, task.control.authorize or their portal.task.* twins stops being called, so no non-developer user sees, lists or stops any task run any more - every Task_Status_Badge, Task_Report, Task_Report_Browser and Task_Output on your users' pages shows "Unavailable", Rsx_Task.find()/page()/live_runs() answer nothing, and the browser console names each task that needs a #[Task_Access] declaration.
+
+SUMMARY
+    The browser task API (Rsx_Task, the Core task widgets, the three task
+    realtime topics, task attachments) no longer asks app-wide event gates who
+    may see or act on a run. Each #[Task] the browser may show declares it on
+    itself:
+
+        #[Task_Access('dispatcher')]          only the user who started a run may
+                                              view, stop and cancel it
+        #[Task_Access('<check method>')]      a public static method on the same
+                                              service answers per run and action
+        #[Task_Access(..., realm: 'portal')]  'staff' (default), 'portal', 'any'
+
+    A task with no #[Task_Access] is visible to developers only (/_sys still
+    shows and controls every run). A signed-in non-developer asking about such
+    a run gets an error naming the task, which Rsx_Task prints to the console.
+    The six events are gone; a handler on one is never called.
+
+THE CHANGE
+    The six events task.view.authorize, task.view.scope, task.control.authorize,
+    portal.task.view.authorize, portal.task.view.scope and
+    portal.task.control.authorize are no longer fired; Task_Gates::scope_viewable()
+    is removed. The decision moved onto each task type, so the author of a task
+    states who watches it.
+
+THE FIX
+    Arrived automatically in system/, nothing to do:
+
+    - #[Task_Access], validated at manifest build (rsx:man tasks, TASK ACCESS
+      AND THE BROWSER API), and Task_Gates::can_view() / can_control() /
+      visible_page() for endpoints of your own.
+    - Rsx_Task_Controller, Rsx_Task and the widgets deciding through it, with
+      the console message for an undeclared task.
+    - The /_sys task screens, unchanged for developers.
+
+ACTION REQUIRED
+    An application that registered no task.* / portal.task.* handler showed no
+    task runs to users and has nothing to change. Otherwise: add a
+    #[Task_Access] declaration to each task your users watch or control in the
+    browser, expressing the rule your handlers expressed, and delete the
+    handlers.
+
+    1. Find the handlers:
+           grep -rnE "OnEvent\('(portal\.)?task\.(view\.authorize|view\.scope|control\.authorize)'" rsx/
+
+    2. For every task those handlers granted ('Service::method'), add one
+       #[Task_Access] to that task's method. Translate the rule:
+
+       a. "Users see and stop the runs they started" - the usual grant:
+
+           Before (rsx/handlers/task_handlers.php):
+               const USER_TASKS = ['Contact_Import_Service::import' => ['stop', 'cancel']];
+
+               #[OnEvent('task.view.authorize', priority: 10)]
+               public static function view_own_runs($data)
+               {
+                   $task = $data['task'];
+                   return $task->dispatched_by_type === 'User_Model'
+                       && (int) $task->dispatched_by_id === Session::get_user_id()
+                       && isset(self::USER_TASKS[class_basename($task->class) . '::' . $task->method]);
+               }
+               // ... plus a task.view.scope filter and a task.control.authorize gate
+
+           After (on the task itself; the handlers are deleted):
+               #[Task('Import a contact file')]
+               #[Task_Access('dispatcher')]
+               public static function import(Task_Instance $task, array $params = []) { ... }
+
+           'dispatcher' grants view, stop and cancel. If your handler granted
+           fewer actions, or others, use a check instead (b).
+
+       b. Any other rule - a role, an ACL, a record the run works on - becomes a
+          check on the same service. $action is 'view' or one of stop,
+          force_stop, force_kill, cancel, rerun; $user is the realm's signed-in
+          user (never null):
+
+           #[Task('Sync the shared file store')]
+           #[Task_Access('sync_access')]
+           public static function sync(Task_Instance $task, array $params = []) { ... }
+
+           public static function sync_access(Task_Run_Model $run, $user, string $action): bool
+           {
+               return $action === 'view' && Permission::can_manage_site_settings();
+           }
+
+          The check answers for ONE run. There is no scope filter to keep in
+          step with it: lists ask the same check row by row.
+
+       c. A portal.task.* handler becomes a declaration with realm: 'portal'
+          (or realm: 'any' when staff and portal users share the rule; the check
+          then receives a User_Model or a Portal_User_Model).
+
+       d. A rule that relied on site_id: a run stamped with a site is now shown
+          only to callers on that site before any check is asked, so a site
+          comparison in a handler needs no counterpart.
+
+    3. Delete the handlers on the six removed events.
+
+    4. An endpoint of your own that served a task attachment or a run's
+       status after asking Task_Gates::can_view() keeps working; one that
+       narrowed a list with Task_Gates::scope_viewable() (now removed) reads
+       through Task_Gates::visible_page($filter, $cursor, $page_size) instead.
+
+VERIFICATION
+    The grep in step 1 finds nothing, and php artisan rsx:check is clean. Sign
+    in as a non-developer user who should see a run, open the page that shows
+    it: the widgets render and the browser console shows no "[Task access]"
+    line. A console line naming a task means that task still needs its
+    #[Task_Access].
+
+SEE ALSO
+    tasks - TASK ACCESS AND THE BROWSER API
+    skill rspade:task-access - worked examples

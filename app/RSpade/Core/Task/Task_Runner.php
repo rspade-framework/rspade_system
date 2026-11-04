@@ -57,7 +57,7 @@ class Task_Runner
      * signed-in identity of the current realm (Rsx_Model_Abstract::_resolve_context_actor()),
      * the current site, the sign-in it came from (Session::get_user_session_id() - a browser's
      * staff or portal sign-in, or an API key's) and Session::get_audit_session_id() - so an
-     * application's view gate can show users the runs they started, and a task declared
+     * #[Task_Access('dispatcher')] can show users the runs they started, and a task declared
      * #[Run_As_Dispatcher] runs bound to that sign-in (Task_Dispatcher_Context).
      *
      * Such a task is refused here unless somebody is acting - it would otherwise run as

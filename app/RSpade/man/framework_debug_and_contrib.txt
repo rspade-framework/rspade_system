@@ -1513,10 +1513,13 @@ SUBSYSTEM PRIMERS
     params. Every operation is an operator line on the run's output. A
     failed run is never retried - only an abandoned one is.
 
-    GATES. Who may see or act on a run is the application's: a view gate, a
-    view scope and a control gate per realm, asked through one class, DENY BY
-    DEFAULT, a staff developer bypassing. The browser endpoints, the three
-    realtime topics and the Core widgets all ask it.
+    TASK ACCESS. Who may see or act on a run is declared PER TASK TYPE by
+    #[Task_Access] (baked by Task_Access_ManifestSupport) and asked through one
+    class, Task_Gates: DENY BY DEFAULT with a named error to a signed-in
+    non-developer, a staff developer bypassing, lists walked until the page is
+    full. The browser endpoints, the three realtime topics and the Core
+    widgets all ask it; nothing generic starts a task, and the public API has
+    no task interface.
 
     THE ENTRY POINTS:
 
@@ -1630,13 +1633,14 @@ SUBSYSTEM PRIMERS
       Task_Instance, Task_Run_Model, Task_Concurrency, Task_Pool, Task_Lock,
       Task_Kill_Worker, Task_Gates, Task_Notify, Rsx_Task_Controller,
       Task_Retention_Service, ui/, Task_Command_ManifestSupport,
+      Task_Access_ManifestSupport,
       Task_Alias_Command), Commands/Rsx/Task_Process_Command.php,
       Task_Worker_Command.php, Task_Killer_Command.php, Task_Run_Command.php,
       Tasks_*_Command.php, Core/Locks/ (RsxLocks.php, Lockd_Client.php,
       Lockd_Connection.php),
       Core/Console/Rsx_Artisan.php, system/bin/rsx-lockd/,
       config/rsx.php (tasks, locks).
-      Skills: rspade:background-tasks, rspade:task-commands,
+      Skills: rspade:background-tasks, rspade:task-access, rspade:task-commands,
       rspade:locks-and-subprocesses, rspade:maintenance-mode.
 
   7. BUNDLES AND JS/SCSS COMPILATION

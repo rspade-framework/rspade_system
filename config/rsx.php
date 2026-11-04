@@ -261,6 +261,7 @@ return [
         \App\RSpade\Core\Portal\Portal_Url_ManifestSupport::class,
         \App\RSpade\Core\Externals\Externals_ManifestSupport::class,
         \App\RSpade\Core\Task\Task_Command_ManifestSupport::class,
+        \App\RSpade\Core\Task\Task_Access_ManifestSupport::class,
         // After the producers of `routes` (it judges the reserved /_companion path) and before
         // Auth, which reads the section for its NO SURFACE check.
         \App\RSpade\Core\Companion\Companion_ManifestSupport::class,

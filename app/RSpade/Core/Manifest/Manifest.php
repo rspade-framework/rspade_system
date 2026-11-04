@@ -269,6 +269,7 @@ class Manifest
         'jqhtml',
         'external_resources',
         'task_commands',
+        'task_access',
         'companions',
         'emails',
         'bundle_aliases',
@@ -406,6 +407,21 @@ class Manifest
         static::init();
 
         return static::$data['data']['task_commands'] ?? [];
+    }
+
+    /**
+    * The baked #[Task_Access] table: '<fqcn>::<method>' => ['class', 'service', 'method',
+    * 'check', 'realm'] - which tasks the browser task API may show, and to whom.
+    *
+    * Populated by Task_Access_ManifestSupport at build time and read by Task_Gates.
+    *
+    * @return array<string, array{class: string, service: string, method: string, check: string, realm: string}>
+    */
+    public static function get_task_access(): array
+    {
+        static::init();
+
+        return static::$data['data']['task_access'] ?? [];
     }
 
     /**

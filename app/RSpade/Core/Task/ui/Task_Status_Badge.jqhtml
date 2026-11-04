@@ -10,7 +10,7 @@ $task     a status object already in hand (Rsx_Task.get(), a find()/page() row):
 Hovering the badge shows the run's reason (why it was cancelled, killed or is being retried)
 or, for a pending run that has none, what it is waiting for (Rsx_Task.waiting_text()).
 
-One of the two is required. Reading needs the run's view gate (Task_Gates); a run the viewer
+One of the two is required. Reading needs the run's task to admit the viewer (#[Task_Access]); a run the viewer
 may not see shows as "Unavailable".
 --%>
 <Define:Task_Status_Badge tag="span">

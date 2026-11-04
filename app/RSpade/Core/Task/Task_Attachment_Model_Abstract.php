@@ -18,7 +18,8 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * file of their own (Rsx_Temp_Files - uploads/_temp/, a random key, never shared), and this row
  * names it under the run. Deleting the temp file deletes this row (the foreign key cascades).
  * It is NOT a File_Attachment_Model: no fileable owner, no retention window, no file gates. Who
- * may read it is the task's own view gate (Task_Gates); Task_Retention_Service deletes it once
+ * may read it is the run's view check (Task_Gates::can_view() - the task's #[Task_Access]);
+ * Task_Retention_Service deletes it once
  * the task's output is truncated, and the temp file's own expiry is the backstop.
  *
  * Read the bytes through read_bytes(), read_stream(), download_response().
@@ -97,7 +98,8 @@ abstract class Task_Attachment_Model_Abstract extends Rsx_Model_Abstract
 
     /**
      * A download response for the file under its file_name. Authorizing the caller is the
-     * caller's job (Task_Gates::can_view()).
+     * caller's job: an endpoint serving it to a browser asks Task_Gates::can_view($run)
+     * first (the run's #[Task_Access] check).
      *
      * @return \Symfony\Component\HttpFoundation\Response
      */

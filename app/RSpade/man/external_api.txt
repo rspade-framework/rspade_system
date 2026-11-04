@@ -1688,7 +1688,8 @@ TEMPLATE ENDPOINTS
         GET  /api/v1/clients/:id/attachments                     list
         POST /api/v1/clients/:id/attachments/attach              claim a key
         POST /api/v1/clients/:id/attachments/:attachment_id/delete
-        ... and the same three for /api/v1/tasks (which also has list + one)
+        ... and the same three for /api/v1/tasks (which also has list, one,
+        create and present-only update - no delete)
 
     Clients attach into the SAME category the staff Documents tab reads, so a
     file uploaded over the API shows up in the UI; removing one revokes its

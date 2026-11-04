@@ -20,10 +20,11 @@ use App\RSpade\Core\Task\Task_Gates;
  * Its output has its own topic (Task_Output_Topic). The frame carries the id only, and the
  * watcher refetches through a gated endpoint.
  *
- * @REALTIME-AUTH-01-EXCEPTION - can_subscribe() delegates to Task_Gates, whose view gates
- * deny every viewer but a developer unless the application registers a handler.
+ * @REALTIME-AUTH-01-EXCEPTION - can_subscribe() delegates to Task_Gates, which asks the
+ * run's task type's #[Task_Access] check for 'view' and denies every caller but a developer
+ * when the task declares none.
  *
- * Subscribing is decided by the run's view gate (Task_Gates::can_view()).
+ * Subscribing is decided by the run's view check (Task_Gates::can_view()).
  */
 class Task_Changed_Topic extends Realtime_Topic_Abstract
 {

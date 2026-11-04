@@ -36,7 +36,8 @@ use App\RSpade\Core\Time\Rsx_Time;
  * A task WRITES all of this through its Task_Instance; nothing outside the task writes a
  * report. Outside code READS through this model, and acts on a run through its lifecycle
  * methods. Reads here are ungated server-side PHP like any model read: an endpoint that shows a
- * task to a user asks Task_Gates first.
+ * task to a user asks Task_Gates first (the task's #[Task_Access]; a list reads through
+ * Task_Gates::visible_page()).
  *
  * @DB-UNBOUNDED-01-EXCEPTION - attachments() reads the attachments of ONE run, which are as many
  * as that run attached; every other whole-set read here is a search capped by its name
@@ -440,7 +441,7 @@ abstract class Task_Run_Model_Abstract extends Rsx_Model_Abstract
     //
     // Each records an OPERATOR line on the run's output naming who did it, so the console
     // shows the run's history alongside what it printed. None of them is gated here: an
-    // endpoint acting for a user asks Task_Gates::can_control() first.
+    // endpoint acting for a user asks Task_Gates::can_control() first (#[Task_Access]).
     // ------------------------------------------------------------------------------------
 
     /**

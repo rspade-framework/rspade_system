@@ -7,7 +7,7 @@ $kind     the report to show first (default: the first the run has set, state_js
 
 Only reports the run has actually set are offered, and the list grows as the run reports
 more (Task_Changed_Topic). Size it with ordinary CSS; the report pane scrolls inside it.
-Reading needs the run's view gate (Task_Gates).
+Reading needs the run's task to admit the viewer (#[Task_Access]; Task_Gates).
 --%>
 <Define:Task_Report_Browser tag="div">
     <% if (!this.args.task_id) { throw new Error('Task_Report_Browser requires $task_id'); } %>

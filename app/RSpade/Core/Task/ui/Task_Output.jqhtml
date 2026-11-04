@@ -12,7 +12,7 @@ it was written (to the millisecond) as the row's title.
 
 Live updates ride Task_Output_Topic and need realtime (REALTIME_ENABLED); without it the
 console shows the output as it was when it opened, and Refresh reads what is new. Reading
-needs the run's view gate (Task_Gates) like every task widget.
+needs the run's task to admit the viewer (#[Task_Access]) like every task widget.
 
 The terminal library loads on first use from /_task/xterm.mjs - pages without a console never
 download it.
