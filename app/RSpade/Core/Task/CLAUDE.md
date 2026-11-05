@@ -28,10 +28,10 @@ says what is in this DIRECTORY and what must stay true when editing it.
 - `Task_Daemon.php` — the application's side of `rspade-taskd`, the container's scheduler
   (`resource/docker/rspade-taskd/`): `poke()` (a line on its socket, only where
   `/.rspade_container` exists and this process spawns workers; never waits, never fails),
-  `next_wake_ms()` (what the tick prints under `--_report-next-wake`: next schedule less the
-  lead, next deferred pending run, `BUSY_RECHECK_SECONDS` while anything runs or a kill is
+  `next_wake_ms()` (what the tick prints under `--_report-next-wake`: next schedule at its own
+  time - never early, next deferred pending run, `BUSY_RECHECK_SECONDS` while anything runs or a kill is
   owed here, null when nothing waits), and THE DUE RULES every claim and spawn check uses:
-  `schedule_due_cutoff()` (`SCHEDULE_LEAD_SECONDS` early), `where_pending_due()` (a dispatched
+  `schedule_due_cutoff()` (a tick claims schedules due within the next `SCHEDULE_LEAD_SECONDS`), `where_pending_due()` (a dispatched
   run at its time, a scheduled-origin run early) and `next_run_after()` (advance from the later
   of now and the due time). Pokes come from `dispatch()`, `set_next_run()`, a worker that ran
   something exiting, a manifest rebuild and `rsx:tasks:enable`.

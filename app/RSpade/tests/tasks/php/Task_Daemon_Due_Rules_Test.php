@@ -26,7 +26,7 @@ use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
  *     a 3:00 schedule claimed at 2:59:56 runs once, not again at 3:00;
  *   - a run a schedule produced is due early too; a DISPATCHED run only at its time, so a
  *     short #[Debounce] delay is never cut short;
- *   - next_wake_ms(): the next schedule less the lead, the next deferred run, a minute while
+ *   - next_wake_ms(): the next schedule at its own time (never early), the next deferred run, a minute while
  *     anything runs, null when nothing waits;
  *   - the tick prints RSX_TASK_NEXT_WAKE_MS only under --_report-next-wake;
  *   - the tick reconciles the schedules from ONE read of the table and writes nothing when
@@ -114,7 +114,7 @@ class Task_Daemon_Due_Rules_Test extends Rsx_Test_Abstract
 
         static::__schedule(60);
         $wake = Task_Daemon::next_wake_ms();
-        static::__assert_true($wake !== null && $wake > 0 && $wake <= (60 - Task_Daemon::SCHEDULE_LEAD_SECONDS) * 1000, "a schedule in 60 s wakes the lead before it (got {$wake})");
+        static::__assert_true($wake !== null && $wake > (60 - Task_Daemon::SCHEDULE_LEAD_SECONDS) * 1000 && $wake <= 60 * 1000, "a schedule in 60 s wakes at its time, not early (got {$wake})");
 
         Task::dispatch('Task_Exec_Fixture_Service', 'marker_a', [], ['scheduled_for' => static::__at(20)]);
         $wake = Task_Daemon::next_wake_ms();

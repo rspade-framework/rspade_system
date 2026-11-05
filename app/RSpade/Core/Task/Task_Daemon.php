@@ -26,9 +26,10 @@ use App\RSpade\Core\Task\Task_Run_Model;
  * reconciles and spawns exactly as under cron - so the two schedulers are one implementation.
  *
  * THE DUE RULES live here too, because the tick, the worker and the next-wake answer must agree
- * on them: a SCHEDULE (and the pending run a schedule produced) is due SCHEDULE_LEAD_SECONDS
- * before its time, so a wake a moment early still runs the 3:00 run; a DISPATCHED run is due at
- * its time exactly, so a short #[Debounce] delay is never cut short.
+ * on them: the daemon WAKES at a schedule's own time, and a tick then claims every SCHEDULE (and
+ * every pending run a schedule produced) due within the next SCHEDULE_LEAD_SECONDS, so a tick
+ * that lands a moment before 3:00 still runs the 3:00 run; a DISPATCHED run is due at its time
+ * exactly, so a short #[Debounce] delay is never cut short.
  */
 class Task_Daemon
 {
@@ -39,9 +40,11 @@ class Task_Daemon
     public const CONTAINER_MARKER = '/.rspade_container';
 
     /**
-     * How early a schedule is due. A timer wake, a clock correction or a tick that lands a
-     * moment before 3:00 must still run the 3:00 run. Taking it a few seconds early is
-     * harmless; missing it until the next wake is not.
+     * The window a tick claims schedules in: everything due between now and this many seconds
+     * from now. The daemon wakes ON TIME; the window is for the tick that lands a moment
+     * before 3:00 anyway - a timer firing early, a clock correction, a poke - which must still
+     * run the 3:00 run. Taking it a few seconds early is harmless; missing it until the next
+     * wake is not.
      */
     public const SCHEDULE_LEAD_SECONDS = 5;
 
@@ -122,7 +125,7 @@ class Task_Daemon
      * How long until the tick should run again, in milliseconds - or null when nothing is
      * waiting at all (the daemon then sleeps until poked, or its ceiling).
      *
-     * The earliest of: the next schedule not yet due, the next pending run not yet due (a
+     * The earliest of: the next schedule beyond the claim window, at its own time, the next pending run not yet due (a
      * deferred dispatch, a #[Debounce] delay, an abandoned run's retry), and - while any run is
      * RUNNING or a kill is owed on this host - BUSY_RECHECK_SECONDS. What is due NOW is not in
      * it: the tick that computes this has just spawned for it, and what it could not spawn for
@@ -137,8 +140,8 @@ class Task_Daemon
             ->where('next_run_at', '>', self::schedule_due_cutoff())
             ->min('next_run_at');
         if ($schedule !== null) {
-            // A schedule is due SCHEDULE_LEAD_SECONDS early, so that is when to wake for it.
-            $candidates[] = static::__ms_until($schedule, $now_ms) - self::SCHEDULE_LEAD_SECONDS * 1000;
+            // Wake at the schedule's own time; the claim window covers a wake that lands early.
+            $candidates[] = static::__ms_until($schedule, $now_ms);
         }
 
         $pending = DB::table('_tasks')

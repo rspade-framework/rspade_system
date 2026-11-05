@@ -1689,8 +1689,8 @@ COMMANDS
 
     INSIDE THE RSPADE CONTAINER there is no cron line: its `tasks` program, rspade-taskd,
     runs the same tick only when it is wanted. Each tick tells it when that is (the
-    internal flag --_report-next-wake prints RSX_TASK_NEXT_WAKE_MS): the next schedule, a
-    few seconds early; the next deferred pending run (a scheduled_for, a #[Debounce]
+    internal flag --_report-next-wake prints RSX_TASK_NEXT_WAKE_MS): the next schedule, at
+    its time; the next deferred pending run (a scheduled_for, a #[Debounce]
     delay, an abandoned run's retry); and one minute while anything is RUNNING or a kill
     is owed on the host, so dead workers are reaped and the silence limit is enforced as
     under cron. Between those moments an idle container runs no PHP process and asks the
@@ -1707,9 +1707,10 @@ COMMANDS
     started again, forever, 2 s doubling to a minute between attempts, and its first tick
     picks up whatever was dispatched while it was down.
 
-    WHEN IS A RUN DUE. A schedule, and a pending run a schedule produced, is due
-    Task_Daemon::SCHEDULE_LEAD_SECONDS (5) before its time, so a tick or a wake a moment
-    early still runs the 3:00 run; it then advances from the later of now and the time it
+    WHEN IS A RUN DUE. The daemon wakes at a schedule's time; a tick then claims every
+    schedule, and every pending run a schedule produced, due within the next
+    Task_Daemon::SCHEDULE_LEAD_SECONDS (5), so a tick that lands a moment early still
+    runs the 3:00 run; a schedule claimed early advances from the later of now and the time it
     was due, so claiming it early never runs that minute twice. A dispatched run is due at
     its scheduled_for exactly.
 

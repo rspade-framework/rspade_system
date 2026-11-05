@@ -600,7 +600,7 @@ Children are real `php artisan` processes on the test database: a task being sto
 | task-due-01 | a schedule within SCHEDULE_LEAD_SECONDS is claimed now and advances past the run it claimed; a second worker runs nothing | schedule due in 3 s; two scheduled workers | one run; next_run_at after the due time | implemented |
 | task-due-02 | a schedule beyond the lead waits | due in 35 s | no run | implemented |
 | task-due-03 | a dispatched run is due at its time exactly; a schedule-origin run early | both due in 3 s; on-demand worker | dispatched PENDING; scheduled COMPLETED | implemented |
-| task-due-04 | next_wake_ms(): null when nothing waits; a schedule's lead before it; a deferred run sooner; a minute while anything runs | rows as named | as named | implemented |
+| task-due-04 | next_wake_ms(): null when nothing waits; a schedule at its own time, never early; a deferred run sooner; a minute while anything runs | rows as named | as named | implemented |
 | task-due-05 | the tick prints RSX_TASK_NEXT_WAKE_MS only under --_report-next-wake | two ticks | absent; one well-formed line | implemented |
 | task-due-06 | an unchanged reconcile reads _task_schedules once and writes nothing | a settled tick, then one under DB::listen | 0 writes, at most 2 reads | implemented |
 
