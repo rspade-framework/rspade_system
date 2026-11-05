@@ -76,12 +76,24 @@ THE BUDGET
                    = 16 + floor((n - 64) / 25)               past it
         scheduled  = max(1, round(tasks / 3))
         on demand  = max(1, tasks - scheduled)
-        standby    = min(4, max(1, floor(php-fpm / 2)))     idle workers kept
-                                                     waiting (production)
+        min_spare  = min(php-fpm, max(3, min(cores, floor(php-fpm / 2))))
+                     idle workers always ready (production; also start_servers)
+        max_spare  = min(php-fpm, max(min_spare,
+                         min(2 x cores, floor(php-fpm x 3 / 4))))
+                     idle workers kept warm after a burst (production)
 
     php-fpm runs ONE pool - pages, Ajax, companion calls and the external API
     alike - and Proxority keeps one client from taking every worker in it
     (rsx:man proxority).
+
+    THE PRODUCTION POOL IS DYNAMIC. Its spare counts are IDLE workers: under
+    load php-fpm runs the busy ones plus min_spare, up to the pool, and after a
+    burst it stops one idle worker a second above max_spare, so that memory
+    returns to the page cache. At least 3 are ready unless the pool itself is
+    smaller. A warm worker buys little in RSpade - every request boots, OPcache
+    is shared, a fork from the master costs milliseconds - so the reserve is
+    modest. pm.max_requests = 1000 recycles each worker after its thousandth
+    request whatever the load. Development keeps a fixed 16-worker ondemand pool.
 
     Fixed 600 MB is the operating system and every service that is not a PHP
     worker (about 160 MB measured, plus OPcache's shared memory and the

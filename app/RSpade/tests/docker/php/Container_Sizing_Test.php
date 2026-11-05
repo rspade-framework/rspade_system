@@ -66,7 +66,7 @@ class Container_Sizing_Test extends Rsx_Test_Abstract
                 'ram_mb' => 3037, 'ram_and_swap_mb' => 7133,
             ],
             'ceilings' => ['ram' => 23, 'ram_and_swap' => 22, 'cpu' => 8, 'processes' => 22, 'process_cap' => 140, 'capped' => false, 'cap_notice' => false, 'winner' => 'cpu'],
-            'php_fpm' => ['total' => 8, 'source' => 'calculated', 'standby' => 4, 'pool_sized' => true],
+            'php_fpm' => ['total' => 8, 'source' => 'calculated', 'min_spare' => 4, 'max_spare' => 6, 'pool_sized' => true],
             'tasks' => ['total' => 4, 'scheduled' => 1, 'scheduled_source' => 'calculated', 'on_demand' => 3, 'on_demand_source' => 'calculated'],
             'redis' => ['maxmemory_mb' => 204, 'source' => 'calculated'],
             'mysql' => ['innodb_buffer_pool_mb' => null],

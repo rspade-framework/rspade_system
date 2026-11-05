@@ -86,7 +86,7 @@ class Sys_Performance_Controller_Test extends Rsx_Test_Abstract
     {
         file_put_contents(static::$file, json_encode([
             'php' => ['memory_limit_mb' => 320, 'typical_mb' => 128, 'ram_mb' => 3037, 'ram_and_swap_mb' => 7133],
-            'php_fpm' => ['total' => 8, 'source' => 'calculated', 'standby' => 4, 'pool_sized' => true],
+            'php_fpm' => ['total' => 8, 'source' => 'calculated', 'min_spare' => 4, 'max_spare' => 6, 'pool_sized' => true],
             'tasks' => ['total' => 3, 'scheduled' => 1, 'on_demand' => 2],
             'ceilings' => ['winner' => 'cpu'],
         ]));

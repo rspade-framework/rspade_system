@@ -4,7 +4,7 @@
 # The script is the whole rule: the Redis cap from memory; what is reserved for everything
 # that is not PHP; the task workers from the cores; the php-fpm total as the lowest of three
 # ceilings (typical size in RAM, the memory limit in RAM + swap, workers per core) with a
-# floor of 2; ONE pool takes them all, with its standby. It is driven here through `plan`, which
+# floor of 2; ONE pool takes them all, with its spare workers (min_spare ready, max_spare kept warm). It is driven here through `plan`, which
 # prints the decision for a given machine, and through `apply --root=`, which writes under a
 # scratch root holding COPIES of the shipped production pool files - never the files of the
 # box running the test.
@@ -33,15 +33,15 @@ plan_is() {
 # ---- 1. The worked table: the memory ceilings bound every PHP process, php-fpm is held
 # to 3 a core, and the task workers are about a quarter of php-fpm, never below 2. -------
 # 2 GB / 1 core / no swap: RAM + swap at 352 MB allows 3 processes - the floors win.
-plan_is "total=2 standby=1 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=352" 1 2048 0
+plan_is "total=2 min_spare=2 max_spare=2 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=352" 1 2048 0
 # The same box with 2 GB of swap: php-fpm at the CPU ceiling (3 a core), tasks at the floor.
-plan_is "total=3 standby=1 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=352" 1 2048 2048
+plan_is "total=3 min_spare=3 max_spare=3 tasks=2 scheduled=1 on_demand=1 redis_mb=102 limit_mb=352" 1 2048 2048
 # 4 GB / 2 cores / no swap: php-fpm at the CPU ceiling, 6, and the floor of 2 tasks.
-plan_is "total=6 standby=3 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=352" 2 4096 0
+plan_is "total=6 min_spare=3 max_spare=4 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=352" 2 4096 0
 # Swap adds nothing once the CPU ceiling is what binds.
-plan_is "total=6 standby=3 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=352" 2 4096 4096
-plan_is "total=12 standby=4 tasks=3 scheduled=1 on_demand=2 redis_mb=409 limit_mb=352" 4 8192 0
-plan_is "total=24 standby=4 tasks=6 scheduled=2 on_demand=4 redis_mb=819 limit_mb=352" 8 16384 0
+plan_is "total=6 min_spare=3 max_spare=4 tasks=2 scheduled=1 on_demand=1 redis_mb=204 limit_mb=352" 2 4096 4096
+plan_is "total=12 min_spare=4 max_spare=8 tasks=3 scheduled=1 on_demand=2 redis_mb=409 limit_mb=352" 4 8192 0
+plan_is "total=24 min_spare=8 max_spare=16 tasks=6 scheduled=2 on_demand=4 redis_mb=819 limit_mb=352" 8 16384 0
 
 # ---- 2. The Redis cap: 32 under 1 GB, otherwise max(64, 5%). ---------------------------
 plan_line 1 512 0 | grep -q "redis_mb=32 "    || fail "a box under 1 GB gets 32 MB of Redis"
@@ -52,9 +52,9 @@ plan_line 8 65536 0 | grep -q "redis_mb=2048 " || fail "64 GB is capped at 2 GB"
 bash "$SCRIPT" plan 8 131072 0 | grep -q "+ 2048 scratch" || fail "scratch is capped at 2 GB"
 
 # ---- 2b. Past 64 php-fpm, one more task worker per 25; and the 140-process cap. -------
-plan_is "total=48 standby=4 tasks=12 scheduled=4 on_demand=8 redis_mb=1638 limit_mb=352" 16 32768 0
-plan_is "total=96 standby=4 tasks=17 scheduled=6 on_demand=11 redis_mb=2048 limit_mb=352" 32 65536 0
-plan_is "total=122 standby=4 tasks=18 scheduled=6 on_demand=12 redis_mb=2048 limit_mb=352" 128 524288 0
+plan_is "total=48 min_spare=16 max_spare=32 tasks=12 scheduled=4 on_demand=8 redis_mb=1638 limit_mb=352" 16 32768 0
+plan_is "total=96 min_spare=32 max_spare=64 tasks=17 scheduled=6 on_demand=11 redis_mb=2048 limit_mb=352" 32 65536 0
+plan_is "total=122 min_spare=61 max_spare=91 tasks=18 scheduled=6 on_demand=12 redis_mb=2048 limit_mb=352" 128 524288 0
 bash "$SCRIPT" plan 128 524288 0 | grep -q "^notice    capped at 140 PHP processes" || fail "a capped box says so"
 bash "$SCRIPT" plan 16 32768 0 | grep -q "^notice" && fail "a box under the cap has no notice"
 PHP_FPM_WORKER_COUNT=300 plan_line 128 524288 0 | grep -q "^total=300 .* tasks=25 scheduled=8 on_demand=17 " || fail "a set count is never capped"
@@ -72,8 +72,8 @@ echo "$OUT" | grep -q "reserved  1315 MB = 600 fixed + 204 scratch + 255 redis +
 echo "$OUT" | tail -n1 | grep -q "total=6 .* tasks=2 .* limit_mb=320$" || fail "dev budget: $OUT"
 
 # ---- 5. Each switch replaces its part of the calculation. -----------------------------
-[ "$(PHP_FPM_WORKER_COUNT=10 plan_line 1 1 0 | cut -d' ' -f1-2)" = "total=10 standby=4" ] || fail "PHP_FPM_WORKER_COUNT"
-[ "$(PHP_FPM_WORKER_COUNT=2 plan_line 64 65536 0 | cut -d' ' -f1-2)" = "total=2 standby=1" ] || fail "PHP_FPM_WORKER_COUNT=2 is the floor"
+[ "$(PHP_FPM_WORKER_COUNT=10 plan_line 1 1 0 | cut -d' ' -f1-3)" = "total=10 min_spare=3 max_spare=3" ] || fail "PHP_FPM_WORKER_COUNT"
+[ "$(PHP_FPM_WORKER_COUNT=2 plan_line 64 65536 0 | cut -d' ' -f1-3)" = "total=2 min_spare=2 max_spare=2" ] || fail "PHP_FPM_WORKER_COUNT=2 is the floor, and the spares never exceed the pool"
 REDIS_MAXMEMORY_MB=500 plan_line 2 4096 0 | grep -q "redis_mb=500 "        || fail "REDIS_MAXMEMORY_MB"
 RSX_TASK_MAX_WORKERS=6 plan_line 2 4096 4096 | grep -q "^total=6 .* tasks=7 scheduled=1 on_demand=6 " || fail "RSX_TASK_MAX_WORKERS"
 RSX_TASK_SCHEDULED_WORKERS=3 plan_line 2 4096 4096 | grep -q "^total=6 .* tasks=4 scheduled=3 on_demand=1 " || fail "RSX_TASK_SCHEDULED_WORKERS"
@@ -113,8 +113,13 @@ value_of() { grep -E "^$2 = " "$POOLS/$1.conf" | sed 's/.* = //'; }
 
 [ "$(value_of www pm)" = "dynamic" ]              || fail "www pm"
 [ "$(value_of www pm.max_children)" = "10" ]      || fail "www max_children"
-[ "$(value_of www pm.start_servers)" = "4" ]      || fail "www start_servers"
-[ "$(value_of www pm.max_spare_servers)" = "4" ]  || fail "www max_spare_servers"
+# The spares depend on the cores this machine has; the plan for the same cores is the oracle
+# (the rows above pin the formula itself).
+cores="$(echo "$OUT" | sed -nE 's/.*sized for ([0-9]+) cores.*/\1/p')"
+expected="$(PHP_FPM_WORKER_COUNT=10 plan_line "$cores" 1 0 | cut -d' ' -f2-3)"
+[ "min_spare=$(value_of www pm.min_spare_servers) max_spare=$(value_of www pm.max_spare_servers)" = "$expected" ] \
+    || fail "www spares: expected $expected for $cores cores"
+[ "$(value_of www pm.start_servers)" = "$(value_of www pm.min_spare_servers)" ] || fail "www start_servers is min_spare"
 for key in pm pm.max_children pm.start_servers pm.min_spare_servers pm.max_spare_servers; do
     [ "$(grep -cE "^${key//./\\.} = " "$POOLS/www.conf")" = "1" ] || fail "www.conf sets $key more than once"
 done
@@ -132,7 +137,7 @@ php -r '
     $b = json_decode(file_get_contents($argv[1]), true);
     $ok = is_array($b)
         && $b["target"] === "prod"
-        && $b["php_fpm"]["total"] === 10 && $b["php_fpm"]["source"] === "override" && $b["php_fpm"]["standby"] === 4 && $b["php_fpm"]["pool_sized"] === true
+        && $b["php_fpm"]["total"] === 10 && $b["php_fpm"]["source"] === "override" && $b["php_fpm"]["min_spare"] >= 3 && $b["php_fpm"]["max_spare"] >= $b["php_fpm"]["min_spare"] && $b["php_fpm"]["max_spare"] <= 10 && $b["php_fpm"]["pool_sized"] === true
         && $b["ceilings"]["winner"] === "override"
         && $b["redis"]["maxmemory_mb"] === 300 && $b["redis"]["source"] === "override"
         && $b["php"]["memory_limit_mb"] === 352 && $b["php"]["memory_limit_source"] === "calculated"

@@ -245,17 +245,44 @@ budget() {
 }
 
 # -----------------------------------------------------------------------------
-# 5. The pool's standby.
+# 5. The pool's spare workers.
 # -----------------------------------------------------------------------------
 #
 # php-fpm runs ONE pool - pages, Ajax, companion calls and the external API alike - and
 # every php-fpm worker is in it. Proxority, in front of it, keeps one client from
-# occupying them all (rsx:man proxority).
+# occupying them all (rsx:man proxority). The pool is `dynamic`, and its two spare counts
+# are IDLE workers, not resident ones:
 #
-# STANDBY is how many idle workers the pool keeps waiting: min(4, floor(pool / 2)), and
-# never fewer than 1 - php-fpm's dynamic mode requires a spare worker, and a pool with
-# nobody waiting makes the first visitor pay for a process start.
-standby_for()  { local n=$(( $1 / 2 )); [ "$n" -gt 4 ] && n=4; [ "$n" -lt 1 ] && n=1; echo "$n"; }
+#   min_spare = min(pool, max(3, min(cores, floor(pool / 2))))
+#             idle workers php-fpm always keeps ready - under load it runs the busy ones
+#             PLUS these, up to the pool. At least 3 (fewer only when the pool itself is
+#             smaller), one per core, never more than half the pool.
+#   max_spare = min(pool, max(min_spare, min(2 * cores, floor(pool * 3 / 4))))
+#             idle workers kept warm after a burst; above it php-fpm stops one idle worker
+#             a second, so the rest of the pool's memory goes back to the page cache.
+#   start_servers = min_spare
+#
+# A warm worker buys little here - RSpade boots per request, OPcache is shared, and a fork
+# from the master costs milliseconds - so the ready reserve is modest and the pool drains
+# back after a burst. pm.max_requests (www-prod.conf) recycles every worker after its
+# thousandth request whatever the load. The budget already counts every php-fpm worker at
+# the typical size, so the spares hold memory it planned for.
+spares_for() {
+    local pool="$1" cores="$2"
+    local half=$(( pool / 2 )) three_quarters=$(( pool * 3 / 4 ))
+
+    local min_spare=$cores
+    [ "$min_spare" -gt "$half" ] && min_spare=$half
+    [ "$min_spare" -lt 3 ] && min_spare=3
+    [ "$min_spare" -gt "$pool" ] && min_spare=$pool
+
+    local max_spare=$(( cores * 2 ))
+    [ "$max_spare" -gt "$three_quarters" ] && max_spare=$three_quarters
+    [ "$max_spare" -lt "$min_spare" ] && max_spare=$min_spare
+    [ "$max_spare" -gt "$pool" ] && max_spare=$pool
+
+    echo "$min_spare $max_spare"
+}
 
 # -----------------------------------------------------------------------------
 # What this container has.
@@ -308,13 +335,13 @@ set_pool_value() {
 }
 
 write_pool() {
-    local file="$1" workers="$2" standby="$3"
+    local file="$1" workers="$2" min_spare="$3" max_spare="$4"
 
     set_pool_value "$file" pm dynamic
     set_pool_value "$file" pm.max_children "$workers"
-    set_pool_value "$file" pm.start_servers "$standby"
-    set_pool_value "$file" pm.min_spare_servers "$standby"
-    set_pool_value "$file" pm.max_spare_servers "$standby"
+    set_pool_value "$file" pm.start_servers "$min_spare"
+    set_pool_value "$file" pm.min_spare_servers "$min_spare"
+    set_pool_value "$file" pm.max_spare_servers "$max_spare"
 }
 
 # Write a file whole, readable by everyone (MySQL ignores a world-writable config file).
@@ -389,7 +416,7 @@ if [ "$capped" = true ] && [ "$total_source" = calculated ] && [ "$scheduled_sou
     cap_notice=true
 fi
 
-standby="$(standby_for "$total")"
+read -r min_spare max_spare <<< "$(spares_for "$total" "$cores")"
 
 php_ram_mb=$(( memory_mb - reserved ))
 [ "$php_ram_mb" -lt 0 ] && php_ram_mb=0
@@ -402,10 +429,10 @@ if [ "$mode" = "plan" ]; then
     echo "reserved  ${reserved} MB = ${FIXED_RESERVED_MB} fixed + ${scratch_mb} scratch + ${redis_reserved_mb} redis + ${mysql_mb} mysql + ${extra_mb} extra"
     echo "php       memory_limit ${limit_mb} MB, typical ${typical_mb} MB, ${per_core} per core"
     echo "ceilings  processes: ram ${by_ram}, ram+swap ${by_worst}; php-fpm: cpu ${by_cpu} -> ${ceiling}"
-    echo "php-fpm   ${total} (${total_source}), ${standby} standby"
+    echo "php-fpm   ${total} (${total_source}), spares ${min_spare} ready, ${max_spare} kept warm"
     echo "tasks     ${tasks}: ${scheduled} scheduled (${scheduled_source}) + ${on_demand} on demand (${on_demand_source})"
     [ "$cap_notice" = true ] && echo "notice    capped at ${PROCESS_CAP} PHP processes - past this, set the counts and size the database (rsx:man server_sizing)"
-    echo "total=${total} standby=${standby} tasks=${tasks} scheduled=${scheduled} on_demand=${on_demand} redis_mb=${redis_mb} limit_mb=${limit_mb}"
+    echo "total=${total} min_spare=${min_spare} max_spare=${max_spare} tasks=${tasks} scheduled=${scheduled} on_demand=${on_demand} redis_mb=${redis_mb} limit_mb=${limit_mb}"
     exit 0
 fi
 
@@ -420,7 +447,7 @@ php_dir="${ROOT}/etc/php/${php_version}"
 if [ "$target" = "prod" ]; then
     pool_file="${php_dir}/fpm/pool.d/www.conf"
     [ -f "$pool_file" ] || die "${pool_file} does not exist; the php-fpm pool was not sized."
-    write_pool "$pool_file" "$total" "$standby"
+    write_pool "$pool_file" "$total" "$min_spare" "$max_spare"
 fi
 
 # The memory limit, one number for php-fpm and the CLI: a task worker, a cron run and a
@@ -450,7 +477,7 @@ write_file "${ROOT}/var/lib/rspade/sizing.json" "{
         \"ram_mb\": ${php_ram_mb}, \"ram_and_swap_mb\": ${php_worst_mb}
     },
     \"ceilings\": {\"ram\": ${by_ram}, \"ram_and_swap\": ${by_worst}, \"cpu\": ${by_cpu}, \"processes\": ${processes}, \"process_cap\": ${PROCESS_CAP}, \"capped\": ${capped}, \"cap_notice\": ${cap_notice}, \"winner\": \"${ceiling}\"},
-    \"php_fpm\": {\"total\": ${total}, \"source\": \"${total_source}\", \"standby\": ${standby}, \"pool_sized\": $([ "$target" = "prod" ] && echo true || echo false)},
+    \"php_fpm\": {\"total\": ${total}, \"source\": \"${total_source}\", \"min_spare\": ${min_spare}, \"max_spare\": ${max_spare}, \"pool_sized\": $([ "$target" = "prod" ] && echo true || echo false)},
     \"tasks\": {\"total\": ${tasks}, \"scheduled\": ${scheduled}, \"scheduled_source\": \"${scheduled_source}\", \"on_demand\": ${on_demand}, \"on_demand_source\": \"${on_demand_source}\"},
     \"redis\": {\"maxmemory_mb\": ${redis_mb}, \"source\": \"${redis_mb_source}\"},
     \"mysql\": {\"innodb_buffer_pool_mb\": $([ "$target" = "dev" ] && echo "${innodb_mb}" || echo null)}
