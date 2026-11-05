@@ -802,6 +802,13 @@ ordinary pass and silently skips the rule in a process that runs two (a build fo
 `depends_on()`, and its `check()` simply judges.** `tests/code_quality/php/Rule_Self_Guard_Test`
 refuses any function-level `static` in a rule's `check()`.
 
+**A cross-file rule finds its subjects through the manifest's indexes, never by walking
+`get_all()`.** `Manifest::php_get_subclasses_of()` names a lineage and `Manifest::by_attribute()`
+names every declaration of an attribute, without loading or parsing anything; only the classes
+they return are loaded or read. `class_exists()` on every indexed file autoloads the whole tree
+for good (PHP never unloads a class), and that is what made a one-file manifest rebuild cost as
+much as a cold one (`Manifest_Memory_Gate_Test`, the incremental budget).
+
 **When in doubt, `depends_on()` lists `files:<your own patterns>`.** An under-stated
 dependency is a rule that silently stops firing; an over-stated one only costs time.
 

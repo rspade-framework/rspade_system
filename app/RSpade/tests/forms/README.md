@@ -52,6 +52,7 @@ and a playwright script drives the ordinary web server.
 | `Form_Questions::answer()` / `answered()`: null is unasked, `false` is an answer | php | implemented (`Form_Questions_Test.php`) |
 | An asking endpoint raises `AjaxQuestionException` in-process | php | implemented (`Form_Questions_Test.php`) |
 | `Model.field_length()` answers from the page's field-length script, null for no length, throws without data | playwright | implemented (`field_length_script.js`) |
+| The page boots only after its field-length script has run, however late it arrives | playwright | implemented (`field_length_script_delayed.js`) |
 | `Rsx_Form.CANCELLED` stops the submit, leaving the form open and error-free | playwright | implemented (`form_questions_round_trip.js`) |
 | An answer resubmits with `_answers` plus the original values | playwright | implemented (`form_questions_round_trip.js`) |
 | Answers accumulate across questions in one submit | playwright | implemented (`form_questions_round_trip.js`) |

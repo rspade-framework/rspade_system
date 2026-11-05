@@ -12,8 +12,8 @@ use App\RSpade\Tests\Proxority\Php\Proxority_Test_Abstract;
 
 /**
  * What the operator and the application see of the proxy: the whitelist refresh in every
- * outcome, the status socket and its CLI (status, log, log --follow), and the socket file's
- * own lifecycle (a stale file is replaced, a live one is never stolen).
+ * outcome, the status socket and its CLI (status, log, log --follow, close, open), and the
+ * socket file's own lifecycle (a stale file is replaced, a live one is never stolen).
  */
 class Proxority_Control_Test extends Proxority_Test_Abstract
 {
@@ -102,6 +102,69 @@ class Proxority_Control_Test extends Proxority_Test_Abstract
             $missing->run();
             static::__assert_equals(1, $missing->getExitCode());
             static::__assert_contains('Proxority is not running', $missing->getErrorOutput());
+        });
+    }
+
+    /**
+     * CLOSED TO EXTERNAL CLIENTS (Proxority_Gate; a sequential rsx:test run inside the
+     * container). `close` returns only once the external request already running has finished;
+     * meanwhile a new external request is refused with a 503 naming the reason and loopback
+     * still passes. `open` admits everyone again, and a closure whose holder process has died
+     * reopens on the next request it would have refused.
+     */
+    public static function test_close_drains_refuses_external_clients_and_reopens()
+    {
+        static::__in_scratch(function (array $s) {
+            $s = static::__start_proxy($s, [], 4);
+
+            $holder = new Process(['sleep', 'infinity']);
+            $holder->setTimeout(null);
+            $holder->start();
+            $holder_pid = $holder->getPid();
+
+            static::__send_from($s, '198.51.100.7', '/page?hold=e1');
+            static::__wait_arrived($s, 1);
+
+            $closer = static::__spawn(['node', static::__proxority_js(), 'close', '--reason=a test run is in progress',
+                '--holder-pid=' . $holder_pid, '--socket=' . $s['socket']]);
+            static::__wait_event($s, 'closed', 'a test run is in progress');
+            static::__assert_true($closer->isRunning(), 'close waits while an external request is still running');
+
+            $refused = static::__read_response(static::__send_from($s, '198.51.100.8', '/page?hold=never'));
+            static::__assert_equals(503, $refused['status'], 'a new external request is refused while closed');
+            static::__assert_equals('30', $refused['headers']['retry-after'] ?? null);
+            static::__assert_contains('a test run is in progress', $refused['body']);
+
+            static::__send($s, '/page?hold=l1');
+            static::__assert_equals(['e1', 'l1'], static::__wait_arrived($s, 2), 'a loopback request still reaches the upstream');
+
+            static::__release($s, 'e1');
+            $closer->wait();
+            static::__assert_equals(0, $closer->getExitCode(), 'close succeeded: ' . $closer->getErrorOutput());
+            static::__assert_contains('[OK] Closed to external clients: a test run is in progress', $closer->getOutput());
+
+            $closed = static::__status($s)['closed'];
+            static::__assert_equals('a test run is in progress', $closed['reason']);
+            static::__assert_equals($holder_pid, $closed['holder_pid']);
+            static::__assert_contains('CLOSED to external clients', static::__cli($s, ['status']));
+
+            static::__assert_contains('[OK] Open to every client', static::__cli($s, ['open']));
+            static::__send_from($s, '198.51.100.7', '/page?hold=e2');
+            static::__assert_equals(['e1', 'l1', 'e2'], static::__wait_arrived($s, 3), 'open admits external clients again');
+
+            // A closer that dies never leaves the site closed. (Nothing external is in flight,
+            // so this close returns at once.)
+            static::__release($s, 'e2');
+            static::__assert_contains('[OK] Closed', static::__cli($s, ['close', '--reason=held by a process that dies', '--holder-pid=' . $holder_pid]));
+            $holder->stop(0);
+            static::__send_from($s, '198.51.100.7', '/page?hold=e3');
+            static::__assert_equals(['e1', 'l1', 'e2', 'e3'], static::__wait_arrived($s, 4), 'a closure whose holder is gone admits the request');
+            static::__assert_contains('pid ' . $holder_pid . ', is gone', static::__wait_event($s, 'opened', 'is gone')['text']);
+            static::__assert_null(static::__status($s)['closed']);
+
+            foreach (['l1', 'e3'] as $token) {
+                static::__release($s, $token);
+            }
         });
     }
 

@@ -126,6 +126,15 @@ Real keyboard input on a runtime-mounted widget on `/_sys`.
 | forms-fl-04 | a class extending a model answers through it | `class X extends User_Model` | the model's answer | implemented |
 | forms-fl-05 | missing data throws | `Rsx.__field_length_data = null`; `= {}` | a throw naming the model and the script, both times | implemented |
 
+## field_length_script_delayed.js (playwright) - the page boots only after its field-length script
+
+`/_sys`, the framework's `User_Model`; the `/_field_lengths/` response is held until the app bundle has run.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-fl-06 | a late field-length script holds the boot back | the response held; the page's timers given 250 ms | bundle executed, `Rsx.__booted` false, `readyState` interactive | implemented |
+| forms-fl-07 | once the script arrives the page boots with the data in place | the response released | booted, data present, `field_length()` answers, no page error | implemented |
+
 
 ## Form error messages are plain text (`playwright/form_errors_plain_text.js`)
 

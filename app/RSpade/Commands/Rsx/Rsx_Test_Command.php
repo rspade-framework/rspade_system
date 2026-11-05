@@ -14,6 +14,7 @@ use App\RSpade\Commands\Migrate\Maint_Migrate;
 use App\Console\Commands\FrameworkDeveloperCommand;
 use App\RSpade\Core\Database\MigrationPaths;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Proxority\Proxority_Gate;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Env\Rsx_Initial_User;
@@ -330,6 +331,62 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             $this->warn('No application tests found (rsx/tests holds no test classes).');
         }
 
+        // THE SERVED SITE IS CLOSED TO OUTSIDE VISITORS FOR THE RUN. A sequential run shares
+        // ONE manifest with the site: this process and every child index the test trees, a
+        // served request indexes without them, and each rebuilds what the other just built -
+        // mid-run, under the classes. Inside the RSpade container Proxority sits in front of
+        // every PHP-bound request, so the run closes it to external clients (they get a 503
+        // naming the reason) and reopens it at the end, error or not. Loopback callers - a
+        // browser test, rsx:debug - still pass. The closure names this process, and the proxy
+        // reopens itself if this process dies without reopening it.
+        $closed_to_visitors = !empty($selected) && $this->close_site_to_visitors();
+
+        try {
+            $totals = $this->run_selected_sequentially($selected, $filters);
+
+            // Every class boundary already waited for the detached processes its class
+            // started; the run's end is one more boundary, for anything the runner itself
+            // started.
+            \App\RSpade\Core\Testing\Rsx_Test_Detached_Processes::contain();
+        } finally {
+            if ($closed_to_visitors) {
+                Proxority_Gate::open();
+                $this->line('Proxority: open to every client again.');
+            }
+        }
+
+        // The run is over: drop what it cached under the test suffix so the next run
+        // starts from the database, not from a previous run's answers.
+        \App\RSpade\Core\Cache\RsxCache::clear();
+
+        return $this->print_summary($totals);
+    }
+
+    /**
+     * Close the served site to external clients for a sequential run, when this is the RSpade
+     * container and its Proxority is answering. Answers whether it closed. Waits - with no
+     * deadline - until the external requests already admitted have finished.
+     */
+    private function close_site_to_visitors(): bool
+    {
+        if (!file_exists('/.rspade_container') || !Proxority_Gate::is_running()) {
+            return false;
+        }
+
+        $this->line('Proxority: closing the site to external clients for the run (loopback still passes)...');
+        Proxority_Gate::close_to_external('a test run is in progress on this server');
+        $this->newLine();
+
+        return true;
+    }
+
+    /**
+     * The sequential loop: every selected class, in order, against this box's test database.
+     *
+     * @return array{tests:int,passed:int,failed:int,skipped:int}
+     */
+    private function run_selected_sequentially(array $selected, array $filters): array
+    {
         $totals = self::__empty_totals();
 
         // Tracks whether a prior $requires_db_reset class may have committed
@@ -379,15 +436,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             $this->newLine();
         }
 
-        // Every class boundary already waited for the detached processes its class started;
-        // the run's end is one more boundary, for anything the runner itself started.
-        \App\RSpade\Core\Testing\Rsx_Test_Detached_Processes::contain();
-
-        // The run is over: drop what it cached under the test suffix so the next run
-        // starts from the database, not from a previous run's answers.
-        \App\RSpade\Core\Cache\RsxCache::clear();
-
-        return $this->print_summary($totals);
+        return $totals;
     }
 
     /**

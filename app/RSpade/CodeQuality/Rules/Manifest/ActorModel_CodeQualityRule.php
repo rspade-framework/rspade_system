@@ -103,13 +103,8 @@ class ActorModel_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        $files = Manifest::get_all();
-        if (empty($files)) {
-            return;
-        }
-
         $this->check_stamp_targets_are_actors();
-        $this->check_actors_soft_delete($files);
+        $this->check_actors_soft_delete();
     }
 
     /**
@@ -159,29 +154,25 @@ class ActorModel_CodeQualityRule extends CodeQualityRule_Abstract
 
     /**
      * CHECK 2: every concrete descendant of the actor layer still resolves SoftDeletes.
+     *
+     * The descendants come from the manifest's subclass index, and only they are loaded. The
+     * question is about a handful of models, and asking PHP instead (class_exists() on every
+     * indexed file, then is_subclass_of()) autoloaded the whole tree to answer it - the largest
+     * single cost of an incremental manifest build.
      */
-    private function check_actors_soft_delete(array $files): void
+    private function check_actors_soft_delete(): void
     {
-        foreach ($files as $rel_path => $file_metadata) {
-            if (($file_metadata['extension'] ?? '') !== 'php') {
-                continue;
-            }
+        $actors = array_unique(array_merge(
+            Manifest::php_get_subclasses_of('Rsx_Actor_Model_Abstract'),
+            Manifest::php_get_subclasses_of('Rsx_Site_Actor_Model_Abstract')
+        ));
+        sort($actors);
 
-            $fqcn = $file_metadata['fqcn'] ?? null;
-            $class_name = $file_metadata['class'] ?? null;
-            if (!$fqcn || !$class_name || !class_exists($fqcn)) {
-                continue;
-            }
-
-            // The two halves of the actor layer, tested by class rather than by the
-            // shared interface: the manifest indexes classes, and these are the two
-            // names a downstream model actually writes after `extends`.
-            if (!is_subclass_of($fqcn, Rsx_Actor_Model_Abstract::class)
-                && !is_subclass_of($fqcn, Rsx_Site_Actor_Model_Abstract::class)) {
-                continue;
-            }
-
-            if (Manifest::php_is_abstract($class_name)) {
+        foreach ($actors as $class_name) {
+            $record = Manifest::php_class_metadata($class_name);
+            $fqcn = $record['fqcn'] ?? null;
+            $rel_path = $record['file'] ?? null;
+            if (!$fqcn || !$rel_path || !class_exists($fqcn)) {
                 continue;
             }
 

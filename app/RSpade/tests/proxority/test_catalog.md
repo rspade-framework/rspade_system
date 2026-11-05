@@ -37,6 +37,7 @@ row starts a real proxy against `resource/fake_upstream.js` and `resource/fake_r
 | START-FAIL | a missing pool file fails the start loudly | php | no www.conf | exit 1, [ERROR] | implemented | 2026-11-03 |
 | REFRESH | failure keeps nothing whitelisted at boot; ok replaces and classifies; maintenance, bad JSON and a hung run keep the list; a hung run skips the next | php | fake command modes | refresh_* events, counts kept | implemented | 2026-11-03 |
 | STATUS-CLI | `status`, `log`, `log --follow` over the socket, ASCII output; not running is exit 1 | php | node CLI | as specified | implemented | 2026-11-03 |
+| CLOSE-OPEN | `close` waits for the running external request, meanwhile refuses a new external one (503, Retry-After 30, the reason) and passes loopback; `status` shows it; `open` admits again; a closure whose `--holder-pid` is gone reopens on the next request | php | node CLI, a held external request, a `sleep` holder | as stated | implemented (`Proxority_Control_Test`) | 2026-11-05 |
 | SOCKET-STALE | a stale socket file is replaced; a live one is never stolen | php | leftover file, second proxy | start ok; second exits 1 | implemented | 2026-11-03 |
 | RING-1000-LIVE | the live ring caps at 1000 | php | >1000 events through a proxy | 1000 | deferred: covered by UNIT-RING over the same class; a live run adds only time | 2026-11-03 |
 | SHUTDOWN-DRAIN | SIGTERM stops accepting, removes the socket, and exits 0 once in-flight requests finish | php | held request, SIGTERM | exit after release | implemented | 2026-11-03 |

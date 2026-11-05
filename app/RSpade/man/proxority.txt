@@ -238,6 +238,17 @@ OPERATING IT
         upstream errors, client aborts, refreshes, capacity changes), held in
         memory only; --follow streams new ones.
 
+    proxority close --reason="..." [--holder-pid=N]
+        Stop admitting EXTERNAL clients and return once the external requests
+        already admitted have finished (no deadline). A non-loopback client is
+        then answered 503, Retry-After: 30, with the reason; loopback callers
+        and files nginx serves from disk pass. With --holder-pid the proxy
+        reopens by itself once that process is gone. A restart comes up open.
+        A sequential rsx:test run does this for itself (rsx:man testing).
+
+    proxority open
+        Admit every client again.
+
     supervisorctl signal HUP proxority
         Re-read pm.max_children after changing a pool file (reload php-fpm
         first). Requests already running are never stopped.

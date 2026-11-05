@@ -4,6 +4,8 @@
 #     proxority status            the ledgers, the queues, the whitelist
 #     proxority log               the event ring, oldest first
 #     proxority log --follow      the ring, then every new event as it is logged
+#     proxority close --reason=.. stop admitting external clients; returns once they have drained
+#     proxority open              admit every client again
 #
 # Installed as /usr/local/bin/proxority. It is `node /opt/rspade/proxority/proxority.js "$@"`
 # and nothing else: the proxy's own CLI, which reads the running proxy's status socket.

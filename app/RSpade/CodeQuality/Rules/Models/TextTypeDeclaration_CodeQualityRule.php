@@ -96,19 +96,26 @@ class TextTypeDeclaration_CodeQualityRule extends CodeQualityRule_Abstract
         ];
     }
 
+    /**
+     * Only the model lineage is loaded: the subclass index names every descendant of
+     * Rsx_Model_Abstract, abstract ones included (a declaration may sit on one). Loading
+     * every indexed class to ask is_subclass_of() was most of an incremental build's memory.
+     */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        foreach (Manifest::get_all() as $rel_path => $file_metadata) {
-            if (($file_metadata['extension'] ?? '') !== 'php') {
+        $models = Manifest::php_get_subclasses_of('Rsx_Model_Abstract', false);
+        sort($models);
+
+        foreach ($models as $class_name) {
+            $record = Manifest::php_class_metadata($class_name);
+            $fqcn = $record['fqcn'] ?? null;
+            $rel_path = $record['file'] ?? null;
+
+            if (!$fqcn || !$rel_path || !class_exists($fqcn)) {
                 continue;
             }
 
-            $fqcn = $file_metadata['fqcn'] ?? null;
-            if (!$fqcn || !class_exists($fqcn) || !is_subclass_of($fqcn, Rsx_Model_Abstract::class)) {
-                continue;
-            }
-
-            $this->evaluate_class($fqcn, base_path($rel_path), Manifest::php_is_abstract($file_metadata['class'] ?? class_basename($fqcn)));
+            $this->evaluate_class($fqcn, base_path($rel_path), !empty($record['abstract']));
         }
     }
 

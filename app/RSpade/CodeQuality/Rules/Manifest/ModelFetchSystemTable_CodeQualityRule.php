@@ -85,21 +85,34 @@ class ModelFetchSystemTable_CodeQualityRule extends CodeQualityRule_Abstract
         ];
     }
 
+    /**
+     * Only the classes the attribute index says declare a fetch surface are read. Parsing
+     * every class in the tree to look for the attribute held a member summary of every file
+     * for the rest of the build.
+     */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        foreach (Manifest::get_all() as $rel_path => $file_metadata) {
-            if (($file_metadata['extension'] ?? '') !== 'php' || empty($file_metadata['class'])) {
+        $classes = [];
+
+        foreach (Manifest::by_attribute('Ajax_Endpoint_Model_Fetch') as $row) {
+            if (empty($row['class'])) {
                 continue;
             }
 
-            $normalized_rel = str_replace('\\', '/', $rel_path);
+            $normalized_rel = str_replace('\\', '/', $row['file']);
 
             // Meta-code ABOUT the attribute (this rule, its fixtures) is not an instance of it.
             if (str_contains($normalized_rel, '/CodeQuality/')) {
                 continue;
             }
 
-            $this->evaluate_file(base_path($rel_path), $file_metadata['class']);
+            $classes[$row['file']] = $row['class'];
+        }
+
+        ksort($classes);
+
+        foreach ($classes as $rel_path => $class_name) {
+            $this->evaluate_file(base_path($rel_path), $class_name);
         }
     }
 

@@ -76,6 +76,8 @@ rsx:test --fresh                            # drop + recreate the test DB first
 
 All three selectors take a SET; within one selector members are OR'd, across selectors they are AND'd. `--framework` selects the framework partition rather than adding to it. Exit code is 1 only if something failed - a run that selected NOTHING exits 0, so read the summary line.
 
+**A run inside the RSpade container closes the site to outside visitors while its classes run.** The test run and the served site share one manifest, so the runner closes Proxority to external clients (they get a 503 saying a test run is in progress) and reopens it when the run ends, pass or fail - `Proxority: closing the site ...` / `Proxority: open to every client again.` Browser tests and `rsx:debug` (loopback) still reach the site. A runner killed mid-run cannot leave it closed: the proxy reopens once the runner's process is gone. So a 503 on a box during a run is expected, and running the suite on a box serving real users takes it offline for the run. `rsx:man testing`, THE TEST TREES IN THE MANIFEST.
+
 **You rarely need `--fresh`**: a plain run applies pending migrations to the test database first. Reach for it when you suspect the test DB has drifted or been dirtied, not because you added a migration.
 
 ## Two things that are never the answer

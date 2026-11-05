@@ -19,6 +19,12 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * files parsed. The acceptance numbers are a cold build of the reference tree under
  * **128 MB** and of a synthetic tree five times its size under **256 MB**.
  *
+ * A third number holds the INCREMENTAL build to the same ruling: rebuilding after one file
+ * changed costs at most **32 MB** more than a rebuild that found nothing to do. The cost of
+ * a rebuild is the changed files, never the tree. The failure it guards against was a
+ * manifest-time rule that called class_exists() on every indexed file to find the few it
+ * judges - a one-file rebuild then loaded every class in the tree, about 90 MB on this one.
+ *
  * Both are one number each, and they are checked because the failure they guard against is
  * invisible: a rule that starts holding its own AST, an index that starts copying records,
  * a phase that stops freeing - none of them break anything, they just make the build cost
@@ -48,6 +54,9 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
     /** The synthetic tree's ceiling, in bytes. */
     private const SYNTHETIC_BUDGET = 256 * 1024 * 1024;
 
+    /** What a one-file rebuild may cost over a rebuild that changed nothing, in bytes. */
+    private const INCREMENTAL_BUDGET = 32 * 1024 * 1024;
+
     /** How many times the reference file count the synthetic tree must reach. */
     private const SYNTHETIC_MULTIPLE = 5;
 
@@ -73,14 +82,21 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
     /**
      * Build in a child and return its peak memory in bytes.
      *
+     * A COLD build unless $keep is true: then the scratch roots are kept from the previous
+     * call, so the child rebuilds incrementally over the index that call left, and are left
+     * in place for the next one (the caller removes them with __remove_scratch()).
+     *
      * @param array<int,string> $scan_roots The EXACT list the child indexes
      */
-    private static function __peak_of_build(array $scan_roots): int
+    private static function __peak_of_build(array $scan_roots, bool $keep = false): int
     {
         static::$build_root = Rsx_Project_Paths::tmp_path('manifest-gate/' . getmypid() . '/build');
         static::$scratch_tmp = Rsx_Project_Paths::tmp_path('manifest-gate/' . getmypid() . '/tmp');
 
-        rmdir_recursive(dirname(static::$build_root));
+        if (!$keep) {
+            rmdir_recursive(dirname(static::$build_root));
+        }
+
         ensure_directory(static::$build_root);
         ensure_directory(static::$scratch_tmp);
 
@@ -93,7 +109,9 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
             '--_manifest-report-peak',
         ], $output);
 
-        rmdir_recursive(dirname(static::$build_root));
+        if (!$keep) {
+            static::__remove_scratch();
+        }
 
         static::__assert_equals(
             0,
@@ -113,6 +131,11 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
         );
 
         return 0;
+    }
+
+    private static function __remove_scratch(): void
+    {
+        rmdir_recursive(dirname(static::$build_root));
     }
 
     private static function __megabytes(int $bytes): string
@@ -173,6 +196,63 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
         } finally {
             rmdir_recursive(base_path(static::$synthetic));
         }
+    }
+
+    /**
+     * THE INCREMENTAL BUDGET: one changed file costs the build one file, not the tree.
+     *
+     * A cold build, then a rebuild with nothing changed (the baseline: loading the index and
+     * deciding there is nothing to do), then a rebuild after one fixture class gained a method.
+     * Both rebuilds run the same process shape over the same index, so the difference is
+     * what the change itself cost - re-parsing, reflecting and checking one file.
+     */
+    public static function test_a_one_file_rebuild_costs_under_32mb_over_a_no_change_rebuild()
+    {
+        $fixture = 'app/RSpade/temp/manifest_gate_incremental' . getmypid();
+        $root = base_path($fixture);
+        $namespace = 'App\\RSpade\\Temp\\ManifestGateIncremental' . getmypid();
+        $class_name = 'Gate_Incremental_' . getmypid();
+
+        rmdir_recursive($root);
+        ensure_directory($root);
+
+        $write = function (string $body) use ($root, $namespace, $class_name): void {
+            file_put_contents(
+                $root . '/gate_incremental_' . getmypid() . '.php',
+                "<?php\n\nnamespace {$namespace};\n\nclass {$class_name}\n{\n{$body}}\n"
+            );
+        };
+
+        $write("    public static function label(): string\n    {\n        return 'one';\n    }\n");
+
+        $roots = static::__production_scan_roots();
+        $roots[] = $fixture;
+
+        try {
+            static::__peak_of_build($roots, true);
+            $no_change = static::__peak_of_build($roots, true);
+
+            $write("    public static function label(): string\n    {\n        return 'one';\n    }\n\n"
+                . "    public static function second_label(): string\n    {\n        return 'two';\n    }\n");
+            // A same-second rewrite can keep the mtime; the size moves, which is what the
+            // change detector reads first.
+            clearstatcache(true, $root);
+
+            $one_file = static::__peak_of_build($roots, true);
+        } finally {
+            static::__remove_scratch();
+            rmdir_recursive($root);
+        }
+
+        static::__assert_true(
+            $one_file - $no_change < self::INCREMENTAL_BUDGET,
+            'a rebuild after one file changed peaked at ' . static::__megabytes($one_file)
+            . ', ' . static::__megabytes($one_file - $no_change) . ' over a rebuild that changed nothing ('
+            . static::__megabytes($no_change) . '), over the ' . static::__megabytes(self::INCREMENTAL_BUDGET)
+            . ' budget. A rebuild costs its changed files, never the tree: look for a manifest-time'
+            . ' rule or module that loads, parses or reflects every indexed file to find the few it'
+            . ' judges (the subclass and attribute indexes answer that without loading anything).'
+        );
     }
 
     /**

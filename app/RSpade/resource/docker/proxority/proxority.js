@@ -5,6 +5,9 @@
  *     node proxority.js [--flags]          serve
  *     node proxority.js status             the ledgers, the queues, the whitelist
  *     node proxority.js log [--follow]     the event ring; --follow streams new events
+ *     node proxority.js close --reason=...  stop admitting EXTERNAL clients; returns once the
+ *                                          external requests already admitted have finished
+ *     node proxority.js open               admit everyone again
  *
  * The image installs this directory at /opt/rspade/proxority and the operator's wrapper
  * /usr/local/bin/proxority (`proxority status`, `proxority log --follow`).
@@ -44,6 +47,17 @@ const { classify } = require('./lib/classify.js');
 const { Event_Log, format_event } = require('./lib/event_log.js');
 const { read_capacity } = require('./lib/pool_capacity.js');
 const { Whitelist } = require('./lib/whitelist.js');
+const { is_loopback: is_loopback_address } = require('./lib/classify.js');
+
+/** Whether a process exists. EPERM means it exists and belongs to someone else. */
+function process_is_alive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        return error.code === 'EPERM';
+    }
+}
 
 /**
  * THE TWO SANCTIONED TIMEOUTS - the owner's specified values (2026-11-03).
@@ -67,6 +81,12 @@ const RESPONSE_BUFFER_BYTES = 10 * 1024 * 1024;
 
 /** A status-socket request line larger than this closes the connection: no frame is large. */
 const MAX_SOCKET_FRAME_BYTES = 64 * 1024;
+
+/**
+ * What a client is told while the proxy is CLOSED to external traffic: try again shortly.
+ * A hint to the client, not a deadline on anything.
+ */
+const CLOSED_RETRY_AFTER_SECONDS = 30;
 
 /** Proxority's own routing header: which public listener received the request. Never forwarded. */
 const SCHEME_HEADER = 'x-rsx-scheme';
@@ -226,6 +246,13 @@ class Proxority {
         this.active = new Set();
         this.shutting_down = false;
 
+        // CLOSED TO EXTERNAL TRAFFIC (the `close` / `open` verbs). Null while open; otherwise
+        // {reason, since, holder_pid}. In memory only, so a restart always comes up OPEN.
+        this.closed = null;
+
+        // `close` callers waiting for the admitted external requests to finish.
+        this.drain_waiters = [];
+
         this.event_log = new Event_Log({
             echo: (line) => process.stdout.write('[proxority] ' + line + '\n'),
         });
@@ -320,6 +347,71 @@ class Proxority {
     }
 
     // -----------------------------------------------------------------------------------
+    // Closed to external traffic
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * Stop admitting EXTERNAL clients - every address that is not loopback - and resolve once
+     * the external requests already admitted (queued or running) have finished. Loopback
+     * callers (a test harness's browser, rsx:debug, companions) are untouched.
+     *
+     * holder_pid names the process that asked. While closed, every refused request first checks
+     * that it is alive, and reopens the proxy when it is gone - so a closer that died without
+     * calling `open` cannot leave a site refusing its visitors.
+     */
+    close(reason, holder_pid) {
+        const text = String(reason || '').trim() || 'closed for maintenance';
+        const pid = Number.isInteger(holder_pid) && holder_pid > 0 ? holder_pid : null;
+
+        this.closed = { reason: text, since: new Date().toISOString(), holder_pid: pid };
+        this.event_log.log('closed', text + (pid ? ' (held by pid ' + pid + ')' : '') + '; '
+            + this._external_in_flight() + ' external request(s) to finish');
+
+        return new Promise((resolve) => {
+            this.drain_waiters.push(resolve);
+            this._settle_drain();
+        });
+    }
+
+    open(why) {
+        const was = this.closed;
+        this.closed = null;
+        if (was) this.event_log.log('opened', why || ('was closed: ' + was.reason));
+        this._settle_drain();
+        return was;
+    }
+
+    _refuses_while_closed(info) {
+        if (!this.closed || info.loopback || is_loopback_address(info.ip)) return false;
+
+        if (this.closed.holder_pid && !process_is_alive(this.closed.holder_pid)) {
+            this.open('the holder, pid ' + this.closed.holder_pid + ', is gone; reopened');
+            return false;
+        }
+
+        return true;
+    }
+
+    _external_in_flight() {
+        let count = 0;
+        for (const job of this.active) {
+            if (!job.loopback && !is_loopback_address(job.ip)) count++;
+        }
+        return count;
+    }
+
+    /** Resolve the `close` callers once nothing external is left in flight (or it reopened). */
+    _settle_drain() {
+        if (this.drain_waiters.length === 0) return;
+        if (this.closed && this._external_in_flight() > 0) return;
+
+        const waiters = this.drain_waiters;
+        this.drain_waiters = [];
+        if (this.closed) this.event_log.log('drained', 'no external request in flight');
+        for (const resolve of waiters) resolve(this.closed !== null);
+    }
+
+    // -----------------------------------------------------------------------------------
     // Requests
     // -----------------------------------------------------------------------------------
 
@@ -330,6 +422,14 @@ class Proxority {
             headers: req.headers,
             remote_address: req.socket.remoteAddress,
         }, this.whitelist.current);
+
+        if (this._refuses_while_closed(info)) {
+            this.event_log.log('refused', info.ip + ' ' + req.method + ' ' + info.path.substring(0, EVENT_PATH_CHARS)
+                + ' (closed: ' + this.closed.reason + ')');
+            res.setHeader('Retry-After', String(CLOSED_RETRY_AFTER_SECONDS));
+            this._plain(res, 503, 'Service Unavailable: ' + this.closed.reason + '. Please try again shortly.\n');
+            return;
+        }
 
         const job = Object.assign(info, {
             id: ++this.next_id,
@@ -442,6 +542,7 @@ class Proxority {
 
     _client_closed(job) {
         this.active.delete(job);
+        this._settle_drain();
 
         if (job._state === 'queued') {
             job.ledger.cancel(job);
@@ -531,6 +632,7 @@ class Proxority {
             },
             pool: this.ledger.snapshot(),
             whitelist: this.whitelist.snapshot(),
+            closed: this.closed,
         };
     }
 
@@ -594,6 +696,14 @@ class Proxority {
                     send({ ok: true, status: this.status() });
                 } else if (frame.verb === 'log') {
                     send({ ok: true, events: this.event_log.entries() });
+                } else if (frame.verb === 'close') {
+                    const pid = Number(frame.holder_pid);
+                    this.close(frame.reason, Number.isInteger(pid) ? pid : null)
+                        .then((still_closed) => send(still_closed
+                            ? { ok: true, closed: this.closed }
+                            : { ok: false, error: 'reopened before the external requests finished' }));
+                } else if (frame.verb === 'open') {
+                    send({ ok: true, was_closed: this.open() !== null });
                 } else if (frame.verb === 'follow') {
                     send({ ok: true, events: this.event_log.entries() });
                     if (!unfollow) unfollow = this.event_log.follow((event) => send({ event }));
@@ -612,7 +722,7 @@ class Proxority {
 // The CLI client
 // ---------------------------------------------------------------------------------------
 
-function client_request(socket_file, verb, on_frame) {
+function client_request(socket_file, request, on_frame) {
     return new Promise((resolve, reject) => {
         const connection = net.connect(socket_file);
         let buffer = '';
@@ -620,7 +730,8 @@ function client_request(socket_file, verb, on_frame) {
         connection.once('error', (error) => {
             reject(new Error('Proxority is not running (cannot connect to ' + socket_file + ': ' + error.message + ')'));
         });
-        connection.on('connect', () => connection.write(JSON.stringify({ verb }) + '\n'));
+        const frame = typeof request === 'string' ? { verb: request } : request;
+        connection.on('connect', () => connection.write(JSON.stringify(frame) + '\n'));
         connection.on('data', (chunk) => {
             buffer += chunk.toString('utf8');
             let newline;
@@ -680,6 +791,12 @@ function format_status(status) {
         lines.push('    ... and ' + (pool.queued_by_ip.length - STATUS_TOP_ADDRESSES) + ' more address(es)');
     }
 
+    lines.push('');
+    lines.push(status.closed
+        ? 'CLOSED to external clients since ' + status.closed.since + ': ' + status.closed.reason
+            + (status.closed.holder_pid ? ' (held by pid ' + status.closed.holder_pid + ')' : '')
+        : 'Open to every client');
+
     const whitelist = status.whitelist;
     lines.push('');
     lines.push('Whitelist: ' + whitelist.counts.unthrottled + ' unthrottled, ' + whitelist.counts.priority
@@ -705,6 +822,27 @@ async function run_client(verb, flags) {
         return;
     }
 
+    if (verb === 'close') {
+        const reason = typeof flags.reason === 'string' ? flags.reason : '';
+        const holder = flags['holder-pid'] === undefined ? null : Number(flags['holder-pid']);
+        process.stdout.write('Closing to external clients; waiting for the external requests in flight to finish...\n');
+        await client_request(socket_file, { verb: 'close', reason, holder_pid: holder }, (frame) => {
+            if (!frame.ok) throw new Error(frame.error);
+            process.stdout.write('[OK] Closed to external clients: ' + frame.closed.reason + '\n');
+            return 'done';
+        });
+        return;
+    }
+
+    if (verb === 'open') {
+        await client_request(socket_file, 'open', (frame) => {
+            if (!frame.ok) throw new Error(frame.error);
+            process.stdout.write(frame.was_closed ? '[OK] Open to every client\n' : '[OK] Already open to every client\n');
+            return 'done';
+        });
+        return;
+    }
+
     const follow = flags.follow === true;
     await client_request(socket_file, follow ? 'follow' : 'log', (frame) => {
         if (frame.event) {
@@ -725,12 +863,12 @@ async function main() {
     const { flags, words } = parse_argv(process.argv.slice(2));
     const verb = words[0] || 'serve';
 
-    if (verb === 'status' || verb === 'log') {
+    if (verb === 'status' || verb === 'log' || verb === 'close' || verb === 'open') {
         await run_client(verb, flags);
         return;
     }
     if (verb !== 'serve') {
-        throw new Error('Unknown command "' + verb + '". Usage: proxority.js [serve] | status | log [--follow]');
+        throw new Error('Unknown command "' + verb + '". Usage: proxority.js [serve] | status | log [--follow] | close --reason=... [--holder-pid=N] | open');
     }
 
     const proxy = new Proxority(serve_options(flags));

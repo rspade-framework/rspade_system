@@ -17,6 +17,9 @@
  * on_request  (fn) registers ONE interceptor consulted for every same-origin request before it
  *             continues: fn(route, request) returns true when it has answered the route itself
  *             (abort, fulfill, or a continue it performs later), false to let it through.
+ *             An interceptor that must see the page's own first load is passed as
+ *             open_sys_page({ on_request: fn }) instead, which installs it before navigating.
+ *             fn(route, request, headers) then also receives the headers to continue with.
  *
  * Nothing here has a deadline: the SPA wait ends when the SPA is up.
  */
@@ -42,7 +45,7 @@ async function open_sys_page(options = {}) {
     page.on('pageerror', (err) => errors.push(err.message));
     page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
 
-    let interceptor = null;
+    let interceptor = options.on_request || null;
     const on_request = (fn) => { interceptor = fn; };
 
     const auth_headers = {
@@ -55,15 +58,15 @@ async function open_sys_page(options = {}) {
             await route.continue();
             return;
         }
-        if (interceptor && await interceptor(route, request)) {
-            return;
-        }
         const headers = { ...request.headers() };
         if (!initial_doc_sent && request.resourceType() === 'document') {
             Object.assign(headers, auth_headers);
             initial_doc_sent = true;
         } else {
             headers['X-Playwright-Test'] = '1';
+        }
+        if (interceptor && await interceptor(route, request, headers)) {
+            return;
         }
         await route.continue({ headers });
     });

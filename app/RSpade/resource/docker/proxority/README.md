@@ -314,6 +314,8 @@ itself; root only). The CLI reads it:
 proxority status
 proxority log
 proxority log --follow
+proxority close --reason="..." [--holder-pid=N]
+proxority open
 ```
 
 - `status` - pid and uptime; listen and upstream addresses; the pool's capacity, the three
@@ -322,18 +324,34 @@ proxority log --follow
   counts, when it was last accepted, and the last refresh outcome (and a refresh still running).
 - `log` - the event ring, oldest first.
 - `log --follow` - the ring, then every new event as it is logged, until interrupted.
+- `close` - stop admitting EXTERNAL clients (every non-loopback address) and return once the
+  external requests already admitted, queued or running, have finished - a wait with no
+  deadline. While closed, such a request is answered `503` with `Retry-After: 30` and a body
+  naming the reason; loopback callers (rsx:debug, a test harness's browser, companions) and
+  the files nginx serves from disk are untouched. `--holder-pid` names the process the closure
+  belongs to: while closed, a request that would be refused first checks that process, and
+  reopens the proxy when it is gone - so a closer that died never leaves the site closed. The
+  state is in memory, so a restart always comes up open. `status` shows it.
+- `open` - admit everyone again.
 
-All three exit 1 with "Proxority is not running" when the socket does not answer. `--socket=`
+A sequential `rsx:test` inside the container closes the proxy for its run and opens it again
+when the run ends (PHP side: `Core/Proxority/Proxority_Gate.php`; `rsx:man testing`).
+
+All of them exit 1 with "Proxority is not running" when the socket does not answer. `--socket=`
 points them at another socket.
 
 The ring keeps the last 1000 events in memory - nothing is written to disk. Event types:
 `start`, `stop`, `capacity`, `queued`, `dispatched`, `released`, `timeout`,
 `upstream_error`, `client_abort`, `refresh_ok`, `refresh_failed`, `refresh_maintenance`,
-`refresh_skipped`. `queued`, `dispatched` and `released` are per-request traffic and stay in
+`refresh_skipped`, `closed`, `drained`, `opened`, `refused`. `queued`, `dispatched`, `released`
+and `refused` are per-request traffic and stay in
 the ring only (echoing them would make stdout an access log); the rest are also echoed.
 
 The socket protocol is newline-delimited JSON: a line `{"verb":"status"}` (or `log`, or
 `follow`) answers `{"ok":true,...}`; `follow` then streams `{"event":{...}}` lines.
+`{"verb":"close","reason":"...","holder_pid":N}` answers `{"ok":true,"closed":{...}}` once
+drained (`ok:false` if it was reopened first); `{"verb":"open"}` answers
+`{"ok":true,"was_closed":bool}`.
 
 
 ## Signals

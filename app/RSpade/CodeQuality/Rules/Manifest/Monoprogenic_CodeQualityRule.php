@@ -100,103 +100,84 @@ class Monoprogenic_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        // Get all manifest files
-        $files = \App\RSpade\Core\Manifest\Manifest::get_all();
-        if (empty($files)) {
-            return;
-        }
-
-        // Step 1: Find all classes with Monoprogenic attribute
+        // Step 1: every class carrying #[Monoprogenic], from the attribute index
         $monoprogenic_classes = [];
-        foreach ($files as $file => $file_metadata) {
-            if (isset($file_metadata['attributes']['Monoprogenic'])) {
-                $fqcn = $file_metadata['fqcn'] ?? null;
-                if ($fqcn) {
-                    $monoprogenic_classes[$fqcn] = $file;
-                }
+        foreach (\App\RSpade\Core\Manifest\Manifest::by_attribute('Monoprogenic') as $row) {
+            if ($row['member'] === null && !empty($row['class'])) {
+                $monoprogenic_classes[$row['class']] = $row['file'];
             }
         }
 
-        if (empty($monoprogenic_classes)) {
-            return;
-        }
+        ksort($monoprogenic_classes);
 
-        // Step 2: For each Monoprogenic class, check all its descendants
+        // Step 2: each one's descendants
         foreach ($monoprogenic_classes as $monoprogenic_class => $monoprogenic_file) {
-            $this->check_descendants($monoprogenic_class, $monoprogenic_file, $files);
+            $this->check_descendants($monoprogenic_class);
         }
     }
 
     /**
-     * Check all descendants of a Monoprogenic class for violations
+     * Check all descendants of a Monoprogenic class for violations.
+     *
+     * The descendants and their parents come from the manifest's class map and subclass
+     * index, and no class is loaded. Asking PHP (class_exists() then is_subclass_of() on every
+     * indexed file) autoloaded the whole tree to answer a question the index already holds.
      */
-    private function check_descendants(string $monoprogenic_class, string $monoprogenic_file, array $files): void
+    private function check_descendants(string $monoprogenic_class): void
     {
-        // Find all classes that extend from any Monoprogenic class
-        foreach ($files as $file => $metadata) {
-            $fqcn = $metadata['fqcn'] ?? null;
-            if (!$fqcn || !class_exists($fqcn)) {
+        $descendants = \App\RSpade\Core\Manifest\Manifest::php_get_subclasses_of($monoprogenic_class);
+        sort($descendants);
+
+        foreach ($descendants as $class_name) {
+            $record = \App\RSpade\Core\Manifest\Manifest::php_class_metadata($class_name);
+            $parent_class_name = $record['extends'] ?? null;
+            $file = $record['file'] ?? null;
+
+            if (!$parent_class_name || !$file) {
                 continue;
             }
 
-            // Check if this class is a subclass of the Monoprogenic class
-            if (!is_subclass_of($fqcn, $monoprogenic_class)) {
-                continue;
-            }
-
-            // Check if the class is abstract
-            if (\App\RSpade\Core\Manifest\Manifest::php_is_abstract($fqcn)) {
-                continue; // Abstract classes are allowed at any level
-            }
-
-            // This is a concrete class that extends from Monoprogenic
-            // Check if its direct parent is also concrete (violation)
-            // Get the parent class name from manifest data
-            $class_metadata = \App\RSpade\Core\Manifest\Manifest::php_get_metadata_by_fqcn($fqcn);
-            $parent_class_name = $class_metadata['extends'] ?? null;
-
-            if (!$parent_class_name) {
-                continue;
-            }
-
-            // If parent is the Monoprogenic class itself, that's fine
+            // A concrete class extending the Monoprogenic class itself is the intended shape
             if ($parent_class_name === $monoprogenic_class) {
                 continue;
             }
 
-            // Check if parent is abstract
-            if (!\App\RSpade\Core\Manifest\Manifest::php_is_abstract($parent_class_name)) {
-                // VIOLATION: Concrete class extending another concrete class in Monoprogenic hierarchy
-                $line_number = $this->find_class_line($file, $metadata['class'] ?? '');
+            $parent_record = \App\RSpade\Core\Manifest\Manifest::php_class_metadata($parent_class_name);
 
-                $this->add_violation(
-                    $file,
-                    $line_number,
-                    sprintf(
-                        "Class '%s' violates Monoprogenic inheritance pattern.\n\n" .
-                        "This class is a concrete (non-abstract) class that extends another concrete class '%s'.\n" .
-                        "The base class '%s' has the #[Monoprogenic] attribute, which means concrete descendants " .
-                        "can only extend from it through abstract intermediary classes.\n\n" .
-                        "Monoprogenic classes are used in reflection-based operations (like route discovery or " .
-                        "command registration). Having concrete classes extend other concrete classes creates " .
-                        "ambiguity about which class should handle the discovered operations.",
-                        $metadata['class'] ?? $fqcn,
-                        $this->get_short_name($parent_class_name),
-                        $this->get_short_name($monoprogenic_class)
-                    ),
-                    "class " . ($metadata['class'] ?? '') . " extends",
-                    sprintf(
-                        "To fix this violation, choose one of these approaches:\n" .
-                        "1. Make the parent class '%s' abstract\n" .
-                        "2. Make this class '%s' extend directly from an abstract class\n" .
-                        "3. Remove the concrete inheritance chain by not extending '%s'",
-                        $this->get_short_name($parent_class_name),
-                        $metadata['class'] ?? '',
-                        $this->get_short_name($parent_class_name)
-                    ),
-                    'critical'
-                );
+            // A parent outside the index, or an abstract one, is allowed
+            if ($parent_record === null || !empty($parent_record['abstract'])) {
+                continue;
             }
+
+            $line_number = $this->find_class_line($file, $class_name);
+
+            $this->add_violation(
+                $file,
+                $line_number,
+                sprintf(
+                    "Class '%s' violates Monoprogenic inheritance pattern.\n\n" .
+                    "This class is a concrete (non-abstract) class that extends another concrete class '%s'.\n" .
+                    "The base class '%s' has the #[Monoprogenic] attribute, which means concrete descendants " .
+                    "can only extend from it through abstract intermediary classes.\n\n" .
+                    "Monoprogenic classes are used in reflection-based operations (like route discovery or " .
+                    "command registration). Having concrete classes extend other concrete classes creates " .
+                    "ambiguity about which class should handle the discovered operations.",
+                    $class_name,
+                    $this->get_short_name($parent_class_name),
+                    $this->get_short_name($monoprogenic_class)
+                ),
+                "class " . $class_name . " extends",
+                sprintf(
+                    "To fix this violation, choose one of these approaches:\n" .
+                    "1. Make the parent class '%s' abstract\n" .
+                    "2. Make this class '%s' extend directly from an abstract class\n" .
+                    "3. Remove the concrete inheritance chain by not extending '%s'",
+                    $this->get_short_name($parent_class_name),
+                    $class_name,
+                    $this->get_short_name($parent_class_name)
+                ),
+                'critical'
+            );
         }
     }
 

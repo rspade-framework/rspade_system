@@ -12,7 +12,7 @@
 const EVENT_LIMIT = 1000;
 
 /** Per-request traffic: kept in the ring, never echoed (stdout would become an access log). */
-const QUIET_TYPES = new Set(['queued', 'dispatched', 'released']);
+const QUIET_TYPES = new Set(['queued', 'dispatched', 'released', 'refused']);
 
 class Event_Log {
     /**

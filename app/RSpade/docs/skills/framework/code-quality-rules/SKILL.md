@@ -51,6 +51,23 @@ guarded itself with a static flag it RESET at the end of every call, so it rebui
 whole tree once per changed file - **18.5 s of a cold build** spent answering the same question
 1,400 times.
 
+**A cross-file rule finds its SUBJECTS through the index, never by walking `get_all()`.**
+`Manifest::php_get_subclasses_of($parent, $concrete_only)` names a lineage and
+`Manifest::by_attribute($name)` every declaration of an attribute (rows `file`, `class`,
+`member`), with nothing loaded or parsed; load or read only what they return. The shape to never
+write is `foreach (Manifest::get_all() ...) { if (class_exists($fqcn) && is_subclass_of(...)) }`:
+PHP never unloads a class, so it pinned the whole tree in memory and a ONE-FILE manifest rebuild
+cost 90 MB more than a no-change one (ACTOR-01, MANIFEST-MONO-01, TEXT-TYPE-01 and
+MODEL-FETCH-SYSTEM-01 all did it). `Manifest_Memory_Gate_Test`'s incremental budget catches it.
+
+```php
+foreach (Manifest::php_get_subclasses_of('Rsx_Model_Abstract', false) as $class_name) {
+    $record = Manifest::php_class_metadata($class_name);   // ['file','fqcn','extends','abstract']
+    if (!class_exists($record['fqcn'])) { continue; }      // loads ONE subject
+    // ... judge it
+}
+```
+
 ### `depends_on()`
 
 Each entry is a manifest section name (`php_classes`, `php_subclass_index`, `auth`, `routes`,

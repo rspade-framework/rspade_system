@@ -153,6 +153,27 @@ THE TEST TREES IN THE MANIFEST
     drop them again, through the normal add/remove path, and every request after
     that is steady. Nothing has to be cleaned and nothing has to be remembered.
 
+    A SEQUENTIAL RUN CLOSES THE SITE TO EXTERNAL VISITORS. A sequential run
+    shares ONE manifest with the served site for its whole length, and a served
+    request rebuilds it without the test trees under the classes still running.
+    So inside the RSpade container, where Proxority fronts every PHP-bound
+    request, the runner closes the proxy to external clients once the classes
+    are chosen and the test database is ready, and opens it again when the run
+    ends, pass, fail or error:
+
+        Proxority: closing the site to external clients for the run ...
+        Proxority: open to every client again.
+
+    Meanwhile an outside visitor gets a 503 (Retry-After: 30) saying a test run
+    is in progress; loopback callers - browser tests, rsx:debug - and files
+    nginx serves from disk still pass. The close waits for the external
+    requests already admitted to finish. A runner that dies without reopening
+    cannot leave the site closed: the closure names the runner's process, and
+    the proxy reopens once it is gone. A docker run never closes anything: its
+    classes run in containers with manifests of their own. Outside the RSpade
+    container (no Proxority) nothing is closed. rsx:man proxority, `proxority
+    close` / `proxority open`.
+
 API REFERENCE
 
   Assertions

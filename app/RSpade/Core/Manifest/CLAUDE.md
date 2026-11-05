@@ -54,9 +54,19 @@ moved onto the seam is only what a test has to be able to move.
 
 Owner ruling: **the build's peak memory is proportional to the INDEX plus a constant bounded
 by the largest single file, never proportional to the number of files parsed.** Acceptance: a
-cold build of the reference tree under 128 MB, and of a synthetic tree five times its size
-under 256 MB. `tests/manifest/php/Manifest_Memory_Gate_Test` is those two numbers, and a
-failure there is a FINDING, never a number to raise.
+cold build of the reference tree under 128 MB, of a synthetic tree five times its size under
+256 MB, and a one-file rebuild at most 32 MB over a rebuild that changed nothing.
+`tests/manifest/php/Manifest_Memory_Gate_Test` is those three numbers, and a failure there is
+a FINDING, never a number to raise.
+
+**A rebuild costs its changed files, never the tree - so a manifest-time rule or module never
+loads, parses or reflects every indexed file to find the few it judges.** Four cross-file rules
+did (ACTOR-01, MANIFEST-MONO-01 and TEXT-TYPE-01 called `class_exists()` on every file before
+asking `is_subclass_of()`; MODEL-FETCH-SYSTEM-01 parsed every class looking for one attribute).
+A loaded class is never unloaded, so a one-file rebuild paid for the whole tree - 90 MB here, and
+past a 256 MB CLI limit on a larger tree. The subject set comes from the index:
+`php_get_subclasses_of()` for a lineage, `by_attribute()` for a declaration, and only those
+classes are loaded or parsed.
 
 Measured on this box (1,420 files): cold 677 MB -> **105.9 MB**, one-file rebuild 103 MB ->
 99.8 MB, no-change 64.4 MB -> 67.5 MB. What was freed was per-rule static AST and token
