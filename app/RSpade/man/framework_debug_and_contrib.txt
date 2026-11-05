@@ -373,7 +373,7 @@ WHAT IS ALREADY ON YOUR DISK
     system/app/RSpade/ unless stated.
 
   The monorepo's always-on knowledge: docs/claude/framework/
-    Ten fragments. Downstream your session loads docs/claude/shared/ plus
+    Eleven fragments. Downstream your session loads docs/claude/shared/ plus
     docs/claude/app/; this third bucket is deliberately not imported, because
     it is true only where the framework is authored.
 
@@ -386,14 +386,14 @@ WHAT IS ALREADY ON YOUR DISK
                                   local-file grant.
       11-framework-testing.md     How the framework suite is organised - what
                                   the maintainer will run against your patch.
+      12-framework-application.md The /_sys panel and /apidocs as an
+                                  ordinary RSX application inside the
+                                  framework, isolated by the _ prefix.
       21-migration-classification.md
                                   Framework-core vs template-app migrations.
                                   Read if your patch adds a table.
-      22-system-columns.md        The leading-underscore column convention
-                                  and the three seams that enforce it.
       70-monorepo-environment.md  Where things live when the framework is
-                                  authored, the two dependency layers, the
-                                  --_ internal-flag convention.
+                                  authored and the two dependency layers.
       80-distribution-and-publishing.md
                                   How a release is assembled - the other end
                                   of the pull you will run.
@@ -404,21 +404,28 @@ WHAT IS ALREADY ON YOUR DISK
                                   change. This is what your request
                                   document's "Documentation affected"
                                   section feeds.
+      83-external-request-validation.md
+                                  What "validate" means for a change
+                                  request like the one you are drafting.
       90-knowledge-routing.md     Which tier knowledge belongs in. Read
                                   before proposing a documentation fix.
 
   The framework-side skills: docs/skills/framework/
-    Three. The files ship, but the plugin manifest that makes skills loadable
+    Five. The files ship, but the plugin manifest that makes skills loadable
     is rewritten at publish to point at the downstream set, so nothing
     surfaces these automatically. Open them directly.
 
       framework-dependencies/     Adding or retiring a package inside
                                   system/, and the standing commitment an
                                   exposed package creates.
+      code-quality-rules/         Writing and changing rsx:check rules.
       publishing-a-release/       What the publish script does, gate by gate.
       shipping-a-contract-change/ Working the six-artifact mandate. The
                                   clearest statement of what the maintainer
                                   must do with your patch.
+      validating-external-requests/
+                                  The criteria a change request is judged
+                                  by when the maintainer validates it.
 
   Colocated CLAUDE.md files, by subsystem
     Each sits beside the code it describes and documents internals a

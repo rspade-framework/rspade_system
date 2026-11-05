@@ -1,86 +1,33 @@
 # Core Framework Systems
 
-## Main_Abstract Middleware System
+## Main_Abstract hooks
 
-The framework provides application-wide middleware hooks via `Main_Abstract`:
+An application's `/rsx/main.php` (and the portal's `/rsx/portal_main.php`) extends
+`Main_Abstract` with static hooks the dispatcher calls: `init()` (bootstrap),
+`pre_dispatch()` (before every dispatch, every Ajax call and every bearer-key call; non-null
+halts, and it is never an authorization hook) and `unhandled_route()`. The contract - order,
+arguments per channel, what a non-null return does - is `rsx:man dispatch`, MAIN HOOKS.
 
-### Implementation
+## Core JavaScript and dispatch
 
-1. **Create `/rsx/main.php`** extending `Main_Abstract` with three methods:
-   - `init()` - Called once during bootstrap
-   - `pre_dispatch(Request $request, array $params)` - Called before any route dispatch and every external API call (after the gates; non-null for a bearer-key identity - on `/api/vN` or a file-serving route - = 403 `account_refused`) and every Ajax CALL, once per call with `$params['controller']`/`['action']` naming the endpoint (non-null = that call's coded envelope, or `unauthorized`)
-   - `unhandled_route(Request $request, array $params)` - Called when no route matches
+Every class in `Js/` is in every bundle - never check for its existence; the boot order and the
+runtime's contents are `Js/CLAUDE.md`. Every request enters through
+`Dispatch/Rsx_Front_Controller` (Laravel's router is never consulted), classified once into a
+channel whose pipeline and error policy own it: `Dispatch/CLAUDE.md`, `rsx:man dispatch`.
 
-2. **Pre-dispatch flow**:
-   - Main::pre_dispatch() called first
-   - Controller::pre_dispatch() called second
-   - If either returns non-null, dispatch halts with that response
+## Autoloader and Manifest
 
-3. **Controller/API Method Signatures**:
-   - All controller methods: `function method_name(Request $request, array $params = [])`
-   - All API methods: `function method_name(Request $request, array $params = [])`
-   - `$params` contains GET query string parameters and URL-extracted route parameters (like `:id`)
-   - POST data is accessed via `$request->post()` or `$request->input()`, NOT in `$params`
+Classes are found by NAME, not path. The manifest indexes every file under the configured
+`rsx.manifest.scan_directories` (`rsx/` plus `app/RSpade/Core`, `Integrations`, `Bundles`,
+`Breadcrumbs`, `CodeQuality`, `Lib`, `Sys`), and the test trees only while `rsx:test` runs.
+`Manifest/CLAUDE.md`.
 
-## Core JavaScript Classes
+## Subsystem documents
 
-These classes are ALWAYS available - never check for their existence:
-- `Manifest` - Manifest reflection
-- `Rsx_Storage` - Browser storage (session/local) with scoping
-- `Rsx` - Core framework utilities
-- All classes in `/app/RSpade/Core/Js/`
-
-Use them directly without defensive coding:
-```javascript
-// GOOD
-Rsx_Storage.session_get('key')
-
-// BAD
-if (typeof Rsx_Storage !== 'undefined') {
-    Rsx_Storage.session_get('key')
-}
-```
-
-## Dispatcher System
-
-`App\Http\Kernel` hands every request to `Dispatch/Rsx_Front_Controller::handle()` -
-Laravel's router is never consulted. It classifies the request once
-(`Rsx_Request_Channel`: ASSET / API / AJAX / PAGE + staff/portal realm), runs that
-channel's pipeline (`AssetHandler`, `Api_Dispatcher`, or `Dispatcher` - ONE page and Ajax
-pipeline for both realms, parameterized by a realm descriptor) and renders any failure
-through that channel's error policy, once. Nothing that renders an error dispatches. The
-Ajax channel is one core, `Ajax::execute()`, shared by `/_ajax/_batch` (the one browser
-transport), the hand-made direct URL `/_ajax/<Controller>/<action>` and `Ajax::internal()`. `rsx:man dispatch`.
-
-## Autoloader System
-
-Provides path-agnostic class loading - classes are found by name, not path.
-
-## Manifest System
-
-Indexes all files in `/rsx/` for automatic discovery and loading.
-
-## JQHTML Named Slots
-
-A child template reads a named slot with `<%= content('slotname') %>`; the parent
-fills it with `<Slot:header>content</Slot:header>`.
-
-## JQHTML Slot-Based Template Inheritance
-
-When component template contains ONLY slots (no HTML), it automatically inherits parent class template structure:
-- Enables abstract base components with customizable slots
-- Child templates define slot-only files to extend parent templates
-- Parent templates call slots: `<%= content('slotname', data) %>` (data passing supported)
-- JavaScript class must extend parent: `class Child extends Parent`
-- Slot names cannot be JavaScript reserved words (enforced by parser)
-
-## JQHTML Define Tag Configuration
-
-`<Define>` tag supports three attribute types:
-- `extends="Parent"` - Explicit template inheritance
-- `$property=value` - Set default this.args values (unquoted=JS expression, quoted=string)
-- Regular HTML attributes (class, id, tag, data-*)
-- Enables template-only components without JavaScript classes
+Subsystems with a colocated `CLAUDE.md`: `Ajax/`, `Api/`, `Bundle/`, `Database/`,
+`Dispatch/`, `Files/`, `Health/`, `Js/`, `JsParsers/`, `Manifest/`, `Models/`, `Portal/`,
+`Realtime/`, `Session/`, `SPA/`, `Sso/`, `Task/`, `TwoFactor/`. jqhtml template
+syntax (slots, inheritance, `<Define>` attributes) is skill `rspade:jqhtml`.
 
 ## CLI Invocation Parameters vs Environment Variables
 

@@ -1,6 +1,6 @@
 ---
 name: model-enums
-description: "Implementing model enums in RSX with integer-backed values, constants, labels, and custom properties. Use when adding enum fields to models, working with status_id or type_id columns, accessing enum labels/properties via BEM-style syntax, or populating dropdowns with enum values."
+description: "Declaring integer model enums with public static $enums - constants (Project_Model::STATUS_ACTIVE), status_id__label and custom properties, Model.status_id__enum_select() and the other JS helpers, rsx:constants:regenerate. Use when adding a status_id or type_id column, building a dropdown of enum values, showing an enum label or badge, or when a constant is missing after an enum change."
 ---
 
 # RSX Model Enums

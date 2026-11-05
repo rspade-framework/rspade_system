@@ -54,7 +54,23 @@ DESCRIPTION
         shake, rsx:man bundle_api), and suppresses diagnostic dumps on
         errors. Every other feature - CSP enforcement
         included - works identically in every mode. A feature that "only
-        breaks in dev" is a broken feature, not a dev-mode allowance.
+        breaks in dev" is a broken feature, not a dev-mode allowance, and a
+        mode-conditional weakening of a security control is a defect.
+
+        Security is planned for development mode, because that is the
+        lowest common denominator. A development-mode site may be serving
+        the public, as production, right now, so a hole that "only exists
+        in dev mode" is a live hole: the development surface is the one
+        that is secured, and production is a SUBSET of it - the same
+        controls, with at most a few extra hardenings. Every developer
+        convenience that crosses the wire (rsx:debug's dev-auth headers,
+        the IDE bridge, console-debug headers, error dumps) is designed as
+        if an attacker who has read the source is on the other end of a
+        public network. A gate spelled "not production" is wrong: the
+        question is always Rsx::is_development() against a threat model,
+        never "is this box safe because it is dev". "It is only reachable
+        in development" is not a mitigation to write in a review, a
+        docblock or a report.
 
     debug and production ("prod modes")
         Both are SEALED builds. A sealed build is compiled ONCE by an

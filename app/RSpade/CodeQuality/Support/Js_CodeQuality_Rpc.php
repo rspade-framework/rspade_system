@@ -14,6 +14,7 @@ use App\RSpade\Core\JsParsers\Rsx_Node_Service;
  *   - quality.lint: Check JavaScript syntax using Babel parser
  *   - quality.analyze_this: Analyze 'this' usage patterns using Acorn
  *   - quality.analyze_raw_html: Find raw HTML writes into the DOM (JS-RAW-HTML-01) using Babel
+ *   - quality.analyze_via: Breadcrumb-origin declarations and _via reads (SPA-VIA-01) using Babel
  */
 class Js_CodeQuality_Rpc
 {
@@ -82,6 +83,47 @@ class Js_CodeQuality_Rpc
         }
 
         return $result['violations'] ?? [];
+    }
+
+    /**
+     * The breadcrumb-origin facts of a JavaScript file (SPA-VIA-01): each class's
+     * `static breadcrumb_via` and `breadcrumb_parent_via` declarations, every read of
+     * `args._via`, and every `@route` pattern with a `:_via` segment.
+     *
+     * Every failure is LOUD: an analysis that could not run must never read as a clean file.
+     *
+     * @param string $file_path Path to the JavaScript file
+     * @return array{classes: array, args_reads: array<int,int>, routes: array}
+     */
+    public static function analyze_via(string $file_path): array
+    {
+        Rsx_Node_Service::ensure();
+
+        $data = Rsx_Node_Service::request('quality.analyze_via', [
+            'files' => [$file_path],
+        ]);
+
+        if (isset($data['error'])) {
+            throw new \RuntimeException("SPA-VIA-01 analysis RPC error for {$file_path}: " . $data['error']);
+        }
+
+        $result = $data['results'][$file_path] ?? null;
+
+        if ($result === null) {
+            throw new \RuntimeException("SPA-VIA-01 analysis returned no result for {$file_path}");
+        }
+
+        if ($result['status'] !== 'success') {
+            throw new \RuntimeException(
+                "SPA-VIA-01 analysis failed for {$file_path}: " . ($result['error']['message'] ?? 'unknown error')
+            );
+        }
+
+        return [
+            'classes' => $result['classes'] ?? [],
+            'args_reads' => $result['args_reads'] ?? [],
+            'routes' => $result['routes'] ?? [],
+        ];
     }
 
     /**

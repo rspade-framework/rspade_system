@@ -1,6 +1,6 @@
 ---
 name: shipping-a-contract-change
-description: "Finishing a framework change that alters how downstream code is written or invoked - working the six-artifact mandate (always-on knowledge, shared fragment, template app, man page, breaking_changes, conformance audit), deciding which audit artifact a new obligation belongs in, authoring a breaking_changes document against the manual-action gate, proposing a conformance audit or a launch_checklist check, and the external-requests INDEX/archive workflow. Use whenever a framework change touches a downstream-facing contract, syntax, default, or behavior."
+description: "Finishing a framework change that alters how downstream code is written or invoked - the six-artifact mandate (always-on knowledge, shared fragment, template app, man page, breaking_changes, conformance audit), the breaking_changes gate, a conformance audit or launch_checklist check, the external-requests INDEX/archive workflow. Use whenever a change touches a downstream-facing contract, syntax, default or behavior."
 ---
 
 # Shipping a downstream-facing contract change
@@ -28,6 +28,10 @@ Rules of thumb:
 ## 3. The template app (`/rsx/`)
 
 **Make it demonstrate the new way.** The template is the worked example downstream reads; a template still doing it the old way teaches the old way. Grep `/rsx/` for the old spelling and convert every instance, including the reference forms and the CRUD module the docs point at.
+
+**This item ships**: `bin/publish` vendors `/rsx/` into every release at `system/app/RSpade/resource/reference_app/`, where a downstream developer reads it as pristine, release-current ground truth - a feature the reference app does not demonstrate is a silent lie in a file that looks canonical, so never mark a contract change done with this item outstanding. **Cite the reference app by that path**: `system/app/RSpade/resource/reference_app/...` resolves in BOTH environments (here a symlink to `/rsx/`, downstream real files), so a man page, skill or `breaking_changes` document may point at a concrete file and be correct everywhere.
+
+**A template feature's framework docs open with a TEMPLATE FEATURE notice.** A framework man page, skill or fragment whose subject lives in `rsx/` begins by naming the living file in `rsx/` (the directory `CLAUDE.md`, and the app skill where one exists) that describes the application's current state; downstream, where that living file records a divergence, it wins (`rsx:man template_app`, LIVING DOCUMENTATION).
 
 ## 4. The man page(s)
 

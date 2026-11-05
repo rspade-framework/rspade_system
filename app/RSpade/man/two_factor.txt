@@ -27,7 +27,8 @@ SYNOPSIS
     return ['redirect' => $destination];
 
     <%-- The challenge screen, pointed at that endpoint --%>
-    <Two_Factor_Challenge $controller="Login_Controller" $method="verify_2fa" />
+    <Two_Factor_Challenge $controller="Login_Controller" $method="verify_2fa"
+                          $autofill_id="code" />
 
     # An emailed code: the challenge accepts one, the application delivers it
     Rsx_Two_Factor::begin_challenge($login_user, [Rsx_Two_Factor::ANSWER_ISSUED_CODE]);
@@ -35,7 +36,7 @@ SYNOPSIS
     $link = Rsx_Two_Factor::issued_link(Rsx::Route('Login_Controller::verify'));  // in the same email
 
     <%-- Enrollment, anywhere a signed-in user can reach --%>
-    <Totp_Enrollment />
+    <Totp_Enrollment $autofill_id="code" />
     <Passkey_Register />
 
     # PASSWORDLESS: a passkey as the only credential. The app's endpoint again:
@@ -813,10 +814,19 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         6-digit proof (typed one digit per box, <Code_Input>, the cursor
         already in it), and the ONE-TIME recovery-code reveal (skipped when
         the server minted no sheet).
-        Args:   $unstyled_controls (above); nothing else - it always enrolls
-                the signed-in identity.
+        Args:   $unstyled_controls (above); $autofill_id - a stable id for
+                the code field (CODE FIELD AUTOFILL, below); nothing else -
+                it always enrolls the signed-in identity.
         Events: enrolled - the user acknowledged the code sheet (the factor
                 is already live at that point).
+
+    CODE FIELD AUTOFILL. The digit boxes are <Code_Input>'s; the first carries
+        autocomplete="one-time-code", so a phone offers a texted or emailed code
+        there. $autofill_id on <Two_Factor_Challenge> or <Totp_Enrollment> is
+        handed to Code_Input and gives that box a stable id and name -
+        conventionally "code" - for a password manager that remembers fields
+        by id (rsx:man jqhtml, AUTOCOMPLETE AND AUTOFILL). Absent, the box keeps
+        its scoped id. The recovery-code box is autocomplete="off".
 
     <Passkey_Register />
         An optional key name, the button that raises the browser prompt, and
@@ -828,7 +838,7 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         that cannot work; the host page is expected to still offer TOTP.
 
     <Two_Factor_Challenge $controller $method [$cancel_url]
-                          [$send_controller $send_method] />
+                          [$send_controller $send_method] [$autofill_id] />
         The login challenge screen.
         Args:   $controller, $method (both REQUIRED) - the application's
                 verification endpoint, named the way <Rsx_Form> names one.
@@ -841,6 +851,8 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
                 code" and sends the FIRST code itself when none has been
                 issued. Absent: no send link; the host issues the code.
                 $unstyled_controls (above).
+                $autofill_id - a stable id for the code field (CODE FIELD
+                AUTOFILL, below).
         Posts:  {code: '...'} from the typed answer, {assertion: {...}}
                 from a passkey, or {email_link: '<token>'} when the page was
                 opened from the email link. To the send endpoint: {}.
@@ -1019,7 +1031,7 @@ IMPLEMENTING 2FA IN AN APPLICATION
         Its blade hosts the component:
 
             <Two_Factor_Challenge $controller="Login_Controller"
-                                  $method="verify_2fa" />
+                                  $method="verify_2fa" $autofill_id="code" />
 
         And the endpoint it posts to - #[Auth('public')], because the session
         is deliberately not signed in yet:
@@ -1385,7 +1397,7 @@ THE CLIENT PORTAL REALM
     redirect to the portal's verify page INSTEAD of set_portal_user_id();
     otherwise sign in as before. The verify page hosts
     <Two_Factor_Challenge $controller="Portal_Login_Controller"
-    $method="verify_2fa" />, whose endpoint calls
+    $method="verify_2fa" $autofill_id="code" />, whose endpoint calls
     Rsx_Portal_Two_Factor::verify_challenge().
 
     The rsx:users:2fa:* operator commands act on staff login identities only;

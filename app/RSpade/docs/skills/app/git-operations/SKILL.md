@@ -1,6 +1,6 @@
 ---
 name: git-operations
-description: "Running git in a downstream RSpade app through the php artisan rsx:git proxy - why a bare git pull leaves the system/ submodule behind, what the proxy does per subcommand (pathspec exclusion, commit unstaging, the maintenance cycle, passthrough), how system/ and app-file conflicts are handled, the two append-append files it merges itself (.migration_whitelist by key-union, framework_update_history.dat by line-union), the stash-failed evidence classification and the scratch-worktree escape, the override flags, and troubleshooting a refusal. Use for any git operation on an app checkout, or when git refuses with overwritten-by-merge or stash failed, when system/ is conflicted, or when migrate reports every migration as unauthorized after a merge."
+description: "Running git in a downstream app through php artisan rsx:git - why a bare git pull leaves the system/ submodule behind, the proxy's per-subcommand behavior, system/ and app conflicts, the self-merged .migration_whitelist, the stash-failed classification and scratch-worktree escape. Use for any git operation on an app checkout, on overwritten-by-merge or stash failed, a conflicted system/, or every migration unauthorized after a merge."
 ---
 
 # Git operations on an RSpade app

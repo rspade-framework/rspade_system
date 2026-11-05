@@ -1,6 +1,6 @@
 ---
 name: auth-gates
-description: "Annotating dispatchable surfaces with #[Auth] and defining the check vocabulary with #[Auth_Check] - covering routes, SPA actions, Ajax endpoints, model fetch, API endpoints, realm declaration with #[Auth_Realm], and can_access()/Auth_Gates::accessible_route() link visibility. Use when adding or gating any #[Route] / #[SPA] / #[Ajax_Endpoint] / #[Ajax_Endpoint_Model_Fetch] / #[Api_Endpoint] / @route action, when the manifest build fails with MISSING GATE / UNKNOWN CHECK / CONTRADICTION / NO SURFACE / NOT STATIC / UNMARKED FETCH OVERRIDE, when a request dies with "is being dispatched, but the auth index has no entry for it" or "is being dispatched with an empty gate list", when writing a new Permission check, when a link or nav item must hide itself, or when a portal endpoint is being denied for the wrong realm."
+description: "Gating every dispatchable surface with #[Auth] and defining #[Auth_Check] checks on the realm's Permission class - #[Auth_Realm], can_access() link visibility. Use when adding a #[Route] / #[SPA] / #[Ajax_Endpoint] / #[Api_Endpoint] / @route action, writing a Permission check, hiding a nav link, when the build fails with MISSING GATE / UNKNOWN CHECK / CONTRADICTION, or a request dies 'the auth index has no entry for it'."
 ---
 
 # Auth Gates

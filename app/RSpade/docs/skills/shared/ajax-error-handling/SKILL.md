@@ -1,6 +1,6 @@
 ---
 name: ajax-error-handling
-description: "Handling Ajax errors in RSX including the {_success,_ajax_return_value} envelope, error codes, response_error()/response_form_error(), client-side error display, and Form_Utils. Use when implementing error handling for Ajax calls, returning per-field validation errors from an endpoint, deciding whether to wrap something in try/catch or let it bubble, or debugging an Ajax failure from the CLI with rsx:ajax."
+description: "Handling Ajax errors - the {_success, _ajax_return_value} envelope, the Ajax::ERROR_* codes, response_error() / response_form_error(), client-side error display, Form_Utils. Use when implementing error handling for Ajax calls, returning per-field validation errors, deciding whether to try/catch or let it bubble, or debugging an Ajax failure from the CLI with rsx:ajax."
 ---
 
 # RSX Ajax Error Handling
@@ -52,6 +52,7 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 | `Ajax::ERROR_UNAUTHORIZED` | User lacks permission |
 | `Ajax::ERROR_AUTH_REQUIRED` | User not logged in |
 | `Ajax::ERROR_FATAL` | Uncaught PHP exceptions |
+| `Ajax::ERROR_GENERIC` | A general failure with no more specific code (`generic`, default message "An error has occurred"): `response_error(Ajax::ERROR_GENERIC, $message)` for a refusal that is none of the above, and the code an uncaught HTTP exception whose status has no mapping (not 401/403/404/429) answers with (an empty message reads as the status text). An in-process caller sees it as a plain `Exception` |
 | `Ajax::ERROR_TOO_MANY_REQUESTS` | A rate limit refused the call: any uncaught HTTP 429 exception (`Auth_Throttled_Exception`, Symfony `TooManyRequestsHttpException`). The same exception is a real 429 on a page or API call; catch it to answer your own 200 form error instead |
 | `Ajax::ERROR_SESSION_EXPIRED` | The sign-in outlived its limits (`metadata.cause` `length`/`idle`), or the call carried the session token a sign-in or sign-out just rotated away (`rotated`); announced once per page to `Rsx.set_session_expired_handler()` |
 | `Ajax::ERROR_QUESTION` | Not a failure: a pending question (`response_form_question($key, $question)`); the form engine answers it, a non-form caller reads `metadata.key`/`metadata.question`, an in-process `Ajax::internal()` raises `AjaxQuestionException`. `rsx:man form_conventions`, QUESTIONS |

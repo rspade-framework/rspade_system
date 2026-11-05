@@ -840,7 +840,9 @@ Approved for manifest-time execution, by rule directory:
 - `Common/` - FILE-CASE-DUP-01, FILE-SPACE-01, ROUTE-SYNTAX-01
 - `Convention/` - CONV-BUNDLE-03, NAME-RESERVED-01, NAME-RESERVED-02, PATH-OWNER-01
 - `JavaScript/` - JQHTML-EVENT-01, JQHTML-IMPL-01, JS-CATCH-FALLBACK-01, JS-DECORATOR-01,
-  JS-DECORATOR-IDENT-01, JS-DUPLICATE-METHOD-01, JS-LIFECYCLE-01, JS-READY-01
+  JS-DECORATOR-IDENT-01, JS-DUPLICATE-METHOD-01, JS-LIFECYCLE-01, JS-READY-01, SPA-VIA-01
+  (also judges `#[Route]`/`#[Portal_Route]` patterns in PHP; its JS half is an AST pass in the
+  node service, `quality.analyze_via`, run only for a file whose bytes mention `_via`)
 - `Jqhtml/` - JQHTML-CLASS-01, JQHTML-COMMENT-01, JQHTML-INLINE-01
 - `Manifest/` - ABSTRACT-ATTR-01, ACTOR-01, MANIFEST-CTRL-01, MANIFEST-INST-01,
   MANIFEST-MONO-01, PHP-PARENT-CHAIN-01, PHP-SPA-01, POLY-01, RELATIONSHIP-OVERRIDE-01,

@@ -42,8 +42,18 @@ class Jqhtml_Integration {
         // sealed DEBUG build keeps them: it exists to reproduce a production issue
         // with the diagnostics still on, and jqhtml's mode changes nothing else.
         // Set before any component renders, so no element is ever stamped.
+        //
+        // autocomplete_off, in every mode: a template-written <input> or <textarea>
+        // with no autocomplete="" attribute and no truthy $autofill_id renders with
+        // autocomplete="off", so a business form is not filled with suggestions
+        // the browser saved from some other field. A field that SHOULD autofill
+        // (a sign-in identifier, a password, a one-time code, a name, an address)
+        // declares its token - see rsx:man jqhtml, AUTOCOMPLETE AND AUTOFILL.
         // ─────────────────────────────────────────────────────────────────────
-        jqhtml.configure({ mode: window.rsxapp.mode === 'production' ? 'production' : 'development' });
+        jqhtml.configure({
+            mode: window.rsxapp.mode === 'production' ? 'production' : 'development',
+            autocomplete_off: true,
+        });
 
         // ─────────────────────────────────────────────────────────────────────
         // SSR Preload Data Injection

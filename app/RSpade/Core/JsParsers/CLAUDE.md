@@ -127,6 +127,11 @@ destructor already reaps what this process spawned.
 - `Js_Transformer::transform_to_file($path, $target)` returns the CACHE ENTRY'S PATH. The
   bundle compiler hands the concatenator that file directly instead of writing a second
   copy of the same bytes under a name of its own.
+- `Js_Transformer::transform_derived_copy($copy, $original, $target)` - UNCACHED, for bytes
+  derived from a source file (the strict-production string-obfuscation pass,
+  `Minifier::obfuscate_strings()`, called from `BundleCompiler`). It takes its helper-prefix
+  identity from the ORIGINAL path, so the generated names match the original's own transform,
+  and never writes the cache, which holds only originals' bytes.
 
 ### Transformation details
 - Preprocesses `@decorator` on standalone functions

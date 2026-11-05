@@ -1,6 +1,6 @@
 ---
 name: rsx-testing
-description: "Writing and running RSpade tests with Rsx_Test_Abstract and php artisan rsx:test - test discovery, the __assert_* helper inventory, session/user impersonation helpers, per-test transactions, database baselines, and the selector algebra for narrowing a run. Use when writing a test for a feature you just built, adding a test class, choosing between --filter/--group/class-name selectors, deciding whether a class needs $requires_db_reset or --fresh, or diagnosing \"test database is the same as the development database\"."
+description: "Writing and running tests with Rsx_Test_Abstract and php artisan rsx:test - discovery, the __assert_* helpers, user impersonation helpers, per-test transactions, database baselines, --filter / --group / class selectors. Use when writing a test for a feature, deciding whether a class needs $requires_db_reset or --fresh, or on 'test database is the same as the development database'."
 ---
 
 # RSpade testing
@@ -86,7 +86,12 @@ All three selectors take a SET; within one selector members are OR'd, across sel
 
 ## When to run the suite
 
-That policy is an always-on conduct mandate, not a lookup - short version: do not run the full suite as housekeeping, but tests you just wrote for a feature you just built are run without asking, and every feature you write gets tests.
+The rules are an always-on conduct mandate (verification is a smoke test; the suite runs at three moments; several groups are one command; one foreground run, never re-run because slow). The reasons behind them:
+
+- **Verification after a change is a SMOKE TEST, not a test run.** `rsx:debug /path` (or `rsx:debug /` when nothing more specific applies) answering 200 with no console errors proves the environment is functional, and a manifest-build failure or a code-quality violation surfaces there on its own. A minute of tests per edit, multiplied across an epic, is how a day disappears with nothing shipped - so no `rsx:test` after a small change, no group "to be safe", and never permutations of groups and filters as evidence.
+- **The three moments**: (1) the test you JUST WROTE or JUST CHANGED, run by itself (class name or `--filter=`), without asking; (2) the end of a major phase or epic, ONCE, the full suite or the affected groups, read then; (3) when the user asks. **A patch handed to you to apply is verified by the smoke test and by the tests it touched - nothing more.** Every feature you write still gets a test: the restriction targets RUNNING, never writing.
+- **Several groups or classes are ONE command, never a loop.** `--group` and the class argument both repeat (`rsx:test --group=session --group=two_factor --group=mail`, `rsx:test Foo_Test Bar_Test`); one invocation hands the whole selection to the parallel runner, which spreads it across every worker. A shell `for` loop over groups runs them one at a time, each paying its own startup, and throws the parallelism away. Application tests and `--framework` tests are the one split a single command cannot make.
+- **One FOREGROUND command, awaited and read.** A framework run occupies several full-stack containers (mysql, php-fpm, nginx and the rest in each), so a run started in the background and abandoned, or a second run beside one in flight, is paid for by everything else on the host. Slowness is load, not failure: re-running a slow test doubles the load that made it slow.
 
 ## Further reading
 

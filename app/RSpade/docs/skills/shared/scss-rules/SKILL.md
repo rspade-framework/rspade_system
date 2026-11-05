@@ -1,6 +1,6 @@
 ---
 name: scss-rules
-description: "The SCSS rules RSpade enforces regardless of what an application's theme looks like - the single-class wrap (SCSS-SCOPE-01), BEM child classes prefixed with the exact PascalCase component name, no nested component selectors, no <style> tags and no hand-injected stylesheets, rsx/lib being non-visual, SCSS-SID-01, SCSS-ANIM-01 and SCSS-PHANTOM-TOKEN-01 (no var(--token, #literal) default), and how SCSS reaches the browser through a module bundle's include order. Use when writing or moving an SCSS file, naming a BEM child class, splitting a stylesheet, wondering why a component renders unstyled or why editing a partial changed nothing, or responding to SCSS-SCOPE-01, SCSS-SID-01, SCSS-ANIM-01 or SCSS-PHANTOM-TOKEN-01."
+description: "The SCSS rules RSpade enforces - one wrapping class per component file, BEM children prefixed with the exact PascalCase component name (never kebab-case), no <style> tags, rsx/lib non-visual, bundle include order. Use when writing or splitting a stylesheet, a component renders unstyled or an edit changes nothing, or on SCSS-SCOPE-01, SCSS-SID-01, SCSS-ANIM-01 or SCSS-PHANTOM-TOKEN-01."
 ---
 
 # SCSS rules the framework enforces

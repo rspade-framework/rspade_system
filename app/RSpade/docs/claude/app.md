@@ -52,4 +52,5 @@ When you write there, match this tone: **terse, not verbose** (no filler words o
 @app/70-app-operations.md
 @app/80-framework-updates.md
 @app/81-git-and-system-readonly.md
+@app/86-living-documentation-divergences.md
 @app/90-knowledge-routing.md

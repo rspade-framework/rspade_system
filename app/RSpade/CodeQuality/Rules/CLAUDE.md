@@ -35,6 +35,12 @@ Implement `get_id()`, `get_name()`, `get_description()`, `get_file_patterns()`,
   wrong, why it is a rule, the exact correct form, and whether to fix it
   autonomously or ask. Agents are instructed to TRUST that text as authoritative
   — so vague remediation produces confident wrong fixes.
+- **Cross-file rules also declare `kind()` / `depends_on()`** (parent `CLAUDE.md`,
+  "Per-file vs cross-file rules"), and **find their subjects through
+  `Manifest::php_get_subclasses_of()` / `Manifest::by_attribute()`, never by
+  walking `get_all()` or calling `class_exists()` per file**. PHP never unloads a
+  class, so that walk makes a one-file rebuild cost a cold one
+  (`Manifest_Memory_Gate_Test` holds the budget).
 
 ## Invariants
 
@@ -44,10 +50,15 @@ Implement `get_id()`, `get_name()`, `get_description()`, `get_file_patterns()`,
 - **Rules run over files the framework does not control.** Never assume a
   parseable file, a known encoding, or that a match implies a defect — a rule
   that cries wolf is worse than no rule.
-- Every rule must be suppressible by a rationale'd `@<ID>-EXCEPTION` comment
-  unless it is fatal by design; honor it in `check()`.
-- Adding a rule that enforces a NEW downstream-facing contract is a contract
-  change: it needs its documentation and, usually, an `breaking_changes` doc.
+- Every rule is suppressible by a `@<ID>-EXCEPTION` comment unless it is fatal
+  by design. By default the driver honours the marker by skipping the rule for
+  the whole file; a rule that returns `true` from `reads_own_exception_markers()`
+  is handed every file and judges each line itself, which lets it require a
+  rationale (`JS-RAW-HTML-01`, `JavaScript/RawHtmlWrite_CodeQualityRule.php`, is
+  the example).
+- A new or stricter rule needs its rule text and its man page / skill entry; it
+  is **no `breaking_changes` document** (the gate in
+  `docs/claude/framework/82-documentation-obligations.md`).
 
 ## Pointers
 

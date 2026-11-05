@@ -278,7 +278,8 @@ THE CORE INPUT: Code_Input
     One concrete input ships in framework core beside the base class, because the
     framework's own second-factor screens are built on it (rsx:man two_factor):
 
-        <Code_Input $name="code" [$length=6] [$align="center"] [$disabled] />
+        <Code_Input $name="code" [$length=6] [$align="center"] [$disabled]
+                    [$autofill_id="code"] />
 
     A one-time numeric code typed one digit per box. Its value is the digits
     entered so far as a string - "" empty, "4071" part-way, "407193" complete -
@@ -308,6 +309,43 @@ THE CORE INPUT: Code_Input
     own rules on .Code_Input, and replaces it outright by declaring a
     Code_Input of its own (rsx:man class_override).
 
+    $autofill_id gives the FIRST box (the one-time-code one) a stable id and
+    name; this.$sid('first_box') is that box. See CREDENTIAL FIELDS.
+
+THE CORE INPUT: Password_Input
+
+        <Password_Input $name="password" [$autocomplete="new-password"]
+                        [$autofill_id="password"] [$placeholder="..."] />
+
+    One password field, its value the text typed. autocomplete defaults to
+    current-password; a password being chosen passes new-password. The
+    framework's own <Password_Confirmation_Form> is built on it.
+
+CREDENTIAL FIELDS
+
+    The framework configures jqhtml's autocomplete_off (rsx:man jqhtml,
+    AUTOCOMPLETE AND AUTOFILL): every <input>/<textarea> written in a template
+    with no autocomplete="" attribute and no $autofill_id renders
+    autocomplete="off" - the inner field of every input component included.
+    So an input that can hold a credential, a name or an address FORWARDS the
+    caller's token and id to its inner $sid field:
+
+        <input $sid="input" $autofill_id=this.args.autofill_id
+               <% if (this.args.autocomplete) { %>autocomplete="<%= this.args.autocomplete %>"<% } %> />
+
+    The token is a conditional attribute: autocomplete="<%= x %>" would render
+    an empty token when none was passed, which is neither a token nor "off".
+    $autofill_id renders id="<value>" and name="<value>" exactly as written
+    and this.$sid('input') still resolves the field. The input never chooses
+    the id: only the page knows whether this is the sign-in password or a new
+    one. The page passes both:
+
+        <Text_Input $name="new_password" $type="password" $max_length=-1
+                    $autofill_id="new_password" $autocomplete="new-password" />
+
+    The id convention and the token table are the template application's
+    credential-field rules (rsx/app/login/CLAUDE.md, "Credential fields").
+
 EXTENDING ANOTHER INPUT
 
     class Select_Ajax_Input extends Select_Input {
@@ -326,7 +364,8 @@ EXTENDING ANOTHER INPUT
 BUILT-IN INPUTS
 
     The inputs themselves are APPLICATION components (the template ships a full
-    set under theme/components/inputs/); only the base class is framework core.
+    set under theme/components/inputs/); framework core holds the base class
+    and the two credential inputs above (Code_Input, Password_Input).
 
     Text_Input
         text, email, url, tel, number, date, textarea.
@@ -335,6 +374,11 @@ BUILT-IN INPUTS
 
             <Text_Input $name="email" $max_length=User_Model.field_length('email') />
             <Text_Input $name="notes" $type="textarea" $rows=5 $max_length=-1 />
+
+        $autocomplete and $autofill_id are forwarded to the inner field (see
+        CREDENTIAL FIELDS); with no $autocomplete it renders autocomplete="off".
+        $readonly shows a value the user may not edit and keeps it a field a
+        password manager can read (a $disabled one it skips).
 
         field_length('column') answers from the page's field-length script (the
         live schema's lengths for the models in the page's bundle - rsx:man
@@ -365,6 +409,8 @@ CREATING A CUSTOM INPUT
     3. _get_value() and _set_value().
     4. _mark_ready() at the earliest writable moment.
     5. User interaction wired to _notify_input(value).
+    6. If it can hold a credential, a name or an address: $autofill_id and the
+       autocomplete token forwarded to the inner field (CREDENTIAL FIELDS).
 
         <Define:My_Custom_Input>
             <input type="text" $sid="input" class="form-control" />

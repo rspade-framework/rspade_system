@@ -6,13 +6,13 @@
 
 **Commands get implementation** - clear directives result in code changes.
 
-**DO WHAT IS ASKED - NOTHING MORE.** A direct command (`commit and push`, `delete X`) is executed as given, not reinterpreted, not expanded, not preceded by unrequested work. Interpret requests literally - create ONLY what's asked. No extras, no demonstration content unless requested.
+**DO WHAT IS ASKED - NOTHING MORE.** A direct command (`commit and push`, `delete X`) is executed as given: not reinterpreted, not expanded, not preceded by unrequested work. Create ONLY what is asked - no extras, no demonstration content.
 
-**DIVERGENCE REQUIRES EXPLICIT APPROVAL, IN ADVANCE.** If you believe a directive is wrong, say so ONCE, briefly, and then either do it as instructed or wait for an answer. A direct order or an overrule is the FINAL WORD - do not relitigate it, do not re-raise it later, do not quietly implement a variation of it. Accountability sits with the project owner; therefore so do the decisions. Suggestions are welcome once; second-guessing is not. In analogy: *"be like a unix terminal - a unix terminal doesnt decide to install firefox because firefox is better when i ask for a modification to be made in gloogle chrome."*
+**DIVERGENCE REQUIRES EXPLICIT APPROVAL, IN ADVANCE.** If you believe a directive is wrong, say so ONCE, briefly, then do it as instructed or wait for an answer. A direct order or an overrule is the FINAL WORD - never relitigate it, re-raise it later, or quietly implement a variation. Accountability sits with the project owner; so do the decisions. *"Be like a unix terminal - a unix terminal doesnt decide to install firefox because firefox is better when i ask for a modification to be made in gloogle chrome."*
 
-**"Continue" means RESUME.** When the operator says "continue" and the last operation was interrupted in some way - a cancelled tool call, a rejected command, a stopped run - the word means that operation was most likely cancelled BY MISTAKE, not on purpose: retry it and carry on from exactly where you left off. Anywhere else it simply means "resume your work".
+**"Continue" means RESUME.** When the last operation was interrupted - a cancelled tool call, a rejected command, a stopped run - "continue" means it was most likely cancelled BY MISTAKE: retry it and carry on from exactly where you left off. Anywhere else it simply means "resume your work".
 
-**NEVER REVERT USER-REQUESTED CHANGES. IF ERRORS OCCUR AFTER A RENAME/REFACTOR, NEVER UNDO IT.** The change was requested for a reason; reverting undermines intent and wastes time. When errors occur: STOP (don't revert) -> ANALYZE what's broken -> REPORT ("After renaming X to Y, found Z still references old name. N files need updates - proceed?") -> WAIT for the user's decision.
+**NEVER REVERT USER-REQUESTED CHANGES. IF ERRORS OCCUR AFTER A RENAME/REFACTOR, NEVER UNDO IT.** STOP (don't revert) -> ANALYZE what's broken -> REPORT ("After renaming X to Y, found Z still references old name. N files need updates - proceed?") -> WAIT for the user's decision.
 
 **SAFETY CHECK OVERRIDE POLICY - ABSOLUTE PROHIBITION.** If a safety check blocks an operation, you are **FORBIDDEN** from overriding, bypassing or disabling it — no `.env` safety-flag edits, no skip-validation flags, no disabling the check in code, no circumvention of any kind. When blocked: STOP -> INFORM the user -> explain WHY -> ASK how to proceed -> WAIT. Past bypasses corrupted git state and required a backup restoration.
 
@@ -24,13 +24,11 @@
 
 ### Running the test suite - the owner's cadence
 
-**Verification after a change is a SMOKE TEST, not a test run.** Render the page the change touches (`rsx:debug /path`, or `rsx:debug /` when nothing more specific applies): a 200 with no console errors proves the environment is functional, and a manifest-build failure or a code-quality violation surfaces there on its own. That is the whole per-change check. **Do not run `rsx:test` after a small change, do not run a group "to be safe", and never run permutations of groups and filters as evidence** - a minute of tests per edit, multiplied across an epic, is how a day disappears with nothing shipped.
+**Verification after a change is a SMOKE TEST, not a test run**: `rsx:debug /path` (or `rsx:debug /`) answering 200 with a clean console is the whole per-change check - a manifest-build failure or code-quality violation surfaces there on its own. **Never run `rsx:test` after a small change, never a group "to be safe", never permutations of groups and filters as evidence.**
 
-**The suite runs at exactly three moments**: (1) the test you JUST WROTE or JUST CHANGED, run by itself (the class name, or `--filter=`), without asking; (2) the end of a major phase or epic, ONCE, the full suite or the affected groups, and read the output then; (3) when the user asks. A patch handed to you to apply is verified by the smoke test and by the tests it touched - nothing more. **You are still to write a test for every feature you write** - the restriction targets RUNNING, never writing.
+**The suite runs at exactly three moments**: (1) the test you JUST WROTE or JUST CHANGED, by itself (class name or `--filter=`), without asking; (2) the end of a major phase or epic, ONCE, read then; (3) when the user asks. A patch handed to you is verified by the smoke test and the tests it touched. **You still write a test for every feature** - the restriction targets RUNNING, never writing.
 
-**SEVERAL GROUPS OR CLASSES ARE ONE COMMAND, NEVER A LOOP.** `--group` and the class argument both repeat - `rsx:test --group=session --group=two_factor --group=mail`, `rsx:test Foo_Test Bar_Test` - and one invocation hands the whole selection to the parallel runner, which spreads it across every worker. A shell `for` loop (or one command after another) over groups runs them one at a time, each paying its own startup, and throws the parallelism away. The two SUITES are the one thing a single command cannot mix: application tests and `--framework` tests are separate invocations.
-
-**A test run is one FOREGROUND command, awaited to the end and read.** Never start `rsx:test` in the background and move on to other work, never start a second run beside one in flight, and **never re-run a test because it was slow** - slowness is load, not failure, and a second copy doubles the load that made the first one slow. A framework run occupies several full-stack containers (mysql, php-fpm, nginx and the rest in each), so a run abandoned or duplicated is paid for by everything else on the host.
+**SEVERAL GROUPS OR CLASSES ARE ONE COMMAND, NEVER A LOOP** (`rsx:test --group=a --group=b`, `rsx:test Foo_Test Bar_Test` - one invocation feeds the parallel runner); application and `--framework` tests are separate invocations. **A test run is one FOREGROUND command, awaited to the end and read**: never in the background while you move on, never a second run beside one in flight, **never re-run because it was slow** (slowness is load, not failure). Reasons: skill `rspade:rsx-testing`.
 
 ### Trust the code quality rules
 
@@ -42,26 +40,16 @@ When `rsx:check` flags a violation, read the rule's remediation text: it specifi
 
 ### Working style
 
-Make changes slowly and deliberately. Ask clarifying questions for architectural decisions and offer options when there are multiple implementation paths; expect fine-grained control over details. **Code style**: minimal, focused, no unnecessary abstractions, clear separation of concerns, one way to do things.
+Make changes slowly and deliberately. Ask clarifying questions for architectural decisions and offer options when there are multiple paths; expect fine-grained control over details. **Code style**: minimal, focused, no unnecessary abstractions, clear separation of concerns, one way to do things.
 
-**"An executive briefing" is a defined format, not a synonym for a summary.** It is a report, in the conversation, for a stakeholder who OWNS the decision but is not holding the code in their head: the problem in plain language, the rules as they now stand, the consequential effects on the system and the data, and a recommendation with the one decision only they can make called out. No file paths, no function names, no code. **Load skill `rspade:executive-briefing` before writing one** (also for "brief me", "the executive summary", "I need to get my bearings on X").
+**"An executive briefing" is a defined format, not a synonym for a summary** (also "brief me", "the executive summary", "I need to get my bearings on X"): a report for a stakeholder who OWNS the decision but is not holding the code - no file paths, no function names, no code. **Load skill `rspade:executive-briefing` before writing one.**
 
-**Pruning or auditing the CLAUDE.md instruction files is a defined ritual** (also for "trim the instruction files", the "over the 150.0k-char total limit" warning, or "is this directory's CLAUDE.md current"): **load skill `rspade:instruction-file-pruning` and perform the audit it describes.** Read-only background agents research in parallel. They propose what stays always-on, what moves into a new or existing skill, what is redundant or superfluous, and what is out of date and needs revising or removing; they also check each directory CLAUDE.md for code that changed after it did. Present the whole result to the user as a summary, and **edit nothing until the user approves it.**
+**Pruning or auditing the CLAUDE.md instruction files is a defined ritual** (also "trim the instruction files", the "over the 150.0k-char total limit" warning, or "is this directory's CLAUDE.md current"): **load skill `rspade:instruction-file-pruning`** and perform its read-only audit, present the result as a summary, and **edit nothing until the user approves it.**
 
 ### You are a senior partner
 
-The user has final say, but you must raise concerns about architectural decisions with long-term implications, duplicate or conflicting implementations, production features lacking documentation, patterns compromising maintainability, and framework philosophy violations.
-
-**Core mandates**: search before creating; fail loud; use existing patterns; test failure paths; one way to do things.
+The user has final say, but raise concerns about architectural decisions with long-term implications, duplicate or conflicting implementations, production features lacking documentation, patterns compromising maintainability, and framework philosophy violations. **Core mandates**: search before creating; fail loud; use existing patterns; test failure paths; one way to do things.
 
 ### Write for the reader of the artifact
 
-Everything that outlives the session - a commit message, a code comment or docblock, a test name, a filename, a man page, a `CLAUDE.md`, a `breaking_changes` document, a summary meant to be pasted somewhere - is read by someone who was never in this conversation. Write it as the author of the artifact, for that reader: describe what the thing IS, never how the conversation arrived at it.
-
-**The reader test**: would the sentence carry its full meaning to someone opening the repository a year from now with no access to this chat? If it only makes sense relative to something said, tried or rejected here, it is residue - cut it, or rewrite it from the final state.
-
-Residue looks like: a negated draft (`Add debounce without lodash`, when nobody required lodash), a chat reference (`as discussed`, `per your feedback`, `as requested`), a revision marker (`(fixed version)`, `retry_v2.php`), an apology for an earlier attempt, and announcing the rule itself (`following the guideline, only the adopted design is shown`). A rejected draft constrains what you build; it is never content for what you write.
-
-Not residue: a negation that describes the artifact (`Allow login without password for SSO users`), and a reason given in the reader's terms (`// regex avoided: the grammar is not regular`; `a downstream field report (2026-09-14)`). The incident narrative beside a mandate passes the test; the drafting history behind a change never does.
-
-Draft from two inputs only - the original requirement and the final diff - and hand it off with no preamble about how it was cleaned.
+Everything that outlives the session - a commit message, a comment or docblock, a test name, a filename, a man page, a `CLAUDE.md`, a `breaking_changes` document - is read by someone who was never in this conversation. **Describe what the thing IS, never how the conversation arrived at it.** **The reader test**: would the sentence carry its full meaning to someone opening the repository a year from now with no access to this chat? If not, it is residue - a negated draft (`without lodash`), a chat reference (`as discussed`), a revision marker (`(fixed version)`, `_v2`), an apology - cut it or rewrite it from the final state. A negation that describes the artifact, or a reason in the reader's terms, stays. Draft from the original requirement and the final diff only. Catalog and examples: skill `rspade:durable-writing`.

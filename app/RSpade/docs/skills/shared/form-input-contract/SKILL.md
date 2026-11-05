@@ -1,6 +1,6 @@
 ---
 name: form-input-contract
-description: "Writing a form input on the framework's Form_Input_Abstract contract - _get_value()/_set_value(), _mark_ready() and value buffering, _notify_input() for user edits, the data-name attribute, timing indifference, and why an input never validates. Use when building an input widget, extending an existing input, wiring an input's events, or hitting \"must implement _get_value()\", \"must implement _set_value()\", \"child input has no data-name attribute\", a value that never appears, or a value lost on re-render."
+description: "Writing a form input on Form_Input_Abstract - _get_value() / _set_value(), _mark_ready() and value buffering, _notify_input() for user edits, the data-name attribute, why an input never validates. Use when building or extending an input widget, or on 'must implement _get_value()', 'child input has no data-name attribute', a value that never appears, or a value lost on re-render."
 ---
 
 # The form input contract
@@ -235,6 +235,20 @@ and calls `_mark_ready()`.
 - A keydown handler that prevents the keystroke and rewrites the box, or a blur reformat that
   changes the value, dispatches a native `input` event, or the edit is never announced.
 - `reload()` runs `on_ready()` again: destroy a wrapped library before re-creating it.
+- **Forward the caller's `$autofill_id` and `$autocomplete` to the inner field** of any input
+  that can hold a credential, a name or an address. The framework configures jqhtml's
+  `autocomplete_off`, so an inner `<input>` with no token renders `autocomplete="off"`; and only
+  the PAGE knows whether the field is the sign-in password or a new one, so the input never
+  chooses the id itself:
+
+  ```html
+  <input $sid="input" $autofill_id=this.args.autofill_id
+         <% if (this.args.autocomplete) { %>autocomplete="<%= this.args.autocomplete %>"<% } %> />
+  ```
+
+  `$autofill_id` must sit on the `$sid` tag itself; `this.$sid('input')` keeps resolving it.
+  The framework's `Password_Input` and `Code_Input` (its first box) take `$autofill_id`;
+  `rsx:man jqhtml`, AUTOCOMPLETE AND AUTOFILL.
 
 ## Common mistakes
 

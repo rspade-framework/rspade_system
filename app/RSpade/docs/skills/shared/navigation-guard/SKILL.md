@@ -1,6 +1,6 @@
 ---
 name: navigation-guard
-description: Having the browser ask before the user leaves a page with unsaved changes, using the Rsx.set_navigation_guard() / Rsx.clear_navigation_guard() / Rsx.has_navigation_guard() toggle - on when the page becomes dirty, off when the change is saved or discarded. Use when asked to warn on "navigate away", add a "leave page warning" or an "unsaved changes prompt", wire "beforeunload"/"onbeforeunload", "confirm before leaving" or "are you sure you want to leave", when a page asks "Leave site? Changes you made may not be saved." on every exit, when a guarded link click reloads the whole page, or when the console says "Rsx.set_navigation_guard() takes no argument: the navigation guard is a toggle, not a callback".
+description: "Warning before the user leaves a page with unsaved changes - the Rsx.set_navigation_guard() / Rsx.clear_navigation_guard() toggle, switched by the form's 'dirty' event. Use for a leave-page warning, an unsaved-changes prompt or beforeunload, when 'Leave site? Changes you made may not be saved.' appears on every exit, or the console says 'Rsx.set_navigation_guard() takes no argument'."
 ---
 
 # The navigation guard

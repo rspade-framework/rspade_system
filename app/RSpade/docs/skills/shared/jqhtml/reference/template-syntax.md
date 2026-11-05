@@ -5,12 +5,12 @@
 `<Define>` is not a wrapper around your markup - it BECOMES the rendered element.
 
 ```jqhtml
-<!-- [OK] CORRECT - Define becomes the button -->
+<%-- [OK] CORRECT - Define becomes the button --%>
 <Define:Save_Button tag="button" class="btn btn-primary">
     Save
 </Define:Save_Button>
 
-<!-- Renders as: -->
+<%-- Renders as: --%>
 <button class="Save_Button Component btn btn-primary">Save</button>
 ```
 
@@ -35,7 +35,7 @@ The component's own class name is always stamped on the root - which is what mak
     <%= content() %>
 </Define:Card>
 
-<!-- caller -->
+<%-- caller --%>
 <Card><p>Hello</p></Card>
 ```
 
@@ -79,6 +79,7 @@ Displayed content belongs in `content()`/slots, never in an attribute - see `ref
 | `$quoted="string"` | String literal arg |
 | `$unquoted=expression` | JavaScript expression arg - ends at the first space unless bracketed. `$alert=_x > 0` fails; `$alert=(_x>0)` and `$alert=(_x > 0)` both work |
 | `$sid="name"` | Scoped element id, addressable as `this.$sid('name')` |
+| `$autofill_id=expr` | On a `$sid` `<input>`/`<textarea>`/`<select>` only: renders `id` (and `name`, unless set) exactly as the value, `this.$sid()` still resolves it; falsy = the scoped id. On a component tag, an ordinary arg. See "Form fields and autofill" |
 | `attr="<%= expr %>"` | An ordinary HTML attribute with interpolation |
 | `$prop=value` ON `<Define>` | A DEFAULT for `this.args.prop`; the caller's `$prop=` at the invocation wins |
 | `tag="article"` at an INVOCATION | Overrides the rendered element for that one instance |
@@ -107,10 +108,10 @@ ERROR, not a silent corruption: `<% %> code blocks are not allowed inside attrib
 values`. (It corrupted the value silently before jqhtml 2.3.42.)
 
 ```jqhtml
-<!-- [NO] compile error -->
+<%-- [NO] compile error --%>
 <div class="base<% if (x) { %> extra<% } %>">
 
-<!-- [OK] compute the value, then interpolate the whole thing -->
+<%-- [OK] compute the value, then interpolate the whole thing --%>
 <% const cls = 'base' + (x ? ' extra' : ''); %>
 <div class="<%= cls %>">
 ```
@@ -142,15 +143,28 @@ nowhere for statements to write output, so build the value first and interpolate
 `undefined`, and the workaround was to render them empty and populate from JS in
 `on_render()`. That workaround is no longer needed.)
 
+## Form fields and autofill
+
+RSpade configures jqhtml's `autocomplete_off`: every `<input>` and `<textarea>` written in a template renders `autocomplete="off"` unless the tag carries an `autocomplete=""` attribute (a conditional one counts) or a truthy `$autofill_id`. Inside every component, framework or app; not a `<select>`, a `<Define tag="input">` root, a JS-built element or Blade markup. **So a field that SHOULD autofill declares its token** - `username`, `current-password`, `new-password`, `one-time-code`, `name`, `email`, `tel`, an address token.
+
+A credential field also gets a STABLE id, because the `<sid>:<cid>` id changes with mount order and its colon breaks `'#' + id` (a password manager that replays saved ids fills nothing):
+
+```html
+<input $sid="field" $autofill_id=this.args.autofill_id autocomplete="current-password" />
+```
+
+`$autofill_id` needs `$sid` on the same tag, only on `input`/`textarea`/`select`, never inside a conditional attribute block or with `$redrawable` (compile errors); a truthy value must match `/^[A-Za-z][A-Za-z0-9_-]*$/` (the render throws); no `autocomplete` on the tag warns at compile and, in development, at render. A forwarded token is a conditional attribute - `<% if (this.args.autocomplete) { %>autocomplete="<%= this.args.autocomplete %>"<% } %>` - never `autocomplete="<%= x %>"` (an absent token would render `""` and switch `"off"` off) and never unquoted (a compile error). Contract: `rsx:man jqhtml`, AUTOCOMPLETE AND AUTOFILL.
+
 ## Other compile errors
 
 The compiler refuses these outright, naming the line:
 
+- A hand-written `id=""` anywhere - element, component tag or `<Define:>` ("id="" is not allowed in JQHTML templates - use $sid instead"). Use `$sid`, a class from outside, or `$autofill_id` for a form field.
 - A stray or mismatched closing tag, or a stray `%>`.
 - A `<Define:>` nested inside another component definition.
 - The text `<script` or `</script` ANYWHERE - markup, a JS string in a `<% %>` block, an attribute value, an HTML comment. The compiled template may be inlined in a `<script>` block, where that text would end it; split a string that must contain it (`'<' + '/script>'`). `tag="script"` / `tag="style"` on a `<Define:>` or an invocation is refused too.
 - An attribute name containing a character HTML does not allow (a quote usually means a missing `=` or a stray quote earlier in the tag).
-- A slot name that is not a JavaScript identifier, and non-slot content in a `<Define:>` whose template uses slots.
+- A slot name that is not a JavaScript identifier or is a JavaScript reserved word, and non-slot content in a `<Define:>` whose template uses slots.
 - An unterminated `<% %>` / `<%= %>`, reported at its OPENING tag. When a `//` comment inside template code hides a `%>`, the error says so - a `//` comment runs to the end of its line.
 
 Character references in a quoted attribute literal (`title="Tom &amp; Jerry"`) are decoded at compile time, as a browser would.

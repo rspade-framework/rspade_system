@@ -29,7 +29,8 @@ SYNOPSIS
 
     # 4. The screen
     <Two_Factor_Challenge $controller="Login_Controller" $method="verify_2fa"
-                          $send_controller="Login_Controller" $send_method="send_code" />
+                          $send_controller="Login_Controller" $send_method="send_code"
+                          $autofill_id="code" />
 
     # 5. The verification endpoint - unchanged from any other challenge; the
     #    screen posts {code} or, from the link, {email_link}

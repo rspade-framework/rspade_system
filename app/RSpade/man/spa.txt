@@ -682,6 +682,12 @@ NAVIGATION
 
         Use Spa.dispatch()/redirect() instead of window.location for all navigation.
 
+        Breadcrumb origins: when the current URL carries the reserved _via
+        parameter, dispatch(), redirect() and intercepted link clicks CARRY it
+        onto a target route that names none; {via: false} opts out:
+            Spa.dispatch(url, {via: false});
+        _via never reaches this.args. See rsx:man breadcrumb_origins.
+
     Accessing Active Components:
         Spa.layout      Reference to current layout component instance
         Spa.action()    Reference to current action component instance
@@ -908,7 +914,10 @@ PAGE TITLES
     Breadcrumbs:
         breadcrumb_label() defaults to page_title(), so a fixed-title action
         gets its breadcrumb from @title as well. A dynamic breadcrumb override
-        awaits await_loaded() exactly as the title override does.
+        awaits await_loaded() exactly as the title override does. A page that
+        should crumb to where it was reached from declares a breadcrumb
+        origin (static breadcrumb_via + breadcrumb_parent_via()) - see
+        rsx:man breadcrumb_origins.
 
 SPINNER UNTIL READY
     A page whose components load their own data paints in stages: the action
@@ -1494,6 +1503,7 @@ SEE ALSO
     rsx:man controller - Controller patterns and Ajax endpoints
     rsx:man jqhtml - Component lifecycle and templates
     rsx:man routing - URL generation and route patterns
+    rsx:man breadcrumb_origins - an alternate breadcrumb parent carried by _via
     rsx:man modals - Modal dialogs in SPA context
     rsx:man form_conventions - the form engine, dirty protection and the page
                                pattern a navigation guard usually protects

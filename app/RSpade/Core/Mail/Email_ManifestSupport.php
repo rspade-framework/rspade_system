@@ -12,10 +12,10 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 /**
  * Support module that bakes the table of every email an application can send.
  *
- * An email is an Rsx_Email subclass co-located with the blade that renders it:
+ * An email is an Rsx_Email_Abstract subclass co-located with the blade that renders it:
  *
  * ```php
- * class Welcome_Email extends Rsx_Email
+ * class Welcome_Email extends Rsx_Email_Abstract
  * {
  *     const CATEGORY = self::TRANSACTIONAL;
  *     public static function sample(): static { return new static(...); }
@@ -40,7 +40,8 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  *   - No blade carrying `@rsx_id('<ClassBasename>')`. The class name IS the template
  *     id; without one the send would fail at render time, in a background task, hours
  *     after the code shipped.
- *   - A CATEGORY that is not one of the three constants.
+ *   - A CATEGORY that is not one of the four category constants (TRANSACTIONAL,
+ *     NOTIFICATION, MARKETING, SECURITY).
  *   - Two classes with the same basename - one basename names exactly one email.
  *
  * Constants are read from the SOURCE FILE, not by reflection: the manifest builds
@@ -100,7 +101,7 @@ class Email_ManifestSupport extends Full_ManifestSupport_Abstract
                 continue;
             }
 
-            // An application may put an abstract base of its own between Rsx_Email and
+            // An application may put an abstract base of its own between Rsx_Email_Abstract and
             // its concrete emails. Only a class somebody can actually instantiate owes
             // the contract.
             if (!empty($metadata['abstract'])) {

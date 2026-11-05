@@ -1,6 +1,6 @@
 ---
 name: executive-briefing
-description: "Writing an executive briefing on an issue, feature or incident for a stakeholder who owns the decision but is not holding the code in their head. Use when the user asks for 'an executive briefing', 'the executive summary', to 'brief me', to 'explain this to me like a manager' or 'like a project manager', or says they need to 'get my bearings' / 'back up a step' on something agents have been working on - especially when they mention running several agents or threads at once, or that they only had a passing brief on the issue."
+description: "Writing an executive briefing for a stakeholder who owns the decision but is not holding the code in their head. Use when the user asks for 'an executive briefing', 'the executive summary', to 'brief me', to explain it 'like a manager', or to 'get my bearings' / 'back up a step' on work agents have been doing."
 ---
 
 # Executive briefing

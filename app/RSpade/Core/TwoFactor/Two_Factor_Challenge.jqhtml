@@ -88,6 +88,9 @@ Args:
   $controller  (required) - the application controller holding the verification endpoint.
   $method      (required) - the endpoint's method name.
   $cancel_url  - where Cancel leads (normally the login page). Absent: no Cancel.
+  $autofill_id - a stable id for the code field, handed to <Code_Input> (its first box):
+                 conventionally "code" (rsx:man jqhtml, AUTOCOMPLETE AND AUTOFILL). Absent:
+                 the scoped id.
   $send_controller, $send_method - the application endpoint that issues and delivers a code.
                  Absent: no "Resend code".
   $unstyled_controls - drop the theme (Bootstrap) classes from every control; each keeps its
@@ -157,7 +160,7 @@ See: php artisan rsx:man two_factor
                        placeholder="Recovery code" aria-label="Recovery code" />
             <% } else if (_code_answer) { %>
                 <div class="Two_Factor_Challenge__answer">
-                    <Code_Input $sid="code" $name="code" $align="center" />
+                    <Code_Input $sid="code" $name="code" $align="center" $autofill_id=this.args.autofill_id />
                 </div>
             <% } else if (!_passkey) { %>
                 <div class="Two_Factor_Challenge__notice">This account's second step is a passkey, and this browser cannot use one.</div>

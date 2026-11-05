@@ -27,6 +27,8 @@ Args:
                  own __ class (see CONTROLS), and the host supplies the whole appearance.
                  The digit boxes are <Code_Input>'s and keep its classes - each box carries
                  Code_Input__box, so the host styles them by that.
+  $autofill_id - a stable id for the proof's code field, handed to <Code_Input> (its first
+                 box): conventionally "code" (rsx:man jqhtml, AUTOCOMPLETE AND AUTOFILL).
 
 No other. The component always enrolls the signed-in identity - the server offers no other
 spelling, deliberately (Rsx_Two_Factor_Abstract::__enrolling_identity). On a portal page it
@@ -90,7 +92,7 @@ See: php artisan rsx:man two_factor
             </div>
 
             <div class="Totp_Enrollment__proof">
-                <Code_Input $sid="code" $name="code" $align="center" />
+                <Code_Input $sid="code" $name="code" $align="center" $autofill_id=this.args.autofill_id />
             </div>
 
             <% if (this.state.error) { %>

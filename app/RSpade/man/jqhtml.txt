@@ -525,13 +525,13 @@ SEMANTIC-FIRST DESIGN
     class. This enables incremental scaffolding: build page structure
     with semantic names first, define component templates later.
 
-        <!-- Works immediately without definitions -->
+        <%-- Works immediately without definitions --%>
         <Dashboard>
             <Stats_Panel />
             <Activity_Feed />
         </Dashboard>
 
-        <!-- Renders as: -->
+        <%-- Renders as: --%>
         <div class="Dashboard">
             <div class="Stats_Panel"></div>
             <div class="Activity_Feed"></div>
@@ -692,20 +692,20 @@ COMPONENT ARGUMENTS
 
     Quoted Values = Literal Strings:
         <UserCard $title="User Profile" />
-        <!-- Result: this.args.title = "User Profile" -->
+        <%-- Result: this.args.title = "User Profile" --%>
 
         <UserCard $expr="this.user" />
-        <!-- Result: this.args.expr = "this.user" (string, NOT object!) -->
+        <%-- Result: this.args.expr = "this.user" (string, NOT object!) --%>
 
     Unquoted Values = JavaScript Expressions:
         <UserCard $user=this.data.user />
-        <!-- Result: this.args.user = {actual user object} -->
+        <%-- Result: this.args.user = {actual user object} --%>
 
         <UserCard $count=42 />
-        <!-- Result: this.args.count = 42 (number) -->
+        <%-- Result: this.args.count = 42 (number) --%>
 
         <UserCard $enabled=true />
-        <!-- Result: this.args.enabled = true (boolean) -->
+        <%-- Result: this.args.enabled = true (boolean) --%>
 
     Complex Expressions (use parentheses):
         <UserCard $status=(user.active ? 'online' : 'offline') />
@@ -810,35 +810,35 @@ THIS.ARGS VS THIS.DATA
 
 COMMON PATTERNS AND PITFALLS
     Correct usage examples:
-        <!-- Pass object reference -->
+        <%-- Pass object reference --%>
         <UserList $users=this.data.users />
 
-        <!-- Pass literal string (short, non-displayed DATA - fine) -->
+        <%-- Pass literal string (short, non-displayed DATA - fine) --%>
         <UserList $empty_message="No results" />
 
-        <!-- Displayed page content (a heading/caption) belongs in
-             content(), NOT an attribute - see SEMANTIC-FIRST DESIGN rule 3 -->
+        <%-- Displayed page content (a heading/caption) belongs in
+             content(), NOT an attribute - see SEMANTIC-FIRST DESIGN rule 3 --%>
         <Header><%= 'Dashboard' %></Header>
-        <!-- or, if Header is data-driven from this.data, no arg at all -->
+        <%-- or, if Header is data-driven from this.data, no arg at all --%>
 
-        <!-- Pass computed value -->
+        <%-- Pass computed value --%>
         <Badge $count=this.data.items.length />
 
-        <!-- Pass callback -->
+        <%-- Pass callback --%>
         <Button $onClick=this.handleClick />
 
     Common mistakes to avoid:
-        <!-- WRONG: Passes string "this.data.users" not the array -->
+        <%-- WRONG: Passes string "this.data.users" not the array --%>
         <UserList $users="this.data.users" />
 
-        <!-- WRONG: Missing quotes on literal string -->
-        <Header $title=Dashboard />  <!-- Tries to evaluate variable -->
+        <%-- WRONG: Missing quotes on literal string --%>
+        <Header $title=Dashboard />  <%-- Tries to evaluate variable --%>
 
-        <!-- WRONG: Displayed/authored content trapped in an attribute
-             instead of content()/slots (see SEMANTIC-FIRST DESIGN rule 3) -->
+        <%-- WRONG: Displayed/authored content trapped in an attribute
+             instead of content()/slots (see SEMANTIC-FIRST DESIGN rule 3) --%>
         <Header $title="Dashboard" />
 
-        <!-- WRONG: Using this.data for input parameters -->
+        <%-- WRONG: Using this.data for input parameters --%>
         class Component {
             on_create() {
                 const userId = this.data.userId;  // WRONG - use this.args
@@ -1514,7 +1514,7 @@ DOUBLE-RENDER PATTERN
                 <%-- FIRST RENDER: loading state (see LOADING STATE PATTERN) --%>
                 <Spinner />
             <% } else { %>
-                <!-- SECOND RENDER: Actual data -->
+                <%-- SECOND RENDER: Actual data --%>
                 <% for (let product of this.data.products) { %>
                     <Product_Card $product_id=product.id />
                 <% } %>
@@ -1574,7 +1574,7 @@ LOADING STATE PATTERN (CRITICAL)
 
         Template for incorrect pattern:
             <% if (this.data.state && this.data.state.loading) { %>
-                <!-- WRONG: Complex state check -->
+                <%-- WRONG: Complex state check --%>
                 Loading...
             <% } %>
 
@@ -2247,12 +2247,12 @@ $REDRAWABLE ATTRIBUTE - LIGHTWEIGHT COMPONENTS
         The $redrawable attribute triggers a parser transformation that
         converts the element into a <Redrawable> component:
 
-        <!-- Write this: -->
+        <%-- Write this: --%>
         <div $redrawable $sid="counter">
             Count: <%= this.data.count %>
         </div>
 
-        <!-- Parser transforms to: -->
+        <%-- Parser transforms to: --%>
         <Redrawable tag="div" $sid="counter">
             Count: <%= this.data.count %>
         </Redrawable>
@@ -2864,6 +2864,88 @@ SCOPED IDS
         elements with in-memory references (a Map of id -> element)
         or CSS classes instead.
 
+    A hand-written id="" is a compile error:
+        id="..." anywhere in a template - on an element, a component
+        tag or a <Define:> - fails the compile with "id="" is not
+        allowed in JQHTML templates - use $sid instead". A template
+        renders once per instance, so a fixed id is a duplicate the
+        moment a component appears twice. Reach an element with $sid,
+        from outside the component with a class (a Bootstrap
+        data-bs-target=".Sidebar_Nav", not "#sidebarNav"), and give
+        a form field a fixed id only through $autofill_id (below).
+
+AUTOCOMPLETE AND AUTOFILL
+    Two jqhtml features decide how a template-written form field meets
+    browser autofill and password managers. The framework configures
+    one and the page author uses the other.
+
+    autocomplete_off - ON in every mode (Jqhtml_Integration.js):
+        Every <input> and <textarea> WRITTEN IN A TEMPLATE renders with
+        autocomplete="off" unless the tag carries an autocomplete=""
+        attribute (any value, a conditional one included) or a truthy
+        $autofill_id. It applies inside every component, framework and
+        application alike. Not affected: a <select>; a component's own
+        root element (<Define:X tag="input">); an element built in JS
+        ($('<input>')); server-rendered Blade markup. "off" is a hint:
+        a browser may still offer address or contact suggestions.
+
+        Consequence: a field that SHOULD autofill declares its token -
+        a sign-in identifier (username), a password (current-password,
+        new-password), a one-time code (one-time-code), a name (name,
+        given-name, family-name), an address or contact field (email,
+        tel, street-address, postal-code, ...). A field with no token
+        is "off", which is right for a business form and wrong for a
+        credential.
+
+    $autofill_id="<id>" - a stable id for one form field:
+        <input $sid="field" $autofill_id=this.args.autofill_id
+               autocomplete="current-password" />
+
+        Renders id="<id>" exactly as written (no :cid suffix) and, unless
+        the tag sets name="", name="<id>" too. this.$sid('field') still
+        resolves the element - inside this component only - through
+        renders, re-renders and the cached first paint.
+
+        Rules (compile errors unless noted):
+          - only on <input>, <textarea> and <select>;
+          - only on a tag that also carries $sid;
+          - never with $redrawable, never inside a conditional
+            attribute block (<% if %>...<% } %> around it);
+          - the value may be an expression. A falsy value (undefined,
+            null, false, '') means no explicit id: the element keeps its
+            scoped id. A truthy value must match
+            /^[A-Za-z][A-Za-z0-9_-]*$/ or the RENDER throws, because it
+            must work unescaped in '#' + id;
+          - no autocomplete attribute on the tag: the compiler prints a
+            warning, and at render time (development; the
+            warn_autofill_without_autocomplete flag) a field rendered
+            with an id and no token warns again. Not an error.
+        The author owns uniqueness: two fields with one id on a page are
+        a duplicate id.
+
+        On a COMPONENT tag, $autofill_id is an ordinary argument
+        (this.args.autofill_id), which is how a caller hands the id to
+        an input component. The framework's credential inputs forward
+        it to their inner field: <Password_Input> (the password),
+        <Code_Input> (its first box, the one-time-code one), and through
+        Code_Input <Two_Factor_Challenge> and <Totp_Enrollment>, and
+        <Password_Confirmation_Form> to its Password_Input. Only the
+        page knows which credential a field is, so the page names it.
+
+    Why: a jqhtml $sid id is "<sid>:<cid>" - it changes whenever
+    components mount in a different order, and the colon makes it an
+    invalid CSS selector. A password manager that saved such an id
+    and replays it with querySelector('#' + id) fills nothing.
+    Browser-native managers read autocomplete tokens first; the
+    id-matching extensions read id and name. A credential field needs
+    both: the token AND a stable id.
+
+    The id convention, the token table and the rule that a form setting
+    a password also carries the account identifier are the template
+    application's credential-field rules: rsx/app/login/CLAUDE.md,
+    "Credential fields" (system/app/RSpade/resource/reference_app/ in a
+    release).
+
 EXAMPLES
     Card with async data loading:
         class Product_Card extends Jqhtml_Component {
@@ -2889,7 +2971,7 @@ EXAMPLES
         }
 
     List with loading state:
-        <!-- todo_list.jqhtml -->
+        <%-- todo_list.jqhtml --%>
         <Define:Todo_List>
             <div>
                 <% if (Object.keys(this.data).length === 0) { %>
@@ -2967,16 +3049,16 @@ CONTENT AND SLOTS
         The content() function is the standard way to accept innerHTML
         when a component has ONE content region:
 
-        <!-- Define component -->
+        <%-- Define component --%>
         <Define:Card>
             <div class="card">
                 <div class="card-body">
-                    <%= content() %>  <!-- Outputs passed innerHTML -->
+                    <%= content() %>  <%-- Outputs passed innerHTML --%>
                 </div>
             </div>
         </Define:Card>
 
-        <!-- Use component -->
+        <%-- Use component --%>
         <Card>
             <h3>Card Title</h3>
             <p>This content goes where content() is called</p>
@@ -3006,7 +3088,7 @@ CONTENT AND SLOTS
 
         Child templates use content('slotname') to render named slots:
 
-        <!-- Define with named slots -->
+        <%-- Define with named slots --%>
         <Define:Card_Layout>
             <div class="card">
                 <div class="card-header"><%= content('header') %></div>
@@ -3017,7 +3099,7 @@ CONTENT AND SLOTS
 
         Parent templates provide content using <Slot:slotname> tags:
 
-        <!-- Use with named slots -->
+        <%-- Use with named slots --%>
         <Card_Layout>
             <Slot:header><h3>User Profile</h3></Slot:header>
             <Slot:body>
@@ -3117,9 +3199,9 @@ CONTENT AND SLOTS
             Slot names cannot be JavaScript reserved words.
             Parser rejects with fatal error:
 
-            <Slot:function>Content</Slot:function>  <!-- ERROR: reserved word -->
-            <Slot:if>Content</Slot:if>                <!-- ERROR: reserved word -->
-            <Slot:header>Content</Slot:header>        <!-- Valid -->
+            <Slot:function>Content</Slot:function>  <%-- ERROR: reserved word --%>
+            <Slot:if>Content</Slot:if>                <%-- ERROR: reserved word --%>
+            <Slot:header>Content</Slot:header>        <%-- Valid --%>
 
             Reserved words include: function, if, for, class, const, let,
             var, while, switch, return, try, catch, and others.

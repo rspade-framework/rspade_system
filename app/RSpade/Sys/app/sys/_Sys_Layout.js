@@ -120,6 +120,10 @@ class _Sys_Layout extends Spa_Layout {
     on_ready() {
         const that = this;
 
+        // The sidebar's id is the instance-scoped $sid id, so the toggle's reference to it
+        // is written here rather than in the template.
+        this.$.find('[data-nav="toggle"]').attr('aria-controls', this.$sid('sidebar').attr('id'));
+
         // The narrow-screen drawer. Delegated and namespaced, so a re-render re-binds
         // cleanly. On a wide screen the toggle and the backdrop are not displayed.
         this.$.off('click._sys_nav').on('click._sys_nav', '[data-nav="toggle"]', function () {

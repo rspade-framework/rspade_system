@@ -50,10 +50,37 @@ The target is **URL-threaded, never stashed in the session or browser storage** 
 
 Everything is context-aware via `Rsx_Portal::is_portal_request()`: in a portal request the portal prefix (from `PORTAL_URL`; `''` at the root of a portal host) is a page namespace stripped before the base rules apply, staff and portal targets are **isolated in both directions** (a staff request rejects a path under a same-host portal prefix whatever its spelling), and portal loop-prevention uses `config('rsx.login_redirect.portal_excluded_prefixes')`. The template's portal login/register flows are wired end to end (`Portal_Main::pre_dispatch` captures, the forms emit `hidden_input()`, the post-auth decision consumes).
 
+## Login_Notice (the sentence a sign-in page owes)
+
+A flow that ends on a sign-in page often owes the visitor a sentence ("You have been logged out", "This invitation has expired"). **A session flash is the wrong carrier** - it renders as a floating toast and is lost on a second hop - and **a free-text `?message=` lets a crafted link write on your sign-in page.** So the sentence travels as a fixed CODE beside the redirect, and the page renders it inline. `App\RSpade\Core\Login\Login_Notice` is the contract, staff and portal alike.
+
+The application declares the codes in `rsx/resource/config/rsx.php`:
+
+```php
+'login_notices' => [
+    'logged_out' => ['level' => 'notice', 'text' => 'You have been logged out.'],
+    'invitation_expired' => ['level' => 'error', 'text' => 'This invitation has expired. Contact {name} for a new one.'],
+],
+```
+
+`level` is `notice` or `error`; `{name}` is `config('rsx.name')`.
+
+- **`Login_Notice::params(string $code): array`** - the parameter carrying `$code`, merged into the route to the sign-in page beside `Login_Redirect::params()`. **Throws for a code nobody declared** (a developer's mistake).
+- **`Login_Notice::current(): ?array`** - the notice this request carries, `{code, level, text}`, or null. An undeclared code reads as null, the same silent degradation a hostile `?redirect=` gets: a crafted link can show nothing but a sentence the application wrote.
+
+```php
+return redirect(Rsx_Portal::Route('Portal_Login_Controller::index',
+    Login_Notice::params('invitation_expired') + Login_Redirect::params()));
+
+// sign-in page (Blade)
+@php $notice = Login_Notice::current(); @endphp
+```
+
 ## Pitfalls
 
 - Letting a redirect skip required onboarding - onboarding/welcome flows must win; `consume()` supplies the default, not an override.
 - Forgetting `hidden_input()` on a form-POST hop (the most commonly dropped hop).
 - Calling `consume()` more than once, or in a middle hop instead of the terminal one.
+- Carrying a sign-in page's sentence in a flash or a free-text `?message=` instead of a `Login_Notice` code.
 
 Details: `php artisan rsx:man login_redirect`.

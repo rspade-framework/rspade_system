@@ -19,6 +19,19 @@
  *   }
  */
 class Spa_Action extends Component {
+    /**
+     * Breadcrumb ORIGIN types this page accepts (rsx:man breadcrumb_origins).
+     *
+     * A page that can stand under an alternate parent - an invoice reached from an
+     * engagement - lists the origin types it consumes here and names the alternate parent
+     * in breadcrumb_parent_via(). The two are ONE declaration: a class declaring either
+     * declares both (manifest-build FATAL SPA-VIA-01 otherwise). Both are inherited like
+     * any static and method, so a subclass that re-declares one re-declares the other.
+     *
+     * @type {string[]} Token types, each [a-z][a-z0-9_]*
+     */
+    static breadcrumb_via = [];
+
     // constructor(args = {}, options = {}) {
     //     super(args, options);
     // }
@@ -198,6 +211,32 @@ class Spa_Action extends Component {
      * @returns {Promise<string|null>} Parent URL or null if root
      */
     async breadcrumb_parent() {
+        return null;
+    }
+
+    /**
+     * Alternate parent URL for an accepted breadcrumb ORIGIN, or null to decline it
+     *
+     * Called during the breadcrumb walk when the trail reaches this page with an origin
+     * whose type is listed in static breadcrumb_via. The token arrived in a URL, so anyone
+     * can type it: VERIFY it against this page's own data and return null when it does not
+     * hold - a declined origin is treated exactly as if the page did not accept the type,
+     * and breadcrumb_parent() is used. The URL returned may carry a #fragment (kept on the
+     * crumb) and a _via of its own (origins this page derives from its data; they are put
+     * in front of the ones still pending).
+     *
+     * Example:
+     *   static breadcrumb_via = ['engagement'];
+     *   async breadcrumb_parent_via(via) {
+     *       await this.await_loaded();
+     *       if (this.data.invoice.engagement_id !== int(via.id)) return null;
+     *       return Rsx.Route('Engagements_View_Action', via.id) + '#tab=billing';
+     *   }
+     *
+     * @param {{type: string, id: string|null}} via - The origin token being offered
+     * @returns {Promise<string|null>} Parent URL, or null to decline
+     */
+    async breadcrumb_parent_via(via) {
         return null;
     }
 }

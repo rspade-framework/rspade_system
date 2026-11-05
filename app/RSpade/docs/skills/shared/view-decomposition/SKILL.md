@@ -1,6 +1,6 @@
 ---
 name: view-decomposition
-description: "Breaking an over-long view page into REGION components - the ~325-line template / ~80-line tab-body trigger, the seam test (markup and the handlers it raises move together), the flat file layout in the feature's own view/ directory with _tab_<name> bodies, the eager-vs-lazy data rule (the action loads everything eager in ONE parallel batch and passes it down; a region self-loads only what may never be opened), and the sharp edges - refresh() re-running only the action's on_load, skeletons from explicit args, content handed to a child resolving against its definer, and one-shot bind flags. Use when a .jqhtml view template pushes past ~325 lines or a single tab body past ~80, when a page file is called unmaintainable or nobody can see its shape, when extracting regions or deciding whether a payload is passed down or self-loaded, when a region reaches Spa.action() from inside a Slot body, or when choosing between region decomposition and a per-variant content split."
+description: "Breaking an over-long view page into REGION components - the ~325-line template trigger, the seam test, _tab_<name> bodies in the feature's view/ directory, and the eager-vs-lazy rule (the action loads in one parallel batch and passes data down). Use when a .jqhtml template passes ~325 lines, a page is called unmaintainable, when extracting regions, or a region reaches Spa.action() from inside a Slot body."
 ---
 
 # Decomposing an over-long view page

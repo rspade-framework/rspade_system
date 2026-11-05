@@ -1,6 +1,6 @@
 ---
 name: framework-dependencies
-description: "Adding or changing a dependency in the RSpade monorepo - installing inside system/, committing vendor and node_modules, when and how to add a package to the exposed_composer/exposed_npm lists, the standing commitment that exposure creates and the Category 2 breaking_changes obligation when one breaks or retires, and how the replace map is regenerated downstream. Use when the framework or the template app needs a new third-party package, or when retiring/major-bumping an exposed one."
+description: "Adding or changing a dependency in the monorepo - installing inside system/, committing vendor and node_modules, the exposed_composer / exposed_npm lists and the standing commitment exposure creates, the Category 2 breaking_changes obligation, the downstream replace map. Use when the framework or template app needs a new package, or when retiring or major-bumping an exposed one."
 ---
 
 # Framework dependencies (monorepo)
@@ -16,6 +16,8 @@ npm install some-package
 `system/vendor` and `system/node_modules` are **committed** and ship to downstream apps via `rsx:framework:pull`. Commit them with the change, in the same snapshot as everything else - a package installed but not committed is a package downstream will never receive.
 
 **This is the ONLY place you add a package this template needs.** The `/rsx/` starter template in this repo keeps **ZERO application-layer dependencies** by rule: anything template code needs goes framework-level. The root-level `rsx:composer`/`rsx:npm` layer exists for downstream applications, not for us.
+
+**Updating every npm package at once** is `php artisan rsx:dev:update_npm` (updates the framework's npm packages and rebuilds the framework bundles).
 
 **Precedence**: the framework wins every name collision (composer autoloader order for PHP; `system/node_modules` resolving before the project root for JS). Downstream cannot shadow a framework package, which is why the downstream wrappers record rather than install.
 

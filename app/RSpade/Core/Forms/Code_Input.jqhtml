@@ -10,6 +10,9 @@ digits entered so far as a string ("" when empty, "4071" part-way, "407193" comp
     </Form_Field>
 
 $name      - the field name (form contract).
+$autofill_id - optional stable id (and name) for the FIRST box - the one that carries
+             autocomplete="one-time-code" (jqhtml's $autofill_id; rsx:man jqhtml,
+             AUTOCOMPLETE AND AUTOFILL). The host names it, conventionally "code".
 $length    - how many digits (default 6).
 $align     - "center" centres the row in its container; omitted, it sits at the start.
 $disabled  - disables every box; the value is still reported.
@@ -48,14 +51,21 @@ the application's own. An application restyles the widget with its own rules on 
         }
     %>
     <div class="<%= _class %>">
-        <% for (let _i = 0; _i < _length; _i++) { %>
-            <%-- No maxlength: a paste has to arrive whole before it can be spread across the
-                 boxes. Only the first box asks for the one-time-code autofill, so a phone
-                 offers the code once and it lands where distribution starts. --%>
+        <%-- No maxlength: a paste has to arrive whole before it can be spread across the
+             boxes. Only the first box asks for the one-time-code autofill, so a phone offers
+             the code once and it lands where distribution starts; it is also the one box a
+             host's $autofill_id names. --%>
+        <input type="text" class="form-control Code_Input__box" $sid="first_box"
+               $autofill_id=this.args.autofill_id
+               inputmode="numeric"
+               aria-label="Digit 1 of <%= _length %>"
+               autocomplete="one-time-code"
+               <% if (this.args.disabled) { %>disabled<% } %> />
+        <% for (let _i = 1; _i < _length; _i++) { %>
             <input type="text" class="form-control Code_Input__box"
                    inputmode="numeric"
                    aria-label="Digit <%= _i + 1 %> of <%= _length %>"
-                   autocomplete="<%= _i === 0 ? 'one-time-code' : 'off' %>"
+                   autocomplete="off"
                    <% if (this.args.disabled) { %>disabled<% } %> />
         <% } %>
     </div>

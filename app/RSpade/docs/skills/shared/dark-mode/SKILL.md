@@ -1,6 +1,6 @@
 ---
 name: dark-mode
-description: "The per-identity theme preference (light/dark/auto) - login_users.dark_mode, Rsx_Dark_Mode, the rsx-dark class put on <html> before first paint by autotheme.js, the app-declared theme attributes in config('rsx.theme.dark_mode.attributes'), Rsx_Dark_Mode_Controller, and Rsx_Dark_Mode.set_mode() for re-theming the page in place. Use when adding or theming dark mode, building a theme setting, styling a component for dark, wiring a UI framework's theme attribute (data-bs-theme or equivalent), or diagnosing a white flash on load, a `body.rsx-dark` selector that matches nothing, a page that stays the old theme after saving, or CSS that ignores the theme."
+description: "The per-identity light/dark/auto preference - login_users.dark_mode, Rsx_Dark_Mode, the rsx-dark class on <html> set before first paint by autotheme.js, config('rsx.theme.dark_mode.attributes'), Rsx_Dark_Mode.set_mode(). Use when adding or theming dark mode, building a theme setting, wiring data-bs-theme, or on a white flash on load or a body.rsx-dark selector that matches nothing."
 ---
 
 # Dark mode

@@ -4,28 +4,16 @@
 
 ### NEVER add a timeout
 
-**Do not put a timeout in code. Not one. Not ever — unless the user ASKED for it, or you PROPOSED one and they explicitly approved it.** No `setTimeout()`, no `--timeout` flag, no `max_execution_time`, no lock lease or TTL, no watchdog deadline, no "safety" cap on how long a loop, copy, query or wait may run. This is a data-integrity rule, not a style preference: **a timeout converts a working operation into a failed one at the worst possible moment, and hands that failure to code that never expected it.**
+**Do not put a timeout in code. Not one. Not ever — unless the user ASKED for it, or you PROPOSED one and they explicitly approved it.** No `setTimeout()`, no `--timeout` flag, no `max_execution_time`, no lock lease or TTL, no watchdog deadline, no "safety" cap on how long a loop, copy, query or wait may run. This is a data-integrity rule: **a timeout converts a working operation into a failed one at the worst possible moment, and hands that failure to code that never expected it** - the `cp -r` that does not finish, followed by a line that deletes the source directory. It has bitten this framework twice (narratives in skills `rspade:migrations` and `rspade:locks-and-subprocesses`).
 
 ```php
 $process->setTimeout(60);    // [NO] a large copy now "exceeds the timeout" and FAILS
 $process->setTimeout(null);  // [OK] the operation takes as long as the data requires
 ```
 
-**The shape of every timeout bug**: that `cp -r` does not finish, and the next line — written by someone who never imagined a timeout existed — deletes the source directory. It has already bitten this framework twice (narratives in skills `rspade:migrations` and `rspade:locks-and-subprocesses`).
+**THE 599/601 TEST — apply it to every timeout, existing or proposed**: why is 599 seconds acceptable here but 601 seconds is not? If you cannot give a reason grounded in what the operation actually does — not "it felt generous", not "just in case" — **the number is arbitrary and the timeout must not exist.** "Give it room" is self-refuting (it concedes slowness is normal here, the argument for no cap at all); a copied number is always arbitrary.
 
-**THE 599/601 TEST — apply it to every timeout, existing or proposed.** A timeout of N seconds asserts that the operation is *correct* at N-1 seconds and *broken* at N+1. So answer the question out loud: **why is 599 seconds acceptable here but 601 seconds is not?** If you cannot give a reason grounded in what the operation actually does — not "it felt generous", not "it can hit the network so give it room", not "just in case" — **the number is arbitrary and the timeout must not exist.** An arbitrary number is not a safety net; it is a randomly-timed failure injector aimed at your slowest, most loaded, most important runs.
-
-Two corollaries follow:
-- **"Give it room" is self-refuting.** If you are widening the number because the operation is legitimately slow, you have already conceded that slowness is normal here — which is the argument for having no cap at all, not for a bigger one.
-- **A copied number is always arbitrary.** The same constant appearing in two files is proof nobody derived it the second time.
-
-**A sanctioned timeout is WRITTEN DOWN where it lives.** If you cannot articulate the justification in a comment beside the value, you have not justified it. The house example is `rsx.javascript.rpc_server_ready_wait_ms` in `system/config/rsx.php`: it names the mandate, says what external party it waits on, says it caps the READINESS WAIT and never the work, and says expiry degrades to a loud evidence-carrying error. **Meet that bar or remove the timeout.**
-
-**Slowness is normal and is never evidence of a hang.** How long a copy, query, build or critical section takes is a function of data size and machine load, and your code does not get an opinion about it. A genuine hang is a fault to SEE and diagnose, not to paper over.
-
-**The one narrow legitimate case is still a PROPOSAL, never your decision**: bounding a wait on an EXTERNAL party that may never answer, where expiry degrades to a working outcome (the archetype: a blocking HTTP call in the realtime relay). Say what you want to bound, why, and what happens on expiry — then wait. **Bounding your own work is never legitimate**, and a third-party binary you invoked is only "external" when it can genuinely hang forever AND expiry leaves a coherent result; a slow one is just slow.
-
-**Your own tool calls follow the same rule**: the only timeout you set unprompted is the standard ~2-minute backgrounding of a long-running command; never shorten it to "check on" something, and never cap an operation you were told to run to completion.
+**A sanctioned timeout is WRITTEN DOWN where it lives** - house example `rsx.javascript.rpc_server_ready_wait_ms` in `system/config/rsx.php`: it names the mandate, the external party it waits on, caps the READINESS WAIT and never the work, and expiry degrades to a loud evidence-carrying error. **Meet that bar or remove the timeout.** **Slowness is normal and is never evidence of a hang**; a genuine hang is a fault to SEE and diagnose. **The one narrow legitimate case is still a PROPOSAL, never your decision**: bounding a wait on an EXTERNAL party that may never answer, where expiry degrades to a working outcome - say what, why, and what happens on expiry, then wait. **Bounding your own work is never legitimate.** **Your own tool calls follow the same rule**: the only timeout you set unprompted is the standard ~2-minute backgrounding of a long-running command; never shorten it to "check on" something, never cap an operation you were told to run to completion.
 
 ### Fail loud — no silent fallbacks
 
@@ -37,7 +25,7 @@ Two corollaries follow:
 
 ### Do the whole job
 
-**A function does exactly what its name says, in its entirety, and nothing else.** `ls` does not stop after 100 files; `get_sessions_for_user()` returns ALL of a user's sessions — if it returned the first 100 it would be named `get_first_100_sessions_for_user()`. Never process a partial set when asked to process a full set; be conservative about memory, but memory never wins by dropping data — satisfying both means ITERATING, not truncating. A function whose job is "these records" returns `->result_set()` (an ordinary `foreach` reaches every record, one keyset page at a time). **A bare `LIMIT` that silently truncates is the bug** — it is right when it IS the mechanism or when the caller asked for N; otherwise say why at the call site. Scope is DATABASE result sets, not in-process work the codebase itself sizes. Skill `rspade:bounded-result-sets`.
+**A function does exactly what its name says, in its entirety, and nothing else** — `get_sessions_for_user()` returns ALL of a user's sessions. Never process a partial set when asked for a full set; memory never wins by dropping data — ITERATE, never truncate: a function whose job is "these records" returns `->result_set()`. **A bare `LIMIT` that silently truncates is the bug** — right only when it IS the mechanism or the caller asked for N; otherwise say why at the call site. Scope is DATABASE result sets. Skill `rspade:bounded-result-sets`.
 
 ### No defensive coding for core classes
 
@@ -45,4 +33,4 @@ Core framework classes ALWAYS exist (`Manifest`, `Rsx_Storage`, `Rsx`, everythin
 
 ### Always bash — never sh, never an implicit shell
 
-**bash is the ONLY shell this project's tooling invokes, and it is invoked EXPLICITLY.** Scripts run with an explicit `bash ` prefix, never relying on the exec bit (the one exception is a `.git/hooks/<name>` file, which git execs directly). Inline shell is never `sh`, never `sh -c`, never an IMPLICIT `/bin/sh` — PHP `shell_exec()`/`passthru()`/string `proc_open()` and node `child_process.exec()` all run `/bin/sh`, which is **dash** here, and dash once killed every helper spawned under a held lock (`sh: 1: exec: 11: not found`). Skill `rspade:shell-invocation`.
+**bash is the ONLY shell this project's tooling invokes, and it is invoked EXPLICITLY**: scripts run with a `bash ` prefix, never the exec bit (except a `.git/hooks/<name>` file, which git execs directly); never `sh`, never `sh -c`. PHP `shell_exec()`/`passthru()`/string `proc_open()` and node `child_process.exec()` all run `/bin/sh` = **dash** here, which once killed every helper spawned under a held lock (`sh: 1: exec: 11: not found`). Skill `rspade:shell-invocation`.

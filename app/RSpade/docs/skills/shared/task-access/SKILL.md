@@ -1,6 +1,6 @@
 ---
 name: task-access
-description: "Deciding who the browser may show a background task run to, and who may stop it - #[Task_Access('dispatcher')] (only the user who started a run may view, stop and cancel it), #[Task_Access('<check method>')] with a static check (Task_Run_Model $run, $user, string $action): bool on the same service, the realm: 'staff'|'portal'|'any' argument, deny by default (a task with no #[Task_Access] is visible to developers and /_sys only), and how that reaches Rsx_Task, Task_Report, Task_Output, Task_Status_Badge, Task_Report_Browser, the task realtime topics and Task_Gates::can_view() / can_control() / visible_page(). Use when a page shows a user the progress or output of a task they started (a file import, a mass edit, an export), an admin screen shows a sync or maintenance task's live output, a portal user watches a run, a widget says Unavailable, or the console prints \"declares no #[Task_Access], so the browser task API refuses it\" or \"declares #[Task_Access] for another realm\", or a manifest build fails with \"Invalid #[Task_Access]\" or \"Duplicate #[Task_Access]\"."
+description: "Deciding who the browser may show a task run to - #[Task_Access('dispatcher')] or a static check (Task_Run_Model $run, $user, string $action), realm:, deny by default, Rsx_Task and the Task_Report / Task_Output widgets. Use when a page shows a user their import or export progress, a widget says Unavailable, the console prints 'declares no #[Task_Access], so the browser task API refuses it', or on 'Invalid #[Task_Access]'."
 ---
 
 # Task Access
@@ -208,6 +208,9 @@ View as Client watches a run and never stops one.
 - **Starting** a task is never generic, from anywhere: Ajax and the external API never invoke
   a `#[Task]` directly. An endpoint validates the request, checks ACLs and records, and then
   calls `Task::dispatch()` (Example 1).
+- **An administrator of a site is not a sysadmin**, and is not qualified to invoke the `#[Task]`
+  library directly: site-admin rights earn an endpoint written for that operation, never a generic
+  task launcher.
 - **Reading and controlling** an existing run from the browser is the generic part, and
   `#[Task_Access]` is what governs it.
 - **The public API has no task interface at all.** An integration that needs a run's status

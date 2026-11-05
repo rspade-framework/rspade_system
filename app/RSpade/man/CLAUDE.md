@@ -1,108 +1,79 @@
 # RSX Framework Manual Pages
 
-## Documentation Philosophy
+A man page is the **CONTRACT tier**: terse, complete, expert-level, and it describes what the
+framework ACTUALLY does. Updating the affected pages is part of any change that moves
+observable behaviour (`docs/claude/framework/82-documentation-obligations.md`). Pages are read
+with `php artisan rsx:man <topic>` (`Commands/Rsx/Man_Command.php`); a page of the same name
+under `rsx/resource/man/` takes priority over the one here (`rsx:man man`).
 
-These manual pages follow traditional Unix man page conventions from the late 1990s:
-- **Plain text format** - No fancy formatting, boxes, or special characters
-- **Simple indentation** - Code examples use 4-space indentation
-- **Readable and copyable** - Easy to copy/paste examples
-- **Traditional sections** - NAME, SYNOPSIS, DESCRIPTION, etc.
+The format rules shared with an application's own pages live in `rsx/resource/man/CLAUDE.md`;
+this file adds what is specific to the framework's pages.
 
-## Writing Style Requirements
+## Format
 
-### Format
-- Use plain ASCII text only
-- Code examples indented with 4 spaces
-- No box drawing characters (└─┘│┌┐)
-- No special Unicode symbols
-- Section headers in ALL CAPS
-- Subsection headers in Title Case
+Plain ASCII text in late-1990s Unix man page style: section headers in ALL CAPS, subsection
+headers in Title Case, code indented 4 spaces, no box-drawing characters or Unicode symbols, so
+every example copies and pastes as-is. Files are `lowercase_with_underscores.txt`.
 
-### Content Requirements
-Each man page must include:
+## Sections
 
-1. **General introduction** - Explain what the RSX feature is and its purpose
-2. **RSX philosophy** - How it simplifies development compared to standard approaches
-3. **Laravel differences** - Explicitly note how RSX differs from Laravel equivalents
-4. **Practical examples** - Real-world usage patterns from actual RSX applications
-5. **Common pitfalls** - What mistakes developers might make
-
-### RSX vs Laravel Context
-Always explain how RSX features differ from their Laravel counterparts:
-- Path-agnostic class loading vs PSR-4 autoloading
-- Manifest-based discovery vs service provider registration
-- Static controller methods vs instance methods with DI
-- Unified bundle system vs mix/vite configuration
-- Automatic route discovery vs manual route files
-
-## Manual Page Sections
-
-Standard sections in order:
+Standard sections, in order (use those the page needs):
 
 ```
 NAME
-    Component name and one-line description
+    topic - one-line description
+
+TAGS
+    forms, ui
 
 SYNOPSIS
-    Quick usage examples showing the most common use case
+    The most common use, as code
 
 DESCRIPTION
-    Overview of the component, its philosophy, and how it differs from Laravel
+    What the feature is, why it exists, the design decisions behind it
 
-BASIC USAGE
-    Step-by-step introduction to using the feature
-
-API REFERENCE
-    Detailed method/function documentation
-
-EXAMPLES
-    Practical, real-world code examples
+BASIC USAGE / API REFERENCE / EXAMPLES
+    How it is used, the full surface, real-world code
 
 RSX VS LARAVEL
-    Explicit comparison with Laravel equivalents
+    Only where a Laravel developer's expectation would mislead
 
 TROUBLESHOOTING
-    Common errors and their solutions
+    Common errors (their literal text) and their fixes
 
 SEE ALSO
-    Related manual pages
+    Related man pages and skills
 ```
 
-## File Naming
-- Use lowercase with underscores: `manifest_api.txt`
-- Extensions: Always `.txt` for man pages
-- No special characters or spaces
+**TAGS** comes right after NAME: one indented line of lowercase, comma-separated tags from the
+shared vocabulary (`Man_Command::TAG_VOCABULARY`; `rsx:man --tags` lists it with counts), a few
+tags, one per subject the page covers. `rsx:man --tag=<tag>` finds pages by them. Only a handful
+of pages carry them so far; tagging the rest is backlog B-146.
 
-## Example Introduction Template
+**RSX VS LARAVEL** is written only where a Laravel developer's expectation would mislead. The
+catalogue of divergences from Laravel is `rsx:man framework_divergences` (its ADDING AN ENTRY
+section is the contract).
 
-```
-DESCRIPTION
-    The RSX [feature] provides [what it does] through [how it works].
-    Unlike Laravel's [equivalent], which requires [Laravel approach],
-    RSX automatically [RSX approach] without any configuration.
+## Cross-references
 
-    This path-agnostic approach means developers never need to worry
-    about [common Laravel pain point]. The framework handles all
-    [technical detail] transparently.
+The cross-reference section is headed `SEE ALSO`, one reference per line. A man-page row is
+either the full form `rsx:man topic - description` or, because the heading already
+disambiguates it, the compact `topic - description`; a skill row is
+`skill rspade:name - description`. A repository path or an artisan command stays spelled as
+itself. **In prose and in code comments the spelling is `rsx:man topic`** - never
+`topic(7)`, never `topic.txt`, never `php artisan rsx:man topic`. The VS Code extension
+resolves exactly these spellings into a highlight and a go-to-definition, so a reference it
+cannot resolve is a reference nobody can follow. Every topic named must exist as
+`system/app/RSpade/man/<topic>.txt` or `rsx/resource/man/<topic>.txt`, and every skill as a
+`SKILL.md` under `docs/skills/{shared,framework}/` or `rsx/resource/skills/`.
 
-    Key differences from Laravel:
-    - Laravel: [how Laravel does it]
-    - RSX: [how RSX does it]
+## Pages that do not ship
 
-    Benefits:
-    - No [configuration/boilerplate] required
-    - Automatic [feature]
-    - Works with [use case]
-```
+`bin/publish` strips five pages from every release: `code_quality`, `manifest_api`,
+`manifest_build`, `ast_sourcecode_parsers`, `vs_code_extension`. They document framework
+internals for this monorepo only, so **a shipped page, skill or fragment never points at one**.
 
-## Testing Documentation
-After writing or updating a man page:
-1. Test with `php artisan rsx:man [topic]`
-2. Verify plain text output (no special characters)
-3. Ensure code examples are properly indented
-4. Confirm examples can be copy/pasted directly
+## Checking a page
 
-## Future Documentation Topics
-Planned manual pages to create:
-- `ajax.txt` - Internal API system with auto-generated stubs
-- `main.txt` - Application-wide middleware hooks
+Render it with `php artisan rsx:man <topic>` and read the output: plain text, indentation
+intact, examples copyable.

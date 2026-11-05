@@ -1,6 +1,6 @@
 ---
 name: qr-codes
-description: "Generating a QR code with Rsx_Qr_Code::generate($text) - the returned {svg, size_px, size_in, modules}, embedding the inline SVG in a jqhtml or Blade template, and sizing it for a screen and for a printed sheet. Use when a page, label, ticket, badge, invoice or print sheet needs a QR code or a scannable link, when tempted to install a QR package or to call BaconQrCode directly, when asked for a QR image, PNG, data URI or <img> tag, or when a printed code will not scan or a code disappears in dark mode."
+description: "Generating a QR code with Rsx_Qr_Code::generate($text) - the {svg, size_px, size_in, modules} result, embedding the inline SVG, sizing for screen and print. Use when a page, label, ticket or print sheet needs a QR code, when tempted to install a QR package or call BaconQrCode, when asked for a QR PNG or data URI, or a printed code will not scan."
 ---
 
 # QR codes

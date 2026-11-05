@@ -1,6 +1,6 @@
 ---
 name: conformance-audits
-description: "Running and writing conformance audits - the library of review prompts (system/app/RSpade/conformance/, rsx/resource/conformance/) for contracts no lint rule can enforce, each walked on request by one read-only agent: listing them with rsx:conformance:list [--when=launch] [--severity=], dispatching one Sonnet agent per audit with rsx:conformance:show <id>, verifying every finding against the source before reporting, consulting rsx:conformance:for <path> before changing governed code, and authoring a new audit. Use when asked to \"run the conformance audits\", \"run the launch audits\", \"run conformance audit <id>\", to prepare a site for launch, when writing a new audit or adding an application audit in rsx/resource/conformance/, or when a conformance file fails to parse (\"does not open with a header\", \"unknown header key\", \"is declared twice\")."
+description: "Running and writing conformance audits - review prompts for contracts no lint rule enforces, one read-only agent per audit, via rsx:conformance:list [--when=launch], rsx:conformance:show and rsx:conformance:for <path>. Use when asked to run the conformance or launch audits, before changing code an audit governs, or when writing an audit."
 ---
 
 # Conformance audits

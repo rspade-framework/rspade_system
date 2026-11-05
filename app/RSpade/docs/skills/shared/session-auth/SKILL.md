@@ -1,6 +1,6 @@
 ---
 name: session-auth
-description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::verify_credentials() and login history, the site sign-in history (Site_Sign_In_History - one row per sign-in entering a site, impersonations included), the password_reset_required refusal (Auth_Password_Reset_Required_Exception, rsx:users:force_password_reset), account-state enforcement, "where you're signed in" screens over user sessions (get_sessions_for_user(), get_user_session_id(), Audit_Session::list_page_for_user_session()), self vs admin termination guards, session lifetime limits (rsx.sessions.staff / .portal max_length_minutes and max_idle_minutes, ajax_grace_minutes, unused_session_days, the session_expired envelope, Rsx.set_session_expired_handler()), realm-tagged session values (put_value staff/portal/guest), token rotation, get_session_id() being null in commands and tasks, the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, a \"you have been signed out\" dialog, an idle or absolute session timeout, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
+description: "Working with the Session facade and staff login - RsxAuth::verify_credentials() then RsxAuth::login(), Login_History, Login_Throttle, Auth_Throttled_Exception, get_session_id() vs has_session(), put_value(), get_sessions_for_user() / terminate_session(), session lifetimes, Login_Redirect / Login_Notice, begin_impersonation(). Use when building a login or logout page, a where-you're-signed-in screen or an account-status check, or on 'You're doing that too fast' or every visitor throttled at once (TRUSTED_PROXIES)."
 ---
 
 # Sessions and Login
@@ -77,6 +77,16 @@ public static function index(Request $request, array $params = [])
 }
 ```
 
+**The login page's fields carry autofill tokens and stable ids** - the identifier
+`id="email" autocomplete="username"` (even on `type="email"`), the password
+`id="password" autocomplete="current-password"`, a password being chosen `new-password`, and a
+form that sets a password also carries the account identifier as a `username` field (hidden or
+read-only). A password manager reads the token first and the id second; an id-matching one
+replays a saved id with an unescaped `'#' + id`, so a jqhtml `<sid>:<cid>` id fills nothing -
+a jqhtml field uses `$autofill_id` (`rsx:man jqhtml`, AUTOCOMPLETE AND AUTOFILL). The template's
+rules and id convention: `system/app/RSpade/resource/reference_app/app/login/CLAUDE.md`,
+CREDENTIAL FIELDS.
+
 ### `RsxAuth::verify_credentials()` records the outcome itself
 
 `RsxAuth::verify_credentials(array $credentials, bool $record = true): ?Login_User_Model` checks an email + password pair and answers the identity or null. **It signs nobody in and touches no session** - `RsxAuth::login($identity)` is the only way into a staff session, so anything a sign-in still owes (a second factor, your own account-state question) runs BETWEEN the two, with the visitor still signed out; there is never a session to undo on a refusal. It classifies and records SUCCESS / FAILED_NOT_FOUND / FAILED_PASSWORD / FAILED_DISABLED - **it is the only place that can tell those apart**. So **never call `Login_History::record_success()` beside it** with the default `record: true`; you would record twice. `record: false` is the opt-out for a check that is not yet a login - one that still owes a second step, a fixture, a harness - and then YOU record the outcome when it is known.
@@ -126,7 +136,7 @@ Login_History::get_failed_attempts_count($email);     // within the failure wind
 Login_History::get_failed_attempts_count_by_ip($ip);  // same
 ```
 
-Successes, post-password refusals (`record_refusal()`) and passkey enrollment outcomes (written by `Rsx_Two_Factor`) are `_login_history` rows, pruned on `rsx.sessions.login_history_retention_days` (default 365). **Failures are ephemeral - no row at all**: a per-email and a per-IP counter expiring on `rsx.sessions.login_throttle.window_minutes` (default 15), plus one `Log::warning` line. `/login` is anonymous-reachable, and a persisted failure row was an unauthenticated INSERT anyone on the internet could drive.
+Successes, post-password refusals (`record_refusal()`) and passkey enrollment outcomes (written by `Rsx_Two_Factor`) are `_login_history` rows, pruned on `rsx.sessions.login_history_retention_days` (default 365). **Failures are ephemeral - no row at all**: a per-email and a per-IP counter expiring `Login_History::FAILURE_WINDOW_SECONDS` (15 minutes) after the first failure, plus one `Log::warning` line - and the same call feeds `Login_Throttle::record_failure()`. `/login` is anonymous-reachable, and a persisted failure row was an unauthenticated INSERT anyone on the internet could drive.
 
 Consequences you must design around: **a 30-day failed-attempt count is not answerable** - shrink such a stat to the window, or state the window in the label. And these counts are a **statistic, not the enforcement** - never build a second throttle on them (below).
 
@@ -144,7 +154,7 @@ try {
 
 **It THROWS rather than returning false**, because "we did not check" is not "those credentials are wrong" - a false would report an invalid password to a user whose password may be correct. `$e->retry_after_seconds` is for your logs and headers; the message deliberately tells the caller nothing else.
 
-A password is verified by `RsxAuth::verify_credentials()` or, on the portal, `Portal_Auth::verify_credentials($site_id, ...)` - both throttle-first. A path that checks some OTHER guessable secret (a PIN, an access code) and records to neither history does both halves itself - `Login_Throttle::require_not_throttled($account)` before the check, `Login_Throttle::record_failure($account)` on the miss. **Never pair `record_failure()` with a `Login_History::record_failure()` on the same event** - that counts twice.
+**Who counts a failure - exactly one call per failed event.** `Login_Throttle` holds the counters and `require_not_throttled()` refuses; it never records anything itself. `Login_History::record_failure()` (and `Portal_Login_History::record_failure()`) is the recording call for a sign-in outcome, and it calls `Login_Throttle::record_failure()` internally - so recording the outcome IS counting it. A password is verified by `RsxAuth::verify_credentials()` or, on the portal, `Portal_Auth::verify_credentials($site_id, ...)` - both throttle-first and both recording their own misses. A path that verifies a password ITSELF calls `Login_Throttle::require_not_throttled($account)` first and records the miss through `Login_History::record_failure()` only. A path that checks some OTHER guessable secret (a PIN, an access code) and records to neither history does both halves itself - `Login_Throttle::require_not_throttled($account)` before the check, `Login_Throttle::record_failure($account)` on the miss. **Never pair `record_failure()` with a `Login_History::record_failure()` on the same event** - that counts twice.
 
 Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (8), `seconds` (60) - loose on purpose: Turnstile and second factors protect accounts, and this only stops a flood of automated attempts. Uncaught, `Auth_Throttled_Exception` is an HTTP 429 (Ajax: `too_many_requests`); a login function catches it and answers an ordinary 200 form error. **A caller with no client IP is never throttled** - CLI, tasks and tests have no remote party to throttle. The client IP is `Session::get_client_ip()` = `$request->ip()`: X-Forwarded-For counts only through a trusted proxy (loopback plus `rsx.http.trusted_proxies`: `TRUSTED_PROXIES` from `.env`, else the container's `RSPADE_TRUSTED_PROXIES`, else loopback only), so **a box behind a load balancer must list it** or every visitor shares one bucket. Never read a forwarding header yourself. **Fail closed**: a cache error propagates and the login fails loud; only maintenance mode (redis deliberately stopped) leaves the throttle inert.
 
@@ -392,6 +402,7 @@ Never write a one-off script or raw SQL for either: a hand-written `UPDATE login
 - **A user is still signed in after their APP status changed.** `verify_credentials()` only guards the sign-in. Enforce your statuses in `Main::pre_dispatch()` too, and terminate their sessions when you change them (`users.is_enabled` needs neither - the framework ends those sign-ins itself).
 - **Failed-attempt count reads zero for a user you know just failed.** The 15-minute window elapsed, or the cache was restarted. Both are expected - the counters are ephemeral, and they are a statistic rather than the enforcement.
 - **A login form reports "invalid email or password" for a correct password.** The attempt was throttled and the `Auth_Throttled_Exception` was swallowed into the same branch as a credential miss. Catch it separately and show `$e->getMessage()`.
+- **A sign-in page needs to say "You have been logged out" or "This invitation has expired".** That is a `Login_Notice` code beside `Login_Redirect::params()`, never a flash (lost on a second hop) and never free text in the URL - `references/login-redirect.md`.
 - **A test or command "cannot log in any more".** It cannot be the throttle: CLI has no client IP and is never throttled. Clear a real throttle with `Login_Throttle::reset($account, $ip)`.
 - **A user reports being signed out "for no reason".** Their entry in `get_sessions_for_user()` carries the reason: a limit (8 hours idle / 7 days by default), ended from another device or by an administrator, the session cap, another account signing in on that browser, a membership disabled.
 - **A "where you're signed in" list shows another person's sign-in on a shared computer.** It cannot - entries are per account. Two accounts on one browser are two user sessions, each listed only for its own account.
@@ -404,6 +415,6 @@ Never write a one-off script or raw SQL for either: a hand-written `UPDATE login
 ## Two subsystems with their own references
 
 - **CSRF** - fully automatic; there is nothing to write. `references/csrf.md`.
-- **Intended-URL redirect** - `Login_Redirect`, the one sanitizer; wire every hop. `references/login-redirect.md`.
+- **Intended-URL redirect** - `Login_Redirect`, the one sanitizer; wire every hop. The sign-in page's sentence is a `Login_Notice` code. `references/login-redirect.md`.
 
 Details: `php artisan rsx:man session`, `rsx:man auth`. Related: `rspade:auth-gates`, `rspade:permissions-acl`, `rspade:portal-core`, `rspade:turnstile`.

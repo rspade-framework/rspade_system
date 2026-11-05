@@ -1,6 +1,6 @@
 ---
 name: application-modes-deployment
-description: "Building, sealing and deploying an RSpade app - the three application modes, rsx:build as the one build path, the rsx:prod:enable/disable/verify lifecycle, the build/ tmp/ storage/ split and its read-only production posture, what the seal pins, strict production vs the --debug variant, the determinism contract that makes a build cluster-shareable, and diagnosing a refusal or verify drift. Use when taking an app to production, reproducing a prod-only bug locally, deploying new code onto a sealed host, or debugging \"This production build is unsealed\", \"A sealed production build is already present\", \"Refusing to clean a production build tree without --force\", or \"is a build artifact, and only a build may write it\"."
+description: "Building, sealing and deploying - the three modes, rsx:build as the one build path, rsx:prod:enable / disable / verify, the build/ tmp/ storage/ split, what the seal pins, --debug vs strict production. Use when going to production, reproducing a prod-only bug, deploying onto a sealed host, or on 'This production build is unsealed', 'A sealed production build is already present' or 'only a build may write it'."
 ---
 
 # Application modes and deployment
@@ -113,6 +113,10 @@ Building elsewhere (a CI artifact, a container image) works because of determini
 ### The environment gate
 
 **There is no environment to validate.** `RSX_MODE` is the single mode switch and Laravel's `app.env` / `app.debug` derive from it (`config/app.php`); the `APP_ENV` / `APP_DEBUG` env keys are not read anywhere. Setting `RSX_MODE=production` IS the production environment with debug off, so `rsx:prod:enable` has no environment pre-check and `rsx:prod:verify` carries no environment rows - a mode that disagrees with the seal shows up as seal drift.
+
+### The development container gate
+
+**In DEVELOPMENT mode `artisan` runs inside the RSpade container or not at all**: a pre-boot gate (`system/bootstrap/rsx_container_gate.php`, required by the shared pre-boot sequence of `artisan` and `script.php`) refuses when the marker `/.rspade_container` is absent and prints the `docker compose exec` line for the command that was typed. Development mode is a promise about the machine (supervised MySQL for the migrate snapshot, the task ticker, the realtime relay, the lock daemon), and one refusal at the entrypoint replaces a scatter of symptom errors. **Scope: CLI only, development only** - debug and production run outside a container normally, and the web entrypoint is never gated. Either image (dev or prod) satisfies it; `migrate` separately reads `/.rspade_container_dev` to decide whether it snapshots.
 
 ---
 

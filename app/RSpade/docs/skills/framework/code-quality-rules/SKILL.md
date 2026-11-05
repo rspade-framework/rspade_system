@@ -1,6 +1,6 @@
 ---
 name: code-quality-rules
-description: "Writing and changing an RSpade code-quality rule against the driver contract - kind() per_file vs cross_file, depends_on() and fingerprint_extra(), the Manifest_Rule_Driver loop, Source_Cache (content/tokens/ast/class_node/declared_members - a rule never opens, parses or caches a file), the Validation_Ledger and its derived slots, where a build-time memo may live, @RULE-ID-EXCEPTION markers, and the tests/code_quality conventions. Use when adding a rule under CodeQuality/Rules/ or an application's own APP- rule, making one manifest-time, diagnosing a rule that stopped firing or one that is slow on a cold build, or hitting Rule_Private_Cache_Test, Rule_Discovery_Depth_Test, or shouldnt_happen('Manifest::get_build_key() called before manifest was loaded')."
+description: "Writing an RSpade code-quality rule - CodeQualityRule_Abstract under CodeQuality/Rules/ or an app's APP- rule, kind() per_file vs cross_file, depends_on(), Source_Cache (a rule never opens or parses a file), Manifest_Rule_Driver, @RULE-ID-EXCEPTION markers. Use when adding or changing a rule, making one manifest-time, a rule stops firing or is slow on a cold build, or Rule_Private_Cache_Test / Rule_Discovery_Depth_Test fails."
 ---
 
 # Writing a code-quality rule

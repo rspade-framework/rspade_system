@@ -1,6 +1,6 @@
 ---
 name: locks-and-subprocesses
-description: "RsxLocks and Rsx_Artisan - cluster vs system locks, named and per-site read/write locks, counting semaphores, wait-forever semantics, FIFO grants and deadlock refusal, lock groups, releasing locks at a task boundary, lock descriptors never inherited by a long-lived child, the task worker's separate pool connection, and the mandate that every artisan subprocess is spawned through Rsx_Artisan. Use when serializing a critical section, guarding a shared resource or tenant, capping concurrency, spawning an artisan command from PHP, asking why locks carry no lease or TTL, finding out who held a lock that timed out (RsxLocks::set_lock_logging, lockd.js log on - the daemon's live event log), or debugging a hang or a \"lock daemon restarted\" warning."
+description: "Serializing work with RsxLocks and spawning artisan with Rsx_Artisan - cluster vs system locks, named and per-site read/write locks, semaphores, wait-forever with no lease or TTL, deadlock refusal, lock groups, ARTISAN-SPAWN-01. Use when guarding a critical section or tenant, capping concurrency, spawning php artisan from PHP, finding who held a lock (RsxLocks::set_lock_logging), or on a hang or 'lock daemon restarted'."
 ---
 
 # Locks and Subprocesses

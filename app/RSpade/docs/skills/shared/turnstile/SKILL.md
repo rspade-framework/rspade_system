@@ -1,6 +1,6 @@
 ---
 name: turnstile
-description: "Wiring Cloudflare Turnstile human verification into a form and its endpoint - the TURNSTILE_* .env keys, <Turnstile_Input /> placement, Rsx_Turnstile::validate() as the first statement of the POST branch, the __turnstile field contract and 'inactive' sentinel, the rsx.post_dispatch completeness guard, and the dummy-key dev recipe. Use when adding bot protection to a login, registration, password-reset or public contact form, when a submit fails with \"Turnstile implementation incomplete\", or when a token is rejected as already spent."
+description: "Wiring Cloudflare Turnstile into a form and its endpoint - the TURNSTILE_* keys, <Turnstile_Input />, Rsx_Turnstile::validate() as the first statement of the POST branch, the __turnstile field and 'inactive' sentinel, the dummy-key dev recipe. Use when adding bot protection to a login, reset or public form, or on 'Turnstile implementation incomplete' or a token rejected as already spent."
 ---
 
 # Turnstile
@@ -33,8 +33,8 @@ TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA     # server-only, neve
 
 ```jqhtml
 <Rsx_Form $controller="Login_Controller" $method="submit">
-    <Form_Field $label="Email"><Text_Input $name="email" $max_length=255 /></Form_Field>
-    <Form_Field $label="Password"><Text_Input $name="password" $type="password" $max_length=255 /></Form_Field>
+    <Form_Field $label="Email"><Text_Input $name="email" $max_length=255 $autofill_id="email" $autocomplete="username" /></Form_Field>
+    <Form_Field $label="Password"><Text_Input $name="password" $type="password" $max_length=255 $autofill_id="password" $autocomplete="current-password" /></Form_Field>
 
     <Turnstile_Input />
     <button type="submit" class="btn btn-primary">Sign In</button>

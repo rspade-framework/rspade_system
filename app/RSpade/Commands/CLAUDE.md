@@ -87,23 +87,11 @@ it.
 Use `--_` only for a switch whose caller is the updater or another framework command. A
 user-facing flag stays an ordinary option.
 
-## Spawning artisan from PHP
+## Spawning and shelling out
 
-Always `App\RSpade\Core\Console\Rsx_Artisan` (`passthru` / `run` / `dispatch_detached`) -
-never `passthru`/`exec_safe`/`shell_exec`/`proc_open` with an artisan command line
-(`ARTISAN-SPAWN-01`). The synchronous forms attach `--_lock-group` so the child joins the
-parent's lock group instead of deadlocking behind it. In-process `Artisan::call()` needs
-none of this.
-
-## Streaming vs capturing output
-
-`\exec_safe()` is the sanctioned wrapper but it **buffers to EOF** - a long dump or restore
-prints nothing until it finishes. When the operator needs to watch progress, use
-`\passthru('bash -c ' . escapeshellarg($pipeline), $exit_code)`. Explicit `bash -c` is
-mandatory: `passthru()` otherwise hands the line to `/bin/sh`, which is dash here.
-
-Credentials go in the **environment** (`putenv('MYSQL_PWD=...')` around the call), never in
-the command string, where `ps` shows them to every user on the box.
+Artisan is spawned only through `Rsx_Artisan` (`ARTISAN-SPAWN-01`; skill
+`rspade:locks-and-subprocesses`). Any other command line runs under explicit bash; streaming
+vs capturing output and keeping credentials out of `ps`: skill `rspade:shell-invocation`.
 
 ## THE MIGRATION SCHEMA CACHE IS NEVER REGENERATED ON DEMAND
 

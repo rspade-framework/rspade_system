@@ -7,7 +7,9 @@ declares `$explicit_group_only`, so a bare suite run passes over them and says s
 **Run them only when a change meaningfully alters the proxy's behaviour**: the scheduler (caps,
 priority, round robin, slot release), request classification (media, robots, revalidation,
 loopback, whitelist patterns), streaming and buffering, header forwarding, the timeouts, the
-whitelist refresh, or the status socket and its CLI. Then run them once, on purpose, and read the
+whitelist refresh, the status socket and its CLI, or the close/open control (the closure,
+draining admitted requests, loopback pass-through, the dead-closer reopen;
+`Proxority_Control_Test`). Then run them once, on purpose, and read the
 output:
 
     php artisan rsx:test --framework --group=proxority

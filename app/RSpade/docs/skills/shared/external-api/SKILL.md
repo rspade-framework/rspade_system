@@ -1,6 +1,6 @@
 ---
 name: external-api
-description: "Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the key's own session, param validation, response contract, versioning, key scopes (bare path patterns in _api_keys.scopes), file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version (#[Api_Versions], through:, #[Api_Resource], @api-deprecated, Api_Route_Usage, rsx:api:openapi --api-version), uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, narrowing a key with scopes or scope presets (config('rsx.api.scope_presets')) or with the read-only flag (--read-only, _api_keys.read_only), or diagnosing a 401 before route match, a 403 insufficient_scope, a 403 read_only_key, an API-GET-PURE-01 manifest-build failure, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument."
+description: "Building external REST endpoints - #[Api_Endpoint] + #[Api_Param] on Rsx_Api_Controller_Abstract under /api/vN/, Bearer rsx_ keys, rsx:api:key:create, key scopes and --read-only, POST /api/v1/files, /apidocs. Use when exposing an API or minting a key, or on a 401, 403 insufficient_scope, 403 read_only_key, a 422 on an undeclared param, API-GET-PURE-01, or a scan dying on an attribute argument."
 ---
 
 # External API

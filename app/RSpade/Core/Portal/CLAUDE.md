@@ -23,6 +23,8 @@ the application half lives in `rsx/portal/` (which has its own CLAUDE.md).
   `is_separate_host()` answer for the current site and throw without one;
   `client_payload()` is `window.rsxapp.portal`. `Rsx_Portal::Route()`/`portal_path()` take
   `site_id:` and answer false; inside a portal request they use the request's base.
+  `PORTAL_CUSTOM_DOMAINS=override|only` FAILS the manifest build in single tenancy: one
+  portal, addressed only by `PORTAL_URL`, and `sites.portal_domain` is ignored.
 - `Portal_Site_Resolver.php` — which site a portal request serves, read from its host and
   path (custom domain, then the template); the verdict (served / 301 / not served); cached
   site lookups forgotten by `Site_Model`'s hooks; the host patterns both hostname guards

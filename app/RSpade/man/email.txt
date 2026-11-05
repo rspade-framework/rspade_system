@@ -136,8 +136,10 @@ WRITING AN EMAIL
 
         {!! \App\RSpade\Core\Mail\Rsx_Mail_Layout::footer($unsubscribe_url ?? null) !!}
 
-    THE THREE MANDATORY MEMBERS. Each is a manifest-build FATAL when absent, with a
-    per-class worklist (Email_ManifestSupport):
+    THE FOUR MANDATORY MEMBERS. A missing const CATEGORY or static sample() is a
+    manifest-build FATAL naming the class (Email_ManifestSupport); subject(), data()
+    and sample() are abstract on Rsx_Email_Abstract, so PHP itself refuses a concrete
+    email class without them:
 
         const CATEGORY      TRANSACTIONAL | NOTIFICATION | MARKETING | SECURITY. There is no default
                             because there is no safe one: TRANSACTIONAL over-delivers to
@@ -152,7 +154,9 @@ WRITING AN EMAIL
                             touching the database wherever the data allows: an unsaved model
                             carrying the handful of fields the template reads is enough.
 
-    A blade whose @rsx_id does not equal the class basename is the third FATAL.
+    The manifest-build FATALs are three: no const CATEGORY (or one that is not a
+    category constant), no static sample(), and no blade whose @rsx_id equals the
+    class basename. A duplicate class basename is fatal too.
 
     ONE OPTIONAL MEMBER, tag(). An email class that carries more than one KIND of message
     (one notification email for every notification type, an invitation with a new-account

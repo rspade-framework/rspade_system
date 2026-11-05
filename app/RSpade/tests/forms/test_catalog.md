@@ -114,6 +114,29 @@ Real keyboard input on a runtime-mounted widget on `/_sys`.
 | forms-code-07 | Enter with every box full | Enter | not prevented | implemented |
 | forms-code-08 | the input contract | `val('')`, `focus()`, `val('00a42')` | cleared, cursor in box 1, `0042`; `input` carried the value; no `maxlength`, one `one-time-code` | implemented |
 
+## credential_autofill.js (playwright) - credential fields keep a stable id
+
+A password manager that remembers a field by its id needs an id that is the same on every render
+and works unescaped in `'#' + id`; the jqhtml `<sid>:<cid>` id is neither. jqhtml's `$autofill_id`
+gives a `$sid` field exactly the id (and name) it is handed, and the framework's credential inputs
+forward a caller's `$autofill_id` to their inner field. The framework also configures jqhtml's
+`autocomplete_off`, so a template-written field that declares no token renders `"off"`. Raised by
+a downstream field report (2026-11-05): a password manager saved a form's generated ids and,
+replaying them as unescaped selectors on the sign-in page, filled nothing.
+
+Runtime-mounted on `/_sys`, once as the page is served and once after the in-page
+`jqhtml.configure({mode: 'production', autocomplete_off: true})` a production page makes.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| forms-autofill-01 | the integration turns `autocomplete_off` on | `jqhtml.get_config()` | `autocomplete_off === true` | implemented |
+| forms-autofill-02 | a field declaring no token is "off" | `_Sys_Text_Input` | `autocomplete="off"` | implemented |
+| forms-autofill-03 | id and name are the `$autofill_id` | `<Password_Input $autofill_id="password">` | `id` and `name` are `password`, `autocomplete="current-password"`, `#password` matches exactly the field | implemented |
+| forms-autofill-04 | the component still reaches its field | the same | `$sid('field')` resolves it; `val()` writes and reads; typing fires `input` with the value; a re-render keeps the id and the lookup | implemented |
+| forms-autofill-05 | the code's first box takes the id | `<Code_Input $autofill_id="code">` | first box `code` / `one-time-code`, the rest `off` with no id; `$sid('first_box')` resolves it; `val('123456')` complete | implemented |
+| forms-autofill-06 | no `$autofill_id`, no change | `<Password_Input>` | the scoped `field:<cid>` id | implemented |
+| forms-autofill-07 | nothing complained | the whole run | no jqhtml autofill warning, no page error | implemented |
+
 ## field_length_script.js (playwright) - `Model.field_length()` reads the page's script
 
 `/_sys`, the framework's `User_Model`.

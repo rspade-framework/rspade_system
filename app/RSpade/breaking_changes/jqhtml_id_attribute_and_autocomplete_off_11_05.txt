@@ -1,0 +1,54 @@
+JQHTML TEMPLATES MAY NOT WRITE id=""; FIELDS WITH NO AUTOCOMPLETE TOKEN RENDER "off"
+Date: 2026-11-05
+
+IF YOU DO NOTHING: every template of yours that writes a literal id="" (the template's sidebar_nav.jqhtml did) fails to compile under jqhtml 2.4.4, so every page whose bundle carries it answers a 500 ("JQHTML compilation failed: id="" is not allowed"); and every input or textarea your templates write without an autocomplete token now renders autocomplete="off", including a jqhtml sign-in or change-password form, which password managers then fill poorly.
+
+SUMMARY
+    Category 1 (a /rsx/ template change) plus a template-syntax change.
+
+    jqhtml 2.4.4 owns an element's id: a template never writes id="" (the
+    compiler refuses it); an element is reached with $sid, and a form field
+    that needs a STABLE id and name for autofill declares $autofill_id (only
+    on an <input>/<textarea>/<select> that also carries $sid). The framework
+    also turns on jqhtml's autocomplete_off, so a template-written <input> or
+    <textarea> with no autocomplete attribute and no $autofill_id renders
+    autocomplete="off". A credential field therefore states its token
+    (username, current-password, new-password, one-time-code).
+
+AFFECTED FILES
+    Any /rsx/**/*.jqhtml that writes id="..."
+    /rsx/theme/components/navigation/sidebar/sidebar_nav.jqhtml
+    /rsx/app/frontend/Frontend_Spa_Layout.jqhtml (and any layout whose menu
+        toggle targets #sidebarNav)
+    /rsx/theme/components/inputs/text/text_input.jqhtml
+    Your credential pages (sign-in, verify, accept invite / register, password
+        reset, change password)
+
+CHANGES REQUIRED
+
+    1. Find the ids:   grep -rn ' id="' rsx --include='*.jqhtml'
+       Replace each with $sid="name" (read it with this.$sid('name')), or
+       target the element by its class. The template's sidebar:
+
+         <Define:Sidebar_Nav class="navbar-collapse d-desktop-block collapse" id="sidebarNav">
+       becomes
+         <Define:Sidebar_Nav class="navbar-collapse d-desktop-block collapse">
+
+       and the layout's toggle data-bs-target="#sidebarNav" becomes
+       data-bs-target=".Sidebar_Nav".
+
+    2. Port the reference Text_Input's forwarding of $autofill_id,
+       $autocomplete and $readonly onto its inner <input $sid="input">:
+       system/app/RSpade/resource/reference_app/theme/components/inputs/text/text_input.jqhtml
+
+    3. Give every credential field its token and stable id, following the
+       "Credential fields" section of
+       system/app/RSpade/resource/reference_app/app/login/CLAUDE.md
+       (and portal/auth/CLAUDE.md for the portal). A form that sets a
+       password also carries the account identifier as a username field.
+
+VERIFICATION
+    Every signed-in page renders (rsx:debug /). On each credential page the
+    fields carry the expected autocomplete tokens and ids with no colon, and
+    the console shows no "[JQHTML] ... $autofill_id but no autocomplete"
+    warning. rsx:man jqhtml, AUTOCOMPLETE AND AUTOFILL.

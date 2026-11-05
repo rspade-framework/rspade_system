@@ -1,6 +1,6 @@
 ---
 name: framework-updates
-description: "Updating the RSpade framework in a downstream application - what rsx:framework:pull actually does end to end, why all of system/ is framework property that every update overwrites, the flags that exist and the ones that no longer do, the one-time conversion from the vendored tree to a git submodule and why it only happens inside the container, cloning a project so system/ is populated, the environment updates that self-apply after a pull, consuming breaking_changes documents, and rsx:framework:status. Use when running or recovering a pull, reading its output, cloning a project with an empty system/, or reacting to a breaking-change notice."
+description: "Updating the framework downstream with rsx:framework:pull - what it does end to end, why all of system/ is overwritten, its flags, the one-time conversion to a git submodule, cloning so system/ is populated, the self-applying environment updates, breaking_changes documents, rsx:framework:status. Use when running or recovering a pull, cloning a project with an empty system/, or reacting to a breaking-change notice."
 ---
 
 # Framework updates

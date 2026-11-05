@@ -104,6 +104,21 @@ PRIMARY NAVIGATION
             Called by layout to update active link highlighting.
             Matches current URL to nav item hrefs.
 
+        follow_trail(meta):
+            Called by the layout with the breadcrumb resolver's meta (from
+            on_chain and from the Spa_Layout.on_breadcrumb_complete() hook).
+            When meta.grafted is true - the page was reached through a
+            breadcrumb origin - items are matched against meta.root_url, the
+            URL the TRAIL starts at, and only when none matches against the
+            current URL. A plain trail changes nothing.
+
+                on_breadcrumb_complete(chain, meta) {
+                    this.sid('sidebar_nav').follow_trail(meta);
+                }
+
+        An application with its own sidebar does the same from its layout's
+        on_breadcrumb_complete(chain, meta). See rsx:man breadcrumb_origins.
+
 SECONDARY NAVIGATION (SUBLAYOUTS)
     Secondary navigation is used for feature areas with multiple related
     pages (e.g., Settings). Implemented as sublayouts with their own sidebar.
@@ -208,6 +223,16 @@ BREADCRUMB SYSTEM
         breadcrumb_parent()
             Returns the URL of the parent page, or null for root.
             Example: Rsx.Route('Contacts_View_Action', { id: this.args.id })
+
+    Alternate Parents:
+        A page that legitimately lives in two places - an invoice under
+        Billing, and under the engagement it was opened from - keeps its
+        home parent in breadcrumb_parent() and declares the ORIGINS it
+        accepts: static breadcrumb_via = ['engagement'] plus
+        breadcrumb_parent_via(via), which verifies the claim and names the
+        alternate parent. The link that starts the detour carries the origin
+        in the reserved _via query parameter (Spa.via_push()). See
+        rsx:man breadcrumb_origins.
 
     Example Implementation:
         class Contacts_View_Action extends Spa_Action {
@@ -355,29 +380,56 @@ RSX_BREADCRUMB_RESOLVER
                 action    - Current Spa_Action instance
                 url       - Current URL (pathname + search)
                 callbacks - Object with callback functions:
-                    on_chain(chain)           - Chain structure ready
+                    on_chain(chain, meta)     - Chain structure ready
                     on_label_update(idx, lbl) - Individual label resolved
-                    on_complete(chain)        - All labels resolved
+                    on_complete(chain, meta)  - All labels resolved
+
+                meta = {grafted, root_url, decider}
+                    grafted  - a breadcrumb origin replaced a parent somewhere
+                               in the trail
+                    root_url - the URL the trail starts at (chain[0].url)
+                    decider  - the page that accepted the URL's first origin,
+                               '<Action_Class>@<url without _via or hash>',
+                               or null
 
             Returns: Cancel function
+
+            On completion every layout in the chain also receives
+            Spa_Layout.on_breadcrumb_complete(chain, meta), whichever layout
+            streamed it.
+
+        Rsx_Breadcrumb_Resolver.settle_via(action, url, navigation)
+            The keep/strip decision for a URL's _via, once per action (Spa
+            calls it for every action it creates; stream() awaits it). See
+            rsx:man breadcrumb_origins, CARRYING AND STRIPPING.
 
         Rsx_Breadcrumb_Resolver.clear_cache(url)
             Clears cached breadcrumb chain for a URL.
 
     Resolution Flow:
-        1. Check session cache for URL's breadcrumb chain
-        2. If cached, display immediately
-        3. Walk breadcrumb_parent() chain to get structure (URLs)
-        4. Compare to cache:
+        1. When the URL carries a _via, wait for the keep/strip decision:
+           nothing is emitted before it, and the walk continues with the URL
+           it left (the kept trail is reused; a stripped URL is walked again
+           without _via)
+        2. Check session cache for URL's breadcrumb chain
+        3. If cached, display immediately
+        4. Walk breadcrumb_parent() chain to get structure (URLs) - a page
+           accepting a pending origin answers through breadcrumb_parent_via()
+           instead. A parent URL already in the trail ends the walk (a loop),
+           and so does a depth of 20, each with a console warning
+        5. Compare to cache:
            - Different length: render skeleton with blank labels
            - Same length: render with cached labels
-        5. Resolve each label via breadcrumb_label()/breadcrumb_label_active()
-        6. Update display as each label resolves
-        7. Cache final result
+        6. Resolve each label via breadcrumb_label()/breadcrumb_label_active()
+        7. Update display as each label resolves
+        8. Cache final result, call on_complete and every layout's
+           on_breadcrumb_complete()
 
     Caching:
         Uses Rsx_Storage.session_set/get() with key prefix 'breadcrumb_chain:'
-        Cached data: Array of { url, label, is_active }
+        Cached data: { chain: [{ url, label, is_active }, ...], meta }
+        Keyed by the full URL, so a grafted (_via) and a plain chain for the
+        same page never share an entry.
 
 LAYOUT INTEGRATION
     The layout handles header rendering and breadcrumb streaming.
@@ -525,11 +577,11 @@ CACHING STRATEGY
 
     Breadcrumb Chain Cache:
         Key: 'breadcrumb_chain:/contacts/edit/1'
-        Value: [
+        Value: { chain: [
             { url: '/contacts', label: 'Contacts', is_active: false },
             { url: '/contacts/view/1', label: 'John Smith', is_active: false },
             { url: '/contacts/edit/1', label: 'Edit Contact', is_active: true }
-        ]
+        ], meta: { grafted: false, root_url: '/contacts', decider: null } }
 
     Cache Behavior:
         - Cached values display immediately on navigation
@@ -551,6 +603,7 @@ FILES
         Primary sidebar navigation component
 
 SEE ALSO
+    rsx:man breadcrumb_origins
     rsx:man spa
     rsx:man jqhtml
     rsx:man storage

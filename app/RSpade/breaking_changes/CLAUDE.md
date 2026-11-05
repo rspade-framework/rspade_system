@@ -176,11 +176,10 @@ If there is nothing for them to change, there is no document.
 
 ## Audience
 
-The audience is a developer who:
-- Forked the `/rsx/` starter template weeks or months ago
-- Has been building their own application on top of it
-- Wants to incorporate improvements we've made to the starter template
-- Needs to know the EXACT file paths and code changes to make
+The reader forked the `/rsx/` starter template weeks or months ago, has built an application
+on it, and has just pulled a framework release. They did not follow our work and should not
+have to: the document exists because something in THEIR code must now change (THE GATE), and
+it tells them exactly what, where, and how to tell it is done.
 
 ## Consumption Side (Downstream Tracking)
 
@@ -254,13 +253,10 @@ Category 1, and usually no document at all).
 
 ## What the Document Must Contain
 
-The document must provide everything needed to replicate the change:
-
-1. **AFFECTED FILES** - Exact file paths in `/rsx/` that were changed
-2. **WHAT CHANGED** - The specific code additions, modifications, or deletions
-3. **HOW TO APPLY** - Step-by-step instructions or copy-paste code blocks
-
-The goal is: a user can read the document and make the exact same changes to their fork without needing to diff files or guess what changed.
+Everything the reader needs to act without diffing anything or guessing: the `IF YOU DO
+NOTHING:` line, then the category's structure below. Category 1 carries the exact code to
+change in their `/rsx/` files; Category 2 names the calls, members or defaults to audit in
+their own code; Category 3 maps the reference implementation for a port.
 
 ## File Naming Convention
 
@@ -376,4 +372,6 @@ VERIFICATION
 
 ## Key Principle
 
-**Show the code.** Don't just describe what changed - show the exact lines to add or modify. Users should be able to copy-paste from the document into their files.
+**Be concrete about THEIR code.** Name the call shape, the member, the file path, the
+symptom - and where code must be copied (Category 1), show the exact lines. A document a
+reader has to interpret is a document they will skip.

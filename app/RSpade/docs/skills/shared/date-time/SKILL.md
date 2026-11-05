@@ -1,6 +1,6 @@
 ---
 name: date-time
-description: "Working with dates and times in RSX using Rsx_Time and Rsx_Date classes. Use when formatting dates/times for display (format_timestamp(), format_timestamp_short(), format_time_range(), a zone suffix like IST only when it is not the viewer's, the rsx.datetime.display patterns, "uses the letter ... which RSpade date patterns do not support"), deciding whether a timezone lives on login_users or users, reading the zone recorded on a sign-in or audit session (timezone_source), handling user timezones (the per-request resolution, the rsx_tz browser cookie, NULL = automatic, rsx.datetime.default_user_timezone), working with datetime columns, the external API's __localized / __localized_tz timestamp companions and Rsx_Time::encode_for_output(), converting between formats, or displaying relative times like \"2 hours ago\"."
+description: "Formatting dates and times with Rsx_Time (moments) and Rsx_Date (calendar dates), identical in PHP and JS - format_timestamp(), format_timestamp_short(), format_time_range(), the per-request user timezone (login_users.timezone, the rsx_tz cookie), Rsx_Time::encode_for_output(). Use when displaying a date, a time or '2 hours ago', handling a timezone, or on 'which RSpade date patterns do not support'."
 ---
 
 # RSX Date & Time Handling
@@ -41,6 +41,8 @@ Carbon is used internally for calculations, never exposed externally.
 - DATETIME columns → `Rsx_DateTime_Cast`
 
 **Never define** `$casts` with `'date'`, `'datetime'`, or `'timestamp'` - these use Carbon and are blocked by `rsx:check`.
+
+**So a model attribute is ALREADY an ISO string, never a Carbon object** - `$model->created_at->format(...)` and `->toIso8601String()` fail; pass the string straight to `Rsx_Time::format_timestamp($model->created_at)`.
 
 ---
 

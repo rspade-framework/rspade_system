@@ -35,10 +35,17 @@ bundle)**
   loader. Statics are the live state: `routes`, `layout`, `_action` (read through `Spa.action()`,
   which falls back to `$('.Spa_Action')`), `route`, `params`.
 - `Spa_Action.js` - the page. `on_load()`, static/instance `url()` + `dispatch()`, the title ladder
-  (`page_title()`, `get_static_title()`, `await_loaded()`) and the breadcrumb trio.
+  (`page_title()`, `get_static_title()`, `await_loaded()`), the breadcrumb trio, and the empty
+  breadcrumb-origin pair (`static breadcrumb_via = []`, `breadcrumb_parent_via()` returning null).
+- `Spa_Via.js` - the grammar of the reserved `_via` parameter (breadcrumb origins,
+  `rsx:man breadcrumb_origins`): parse/serialize a token list, and add/remove the parameter
+  without touching the rest of a URL. Pure; the behaviour lives in `Spa.js` (carrying, the
+  new-tab href rewrite, `Spa.via()` / `Spa.via_push()`) and in
+  `Breadcrumbs/Rsx_Breadcrumb_Resolver.js` (the walk, `settle_via()` - the keep/strip decision).
 - `Spa_Layout.js` - the persistent wrapper. `$content()` (i.e. `$sid('content')`),
   `resolve_page_title(paint, placeholder)` - the ONE way a layout obtains a title - the
-  `on_action(url, action_name, args)` hook, and `show_debug_exception()`.
+  `on_action(url, action_name, args)` hook, the `on_breadcrumb_complete(chain, meta)` hook (called
+  on every layout by the resolver when a trail completes), and `show_debug_exception()`.
 - `Spa_Decorators.js` - seven `/** @decorator */` functions, each storing one static on the class:
   `route` -> `_spa_routes[]`, `layout` -> `_spa_layouts[]` (unshift, because decorators run
   bottom-up and the array is outermost-first), `spa` -> `_spa_controller_method`, `title` ->
@@ -88,6 +95,22 @@ works); ORM cache reset and the `spa_dispatch_start` trigger; the four hand-offs
 `_navigate_away()` (external host, same URL under `history: 'auto'`, no route match, and an action
 whose `@spa` names a different bootstrap than the loaded one); history push/replace; the `@auth`
 gate; `_resolve_layout_chain()`; `Rsx.validate_session()` on every navigation after the first.
+
+**Breadcrumb origins ride the dispatch.** `match_url_to_route()` deletes `_via` from the args, so
+no action (and no cache key) ever sees it. `_carry_via()` runs after the URL is made relative:
+it copies the current `_via` onto a target route of this SPA that names none (unless
+`{via: false}`) and labels the arrival `explicit` / `carried` / `restored` (popstate) / null.
+`Spa._via_navigation = {arrival, previous}` is set before the layout chain is resolved -
+`previous` is the LEAVING action's `_spa_via_settlement` promise for a carried hop, or the
+entry's `history.state.via_decider` for Back/Forward - and `_resolve_layout_chain()` calls
+`Rsx_Breadcrumb_Resolver.settle_via(action, url, Spa._via_navigation)` the moment the action
+exists, before any layout's `on_action()`. That decision rewrites the entry with
+`replaceState` (kept: canonical `_via` + `via_decider`; stripped: no `_via`), so
+`_last_committed_url` is read back from `window.location` at the end of a dispatch rather than
+from the parsed target. `setup_browser_integration()` also rewrites an in-app link's href on
+mousedown / auxclick / contextmenu / Enter (`_rewrite_link_via()`, marked
+`data-spa-via-carried`), and a click on a marked link dispatches its href WITHOUT `_via`, so the
+hop is judged as carried.
 
 The one popstate that does NOT reach `dispatch()` is a fragment-only move: when the new location
 keeps the path and query of `_last_committed_url` (`_is_fragment_only_move()`), the handler
@@ -173,8 +196,10 @@ and the user's.
 
 ## Tests
 
-`app/RSpade/tests/spa/` (`rsx:test --framework --group=spa`) - one Playwright file today, covering
-the title ladder; its `test_catalog.md` lists the layout-chain and history rows as holes. The
+`app/RSpade/tests/spa/` (`rsx:test --framework --group=spa`) - Playwright files run with `node`
+(title ladder, guard, history, spinner, breadcrumb origins - `breadcrumb_origins.js`); its
+`test_catalog.md` lists the rows and the holes. `SPA-VIA-01` (the manifest FATALs) is
+`tests/code_quality/php/Spa_Via_Rule_Test.php`. The
 decorator transform is covered in the `js_transform` concern, the gating in `auth_gates`, and the
 dispatcher's rejection surface in `dispatch`.
 

@@ -1,34 +1,9 @@
-<!-- bucket: framework — single-source, never duplicate. True ONLY in the RSpade
-monorepo. CANONICAL HOME of the `--_` internal-flag convention,
-RSPADE_MAINT_MODE, and the framework dependency layer. The OPcache/never-restart
-box fact lives in framework/00. The inverse app-layer dependency mandate lives
-in app/70 and must NEVER appear in shared/. -->
+<!-- bucket: framework — single-source, never duplicate. True ONLY in this monorepo. -->
 
 ## MONOREPO ENVIRONMENT
 
-**URL**: https://rspade.framework.dev.hanson.xyz/ (user URLs) | http://localhost/ (curl/testing)
-**DB**: MySQL (rspade/rspadepass) | **Dir**: `/var/www/html` | **PHP**: 8.5
+**URL**: https://rspade.framework.dev.hanson.xyz/ (user URLs) | http://localhost/ (curl/testing) | **DB**: MySQL (rspade/rspadepass) | **Dir**: `/var/www/html` | **PHP**: 8.5. `base_path()` = `/var/www/html/system`; the tree links `system/rsx -> ../rsx`, `system/.env -> ../.env`, `system/build -> ../build` and `system/app/RSpade/resource/reference_app` -> `rsx/`, so `/rsx` in framework code is `/var/www/html/rsx`.
 
-**Literal paths here** (the shared fragments state these path-relatively): `base_path()` = `/var/www/html/system`, so `base_path() . '/bin/script.js'` = `/var/www/html/system/bin/script.js`; `/rsx` in framework code = `/var/www/html/system/rsx`, a symlink to `/var/www/html/rsx`. CLI interfaces live in `/system/app/RSpade/Commands/`, business logic in `/system/app/RSpade/Core/{Feature}/`, framework config in `/system/config/`, user overrides in `/rsx/resource/config/`. The three volatile roots are `/var/www/html/{build,tmp,storage}`; `build/` is fixed there and `tmp`/`storage` move with `RSX_TMP_PATH`/`RSX_STORAGE_PATH` in `.env`, always reached through `Rsx_Project_Paths` and never as literals. `/var/www/html/tmp` is also Laravel's storage path and `TMPDIR`; `system/build` is the only tree symlink.
+**Dependencies**: framework packages install with plain `composer require` / `npm install` INSIDE `system/` (`system/vendor` + `system/node_modules` committed, shipped by `rsx:framework:pull`; the framework wins every overlap) - **the ONLY place this template gets a package; the template keeps ZERO app-layer deps.** Exposing one (`dependencies.exposed_composer`/`exposed_npm`) is a standing commitment whose breaking change or retirement ships a Category 2 `breaking_changes` doc; **never hand-edit the machine-generated `"replace"` block in the root `composer.json`.** Skill `rspade:framework-dependencies`.
 
-### Framework dependencies
-
-Two physical layers, one logical environment; **the framework wins all overlaps**. Framework deps install with plain `composer require` / `npm install` **inside `system/`**, and `system/vendor` + `system/node_modules` are committed and ship via `rsx:framework:pull` — **this is the ONLY place you add packages this template needs**. The app layer (project-root manifests, `rsx:composer`/`rsx:npm`) exists for downstream apps; **this repo's template keeps ZERO app-layer deps**. Adding a package to `dependencies.exposed_composer`/`exposed_npm` is a **standing commitment**: a breaking change or retirement ships with a Category 2 `breaking_changes` doc. The `"replace"` block in the root `composer.json` is machine-generated — **NEVER hand-edit it**.
-
-Skill `rspade:framework-dependencies`. Details: `rsx:man dependencies`.
-
-### `.env.dist` is authored here, and ships verbatim
-
-The project-root `.env.dist` is a TRACKED, hand-curated file, and `bin/publish` copies it **verbatim** to `system/.env.dist` and into the starter project. **Whether a key ships is therefore an editorial decision made in `.env.dist`.** **Never put a secret in it**: it ships to every install in the world. A publish with no root `.env.dist` fails loudly.
-
-### Framework-internal flags: the `--_` convention
-
-**Framework-INTERNAL flags use the `--_` convention** (`--_framework-update-override`, `--_no-system-reset`): `--_` prefix + hyphens, **declared as NO `InputOption`**, stripped from argv pre-boot by `system/artisan` and read via `Rsx_Internal_Flags::has()` — or `::get('--_name')` for the VALUED form. **Consequence: they render in no `php artisan list`/`help` output and can never raise an unknown-option error.** `--_lock-group=<id>` is the valued one that matters: `Rsx_Artisan` attaches it to every synchronous spawn so a child inherits the parent's cluster locks.
-
-Use `--_` for any switch whose only caller is the updater or another framework command; **a user-facing flag stays an ordinary option.**
-
-### `RSPADE_MAINT_MODE`
-
-A **per-process snapshot** both entrypoints define from ONE stat at boot. `Framework_Maintenance::is_active()` reads it — **so consumers never see the flag flip mid-process**; `is_active_on_disk()` is the live view, `reason()` the flag's content, `$force_active_for_tests` the PHP-test seam.
-
-Related man pages: `rsx:man storage_directories`, `rsx:man dependencies`, `rsx:man app_mode` (which covers the prod-mode env-sync gotcha, along with skill `rspade:application-modes-deployment`).
+**`.env.dist` is authored here** (hand-curated, copied verbatim into every release) - **never put a secret in it.** Framework-internal `--_` flags (no `InputOption`, stripped pre-boot in `bootstrap/rsx_preboot.php`, read via `Rsx_Internal_Flags`) and `RSPADE_MAINT_MODE`: `Commands/CLAUDE.md`, skill `rspade:maintenance-mode`.

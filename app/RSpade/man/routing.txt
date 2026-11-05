@@ -133,6 +133,31 @@ ROUTE PATTERNS
             $user_id = $params['id'];
         }
 
+    Handler Signature and Verbs:
+        Every route handler is a public static method with the signature
+        (Request $request, array $params = []), where $params carries the
+        :param values. There are no PUT, PATCH or
+        DELETE routes and no resource routes: a handler that serves both GET
+        and POST does so in the SAME method, branching on the request macro:
+
+        #[Route('/settings', methods: ['GET', 'POST'])]
+        public static function settings(Request $request, array $params = [])
+        {
+            if ($request->is_post()) {
+                // handle the submission, then redirect
+            }
+            // render the page
+        }
+
+    File Responses:
+        A handler that returns a file uses Laravel's Response::download() or
+        Response::file() for a file it produced itself. Bytes the framework
+        stores are served by their owner instead, never by a path: a blob or
+        attachment through $storage->download_response() on its
+        File_Storage_Model (or the attachment's URL builders), a temp file through
+        $temp_file->download_response() (rsx:man temp_files, rsx:man
+        file_disposal).
+
     Multiple Routes Per Action:
         Controllers and SPA actions can define multiple route patterns.
         The best matching route is automatically selected based on provided parameters:

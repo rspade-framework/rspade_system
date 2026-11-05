@@ -1,6 +1,6 @@
 ---
 name: model-fetch
-description: "Loading model records from JavaScript through the ORM endpoint - writing a gated fetch() with #[Ajax_Endpoint_Model_Fetch] + #[Auth], lazy relationships, fetch_cached, and the policy on when a custom Ajax endpoint is allowed instead. Use when implementing or changing fetch()/portal_fetch(), loading a record or relationship from JS, deciding what to do when a model has no fetch() or is missing from the bundle, hitting the relationship cap error (rsx.model_fetch.max_relationship_records), or responding to a MODEL-FETCH-TRASHED-01 or MODEL-FETCH-SYSTEM-01 finding."
+description: "Loading records from JavaScript through the ORM endpoint - a gated fetch() with #[Ajax_Endpoint_Model_Fetch] + #[Auth], fetch_or_null(), lazy relationships, fetch_cached, and when a custom endpoint is allowed instead. Use when writing or changing fetch() / portal_fetch(), a model has no fetch() or is missing from the bundle, on the relationship cap, or a MODEL-FETCH-TRASHED-01 / MODEL-FETCH-SYSTEM-01 finding."
 ---
 
 # Model Fetch

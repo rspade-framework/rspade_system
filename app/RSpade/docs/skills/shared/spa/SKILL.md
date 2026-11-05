@@ -1,6 +1,6 @@
 ---
 name: spa
-description: "Building SPA modules in RSX - the #[SPA] bootstrap controller, @route/@layout/@spa/@auth/@title action decorators, Spa_Layout and on_action(), sublayouts, Spa.dispatch/Spa.redirect navigation, the spa_hash_change event for a Back/Forward over a #fragment, route and query parameters, and the module/feature/submodule file organization. Use when adding a screen to an authenticated area, creating a new SPA module or layout, wiring client-side navigation or redirects, making Back close a URL-addressed dialog or tab, reading route params in an action, deciding SPA vs Blade, or debugging a 404 on an SPA route."
+description: "Building SPA modules - the #[SPA] bootstrap controller, @route / @layout / @spa / @auth / @title, Spa_Layout and on_action(), sublayouts, Spa.dispatch() vs Spa.redirect(), spa_hash_change, route and query params. Use when adding a screen to an authenticated area, creating a module or layout, making Back close a URL-addressed dialog, deciding SPA vs Blade, or debugging a 404 on an SPA route."
 ---
 
 # SPA Routing
@@ -254,7 +254,9 @@ throws away the zero-latency rung.
 
 `breadcrumb_label()` defaults to `page_title()`, so a fixed-title action gets its breadcrumb
 from `@title` too; a dynamic breadcrumb override awaits `await_loaded()` exactly like the
-title does.
+title does. A page that should crumb to where it was REACHED FROM (an invoice opened from an
+engagement) does not hand-roll a `from=` parameter: that is a breadcrumb origin (`_via`,
+`static breadcrumb_via` + `breadcrumb_parent_via()`) - skill `rspade:breadcrumb-origins`.
 
 ## Troubleshooting
 

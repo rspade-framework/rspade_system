@@ -10,12 +10,12 @@
 
 **Static-first**: classes are namespacing tools. Use static unless instances are genuinely needed (models, resources, service connectors); **avoid dependency injection**.
 
-**NEVER define attribute classes** — attributes work via reflection, and the linter removing their `use` statements is CORRECT. An attribute may repeat with DIFFERENT arguments (`#[Exclusive('a')] #[Exclusive('b')]`); the same attribute with IDENTICAL arguments twice on one declaration is a manifest-build FATAL. **NEVER manually update namespaces** — the manifest regenerates them.
+**NEVER define attribute classes** — attributes work via reflection, and the linter removing their `use` statements is CORRECT. An attribute may repeat with DIFFERENT arguments (`#[Exclusive('a')] #[Exclusive('b')]`); the same attribute with IDENTICAL arguments twice on one declaration is a manifest-build FATAL. **NEVER put a class constant in an attribute argument** (`#[Api_Param('x', default: Model::FOO)]`) — reflection resolves it before the autoloader is ready and the scan dies; literals only. **NEVER manually update namespaces** — the manifest regenerates them.
 
 Attribute markers (metadata only): `#[Instantiatable]` whitelists abstract-class children for instantiation; `#[Replaceable]` on a PARENT method lets overriders skip the `parent::` call; `#[Sealed]` on a PROPERTY forbids redeclaration by any descendant. **Parent-call chaining (`PHP-PARENT-CHAIN-01`)**: an override MUST call `parent::<same-method>()` unless the nearest declaring ancestor is abstract, `#[Replaceable]`, or a vendor class. Both are manifest-build FATALs.
 
-**JS non-class files** hold only functions, `const` with STATIC values, and decorators — `const RANDOM = Math.random()` and `let variable = 42` are forbidden. **JS decorators require the `/** @decorator */` marker** on the definition.
+**JS non-class files** hold only functions, `const` with STATIC values, and decorators (`const RANDOM = Math.random()` and `let variable = 42` are forbidden); **a decorator requires the `/** @decorator */` marker** on its definition.
 
-**`php artisan rsx:check`** enforces the above plus the `that = this` pattern (`JS-THIS-01`: jQuery callbacks alias `const $element = $(this)`, anonymous functions `const that = this`, static methods never use naked `this`). **Every finding carries its own remediation text — trust it as authoritative.**
+**`rsx:check`** enforces the above plus the `that = this` pattern (`JS-THIS-01`: jQuery callbacks alias `const $element = $(this)`, anonymous functions `const that = this`, static methods never use naked `this`).
 
 Details: `rsx:man coding_standards`; skill `rspade:js-decorators`.

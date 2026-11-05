@@ -77,6 +77,13 @@ class Spa {
     // to the top when the action is ready.
     static _dispatch_is_restoration = false;
 
+    // Marks a link whose _via the framework wrote for a new tab (_rewrite_link_via()).
+    static VIA_CARRIED_ATTRIBUTE = 'data-spa-via-carried';
+
+    // The breadcrumb-origin facts of the navigation in progress, handed to the action it
+    // creates (Rsx_Breadcrumb_Resolver.settle_via()): {arrival, previous}. See _carry_via().
+    static _via_navigation = null;
+
     // Keys that scroll the page. One pressed outside a text field while a restoration
     // is running is the user scrolling, and the restoration yields to it.
     static _SCROLL_KEYS = ['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '];
@@ -282,6 +289,11 @@ class Spa {
         // Parse URL to get path and query params
         const parsed = Spa.parse_url(url);
         let path = parsed.path;
+
+        // The reserved breadcrumb-origin parameter never reaches an action: the framework
+        // reads it (Spa.via(), the resolver), an action never does, and keeping it out of
+        // this.args keeps it out of the component cache key. See rsx:man breadcrumb_origins.
+        delete parsed.query_params[Spa_Via.PARAM];
 
         // On a portal page the SPA routes live under this page's portal base: a path outside
         // it (a staff page on the same host, another tenant's portal) is no route of this
@@ -580,6 +592,27 @@ class Spa {
             });
         });
 
+        // BREADCRUMB ORIGINS IN NEW TABS. A tab opened from a link reads the link's href, and
+        // a raw href carries no origin. So before the browser reads it - on any button going
+        // down, a middle click, the context menu (Copy link, Open in new tab) and Enter on a
+        // focused link - an in-app link is rewritten to carry the current page's _via. The
+        // rewritten href stays: wherever the origin does not apply, the page it opens strips
+        // it. Capturing, so it runs before any handler that might stop the event.
+        const rewrite_link_via = (e) => {
+            const link = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+            if (link) {
+                Spa._rewrite_link_via(link);
+            }
+        };
+        document.addEventListener('mousedown', rewrite_link_via, { capture: true });
+        document.addEventListener('auxclick', rewrite_link_via, { capture: true });
+        document.addEventListener('contextmenu', rewrite_link_via, { capture: true });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                rewrite_link_via(e);
+            }
+        }, { capture: true });
+
         // Intercept link clicks using event delegation
         document.addEventListener('click', (e) => {
             // Find <a> tag in event path (handles clicks on child elements)
@@ -589,7 +622,14 @@ class Spa {
                 return;
             }
 
-            const href = link.getAttribute('href');
+            let href = link.getAttribute('href');
+
+            // A link whose _via the framework wrote (above) navigates as the link the
+            // application wrote: without it, so dispatch() CARRIES the current origin and the
+            // keep/strip decision judges it as carried rather than as an explicit claim.
+            if (href && link.hasAttribute(Spa.VIA_CARRIED_ATTRIBUTE)) {
+                href = Spa_Via.without(href);
+            }
 
             // Ignore if:
             // - No href
@@ -614,9 +654,14 @@ class Spa {
             const target_parsed = Spa.parse_url(href);
 
             // If same page (same path + search), let browser handle (causes reload)
-            // This mimics non-SPA behavior where clicking current page refreshes
-            if (current_parsed.path === target_parsed.path &&
-                current_parsed.search === target_parsed.search) {
+            // This mimics non-SPA behavior where clicking current page refreshes.
+            // A link that names no _via of its own would carry the current one, so on a
+            // page with an origin it is the same page when the rest of the query matches
+            // (a fragment-only link stays a fragment move).
+            const same_query = current_parsed.search === target_parsed.search
+                || (Spa_Via.raw(target_parsed.search) === null
+                    && Spa_Via.without(current_parsed.search) === Spa_Via.without(target_parsed.search));
+            if (current_parsed.path === target_parsed.path && same_query) {
                 console_debug('Spa', 'Same page click, letting browser reload');
                 return;
             }
@@ -666,6 +711,136 @@ class Spa {
     }
 
     /**
+     * Rewrite an in-app link so a new tab opened from it carries the current page's _via.
+     *
+     * Applies only to a link to a known SPA route on this host that does not name its own
+     * _via. A link rewritten earlier is marked (VIA_CARRIED_ATTRIBUTE) and is recomputed
+     * from its own href each time, so it follows the current origin - and loses it once the
+     * current page has none.
+     *
+     * @param {HTMLAnchorElement} link
+     */
+    static _rewrite_link_via(link) {
+        const href = link.getAttribute('href');
+        if (!href || href.startsWith('#')) {
+            return;
+        }
+
+        const marked = link.hasAttribute(Spa.VIA_CARRIED_ATTRIBUTE);
+
+        // A link that names its own origin keeps it: explicit wins.
+        if (!marked && Spa_Via.raw(href) !== null) {
+            return;
+        }
+
+        const base = marked ? Spa_Via.without(href) : href;
+        const current = Spa_Via.raw(window.location.search);
+
+        if (current === null) {
+            if (marked) {
+                link.setAttribute('href', base);
+                link.removeAttribute(Spa.VIA_CARRIED_ATTRIBUTE);
+            }
+            return;
+        }
+
+        const target = Spa.parse_url(base);
+        if (target.host !== window.location.host || !Spa.match_url_to_route(target.path + target.search)) {
+            return;
+        }
+
+        link.setAttribute('href', Spa_Via.with_value(base, current));
+        link.setAttribute(Spa.VIA_CARRIED_ATTRIBUTE, '1');
+    }
+
+    /**
+     * The current page's breadcrumb origins, parsed: [{type, id}, ...], nearest first, empty
+     * when the URL names none (or names a malformed value, which the framework strips).
+     *
+     * For layouts and diagnostics. A page's breadcrumb_parent_via() receives its token as an
+     * argument and never needs this; an action never reads this.args._via (a manifest-build
+     * FATAL). See rsx:man breadcrumb_origins.
+     *
+     * @returns {Array<{type: string, id: string|null}>}
+     */
+    static via() {
+        const raw = Spa_Via.raw(window.location.search);
+        if (raw === null) {
+            return [];
+        }
+
+        return Spa_Via.parse_value(raw).tokens;
+    }
+
+    /**
+     * A _via VALUE with this origin in front of the current page's list (at most 4 tokens,
+     * the oldest dropped). Used when BUILDING the link that establishes an origin:
+     *
+     *     Rsx.Route('Invoice_Builder_Action', {engagement_id: 156, _via: Spa.via_push('engagement', 156)})
+     *
+     * Throws on a type or id outside the grammar - this is the developer's own input.
+     *
+     * @param {string} type - [a-z][a-z0-9_]*
+     * @param {string|number|null} id - [A-Za-z0-9_-]+, or null for an origin that is a place
+     * @returns {string}
+     */
+    static via_push(type, id = null) {
+        const text = id === null || id === undefined ? String(type) : String(type) + '.' + String(id);
+        const token = Spa_Via.parse_token(text);
+
+        if (!token || token.type !== String(type)) {
+            throw new Error(
+                `Spa.via_push('${type}', ${JSON.stringify(id)}): not a valid origin token. ` +
+                'The type is [a-z][a-z0-9_]* and the id [A-Za-z0-9_-]+ (or null). See rsx:man breadcrumb_origins.'
+            );
+        }
+
+        return Spa_Via.serialize([token, ...Spa.via()]);
+    }
+
+    /**
+     * Carry the current page's _via onto a navigation's target, and say how the target's
+     * _via got there.
+     *
+     * - A target naming its own _via keeps it: 'explicit'.
+     * - {via: false} never carries.
+     * - Otherwise, when the current URL has a _via and the target is a route of this SPA,
+     *   the current value is copied: 'carried'. Dispatch does not ask whether the origin
+     *   applies there - the resolver decides that after the walk, and strips it if not.
+     * - The initial load (and a reload, a pasted URL, a new tab) is 'explicit'; a
+     *   Back/Forward is 'restored', judged against the decider its own entry recorded.
+     *
+     * @returns {{url: string, arrival: string|null}} arrival null = the target has no _via
+     */
+    static _carry_via(url, options) {
+        const target_via = Spa_Via.raw(url);
+
+        if (options._is_popstate) {
+            return { url: url, arrival: target_via === null ? null : 'restored' };
+        }
+
+        if (target_via !== null) {
+            return { url: url, arrival: 'explicit' };
+        }
+
+        if (options.via === false || options.history === 'none') {
+            return { url: url, arrival: null };
+        }
+
+        const current = Spa_Via.raw(window.location.search);
+        if (current === null) {
+            return { url: url, arrival: null };
+        }
+
+        const target = Spa.parse_url(url);
+        if (!Spa.match_url_to_route(target.path + target.search)) {
+            return { url: url, arrival: null };
+        }
+
+        return { url: Spa_Via.with_value(url, current), arrival: 'carried' };
+    }
+
+    /**
      * True when a history move keeps the path and the query - the two parts that route
      * an action - so at most the fragment changed.
      *
@@ -689,6 +864,7 @@ class Spa {
      * Navigate to a URL, replacing the current history entry instead of pushing.
      * Use for programmatic redirects (e.g., in on_load() when a record should
      * display at a different URL) so Back button skips the redirecting page.
+     * Takes dispatch()'s options, {via: false} included.
      */
     static async redirect(url, options = {}) {
         return Spa.dispatch(url, { ...options, history: 'replace' });
@@ -710,6 +886,9 @@ class Spa {
      * @param {object|null} options.scroll - Scroll position {x, y} to restore (default: null = scroll to top)
      * @param {boolean} options.triggers - Fire before/after dispatch events (default: true)
      * @param {boolean} options.force - Force SPA dispatch even if disabled (used by popstate) (default: false)
+     * @param {boolean} options.via - false: do not carry the current page's breadcrumb origin
+     *   (_via) onto the target. By default it is carried whenever the target names none; see
+     *   rsx:man breadcrumb_origins.
      *
      * THE NAVIGATION GUARD DOES NOT GUARD THIS. Navigation from code - a button
      * handler, a row click, a redirect after a save - goes ahead with no prompt, and a
@@ -747,6 +926,10 @@ class Spa {
         }
 
         Spa.is_dispatching = true;
+
+        // The page being left. A carried breadcrumb origin is kept only when the same page
+        // decides it as decided it here, so its decision travels with the navigation.
+        const leaving_action = Spa._action;
 
         // Clear cached action - will be set when new action is created
         Spa._action = null;
@@ -805,6 +988,12 @@ class Spa {
                     return;
                 }
             }
+
+            // Breadcrumb origins: carry the current _via onto the target unless it names its
+            // own or the caller opted out ({via: false}). See _carry_via().
+            const carried = Spa._carry_via(url, options);
+            url = carried.url;
+            const via_arrival = carried.arrival;
 
             // Parse the (now relative) URL
             const parsed = Spa.parse_url(url);
@@ -984,6 +1173,16 @@ class Spa {
                 window.scrollTo({ left: 0, top: 0, behavior: 'instant' });
             }
 
+            // What the action about to be created needs to settle its breadcrumb origin: how
+            // the _via arrived, and what it is judged against - the decision of the page being
+            // left (a carried hop), or the decider this history entry recorded (Back/Forward).
+            Spa._via_navigation = {
+                arrival: via_arrival,
+                previous: via_arrival === 'carried'
+                    ? leaving_action._spa_via_settlement ?? null
+                    : (via_arrival === 'restored' ? (history.state?.via_decider ?? null) : null),
+            };
+
             // Resolve layout chain - find divergence point and reuse matching layouts
             await Spa._resolve_layout_chain(target_layouts, action_name, action_args, url);
 
@@ -1017,9 +1216,10 @@ class Spa {
             }
 
             // Record the URL now showing. Used to restore the address bar if the user
-            // declines a later Back/Forward at the navigation guard's prompt. Same URL
-            // construction as the history push/replace above.
-            Spa._last_committed_url = parsed.path + parsed.search + (parsed.hash || '');
+            // declines a later Back/Forward at the navigation guard's prompt. Read from the
+            // address bar, because the breadcrumb-origin decision may already have rewritten
+            // its _via (Rsx_Breadcrumb_Resolver.settle_via()).
+            Spa._last_committed_url = window.location.pathname + window.location.search + window.location.hash;
 
         } catch (error) {
             console.error('[Spa] Dispatch error:', error);
@@ -1184,6 +1384,11 @@ class Spa {
             if (is_last) {
                 // This is the action - set reference but don't wait
                 Spa._action = component;
+
+                // Settle the breadcrumb origin for this page now, before any layout asks for
+                // its trail and whether or not one does: a _via that no page accepts is
+                // stripped from the address bar even on a page with no breadcrumbs.
+                Rsx_Breadcrumb_Resolver.settle_via(component, url, Spa._via_navigation);
 
                 // @spinner_until_ready: the page is hidden behind the spinner until the whole
                 // tree is ready - on every visit, or only on one jqhtml has no record of.

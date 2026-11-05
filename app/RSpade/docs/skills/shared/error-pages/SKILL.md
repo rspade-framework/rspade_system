@@ -1,6 +1,6 @@
 ---
 name: error-pages
-description: "Declaring an application's full-page error screens as routes under the reserved /error/ prefix - #[Route('/error/404')] and #[Portal_Route('/error/404')], the Error_Context a page receives as $params['error'], /error/generic as the catch-all, the framework page as the last fallback, and the development-only preview. Use when building or restyling a 404 / 403 / 500 / 419 page, adding an error page for another status, wiring the portal's own error screens, responding to a ROUTE-ERROR-01 manifest-build failure, chasing a \"Page Expired\" response, or finding a log line reading \"failed while rendering\"; also when registering the SPA's in-app error screens with Error_Screens.set_components() or hitting \"No error screen components are registered\"."
+description: "Declaring error screens as routes under /error/ - #[Route('/error/404')], #[Portal_Route('/error/404')], /error/generic, the Error_Context in $params['error'], the development preview, Error_Screens.set_components() for in-SPA errors. Use when building a 404 / 403 / 500 / 419 page, or on ROUTE-ERROR-01, a 'Page Expired' response or 'No error screen components are registered'."
 ---
 
 # Error pages

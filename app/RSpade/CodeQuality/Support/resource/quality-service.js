@@ -4,7 +4,7 @@
  * JavaScript linting (Babel parser), this-usage analysis (Acorn) and raw-HTML-write
  * detection (Babel parser) for rsx:check.
  *
- * Methods: quality.lint, quality.analyze_this, quality.analyze_raw_html
+ * Methods: quality.lint, quality.analyze_this, quality.analyze_raw_html, quality.analyze_via
  *
  * @FILENAME-CONVENTION-EXCEPTION - node service module
  */
@@ -558,6 +558,155 @@ function analyzeRawHtml(content) {
 }
 
 // =============================================================================
+// BREADCRUMB ORIGINS (SPA-VIA-01)
+// =============================================================================
+
+const VIA_TYPE_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+/** Is this node the expression `args` or `<anything>.args`? */
+function isArgsExpression(node) {
+    if (!node) {
+        return false;
+    }
+    if (node.type === 'Identifier') {
+        return node.name === 'args';
+    }
+    return memberPropertyName(node) === 'args';
+}
+
+/** Does a route pattern declare a `:_via` segment? */
+function routeDeclaresVia(pattern) {
+    return pattern.split('/').some((segment) => segment.replace(/\?$/, '') === ':_via');
+}
+
+/**
+ * Everything SPA-VIA-01 judges in one JavaScript file.
+ *
+ * @param {string} content - File content
+ * @returns {object} {classes: [{name, line, via, hook}], args_reads: [line], routes: [{line, pattern}], error}
+ *   via:  null, or {line, entries: string[]|null (null = not an array literal of strings)}
+ *   hook: null, or {line, is_static}
+ */
+function analyzeVia(content) {
+    let ast;
+    try {
+        ast = babelParser.parse(content, {
+            sourceType: 'module',
+            errorRecovery: true,
+            plugins: [
+                'decorators-legacy',
+                'classProperties',
+                'classPrivateProperties',
+                'classPrivateMethods',
+                'optionalChaining',
+                'nullishCoalescingOperator',
+                'asyncGenerators',
+                'bigInt',
+                'dynamicImport',
+                'exportDefaultFrom',
+                'exportNamespaceFrom',
+                'objectRestSpread',
+                'topLevelAwait'
+            ]
+        });
+    } catch (e) {
+        // A file that does not parse is reported by quality.lint; nothing to analyze here.
+        return { classes: [], args_reads: [], routes: [], error: `Parse error: ${e.message}` };
+    }
+
+    const classes = [];
+    const args_reads = [];
+    const routes = [];
+
+    const visit = (node) => {
+        if (!node || typeof node.type !== 'string') {
+            return;
+        }
+
+        if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
+            const info = {
+                name: node.id ? node.id.name : '(anonymous)',
+                line: node.loc.start.line,
+                via: null,
+                hook: null,
+            };
+
+            for (const decorator of node.decorators || []) {
+                const expr = decorator.expression;
+                if (expr && expr.type === 'CallExpression' && expr.callee.type === 'Identifier'
+                    && expr.callee.name === 'route' && expr.arguments.length
+                    && expr.arguments[0].type === 'StringLiteral' && routeDeclaresVia(expr.arguments[0].value)) {
+                    routes.push({ line: decorator.loc.start.line, pattern: expr.arguments[0].value });
+                }
+            }
+
+            for (const member of node.body.body) {
+                const key = member.key && !member.computed && member.key.type === 'Identifier' ? member.key.name : null;
+
+                if (key === 'breadcrumb_via' && (member.type === 'ClassProperty' || member.type === 'ClassAccessorProperty') && member.static) {
+                    let entries = null;
+                    const value = member.value;
+                    if (value && value.type === 'ArrayExpression'
+                        && value.elements.every((el) => el && el.type === 'StringLiteral')) {
+                        entries = value.elements.map((el) => el.value);
+                    }
+                    info.via = { line: member.loc.start.line, entries: entries };
+                }
+
+                if (key === 'breadcrumb_parent_via' && (member.type === 'ClassMethod' || member.type === 'ClassProperty')) {
+                    info.hook = { line: member.loc.start.line, is_static: !!member.static };
+                }
+            }
+
+            if (info.via || info.hook) {
+                classes.push(info);
+            }
+        }
+
+        if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') {
+            if (memberPropertyName(node) === '_via' && isArgsExpression(node.object)) {
+                args_reads.push(node.loc.start.line);
+            }
+        }
+
+        if (node.type === 'VariableDeclarator' && node.id && node.id.type === 'ObjectPattern' && isArgsExpression(node.init)) {
+            for (const prop of node.id.properties) {
+                if (prop.type === 'ObjectProperty' && !prop.computed
+                    && ((prop.key.type === 'Identifier' && prop.key.name === '_via')
+                        || (prop.key.type === 'StringLiteral' && prop.key.value === '_via'))) {
+                    args_reads.push(prop.loc.start.line);
+                }
+            }
+        }
+
+        for (const key of Object.keys(node)) {
+            if (key === 'loc' || key === 'start' || key === 'end' || key === 'extra'
+                || key === 'leadingComments' || key === 'trailingComments' || key === 'innerComments') {
+                continue;
+            }
+            const child = node[key];
+            if (Array.isArray(child)) {
+                for (const item of child) {
+                    visit(item);
+                }
+            } else if (child && typeof child === 'object') {
+                visit(child);
+            }
+        }
+    };
+
+    visit(ast.program);
+
+    for (const info of classes) {
+        if (info.via && info.via.entries) {
+            info.via.invalid = info.via.entries.filter((entry) => !VIA_TYPE_PATTERN.test(entry));
+        }
+    }
+
+    return { classes, args_reads, routes };
+}
+
+// =============================================================================
 // HANDLERS
 // =============================================================================
 
@@ -603,6 +752,37 @@ module.exports = {
                 results[file] = {
                     status: 'success',
                     violations: result.violations,
+                    error: result.error || null
+                };
+            } catch (error) {
+                results[file] = {
+                    status: 'error',
+                    error: {
+                        type: 'FileReadError',
+                        message: error.message
+                    }
+                };
+            }
+        }
+
+        return { results };
+    },
+
+    /**
+     * {files: [<absolute path>, ...]} -> {results: {<path>: {status, classes, args_reads, routes, error}}}
+     */
+    analyze_via(request) {
+        const results = {};
+
+        for (const file of request.files) {
+            try {
+                const content = fs.readFileSync(file, 'utf8');
+                const result = analyzeVia(content);
+                results[file] = {
+                    status: 'success',
+                    classes: result.classes,
+                    args_reads: result.args_reads,
+                    routes: result.routes,
                     error: result.error || null
                 };
             } catch (error) {

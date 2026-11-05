@@ -95,28 +95,8 @@ switch ($service_path) {
         handle_overrides_service();
         break;
 
-    case 'resolve_class':
-        // TODO: Migrate from handler.php and refactor to use Manifest directly
-        error_response('Service not yet migrated to Laravel handler', 501);
-        break;
-
-    case 'definition':
-        // TODO: Migrate from handler.php and refactor to use Manifest directly
-        error_response('Service not yet migrated to Laravel handler', 501);
-        break;
-
-    case 'complete':
-        // TODO: Migrate from handler.php and refactor to use Manifest directly
-        error_response('Service not yet migrated to Laravel handler', 501);
-        break;
-
-    case 'exec':
-    case 'command':
-        // TODO: Migrate from handler.php
-        error_response('Service not yet migrated to Laravel handler', 501);
-        break;
-
-    // git and git/diff services are handled by handler.php (standalone, no Laravel needed)
+    // format, definition, complete, resolve_class, git, git/diff and refactor are routed to
+    // handler.php by system/public/index.php and never reach this switch.
 
     case 'js_lineage':
         // TODO: Migrate from handler.php - or remove if js_is_subclass_of replaces it

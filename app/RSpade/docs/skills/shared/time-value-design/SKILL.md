@@ -1,6 +1,6 @@
 ---
 name: time-value-design
-description: "Designing how an application stores the dates and times its users record - an INSTANT (UTC DATETIME), a CALENDAR DATE (DATE), or an INTENDED DAY with an optional actual time and the zone it was entered in - plus the day-and-clock helpers Rsx_Time::local_date(), local_clock(), combine_date_and_time(), day_start_utc() and day_after_utc(). Use when adding a date or time column, logging work or hours, building a calendar, a timecard, a timesheet or a due date, writing a report grouped by day, a scheduled sweep that reasons about \"today\", or when evening work shows on the next day, a date moved a day for some viewers, or substr($time, 0, 10) / SQL DATE() appears on an instant."
+description: "Choosing how a recorded date or time is stored - an INSTANT (UTC DATETIME), a CALENDAR DATE, or an INTENDED DAY with an optional time and its entry zone - with Rsx_Time::local_date(), combine_date_and_time(), day_start_utc(). Use when adding a date or time column, building a timecard, calendar or due date, grouping a report by day, or when evening work shows on the next day."
 ---
 
 # Time value design

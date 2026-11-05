@@ -18,6 +18,10 @@
  * Hook methods that can be overridden:
  * - on_action(url, action_name, args) - Called when any action is dispatched
  *   All layouts in the chain receive this with the final action's info.
+ * - on_breadcrumb_complete(chain, meta) - Called when the current action's breadcrumb
+ *   trail has fully resolved (by whichever layout streams it). meta.root_url is where
+ *   the trail starts, meta.grafted says a breadcrumb origin replaced a parent - the hook
+ *   a sidebar uses to highlight the section the TRAIL starts in.
  */
 class Spa_Layout extends Component {
     on_create() {
@@ -143,6 +147,27 @@ class Spa_Layout extends Component {
      * @param {object} args - URL parameters and query params
      */
     async on_action(url, action_name, args) {
+        // Empty by default - override in subclass
+    }
+
+    /**
+     * Hook called when the current action's breadcrumb trail has fully resolved
+     *
+     * Called on EVERY layout in the chain by Rsx_Breadcrumb_Resolver once a layout has
+     * streamed the current action's trail to completion - so a layout that does not render
+     * breadcrumbs itself still learns where the trail starts. Not called when no layout
+     * streams breadcrumbs.
+     *
+     * When meta.grafted is true the page was reached through a breadcrumb origin and its
+     * trail starts somewhere other than the section its URL belongs to: an engagement's
+     * invoice crumbs Engagements > Engagement > Invoice although its URL is under Billing.
+     * A sidebar matches its items against meta.root_url first in that case, and falls back
+     * to the current URL. See rsx:man breadcrumb_origins, SIDEBAR.
+     *
+     * @param {Array<{url, label, is_active}>} chain - The resolved trail, root first
+     * @param {{grafted: boolean, root_url: string, decider: string|null}} meta
+     */
+    on_breadcrumb_complete(chain, meta) {
         // Empty by default - override in subclass
     }
 

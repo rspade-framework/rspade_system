@@ -1,6 +1,6 @@
 ---
 name: instruction-file-pruning
-description: "CLAUDE.md instruction file pruning strategies - auditing always-on instruction files for what must stay always-on, what moves into a new or existing skill, what is redundant or superfluous, and what is out of date; plus the currency pass over the per-directory CLAUDE.md files that document a subsystem's design beside its source, driven by git history (code changed after its CLAUDE.md last did). Use when asked to prune, trim, slim, shrink, restructure or audit CLAUDE.md / the instruction files / the always-on instructions / the fragments, when Claude Code warns that instruction files are \"over the 150.0k-char total limit\", when asked whether a directory CLAUDE.md is current, or when asked to add CLAUDE.md files for the key subsystems."
+description: "Auditing the always-on CLAUDE.md fragments - what stays always-on, moves to a skill, is redundant or out of date - plus the currency pass over per-directory CLAUDE.md files. Use when asked to prune, trim or audit CLAUDE.md or the instruction files, when Claude Code warns 'over the 150.0k-char total limit', or when asked whether a directory CLAUDE.md is current."
 ---
 
 # Pruning the instruction files
@@ -41,6 +41,10 @@ A directory CLAUDE.md explains WHY the code is shaped the way it is. The skill e
 
 - **Framework monorepo** (`IS_FRAMEWORK_DEVELOPER=true`): the fragments under `system/app/RSpade/docs/claude/{shared,framework,app}/`, the skills under `system/app/RSpade/docs/skills/`, the man pages, and every directory CLAUDE.md in `system/app/` AND `rsx/`. Filing rules for the buckets are in the always-on knowledge-routing fragment.
 - **Downstream application**: the application's own files only. That means `rsx/resource/CLAUDE.md`, every `rsx/**/CLAUDE.md`, and `rsx/resource/skills/`. Everything under `system/` is framework property that the next pull replaces. A finding about a framework fragment, skill or man page is reported upstream (`rsx:man framework_debug_and_contrib`) and never edited locally. Downstream also loads the framework's always-on view, so its byte count is a fixed cost to budget around rather than something to prune.
+
+## Assembly and delivery (monorepo)
+
+`docs/claude/framework.md` (this tree's view) and `docs/claude/app.md` (the downstream view) are IMPORT INDEXES over `shared/` plus their own bucket; they carry no content. The monorepo root `CLAUDE.md` imports `framework.md`; downstream, `rsx/resource/CLAUDE.md` imports `app.md` (the import line is wired by an environment update). Skills load through the `rspade` plugin at `.claude/skills/rspade -> system/app/RSpade/docs/`, whose `.claude-plugin/plugin.json` lists `skills/shared/` + `skills/framework/` here; `bin/publish` rewrites that second entry to `skills/app/` in a release - a one-token manifest flip, because Claude Code does not follow a skills-DIRECTORY symlink, only skill-entry symlinks. Fragments load every session, skills on trigger. **The assembled always-on view targets 80 KB or less** (Claude Code warns past 150k chars across all instruction files); growth past it is demoted to the covering skill by the trigger-moment test, never left to accumulate. The record of the restructure that set this layout up: `docs.dev/knowledge_restructure/`.
 
 ## The procedure
 

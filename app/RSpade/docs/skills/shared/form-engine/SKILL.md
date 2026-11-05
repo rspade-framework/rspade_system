@@ -1,6 +1,6 @@
 ---
 name: form-engine
-description: "Building RSX forms on the framework's Rsx_Form engine - the $controller/$method declaration, form.submit(), server-only validation, the mandatory <Form_Errors />, set_loading()/populate(), unsaved changes (form.dirty() and the 'dirty' event, for a navigation guard or a disabled-until-changed Save), touched-value parking, and the Form_Utils error renderer. Use when creating or converting a form, wiring an endpoint to a form, writing the save() endpoint's validation, deciding where a form's loading state lives, or hitting \"no <Form_Errors /> in this form\", \"$controller and $method are required on the <Rsx_Form> tag\", or a form whose values arrive blank."
+description: "Building forms on the Rsx_Form engine - <Rsx_Form $controller $method>, form.submit(), server-only validation with response_form_error(), the mandatory <Form_Errors />, populate() / set_loading(), form.dirty(), Form_Edit::run() for record edits, response_form_question(). Use when creating or converting a form, writing its save endpoint, or on 'no <Form_Errors /> in this form' or values arriving blank."
 ---
 
 # The Rsx_Form engine
@@ -54,7 +54,7 @@ beats reasoning the wiring out. The reference app's current worked example is
   the first section, above a grid, under a heading - so the form's own containers give
   the alert their spacing. A form without one throws *"no `<Form_Errors />` in this
   form"* at the moment feedback is needed.
-- A `type="submit"` button inside the form is auto-wired to `submit()`.
+- A `type="submit"` button inside the form is auto-wired to `submit()`, and so is the form's own submit event - so Enter in a text input submits through `submit()` instead of navigating.
 
 ## Submission
 

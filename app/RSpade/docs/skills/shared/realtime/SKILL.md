@@ -1,6 +1,6 @@
 ---
 name: realtime
-description: "Making RSX pages live over WebSocket - $realtime models and the Model_Changed_Topic, #[Realtime_Touch] parent cascades, subscribing from a component in on_create(), refresh() vs reload(), writing a topic class with can_subscribe(), #[Emitter] derived values, manual realtime_emit(), bulk-write interactions, session/user refresh push, and the residual gaps. Use when a screen must update itself when data changes elsewhere, when adding a topic or emitter, or when debugging a page that does not update or updates too much."
+description: "Making pages live over WebSocket - $realtime models and Model_Changed_Topic, #[Realtime_Touch], this.subscribe() in on_create(), refresh() vs reload(), topic classes with can_subscribe(), #[Emitter], realtime_emit(). Use when a screen must update when data changes elsewhere, adding a topic or emitter, a page that does not update or updates too much, or a REALTIME-AUTH-01 / REALTIME-BULK-01 finding."
 ---
 
 # Realtime

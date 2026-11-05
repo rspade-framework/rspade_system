@@ -1,6 +1,6 @@
 ---
 name: blade-views
-description: "Creating Blade views and server-rendered pages in RSX. Use when building SEO pages, login/auth pages, server-rendered content, working with @rsx_id, @rsx_page_data, or Blade-specific patterns."
+description: "Building server-rendered Blade pages - @rsx_id, rsx_view(), @rsx_page_data read as window.rsxapp.page_data, a static on_app_ready() with a page guard, jqhtml inside Blade, converting Blade to SPA. Use for SEO pages, login and auth pages, or a Blade page whose JS runs on every page of its bundle."
 ---
 
 # RSX Blade Views
@@ -33,6 +33,10 @@ Every Blade view starts with `@rsx_id`:
 - **NO inline scripts** - Use companion `.js` files
 - **NO inline event handlers** - Use `on_app_ready()` pattern
 - **jqhtml components** work fully in Blade (but no slots)
+- **A credential field on an auth page** writes `id`, `name` and `autocomplete` on the `<input>`
+  directly (`autocomplete="username"` / `"current-password"` / `"new-password"`) - a Blade
+  field is not jqhtml, so the framework's `autocomplete="off"` default does not reach it and
+  nothing else will add the token (`reference_app/app/login/CLAUDE.md`, CREDENTIAL FIELDS)
 
 ---
 

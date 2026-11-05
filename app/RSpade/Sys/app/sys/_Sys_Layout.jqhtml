@@ -13,7 +13,7 @@ the top bar's menu button (_Sys_Layout.scss owns the breakpoint).
 
     <div class="_Sys_Layout__backdrop" data-nav="close"></div>
 
-    <nav class="_Sys_Layout__sidebar" id="_sys_sidebar">
+    <nav class="_Sys_Layout__sidebar" $sid="sidebar">
         <div class="_Sys_Layout__sidebar-inner">
             <div class="_Sys_Layout__brand">
                 <i class="bi bi-hdd-rack"></i>
@@ -26,7 +26,7 @@ the top bar's menu button (_Sys_Layout.scss owns the breakpoint).
 
     <div class="_Sys_Layout__content">
         <header class="_Sys_Layout__topbar">
-            <button type="button" class="_Sys_Layout__nav-toggle" data-nav="toggle" aria-label="Menu" aria-controls="_sys_sidebar" aria-expanded="false">
+            <button type="button" class="_Sys_Layout__nav-toggle" data-nav="toggle" aria-label="Menu" aria-expanded="false">
                 <i class="bi bi-list"></i>
             </button>
 

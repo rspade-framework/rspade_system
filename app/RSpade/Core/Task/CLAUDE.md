@@ -304,6 +304,15 @@ says what is in this DIRECTORY and what must stay true when editing it.
   that column must be guarded the same way.
 - Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]`/`#[Task_Access]` classes.
 
+## Open backlog touching this tree
+
+- **B-85**: a task should DECLARE its site-lock posture (acquire, or explicitly opt out).
+- **B-87**: automatic per-tenant write locks on `save()` are DISABLED
+  (`AUTOMATIC_SITE_WRITE_LOCKS_ENABLED = false` in `Core/Database/Models/Site_Scoped.php`),
+  re-enable pending. The `Rsx_Artisan` spawn mandate stands regardless.
+
+Both in `docs.dev/backlog/BACKLOG.md`.
+
 ## See also
 
 `rsx:man tasks` · `rsx:man task_commands` · `rsx:man locks` · skills `rspade:background-tasks`, `rspade:task-access`, `rspade:locks-and-subprocesses`

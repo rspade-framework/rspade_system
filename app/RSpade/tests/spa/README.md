@@ -6,7 +6,11 @@ Client-side routing for authenticated areas: `Spa` (dispatch, layout chain, hist
 
 This concern covers the **page-title ladder** - the seam where a dispatched action's
 title reaches a layout - and the **navigation guard**, the toggle that has the browser
-ask before a page with unsaved changes is left. Everything else in the SPA is either covered elsewhere (decorator transform
+ask before a page with unsaved changes is left, and **breadcrumb origins** - the reserved
+`_via` parameter, carried across navigation and kept or stripped after each breadcrumb walk
+(`rsx:man breadcrumb_origins`; source `Core/SPA/Spa_Via.js`, `Spa.js` `_carry_via()` /
+`_rewrite_link_via()` / `via()` / `via_push()`, `Breadcrumbs/Rsx_Breadcrumb_Resolver.js`
+`settle_via()` / `_walk_chain_structure()`; test `playwright/breadcrumb_origins.js`). Everything else in the SPA is either covered elsewhere (decorator transform
 in `js_transform`, auth gating in `auth_gates`, the dispatcher's auth-rejection surface
 in `dispatch`) or catalogued below as a coverage hole.
 

@@ -4,7 +4,7 @@ The title rows live in `playwright/spa_action_title.js` (one browser session ove
 template app's `/contacts` and `/contacts/view/:id`); the guard rows live in
 `playwright/navigation_guard.js` (the framework's own `/_sys` panel, so it depends on no
 application code; links, code navigation and real page exits) and the Back/Forward half of
-the guard in `playwright/history_scroll_and_veto.js` (the HISTORY rows); the REFRESH rows live in `playwright/refresh_scroll_restoration.js`; the fragment rows live in `playwright/fragment_popstate.js`
+the guard in `playwright/history_scroll_and_veto.js` (the HISTORY rows); the breadcrumb-origin rows (`SPA-VIA-*`) live in `playwright/breadcrumb_origins.js` (`/_sys`, structure declared at run time; the manifest FATALs of rule SPA-VIA-01 are `code_quality`'s `Spa_Via_Rule_Test`, and the template sidebar's half is `rsx/tests/playwright/sidebar_trail_root.js`); the REFRESH rows live in `playwright/refresh_scroll_restoration.js`; the fragment rows live in `playwright/fragment_popstate.js`
 (same `/_sys` session shape); the ResizeObserver rows live in `playwright/resize_observer_notice.js` (same shape), the rejection-origin rows in `playwright/unhandled_rejection_origin.js` (same shape). The decorator half - `@title` surviving the transform
 as `_spa_title` - is JT-03f in the `js_transform` concern.
 
@@ -75,6 +75,20 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-SPINNER-08 | Placement: the stage spans the action from its top edge to the lower of its bottom edge and the window's | playwright | `show_spinner()` on the mounted action | stage top/bottom equal the expected edges | implemented | 2026-10-23 |
 | SPA-SPINNER-09 | A dispatch made during a hold removes the old spinner, which sits outside the emptied content area | playwright | `show_spinner()`, then `Spa.dispatch()` | spinner gone on the new page | implemented | 2026-10-23 |
 | SPA-SPINNER-10 | An unhandled exception during a hold reveals the page (`Spinner_Overlay.hide_all()`) | playwright | `/_sys/workers` held, `Exception_Handler.display_unhandled_exception()` | spinner gone, action visible | implemented | 2026-10-23 |
+
+| SPA-VIA-01 | An explicit `_via` the page accepts is kept; the decider (`Class@url`) is recorded in `history.state.via_decider`; the trail ends at the hook's parent with its fragment | playwright | `/_sys/users/1?_via=site.1`, User_View accepts `site` (verifies id 1) | kept, trail `[/_sys/sites, /_sys/sites/1#tab=users, /_sys/users/1?_via=site.1]` | implemented | 2026-11-05 |
+| SPA-VIA-02 | A claim the hook declines is stripped with `replaceState` (no new entry) and the plain trail shows | playwright | `?_via=site.999` | no `_via`, history length unchanged, plain trail | implemented | 2026-11-05 |
+| SPA-VIA-03 | Carry, same decider: a page beneath the decider keeps the carried `_via` and is grafted | playwright | users/1 -> `/_sys/system-info` (parent users/1) | arrival `carried`, kept, trail rooted at `/_sys/sites` | implemented | 2026-11-05 |
+| SPA-VIA-04 | Carry, different decider: stripped, plain trail | playwright | -> `/_sys/workers` (accepts `site` itself) | stripped, no new entry, trail `[/_sys, /_sys/workers]` | implemented | 2026-11-05 |
+| SPA-VIA-05 | Carry, no decider: stripped | playwright | -> `/_sys/tasks` | stripped | implemented | 2026-11-05 |
+| SPA-VIA-06 | Explicit wins over carrying | playwright | from `site.1`, dispatch `?_via=site.1,users_home` | the target's own value kept | implemented | 2026-11-05 |
+| SPA-VIA-07 | `{via: false}` does not carry | playwright | `Spa.dispatch(url, {via: false})` | no `_via`, arrival null | implemented | 2026-11-05 |
+| SPA-VIA-08 | Nesting: each consumer pops its head; a hook-supplied `_via` goes in front of the remainder; an unconsumed token rides to the root | playwright | walk of `site.1,users_home,extra` | chain URLs carry `users_home,extra` then `dash_home,extra` then `extra` | implemented | 2026-11-05 |
+| SPA-VIA-09 | A malformed `_via` is stripped; more than 4 tokens truncated at the end; `Spa.via()` parses, `Spa.via_push()` prepends, caps and throws on a bad token | playwright | `?_via=Site.1`, `?_via=site.1,a,b,c,d` | stripped; `site.1,a,b,c`; `contact.42,site.1,a,b` | implemented | 2026-11-05 |
+| SPA-VIA-10 | Loop guard and depth cap | playwright | logs <-> companions; performance?n=N -> N+1 | walk stops at the repeat; 20 pages | implemented | 2026-11-05 |
+| SPA-VIA-11 | New-tab rewrite: mousedown writes the carried `_via` into an in-app link only; a click on it is a carried hop | playwright | planted links: in-app, own `_via`, external, non-SPA | only the in-app href rewritten; arrival `carried` | implemented | 2026-11-05 |
+| SPA-VIA-12 | Back/Forward: an entry's recorded decider decides; a different recorded decider strips | playwright | Back onto a kept entry; Back onto one whose `via_decider` was rewritten | kept; stripped | implemented | 2026-11-05 |
+| SPA-VIA-13 | `meta {grafted, root_url, decider}` reaches `on_chain`, `on_complete` and every layout's `on_breadcrumb_complete()` | playwright | stream on the grafted page | meta present on all three | implemented | 2026-11-05 |
 
 ## Notes
 

@@ -3,9 +3,8 @@
 Authoritative structure for **framework** tests (the RSpade framework itself).
 Application tests live under `/rsx/` and are out of scope here.
 
-This directory is being built out by a per-man-page audit: for each subsystem we
-review the code + man page, reconcile any divergence, and catalog everything
-worth testing across all test types - implemented or not.
+Each subsystem's tests sit in a concern directory with a README and a test catalog
+(below), reconciled against the subsystem's code and man page.
 
 ## Layout
 
@@ -113,7 +112,8 @@ again after undoing it (`tests/database/php/Rsx_Schema_Test.php` is the worked e
 another manifest, another database. Such a test uses a framework-served page (`/_sys`) and
 framework classes, and registers whatever else it needs at runtime in the browser. The shared
 opening for such a script is `_lib/playwright/sys_page.js` (`open_sys_page()`: launch, dev-auth on
-the first document request, wait for the SPA) - it sits under a `playwright` directory because
+the first document request, wait for the SPA; `open_sys_page({on_request: fn})` installs a request interceptor before
+navigating) - it sits under a `playwright` directory because
 that basename is what keeps a node script out of the manifest scan.
 
 ## Database isolation (PHP tests)
@@ -232,7 +232,9 @@ test runs): it enqueues and returns. A test that asserts on queued work drives i
 `Task::internal()`, the service method, or `Artisan::call('rsx:task:worker')` in-process. A
 test whose subject is the spawn calls `Task::spawn_workers(true)` (the process-level spawn
 switch, OFF by default under the suite); the runner calls `Task::spawn_workers(false)` at every
-class boundary.
+class boundary. With spawning on, a dispatch inside a database transaction starts its worker
+at COMMIT, never before, and a rolled-back one starts nothing
+(`tasks/php/Task_Dispatch_After_Commit_Test.php`).
 
 The harness owns every detached process that remains (`Core/Testing/Rsx_Test_Detached_Processes.php`):
 
@@ -251,6 +253,13 @@ would hold the boundary open: that is a visible hang, and the fix is to give tha
 end or to terminate it here deliberately - never to cap the wait. Identity is pid + start
 time, so a reused pid is never waited for; a zombie counts as exited.
 `tests/harness/php/Detached_Process_Containment_Test.php` pins the mechanism.
+
+## A test whose subject is the artisan entrypoint
+
+Every spawn of `php artisan` goes through `Rsx_Artisan` (`ARTISAN-SPAWN-01`). The one
+exception is a test whose SUBJECT is the entrypoint itself (pre-boot gates, argv handling,
+the `--_` strip): it keeps its raw spawn and marks it `@ARTISAN-SPAWN-01-EXCEPTION` with the
+rationale beside it.
 
 ## Running
 
@@ -277,6 +286,15 @@ never a manual step) and version-matched, and a trivial container that actually 
 failing prints ONE line and the run continues sequentially in this process - never an error.
 `--sequential` forces that path anywhere. Mechanics: `system/bin/rsx-testd/CLAUDE.md`; the
 gate and the host capabilities the nested daemon needs: `rsx:man testing`.
+
+**A sequential run inside the RSpade container closes the site to external clients**
+(`Core/Proxority/Proxority_Gate`, the operator's `proxority close --reason=...`), from the
+moment its classes are chosen until a `finally` reopens it. The run shares one manifest with
+the served site, and a served request would rebuild it without the test trees under the
+classes still running. Closed, a non-loopback client gets a 503 naming the reason; loopback
+callers (browser tests, `rsx:debug`) pass. The closure names the runner's pid and the proxy
+reopens itself once that process is gone, so a killed run never leaves the site closed. A
+docker run closes nothing (`rsx:man proxority`).
 
 **A docker run is cached by manifest state key + environment fingerprint + selector**
 (`tmp/test-results/<suite>_<key>_<selector>.json`; the fingerprint covers

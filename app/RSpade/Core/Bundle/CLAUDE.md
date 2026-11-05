@@ -93,6 +93,11 @@
   `Rsx.__field_length_data = {Model: {column: length}}` built from the list and the live
   schema, cached under the state key
 - So a compiled bundle is a function of code alone: a migration changes no bundle
+- The boot runner (`_create_javascript_runner`) starts `Rsx._rsx_core_boot()` on
+  DOMContentLoaded when the bundle script came by its deferred tag, and on jQuery `ready()`
+  otherwise, so every deferred script - the field-length script included - has run before
+  boot. jQuery's ready is not that guarantee: in an "interactive" document it fires on a timer
+  that can land between two deferred scripts, and `field_length()` would then find no data
 
 # Bundle Processor System
 

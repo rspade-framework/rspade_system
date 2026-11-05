@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: "Writing, running and watching RSpade background tasks - #[Task] service methods, the Task_Instance reporting API (status(), progress(), progress_count(), eta(), state(), queue_push()/queue_pop()/queue_remove()/queue_clear()/queue_depth(), message(), stdout()/stderr(), attach_file()/attach_bytes(), summary(), heartbeat(), flush(), run_again_in()), the return contract (null/true/0 = success, an integer = return code), Task::dispatch / Task::internal and the Task_Run_Model run row, #[Schedule] recurrence and Task::set_next_run(), maintenance tasks (#[Schedule('maintenance')] + #[Exclusive('maintenance')] in the rsx.tasks.maintenance_hour window), the silence limit (rsx.tasks.silent_timeout - a task that stops reporting is killed after 30 minutes), what a pending run is waiting for (Task_Waiting, Rsx_Task.waiting_text), #[Exclusive]/#[Debounce] identities, the on_demand/scheduled/kill worker pools, lifecycle control (request_stop, force_stop, force_kill, cancel, rerun, rsx:tasks:stop), who the browser may show a run to (#[Task_Access], deny by default - details in rspade:task-access), Rsx_Task in JS, and the widgets Task_Status_Badge, Task_Report, Task_Report_Browser and Task_Output. #[Run_As_Dispatcher] (a task that is the asynchronous stand-in for a user's Ajax endpoint runs bound and frozen as the dispatching sign-in; "this task runs as the user who dispatched it"; run by hand or in a test as a stated user with rsx:task:run --user=<id|email> --site=<id> or __acting_as_user() + __run_task_method(); "nobody is acting here", "From the command line, say who it acts as"), the claim order (dispatcher runs, then on-demand, then scheduled). Use when adding a scheduled job, a nightly or weekly cleanup / retention / maintenance task, a queued background job, a cleanup/import/report task, making a long task stoppable (is_stop_requested), reporting progress, showing a user the progress or output of a task they started, letting users stop or rerun their runs, or debugging a task that 'returned an array' and failed, a widget that says Unavailable, a run stuck Pending, or a long task killed with 'no report for Ns'."
+description: "Writing and watching background tasks - #[Task] methods, Task_Instance reporting (status(), progress_count(), heartbeat(), is_stop_requested(), summary()), the return contract, Task::dispatch / Task::internal, #[Schedule] incl. 'maintenance', #[Exclusive] / #[Debounce], #[Run_As_Dispatcher], request_stop / rerun, rspade-taskd, Task::spawn_workers(false), system/script.php. Use when adding a scheduled or queued job, or a run 'returned an array', is stuck Pending, or was killed with 'no report for Ns'."
 ---
 
 # Background Tasks
@@ -141,6 +141,7 @@ php artisan rsx:tasks:list                                    # the switch, pool
 ```
 
 - **`dispatch()`** writes a PENDING row and, when due now, spawns a detached worker if a pool has room. Options: `scheduled_for` (a FUTURE value is the only thing that defers a run; refused - it throws - for an `#[Exclusive]`/`#[Debounce]` task, which times its own runs) and `timeout` (a HARD limit on that run, seconds from its start, reporting or not - only for a caller that wants one). Any other option throws - there is no `queue`.
+- **A PHP script OUTSIDE the application** boots the whole shell with `$app = require '<project>/system/script.php';` and nothing else - same pre-boot guards, same manifest, same site (`rsx:man scripting`).
 - **`Task::spawn_workers(false)`** makes dispatch enqueue ONLY for the rest of the process - the cron tick drains it. A long-running script that writes many rows calls it first (`rsx:man scripting`). **Under the test suite it is OFF by default**: a test drives queued work with `Task::internal()` or `Artisan::call('rsx:task:worker')`; a test whose subject is the spawn opts in with `Task::spawn_workers(true)`.
 - **`Task::internal()`** runs in this process and returns the settled row. A throw settles FAILED and is rethrown; a failure return comes back as the row (read `status_id`, `return_code`).
 - **A task worth invoking by hand gets its own artisan command**: `#[Command('myapp:report', 'Generate the monthly report')]` beside the `#[Task]`. Skill `rspade:task-commands`.
@@ -366,6 +367,8 @@ public static function drain(Task_Instance $task, array $params = []) { ... }
 
 Standard cron works (`'0 3 * * *'`), but **prefer the phrases**: `'every minute'`, `'every 5 minutes'`, `'hourly'`, `'daily at 2am'`, `'weekly on monday at 9:30am'`, `'monthly'`. **Why: a cron step token is `*` followed by `/`, which terminates a block comment and corrupts the file.**
 
+**What ticks the scheduler.** One cron line drives everything outside the container: `* * * * * php artisan rsx:task:process`, a tick every minute. **Inside the RSpade container the `tasks` supervisor program (`rspade-taskd`) runs that SAME tick only when work comes due** - it wakes at a schedule's own time, and whenever the application POKES it (`Task_Daemon::poke()`, done for you by dispatch and the rest) because the next due moment may have moved earlier - so an idle container queries nothing. A tick claims every schedule (and every pending run a schedule produced) due within the next 5 s (`Task_Daemon::SCHEDULE_LEAD_SECONDS`), so a tick landing a moment before 3:00 still runs the 3:00 run; a DISPATCHED run is due at its time exactly, so a short `#[Debounce]` delay is never cut short. `rspade-taskd status` shows the daemon. `rsx:man tasks`.
+
 ### Maintenance tasks
 
 Housekeeping that runs **once a day or less** - a retention purge, a cleanup, a disposal sweep, a nightly rebuild - is a MAINTENANCE task, and every one is built the same three ways:
@@ -464,39 +467,9 @@ A worker releases any lock a task left held at the task boundary - and names it 
 
 ---
 
-## The worker pools
+## Worker pools, abandonment, and turning the task system off
 
-| Pool | Runs | Cap (`rsx.tasks.pools.<pool>.max_workers`) |
-|---|---|---|
-| `on_demand` | dispatched work | automatic: two thirds of the container's task workers (task workers about a quarter of php-fpm's), else 2; `RSX_TASK_MAX_WORKERS` sets it |
-| `scheduled` | queued on-demand work FIRST, then due schedules | automatic: a third of the container's task workers (at least 1), else 1; `RSX_TASK_SCHEDULED_WORKERS` sets it |
-| `kill` | force stops and kills | 2 |
-
-**Claim order**: `#[Run_As_Dispatcher]` runs first (somebody is waiting), then every other on-demand run, then scheduled-origin runs - oldest first within each tier; no schedule is ticked while an on-demand run is due. A run whose lock is held is passed over, whatever its tier.
-
-**rsx-lockd is the one count of workers** (`Task_Pool`): a worker's pool membership IS its lifelong daemon connection - no heartbeat, lease or TTL. A worker admits itself under its pool's lock, claims with a guarded write, runs the task unlocked, settles under the lock. The cron tick settles an ABANDONED run (its worker gone) with no grace period: a dispatched run goes back to PENDING after `rsx.tasks.retry.base_seconds` (600) * 2^(n-1) and FAILS on the `attempts`-th (5) abandonment; a scheduled or inline run is FAILED. **So a dispatched task's body may run more than once when a worker dies under it - write it to be safe to re-run from the start.** Full contract: `rsx:man tasks`.
-
-Retention: finished runs' output is cut to 150 lines and their attachments unlinked after 7 days; runs are purged after 21 days (`rsx.tasks.retention`, minutes).
-
----
-
-## Turning the task system off and on
-
-```bash
-php artisan rsx:tasks:disable --reason="replacing the server" [--grace=30]
-php artisan rsx:tasks:enable
-```
-
-One switch, **stored in the database** (one fact for every host sharing it). **While it is off, every task - dispatched or inline - QUEUES; nothing runs until `rsx:tasks:enable`; an inline caller waits for its answer.**
-
-- `Task::dispatch()` writes its PENDING row as always; no worker is started, a worker claims nothing and exits, and no `#[Schedule]` produces a run. A schedule that came due meanwhile runs **once** after enable, then follows its cadence.
-- **`Task::internal()`, `rsx:task:run` and a `#[Command]` queue the run PENDING and WAIT** - no limit, re-reading every 2 s; a command says once on stderr that it is waiting for `php artisan rsx:tasks:enable`. After enable the waiting process claims and runs its own run in-process and the caller gets its ordinary answer; if a worker claimed it first the caller returns that settled run. It executes exactly once. **A waiter that goes away loses nothing**: the process dies with the server, or a web server ends a request that outlived its limit, and the run stays queued for a worker - that caller just never sees the answer. So an endpoint that calls `Task::internal()` blocks while the system is off; where the answer is not needed in the request, `dispatch()`.
-- `rsx:task:process` keeps settling dead runs and starting kill workers. No flag makes anything run.
-- **`rsx:tasks:disable` is synchronous**: switch first, then every RUNNING run gets a force stop - asked to stop, killed after the grace (`--grace`, default `rsx.tasks.stop_grace_seconds`) - and it returns once this host's runs have settled. **Exit 0 = off and nothing running here**; 2 = off, with the inline web-request runs it lists still running (never signalled); another host's runs keep their kill request for that host's tick. Idempotent both ways.
-- It is seen everywhere: every pending run's wait line reads `task system disabled - php artisan rsx:tasks:enable`, `rsx:tasks:list` leads with it, `rsx:health` FAILs its **Task System** row, `/_sys` Tasks and Task Workers show an alert. In PHP: `Task::is_enabled()`, `Task::disabled_state()`.
-- `rsx:maintenance:enable` runs the disable and `rsx:maintenance:disable` the enable - so a task system you had turned off on purpose is ON after a maintenance window.
-
-**Replacing a server**: `rsx:tasks:disable` -> wait for exit 0 -> replace it -> `rsx:tasks:enable` on the new one. A host lost without that leaves its RUNNING runs unsettled when it returns under another hostname (a recreated container's hostname is its id unless pinned): only the host that ran a worker can judge its pid.
+Pools `on_demand`, `scheduled` and `kill` (`rsx.tasks.pools`); claim order is `#[Run_As_Dispatcher]` runs, then other on-demand runs, then scheduled ones. **A dispatched run whose worker dies is retried from the start (up to 5 abandonments), so write a dispatched task to be safe to re-run.** `rsx:tasks:disable [--reason=] [--grace=]` / `rsx:tasks:enable` switch the whole task system (a database fact for every host): while off every run queues and an inline caller waits. Pool caps, the abandonment backoff, retention, and the disable/enable contract (exit codes, replacing a server): [reference/operations.md](reference/operations.md).
 
 ## Troubleshooting
 

@@ -209,7 +209,12 @@ restructured or deleted in any release. The sanctioned references are a link to
 the panel through `Rsx::Route('_Sys_Dashboard_Action')` guarded by
 `Permission::can_access(...)`, and an impersonation banner's exit link through
 `Rsx.Route('_Sys_Impersonation_Controller::stop')` - both published into every bundle
-by `config('rsx.always_published_routes')`.
+by `config('rsx.always_published_routes')`. `BundleCompiler` resolves those targets into
+every bundle's route table (a configured target with no manifest routes FAILS THE COMPILE),
+and `Auth_Gates::export_published_route_grants()` ships their grants on every page as
+`window.rsxapp.auth_routes_published` (always present, explicit `0`s). That map is attached
+AFTER `__filter_underscore_keys()` in `Rsx_Bundle_Abstract`: the filter strips `_`-prefixed
+PAYLOAD fields, and these keys are route targets whose reserved prefix is the point.
 
 `NAME-RESERVED-01` checks DECLARATIONS; `NAME-RESERVED-02` checks REFERENCES,
 and both are manifest-build fatals. NAME-RESERVED-02 fires when application code

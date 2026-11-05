@@ -1,6 +1,6 @@
 ---
 name: js-decorators
-description: "RSX JavaScript decorators including @route, @spa, @layout, @mutex, and custom decorator creation. Use when adding route decorators to actions, understanding decorator restrictions, creating custom decorators, or troubleshooting decorator errors."
+description: "Using and writing JavaScript decorators - @route, @spa, @layout, @auth, @mutex, and custom decorators marked /** @decorator */. Use when decorating an SPA action, serializing a method with @mutex, writing a decorator, or on 'not whitelisted', 'Decorator 'X' not found' or 'Decorators can only be applied to static methods'."
 ---
 
 # RSX JavaScript Decorators

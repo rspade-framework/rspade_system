@@ -1,6 +1,6 @@
 ---
 name: revisions
-description: "Recording and reading per-model revision history in RSpade - opting a model in with $revisions and $revision_exclude, filing a child's writes under its parent with #[Revision_Parent], the one transaction per unit of work, reading it back with revisions() / revisions_including_children() / $revision->diff() and Revision_Model::is_redacted() for a $neverExport column's Revision::REDACTED marker, storing Revision::transaction_id() on an application activity row, suppressing a backfill with Revision::without(), and declaring units of work in a script or long task with Revision::unit_of_work() / begin_unit_of_work(). Use when a screen must show what changed and who changed it, when adding $revisions to a model, when writing an import script or a task that saves many revisioned records, when one transaction holds a whole run's writes, when responding to a REVISION-01 manifest-build failure, when a bulk write records too many or no revisions, or when a read throws \"unknown codec byte\" or \"unknown dictionary id\", or when a diff value reads \"__RSX_REDACTED__\"."
+description: "Recording and reading revision history - $revisions = true, $revision_exclude, #[Revision_Parent], one transaction per unit of work, revisions() / $revision->diff(), Revision::transaction_id(), Revision::without(), Revision::unit_of_work() for imports. Use when a screen shows what changed and who, an import saves many revisioned records, or on REVISION-01 or a diff reading '__RSX_REDACTED__'."
 ---
 
 # Revision history

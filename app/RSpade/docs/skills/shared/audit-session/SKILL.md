@@ -1,6 +1,6 @@
 ---
 name: audit-session
-description: "Attributing logged activity to who did it and from where - Session::get_audit_session_id() to record (keyed on user session x site x address x user agent x display zone; null in a command or plain task), Session::get_audit_session() to read one back, Audit_Session::join() and Audit_Session::column() to show, search and sort audit fields (IP address, user agent, identity, impersonator, timezone) in a datagrid query, and Audit_Session::list_page_for_user_session() for a per-sign-in detail screen. Use when building an activity log, action log, audit trail or export record; adding an audit_session_id column; showing the IP address or browser behind a logged action; building the detail page of a \"where you're signed in\" entry; deciding between get_session_id() and get_audit_session_id(); or when get_audit_session_id() answers null in a command or task."
+description: "Attributing logged activity - Session::get_audit_session_id() to record, Session::get_audit_session() to read back, Audit_Session::join() / Audit_Session::column() for IP, user agent and impersonator in a datagrid. Use when building an activity log or audit trail, adding an audit_session_id column, showing the IP or browser behind an action, or choosing between get_session_id() and get_audit_session_id()."
 ---
 
 # Audit sessions

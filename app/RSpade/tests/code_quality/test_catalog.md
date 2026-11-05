@@ -552,3 +552,16 @@ stay aligned.
 | CQ-MEM-03 | the entry bound still holds for small files | php | ten tiny files, capacity 4 | four resident | implemented (`Source_Cache_Bounds_Test`) | 2026-11-05 |
 | CQ-MEM-04 | a cold rsx:check of the reference tree peaks under 160 MB | php (child processes) | scratch build + tmp roots; manifest built first, then the check | CHECK_PEAK_BYTES under budget (measured 113 MB) | implemented (`Code_Quality_Memory_Gate_Test`) | 2026-11-05 |
 | CQ-MEM-05 | a cold rsx:check of a tree five times the reference size peaks under 256 MB | php (child processes) | generated classes (10 methods, chains of 4), JS classes, stylesheets | CHECK_PEAK_BYTES under budget (measured 186 MB) | implemented (`Code_Quality_Memory_Gate_Test`) | 2026-11-05 |
+
+## SPA-VIA-01 - the reserved breadcrumb-origin parameter (`Spa_Via_Rule_Test`)
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| VIA-ROUTE | a `:_via` route parameter is FATAL in `@route`, `#[Route]` and `#[Portal_Route]` (optional too) | php | fixtures + synthetic metadata | throws | implemented | 2026-11-05 |
+| VIA-ARGS | reading `_via` from args is FATAL in four shapes (`this.args._via`, `['_via']`, `args._via`, destructuring) | php | JS fixtures | throws, names `Spa.via()` | implemented | 2026-11-05 |
+| VIA-PAIR-LIST | `breadcrumb_via` without an instance `breadcrumb_parent_via()` is FATAL; a STATIC hook does not satisfy it | php | JS fixtures | throws | implemented | 2026-11-05 |
+| VIA-PAIR-HOOK | `breadcrumb_parent_via()` without `breadcrumb_via` is FATAL | php | JS fixture | throws | implemented | 2026-11-05 |
+| VIA-LITERAL | a non-literal `breadcrumb_via` is FATAL | php | `= Probe_Types.ALL` | throws | implemented | 2026-11-05 |
+| VIA-TYPE | an entry outside `[a-z][a-z0-9_]*` is FATAL | php | four bad entries | throws, names the entry | implemented | 2026-11-05 |
+| VIA-CLEAN | the pair declared together, `constructor.breadcrumb_via` reads, a `'_via'` string and an ordinary route param pass | php | fixtures | no throw | implemented | 2026-11-05 |
+

@@ -179,6 +179,8 @@ argument alone would read site 0).
   compose a derived value onto the shared `Model_Changed_Topic` without making every model
   write kick the task / fan out to every watched record (preserves no-churn). Absent →
   unconstrained (custom topics unchanged).
+- **No template consumer.** The reference app (`rsx/`) declares no `#[Emitter]`; emitters are
+  exercised only by framework tests, so a change here is verified by those tests, never by a page.
 
 - **NO timer, write-kicked** — any non-silent model write marks emitters dirty; the commit
   flush dispatches `Realtime_Emitter_Service::run_emitters` (`#[Task]` `#[Debounce(2)]`) IFF

@@ -1,6 +1,6 @@
 ---
 name: jquery-extensions
-description: "RSX jQuery extensions including the click() override that auto-prevents default, .click_async() button busy-states and the Button_Utils.set_loader() custom busy loader, existence and viewport checks, component-aware traversal, form validation helpers, scrolling, the width_group family, and rsx_numeric() - the one numeric field filter. Use when working with click handlers, wiring a button to a server-side action, checking element existence or visibility, finding sibling components, syncing widths across elements, building a numeric only textbox, a digits only input, a currency input, a time entry field, hours and minutes, H:MM to decimal hours, decimal places or thousands separators, understanding why links don't navigate, or hitting the \"$.ajax() is blocked\" throw."
+description: "The RSX jQuery extensions - the click() override that prevents default, .click_async() busy buttons and Button_Utils.set_loader(), .exists(), component-aware traversal, the width_group family, and $(input).rsx_numeric() for numeric, currency and H:MM fields. Use when wiring a click handler or busy button, checking existence, building a digits-only or currency input, when a link does not navigate, or on the '$.ajax() is blocked' throw."
 ---
 
 # RSX jQuery Extensions

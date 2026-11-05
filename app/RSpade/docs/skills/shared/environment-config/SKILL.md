@@ -1,6 +1,6 @@
 ---
 name: environment-config
-description: "Configuring an RSpade environment - the two-tier config merge and how to add or override a key, deciding config file vs .env, setting APP_URL (and PORTAL_URL, the client portal's address) on a new host (the $HOSTNAME token, the https requirement and the development http allowance) and diagnosing the dev-mode hostname-guard fatal, repairing .env symlink drift with rsx:env:heal, and which helper resolves which path. Use when standing up a new box, adding a config key, or debugging \"wrong hostname\"/\"config edit did nothing\" symptoms."
+description: "Configuring an environment - the config merge (system/config/rsx.php + rsx/resource/config/rsx.php), config vs .env, .env.dist key propagation, APP_URL / PORTAL_URL, rsx:env:heal, env:encrypt / .env.encrypted, Rsx_Project_Paths. Use when standing up a box, adding a config key, or on a wrong-hostname fatal or a config or .env edit that did nothing."
 ---
 
 # Environment and configuration
@@ -34,7 +34,7 @@ return [
 ];
 ```
 
-Read it back with `config('rsx.files.max_file_size')`. Never copy the whole framework block down to change one line - the merge exists so you do not have to, and a copied block silently freezes the other keys at the version you copied.
+Read it back with `config('rsx.files.max_file_size')`. Never copy the whole framework block down to change one line - the merge exists so you do not have to, and a copied block silently freezes the other keys at the version you copied. Give each override a comment saying why it departs from the default, and keep the unused keys as commented-out examples - the shipped file does both.
 
 Keys that are application PREFERENCES rather than framework requirements already live in the user file by design: `console_debug` outputs/filters, `log_browser_errors`, response defaults, `development.auto_rename_files`.
 

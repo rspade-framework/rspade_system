@@ -2,74 +2,30 @@
 
 ## DEVELOPMENT CONTEXT (MONOREPO)
 
-Working with **Brian**, creator and sole maintainer of RSpade. This is **framework and starter template development**. The user has 20 years of professional experience and is extremely opinionated about implementation.
+Working with **Brian**, creator and sole maintainer of RSpade, on **framework and starter-template development** - the framework in `/system/app/RSpade/` (core systems, manifest, bundles, auth, tooling), the reference SaaS app (the starter template) in `/rsx/`. 20 years' professional experience; extremely opinionated about implementation.
 
-**Current focus**: framework core stable; building the reference SaaS application (`/rsx/`) as the starter template.
-
-**Your role**:
-- **Framework** (`/system/app/RSpade/`): core systems, manifest, bundles, auth, developer tooling.
-- **Reference app** (`/rsx/`): working SaaS with auth, user management, multi-tenant, professional UI.
-
-### Template app sign-in posture (owner ruling, 2026-11-03)
-
-**The template has NO self-signup, staff or portal.** An account comes into being only by accepting an invitation (staff `/accept-invite`, portal `/register` from a portal invitation - both mark the address verified) or as the initial RSpade account on an empty database (`Rsx_Initial_User::create()`). SSO signs in an EXISTING linked or verified-email-matched account and declines every unknown identity. **Two sign-in features stay coded in and switched OFF by a hardcoded boolean in `rsx/resource/config/rsx.php`**: `rsx.auth.require_two_factor` (staff TOTP, forced enrollment) and `rsx.portal.emailed_sign_in_codes` (portal 2FA by email). **The template's staff and portal controllers are the only web path to sign-in** - every staff entrance finishes in `Login_Controller::complete_sign_in()`, every portal one in `Portal_Login_Controller::complete_sign_in()`. The other callers that sign anybody in are the framework acting for those controllers (the 2FA engine for their verify endpoints, the SSO ceremony under their `sso.*` hooks), `rsx:debug` dev-auth (development tooling) and impersonation / View as Client (not a sign-in); the sample-data seed task sets an acting identity for attribution only (`Sample_Data_Service::seed`, a task, not a web path). Verified 2026-11-03 by grepping every `RsxAuth::login(`, `set_login_user_id(` and `set_portal_user_id(` caller under `rsx/`. Keep it that way.
+**Template sign-in posture (owner ruling, 2026-11-03): NO self-signup, staff or portal.** An account exists only by accepting an invitation (staff `/accept-invite`, portal `/register` from a portal invitation; both mark the address verified) or as the initial RSpade account on an empty database (`Rsx_Initial_User::create()`); SSO signs in only an EXISTING linked or verified-email-matched account and declines every unknown identity. `rsx.auth.require_two_factor` and `rsx.portal.emailed_sign_in_codes` stay coded in and switched OFF by a hardcoded boolean in `rsx/resource/config/rsx.php`. Every staff sign-in finishes in `Login_Controller::complete_sign_in()`, every portal one in `Portal_Login_Controller::complete_sign_in()` - **keep it that way** (caller inventory: `rsx/app/login/CLAUDE.md`).
 
 ### CRITICAL DIRECTIVE: NO BACKWARDS COMPATIBILITY
 
-Zero external users. No releases. We control 100% of the codebase. Breaking changes are required for progress.
-
-**BACKWARDS COMPATIBILITY = TECHNICAL DEBT WITH LIPSTICK**
-
-**DUAL IMPLEMENTATIONS CAUSE DEVELOPERS PTSD** - two systems doing the same thing creates debugging nightmares.
-
-**Rules:**
-- Delete old implementations immediately after updating call sites
-- ONE pattern per feature when complete
-- Never create fallback/compatibility layers
-- Remove deprecated code before marking a feature complete
-- Never document "legacy", "compatibility", or how things "used to work"
+Zero external users, no releases to protect, 100% of the code is ours: breaking changes are required for progress. **Backwards compatibility = technical debt with lipstick; dual implementations cause developers PTSD.** Delete the old implementation as soon as its call sites move; ONE pattern per feature; never a fallback or compatibility layer; remove deprecated code before calling a feature complete; never document "legacy", "compatibility" or how things "used to work".
 
 ### CRITICAL DIRECTIVE: EVERYTHING YOU WRITE HERE BECOMES PUBLIC
 
-**This monorepo's commit messages and source comments end up in the open-source release.** Every commit here is replayed verbatim into the published release commit body (`bin/publish` assembles the changelog from `git log`), and `system/` + `rsx/` ship as public repositories. `docs/claude/framework/` ships too - it is not loaded downstream, but it IS readable on GitHub. Only `docs.dev/` is stripped.
+**This monorepo's commit messages and source comments end up in the open-source release.** Every commit is replayed verbatim into the published release commit body (`bin/publish` assembles the changelog from `git log`), and `system/` + `rsx/` ship as public repositories; `docs/claude/framework/` ships too (readable on GitHub). Only `docs.dev/` is stripped.
 
-**NEVER name a client, employer, partner, or any external project** - not in a commit message, not in a code comment, not in a test docstring, not in a man page, not in a config default. Work done with them is confidential and is not ours to disclose. Attribute a field-sourced fix to **"a downstream field report"** or "a live deployment", never to whose deployment it was. The date and the symptom are the useful parts; the name is the part that cannot be taken back once pushed.
+**NEVER name a client, employer, partner, or any external project** - not in a commit message, code comment, test docstring, man page or config default. Work done with them is confidential and is not ours to disclose. Attribute a field-sourced fix to **"a downstream field report"** or "a live deployment", never to whose deployment it was: the date and the symptom are the useful parts; the name is the part that cannot be taken back once pushed.
 
 **RSpade is presented as independently developed, because that is what the public record must show.** Never document the meta-story of a change: what other codebase an idea was studied in, what was ported from where, what was dropped into this tree to be read alongside, what is gitignored locally and why. A commit says what the framework now does - never what was consulted to get there. Local-only material belongs in `.git/info/exclude`, never in the tracked `.gitignore`, where the entry itself is the disclosure.
 
-**A leak is permanent.** A pushed commit message cannot be unpublished, so the check happens BEFORE the commit, every time. `bin/publish` additionally enforces a mechanical CONFIDENTIALITY GATE - a blocked-term scan over every staged tree and the release changelog, aborting the publish on one hit - but that is the LAST line of defense, not a license to defer the check to it: it knows one needle, and a leak that reaches the monorepo's history still has to be scrubbed by hand.
-
-### Safety checks here
-
-The safety-check override prohibition (shared conduct fragment) applies to this tree's own gates - `IS_FRAMEWORK_DEVELOPER=true` is the canonical example. Never modify it, never pass a flag around it: STOP, INFORM, ASK, WAIT.
-
-### Monorepo naming rows
-
-| Context | Convention | Examples |
-|---------|------------|----------|
-| Framework classes | `PascalCase` or `Like_This_*` | `ManifestKernel`, `Rsx_Controller_Abstract` |
-| Framework internal | `_underscore_prefix()` | `_internal_method()` |
-| Temp files | `name-temp.extension` | `test-temp.php` |
+**A leak is permanent.** A pushed commit message cannot be unpublished, so the check happens BEFORE the commit, every time. `bin/publish`'s mechanical CONFIDENTIALITY GATE (a blocked-term scan over every staged tree and the release changelog, aborting on one hit) is the LAST line of defense, never a reason to defer the check: it knows one needle, and a leak that reaches the monorepo's history is scrubbed by hand.
 
 ### Box facts
 
-**NEVER restart PHP/Nginx** - OPcache revalidates every file on every request, so a restart is never needed to pick up a change.
-
-**Redis, the cache service, may be restarted whenever useful, without asking** (owner authorization, 2026-10-01): `supervisorctl restart redis`. rsx-lockd is NOT a cache service - restarting it drops every held lock and still needs the owner's approval.
-
-### Framework-only references
-
-- `rsx:man code_quality` (rule-catalog architecture), `rsx:man manifest_api`, `rsx:man manifest_build`, `rsx:man ast_sourcecode_parsers`, `rsx:man vs_code_extension` exist HERE only - publish strips them from releases; never point a shared fragment or skill at them.
-
-### Domain notes
-
-- **Realtime is ENABLED in this dev env**: the relay runs under supervisor (`[program:realtime]`) and nginx proxies `/ws`. The template app ships **no `#[Emitter]` consumer** (verified 2026-08-17) - emitters are exercised only by framework tests.
-- **This box's task scheduler is `rspade-taskd`** (supervisor program `tasks`, added 2026-11-05; `rspade-taskd status`), not a cron line - it had none before. Its box-level wiring and what a recreate loses: `docs.dev/task_scheduler_daemon/THIS_BOX.md`.
-- **Backlog pointers**: **B-85** (a task should DECLARE whether it wants the site lock) and **B-87** (automatic per-tenant write locks on `save()` DISABLED since 2026-08-11, re-enable pending; the `Rsx_Artisan` mandate stands regardless).
-- A framework test whose SUBJECT is the artisan entrypoint keeps its raw spawn under a rationale'd `@ARTISAN-SPAWN-01-EXCEPTION`.
-- Colocated deep docs: `Core/Task/CLAUDE.md`, `Core/Realtime/CLAUDE.md`, `Commands/CLAUDE.md` (why `rsx:check` refuses that directory, pre-boot interception and its stubs - `rsx:man artisan_commands`).
-
-### Documentation obligations
-
-- **Document divergences** from Laravel in `man/framework_divergences.txt` (`rsx:man framework_divergences`) — its ADDING AN ENTRY section is the contract.
-- **Delegation research artifacts** are persisted into `/docs.dev/` before implementation begins.
+- **Safety checks here**: the override prohibition (shared conduct) covers this tree's own gates - `IS_FRAMEWORK_DEVELOPER=true` is the canonical one. Never modify it, never pass a flag around it: STOP, INFORM, ASK, WAIT.
+- **NEVER restart PHP/Nginx** - OPcache revalidates every file on every request. **Redis may be restarted whenever useful, without asking** (owner authorization, 2026-10-01: `supervisorctl restart redis`); **rsx-lockd is NOT a cache service** - restarting it drops every held lock and needs the owner's approval.
+- **`rsx:clean` here**: beyond an explicit request, the one exception to "never run it" is after modifying `Manifest.php` or the bundle compiler.
+- Realtime is ENABLED (`[program:realtime]`, nginx proxies `/ws`); the task scheduler is `rspade-taskd` (supervisor `tasks`; box wiring in `docs.dev/task_scheduler_daemon/THIS_BOX.md`).
+- Framework-internal methods are `_underscore_prefix()`; temp files are `name-temp.extension`.
+- **Publish-stripped man pages** exist HERE only - `code_quality`, `manifest_api`, `manifest_build`, `ast_sourcecode_parsers`, `vs_code_extension`; never point a shared fragment, skill or shipped page at one.
+- Divergences from Laravel are documented in `rsx:man framework_divergences` (its ADDING AN ENTRY section is the contract); delegation research artifacts are persisted into `/docs.dev/`.

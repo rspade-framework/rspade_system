@@ -1,0 +1,48 @@
+---
+name: delegation
+description: "Orchestrating a multi-agent task under the Fable mandate - Sonnet vs Opus calibration, parallel research but one writer at a time across the whole agent tree, the review loop, checkpoint commits between reviewed writers, the writer-brief contents and test-run rules, batched escalations, persisting research to docs.dev. Use when you are model Fable on a complex task, the user asks for 'the Fable mandate', or you are spawning implementation agents or writing a writer brief."
+---
+
+# Delegation (the Fable mandate)
+
+**If you are notified you are model "Fable" (as opposed to Opus or Sonnet) and are given a complex task, delegate.** **When the user asks for the "Fable mandate" as the delegation strategy, follow it whatever model you are** - the orchestrator (Opus included) takes the Fable role below and delegates implementation to agents exactly as written.
+
+Fable is the architect / product owner / lead engineer: its time is best spent at a higher level - reading all the details, considering the big picture, coordinating, reviewing, and solving architecture problems. Opus agents code faster and are cheaper; Sonnet agents are cheaper still but limited.
+
+## Calibration
+
+- **Sonnet ~ 1-year intern.** Good at collecting factual information, summaries, and state-of-things investigation reports. Do NOT trust it with heavy work, edits, or complex logical conclusions.
+- **Opus ~ 4-year professional.** Good at investigating and producing a nuanced report and recommendation about a problem - and it does ALL implementation work.
+
+## Rules of engagement
+
+1. **Research** -> Sonnet/Opus as fits the depth needed; research agents may run in PARALLEL.
+2. **Implementation** -> Opus agents ONLY, strictly SEQUENTIAL - each agent must know it is the only one making changes, so any runtime error is unambiguously its own fault. This includes an agent's own subagents: a writer may spawn a scoped subagent, but must WAIT for it and review its work - **never more than one writer active in the entire tree at any moment**. (Shared build state makes parallel writers structurally unsafe: a transient syntax error from one agent breaks every other agent's verification and none can attribute the failure.)
+3. **Review loop** -> after each implementation agent completes, check its work yourself (screenshots, diffs, spot-reads - do not take its report on faith). Small fixes: do them yourself. Larger fixes: re-delegate to the agent. Escalate to the user only when a fix genuinely requires their feedback or clarification.
+4. **Heavy QA passes at chunk boundaries only** -> instruct agents NOT to run the full code-quality suite after individual changes; per-edit errors surface automatically. Run it ONCE at the end and review the output then. (In RSpade projects: iterate with `rsx:debug` as the smoke test; a writer runs ONLY the test class it wrote or changed; `rsx:check` and `rsx:test` run once at epic end, by the orchestrator. Write that into every brief - an agent left to its own judgment runs groups.)
+5. **Commits** -> commit between each implementation agent's reviewed work (a checkpoint timeline enabling selective reverts). When acting as delegator on a task complex enough for subagents, autonomous commits are authorized - the sole exception to "commit only when explicitly asked".
+6. **Preference questions** with no drastic impact on the task's flow: make the recommended choice and keep moving; present every such question + the choice taken at the end of the epic as part of the summary, and ask whether any chosen path needs a refactor.
+
+## Writer-agent brief contents
+
+Every implementation agent gets:
+
+- exact scope + the files it owns;
+- required reading (the governing spec/plan docs);
+- the nested-subagent rule above (one writer in the whole tree; a scoped subagent is waited for and reviewed);
+- verification duties (render/screenshot evidence at the relevant states, DB checks where applicable);
+- "do NOT commit - the orchestrator reviews and commits";
+- a required report format: per-item outcome, files touched, judgment calls made, verification evidence, and open questions;
+- the test-run rules verbatim: **run only the test classes you wrote or changed, one at a time, in the FOREGROUND, waiting for each to finish; never start a test in the background and move on; never re-run a test because it was slow.**
+
+**Stopping an agent is not stopping its work**: after stopping one that may have been mid-test, the orchestrator confirms its test containers are gone (`docker ps --filter label=rsx-test-run`) before the next writer starts.
+
+**`breaking_changes` is never a writer's deliverable** - the report answers the gate ("IF YOU DO NOTHING: <breakage>" or "nothing breaks -> none") and the orchestrator decides.
+
+**Propagate lessons forward:** when one phase discovers a constraint or gotcha, write it into the next writers' briefs verbatim.
+
+## Escalations and research artifacts
+
+**Escalations** are batched to phase boundaries unless truly blocking.
+
+**Research artifacts** worth keeping (audits, investigation reports) are persisted verbatim into the project's development documentation tree before implementation begins - agent transcripts are ephemeral, and future tasks will need the evidence.

@@ -1,6 +1,6 @@
 ---
 name: shell-invocation
-description: "Invoking shell commands and repo scripts correctly in RSpade - always explicit bash, never sh or an implicit /bin/sh. Use when writing shell_exec/passthru/proc_open/exec_safe from PHP, child_process from node, registering a Claude Code hook or statusline, writing a git hook body, adding a supervisor or cron command line, calling one script from another, or diagnosing \"Permission denied\" on a script or \"sh: 1: exec: 11: not found\"."
+description: "Invoking shell commands and scripts correctly - always explicit bash, never sh or an implicit /bin/sh. Use when writing shell_exec / passthru / proc_open / exec_safe from PHP or child_process from node, a Claude Code hook, a git hook body, a supervisor or cron line, calling one script from another, or on 'Permission denied' or 'sh: 1: exec: 11: not found'."
 ---
 
 # Shell Invocation
@@ -49,6 +49,8 @@ exec_safe('cd ' . escapeshellarg($dir) . ' && git rev-parse HEAD', $output, $ret
 ```
 
 `exec_safe()` does it internally via array-form `proc_open(['bash','-c',$cmd])`, so **every caller of it is already compliant** - prefer it.
+
+**Streaming vs capturing.** `exec_safe()` **buffers to EOF** - a long dump or restore prints nothing until it finishes. When the operator needs to watch progress, stream with `passthru('bash -c ' . escapeshellarg($pipeline), $exit_code)` (the explicit `bash -c` is what keeps `passthru()` off dash). Credentials go in the **environment** (`putenv('MYSQL_PWD=...')` around the call), never in the command string, where `ps` shows them to every user on the box. An artisan command line is never spawned this way at all: that is `Rsx_Artisan` (skill `rspade:locks-and-subprocesses`).
 
 ### node
 
